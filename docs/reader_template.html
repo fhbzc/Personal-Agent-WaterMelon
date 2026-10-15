@@ -1,0 +1,507 @@
+<title>Personalized Agent Spec</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+<style>
+:root {
+  --ground: #f7f8f7;
+  --surface: #ffffff;
+  --surface-sunken: #eef1f0;
+  --ink: #16191c;
+  --ink-soft: #3d464b;
+  --muted: #5c6672;
+  --rule: #e1e5e4;
+  --rule-strong: #cbd2d0;
+  --accent: #0f6e63;
+  --accent-soft: #d8ebe7;
+  --accent-ink: #0a4a43;
+  --mark: #ffe6a3;
+  --mark-ink: #4a3a08;
+  --shadow: 0 1px 2px rgba(22, 25, 28, .05), 0 8px 24px rgba(22, 25, 28, .06);
+
+  --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --serif: "Source Serif 4", ui-serif, Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --rail: 310px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #101413;
+    --surface: #171c1b;
+    --surface-sunken: #1e2524;
+    --ink: #e6eae8;
+    --ink-soft: #c3ccc9;
+    --muted: #97a3a0;
+    --rule: #262e2d;
+    --rule-strong: #37423f;
+    --accent: #4fd1be;
+    --accent-soft: #16302c;
+    --accent-ink: #8fe6d8;
+    --mark: #4a3f18;
+    --mark-ink: #ffe6a3;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .35);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #101413;
+  --surface: #171c1b;
+  --surface-sunken: #1e2524;
+  --ink: #e6eae8;
+  --ink-soft: #c3ccc9;
+  --muted: #97a3a0;
+  --rule: #262e2d;
+  --rule-strong: #37423f;
+  --accent: #4fd1be;
+  --accent-soft: #16302c;
+  --accent-ink: #8fe6d8;
+  --mark: #4a3f18;
+  --mark-ink: #ffe6a3;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .35);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------------------------------------------------------------- shell */
+.shell { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); min-height: 100vh; }
+
+/* ----------------------------------------------------------------- rail */
+.rail {
+  position: sticky; top: 0; height: 100vh;
+  display: flex; flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--rule);
+}
+.rail-head { padding: 20px 20px 14px; border-bottom: 1px solid var(--rule); }
+.doc-kicker {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--accent); margin: 0 0 6px;
+}
+.doc-title {
+  font-family: var(--sans); font-weight: 600; font-size: 19px; line-height: 1.25;
+  margin: 0 0 4px; letter-spacing: -.01em; text-wrap: balance;
+}
+.doc-meta { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+
+.search-wrap { padding: 12px 16px; border-bottom: 1px solid var(--rule); }
+.search-field { position: relative; display: flex; align-items: center; }
+.search-field svg { position: absolute; left: 10px; width: 14px; height: 14px; color: var(--muted); }
+#search {
+  width: 100%; padding: 8px 30px 8px 30px;
+  font-family: var(--sans); font-size: 13.5px; color: var(--ink);
+  background: var(--surface-sunken); border: 1px solid transparent; border-radius: 7px;
+}
+#search::placeholder { color: var(--muted); }
+#search:focus { outline: none; border-color: var(--accent); background: var(--surface); }
+.search-clear {
+  position: absolute; right: 6px; border: 0; background: none; cursor: pointer;
+  color: var(--muted); font-family: var(--mono); font-size: 15px; line-height: 1; padding: 4px;
+}
+.search-note { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 7px; }
+
+.toc { flex: 1; overflow-y: auto; padding: 8px 0 40px; scrollbar-width: thin; }
+.toc-row {
+  display: grid; grid-template-columns: 3.6em 1fr auto; align-items: baseline; gap: 8px;
+  width: 100%; text-align: left; padding: 5px 16px 5px 14px;
+  border: 0; background: none; cursor: pointer; color: var(--ink-soft);
+  font-family: var(--sans); font-size: 13.5px; line-height: 1.35;
+  border-left: 2px solid transparent;
+}
+.toc-row:hover { background: var(--surface-sunken); color: var(--ink); }
+.toc-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.toc-row .num {
+  font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.toc-row .page {
+  font-family: var(--mono); font-size: 10.5px; color: var(--muted); opacity: .75;
+  font-variant-numeric: tabular-nums;
+}
+.toc-row.child { padding-left: 30px; font-size: 12.5px; }
+.toc-row.child .num { font-size: 10.5px; }
+.toc-row.grandchild { padding-left: 46px; font-size: 12.5px; }
+.toc-row.active {
+  background: var(--accent-soft); color: var(--accent-ink);
+  border-left-color: var(--accent); font-weight: 500;
+}
+.toc-row.active .num, .toc-row.active .page { color: var(--accent-ink); }
+.toc-row.hidden { display: none; }
+.toc-group { display: flex; align-items: center; }
+.toc-toggle {
+  width: 18px; height: 18px; margin-left: 6px; flex: none;
+  border: 0; background: none; cursor: pointer; color: var(--muted);
+  font-family: var(--mono); font-size: 10px; line-height: 1;
+}
+.toc-toggle:hover { color: var(--accent); }
+.toc-empty { padding: 16px; font-family: var(--sans); font-size: 13px; color: var(--muted); }
+
+/* ---------------------------------------------------------------- reader */
+.reader { display: flex; flex-direction: column; min-width: 0; }
+.reader-bar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 28px; background: color-mix(in srgb, var(--ground) 88%, transparent);
+  backdrop-filter: blur(8px); border-bottom: 1px solid var(--rule);
+}
+.crumb {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted); margin-right: auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nav-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 11px; border: 1px solid var(--rule-strong); border-radius: 7px;
+  background: var(--surface); color: var(--ink-soft); cursor: pointer;
+  font-family: var(--sans); font-size: 12.5px; white-space: nowrap;
+}
+.nav-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.nav-btn:disabled { opacity: .38; cursor: default; }
+.nav-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rail-toggle { display: none; }
+
+.page-wrap { padding: 34px 28px 96px; display: flex; justify-content: center; }
+article { width: 100%; max-width: 46rem; }
+
+.eyebrow {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--accent); margin: 0 0 10px;
+  display: flex; align-items: baseline; gap: 10px;
+}
+.eyebrow .src { color: var(--muted); letter-spacing: .06em; }
+h1 {
+  font-family: var(--sans); font-weight: 600; letter-spacing: -.018em;
+  font-size: clamp(1.7rem, 1.2rem + 1.6vw, 2.3rem); line-height: 1.16;
+  margin: 0 0 26px; text-wrap: balance;
+}
+h2 {
+  font-family: var(--sans); font-weight: 600; font-size: 1.12rem;
+  letter-spacing: -.006em; margin: 34px 0 -6px; color: var(--ink);
+}
+article > * + * { margin-top: 16px; }
+p { margin: 0; color: var(--ink-soft); }
+ul, ol { margin: 0; padding-left: 1.35em; color: var(--ink-soft); display: grid; gap: 6px; }
+li::marker { color: var(--accent); }
+ol li::marker { font-family: var(--mono); font-size: .85em; }
+
+pre {
+  margin: 0; padding: 15px 18px; overflow-x: auto;
+  background: var(--surface-sunken); border: 1px solid var(--rule);
+  border-radius: 9px; font-family: var(--mono); font-size: 12.5px;
+  line-height: 1.55; color: var(--ink); white-space: pre; tab-size: 4;
+}
+blockquote {
+  margin: 0; padding: 4px 0 4px 20px; border-left: 3px solid var(--accent);
+  font-size: 1.04rem; color: var(--ink);
+}
+mark { background: var(--mark); color: var(--mark-ink); border-radius: 2px; padding: 0 1px; }
+
+/* Amendments are content the PDF does not contain; they are always labelled. */
+.amend-badge {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--accent); border: 1px solid var(--accent); border-radius: 999px;
+  padding: 1px 7px; margin-left: 8px; vertical-align: middle; white-space: nowrap;
+}
+.amend-note {
+  border-left: 3px solid var(--accent); background: var(--surface);
+  padding: 10px 14px; border-radius: 0 9px 9px 0; font-size: .95rem;
+}
+.amend-note strong { font-family: var(--sans); font-size: .82rem; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--accent); display: block; margin-bottom: 4px; }
+.amended-block { border-left: 3px solid var(--accent); padding-left: 14px; }
+.toc-row .amend { color: var(--accent); font-family: var(--mono); font-size: 10px; }
+
+.jump {
+  margin-top: 44px; padding-top: 20px; border-top: 1px solid var(--rule);
+  display: flex; gap: 12px; justify-content: space-between;
+}
+.jump a {
+  flex: 1 1 0; min-width: 0; text-decoration: none; color: var(--ink-soft);
+  border: 1px solid var(--rule); border-radius: 9px; padding: 12px 14px;
+  background: var(--surface); display: block;
+}
+.jump a:hover { border-color: var(--accent); color: var(--accent); }
+.jump a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.jump .dir {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 3px;
+}
+.jump .name {
+  font-family: var(--sans); font-size: 13.5px; display: block;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.jump a.next { text-align: right; }
+
+.results { display: grid; gap: 2px; }
+.result {
+  width: 100%; text-align: left; border: 0; background: none; cursor: pointer;
+  padding: 12px 14px; border-radius: 9px; color: var(--ink-soft);
+  font-family: var(--serif); font-size: 14.5px; line-height: 1.5;
+}
+.result:hover { background: var(--surface); }
+.result .rnum {
+  font-family: var(--mono); font-size: 11px; color: var(--accent);
+  letter-spacing: .06em; display: block; margin-bottom: 2px;
+}
+.result .rtitle { font-family: var(--sans); font-weight: 500; color: var(--ink); }
+
+@media (max-width: 900px) {
+  .shell { grid-template-columns: 1fr; }
+  .rail {
+    position: fixed; z-index: 20; width: min(88vw, var(--rail));
+    transform: translateX(-101%); transition: transform .22s ease; box-shadow: var(--shadow);
+  }
+  .rail.open { transform: none; }
+  .rail-toggle { display: inline-flex; }
+  .page-wrap { padding: 24px 18px 80px; }
+  .reader-bar { padding: 10px 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail { transition: none; }
+}
+</style>
+
+<div class="shell">
+  <aside class="rail" id="rail">
+    <div class="rail-head">
+      <p class="doc-kicker">Draft architecture specification</p>
+      <h1 class="doc-title">Personalized Agent</h1>
+      <div class="doc-meta" id="doc-meta">System Design and Implementation Specification</div>
+      <div class="doc-meta" id="doc-amend" style="margin-top:6px"></div>
+    </div>
+    <div class="search-wrap">
+      <div class="search-field">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+             aria-hidden="true"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5 14 14"></path></svg>
+        <input id="search" type="search" placeholder="Search the specification" autocomplete="off"
+               aria-label="Search the specification">
+        <button class="search-clear" id="search-clear" hidden aria-label="Clear search">×</button>
+      </div>
+      <div class="search-note" id="search-note"></div>
+    </div>
+    <nav class="toc" id="toc" aria-label="Table of contents"></nav>
+  </aside>
+
+  <main class="reader">
+    <div class="reader-bar">
+      <button class="nav-btn rail-toggle" id="rail-toggle" aria-label="Show contents">Contents</button>
+      <span class="crumb" id="crumb"></span>
+      <button class="nav-btn" id="prev" aria-label="Previous section">← Prev</button>
+      <button class="nav-btn" id="next" aria-label="Next section">Next →</button>
+    </div>
+    <div class="page-wrap"><article id="content"></article></div>
+  </main>
+</div>
+
+<script id="doc-data" type="application/json">__DATA__</script>
+<script>
+"use strict";
+
+const SECTIONS = JSON.parse(document.getElementById("doc-data").textContent);
+const byId = new Map(SECTIONS.map((s) => [s.id, s]));
+const $ = (sel) => document.querySelector(sel);
+
+const escapeHtml = (value) =>
+  String(value).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/* ------------------------------------------------------------- searching */
+let query = "";
+
+function sectionText(section) {
+  if (section._text) return section._text;
+  const parts = [section.label, section.title];
+  for (const block of section.blocks) {
+    if (block.items) parts.push(block.items.join(" "));
+    else parts.push(block.text);
+  }
+  section._text = parts.join(" ").toLowerCase();
+  return section._text;
+}
+
+function matches(section) {
+  return !query || sectionText(section).includes(query);
+}
+
+function highlight(html) {
+  if (!query) return html;
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Operates on already-escaped HTML, and never inside a tag.
+  return html.replace(new RegExp(`(?![^<]*>)(${escaped})`, "gi"), "<mark>$1</mark>");
+}
+
+/* -------------------------------------------------------------- contents */
+function depthOf(section) {
+  return section.number ? section.number.split(".").length : 1;
+}
+
+function renderToc() {
+  const toc = $("#toc");
+  const visible = SECTIONS.filter(matches);
+  const visibleIds = new Set(visible.map((s) => s.id));
+  toc.innerHTML = "";
+
+  if (!visible.length) {
+    toc.innerHTML = '<p class="toc-empty">No section contains that text.</p>';
+    return;
+  }
+  for (const section of SECTIONS) {
+    const depth = depthOf(section);
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "toc-row" + (depth === 2 ? " child" : depth > 2 ? " grandchild" : "");
+    row.dataset.id = section.id;
+    if (!visibleIds.has(section.id)) row.classList.add("hidden");
+    row.innerHTML =
+      `<span class="num">${escapeHtml(section.label || "—")}</span>` +
+      `<span class="label">${escapeHtml(section.title)}</span>` +
+      `<span class="page">${section.amended ? '<span class="amend">§</span> ' : ""}` +
+      `p${section.page}</span>`;
+    row.addEventListener("click", () => {
+      location.hash = section.id;
+      if (window.matchMedia("(max-width: 900px)").matches) $("#rail").classList.remove("open");
+    });
+    toc.appendChild(row);
+  }
+  markActive(currentId);
+}
+
+function markActive(id) {
+  for (const row of document.querySelectorAll(".toc-row")) {
+    const active = row.dataset.id === id;
+    row.classList.toggle("active", active);
+    if (active) row.scrollIntoView({ block: "nearest" });
+  }
+}
+
+/* --------------------------------------------------------------- reading */
+const AMENDED_ON = "2026-08-30";
+
+function renderBlocks(section) {
+  const html = [];
+  for (const block of section.blocks) {
+    const amended = block.amended ? ' class="amended-block"' : "";
+    if (block.type === "p") html.push(`<p${amended}>${highlight(escapeHtml(block.text))}</p>`);
+    else if (block.type === "h") html.push(`<h2>${highlight(escapeHtml(block.text))}</h2>`);
+    else if (block.type === "quote")
+      html.push(`<blockquote>${highlight(escapeHtml(block.text))}</blockquote>`);
+    else if (block.type === "pre")
+      html.push(`<pre>${highlight(escapeHtml(block.text))}</pre>`);
+    else if (block.type === "ul" || block.type === "ol") {
+      const tag = block.type;
+      const items = block.items
+        .map((item) => `<li>${highlight(escapeHtml(item))}</li>`)
+        .join("");
+      html.push(`<${tag}${amended}>${items}</${tag}>`);
+    }
+  }
+  return html.join("");
+}
+
+let currentId = null;
+
+function show(id) {
+  const section = byId.get(id) || SECTIONS[0];
+  currentId = section.id;
+  const index = SECTIONS.indexOf(section);
+  const previous = SECTIONS[index - 1];
+  const upcoming = SECTIONS[index + 1];
+
+  const jump = [];
+  if (previous)
+    jump.push(`<a class="prev" href="#${previous.id}"><span class="dir">Previous</span>` +
+      `<span class="name">${escapeHtml(previous.label ? previous.label + " " : "")}` +
+      `${escapeHtml(previous.title)}</span></a>`);
+  if (upcoming)
+    jump.push(`<a class="next" href="#${upcoming.id}"><span class="dir">Next</span>` +
+      `<span class="name">${escapeHtml(upcoming.label ? upcoming.label + " " : "")}` +
+      `${escapeHtml(upcoming.title)}</span></a>`);
+
+  $("#content").innerHTML =
+    `<p class="eyebrow"><span>${escapeHtml(section.label || "Title page")}</span>` +
+    `<span class="src">PDF page ${section.page}</span></p>` +
+    `<h1>${highlight(escapeHtml(section.title))}` +
+    (section.amended ? '<span class="amend-badge">amended</span>' : "") + `</h1>` +
+    (section.amendment_note
+      ? `<div class="amend-note"><strong>Amendment · ${AMENDED_ON}</strong>` +
+        `${escapeHtml(section.amendment_note)}</div>`
+      : "") +
+    renderBlocks(section) +
+    (jump.length ? `<nav class="jump">${jump.join("")}</nav>` : "");
+
+  $("#crumb").textContent =
+    `${section.label ? section.label + " " : ""}${section.title}`;
+  $("#prev").disabled = !previous;
+  $("#next").disabled = !upcoming;
+  markActive(section.id);
+  document.querySelector(".page-wrap").scrollTo?.({ top: 0 });
+  window.scrollTo({ top: 0 });
+}
+
+/* ------------------------------------------------------------------ wire */
+function go(delta) {
+  const index = SECTIONS.indexOf(byId.get(currentId));
+  const target = SECTIONS[index + delta];
+  if (target) location.hash = target.id;
+}
+
+$("#prev").addEventListener("click", () => go(-1));
+$("#next").addEventListener("click", () => go(1));
+$("#rail-toggle").addEventListener("click", () => $("#rail").classList.toggle("open"));
+
+$("#search").addEventListener("input", (event) => {
+  query = event.target.value.trim().toLowerCase();
+  $("#search-clear").hidden = !query;
+  const hits = SECTIONS.filter(matches).length;
+  $("#search-note").textContent = query
+    ? `${hits} of ${SECTIONS.length} sections match`
+    : "";
+  renderToc();
+  if (currentId) show(currentId);
+});
+
+$("#search-clear").addEventListener("click", () => {
+  $("#search").value = "";
+  $("#search").dispatchEvent(new Event("input"));
+  $("#search").focus();
+});
+
+document.addEventListener("keydown", (event) => {
+  const typing = ["INPUT", "TEXTAREA"].includes(event.target.tagName);
+  if (event.key === "/" && !typing) {
+    event.preventDefault();
+    $("#search").focus();
+  } else if (event.key === "Escape" && typing) {
+    $("#search").value = "";
+    $("#search").dispatchEvent(new Event("input"));
+    $("#search").blur();
+  } else if (!typing && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+    go(event.key === "ArrowLeft" ? -1 : 1);
+  }
+});
+
+window.addEventListener("hashchange", () => show(location.hash.slice(1)));
+
+const numbered = SECTIONS.filter((s) => s.number && !s.number.includes(".")).length;
+$("#doc-meta").textContent =
+  `${numbered} sections · ${SECTIONS.length} entries · ${SECTIONS[SECTIONS.length - 1].page} pages`;
+const amendedCount = SECTIONS.filter((s) => s.amended).length;
+$("#doc-amend").textContent = amendedCount
+  ? `${amendedCount} amended section${amendedCount > 1 ? "s" : ""} · marked in the text`
+  : "";
+
+renderToc();
+show(location.hash.slice(1) || SECTIONS[0].id);
+</script>
