@@ -57,9 +57,13 @@ plain files you can open, and sent only to the model you choose
 ([Your privacy](#your-privacy)).
 
 **An Overview of your work.** The task you are on now, your tasks and
-projects as bars over time, a **To do** list you keep yourself, and a front
-page of **what you need to know** today, drawn from your work and the people
-around it.
+projects as bars over time, and a **To do** list you keep yourself, each with
+a **Delegate work** button.
+
+<p align="center">
+  <img src="docs/images/overview.png" width="100%" alt="The Overview: tasks and projects over the last week, one project opened with its next steps, and To do"><br>
+  <sub>The Overview: your tasks and projects over the last week, one project opened with its next steps, and your To do list.</sub>
+</p>
 
 **Calendar and notifications that learn from you.** It adds reminders it
 thinks you need (an invitation in an email, a deadline in a document) and
@@ -67,6 +71,15 @@ says why each was worth interrupting you for. Every notification's buttons say
 exactly what they do: *Got it*, *Remind me in N minutes*, *Add to to-do*, or
 *Bad notification*. What you do with them, and only what *you* do, teaches it
 which notifications to send next time.
+
+<p align="center">
+  <img src="docs/images/calendar.png" width="100%" alt="The Calendar: a month of events and a reminder's card, with why it was scheduled and when it was postponed"><br>
+  <sub>A reminder the agent added: why it was scheduled, and when you postponed it.</sub>
+</p>
+<p align="center">
+  <img src="docs/images/notification.png" width="380" alt="A notification with its four buttons: Got it, Remind me in 30 minutes, Add to to-do, Bad notification"><br>
+  <sub>Every button on a notification says what it does.</sub>
+</p>
 
 **Delegate work.** Hand it a piece of work from wherever you are:
 
@@ -76,6 +89,11 @@ which notifications to send next time.
 - select text in any window and click the small Watermelon button beside it,
 - the avatar's menu, or the **Delegate work** button in To do.
 
+<p align="center">
+  <img src="docs/images/delegate-menu.png" width="560" alt="Right-clicking a folder in Windows Explorer: Delegate work, with the Watermelon icon"><br>
+  <sub>Right-click a folder → <b>Delegate work</b>.</sub>
+</p>
+
 A small **Delegate work** window opens, always in three steps:
 
 1. **Your instruction.** What you handed over is shown, with a box for what
@@ -84,6 +102,12 @@ A small **Delegate work** window opens, always in three steps:
    relevant, and drafts a short plan: the goal, the steps, what you will get,
    what is left out. You can change any of it.
 3. **Start.** Nothing runs before you press it.
+
+<p align="center">
+  <img src="docs/images/delegate-instruction.png" width="49%" alt="Step 1 of Delegate work: what was handed over and the box for your instruction, with Create">
+  <img src="docs/images/delegate-plan.png" width="49%" alt="The drafted plan: title, goal, main steps, what you get, what is not part of it, the folders, and Start"><br>
+  <sub>Left: your instruction for what was handed over. Right, after <b>Create</b>: the drafted plan, to change and then <b>Start</b>.</sub>
+</p>
 
 Two agents
 then take turns, one doing the work and one reviewing it against how you
@@ -95,26 +119,59 @@ made and how to check it.
 was broken into pieces and how each piece was judged. That is what the
 reviewer uses when it works on that project for you.
 
+<p align="center">
+  <img src="docs/images/experience.png" width="100%" alt="The Experience tab: a project learned into stages, one review stage opened"><br>
+  <sub>A project learned into stages: each deliverable's attempts, reviews and fixes, one review opened.</sub>
+</p>
+
 **Connections.** The people in your work and what they are doing, from what
 you had in front of you and from public pages only. It never signs in to
 any of your accounts.
+
+<p align="center">
+  <img src="docs/images/connections.png" width="100%" alt="Connections: the people grouped by relationship, and one person's card"><br>
+  <sub>The people in your work, and one person's card: public profiles, what happened, and the changes you made.</sub>
+</p>
 
 **Customized Recommendation.** Each day, things worth reading for your
 current tasks and interests, chosen to tell you something you do not already
 know. *More like this* and *Not interested* tune it.
 
+<p align="center">
+  <img src="docs/images/recommendation.png" width="100%" alt="Customized Recommendation: a newspaper front page with a lead story, In brief, and pages per topic"><br>
+  <sub>Today's issue: the front page, a page for each topic, why each story is there and what in it is new to you.</sub>
+</p>
+
 **Chat.** Ask it about your work, or ask it to do something. Files it makes
 in a conversation are kept in `workspace/Chat/<conversation title>/`.
+
+<p align="center">
+  <img src="docs/images/chat.png" width="100%" alt="Chat: a conversation about the week's work, with a follow-up question in the margin"><br>
+  <sub>Ask about your work, or ask it to do something; select words in a reply to ask about them in the margin.</sub>
+</p>
 
 **The Watermelon.** A small avatar on your desktop. It shows notifications in
 a speech bubble, looks at your pointer, and turns to face the middle of the
 screen. You can rename it, move it, or hide it.
+
+<p align="center">
+  <img src="docs/images/watermelon-moods.png" width="100%" alt="The Watermelon's moods: idle, hover, talking, thinking, notification">
+</p>
+<p align="center">
+  <img src="docs/images/speech-bubble.png" width="700" alt="The Watermelon on the desktop with a notification in its speech bubble"><br>
+  <sub>Its moods, and a notification in its speech bubble, waiting until you answer.</sub>
+</p>
 
 **In your language.** English, 中文, Español, 日本語, 한국어, Русский, Français,
 Deutsch and Italiano, chosen when you install and changeable in Settings. The
 whole interface changes with it: every tab, menu, button and explanation, the
 avatar's and the tray's menus, and the notifications' buttons. The agent
 writes and speaks in it too.
+
+<p align="center">
+  <img src="docs/images/languages.png" width="100%" alt="The same screen, Settings → Functions, in English, Chinese and French"><br>
+  <sub>The same screen in English, 中文 and Français.</sub>
+</p>
 
 ---
 
@@ -202,6 +259,13 @@ Beyond the switches:
   value becomes `[hidden]` and the label stays, so the agent still knows a
   sign-in happened, not what was typed. A screenshot showing one is not kept
   at all. On by default (*Hide passwords and codes*).
+- **Never its own folder.** The data folder is never listened to, whatever
+  the list of excluded folders says; Settings shows it there, locked.
+
+<p align="center">
+  <img src="docs/images/settings-privacy.png" width="620" alt="Settings → Privacy: each source its own switch, with what you lose and what it costs"><br>
+  <sub>Settings → Privacy: one switch per source, each saying what the agent loses without it and what it costs your computer.</sub>
+</p>
 
 ### You choose what it does
 
@@ -217,6 +281,11 @@ and **what it cost over the last 72 hours**:
 Turn one off and it stops, along with its model calls. Only the core
 (noting what you are doing) is always on, because everything else is built
 on it. What you start yourself (chat, a piece of work) is counted apart.
+
+<p align="center">
+  <img src="docs/images/settings-functions.png" width="100%" alt="Settings → Functions: each function with its switch and what it cost over the last 72 hours"><br>
+  <sub>Settings → Functions: each with its own switch and what it cost over the last 72 hours.</sub>
+</p>
 
 ### What it will never do
 
@@ -270,9 +339,16 @@ workflow. Only how it gets onto your computer differs.
 
 | | Installer | Portable |
 | --- | --- | --- |
-| How | Run it. It asks for your language, installs, and adds a Start menu / Applications entry | Unzip anywhere and run `PersonalizedAgent` |
+| How | Run it. It asks for your language and where to keep your data, installs, and adds a Start menu / Applications entry | Unzip anywhere and run `PersonalizedAgent` |
 | Language, start at sign-in, Explorer's *Delegate work* entry | Set up by the installer | Set up by the program on its first start |
 | Removing it | Uninstall from Settings → Apps (Windows) or the usual way; the extra entries go with it | Delete the folder. Turn off *Start at sign-in* in Settings first, or the entry stays |
+
+**Your data folder.** The installer asks where to keep your data: one folder
+for everything the agent learns and makes. A different folder is a different
+agent, with its own calendar, contacts and keys, so you can try a new version
+on a fresh folder without touching your usual one. If the folder you pick
+already holds an agent's data, it asks before using it; say No and pick
+another. Uninstalling leaves the data folder where it is.
 | Best for | Most people | Trying it out, or keeping it on a USB drive |
 
 Neither contains the developer **Debugger** tabs; see
@@ -347,6 +423,9 @@ read the exact code. You can also read the build's log under the repository's
    tray icon brings it back.
 2. **Add a model.** Settings → Models → **Add**. Put the one you prefer
    first.
+
+   <img src="docs/images/settings-models.png" width="640" alt="Settings → Models: two models in order, and the form for adding another">
+
 3. **Choose what it may notice.** Settings → Privacy. Each source (the window
    in front and its text, screenshots, browser history, files, coding
    assistants' sessions) can be switched off, each with what is lost without
@@ -364,7 +443,10 @@ read the exact code. You can also read the build's log under the repository's
    interested*, deleting a person or an event: each is kept as a lesson, and
    only your own actions change what it learns.
 
-Where things are (the defaults, changeable in Settings → General):
+Where things are. The data folder is chosen when you install it
+(`C:\Users\<you>\PersonalizedAgent` by default) or, from source, with
+`python run.py --root <folder>`; Settings → General shows it, and the
+listener never reads it:
 
 ```
 PersonalizedAgent/
