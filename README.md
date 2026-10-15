@@ -344,11 +344,20 @@ workflow. Only how it gets onto your computer differs.
 | Removing it | Uninstall from Settings → Apps (Windows) or the usual way; the extra entries go with it | Delete the folder. Turn off *Start at sign-in* in Settings first, or the entry stays |
 
 **Your data folder.** The installer asks where to keep your data: one folder
-for everything the agent learns and makes. A different folder is a different
-agent, with its own calendar, contacts and keys, so you can try a new version
-on a fresh folder without touching your usual one. If the folder you pick
-already holds an agent's data, it asks before using it; say No and pick
-another. Uninstalling leaves the data folder where it is.
+for everything the agent learns and makes.
+
+- **Choose an empty folder, or one that holds only an earlier Personal
+  Agent's data** (its `workspace` and `internal` folders). Everything in the
+  data folder belongs to the agent and is never listened to, so a folder with
+  other things in it (Documents, a whole drive, a project) would hide the
+  work kept there. The installer refuses such a folder, and the program will
+  not start in one.
+- **Reusing earlier data:** if the folder holds an earlier agent's data, the
+  installer asks whether to use it; say No and pick another folder.
+- **A different folder is a different agent**, with its own calendar,
+  contacts and keys, so you can try a new version on a fresh folder without
+  touching your usual one.
+- Uninstalling leaves the data folder where it is.
 | Best for | Most people | Trying it out, or keeping it on a USB drive |
 
 Neither contains the developer **Debugger** tabs; see
