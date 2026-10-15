@@ -5,10 +5,10 @@
 <h1 align="center">Personal Agent · WaterMelon</h1>
 
 <p align="center">
-A desktop agent that learns what you are working on, on your own computer,
-and helps with it: it keeps your tasks and calendar in view, tells you what
-you need to know, and does pieces of work you hand to it, inside a sandbox
-that can only write where you allow.
+<b>An agent that learns you.</b> It watches how you work - with as little
+instruction from you as possible - learns your patterns and habits, keeps
+refining its understanding of you, and in time learns to work for you the
+way you would want it done. All on your own computer.
 </p>
 
 <p align="center">
@@ -22,6 +22,29 @@ that can only write where you allow.
 </p>
 
 ---
+
+## The idea
+
+Most assistants wait to be told. This one learns by watching, and needs
+very little telling.
+
+1. **It learns your patterns and habits, not your commands.** From the
+   windows, documents and pages you work with (only the sources you allow),
+   it writes down what you were doing, groups it into your tasks and
+   projects, and learns *how* you work: how you break work into steps, how
+   you judge a result, what you want a finished piece to look like.
+2. **Its understanding of you keeps evolving.** Every day of activity adds
+   to it, and so does every small thing you do with what it shows you: a
+   notification kept or called bad, a story you want more of, a contact
+   corrected, a plan changed. Only your own actions change what it has
+   learned. You never have to write a profile or a prompt about yourself.
+3. **In time, it works for you the way you would.** Hand it a piece of work
+   and it plans from what it has learned; a second agent reviews the result
+   against how *you* judge your own work. The more it has seen, the closer
+   its work comes to your taste.
+
+Everything it learns stays on your computer, in plain files you can read,
+and goes only to the model you choose.
 
 ## What it does
 
