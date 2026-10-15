@@ -14204,8 +14204,15 @@
      "The user is not asked to act on it. There is nothing they could do, and the file is saved a moment later",
      "A refusal that outlasts the retries is a real fault and is raised, not silently swallowed - a setting the user changed must never be quietly lost"
     ]
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-15:* the root - the DATA FOLDER - is chosen when the agent is installed and written beside the program (`data_root.txt`); run from source it is given with `python run.py --root <folder>`. It is found in that order: `--root`, `PERSONALIZED_AGENT_HOME`, the installer's choice, then `~/PersonalizedAgent`. A different data folder is a different agent: its own calendar, contacts, lessons and settings, and its own keys in the system's credential store - only the standard folder keeps the plain service name, so a chosen one never reads or overwrites another's keys. State from the pre-110.1 locations is moved only into the standard folder, never into one the user chose. The data folder is never listened to, whatever the directory exclusions say (`common/file_noise.py`, `excluded_folders`), and Settings shows it locked, first among the folders not listened to. A data folder must be empty, or hold only an earlier agent's data (workspace and internal): everything in it is the agent's and never listened to, so a folder with other things in it - Documents, a drive, a project - would hide the work kept there; the program refuses to start in one, and the installer refuses to choose one (`common/paths.py`, `data_folder_problem`). Only one agent runs at a time, whichever folder it uses (110.2).",
+    "amended": true
    }
-  ]
+  ],
+  "amendment_note": "2026-10-15: the data folder is chosen when installing, and a different folder is a different agent - nothing shared, nothing taken from elsewhere, and never listened to.",
+  "amended": true
  },
  {
   "number": "110.2",
@@ -15756,6 +15763,11 @@
    {
     "type": "p",
     "text": "`platform_layer/autostart.py` uses each system's own mechanism in the user's own area, needing no administrator: the HKCU Run key on Windows, a LaunchAgent on macOS, an XDG autostart entry on Linux. The setting `start_at_login` is the truth: each start puts the system's entry back in line with it, with the program as it was started now - the installed executable, or Python with run.py, the same root and headless if headless - so a moved installation is followed and one switched off stays off."
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-15:* after where the program goes, the installer asks WHERE THE DATA IS KEPT - `%USERPROFILE%\\PersonalizedAgent` by default, the previous choice on an upgrade, never inside Program Files - and writes it beside the program. A folder that already holds an agent's data is used only if the user says so; No keeps them on the page to choose another. Uninstalling removes the program and leaves the data folder.",
+    "amended": true
    }
   ],
   "amendment_note": "2026-10-15: Russian, French, German and Italian added to the display languages - nine in all - and the whole interface shown in them from fixed tables (section 134).",

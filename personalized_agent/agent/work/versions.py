@@ -1,0 +1,612 @@
+"""Versions of a run: what it made and where it stood, saved at each key
+point, so the user can continue it from any of them.
+
+A VERSION is saved when the contract is approved, after each round the
+reviewer finds advanced (and each full review), when the final review is
+done, when the deck is made, and when the run pauses, stops or finishes. It
+holds:
+
+  EVERY FILE OF THE WORK'S FOLDER - the deliverables, and this run's own
+  records (its contract, to-do list, deck and report) - but not the
+  version store itself, the run's installed packages, the project's run
+  logs (`run_logs/`: the transcripts and live sessions), the runtime's
+  scratch, or other runs' records.
+
+  THE FILES THE AGENT WROTE IN A GRANTED FOLDER, and only those: the user's
+  own files there are theirs, never taken into a version - and never put
+  back over their changes either (see `restore_granted`).
+
+  WHERE THE RUN STOOD: its plan (the contract, the rounds, the findings, the
+  to-do list, the decisions, the deck, the limits and sessions), and the
+  work's tree of cards and stages as rows of the database - enough to
+  continue from exactly there.
+
+THE STORE is content-addressed and plain Python - no git, no other program:
+each file's bytes are kept once under their SHA-256, however many versions
+hold them, and each database row likewise, so a version costs only what
+changed since the one before. It is kept INSIDE THE RUN'S FOLDER
+(`runs/<run>/.versions`) and writes nowhere else - every path it writes is
+checked against the work's policy, as the agent's own writes are.
+
+CONTINUING FROM AN OLDER VERSION ROLLS BACK: the work's folder becomes
+exactly that version's files, and the plan and the tree become its state.
+Nothing after it is lost - the versions saved after it stay, and the run
+goes on as a new BRANCH from it, so the user can go back to either line.
+
+CONTINUED WITH NEW WORDS, the contract is amended for that line (see
+`runner.Run._amend`): the version saved when the amendment is approved
+carries, on its entry, the words and what changed in the contract. The
+amended contract lives in the plan, so only the versions after it hold it -
+the other line keeps its own.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import threading
+import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+#: Inside a run's folder: where its versions are kept.
+VERSIONS_DIR = ".versions"
+
+#: At the top of a project's work folder: THE PROJECT'S RUN LOGS - a folder
+#: per run, named by when it started, holding its full transcript and its
+#: live session (see `transcript.py`). The record of what happened: never
+#: part of a version, so a rollback - which removes every file the version
+#: does not hold - can never remove or change a log. Defined here, where
+#: the versions leave it out, so the tools and the runner take it from one
+#: place without importing each other.
+LOGS_DIR = "run_logs"
+
+#: Folders that are never part of a version, wherever they are: the
+#: runtime's scratch and Python's caches - not the work, and remade at will.
+SKIP_DIRS = (".agent_runtime", "__pycache__")
+
+#: Inside a run's folder: where each version's slides are drawn - a folder
+#: per version (`slides/v3/fig_progress.png`). Not the work: its figures are
+#: kept with the version's slides instead (in the version's state, their
+#: bytes in this store), so a past version shows the slides it had, and a
+#: rollback neither restores nor removes them.
+SLIDES_DIR = "slides"
+
+#: Inside the run's own folder, also left out: the versions themselves, the
+#: installed packages (thousands of files, and installed again on need), the
+#: live session of a run from before the project's logs had a folder of
+#: their own (LOGS_DIR) - the record of what happened, which a rollback must
+#: not undo any more than it undoes the log - and the versions' slides.
+SKIP_IN_RUN = (VERSIONS_DIR, ".packages", ".session", SLIDES_DIR)
+
+#: The most files one version holds, and the largest file it keeps. A file
+#: over the size is listed as skipped: a rollback neither restores nor
+#: removes it.
+MOST_FILES = 20000
+MOST_BYTES = 256 * 1024 * 1024
+
+#: The first line of versions.
+MAIN = "main"
+
+#: The tables the work's tree lives in, each restored whole for its scope.
+TREE_TABLES = ("experience_cards", "experience_stages", "experience_edges")
+
+#: A version's id, as made here: anything else is refused before it is
+#: used as a file name.
+VERSION_ID = re.compile(r"^v[0-9]{1,7}$")
+SHA = re.compile(r"^[0-9a-f]{64}$")
+
+
+class VersionError(Exception):
+    """A version that cannot be read or restored - missing, or damaged."""
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def sha_of_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha_of_file(path: Path) -> Optional[str]:
+    """A file's SHA-256, read in pieces; None when there is no such file."""
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for piece in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(piece)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def _inside(target: Path, root: Path) -> bool:
+    target, root = Path(target).resolve(), Path(root).resolve()
+    return target == root or root in target.parents
+
+
+class VersionStore:
+    """The versions of one run, in its folder. Read-only without a policy;
+    with one, every path it writes is checked against it first."""
+
+    def __init__(self, run_dir: Path, policy: Any = None) -> None:
+        self.run_dir = Path(run_dir)
+        self.root = self.run_dir / VERSIONS_DIR
+        self.policy = policy
+        #: A version is saved by the run, and its slides added to it later by
+        #: the thread that draws them: the index is changed by one at a time.
+        self._lock = threading.RLock()
+        #: (path, modified, size) -> sha: a file not changed since the last
+        #: version is not read again.
+        self._hashes: Dict[Tuple[str, int, int], str] = {}
+
+    # -- writing, only here ----------------------------------------------------
+    def _checked(self, target: Path) -> Path:
+        """A path the store may write: inside its own folder, and - when it
+        has the work's policy - allowed by it, as the agent's writes are."""
+        if not _inside(target, self.root):
+            raise VersionError(f"the version store writes only in {self.root}")
+        if self.policy is not None:
+            from ...runtime.filesystem import validate_write_path
+            validate_write_path(str(target), self.policy)
+        return target
+
+    def _write(self, target: Path, data: bytes) -> None:
+        """Written whole or not at all: to a temporary file beside it, then
+        moved into place."""
+        target = self._checked(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex[:8]}.tmp")
+        temporary.write_bytes(data)
+        # On Windows a file being read - the index, while the panel asks for
+        # it - cannot be replaced for that moment: tried again, briefly.
+        for attempt in range(20):
+            try:
+                os.replace(temporary, target)
+                return
+            except PermissionError:
+                if attempt == 19:
+                    temporary.unlink(missing_ok=True)
+                    raise
+                time.sleep(0.05)
+
+    def _object(self, sha: str) -> Path:
+        if not SHA.match(str(sha or "")):
+            raise VersionError(f"not an object id: {sha!r}")
+        return self.root / "objects" / sha[:2] / sha
+
+    def put(self, data: bytes) -> str:
+        sha = sha_of_bytes(data)
+        if not self._object(sha).is_file():
+            self._write(self._object(sha), data)
+        return sha
+
+    def put_json(self, value: Any) -> str:
+        return self.put(json.dumps(value, ensure_ascii=False, sort_keys=True,
+                                   default=str).encode("utf-8"))
+
+    def put_file(self, path: Path) -> Tuple[str, int]:
+        """A file kept by its content: read only if it changed since it was
+        last kept, and its bytes stored only if no version holds them yet."""
+        st = path.stat()
+        key = (str(path), st.st_mtime_ns, st.st_size)
+        sha = self._hashes.get(key)
+        if sha is None or not self._object(sha).is_file():
+            data = path.read_bytes()
+            sha = self.put(data)
+            self._hashes[key] = sha
+        return sha, st.st_size
+
+    # -- reading -----------------------------------------------------------------
+    def get(self, sha: str) -> bytes:
+        """An object's bytes - checked against its id, so a damaged one is
+        never restored."""
+        try:
+            data = self._object(sha).read_bytes()
+        except OSError:
+            raise VersionError(f"a saved file is missing ({sha[:12]})") from None
+        if sha_of_bytes(data) != sha:
+            raise VersionError(f"a saved file is damaged ({sha[:12]})")
+        return data
+
+    def get_json(self, sha: str) -> Any:
+        try:
+            return json.loads(self.get(sha).decode("utf-8"))
+        except ValueError:
+            raise VersionError(f"a saved record is damaged ({sha[:12]})") from None
+
+    def index(self) -> Dict[str, Any]:
+        """Every version in brief, the head - the one the next is saved
+        after - and the line it is on."""
+        empty = {"head": "", "branch": MAIN, "branches": [MAIN], "versions": []}
+        try:
+            said = json.loads((self.root / "index.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return empty
+        if not isinstance(said, dict) or not isinstance(said.get("versions"), list):
+            return empty
+        return dict(empty, **said)
+
+    def _save_index(self, index: Dict[str, Any]) -> None:
+        self._write(self.root / "index.json",
+                    json.dumps(index, ensure_ascii=False, indent=1).encode("utf-8"))
+
+    def manifest(self, version_id: str) -> Dict[str, Any]:
+        if not VERSION_ID.match(str(version_id or "")):
+            raise VersionError(f"no such version: {version_id!r}")
+        try:
+            said = json.loads((self.root / "versions" / f"{version_id}.json")
+                              .read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise VersionError(f"no such version: {version_id}") from None
+        if not isinstance(said, dict):
+            raise VersionError(f"version {version_id} is damaged")
+        return said
+
+    # -- versions --------------------------------------------------------------
+    def save(self, kind: str, label: str, files: Dict[str, Dict[str, Any]],
+             granted: Dict[str, Dict[str, Any]], skipped: List[str],
+             state_sha: str, summary: Dict[str, Any],
+             amended: Optional[Dict[str, Any]] = None,
+             message: Optional[Dict[str, Any]] = None,
+             details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """A new version after the head, on the head's line; it becomes the
+        head.
+
+        `amended`: the version is the first after the user's new words
+        amended the contract - the words and what changed in it, kept on the
+        entry so the tree can show, per line, what that line was told.
+        `message`: what it did, as a commit says it - its title (the label),
+        the changes in a few lines, the files added, modified and deleted
+        since its parent. `details`: what else names it (a round's number,
+        what the reviewer found of it), kept as fields of their own."""
+        with self._lock:
+            return self._save(kind, label, files, granted, skipped, state_sha, summary,
+                              amended, message, details)
+
+    def _save(self, kind, label, files, granted, skipped, state_sha, summary, amended,
+              message, details) -> Dict[str, Any]:
+        index = self.index()
+        number = len(index["versions"]) + 1
+        version_id = f"v{number}"
+        entry = {"id": version_id, "n": number, "parent": index["head"] or "",
+                 "branch": index["branch"] or MAIN, "label": str(label)[:300],
+                 "kind": kind, "at": _now(), "files": len(files),
+                 "granted": len(granted), "summary": summary}
+        if amended:
+            entry["amended"] = amended
+        if message:
+            entry["message"] = message
+        for name, value in (details or {}).items():
+            if name not in entry and value is not None:
+                entry[name] = value
+        manifest = dict(entry, files=files, granted=granted,
+                        skipped=skipped[:500], state=state_sha)
+        self._write(self.root / "versions" / f"{version_id}.json",
+                    json.dumps(manifest, ensure_ascii=False, indent=1).encode("utf-8"))
+        index["versions"].append(entry)
+        index["head"] = version_id
+        self._save_index(index)
+        return entry
+
+    def set_slides(self, version_id: str, slides: Optional[Dict[str, Any]],
+                   summary: Dict[str, Any]) -> None:
+        """A VERSION'S SLIDES, ADDED ONCE THEY ARE DRAWN - after the version
+        was saved, while the work went on: kept in its state as if they had
+        been there from the start, and how they came out in its summary."""
+        with self._lock:
+            manifest = self.manifest(version_id)
+            state = self.get_json(str(manifest.get("state") or "")) or {}
+            if not isinstance(state, dict):
+                raise VersionError(f"version {version_id} is damaged")
+            state["slides"] = slides
+            manifest["state"] = self.put_json(state)
+            manifest["summary"] = {k: v for k, v in dict(manifest.get("summary") or {}).items()
+                                   if k != "slides_why"}
+            manifest["summary"].update(summary)
+            self._write(self.root / "versions" / f"{version_id}.json",
+                        json.dumps(manifest, ensure_ascii=False, indent=1).encode("utf-8"))
+            index = self.index()
+            for one in index["versions"]:
+                if one.get("id") == version_id:
+                    one["summary"] = manifest["summary"]
+            self._save_index(index)
+
+    def move_head(self, version_id: str) -> str:
+        """Continue from this version. One with versions after it starts a
+        new line, so the line after it is kept as it was; the tip of a line
+        carries that line on. The line's name is returned."""
+        with self._lock:
+            return self._move_head(version_id)
+
+    def _move_head(self, version_id: str) -> str:
+        index = self.index()
+        known = {one["id"]: one for one in index["versions"]}
+        if version_id not in known:
+            raise VersionError(f"no such version: {version_id}")
+        if any(one.get("parent") == version_id for one in index["versions"]):
+            number = len(index["branches"]) + 1
+            while f"branch {number}" in index["branches"]:
+                number += 1
+            branch = f"branch {number}"
+            index["branches"] = [*index["branches"], branch]
+        else:
+            branch = known[version_id].get("branch") or MAIN
+        index.update(head=version_id, branch=branch)
+        self._save_index(index)
+        return branch
+
+
+#: How many paths of each kind a version's message lists - the counts are
+#: always whole.
+MOST_CHANGED_LISTED = 60
+
+
+def file_changes(before: Dict[str, Any], after: Dict[str, Any],
+                 most: int = MOST_CHANGED_LISTED) -> Dict[str, Any]:
+    """What a version changed in the work's files, against the version
+    before it: by path, by the hash of each file's content - the files
+    added, modified and deleted, each list at most `most` long, with the
+    whole counts beside them."""
+    before, after = before or {}, after or {}
+    added = sorted(set(after) - set(before))
+    deleted = sorted(set(before) - set(after))
+    modified = sorted(one for one in set(after) & set(before)
+                      if (after[one] or {}).get("sha") != (before[one] or {}).get("sha"))
+    return {"added": added[:most], "modified": modified[:most], "deleted": deleted[:most],
+            "counts": {"added": len(added), "modified": len(modified),
+                       "deleted": len(deleted)}}
+
+
+def with_message(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """A version's entry with its message: the one it was saved with, or -
+    saved before versions had one - its label as the title, nothing else
+    known."""
+    if isinstance(entry.get("message"), dict) and entry["message"].get("title"):
+        return entry
+    return dict(entry, message={"title": str(entry.get("label") or ""), "body": [],
+                                "files": None})
+
+
+# -- the work's folder ---------------------------------------------------------------
+def work_files(folder: Path, run_id: str) -> Tuple[Dict[str, Path], List[str]]:
+    """Every file of the work's folder a version holds, by its path inside
+    it ("notes/plan.md"), and those too many or too large to keep. Other
+    runs' records are theirs, and left out; so is what SKIP_DIRS and
+    SKIP_IN_RUN name, and the project's run logs (LOGS_DIR, at the top of
+    the folder only - a folder of the work's own that happens to share the
+    name deeper down is the work's). Links are not followed."""
+    folder = Path(folder)
+    run_dir = folder / "runs" / run_id
+    found: Dict[str, Path] = {}
+    skipped: List[str] = []
+    if not folder.is_dir():
+        return found, skipped
+    for dirpath, dirnames, filenames in os.walk(folder):
+        here = Path(dirpath)
+        dirnames[:] = sorted(one for one in dirnames if one not in SKIP_DIRS
+                             and not os.path.islink(os.path.join(dirpath, one)))
+        if here == folder:
+            dirnames[:] = [one for one in dirnames if one != LOGS_DIR]
+        elif here == folder / "runs":
+            dirnames[:] = [one for one in dirnames if one == run_id]
+        elif here == run_dir:
+            dirnames[:] = [one for one in dirnames if one not in SKIP_IN_RUN]
+        for name in sorted(filenames):
+            whole = here / name
+            if os.path.islink(whole):
+                continue
+            relative = whole.relative_to(folder).as_posix()
+            try:
+                size = whole.stat().st_size
+            except OSError:
+                continue
+            if size > MOST_BYTES or len(found) >= MOST_FILES:
+                skipped.append(relative)
+                continue
+            found[relative] = whole
+    return found, skipped
+
+
+def keep_files(store: VersionStore, folder: Path, run_id: str
+               ) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
+    """The work's folder, kept: each file's object and size."""
+    found, skipped = work_files(folder, run_id)
+    files: Dict[str, Dict[str, Any]] = {}
+    for relative, whole in found.items():
+        try:
+            sha, size = store.put_file(whole)
+        except OSError:
+            skipped.append(relative)
+            continue
+        files[relative] = {"sha": sha, "size": size}
+    return files, skipped
+
+
+def keep_granted(store: VersionStore, written: Dict[str, Optional[str]],
+                 roots: Iterable[Path]) -> Dict[str, Dict[str, Any]]:
+    """The files the agent wrote in granted folders, as it left them. One
+    the user has changed since is theirs now, and not taken."""
+    roots = [Path(one) for one in roots]
+    kept: Dict[str, Dict[str, Any]] = {}
+    for path, agents in (written or {}).items():
+        target = Path(path)
+        if not agents or not target.is_file() \
+                or not any(_inside(target, root) for root in roots):
+            continue
+        if sha_of_file(target) != agents:
+            continue
+        try:
+            sha, size = store.put_file(target)
+        except OSError:
+            continue
+        kept[str(target)] = {"sha": sha, "size": size}
+    return kept
+
+
+def _work_target(folder: Path, run_id: str, relative: str, policy: Any) -> Path:
+    """Where a file of a version goes back to: inside the work's folder, not
+    in what versions leave out, and allowed by the work's policy."""
+    from ...runtime.filesystem import validate_write_path
+    parts = Path(str(relative)).parts
+    # On Windows "C:x" is relative and still names another drive.
+    if not parts or Path(relative).is_absolute() or ".." in parts \
+            or (os.name == "nt" and ":" in str(relative)):
+        raise VersionError(f"not a path inside the work's folder: {relative!r}")
+    target = Path(folder) / Path(*parts)
+    run_dir = Path(folder) / "runs" / run_id
+    if (not _inside(target, folder) or _inside(target, Path(folder) / LOGS_DIR)
+            or any(_inside(target, run_dir / one) for one in SKIP_IN_RUN)):
+        raise VersionError(f"not a path a version restores: {relative!r}")
+    # ANOTHER RUN'S RECORDS are its folder under runs/ - not a file the work
+    # itself left loose in runs/ (a server's log, say), which versions keep
+    # with the rest of the work and give back with it.
+    if parts[0] == "runs" and len(parts) >= 3 and parts[1] != run_id:
+        raise VersionError(f"another run's records are not restored: {relative!r}")
+    validate_write_path(str(target), policy)
+    return target
+
+
+def _claim(paths: Iterable[Path]) -> None:
+    """Written by the application, not the user: the listener does not hear
+    it as the user's activity."""
+    from ...common.agent_writes import mark_written
+    for one in paths:
+        mark_written(str(one))
+
+
+def restore_files(store: VersionStore, manifest: Dict[str, Any], folder: Path,
+                  run_id: str, policy: Any) -> Dict[str, Any]:
+    """The work's folder made exactly the version's: files it does not hold
+    removed, files that differ written back. Every object needed is checked
+    first, so a damaged version changes nothing."""
+    files = manifest.get("files") or {}
+    skipped = set(manifest.get("skipped") or [])
+    current, too_big = work_files(folder, run_id)
+    to_write: List[Tuple[Path, str]] = []
+    # A path no version may write is left as it is, and said - not the whole
+    # rollback refused for it.
+    refused: List[str] = []
+    for relative, entry in files.items():
+        try:
+            target = _work_target(folder, run_id, relative, policy)
+        except VersionError as exc:
+            refused.append(str(exc))
+            continue
+        whole = current.get(relative)
+        if whole is not None and sha_of_file(whole) == entry.get("sha"):
+            continue
+        store.get(str(entry.get("sha") or ""))       # missing or damaged: stop here
+        to_write.append((target, entry["sha"]))
+    to_remove = []
+    for relative in current:
+        if relative in files or relative in skipped:
+            continue
+        try:
+            _work_target(folder, run_id, relative, policy)
+        except VersionError as exc:
+            refused.append(str(exc))
+            continue
+        to_remove.append(current[relative])
+    _claim([one for one, _sha in to_write] + to_remove)
+    for target in to_remove:
+        try:
+            target.unlink()
+        except OSError:
+            pass
+    for target, sha in to_write:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(store.get(sha))
+    return {"restored": [one.relative_to(folder).as_posix() for one, _ in to_write],
+            "removed": [one.relative_to(folder).as_posix() for one in to_remove],
+            "not_kept": sorted(set(too_big) | skipped), "refused": refused[:50]}
+
+
+def restore_granted(store: VersionStore, manifest: Dict[str, Any],
+                    agents: Dict[str, Optional[str]], policy: Any
+                    ) -> Dict[str, Any]:
+    """The agent's files in granted folders, put back as the version had
+    them - each ONLY if it is still as the agent last left it (`agents`:
+    path -> the hash of its last write, None if it deleted it). One the user
+    changed since is theirs: left, and said so. Nothing here is ever
+    deleted - a file the agent wrote after the version stays."""
+    from ...runtime.filesystem import validate_write_path
+    roots = [Path(one) for one in getattr(policy, "extra_writable", None) or []]
+    restored, kept, refused = [], [], []
+    plan: List[Tuple[Path, str]] = []
+    for path, entry in (manifest.get("granted") or {}).items():
+        target = Path(path)
+        if not any(_inside(target, root) for root in roots):
+            refused.append(str(target))
+            continue
+        validate_write_path(str(target), policy)
+        now = sha_of_file(target)
+        if now == entry.get("sha"):
+            continue
+        if str(target) not in agents or now != agents[str(target)]:
+            kept.append(str(target))
+            continue
+        store.get(str(entry.get("sha") or ""))
+        plan.append((target, entry["sha"]))
+    _claim([one for one, _sha in plan])
+    for target, sha in plan:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(store.get(sha))
+        restored.append(str(target))
+    held = set((manifest.get("granted") or {}).keys())
+    left = sorted(path for path, sha in (agents or {}).items()
+                  if sha and path not in held and Path(path).is_file())
+    return {"restored": restored, "kept": kept, "left": left, "refused": refused}
+
+
+# -- the work's tree ------------------------------------------------------------------
+def keep_tree(store: VersionStore, db: Any, scope: str) -> Dict[str, List[str]]:
+    """The work's cards, stages and edges, each row kept as an object of its
+    own: most rows do not change from one version to the next."""
+    kept: Dict[str, List[str]] = {}
+    for table in TREE_TABLES:
+        rows = db.query(f"SELECT * FROM {table} WHERE scope = ? ORDER BY id", (scope,))
+        kept[table] = [store.put_json(dict(row)) for row in rows]
+    return kept
+
+
+def restore_tree(store: VersionStore, db: Any, scope: str,
+                 kept: Dict[str, List[str]]) -> Dict[str, int]:
+    """The work's tree made the version's, in one transaction - every row
+    read and checked first. A row is written only into this work's scope and
+    only into the table's own columns, whatever the saved row says."""
+    rows: Dict[str, List[Dict[str, Any]]] = {}
+    for table in TREE_TABLES:
+        rows[table] = []
+        for sha in (kept or {}).get(table) or []:
+            row = store.get_json(sha)
+            if isinstance(row, dict):
+                rows[table].append(row)
+    columns = {table: [one["name"] for one in db.query(f"PRAGMA table_info({table})")]
+               for table in TREE_TABLES}
+    with db.write() as conn:
+        for table in TREE_TABLES:
+            conn.execute(f"DELETE FROM {table} WHERE scope = ?", (scope,))
+            for row in rows[table]:
+                names = [one for one in columns[table] if one in row]
+                values = [scope if one == "scope" else row[one] for one in names]
+                if "scope" not in names:
+                    names.append("scope")
+                    values.append(scope)
+                # IGNORE, not REPLACE: a saved row never takes over a row of
+                # another scope that happens to have its id.
+                conn.execute(f"INSERT OR IGNORE INTO {table} ({', '.join(names)}) "
+                             f"VALUES ({', '.join('?' for _ in names)})", values)
+    # What each stage is found by, worked out again for the stages it has now.
+    from ...heartbeat.experience.index import StageIndex
+    from ...heartbeat.experience.store import ExperienceStore
+    held = ExperienceStore(db, scope)
+    index = StageIndex(db, scope)
+    index.clear()
+    index.ensure(held.stages(), {one["id"]: one for one in held.cards()})
+    return {table: len(rows[table]) for table in TREE_TABLES}

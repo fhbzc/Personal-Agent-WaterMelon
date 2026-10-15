@@ -1,0 +1,171 @@
+name: Release build
+
+# Run by hand first (Actions > Release build > Run workflow): everything is
+# built and attested, and nothing is published - a dry run. Pushing a tag
+# v* runs it again and publishes the release.
+#
+# Tests gate three native runners, each building the downloads for its own
+# operating system WITHOUT the Debugger (build.py --no-debugger): what users
+# install never carries it. Every file is given a stable name, a SHA-256 in
+# SHA256SUMS.txt, and a build-provenance attestation signed by GitHub, so
+# anyone can check which commit and which workflow made it:
+#   gh attestation verify <file> --repo <owner>/<repo>
+# The builds are not code-signed; signing secrets are used if ever added.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The whole suite, on Windows: the system it is developed and checked on.
+  # macOS and Linux run the tests of what differs there - the OS isolation
+  # of agent code - on their own build runners below.
+  tests:
+    name: Automated tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+      - name: Run the test suite
+        run: python scripts/run_tests.py
+      - name: Build-time validation
+        run: python build.py --validate-only
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: tests
+    permissions:
+      contents: read
+      id-token: write       # to sign the attestation
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows
+          - os: macos-latest
+            target: macos
+          - os: ubuntu-latest
+            target: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pytest
+
+      - name: Install Linux packaging tools
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk xvfb dpkg-dev fuse libfuse2 bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          sudo mv appimagetool-x86_64.AppImage /usr/local/bin/appimagetool
+
+      - name: Install Inno Setup
+        if: matrix.target == 'windows'
+        run: choco install innosetup --no-progress -y
+
+      # The OS isolation of agent code, exercised for real on each runner
+      # (AppContainer, Seatbelt, bubblewrap).
+      - name: OS isolation of agent code
+        env:
+          PA_EXPECT_OS_ISOLATION: "1"
+        run: python -m pytest -q -rs tests/test_isolation.py
+
+      - name: Build the application, without the Debugger
+        env:
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_NOTARY_PROFILE: ${{ secrets.MACOS_NOTARY_PROFILE }}
+        run: python build.py --platform ${{ matrix.target }} --skip-tests --no-debugger
+
+      - name: Release validation on a clean machine
+        if: matrix.target != 'linux'
+        run: python scripts/release_validation.py --report validation-${{ matrix.target }}.json
+      - name: Release validation on a clean machine (Linux)
+        if: matrix.target == 'linux'
+        run: xvfb-run -a python scripts/release_validation.py --report validation-linux.json
+
+      # One stable name per download, so the README's
+      # releases/latest/download/<name> links always point at the newest.
+      - name: Name the downloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          d="dist/${{ matrix.target }}"
+          take() { src=$(ls $1 2>/dev/null | head -1 || true); [ -n "$src" ] || { echo "missing: $1"; exit 1; }; cp "$src" "release/$2"; }
+          case "${{ matrix.target }}" in
+            windows)
+              take "$d/PersonalizedAgent-Setup*.exe"            PersonalizedAgent-Setup-windows-x64.exe
+              take "$d/PersonalizedAgent-*-windows-portable.zip" PersonalizedAgent-portable-windows-x64.zip ;;
+            macos)
+              take "$d/Personalized-Agent.pkg" PersonalizedAgent-macos.pkg
+              take "$d/Personalized-Agent.dmg" PersonalizedAgent-macos.dmg ;;
+            linux)
+              take "$d/*.deb"                    PersonalizedAgent-linux-x86_64.deb
+              take "$d/*.AppImage"               PersonalizedAgent-linux-x86_64.AppImage
+              take "$d/*-linux-x86_64.tar.gz"    PersonalizedAgent-portable-linux-x86_64.tar.gz ;;
+          esac
+          ls -l release
+
+      - name: Attest where each download was built from
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release/*
+
+      - name: Upload the downloads
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: release/*
+          if-no-files-found: error
+
+  release:
+    name: Publish the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums
+        working-directory: artifacts
+        run: |
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          body: |
+            Downloads for every system are below. They are built without the Debugger, by this repository's
+            release workflow, from the commit this release is tagged at.
+
+            **Check a download:** compare it with `SHA256SUMS.txt`, and confirm where it was built from with
+            `gh attestation verify <file> --repo ${{ github.repository }}`.
+
+            The builds are not code-signed: Windows SmartScreen and macOS Gatekeeper warn on first start.
+            See the README's *First start* section.

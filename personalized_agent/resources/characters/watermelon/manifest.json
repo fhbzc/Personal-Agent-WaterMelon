@@ -1,0 +1,92 @@
+{
+  "name": "watermelon",
+  "display_name": "Watermelon",
+  "version": "1.0.0",
+  "author": "Personalized Agent",
+  "states": [
+    "idle",
+    "talking",
+    "thinking",
+    "notification"
+  ],
+  "size": [
+    128,
+    128
+  ],
+  "rig": {
+    "kind": "watermelon",
+    "box": 128,
+    "eyes": [
+      [
+        54.0,
+        59.0,
+        8.4,
+        10.4,
+        6.6
+      ],
+      [
+        33.0,
+        56.0,
+        6.6,
+        9.2,
+        5.4
+      ]
+    ],
+    "mouth": [
+      42.0,
+      73.0
+    ],
+    "ground": 97.0,
+    "cheeks": [
+      [
+        62,
+        70
+      ],
+      [
+        26,
+        66
+      ]
+    ],
+    "badge": [
+      22.0,
+      16.0,
+      10.0
+    ],
+    "bubbles": [
+      [
+        36,
+        24,
+        2.2
+      ],
+      [
+        28,
+        16,
+        3
+      ],
+      [
+        18,
+        7,
+        3.8
+      ]
+    ],
+    "brow_arc": [
+      220,
+      340
+    ],
+    "brow_shift": 1,
+    "looks_from": [
+      44,
+      57
+    ],
+    "faces": "left",
+    "colours": {
+      "outline": "#1c4616",
+      "cream": "#f7eed8",
+      "iris": "#342014",
+      "pupil": "#160c08",
+      "ink": "#1a2812",
+      "brow": "#1e561a",
+      "blush": "#f07878"
+    }
+  }
+}

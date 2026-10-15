@@ -1,0 +1,1161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Personalized Agent</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>Personalized&nbsp;Agent</h1>
+  <nav id="tabs">
+    <button data-tab="overview" class="active">Overview</button>
+    <button data-tab="recommend">Customized Recommendation</button>
+    <button data-tab="calendar">Calendar</button>
+    <button data-tab="connections">Connections</button>
+    <button data-tab="experience">Experience</button>
+    <button data-tab="lessons">Lessons</button>
+    <button data-tab="chat">Chat</button>
+    <button data-tab="settings">Settings</button>
+    <!-- FOR WHOEVER DEVELOPS THE AGENT: the Debugger, then every debugger.
+         An installed build has none of them (applyDebuggerAvailability). -->
+    <button data-tab="debugger">Debugger</button>
+    <button data-tab="xdebug">Experience debugger</button>
+    <button data-tab="naturedebug">Nature debugger</button>
+    <button data-tab="readingdebug">Reading debugger</button>
+    <button data-tab="languagedebug">Language debugger</button>
+    <button data-tab="chatdebug">Chat debugger</button>
+    <button data-tab="heartbeat">Heartbeat debugger</button>
+    <button data-tab="statebeat">State heartbeat debugger</button>
+  </nav>
+    <div id="status-pill" class="pill">connecting…</div>
+</header>
+
+<main>
+  <!-- ------------------------------------------------------- Overview -->
+  <section id="overview" class="tab active">
+        <!-- FIRST ON THE PAGE, because it is the answer to the question the
+         page is opened with: what am I in the middle of. The numbers
+         under it - hours used, pending rows, record counts - are about
+         the agent's own machinery, and reading them first means scrolling
+         past the housekeeping to reach the work. -->
+    <div class="card" id="ov-tasks-card">
+      <!-- SUMMARY TASK AND TO DO, side by side and level: the round's bars
+           under the one, what the user took off a notification to do in the
+           other (app.js, ovPlaceTodos). -->
+      <div class="ov-tasks-top">
+        <div class="ov-tasks-intro">
+          <h3 class="ov-head">Summary task</h3>
+          <div class="muted">The tasks the agent has grouped out of what it
+            has seen, most urgent first. Click one to open it.</div>
+          <div class="ov-strip-slot"></div>
+        </div>
+        <aside id="ov-todo" class="ov-todo"></aside>
+      </div>
+      <div id="ov-tasks">
+        <p class="muted">Reading the last grouping&hellip;</p>
+      </div>
+    </div>
+    <!-- WHAT THE MODELS SPENT, on the Overview: moved from the Debugger. Loaded
+         at start and every half minute (app.js, loadTokenUsage). -->
+    <div class="card ov-tokens-card">
+      <!-- Section 14.33, as amended: what the model time was spent on.
+
+           One line per kind of work, because the total on its own says a
+           number went up and not what to do about it. A heartbeat outspending
+           every conversation is a setting to change; the same total spread
+           evenly is a busy week. -->
+      <div class="dbg-tokens" id="dbg-tokens">
+        <div class="dbg-timeline-head">
+          <strong>Token usage</strong>
+          <span class="muted">by the kind of work that spent it</span>
+          <label>View
+            <select id="dbg-tokens-view">
+              <option value="calls">last 600 calls</option>
+              <option value="days" selected>per day</option>
+            </select>
+          </label>
+          <label>By
+            <select id="dbg-tokens-group">
+              <option value="task" selected>kind of work</option>
+              <option value="module">module</option>
+            </select>
+          </label>
+          <label id="dbg-tokens-days-label">Over
+            <select id="dbg-tokens-days" aria-label="How many days">
+              <option value="7">last 7 days</option>
+              <option value="14">last 14 days</option>
+              <option value="30" selected>last 30 days</option>
+              <option value="90">last 90 days</option>
+            </select>
+          </label>
+          <label>Show
+            <select id="dbg-tokens-metric">
+              <option value="total_tokens">total tokens</option>
+              <option value="input_tokens">input tokens</option>
+              <option value="output_tokens">output tokens</option>
+              <option value="estimated_cost">estimated cost</option>
+            </select>
+          </label>
+          <span class="muted" id="dbg-tokens-note"></span>
+          <button class="small secondary" id="dbg-tokens-collapse" title="Collapse">&#8964;</button>
+        </div>
+        <div class="dbg-tokens-body" id="dbg-tokens-body">
+          <canvas id="dbg-tokens-chart"></canvas>
+          <div class="dbg-tokens-band" id="dbg-tokens-band" hidden></div>
+          <div class="dbg-tokens-tip" id="dbg-tokens-tip" hidden></div>
+          <div class="dbg-tokens-legend" id="dbg-tokens-legend"></div>
+          <div class="muted dbg-cost-note" id="dbg-cost-note" hidden>Each call at the list
+            price of the model that answered it - as Claude Code reports it, or from the
+            model's price. On Claude Code or Codex your subscription pays, not this: it is
+            what the same calls would cost on the API. Calls to a model whose price is not
+            known count nothing.</div>
+        </div>
+      </div>
+    </div>
+    <!-- EVERY LESSON, PACKED TO BE CARRIED: the experience, each work
+         project's tree, the notification lessons and the natures, in one
+         folder of the workspace updated in place, and a zip of it to upload;
+         and a package from another computer loaded - merged - here. -->
+    <div class="card" id="ov-lessons-card">
+      <h3>Lessons package</h3>
+      <div class="muted">Everything learned about how you work - experience,
+        each work project, notification lessons, natures, and the files they
+        point to - packed into one folder, updated with only what is new, and
+        a zip of it you can carry to another computer and load there.</div>
+      <div class="ov-lp-buttons">
+        <button type="button" id="ov-lp-package">Package all lessons</button>
+        <button type="button" id="ov-lp-cancel" class="secondary" hidden>Cancel</button>
+        <button type="button" id="ov-lp-load" class="secondary">Load lessons</button>
+        <button type="button" id="ov-lp-load-folder" class="small secondary"
+          title="Load a package folder instead of its zip">from a folder&hellip;</button>
+        <button type="button" id="ov-lp-open" class="secondary">Open package folder</button>
+      </div>
+      <div id="ov-lp-progress" class="muted"></div>
+      <div id="ov-lp-last"></div>
+      <div id="ov-lp-report"></div>
+      <div id="ov-lp-history"></div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------ Customized Recommendation -->
+  <!-- WHAT YOU WOULD LEARN THE MOST FROM: an issue a day (or at the times you
+       chose), a page per topic - the pages and the issues down the left, the
+       page chosen on the right, as the Experience tab. -->
+  <section id="recommend" class="tab">
+    <div class="card rec-head" id="ov-know-card">
+      <div class="ov-lp-buttons ov-know-tools">
+        <button type="button" id="ov-know-run">Make an issue now</button>
+        <span id="ov-know-when" class="muted"></span>
+      </div>
+      <!-- When an issue is made: the times of day, set here. -->
+      <div class="rec-times" id="rec-times"></div>
+      <div id="ov-know-progress"></div>
+    </div>
+    <div class="rec-grid">
+      <nav class="card rec-side" id="rec-pages" aria-label="Pages"></nav>
+      <div class="card rec-main" id="ov-know"><p class="muted">Reading&hellip;</p></div>
+    </div>
+  </section>
+
+  <!-- --------------------------------------------------- Nature debugger -->
+  <!-- THE NATURES, DRAWN: the principles grouped from them, when each was
+       seen in the user's work - moved here from the Overview. Loaded while
+       the tab is open (app.js, "principles"). -->
+  <section id="naturedebug" class="tab">
+    <!-- HOW THE USER WORKS: the principles grouped from what each project
+         taught, each with when it was last seen - as a project shows when it
+         was last worked on. One long unseen may be a way they no longer
+         work. -->
+    <div class="card" id="ov-principles-card">
+      <h3>How you work</h3>
+      <div class="muted">The principles grouped from what you have done,
+        drawn as the tasks are: when each was seen in your work, most
+        recently active first.</div>
+      <div id="ov-principles"><p class="muted">Reading&hellip;</p></div>
+    </div>
+  </section>
+
+  <!-- -------------------------------------------------- Reading debugger -->
+  <!-- WHAT YOU READ, AS THE AGENT KEPT IT: each thing read or watched, in
+       English - its topics, the points it made, how long you spent - and the
+       topics they fall into, the weightiest first. What Customized
+       Recommendation recommends from. -->
+  <section id="languagedebug" class="tab">
+    <div class="card">
+      <h3>Which language each output is written in</h3>
+      <p class="panel-note">Every place the agent asks a model for something, and whether
+        it is told to write in <strong>English</strong> (the agent's own language - what it
+        keeps, compares and finds things by), in <strong>your display language</strong>,
+        partly each, or <strong>not told at all</strong> - read off the code, and set beside
+        what the calls were actually sent with.</p>
+      <div id="lang-debug"><p class="muted">Reading&hellip;</p></div>
+    </div>
+  </section>
+  <section id="readingdebug" class="tab">
+    <div class="card">
+      <div class="card-head-row">
+        <h3>What you read</h3>
+        <button type="button" class="small secondary" id="reading-run">Update now</button>
+      </div>
+      <p class="muted" id="reading-status"></p>
+      <h4>Topics</h4>
+      <div id="reading-topics"><p class="muted">Reading&hellip;</p></div>
+      <h4>Latest pieces</h4>
+      <div id="reading-pieces"></div>
+    </div>
+  </section>
+
+  <!-- ---------------------------------------------------- Connections -->
+  <!-- THE PEOPLE AROUND YOU: added by the agent from what was on your
+       screen, looked up on the public web, or added by you. Every change you
+       make here - with its reason, if you give one - is one of your
+       connection lessons, listed under "Your changes". -->
+  <section id="connections" class="tab">
+    <!-- As the Experience tab: the people down the left, the one chosen -
+         their profile and what they have been doing - on the right. -->
+    <div class="xp-head">
+      <strong>Connections</strong>
+      <span class="muted">the people around you. The agent adds them from what
+        you had on screen and from public pages; what you set here is yours, and
+        each change you make is kept as one of your connection lessons.</span>
+    </div>
+    <!-- What the boxes suggest as one types: the labels and organisations
+         already in use, so one thing is written one way. -->
+    <datalist id="cx-label-list"></datalist>
+    <datalist id="cx-org-list"></datalist>
+    <datalist id="cx-rel-list"></datalist>
+    <div class="row cx-top">
+    <div class="card" id="cx-inbox-card">
+      <h3>Inbox <span id="cx-inbox-count" class="badge"></span></h3>
+      <p class="panel-note">Things for you to check. A change to your own profile
+        details the agent found on a public page - your name, role, organisation,
+        a profile link - is never made until you accept it here. Your contacts are
+        updated without asking.</p>
+      <div id="cx-inbox"></div>
+    </div>
+    </div>
+    <div class="cx-grid">
+      <div class="card cx-side">
+        <!-- YOU, on top and on your own; the contacts, with the + that adds
+             one, below - so the + reads as adding a person, not changing you. -->
+        <div class="cx-me-row">
+          <button type="button" class="cx-me-open" id="cx-me-open"
+            title="Your own profile" aria-label="Your own profile"></button>
+          <span class="muted">Your profile</span>
+        </div>
+        <h2>Contacts
+          <button type="button" class="small xp-plus" id="cx-add-open"
+            title="Add a person" aria-label="Add a person">+</button>
+          <span id="cx-count" class="muted cx-count"></span></h2>
+        <form id="cx-add" class="cx-form cx-add-box" hidden>
+          <div class="grid">
+            <label>Name <input id="cx-add-name" required autocomplete="off"></label>
+            <label>Relationship <select id="cx-add-relationship"></select></label>
+            <label>Closeness <select id="cx-add-closeness"></select></label>
+            <label>Organisation <input id="cx-add-org" autocomplete="off"
+              list="cx-org-list"></label>
+            <label>Role <input id="cx-add-role" autocomplete="off"></label>
+            <label>Job / profession <input id="cx-add-profession" autocomplete="off"></label>
+            <label>Tags (comma separated) <input id="cx-add-tags" autocomplete="off"></label>
+            <label class="wide">Reason (optional) <input id="cx-add-reason" autocomplete="off"></label>
+          </div>
+          <div class="cx-add-profiles">
+            <span class="muted">Public profiles (optional)</span>
+            <div id="cx-add-links">
+              <div class="cx-link-row">
+                <input type="url" class="cx-add-link" placeholder="https://&hellip;"
+                  aria-label="Address of a public profile">
+                <input class="cx-add-label" list="cx-label-list" placeholder="Label (e.g. LinkedIn)"
+                  aria-label="Label of the profile" autocomplete="off">
+              </div>
+            </div>
+            <button type="button" class="small secondary" id="cx-add-link-more">+ Another profile</button>
+          </div>
+          <div class="ov-lp-buttons">
+            <button type="submit">Add person</button>
+            <button type="button" id="cx-add-cancel" class="secondary">Cancel</button>
+          </div>
+        </form>
+        <div class="cx-side-tools">
+          <input type="search" id="cx-search" placeholder="Search names, organisations, tags&hellip;"
+            aria-label="Search people">
+          <label class="cx-inline">Group by
+            <select id="cx-group">
+              <option value="relationship">Relationship</option>
+              <option value="closeness">Closeness</option>
+              <option value="org">Organisation</option>
+            </select>
+          </label>
+        </div>
+        <div id="cx-list" class="cx-list"><p class="muted">Reading&hellip;</p></div>
+      </div>
+      <div class="card cx-main">
+        <div id="cx-person" class="cx-person">
+          <p class="muted">Choose a person on the left to see who they are, what
+            they have been doing, and to change what is known about them.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------- Calendar -->
+  <section id="calendar" class="tab">
+    <!-- Section 10, as amended: the grid is the panel's primary surface and is
+         drawn from the date, so it is there whether or not anything is scheduled. -->
+    <div class="card">
+      <div class="cal-toolbar">
+        <div class="cal-nav">
+          <button type="button" id="cal-prev" class="small secondary" aria-label="Previous">‹</button>
+          <button type="button" id="cal-today" class="small secondary">Today</button>
+          <button type="button" id="cal-next" class="small secondary" aria-label="Next">›</button>
+        </div>
+        <h3 id="cal-period"></h3>
+        <span style="flex:1"></span>
+        <div class="cal-views" role="group" aria-label="View">
+          <button type="button" class="small secondary" data-cal-view="month">Month</button>
+          <button type="button" class="small secondary" data-cal-view="day">Day</button>
+        </div>
+        <button type="button" class="small" id="cal-add">+ Add event</button>
+      </div>
+      <div id="calendar-surface"></div>
+    </div>
+    <!-- WAITING FOR A TIME: what you agreed whose time is not known yet - put
+         on the calendar when its time is seen. -->
+    <div class="card" id="pending-card">
+      <h3>Waiting for a time</h3>
+      <p class="panel-note">Agreed, but the time was not on your screen - "the time
+        works for me", the message with the time folded away. When the agent sees
+        the time, it puts it on the calendar and takes it off this list.</p>
+      <div id="pending-list"><p class="muted">Reading&hellip;</p></div>
+    </div>
+    <div class="card">
+      <h3 id="cal-day-title">Selected day</h3>
+      <div id="cal-day-tasks"></div>
+    </div>
+  </section>
+
+  <!-- ---------------------------------------------------------- Lessons -->
+  <!-- Lessons are not experience: each kind is learned from one thing the
+       user does, kept with its complete records, and read by the one part
+       of the agent it is for. Nothing here is grouped or retrieved. -->
+  <section id="lessons" class="tab">
+    <div class="card">
+      <h2>Lessons</h2>
+      <p class="muted">What the agent has learned from what you did, kind by
+        kind. Each lesson is a reading of one thing you did, with the complete
+        record it was read from. Unlike your experience, lessons are never
+        grouped into patterns or principles.</p>
+    </div>
+    <div id="lessons-kinds"></div>
+  </section>
+
+  <!-- ----------------------------------------------------------- Chat -->
+  <!-- The conversation, with every past one beside it to reopen (the
+       sidebar is chat-navigation.js). -->
+  <section id="chat" class="tab">
+    <!-- The same conversation as the window the desktop agent opens, drawn
+         by the same script (chat.js). -->
+    <div class="chat-only">
+    <header class="chat-head">
+      <h1 id="agent-name">Conversation</h1>
+      <span class="muted" id="chat-state"></span>
+    </header>
+    <div class="chat-layout">
+      <div class="chat-workspace">
+        <div class="chat-toolbar">
+          <button type="button" class="chat-nav-icon" data-chat-sidebar-open
+                  aria-label="Open the sidebar" aria-controls="chat-sidebar"
+                  aria-expanded="false">&#9776;</button>
+          <span data-chat-title>New chat</span>
+        </div>
+        <div class="card chat-card">
+          <div id="chat-log"></div>
+          <form id="chat-form">
+            <input id="chat-input" placeholder="Ask the agent…" autocomplete="off">
+            <button type="submit">Send</button>
+          </form>
+          <div class="muted" id="chat-meta"></div>
+        </div>
+      </div>
+    </div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------- Settings -->
+  <!-- Section 37, as amended: the heartbeat is the part of the agent nobody
+       can watch. It runs on a timer, it decides what is worth doing, and all
+       anyone sees afterwards is a calendar that has changed. This runs one
+       and shows each of the four steps - what it went looking for, what it
+       was actually given, and what it did with it.
+
+       Its own tab rather than a panel inside the Debugger: one run is a page
+       of reading, and it was sharing a scroll with the timeline, the states
+       and the token usage. Nothing here refreshes itself. -->
+  <section id="heartbeat" class="tab">
+    <div class="dbg-beat" id="dbg-beat">
+      <div class="dbg-timeline-head">
+        <strong>Heartbeat debugger</strong>
+        <span class="muted">one run, four steps, asked one at a time</span>
+        <button class="small" id="dbg-beat-run">Run one now</button>
+        <button class="small secondary" id="dbg-beat-refresh">Refresh</button>
+        <span class="muted" id="dbg-beat-note"></span>
+      </div>
+      <div class="dbg-beat-body" id="dbg-beat-body">
+        <p class="muted">Not run from here yet. Running one takes as long as
+          the model takes - usually under a minute. This page does not update
+          itself: start a run, go and do something else, and press Refresh
+          when you come back.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 34.3: the second review, and the panel it is tested from.
+
+       Its own tab rather than a card on the heartbeat page, because it is a
+       different question on a different clock: that page is one run of the
+       review that writes states, this one is what the states already
+       written add up to. -->
+  <!-- The Experience debugger, a tab of its own: it used to sit far down
+       the Debugger tab, under five other panels, where it was not found. -->
+  <section id="xdebug" class="tab">
+    <!-- The Experience debugger: one piece of work done three ways side by
+         side - one model on its own, builder and reviewer with none of
+         your experience, and the whole system - each in its own subfolder
+         of a folder you choose. Projects made here never appear in
+         Experience. -->
+    <div class="dbg-xd" id="dbg-xd">
+      <div class="dbg-timeline-head">
+        <strong>Experience debugger</strong>
+        <span class="muted">the same work three ways: one model alone, no context, full</span>
+      </div>
+      <div class="dbg-xd-body" id="dbg-xd-body">
+        <p class="muted">Loading.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="experience" class="tab">
+    <div class="xp-head">
+      <strong>Learned experience</strong>
+      <span class="muted">each piece of your work as the stages of its loop,
+        and how you work, as principles and patterns. Each project is learned
+        when you start it below - and updated when you ask.</span>
+      <span id="xp-status" class="muted"></span>
+    </div>
+    <div class="xp-grid">
+      <div class="xp-units card">
+        <h2>Projects and tasks</h2>
+        <div class="xp-order-row">
+          <p class="muted xp-order-note">The most lately active first.</p>
+          <button type="button" class="small xp-plus" id="xp-plus"
+            title="A new project: its title, what it is for, and its folders"
+            aria-label="New project">+</button>
+        </div>
+        <div id="xp-new" class="xp-new" hidden>
+          <input id="xp-new-title" type="text" placeholder="Title">
+          <textarea id="xp-new-description" rows="3"
+            placeholder="Description - what it is for"></textarea>
+          <div class="xp-new-folder"><button type="button" class="small secondary"
+            id="xp-new-choose">Add a folder…</button>
+            <span class="muted">one or more</span></div>
+          <ul id="xp-new-paths" class="xp-folder-list"><li class="muted">no folder chosen</li></ul>
+          <button type="button" class="small" id="xp-new-create">Create</button>
+          <button type="button" class="small secondary" id="xp-new-cancel">Cancel</button>
+        </div>
+        <div id="xp-units"></div>
+        <div id="xp-projects" hidden></div>
+      </div>
+      <div class="xp-main card">
+        <div class="xp-title-row">
+          <h2 id="xp-graph-title">Stages</h2>
+          <!-- The run going on this project: where it stands, Pause or
+               Resume, and Stop - beside its name. -->
+          <span id="xp-title-run" class="xp-title-run"></span>
+        </div>
+        <div id="xp-unit-about" class="xp-unit-about"></div>
+        <div id="xp-graph" class="xp-graph"></div>
+        <div id="xp-stage" class="xp-stage"></div>
+        <div id="xp-work" class="xp-work"></div>
+      </div>
+    </div>
+    <div class="xp-grid">
+      <div class="card xp-search">
+        <h2>Try the retrieval</h2>
+        <form id="xp-search-form">
+          <input id="xp-search-q" placeholder="what the agent is about to do">
+          <select id="xp-search-kind">
+            <option value="">any step</option>
+            <option value="goal,plan">planning</option>
+            <option value="evaluation,adjustment">evaluating</option>
+            <option value="evaluation,delivery">final check</option>
+          </select>
+          <button type="submit" class="small">Search</button>
+        </form>
+        <div id="xp-search-out"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="statebeat" class="tab">
+    <div class="dbg-beat" id="dbg-statebeat">
+      <div class="dbg-timeline-head">
+        <strong>State heartbeat</strong>
+        <span class="muted">states grouped by what they are about, and a
+          summary per group. <strong>Every button below is marked (real
+          data) or (sandbox)</strong> - the two are the same code over
+          different folders, and only the first kind changes anything of
+          yours. The page follows a round while it runs and stops when it
+          stops, so there is nothing to refresh.</span>
+        <button class="small" id="dbg-states-run">Run one now (real data)</button>
+        <span class="muted" id="dbg-states-note"></span>
+      </div>
+      <!-- What the connections part of the round is doing: unobtrusive, one
+           line, with a bar only while it runs. -->
+      <div id="dbg-states-connections" class="cx-beat muted"></div>
+      <!-- What each control does, written here rather than left to be
+           worked out. ONE of these buttons changes the user's real records
+           and four cannot, and that is not a difference to leave a person
+           to infer from the labels. -->
+      <dl class="dbg-keys">
+        <dt>Run one now (real data)</dt>
+        <dd>One real round, immediately, instead of waiting for the hour.
+          It reads your states, appends the new ones to the tasks already
+          there, and rebuilds only if a signal says appending has stopped
+          being honest. <strong>It writes real records</strong> - tasks in
+          the library, rows in the database - and costs a model call for
+          each task whose summary has gone out of date. What it writes is
+          the tasks themselves. The working-out - the instruction, each
+          reply unaltered, whether it chose to search and what came back -
+          is shown here while the round is on the page and is not written
+          anywhere: copy what you want to keep.</dd>
+      </dl>
+      <!-- The sandbox: the same algorithm over a copy of the calendar, in
+           its own library, with invented states only where there were not
+           enough real ones to copy. -->
+      <div class="dbg-sandbox" id="dbg-states-sandbox">
+        <strong>Sandbox</strong>
+        <span class="muted">the same code, a different pair of folders - so
+          the grouping can be judged against the shape that went in. It READS
+          your states, to copy them in; it writes nothing of yours - not your
+          states, not your library, not your tasks.</span>
+        <label class="small">states
+          <input id="dbg-sb-count" type="number" value="60" min="2" max="1000">
+        </label>
+        <label class="small">over days
+          <input id="dbg-sb-days" type="number" value="14" min="1" max="365">
+        </label>
+        <button class="small" id="dbg-sb-make">Make some up (sandbox)</button>
+        <button class="small" id="dbg-sb-run">Run one now (in sandbox)</button>
+        <button class="small" id="dbg-sb-rehearse">Rehearse appending (sandbox)</button>
+        <button class="small secondary" id="dbg-sb-clear">Empty it (sandbox)</button>
+        <div class="muted" id="dbg-sb-where"></div>
+        <dl class="dbg-keys">
+          <dt>states / over days (sandbox)</dt>
+          <dd>How many states to put in, and how far back to spread them.
+            Real ones are copied first; any shortfall is invented, and the
+            invented ones are worded several ways within each subject on
+            purpose, because a sandbox whose states repeat one sentence
+            tests nothing - matching identical text is not what the
+            grouping does.</dd>
+          <dt>Make some up (sandbox)</dt>
+          <dd>Fills the sandbox's own <code>states/</code> folder:
+            <strong>copies of your real states first</strong>, and invented
+            ones only to make up a shortfall. The copies are what make a
+            run worth reading - invented states are five sentences per
+            subject, and separating five sentences is an easier question
+            than the real one. A copy takes the words and the span and
+            nothing else. <strong>Nothing of yours is written to</strong>
+            - not your states, not your library, not your tasks.</dd>
+          <dt>Run one now (in sandbox)</dt>
+          <dd><strong>Empties the sandbox, fills it, and runs one round</strong>
+            - a whole demonstration in one press. It was half of one: it
+            ran over whatever happened to be in the sandbox, so on a
+            sandbox nobody had filled it read nothing and drew nothing,
+            which reads as a fault in the grouping rather than as an
+            empty folder. The same code as <em>Run one now (real
+            data)</em>, handed a different pair of folders and a different
+            set of task rows. Summaries are written here, as they now are
+            for the real round, because a summary is what you came to look
+            at - so this does cost model calls. They were off for the real
+            round while the grouping itself was what was being worked on,
+            which is no longer true. Two presses will not show
+            appending, and cannot: each is a fresh grouping of fresh
+            states. <em>Rehearse appending</em> is what shows that.</dd>
+          <dt>Rehearse appending (sandbox)</dt>
+          <dd>The whole mechanism in one press, and the only way to see all
+            of it. It empties the sandbox, writes <em>more states than the
+            window holds</em> so the cap is doing something, runs a round,
+            adds more and runs again, then adds more and runs a third time.
+            The second and third rounds are both appending rounds - a few
+            dot products against the task centres and no tree at all. There
+            were three because the second one used to rebuild every time,
+            which was a defect and is fixed; the third stays because a
+            second consecutive append is worth seeing, and because it is
+            where a pile of leftovers becomes a task of its own without a
+            rebuild. Each round gets its own overview, and the totals on
+            them are the folder's own count.</dd>
+          <dt>Empty it (sandbox)</dt>
+          <dd>Deletes everything in the sandbox and says what was in it.
+            Two kinds of thing, counted apart because they do not match
+            one to one: <em>files</em> are what you can open - the made-up
+            states, and the write-up of each task found from them -
+            and <em>rows</em> are the bookkeeping behind them: which tasks
+            there are, what each round did, and which states fitted
+            nowhere. One task is one row and one write-up over many state
+            files. Only the sandbox: it cannot reach the real ones, and
+            there is a test that says so.</dd>
+        </dl>
+      </div>
+      <!-- `dbg-beat-body`, not `dbg-states-body`: the month-by-month
+           states browser further down this page already had that id, and
+           two elements sharing one means every lookup finds whichever
+           comes first in the document - this one. So the browser's
+           contents were being written into this panel, its click handler
+           was bound to this panel, and its collapse button hid this
+           panel. -->
+      <div class="dbg-beat-body" id="dbg-statebeat-body">
+        <p class="muted">Nothing to show. The grouping itself needs no model
+          - each state is read as a vector, the closest are joined into a
+          tree, and the tree is read as two layers of tasks - but a model
+          call is made for each task that needs a summary, and only where
+          enough of what a task holds has turned over to make the summary it
+          already has wrong. The page follows a round while it runs.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="settings" class="tab">
+    <!-- The views: General - the models the agent thinks with and how
+         it searches; Display - its language and the size of its text;
+         Avatar - how it looks on the desktop and what it is called; and
+         Others, every other setting. -->
+    <div class="settings-views" role="tablist" aria-label="Settings views">
+      <button type="button" class="settings-view-tab active" role="tab"
+        data-settings-view="general">General</button>
+      <button type="button" class="settings-view-tab" role="tab"
+        data-settings-view="display">Display</button>
+      <button type="button" class="settings-view-tab" role="tab"
+        data-settings-view="avatar">Avatar</button>
+      <button type="button" class="settings-view-tab" role="tab"
+        data-settings-view="modules">Functions</button>
+      <button type="button" class="settings-view-tab" role="tab"
+        data-settings-view="privacy">Privacy</button>
+      <button type="button" class="settings-view-tab" role="tab"
+        data-settings-view="others">Others</button>
+    </div>
+    <div class="settings-pane" data-settings-pane="general">
+    <!-- THE MODELS, IN ORDER: each call goes to the first that works. -->
+    <div class="card" id="models-card">
+      <h3>Models</h3>
+      <p class="panel-note">The models the agent thinks with, <strong>in order</strong>.
+        Each call goes to the first one that works. When one cannot answer - its
+        sign-in has expired, its key is refused, its credit or usage limit is used
+        up, it is not installed - the next one answers, and the first is used again
+        once it works. A call that only timed out is tried again, not passed on.</p>
+      <ol id="model-chain" class="model-chain"></ol>
+      <div class="wide api-billing" id="model-chain-cost" hidden></div>
+      <button type="button" id="model-add-open">+ Add a model</button>
+      <form id="auth-form" class="grid model-add" hidden>
+        <fieldset class="wide model-kind">
+          <legend>What is it?</legend>
+          <label><input type="radio" name="kind" value="api" checked> An API, with a key
+            <span class="muted">(OpenAI, Gemini, DeepSeek, OpenRouter, Anthropic ...)</span></label>
+          <label><input type="radio" name="kind" value="client"> A service on this computer
+            <span class="muted">(Claude Code, Codex)</span></label>
+        </fieldset>
+        <label>Which one<select name="provider"></select></label>
+        <label>Authentication method<select name="method"></select></label>
+        <label class="wide api-key-field">API key<input name="api_key" type="password"
+          placeholder="stored in the OS credential store, never shown again"></label>
+        <label class="wide base-url-field" hidden>API address<input name="base_url"
+          type="url" autocomplete="off" placeholder="https://..."></label>
+        <div class="wide muted provider-key-note" id="provider-key-note" hidden></div>
+        <label class="wide">Model<select name="model"></select></label>
+        <label class="wide model-effort-field" hidden>Reasoning effort<select
+          name="effort"></select></label>
+        <label class="wide model-other-field" hidden>Its model, as the service names it
+          <input name="model_other" autocomplete="off"></label>
+        <div class="wide muted" id="model-add-state"></div>
+        <div class="wide api-billing" id="api-billing" hidden></div>
+        <button type="submit" id="auth-submit">Add to the list</button>
+        <button type="button" id="model-add-cancel" class="secondary">Cancel</button>
+        <button type="button" id="logout-btn" class="secondary">Log out of it</button>
+        <div class="wide muted" id="auth-hint"></div>
+        <div class="wide login-tools" id="login-tools" hidden></div>
+        <!-- Section 75.2: the browser sign-in is hosted here, in this window. -->
+        <div class="wide login-panel" id="login-panel" hidden>
+          <div id="login-step" class="muted"></div>
+          <div class="login-url" id="login-url" hidden>
+            <span class="muted">If your browser did not open:</span>
+            <a id="login-link" target="_blank" rel="noopener noreferrer"></a>
+          </div>
+          <div class="login-code" id="login-code-row" hidden>
+            <label>Code from your browser
+              <input id="login-code" type="text" autocomplete="off"
+                placeholder="paste the code the sign-in page gives you"></label>
+            <button type="button" id="login-complete">Complete sign-in</button>
+            <button type="button" id="login-cancel" class="secondary">Cancel</button>
+          </div>
+        </div>
+        <div class="wide" id="auth-result"></div>
+      </form>
+      <details class="model-more"><summary>Every provider and its credential</summary>
+        <div id="model-register-panel"></div></details>
+    </div>
+    <div class="card" id="startup-settings-card">
+      <h3>Startup</h3>
+      <p class="panel-note">Whether the agent starts when you sign in to this computer.</p>
+      <div id="settings-form-startup"></div>
+    </div>
+    <div class="card" id="heartbeat-settings-card">
+      <h3>Heartbeats</h3>
+      <p class="panel-note">How often each runs, in minutes. The agent heartbeat reads
+        what you have been doing and writes it down; the state heartbeat groups
+        that into your tasks and projects.</p>
+      <div id="settings-form-heartbeats"></div>
+    </div>
+    <div class="card" id="web-search-card">
+      <h3>Web search</h3>
+      <div class="panel-note web-search-explained">
+        <p><strong>What it is for.</strong> When an agent needs something from
+          the public web, it searches and reads public pages:</p>
+        <ul>
+          <li>a work run looking up documentation, data or facts for the work;</li>
+          <li>Connections, looking for your contacts' public news and your own
+            public profile;</li>
+          <li>the web part of <em>What you need to know</em>.</li>
+        </ul>
+        <p><strong>How the model goes about it.</strong> The model decides what
+          to search, opens the pages worth reading, searches again from what it
+          finds, and stops when it has what it needs. Only public pages: it never
+          signs in to anything, and never posts or sends anything. A Connections
+          round runs with every state heartbeat, so it has a guard set far past
+          what a round needs: 200 model calls or 100 lookups.</p>
+        <p><strong>Search with.</strong> By default, <em>the model's own
+          search</em>: a model that has one (Claude Code) searches and opens
+          pages itself, and those searches count toward your plan with it. A model
+          without one, such as an API like DeepSeek, uses the app's search. In <em>the
+          app's search</em>, the model asks and the app searches for it - with
+          Brave's Search API and a key of your own (it has a free plan; the key
+          is kept in the OS credential store and never shown again), or, with no
+          key, DuckDuckGo's results page, which may refuse an application.</p>
+      </div>
+      <label class="wide">Search with<select id="web-search-with">
+        <option value="model">the model's own search (default)</option>
+        <option value="app">the app's: Brave Search, or DuckDuckGo</option>
+      </select></label>
+      <div id="web-search-status" class="muted"></div>
+      <form id="web-search-form" class="grid">
+        <label class="wide">Brave Search API key<input name="api_key" type="password"
+          autocomplete="off" placeholder="paste the key"></label>
+        <button type="submit">Save the key</button>
+        <button type="button" class="secondary" id="web-search-remove">Remove the key</button>
+        <div class="wide"><a id="web-search-key-page" target="_blank"
+          rel="noopener noreferrer" href="https://brave.com/search/api/">Get a Brave
+          Search API key</a></div>
+      </form>
+    </div>
+    </div>
+    <div class="settings-pane" data-settings-pane="display" hidden>
+    <div class="card" id="display-settings-card">
+      <h3>Display</h3>
+      <p class="panel-note">How the agent reads: the language it writes and speaks
+        in, and the size of its text.</p>
+      <div id="settings-form-display"></div>
+    </div>
+    <!-- READING THE WORDS IN A PICTURE, on this computer: which of the five
+         languages it reads here, and a button for those it does not. -->
+    <div class="card" id="ocr-card">
+      <h3>Words in pictures (OCR)</h3>
+      <p class="panel-note">A screenshot, a scanned PDF or a picture is read on
+        this computer - nothing is sent anywhere for it. A model that reads text
+        only is given these words; one that sees pictures, the picture too.</p>
+      <div id="ocr-languages"><p class="muted">Reading&hellip;</p></div>
+    </div>
+    </div>
+    <!-- MODULES: what the agent does by itself, each of which can be turned off
+         to spend fewer tokens - with what it does, what turning it off means,
+         and what it spent lately. What you start yourself is not here. -->
+    <!-- THE AVATAR: which one sits on the desktop, alive here as it is
+         there - its eyes follow the pointer - and what it is called. -->
+    <div class="settings-pane" data-settings-pane="avatar" hidden>
+    <div class="card" id="avatar-settings-card">
+      <h3>Avatar</h3>
+      <p class="panel-note">How the agent appears on your desktop, and what it is
+        called. Move the pointer and it watches; point at it, click it, or try what
+        it does while it works.</p>
+      <div class="avatar-stage-wrap">
+        <div id="avatar-stage" class="avatar-stage" aria-label="Your avatar"></div>
+        <div class="avatar-moods" role="group" aria-label="Show what it does">
+          <button type="button" class="small secondary active" data-avatar-mood="idle">Waiting</button>
+          <button type="button" class="small secondary" data-avatar-mood="talking">Talking</button>
+          <button type="button" class="small secondary" data-avatar-mood="thinking">Thinking</button>
+          <button type="button" class="small secondary" data-avatar-mood="notification">Notifying</button>
+        </div>
+      </div>
+      <div id="settings-form-avatar"></div>
+    </div>
+    </div>
+    <div class="settings-pane" data-settings-pane="modules" hidden>
+    <div class="card" id="modules-card">
+      <h3>Functions</h3>
+      <p class="panel-note">What the agent does by itself. Turn one off to spend fewer
+        tokens - what you start yourself (a work run, a conversation) is always yours
+        to start.</p>
+      <div id="modules-list"><p class="muted">Reading&hellip;</p></div>
+    </div>
+    </div>
+    <!-- PRIVACY: what is listened to, each its own switch - what it records,
+         what is left without it, and what it costs the computer. -->
+    <div class="settings-pane" data-settings-pane="privacy" hidden>
+    <div class="card" id="privacy-card">
+      <h3>Privacy</h3>
+      <p class="panel-note">What the agent listens to, each its own switch - all on
+        by default. Each one off, the agent knows less of what you do; each one on,
+        the computer does more work. <strong>Changing these changes performance:</strong>
+        reading the text on screen and taking pictures of windows cost the most.</p>
+      <div id="settings-form-privacy"></div>
+    </div>
+    </div>
+    <div class="settings-pane" data-settings-pane="others" hidden>
+    <div class="card" id="browser-card">
+      <h3>Browser testing</h3>
+      <p class="panel-note">A headless Chrome the work agents test what they
+        build with, as a person would see it - Google's <em>Chrome for
+        Testing</em>, downloaded from Google once (about 125 MB) when you
+        install it. Each run gets its own, with an empty profile and none of
+        your accounts; it opens only the servers that run starts - not the
+        internet, not another run's, nothing of yours.</p>
+      <div id="browser-status" class="muted"></div>
+      <div class="ov-lp-buttons">
+        <button type="button" id="browser-install">Install</button>
+        <button type="button" id="browser-cancel" class="secondary" hidden>Cancel</button>
+        <button type="button" id="browser-remove" class="secondary" hidden>Remove</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Settings <span class="muted" id="settings-defaults-note"></span></h3>
+      <div id="settings-form"></div>
+    </div>
+    <div id="avatar-editor" class="avatar-card" hidden>
+      <h4>Customize avatar</h4>
+      <p class="panel-note">Choose another image, or paint a crisp 16 × 16 pixel avatar. Saving replaces your previous custom avatar and uses it immediately.</p>
+      <div class="avatar-tools">
+        <div class="avatar-upload">
+          <img id="avatar-preview" alt="Current avatar preview">
+          <label>Image file<input id="avatar-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+          <button type="button" id="avatar-upload-save" disabled>Use this image</button>
+        </div>
+        <div class="pixel-painter">
+          <div class="painter-toolbar">
+            <label>Brush
+              <select id="painter-brush-size" aria-label="Brush size">
+                <option value="1">1 px</option>
+                <option value="2">2 px</option>
+                <option value="3">3 px</option>
+              </select>
+            </label>
+            <button type="button" id="painter-erase" class="small secondary">Eraser</button>
+            <button type="button" id="painter-undo" class="small secondary" disabled>Undo</button>
+            <button type="button" id="painter-clear" class="small secondary">Clear</button>
+          </div>
+          <canvas id="pixel-painter" width="16" height="16" aria-label="16 by 16 pixel avatar painter"></canvas>
+          <div class="painter-colours">
+            <label>Colour<input id="painter-colour" type="color" value="#3d6be5"></label>
+            <div id="painter-recent-colours" class="recent-colours" aria-label="Five recently used colours"></div>
+          </div>
+          <div class="painter-background">
+            <label>Background<input id="painter-background-colour" type="color" value="#ffffff"></label>
+            <button type="button" id="painter-apply-background" class="small secondary">Set background</button>
+          </div>
+          <button type="button" id="painter-save">Use painted avatar</button>
+        </div>
+      </div>
+    </div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------- Debugger -->
+  <section id="debugger" class="tab">
+    <div class="dbg-shell" id="dbg-shell">
+      <div class="dbg-toolbar">
+        <strong class="dbg-title">System Debugger</strong>
+        <input id="dbg-search" type="search" placeholder="component, task id, trace id, error…"
+               aria-label="Search the running system">
+        <label>View
+          <select id="dbg-window">
+            <option value="">Live</option>
+            <option value="5">Last 5 minutes</option>
+            <option value="30">Last 30 minutes</option>
+            <option value="60">Last hour</option>
+          </select>
+        </label>
+        <label>Focus
+          <select id="dbg-focus"><option value="">Whole system</option></select>
+        </label>
+        <button class="small secondary" id="dbg-expand-all">Expand all</button>
+        <button class="small secondary" id="dbg-collapse-all">Collapse all</button>
+        <button class="small secondary" id="dbg-export">Export report</button>
+        <!-- Section 14.33: off means nothing is collected, not that the panels
+             hide what was collected anyway. -->
+        <label class="dbg-switch" title="Turn the Debugger's own monitoring on or off">
+          <input type="checkbox" id="dbg-monitoring" checked>
+          <span>Collect data</span>
+        </label>
+        <span class="muted" id="dbg-status"></span>
+      </div>
+
+
+      <div class="dbg-body" id="dbg-body">
+        <div class="dbg-map-wrap">
+          <canvas id="dbg-map"></canvas>
+          <div class="dbg-legend" id="dbg-legend"></div>
+        </div>
+        <div class="dbg-split-v" id="dbg-split-v" title="Drag to resize the inspector"></div>
+        <aside class="dbg-inspector" id="dbg-inspector">
+          <div class="dbg-inspector-head">
+            <div>
+              <div class="muted" id="dbg-sel-kind">Inspector</div>
+              <h3 id="dbg-sel-name">Nothing selected</h3>
+            </div>
+            <button class="small secondary" id="dbg-inspector-collapse" title="Collapse">›</button>
+          </div>
+          <nav class="dbg-tabs" id="dbg-tabs"></nav>
+          <div class="dbg-inspector-body" id="dbg-inspector-body">
+            <p class="muted">Select a component or a connection in the system map.</p>
+          </div>
+        </aside>
+      </div>
+
+      <!-- Section 37, as amended: one heartbeat, run on demand, shown whole.
+
+           The heartbeat has a place of its own now - it is a page of
+           reading, not a panel to glance at, and it was sharing a scroll
+           with everything else the Debugger holds. -->
+      <!-- Section 34.1, as amended: states are internal, and this is where
+           they are looked at. Shown the way a calendar shows them, because a
+           span is what they are - but inside the Debugger, not beside the
+           things the user scheduled. -->
+      <div class="dbg-states" id="dbg-states">
+        <div class="dbg-timeline-head">
+          <strong>States</strong>
+          <span class="muted">what the agent believes is true, and for how long</span>
+          <button class="small secondary" id="dbg-states-prev" title="Earlier">&lsaquo;</button>
+          <span class="muted" id="dbg-states-range"></span>
+          <button class="small secondary" id="dbg-states-next" title="Later">&rsaquo;</button>
+          <button class="small secondary" id="dbg-states-collapse" title="Collapse">&#8964;</button>
+        </div>
+        <div class="dbg-states-body" id="dbg-states-body">
+          <p class="muted">Loading.</p>
+        </div>
+      </div>
+
+      <div class="dbg-split-h" id="dbg-split-h" title="Drag to resize the timeline"></div>
+      <div class="dbg-timeline" id="dbg-timeline">
+        <div class="dbg-timeline-head">
+          <strong>Trace Timeline</strong>
+          <select id="dbg-trace-filter">
+            <option value="">All traces</option>
+            <option value="user_instruction">User instruction</option>
+            <option value="heartbeat">Heartbeat</option>
+            <option value="scheduled_task">Scheduled task</option>
+            <option value="diagnostic">Diagnostic test</option>
+            <option value="errors">Errors only</option>
+          </select>
+          <span class="muted" id="dbg-trace-count"></span>
+          <button class="small secondary" id="dbg-timeline-collapse" title="Collapse">⌄</button>
+        </div>
+        <div class="dbg-timeline-body">
+          <div class="dbg-trace-list" id="dbg-trace-list"></div>
+          <div class="dbg-trace-detail" id="dbg-trace-detail">
+            <p class="muted">Select a trace to see its end-to-end path.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  
+    <!-- WHAT THE COMPUTER WAS USED FOR: moved here from the Overview, which
+         keeps what the agent knows and has learned. Loaded while this tab
+         is open (app.js, USAGE_PARTS). -->
+    <div class="dbg-usage" id="dbg-usage">
+      <h2>Computer usage</h2>
+    <div class="row">
+      <div class="card stat"><h3>Total computer usage</h3><div id="ov-total" class="big">–</div>
+        <div class="muted" id="ov-window"></div></div>
+    </div>
+    <div class="card">
+      <h3>Activity by hour</h3>
+      <div class="muted">What share of each hour of the last day went to each application. The hour still going is measured against how much of it there has been.</div>
+      <div id="ov-hourly" class="chart"></div>
+    </div>
+    <!-- The list and what it selects sit side by side: a selection whose
+         result is a screen away reads as nothing having happened. -->
+    <div class="row">
+      <div class="card ov-list">
+        <h3>Usage by application
+          <button type="button" id="ov-clear" class="small secondary" hidden>
+            Clear selection</button></h3>
+        <div class="muted">Select one to inspect its activity.
+          <span data-window class="window-note"></span></div>
+        <div id="ov-apps" class="bars"></div>
+      </div>
+      <div class="card ov-inspect">
+        <h3><span id="ov-detail-title">Application detail</span>
+          <span class="muted" id="ov-detail-name"></span>
+          <button type="button" id="ov-detail-back" class="small secondary" hidden>
+            Back</button></h3>
+        <div id="ov-detail" class="muted">Select an application to inspect its
+          activity log.</div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Historical activity</h3>
+      <div id="ov-history" class="bars"></div>
+    </div>
+    <!-- Section 9, as amended: what was actually read and worked on. -->
+    <div class="row">
+      <div class="card grow">
+        <h3>Pages visited <span class="muted" id="ov-pages-count"></span>
+          <span data-window class="window-note"></span></h3>
+        <div id="ov-pages"></div>
+      </div>
+      <div class="card grow">
+        <h3>Files worked on <span class="muted" id="ov-files-count"></span>
+          <span data-window class="window-note"></span></h3>
+        <div id="ov-files"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Assistant work <span class="muted" id="ov-assistants-count"></span>
+        <span data-window class="window-note"></span></h3>
+      <div id="ov-assistants"></div>
+    </div>
+
+    <!-- Section 19, as amended: what was read, and what was written.
+
+         Windows reports both as one kind of change, so a file the user only
+         opened was reported back to them as one they had edited. The
+         Listener tells them apart by whether the content actually moved. -->
+    <div class="card ov-activity" id="ov-activity">
+      <div class="card-head">
+        <strong>Files just now</strong>
+        <span class="muted">what was read, and what was written</span>
+        <label>Show
+          <select id="ov-activity-filter">
+            <option value="">everything</option>
+            <option value="written">only what changed</option>
+            <option value="read">only what was read</option>
+          </select>
+        </label>
+        <span class="muted" id="ov-activity-note"></span>
+      </div>
+      <div class="ov-activity-body" id="ov-activity-body">
+        <p class="muted">Loading.</p>
+      </div>
+    </div>
+    </div>
+
+    <!-- Section 14.33: one panel per module - what it is, what it is for, and
+         what is actually in it.
+
+         Outside the shell above, which is a fixed-height flex column with
+         overflow hidden so the map can own its area. A grid of panels placed
+         inside it crushes the map to nothing and is itself clipped, which is
+         both of the things that went wrong the first time. -->
+    <div class="dbg-modules" id="dbg-modules"></div>
+  </section>
+
+  <!-- The chat debugger (ported from PR #4): one chat turn with everything
+       it did written down - the prompt the model was sent, the model it
+       resolved to, the payload handed to the client, every tool call and its
+       result. Its own tab, as the Experience and Heartbeat debuggers are:
+       one run is a page of reading. Scripted scenarios run on a throwaway
+       application inside the agent's own data folder; a prompt of your own
+       runs on this one. -->
+  <section id="chatdebug" class="tab">
+    <div class="chat-debugger-shell">
+      <div class="card">
+        <div class="chat-debugger-heading">
+          <div><h2>Chat debugger</h2>
+            <p class="muted">Run the scripted scenarios, or a prompt of your own, and read
+              each step of the turn: the exact prompt and tools sent, the model it
+              resolved to, what came back, and every tool call.</p>
+          </div>
+          <button type="button" class="small" id="chat-debugger-run-suite">Run every scenario</button>
+        </div>
+        <div class="chat-debugger-custom">
+          <label for="chat-debugger-prompt">A prompt of your own</label>
+          <textarea id="chat-debugger-prompt" rows="3"
+                    placeholder="Sent through the configured model, as a chat message"></textarea>
+          <label class="chat-debugger-continue"><input type="checkbox" id="chat-debugger-continue">
+            Continue the conversation of the last prompt run here</label>
+          <p class="muted">Your own prompt runs on the real agent with its normal tools and
+            rules: it can change files in the workspace and the calendar, and it is
+            kept as a conversation in the Chat tab.</p>
+          <button type="button" id="chat-debugger-run-custom">Run this prompt</button>
+        </div>
+      </div>
+      <div class="chat-debugger-columns">
+        <section class="card chat-debugger-tests">
+          <div class="chat-debugger-section-head"><h3>Scenarios</h3>
+            <span id="chat-debugger-test-status" class="muted"></span></div>
+          <div id="chat-debugger-tests"><p class="muted">Loading.</p></div>
+        </section>
+        <section class="card chat-debugger-history">
+          <div class="chat-debugger-section-head"><h3>Runs</h3>
+            <span id="chat-debugger-run-status" class="muted"></span></div>
+          <div id="chat-debugger-runs"><p class="muted">No runs yet.</p></div>
+        </section>
+      </div>
+      <section class="card chat-debugger-transcript">
+        <div class="chat-debugger-section-head"><h3 id="chat-debugger-detail-title">A run</h3>
+          <span id="chat-debugger-detail-status" class="muted"></span></div>
+        <div id="chat-debugger-detail"><p class="muted">Run a scenario or choose a past run
+          to read it.</p></div>
+      </section>
+    </div>
+  </section>
+
+</main>
+
+<!-- Section 10, as amended: an event opens where it was clicked.
+
+     Outside the tabs, because it is an overlay over whichever one is showing
+     and belongs to none of them. It used to live inside the Calendar, which
+     was harmless while only the calendar opened things - and then states moved
+     to the Debugger, and opening one put the card inside a section with
+     display:none. The card was built, positioned and utterly invisible. -->
+<div id="event-detail" hidden></div>
+
+<!-- Section 75.3: shown only when a stored sign-in has stopped working. -->
+<div id="reauth-banner" class="reauth" hidden>
+  <span id="reauth-text"></span>
+  <button type="button" id="reauth-go" class="small">Sign in again</button>
+  <button type="button" id="reauth-dismiss" class="small secondary"
+          title="Dismiss. The model stays unusable; its state is still shown in Settings.">Dismiss</button>
+</div>
+<!-- DELEGATE WORK - and every start of work: what was handed over, the
+     context the agent collected, and its high-level plan for the user to
+     check and change before anything runs (app.js, openDelegate). -->
+<dialog id="delegate" class="delegate" aria-labelledby="delegate-title">
+  <form method="dialog" class="delegate-form" id="delegate-form">
+    <h3 id="delegate-title">Delegate work</h3>
+    <div id="delegate-body"></div>
+    <div class="delegate-actions">
+      <button type="button" class="secondary" id="delegate-cancel">Cancel</button>
+      <button type="button" id="delegate-create" hidden>Create</button>
+      <button type="button" id="delegate-start" disabled>Start</button>
+    </div>
+  </form>
+</dialog>
+<div id="toast"></div>
+<script src="/chat-navigation.js"></script>
+<script src="/chat.js"></script>
+<script src="/i18n.js"></script>
+<script src="/app.js"></script>
+<script src="/debugger.js"></script>
+<script src="/chat-debugger.js"></script>
+</body>
+</html>

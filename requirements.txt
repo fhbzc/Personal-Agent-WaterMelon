@@ -1,0 +1,30 @@
+# Core runtime -------------------------------------------------------------
+# The agent runs on the standard library alone (sqlite3, tkinter, http.server).
+# Everything below adds capability and degrades gracefully when missing -
+# the platform capability map reports what is actually available.
+
+anthropic>=1.0.0        # official Anthropic SDK (Anthropic model provider)
+cryptography>=42.0      # Ed25519 agent identity, credential encryption at rest
+psutil>=5.9             # process metrics, active window process lookup
+watchdog>=4.0           # realtime filesystem events (falls back to polling)
+pillow>=10.0            # character package rendering (falls back to vector shapes)
+pystray>=0.19           # the agent's icon beside the clock (none without it)
+keyring>=25.0           # OS keychain credential storage (falls back to encrypted file)
+tzdata>=2024.1          # named time zones where the system has no IANA database (Windows)
+comtypes>=1.4; sys_platform == 'win32'   # UI Automation: reading the window in front (19.2)
+pypdf>=4.0              # the text of a PDF the user opens (19); Word and PowerPoint need nothing
+
+# Reading states by meaning rather than by which words they share (34.3).
+# Optional like everything else here: with no model on disk the state
+# heartbeat compares words, says so on its page, and carries on. The model
+# itself is ninety megabytes, downloaded once, and runs on the processor.
+numpy>=1.24              # scoring pairs of state vectors, in the agent's own process
+torch>=2.0               # the tensor library the sentence model runs on, in its own process
+transformers>=4.40       # loading and running all-MiniLM-L6-v2 locally
+pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'  # per-pixel macOS avatar transparency
+
+# Development ---------------------------------------------------------------
+pytest>=8.0
+# Account sign-in (section 75.2): lets the application host a provider tool
+# that renders only to a terminal, instead of handing the user to a console.
+pywinpty; sys_platform == 'win32'

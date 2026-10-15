@@ -7983,6 +7983,7 @@ Both domains live inside the single writable root defined in section 110.1, as s
 
 # 110.1 Single Writable Root
 <!-- number: 110.1 | label: 110.1 | id: s110-1 | page: 142 -->
+<!-- note: 2026-10-15: the data folder is chosen when installing, and a different folder is a different agent - nothing shared, nothing taken from elsewhere, and never listened to. -->
 
 The user configures exactly one writable root directory.
 
@@ -8082,6 +8083,8 @@ So the refusal is expected, and it is waited out rather than reported:
 - A move that fails this way is retried for a short while before it is treated as a fault
 - The user is not asked to act on it. There is nothing they could do, and the file is saved a moment later
 - A refusal that outlasts the retries is a real fault and is raised, not silently swallowed - a setting the user changed must never be quietly lost
+
+*Amended 2026-10-15:* the root - the DATA FOLDER - is chosen when the agent is installed and written beside the program (`data_root.txt`); run from source it is given with `python run.py --root <folder>`. It is found in that order: `--root`, `PERSONALIZED_AGENT_HOME`, the installer's choice, then `~/PersonalizedAgent`. A different data folder is a different agent: its own calendar, contacts, lessons and settings, and its own keys in the system's credential store - only the standard folder keeps the plain service name, so a chosen one never reads or overwrites another's keys. State from the pre-110.1 locations is moved only into the standard folder, never into one the user chose. The data folder is never listened to, whatever the directory exclusions say (`common/file_noise.py`, `excluded_folders`), and Settings shows it locked, first among the folders not listened to. A data folder must be empty, or hold only an earlier agent's data (workspace and internal): everything in it is the agent's and never listened to, so a folder with other things in it - Documents, a drive, a project - would hide the work kept there; the program refuses to start in one, and the installer refuses to choose one (`common/paths.py`, `data_folder_problem`). Only one agent runs at a time, whichever folder it uses (110.2).
 
 # 110.2 Single Running Instance
 <!-- number: 110.2 | label: 110.2 | id: s110-2 | page: 141 -->
@@ -8904,6 +8907,8 @@ The Windows installer (`build/windows/installer.iss`) asks first which of the fi
 The installer's last page asks whether the agent starts at sign-in, ticked by default, and runs `--autostart on` as the user who installed it. Left unticked, it runs `--autostart off`, so the program's own default (on) does not turn it back on at first start. The uninstaller removes the entry and Explorer's Delegate work menu.
 
 `platform_layer/autostart.py` uses each system's own mechanism in the user's own area, needing no administrator: the HKCU Run key on Windows, a LaunchAgent on macOS, an XDG autostart entry on Linux. The setting `start_at_login` is the truth: each start puts the system's entry back in line with it, with the program as it was started now - the installed executable, or Python with run.py, the same root and headless if headless - so a moved installation is followed and one switched off stays off.
+
+*Amended 2026-10-15:* after where the program goes, the installer asks WHERE THE DATA IS KEPT - `%USERPROFILE%\PersonalizedAgent` by default, the previous choice on an upgrade, never inside Program Files - and writes it beside the program. A folder that already holds an agent's data is used only if the user says so; No keeps them on the page to choose another. Uninstalling removes the program and leaves the data folder.
 
 # 134. The Interface in the Display Language
 <!-- number: 134 | label: 134. | id: s134 | page: 148 -->

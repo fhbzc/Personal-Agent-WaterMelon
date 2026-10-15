@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conversation - Personalized Agent</title>
+<!-- Section 7.1, as amended: the conversation interface, on its own - the
+     desktop agent clicked once. The same conversation as the main page's
+     Chat tab, drawn by the same script (chat.js): one conversation
+     interface, opened in a window of its own. -->
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body class="chat-window">
+  <div class="chat-only">
+    <header class="chat-head">
+      <h1 id="agent-name">Conversation</h1>
+      <span class="muted" id="chat-state"></span>
+      <span style="flex:1"></span>
+      <button type="button" id="open-app" class="small secondary">Open the full interface</button>
+    </header>
+    <div class="chat-layout">
+      <div class="chat-workspace">
+        <div class="chat-toolbar">
+          <button type="button" class="chat-nav-icon" data-chat-sidebar-open
+                  aria-label="Open the sidebar" aria-controls="chat-sidebar"
+                  aria-expanded="false">&#9776;</button>
+          <span data-chat-title>New chat</span>
+        </div>
+        <div class="card chat-card">
+          <div id="chat-log"></div>
+          <form id="chat-form">
+            <input id="chat-input" placeholder="Ask the agent…" autocomplete="off" autofocus>
+            <button type="submit">Send</button>
+          </form>
+          <div class="muted" id="chat-meta"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="toast"></div>
+<script src="/i18n.js"></script>
+<script src="/chat-navigation.js"></script>
+<script src="/chat.js"></script>
+<script>
+"use strict";
+/* How this window asks the agent, and says things; the conversation itself
+   is chat.js's. */
+const api = {
+  async get(path) {
+    const response = await fetch(path, { headers: { Accept: "application/json" } });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || response.statusText);
+    return data;
+  },
+  async post(path, body) {
+    const response = await fetch(path, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || response.statusText);
+    return data;
+  },
+};
+
+function toast(message, kind = "info") {
+  const box = document.getElementById("toast");
+  const one = document.createElement("div");
+  one.className = "toast-item";
+  one.textContent = message;
+  if (kind === "error") one.style.borderLeftColor = "var(--err)";
+  box.appendChild(one);
+  setTimeout(() => one.remove(), 6000);
+}
+
+const chat = window.createChat({ api, toast });
+
+document.getElementById("open-app").addEventListener("click", () => { location.href = "/"; });
+
+/* The list of conversations, and the one the address names - drawn first,
+   so an opening message the agent wanted to say (section 7.4) lands under
+   it rather than being cleared by it. */
+(async () => {
+  if (chat) await chat.activate();
+  const opening = new URLSearchParams(location.search).get("message");
+  if (chat && opening) chat.say(opening);
+  document.getElementById("chat-input").focus();
+})();
+</script>
+</body>
+</html>

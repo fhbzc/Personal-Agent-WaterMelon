@@ -1,0 +1,3640 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --ink: #1c2230;
+  --muted: #6b7386;
+  --line: #e2e5ec;
+  --accent: #3d6be5;
+  --ok: #2f9e6b;
+  --warn: #d08a2c;
+  --err: #cf4b45;
+  /* A destructive action: its words on a plain button, and its fill. */
+  --danger-ink: #c0392f;
+  --danger-fill: #c62f27;
+  /* WHO MADE A MODEL CALL, on the chart of a run's calls: the first three
+     colours of the token chart (TOKEN_COLOURS in app.js), checked together
+     - every pair, for colour-blind readers too - on this panel's colour in
+     each theme with the dataviz palette validator. The third, on white, is
+     under 3:1: the chart has its table beneath it. */
+  --xp-call-builder: #2a78d6;
+  --xp-call-reviewer: #eb6834;
+  --xp-call-single: #1baf7a;
+  /* A heading meant to stand out: the darkest ink here, white in the dark. */
+  --heading-bright: #0f1420;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171d;
+    --panel: #1c2028;
+    --ink: #e6e9f0;
+    --muted: #9aa3b5;
+    --line: #2c313c;
+    --accent: #6f95ff;
+    --danger-ink: #ff8a80;
+    --danger-fill: #d93a32;
+    --xp-call-builder: #3987e5;
+    --xp-call-reviewer: #d95926;
+    --xp-call-single: #199e70;
+    --heading-bright: #ffffff;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+header {
+  display: flex; align-items: center; gap: 16px;
+  padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 10;
+}
+header h1 { font-size: 16px; margin: 0; letter-spacing: .2px; }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+nav button {
+  border: 1px solid transparent; background: transparent; color: var(--muted);
+  padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
+}
+nav button:hover { background: var(--bg); }
+nav button.active { color: var(--ink); background: var(--bg); border-color: var(--line); }
+.pill {
+  margin-left: auto; font-size: 12px; padding: 4px 10px; border-radius: 999px;
+  background: var(--bg); border: 1px solid var(--line); color: var(--muted);
+}
+/* NEARLY THE WHOLE WIDTH: at 1180px the page was as narrow as the chat's
+   own small window. */
+main { padding: 18px 24px; max-width: 2400px; margin: 0 auto; }
+.tab { display: none; }
+.tab.active { display: block; }
+.row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px 16px; margin-bottom: 14px; flex: 1 1 320px;
+}
+.card.grow { flex: 1 1 420px; }
+.card h3 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase;
+  letter-spacing: .6px; color: var(--muted); font-weight: 600; }
+.stat .big { font-size: 26px; font-weight: 600; }
+.muted { color: var(--muted); font-size: 12px; }
+.bars { display: flex; flex-direction: column; gap: 6px; }
+.bar-row { display: grid; grid-template-columns: 150px 1fr 80px; gap: 8px; align-items: center;
+  cursor: default; width: 100%; text-align: left; background: none; border: 0;
+  color: inherit; font: inherit; padding: 2px 4px; border-radius: 6px; }
+.bar-row.clickable { cursor: pointer; }
+.bar-row.clickable:hover { background: var(--bg); }
+.bar-row.clickable:hover .bar-label { color: var(--accent); }
+.bar-row.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.bar-row.selected { background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); }
+.bar-row.selected .bar-label { color: var(--accent); font-weight: 600; }
+/* Section 9, as amended: activity through the day, one line per application. */
+.chart { margin-top: 10px; }
+.line-chart { width: 100%; height: auto; overflow: visible; }
+.chart-grid { stroke: var(--line); stroke-width: 1; }
+.chart-axis { fill: var(--muted); font-size: 11px; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px;
+  color: var(--muted); margin-bottom: 4px; }
+.chart-legend .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.chart-legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-track { background: var(--bg); border-radius: 6px; height: 14px; overflow: hidden;
+  border: 1px solid var(--line); }
+.bar-fill { background: var(--accent); height: 100%; }
+.bar-value { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 600; font-size: 12px; }
+td.actions { white-space: nowrap; }
+button, input, select, textarea {
+  font: inherit; color: inherit;
+}
+button {
+  background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+  padding: 7px 12px; cursor: pointer;
+}
+button.secondary { background: var(--bg); color: var(--ink); border: 1px solid var(--line); }
+button.small { padding: 4px 8px; font-size: 12px; }
+input, select, textarea {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+  padding: 7px 9px; width: 100%;
+}
+label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px; align-items: end; }
+.grid .wide { grid-column: 1 / -1; }
+.toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+.toolbar input { width: auto; }
+/* Section 13, as amended: the drawing gets the room, the inspector gets the
+   detail, and neither squeezes the other out. */
+.graph-wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  gap: 12px; align-items: stretch; }
+@media (max-width: 900px) { .graph-wrap { grid-template-columns: 1fr; } }
+#graph-canvas { background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+  width: 100%; height: 560px; display: block; }
+#node-panel { max-height: 560px; overflow: auto; font-size: 13px; padding-right: 4px; }
+.graph-legend { display: flex; flex-wrap: wrap; gap: 12px; margin: 6px 0 10px;
+  font-size: 12px; color: var(--muted); }
+.graph-legend .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.graph-legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.edge-list { list-style: none; margin: 0; padding: 0; display: flex;
+  flex-direction: column; gap: 8px; }
+.edge-item { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+  border-left-width: 3px; }
+.edge-item.outgoing { border-left-color: #3d6be5; }
+.edge-item.incoming { border-left-color: #2f9e6b; }
+.edge-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.edge-head .edge-dir { font-size: 14px; }
+.edge-head .edge-other { color: var(--muted); }
+.edge-head .edge-weight { margin-left: auto; font-variant-numeric: tabular-nums; }
+.edge-text { margin-top: 4px; line-height: 1.5; }
+.edge-log { margin-top: 6px; font-size: 12px; }
+.edge-log ul { margin: 6px 0 0 16px; padding: 0; }
+.edge-meta { margin-top: 4px; font-size: 11px; word-break: break-all; }
+.edge-actions { margin-top: 6px; }
+.edge-counts { margin-bottom: 6px; }
+.node-content summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+#node-panel h4 { margin: 6px 0; }
+pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px; overflow: auto; max-height: 260px; font-size: 12px; }
+.chat-card { display: flex; flex-direction: column; height: 70vh; }
+#chat-log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 10px;
+  padding-right: 6px; }
+.msg { padding: 9px 12px; border-radius: 12px; max-width: 78%; white-space: pre-wrap; }
+.msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
+.msg.assistant { align-self: flex-start; background: var(--bg); border: 1px solid var(--line); }
+#chat-form { display: flex; gap: 8px; margin-top: 10px; }
+.setting-row { display: grid; grid-template-columns: 260px 1fr; gap: 10px; align-items: center;
+  padding: 6px 0; border-bottom: 1px solid var(--line); }
+/* Section 12, as amended: the explanation sits under the control it explains,
+   smaller and secondary, and stays readable at ~80 characters a line. */
+.setting-row { align-items: start; }
+.setting-row > div:first-child { padding-top: 6px; }
+.setting-row .desc { grid-column: 2 / -1; font-size: 12px; line-height: 1.5;
+  max-width: 62ch; margin: -2px 0 2px; }
+.setting-row input.readonly, .setting-row select.readonly,
+.setting-row textarea.readonly { opacity: .75; cursor: default; }
+.avatar-tools { display: flex; gap: 24px; flex-wrap: wrap; align-items: start; }
+.avatar-card { grid-column: 1 / -1; padding-top: 12px; margin-top: 6px;
+  border-top: 1px solid var(--line); }
+.avatar-card h4 { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+.avatar-upload { display: grid; gap: 9px; min-width: 180px; }
+#avatar-preview { width: 128px; height: 128px; object-fit: cover; border-radius: 12px;
+  border: 1px solid var(--line); background: transparent; image-rendering: pixelated; }
+.pixel-painter { display: grid; gap: 9px; }
+.painter-toolbar { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
+.painter-toolbar label { width: 72px; }
+.painter-toolbar select { padding: 5px 7px; }
+.painter-colours { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+.painter-colours label { width: 94px; }
+.painter-colours input { padding: 1px; height: 31px; }
+.painter-background { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+.painter-background label { width: 94px; }
+.painter-background input { padding: 1px; height: 31px; }
+.recent-colours { display: flex; gap: 6px; min-height: 31px; align-items: center; }
+.recent-colour { width: 25px; height: 25px; padding: 0; border: 1px solid var(--line);
+  border-radius: 50%; box-shadow: inset 0 0 0 2px rgba(255,255,255,.5); }
+#pixel-painter { width: 256px; height: 256px; border: 1px solid var(--line); border-radius: 6px;
+  background-color: #fff; background-image: linear-gradient(45deg, #e7e9ee 25%, transparent 25%),
+  linear-gradient(-45deg, #e7e9ee 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #e7e9ee 75%), linear-gradient(-45deg, transparent 75%, #e7e9ee 75%);
+  background-size: 16px 16px; background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  image-rendering: pixelated; touch-action: none; cursor: crosshair; }
+@media (max-width: 720px) { #pixel-painter { width: min(256px, 78vw); height: min(256px, 78vw); } }
+@media (max-width: 720px) {
+  .setting-row { grid-template-columns: 1fr; }
+  .setting-row .desc { grid-column: 1 / -1; }
+}
+.section-title { margin: 16px 0 4px; font-weight: 600; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px;
+  border: 1px solid var(--line); }
+.badge.ok { color: var(--ok); border-color: var(--ok); }
+.badge.warn { color: var(--warn); border-color: var(--warn); }
+.badge.err { color: var(--err); border-color: var(--err); }
+#toast { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column;
+  gap: 8px; z-index: 40; }
+.toast-item { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 8px; padding: 10px 14px; box-shadow: 0 6px 20px rgba(0,0,0,.12); max-width: 340px; }
+
+/* ------------------------------------------------------- System Debugger */
+/* Section 14.31: interactive system map, inspector, trace timeline. */
+:root {
+  --state-running: #2f9e6b;
+  --state-idle: #6b7386;
+  --state-busy: #3d6be5;
+  --state-degraded: #d08a2c;
+  --state-blocked: #b8531f;
+  --state-failed: #cf4b45;
+  --state-stopped: #8b93a7;
+  --state-disabled: #9aa3b5;
+  --state-unavailable: #7a7f8c;
+  --state-security: #a02bc0;
+}
+.dbg-shell {
+  display: flex; flex-direction: column; gap: 0;
+  height: calc(100vh - 104px); min-height: 560px;
+  border: 1px solid var(--line); border-radius: 12px;
+  /* Scrolls rather than clips. The panels below the map have their own
+     heights and together they can exceed the viewport; hidden meant the
+     last of them was simply unreachable. */
+  overflow: auto;
+  background: var(--panel);
+}
+.dbg-toolbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.dbg-title { font-size: 13px; letter-spacing: .3px; }
+.dbg-toolbar input[type="search"] { width: 260px; }
+.dbg-toolbar label { flex-direction: row; align-items: center; gap: 6px; }
+.dbg-toolbar select { width: auto; }
+/* The map keeps a floor.
+
+   It was the only child of the shell allowed to flex, with min-height: 0, so
+   every pixel the fixed-height panels below it wanted came out of the map -
+   and once they added up to more than the shell, the map was zero pixels
+   tall. A canvas that size draws nothing and reports no error, so the
+   Debugger showed its panels and simply had no component graph. */
+.dbg-body { display: flex; flex: 1 1 auto; min-height: 360px; }
+.dbg-map-wrap { position: relative; flex: 1; min-width: 0; background: var(--bg); }
+#dbg-map { display: block; width: 100%; height: 100%; cursor: grab; }
+#dbg-map.dragging { cursor: grabbing; }
+.dbg-legend {
+  position: absolute; right: 10px; top: 8px; display: flex; gap: 9px; flex-wrap: wrap;
+  font-size: 11px; color: var(--muted); background: color-mix(in srgb, var(--panel) 88%, transparent);
+  padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; max-width: 46%;
+  pointer-events: none;
+}
+.dbg-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.dbg-legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.dbg-split-v { width: 5px; cursor: col-resize; background: var(--line); flex: none; }
+.dbg-split-h { height: 5px; cursor: row-resize; background: var(--line); }
+.dbg-split-v:hover, .dbg-split-h:hover { background: var(--accent); }
+.dbg-inspector {
+  width: 380px; flex: none; display: flex; flex-direction: column;
+  border-left: 1px solid var(--line); background: var(--panel); min-width: 0;
+}
+.dbg-inspector.collapsed { width: 42px; }
+.dbg-inspector.collapsed .dbg-tabs,
+.dbg-inspector.collapsed .dbg-inspector-body,
+.dbg-inspector.collapsed .dbg-inspector-head h3,
+.dbg-inspector.collapsed .dbg-inspector-head .muted { display: none; }
+.dbg-inspector-head {
+  display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.dbg-inspector-head h3 { margin: 2px 0 0; font-size: 15px; }
+.dbg-inspector-head > div { flex: 1; min-width: 0; }
+.dbg-tabs { display: flex; gap: 2px; padding: 6px 8px; border-bottom: 1px solid var(--line);
+  flex-wrap: wrap; }
+.dbg-tabs button {
+  background: none; border: 1px solid transparent; color: var(--muted);
+  font-size: 12px; padding: 4px 9px; border-radius: 7px; cursor: pointer;
+}
+.dbg-tabs button.active { background: var(--bg); color: var(--ink); border-color: var(--line); }
+.dbg-inspector-body { flex: 1; overflow: auto; padding: 10px 12px; font-size: 12.5px; }
+.dbg-kv { display: grid; grid-template-columns: 132px 1fr; gap: 3px 10px; margin-bottom: 10px; }
+.dbg-kv dt { color: var(--muted); }
+.dbg-kv dd { margin: 0; word-break: break-word; }
+.dbg-row {
+  display: flex; gap: 8px; align-items: baseline; padding: 5px 6px; border-radius: 6px;
+  cursor: pointer; border-bottom: 1px solid var(--line);
+}
+.dbg-row:hover { background: var(--bg); }
+.dbg-row .t { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 11px;
+  white-space: nowrap; }
+.dbg-row .op { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.dbg-row .ms { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.dbg-test { border: 1px solid var(--line); border-radius: 9px; padding: 9px 10px;
+  margin-bottom: 8px; }
+.dbg-test header { display: flex; align-items: center; gap: 8px; }
+.dbg-test header strong { flex: 1; font-size: 12.5px; }
+.dbg-test p { margin: 5px 0 0; color: var(--muted); }
+.dbg-test .out { margin-top: 7px; padding-top: 7px; border-top: 1px dashed var(--line); }
+.risk { font-size: 10.5px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line);
+  color: var(--muted); white-space: nowrap; }
+.risk.safe_write { color: var(--warn); border-color: var(--warn); }
+.risk.external_request { color: var(--accent); border-color: var(--accent); }
+.risk.state_changing { color: var(--err); border-color: var(--err); }
+.dbg-timeline { height: 158px; display: flex; flex-direction: column; background: var(--panel);
+  border-top: 1px solid var(--line); }
+.dbg-timeline.collapsed { height: 38px; }
+.dbg-timeline.collapsed .dbg-timeline-body { display: none; }
+.dbg-timeline-head { display: flex; align-items: center; gap: 10px; padding: 6px 12px;
+  border-bottom: 1px solid var(--line); font-size: 13px; }
+.dbg-timeline-head select { width: auto; }
+/* Each control's name beside it, on the header's one line - not above it,
+   as labels are elsewhere: stacked, a named select sat lower than an unnamed
+   one, and the note beside them lower still. */
+.dbg-timeline-head label { flex-direction: row; align-items: center; gap: 6px; }
+.dbg-timeline-head select { margin: 0; }
+.dbg-timeline-head button { margin-left: auto; }
+.dbg-timeline-body { flex: 1; display: flex; min-height: 0; }
+.dbg-trace-list { width: 46%; overflow: auto; border-right: 1px solid var(--line); }
+.dbg-trace-detail { flex: 1; overflow: auto; padding: 8px 12px; font-size: 12.5px; }
+.dbg-trace {
+  padding: 7px 12px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 12.5px;
+}
+.dbg-trace:hover { background: var(--bg); }
+.dbg-trace.active { background: var(--bg); border-left: 2px solid var(--accent); }
+.dbg-trace .path { color: var(--muted); font-size: 11.5px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.dbg-step { display: grid; grid-template-columns: 92px 1fr auto; gap: 8px; align-items: baseline;
+  padding: 4px 0; border-bottom: 1px dashed var(--line); cursor: pointer; }
+.dbg-step:hover { color: var(--accent); }
+.dbg-step .when { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 11px; }
+.dbg-step .gap { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.dbg-step.error { color: var(--err); }
+.dbg-step.security { color: var(--state-security); }
+.dbg-empty { color: var(--muted); padding: 10px 12px; font-size: 12.5px; }
+
+/* Account sign-in hosted in the window (section 75.2) */
+/* A `display` rule beats the hidden attribute, so say so explicitly: without
+   this the sign-in panel is on screen before any sign-in has been started. */
+[hidden] { display: none !important; }
+.login-panel { border: 1px solid var(--line); border-radius: 8px; padding: 12px;
+  display: flex; flex-direction: column; gap: 10px; background: var(--panel); }
+.login-panel .login-url { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.login-panel .login-url a { word-break: break-all; font-size: 12px; }
+.login-panel .login-code { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.login-panel .login-code label { display: flex; flex-direction: column; gap: 4px;
+  flex: 1 1 320px; font-size: 12px; }
+.method-blocked { margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--warn);
+  border-radius: 4px; font-size: 12px; line-height: 1.5; background: var(--bg); }
+
+/* ------------------------------------------------- calendar (section 10) */
+.cal-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 10px; }
+.cal-toolbar h3 { margin: 0; flex: 1; }
+.cal-nav { display: flex; gap: 6px; }
+.cal-grid { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.cal-weekdays, .cal-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.cal-weekdays { background: var(--bg); }
+.cal-weekdays div { padding: 8px 10px; font-size: 12px; font-weight: 600; color: var(--muted);
+  border-bottom: 1px solid var(--line); text-align: left; }
+.cal-day { min-height: 104px; border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line); padding: 6px; display: flex; flex-direction: column;
+  gap: 4px; cursor: pointer; background: var(--panel); }
+.cal-week .cal-day:first-child { border-left: 0; }
+.cal-day.outside { background: var(--bg); }
+.cal-day.outside .cal-date { color: var(--muted); opacity: .7; }
+.cal-day.today .cal-date { background: var(--accent); color: #fff; border-radius: 999px;
+  width: 24px; height: 24px; display: grid; place-items: center; }
+.cal-grid.month .cal-day.selected { box-shadow: inset 0 0 0 2px var(--accent); }
+.cal-date { font-size: 12px; font-variant-numeric: tabular-nums; }
+.cal-chips { display: flex; flex-direction: column; gap: 3px; overflow: hidden; }
+/* An opened day is as tall as it needs to be. The row grows with it, which is
+   the honest thing for a month that really does have sixteen things on one
+   day - hiding them behind a number the user cannot click is not. */
+.cal-day.expanded { z-index: 1; }
+.cal-day.expanded .cal-chips { overflow: visible; }
+.cal-chip { display: flex; gap: 5px; align-items: baseline; width: 100%; text-align: left;
+  font: inherit; font-size: 11px; border: 0; border-radius: 4px; padding: 2px 5px;
+  cursor: pointer; background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: inherit; overflow: hidden; }
+.cal-chip .cal-chip-time { font-variant-numeric: tabular-nums; color: var(--muted);
+  white-space: nowrap; flex: none; }
+.cal-chip .cal-chip-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-chip.status-completed { background: color-mix(in srgb, var(--ok) 18%, transparent); }
+.cal-chip.status-failed { background: color-mix(in srgb, var(--err) 18%, transparent); }
+.cal-chip.status-disabled, .cal-chip.status-cancelled { background: var(--bg);
+  color: var(--muted); }
+/* Closed as already done: still there, struck through, and saying why. */
+.cal-chip.status-closed { background: var(--bg); color: var(--muted); }
+.cal-chip .cal-chip-off { flex: none; color: var(--muted); font-size: 0.85em;
+  font-style: italic; }
+.cal-chip.status-closed .cal-chip-title,
+.cal-chip.status-cancelled .cal-chip-title { text-decoration: line-through; }
+/* It looks like the label it replaced and behaves like the button it now is. */
+.cal-more {
+  font-size: 11px; color: var(--muted); padding: 0 0 0 5px; text-align: left;
+  background: none; border: 0; cursor: pointer; width: 100%; line-height: 1.5;
+}
+.cal-more:hover { color: var(--fg); text-decoration: underline; }
+.cal-day-list { list-style: none; margin: 0; padding: 0; display: flex;
+  flex-direction: column; gap: 6px; }
+.cal-day-list li { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+  padding: 6px 0; border-bottom: 1px solid var(--line); }
+.cal-day-time { font-variant-numeric: tabular-nums; font-weight: 600; }
+.cal-day-name { flex: 1; }
+
+h3 .muted { font-weight: 400; font-size: 12px; margin-left: 8px; }
+.login-tools { border-left: 3px solid var(--accent); border-radius: 4px;
+  padding: 8px 10px; background: var(--bg); font-size: 12px; line-height: 1.5;
+  display: flex; flex-direction: column; gap: 2px; }
+
+/* Pages and files (section 9, as amended) */
+.detail-list { list-style: none; margin: 0; padding: 0; display: flex;
+  flex-direction: column; gap: 8px; max-height: 340px; overflow-y: auto; }
+.detail-list li { border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.detail-head { display: flex; gap: 8px; align-items: baseline; }
+.detail-count { font-variant-numeric: tabular-nums; color: var(--muted);
+  min-width: 30px; }
+.detail-name { flex: 1; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.detail-when { font-variant-numeric: tabular-nums; }
+.detail-sub { font-size: 12px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; padding-left: 38px; }
+.collection-off { border-left: 3px solid var(--warn); border-radius: 4px;
+  padding: 8px 10px; margin-bottom: 8px; font-size: 12px; background: var(--bg); }
+
+/* A sign-in that stopped working (section 75.3) */
+.reauth { position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+  z-index: 50; display: flex; gap: 12px; align-items: center; max-width: 720px;
+  background: var(--panel); border: 1px solid var(--warn); border-left-width: 3px;
+  border-radius: 8px; padding: 10px 14px; font-size: 13px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.18); }
+/* A value the user chose, and the way back (section 12.1) */
+.undo-default { margin-left: 8px; }
+
+/* Directory settings are chosen, not typed (section 12, as amended) */
+.dir-control { display: flex; flex-direction: column; gap: 6px; }
+.dir-list { display: flex; flex-direction: column; gap: 4px; }
+.dir-entry { display: flex; gap: 8px; align-items: center; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+.dir-entry .dir-path { flex: 1; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: 12px; }
+.dir-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.dir-actions .dir-typed { flex: 1 1 240px; }
+.chart-date { font-weight: 600; }
+.chart-daybreak { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart-period { font-size: 12px; margin-bottom: 2px; }
+
+tr.in-use td { background: color-mix(in srgb, var(--ok) 8%, transparent); }
+.use-provider { white-space: nowrap; }
+.choice-note { font-size: 0.85em; color: var(--muted); margin-top: 2px; }
+/* What the avatar is called, under its name box. */
+.setting-row .avatar-name-note { grid-column: 2 / -1; color: var(--ink); }
+.choice-note.warn { color: var(--warn, #b45309); font-weight: 500; }
+.panel-note { margin: -4px 0 10px; font-size: 0.9em; color: var(--muted); max-width: 70ch; }
+#model-use-panel h4, #model-register-panel h4 { margin: 14px 0 6px; font-size: 0.95em; }
+
+/* Section 9, as amended: a stretch of use, and what was open during it. */
+.interaction { border-top: 1px solid var(--line, #2a2f3d); padding: 6px 0; }
+.interaction-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.interaction-when { font-variant-numeric: tabular-nums; }
+.interaction-title { flex: 1 1 200px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.interaction-items { margin: 6px 0 4px 0; padding-left: 22px; }
+.interaction-items li { padding: 2px 0; }
+.interaction-items .muted { font-variant-numeric: tabular-nums; margin-right: 6px; }
+.ov-page { cursor: pointer; }
+.page-url { word-break: break-all; margin-bottom: 4px; }
+
+/* The application list is a column of bars; what it selects is a log, and the
+   log needs the room. They stack on a narrow window rather than being squeezed,
+   which is why nothing on the page refers to the panel's direction. */
+.ov-list { flex: 1 1 300px; max-width: 460px; }
+.ov-inspect { flex: 2 1 460px; min-width: 0; }
+.ov-inspect table { width: 100%; }
+
+/* A row with two jobs: the arrow opens what it was used for, the name opens
+   its log. They are separate controls because they are separate acts. */
+.bar-row:has(.bar-caret) { grid-template-columns: 18px 132px 1fr 80px; }
+.bar-caret {
+  background: none; border: 0; color: var(--muted); cursor: pointer;
+  padding: 0; font-size: 11px; line-height: 1; width: 18px; text-align: left;
+}
+.bar-caret:hover, .bar-caret[aria-expanded="true"] { color: var(--accent); }
+.bar-name {
+  background: none; border: 0; color: inherit; font: inherit; cursor: pointer;
+  padding: 0; text-align: left; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bar-name:hover { color: var(--accent); }
+.bar-children { margin: 0 0 6px 36px; }
+.bar-child {
+  display: flex; justify-content: space-between; gap: 8px;
+  padding: 2px 0; font-size: 0.92em;
+}
+.bar-child a { cursor: pointer; }
+
+/* The handle on a cut line: small, inline, and part of the text it belongs to
+   rather than a control sitting beside it. */
+.cut-toggle {
+  background: none; border: 0; padding: 0 0 0 6px; cursor: pointer;
+  color: var(--muted); font: inherit; font-size: 0.85em; white-space: nowrap;
+}
+.cut-toggle:hover { color: var(--accent); }
+.interaction-title { white-space: normal; }
+.expand-hint { font-size: 0.85em; margin-top: 6px; }
+
+/* A site inside an application: selectable, and marked when it is the one in view. */
+.bar-sub {
+  background: none; border: 0; color: inherit; font: inherit; cursor: pointer;
+  padding: 0; text-align: left; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bar-sub:hover { color: var(--accent); }
+.bar-child.selected { box-shadow: inset 2px 0 0 var(--accent); padding-left: 6px; }
+.bar-child.selected .bar-sub { color: var(--accent); font-weight: 600; }
+.narrowed { margin-bottom: 6px; }
+
+/* Section 15.1: the agent's progress while an answer is awaited. */
+.progress-panel {
+  border: 1px dashed var(--line); border-radius: 10px;
+  padding: 8px 12px; margin: 6px 0; font-size: 0.9em;
+}
+.progress-head { display: flex; justify-content: space-between; margin-bottom: 4px; }
+.progress-elapsed { font-variant-numeric: tabular-nums; }
+.progress-steps { list-style: none; margin: 0; padding: 0; }
+.progress-steps li { display: flex; gap: 8px; align-items: baseline; padding: 1px 0; }
+.progress-steps li.done .progress-stage { opacity: 0.7; }
+.progress-steps li.doing .progress-stage { font-weight: 600; }
+.progress-mark { width: 1em; color: var(--accent); }
+.progress-took { margin-left: auto; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: no-preference) {
+  .progress-steps li.doing .progress-mark { animation: progress-pulse 1.2s infinite; }
+}
+@keyframes progress-pulse { 50% { opacity: 0.3; } }
+
+/* Section 35, as amended: the heartbeat's checklist, beside the graph it fills. */
+.checklist-card { margin-top: 12px; }
+.checklist { margin: 0; padding-left: 20px; }
+.checklist li { padding: 2px 0; }
+.checklist li.off { opacity: 0.55; text-decoration: line-through; }
+.checklist li .muted { margin-left: 6px; font-size: 0.85em; }
+.checklist li button { margin-left: 8px; }
+.retired { margin-top: 8px; }
+.retired ul { list-style: none; padding-left: 0; margin: 6px 0 0; }
+.retired li { padding: 2px 0; font-size: 0.92em; }
+
+/* Section 34.1: states on the calendar. Distinguished from tasks by shape as
+   well as colour, because the difference is what they mean: a task runs, a
+   state is only true. */
+.cal-states { display: flex; flex-direction: column; gap: 1px; margin-bottom: 2px; }
+.cal-state {
+  font-size: 0.72em; padding: 1px 4px; border-radius: 3px;
+  border-left: 2px solid var(--muted); background: var(--bg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cal-state.agent { border-left-color: var(--accent); font-style: italic; }
+.cal-state-mark { opacity: 0.7; margin-right: 3px; }
+.cal-day-states { margin-bottom: 10px; }
+.cal-day-states h4 { margin: 0 0 4px; font-size: 0.9em; }
+.cal-state-row { padding: 3px 0; border-left: 2px solid var(--line); padding-left: 8px; }
+.cal-state-row.agent { border-left-color: var(--accent); }
+.cal-state-title { font-weight: 600; margin-right: 6px; }
+.step-detail { margin-left: 4px; }
+
+/* The event itself, opened over the grid it was clicked on. */
+/* Section 10, as amended: the detail opens beside the event, not over the
+   whole screen. The backdrop stays transparent - it exists to catch the click
+   that dismisses, not to dim the grid the user is still reading. */
+#event-detail { position: fixed; inset: 0; z-index: 40; background: transparent; }
+.event-card {
+  position: absolute;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px 16px; width: min(380px, 92vw); max-height: 70vh; overflow-y: auto;
+  box-shadow: 0 12px 32px rgba(8, 12, 20, 0.28);
+}
+.event-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.event-head h3 { margin: 0; flex: 1; font-size: 15px; text-transform: none; }
+.event-row { display: flex; gap: 10px; padding: 3px 0; font-size: 0.92em; }
+.event-label { width: 84px; color: var(--muted); flex: none; }
+.event-body { margin: 10px 0; white-space: pre-wrap; }
+.event-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.event-actions .danger { color: var(--danger-ink); border-color: var(--danger-ink); }
+/* The "Yes, delete it" that answers "are you sure": solid, so it reads as the
+   one that acts - red words on the blue of an ordinary button could hardly be
+   read, least of all on a dark page. */
+.event-actions button.danger:not(.secondary) {
+  background: var(--danger-fill); color: #fff; border: 1px solid var(--danger-fill);
+  font-weight: 600; }
+.event-actions button.danger:not(.secondary):hover { filter: brightness(1.08); }
+
+/* Section 52.1: a task that says nothing about itself says so. An empty
+   detail that renders as empty space is invisible; the whole reason this went
+   unnoticed is that a missing row looked like no row. */
+.event-detail-body { margin: 10px 0; }
+.event-body.missing { color: var(--muted); font-style: italic; }
+
+/* Section 88.1: the form the prompt sent the user to, made findable for the
+   moment they arrive at it. */
+#auth-form.wants-attention {
+  box-shadow: 0 0 0 2px var(--accent); border-radius: 10px;
+  transition: box-shadow 0.3s ease;
+}
+
+/* Section 34.1, as amended: a state on the calendar is something you can open. */
+button.cal-state { cursor: pointer; font: inherit; text-align: left; width: 100%;
+  display: block; }
+button.cal-state:hover { filter: brightness(1.06); }
+.cal-state-row[data-state] { cursor: pointer; }
+.cal-state-row[data-state]:hover { background: var(--bg); }
+.event-note { margin-top: 12px; }
+
+/* Section 34.1, as amended: the evidence behind an inferred state. */
+.state-trace { margin: 8px 0; }
+.state-trace summary { cursor: pointer; }
+.trace-reasoning { margin: 4px 0 6px; }
+.trace-evidence { margin: 0; padding-left: 20px; font-size: 0.92em; }
+.trace-evidence li { padding: 1px 0; }
+.event-row .missing { color: var(--muted); font-style: italic; }
+
+/* Section 52.2: a task that will interrupt is marked on the calendar. */
+.cal-chip-bell {
+  color: var(--warn, #b26a00);
+  font-size: 0.6em;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.cal-chip.notifies { border-left: 2px solid var(--warn, #b26a00); }
+.notify-state { display: inline-flex; align-items: center; gap: 8px; }
+.badge.notify-on { background: var(--warn-bg, #fdf1dd); color: var(--warn, #b26a00); }
+.badge.notify-off { background: var(--muted-bg, #eef0f3); color: var(--muted, #5b6472); }
+.event-why { margin-top: 10px; }
+.event-why summary {
+  cursor: pointer;
+  color: var(--muted, #5b6472);
+  font-size: 0.9em;
+}
+.event-why .event-body { margin-top: 6px; }
+
+/* Section 52.3: a run drawn from the rule, not yet reached. */
+.cal-chip.projected { opacity: 0.62; border-style: dashed; }
+
+/* Section 14.33: one panel per module. */
+.dbg-modules { display: grid; gap: 12px; padding: 12px;
+               grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.dbg-module-head { display: flex; align-items: center; gap: 8px; }
+.dbg-module-head h3 { margin: 0; }
+.dbg-module-what { margin: 6px 0 8px; }
+.dbg-module-stats { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+.dbg-stat { font-variant-numeric: tabular-nums; font-size: 0.9em; }
+.dbg-picker { display: block; margin: 10px 0; }
+.dbg-group { margin-top: 10px; }
+.dbg-group-head { display: flex; gap: 8px; align-items: baseline;
+                  font-weight: 600; margin-bottom: 4px; }
+.dbg-entry summary { cursor: pointer; font-size: 0.9em;
+                     font-variant-numeric: tabular-nums; }
+.dbg-fields { width: 100%; border-collapse: collapse; margin: 4px 0 8px; }
+.dbg-fields th { text-align: left; vertical-align: top; padding: 2px 8px 2px 0;
+                 font-weight: 500; color: var(--muted, #5b6472); white-space: nowrap; }
+.dbg-fields td { vertical-align: top; padding: 2px 0;
+                 white-space: pre-wrap; word-break: break-word; }
+.dbg-switch { display: inline-flex; align-items: center; gap: 6px; }
+.dbg-off { grid-column: 1 / -1; }
+
+/* Section 18, as amended: a detected list of assistants, ticked.
+
+   The name is read first and the tick sits at the right edge, so the ticks
+   form one column instead of trailing each name at a different distance. */
+.multi-choice { display: flex; flex-direction: column;
+                align-items: stretch; gap: 2px; }
+/* The rows are labels, and the global label rule stacks and shrink-wraps
+   them - which puts every tick at a different place, one per name length. */
+.multi-choice-row {
+  display: flex; flex-direction: row; align-items: center; gap: 10px;
+  width: 100%; box-sizing: border-box;
+  padding: 5px 8px; border-radius: 6px; cursor: pointer;
+}
+.multi-choice-where { margin-right: 0; }
+.multi-choice-row:hover { background: var(--bg, #f4f6f8); }
+.multi-choice-name { font-weight: 500; }
+.multi-choice-where { font-size: 0.85em; }
+.multi-choice-row input[type="checkbox"] {
+  /* The shared rule above gives every input width:100% and a text field's
+     padding. Left alone, the box fills the row, and margin-left:auto then has
+     no free space to push into - which is why the tick sat against the name
+     however the row was arranged. */
+  width: 18px; height: 18px; padding: 0; margin: 0;
+  flex: 0 0 auto;
+  align-self: center;
+}
+/* In a setting's row the list starts where every other switch does: its
+   ticks in the same column as theirs. */
+.setting-row .multi-choice-row { padding-left: 0; padding-right: 0; }
+.setting-row .multi-choice-note { max-width: 62ch; }
+.multi-choice-note { margin-top: 4px; font-size: 0.85em; }
+
+/* Section 34.1, as amended: the states view, inside the Debugger.
+   A month grid, because a state is a span and a list of spans loses the one
+   thing that matters about them. */
+.dbg-states { border-top: 1px solid var(--line); }
+.dbg-states-body { padding: 8px 12px 12px; overflow: auto; max-height: 46vh; }
+/* The Experience debugger: its own height, never taken from the map's; the
+   three ways side by side where there is room, one above another where not. */
+.dbg-xd { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.dbg-xd-body { padding: 8px 12px 12px; }
+.xd-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.xd-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.xd-list li { display: flex; align-items: center; gap: 4px; }
+.xd-project { background: none; border: 1px solid var(--line); border-radius: 8px;
+  padding: 4px 10px; color: inherit; font: inherit; cursor: pointer; }
+.xd-project.selected { border-color: var(--accent); font-weight: 600; }
+.xd-new { display: grid; gap: 6px; max-width: 720px; padding: 8px 10px; margin-bottom: 10px;
+  border: 1px solid var(--line); border-radius: 8px; }
+.xd-new label { display: grid; gap: 3px; }
+.xd-subfolders { margin: 4px 0; }
+/* The Experience debugger takes the whole width of the window: three ways
+   read side by side need it, and the page's usual 1180px held them to a
+   third of that each. */
+main:has(> #xdebug.active) { max-width: none; }
+/* What a merge would bring over, before it is confirmed. */
+.cx-merge-preview { flex-basis: 100%; margin: 6px 0; }
+.cx-merge-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 16px; }
+.cx-merge-grid h5 { margin: 4px 0; font-size: 12px; color: var(--muted); }
+/* Real work's run beside the project's name: its state, Pause, Stop. */
+.xp-title-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.xp-title-row h2{margin-right:4px}
+.xp-title-run{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+.xp-title-run:empty{display:none}
+/* The way shown takes the whole width: a run's live session, its versions
+   and its slides need the room - three narrow columns squeezed every line of
+   them. One way at a time, chosen by its tab (.xd-tabs). */
+.xd-variants { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px;
+  margin-top: 0; }
+.xd-variant { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px;
+  min-width: 0; overflow-wrap: anywhere; }
+.xd-variant h4 { margin: 0 0 2px; }
+.xd-limits label { display: inline-flex; gap: 4px; align-items: center; margin-right: 8px; }
+.xd-limits input { width: 7.5em; }
+.xp-answer-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 20rem;
+  overflow: auto; font-size: 12px; overscroll-behavior: contain; }
+.dbg-state-grid {
+  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px;
+}
+.dbg-state-cell {
+  min-height: 74px; padding: 4px; border: 1px solid var(--line); border-radius: 4px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.dbg-state-cell.outside { opacity: 0.45; }
+/* An opened day grows the row it is in rather than scrolling inside itself:
+   the point of opening it is to see all of them at once, and a cell with its
+   own scrollbar hides the rest exactly as "+5 more" did. */
+.dbg-state-cell.expanded {
+  background: var(--panel-2, rgba(255, 255, 255, 0.03));
+  outline: 1px solid var(--accent);
+}
+.dbg-state-more {
+  background: none; border: 0; padding: 1px 2px; cursor: pointer;
+  color: var(--muted); font-size: 11px; text-align: left; text-decoration: underline;
+}
+.dbg-state-more:hover { color: var(--fg); }
+.dbg-state-day { font-size: 11px; color: var(--muted); }
+.dbg-states-body .cal-state { width: 100%; text-align: left; }
+
+/* Section 14.33, as amended: token usage, one line per kind of work. */
+.dbg-tokens { border-top: 1px solid var(--line); }
+.dbg-tokens-body { padding: 8px 12px 12px; position: relative; }
+/* What the pointer is over: a faint band, and the numbers beside it. */
+.dbg-tokens-band { position: absolute; pointer-events: none;
+  background: var(--ink); opacity: 0.07; border-radius: 3px; }
+.dbg-tokens-tip { position: absolute; pointer-events: none; z-index: 5;
+  background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 8px; font-size: 11px; min-width: 150px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); }
+.dbg-tokens-tip table { border-collapse: collapse; margin-top: 4px; width: 100%; }
+.dbg-tokens-tip td { padding: 1px 0; }
+.dbg-tokens-tip td + td { text-align: right; padding-left: 12px;
+  font-variant-numeric: tabular-nums; }
+.dbg-tokens-tip .dbg-token-swatch { width: 8px; height: 8px; margin-right: 4px; }
+#dbg-tokens-chart { width: 100%; height: 180px; display: block; }
+.dbg-tokens-legend {
+  display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px;
+}
+.dbg-token-key {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: none; border: 0; padding: 1px 3px; cursor: pointer;
+  color: var(--fg); font-size: 11px; border-radius: 3px;
+}
+.dbg-token-key:hover { background: var(--panel-2, rgba(255,255,255,0.05)); }
+/* A line put away still has to be findable to bring back, so it fades rather
+   than disappears. */
+.dbg-token-key.off { opacity: 0.4; text-decoration: line-through; }
+.dbg-token-swatch {
+  width: 10px; height: 3px; border-radius: 2px; display: inline-block;
+}
+/* The data folder in the list of folders never listened to: there, and
+   locked - no Remove. */
+.dir-entry-fixed { opacity: 0.85; }
+.dir-entry-fixed .dir-path::before { content: "F512 A0"; }
+.dir-fixed-note { font-size: 11px; margin-left: 8px; }
+/* The key to the lighter part of a bar: a colour, and above it the same,
+   lighter. */
+.dbg-token-cache-key { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; }
+.dbg-token-swatch-cache {
+  height: 10px; width: 8px; border-radius: 2px;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--muted) 45%, transparent) 50%,
+                              var(--muted) 50%);
+}
+
+/* ------------------------------------------------- retrieval cost (14.36) */
+.dbg-retrieval { border: 1px solid var(--line); border-radius: 10px; margin: 12px 0; }
+.dbg-retrieval-body { padding: 10px 12px 14px; }
+#dbg-retrieval-chart { width: 100%; display: block; }
+.dbg-retrieval-kinds {
+  display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0;
+}
+.dbg-retrieval-kind {
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
+  display: flex; flex-direction: column; gap: 2px; font-size: 0.78rem;
+}
+.dbg-retrieval-kind .k-name { font-weight: 600; }
+.dbg-retrieval-kind .k-mean { font-size: 1.05rem; }
+.dbg-retrieval-list { max-height: 16rem; overflow: auto; font-size: 0.78rem; }
+.dbg-retrieval-row {
+  display: grid; grid-template-columns: 4.5rem 8rem 5rem 10rem 1fr;
+  gap: 6px; padding: 3px 0; border-bottom: 1px solid var(--line);
+}
+.dbg-retrieval-row .q-ms { text-align: right; }
+.dbg-retrieval-row .q-text { overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+
+@media (max-width: 900px) {
+  .dbg-retrieval-row { grid-template-columns: 1fr 1fr; }
+}
+
+.dbg-retrieval-sub { margin: 12px 0 4px; font-size: 0.82rem; opacity: 0.8; }
+
+/* Section 52.7: the reason an agent-created entry exists, shown rather than
+   hidden. `missing` is for one whose creator recorded none - a fault, and it
+   should look like one. */
+.event-why { margin: 8px 0; padding: 8px 10px; border-left: 2px solid var(--line); }
+.event-why.missing { border-left-color: #d68a8a; opacity: 0.85; }
+
+/* What an answer was built from (section 44.3). */
+.built-from { margin: 4px 0 10px 0; font-size: 12px; }
+.built-from > summary {
+  cursor: pointer; color: var(--muted); padding: 2px 0; list-style: revert;
+}
+.built-from > summary:hover { color: var(--fg); }
+.built-list { border-left: 2px solid var(--line); margin: 6px 0 0 6px; padding-left: 10px; }
+.built-where { color: var(--muted); margin: 8px 0 4px 0; }
+.built-record > summary { cursor: pointer; padding: 2px 0; }
+.built-record > summary:hover { text-decoration: underline; }
+.built-record .muted { font-size: 11px; }
+.built-body { margin: 2px 0 6px 12px; }
+.built-body p { margin: 3px 0; }
+
+/* A citation in an answer, and the card it opens (section 44.3). */
+.cite { white-space: nowrap; }
+.cite-known, .cite-unknown {
+  font-size: 11px; padding: 0 6px; border-radius: 9px; line-height: 1.7;
+  vertical-align: baseline; max-width: 26ch; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; display: inline-block;
+}
+.cite-known {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  cursor: pointer;
+}
+.cite-known:hover { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+/* A citation that opens nothing was not read from anything, and looks like it. */
+.cite-unknown { color: var(--muted); border: 1px dashed var(--line); }
+
+.cite-card {
+  position: absolute; z-index: 60; max-width: 420px; min-width: 240px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px; box-shadow: 0 10px 28px rgba(0, 0, 0, .34);
+  font-size: 12px;
+}
+.cite-card-head { display: flex; gap: 8px; align-items: baseline;
+  justify-content: space-between; margin-bottom: 4px; }
+.cite-card p { margin: 4px 0; }
+.cite-card .muted { font-size: 11px; }
+/* The facts about a cited memory, laid out as facts rather than as prose:
+   a label column the eye can run down, and the value beside it. */
+.cite-card-head strong { line-height: 1.35; }
+.cite-folder { font-size: 11px; color: var(--muted); white-space: nowrap;
+  border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; }
+.cite-summary { margin: 6px 0 8px; line-height: 1.45; }
+.cite-facts { display: grid; gap: 3px; border-top: 1px solid var(--line);
+  padding-top: 7px; }
+.cite-row { display: grid; grid-template-columns: 68px 1fr; gap: 8px;
+  align-items: baseline; }
+.cite-label { color: var(--muted); font-size: 11px; }
+.cite-value { font-size: 11.5px; line-height: 1.45; word-break: break-word; }
+/* One source per line: a file, a session and an application on one line read
+   as a single unreadable string. */
+.cite-line { display: block; }
+.cite-how { margin-top: 7px; }
+/* An interval: the number, the unit it is counted in, and what that means. */
+.duration { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.duration-amount { width: 88px; }
+.duration-unit { width: auto; }
+.duration-says { font-size: 11px; white-space: nowrap; }
+
+/* Section 19, as amended: what was read, and what was written. */
+.ov-activity-body { padding: 4px 2px 2px; }
+.activity-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.activity-row { display: grid; grid-template-columns: 52px 62px minmax(0, 1fr)
+  minmax(0, 1.2fr) auto; gap: 10px; align-items: baseline; font-size: 12px;
+  padding: 2px 4px; border-radius: 5px; }
+.activity-row:hover { background: var(--hover, rgba(127, 127, 127, .10)); }
+.activity-at { font-size: 11px; }
+/* Read and written differ in weight rather than only in wording: the list is
+   scanned, and a word alone is not something the eye separates on. */
+.activity-what { font-size: 11px; border-radius: 999px; padding: 1px 7px;
+  text-align: center; border: 1px solid var(--line); white-space: nowrap; }
+.activity-what.read { color: var(--muted); }
+.activity-what.wrote { color: #2f9e6b; border-color: #2f9e6b55; }
+.activity-name { font-weight: 600; word-break: break-word; }
+.activity-folder { font-size: 11px; color: var(--muted); word-break: break-all; }
+.activity-again { font-size: 11px; white-space: nowrap; }
+
+/* The period a panel covers, beside its heading. Quieter than the heading
+   and quieter than the count: it is the kind of thing a reader wants when
+   they go looking for it, not something to read first. */
+.window-note {
+  font-weight: 400;
+  font-size: 0.82em;
+  opacity: 0.62;
+  white-space: nowrap;
+}
+
+/* The heartbeat panel: four steps, each one openable. Numbered down the
+   left because "step 3" is how the checklist, the prompt and the report all
+   refer to them, and a reader matching this against a log should not have to
+   count rows. */
+.dbg-beat-body { padding: 10px 14px 14px; }
+.beat-step {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin: 8px 0;
+  overflow: hidden;
+}
+.beat-step > summary {
+  cursor: pointer;
+  padding: 8px 12px;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  list-style: none;
+}
+.beat-step > summary::-webkit-details-marker { display: none; }
+.beat-step > summary:hover { background: var(--hover, rgba(127,127,127,.08)); }
+.beat-n {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  opacity: .5;
+  font-weight: 600;
+}
+.beat-title { flex: 1 1 auto; }
+.beat-meta { flex: 0 0 auto; font-size: .82em; opacity: .6; white-space: nowrap; }
+.beat-inner { padding: 4px 12px 12px 40px; }
+.beat-sub {
+  margin: 10px 0 4px;
+  font-size: .78em;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  opacity: .55;
+}
+.beat-context {
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .82em;
+  line-height: 1.45;
+  max-height: 22em;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--sunken, rgba(127,127,127,.07));
+}
+.beat-records { margin: 0; padding-left: 18px; font-size: .88em; }
+.beat-records li { margin: 2px 0; }
+.beat-records .muted { font-size: .9em; }
+.beat-outcome {
+  white-space: pre-wrap;
+  font-size: .86em;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--sunken, rgba(127,127,127,.07));
+}
+.beat-nothing { opacity: .55; font-style: italic; }
+
+/* Section 34.3: the state heartbeat's page.
+
+   Groups rather than steps, because what has to be judged here is not the
+   order things happened in but why these states were put together. */
+.sb-head { margin: 0 0 12px; }
+.sb-figures { display: flex; flex-wrap: wrap; gap: .3rem 1.1rem; font-size: .9em; }
+.sb-figures strong { font-size: 1.05em; }
+.sb-settings { font-size: .82em; margin-top: .3rem; }
+/* A task, and the tasks inside it. Nested rather than listed, because
+   what a reader asks for is "a few things I have been doing" and then
+   "what was inside that one". */
+.sb-task {
+  border-left: 3px solid var(--line, rgba(127,127,127,.3));
+  padding: 2px 0 2px 10px;
+  margin: 5px 0;
+}
+.sb-task > summary {
+  cursor: pointer; display: flex; gap: .55rem; align-items: baseline;
+  flex-wrap: wrap; font-size: .9em;
+}
+.sb-task-name { font-weight: 600; text-transform: capitalize; }
+/* Which layer a task is in, said on the task rather than left to the
+   indentation - an indented row two screens down from its parent is a
+   row with no context. */
+.sb-layer {
+  font-size: .72em; text-transform: uppercase; letter-spacing: .04em;
+  opacity: .6; border: 1px solid var(--line, rgba(127,127,127,.35));
+  border-radius: 3px; padding: 0 .3rem;
+}
+.sb-task-loose { border-left-style: dashed; }
+.sb-loose { margin-top: .4rem; font-size: .88em; }
+.sb-loose .event-label { display: block; opacity: .7; }
+.sb-task-title { opacity: .85; }
+.sb-task-figures { font-size: .88em; }
+.sb-task-body { padding: 2px 0 2px 6px; }
+.sb-task-states { list-style: none; margin: .2rem 0; padding: 0; font-size: .88em; }
+.sb-task-states li { margin: 1px 0; }
+/* What one summary cost, and the words it was sent. Monospaced and
+   scrollable: it is forty states long and is meant to be read, not
+   skimmed past. */
+.sb-cost { margin: .2rem 0 .4rem; font-size: .88em; }
+/* The prompt, entire. No height cap: the point of showing it is that it
+   can be read, and a scrolling box twenty lines tall in the middle of a
+   page is a way of not showing something while appearing to. */
+.sb-prompt-whole { max-height: none; overflow: visible; }
+/* The pieces of one task as a technology tree. Filled means finished,
+   because "still open" is what a reader is looking for and an empty
+   outline reads as unfinished without needing a key. */
+.sb-techtree .sb-tt-axis,
+.sb-techtree .sb-tt-span {
+  stroke: var(--line, rgba(127,127,127,.5)); stroke-width: 2;
+}
+.sb-techtree .sb-tt-span { stroke-linecap: round; opacity: .7; }
+.sb-techtree .sb-tt-edge {
+  fill: none; stroke: var(--accent, #6b8afd); stroke-width: 1.5; opacity: .85;
+}
+.sb-techtree #sb-tt-arrow path { fill: var(--accent, #6b8afd); }
+.sb-techtree .sb-tt-node circle {
+  fill: var(--panel, #fff); stroke: var(--accent, #6b8afd); stroke-width: 2;
+}
+.sb-techtree .sb-tt-done circle { fill: var(--accent, #6b8afd); }
+.sb-techtree .sb-tt-tick {
+  fill: none; stroke: var(--panel, #fff); stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.sb-techtree .sb-tt-name { font-size: 11px; fill: currentColor; }
+.sb-techtree .sb-tt-done .sb-tt-name { opacity: .7; }
+.sb-techtree .sb-tt-tick-label {
+  font-size: 9px; fill: currentColor; opacity: .7;
+}
+
+/* One search, with what it asked, got, and was asked next. Marked when it
+   came back empty, because a summary written after an empty search is the
+   one worth reading closely. */
+.sb-search {
+  border-left: 3px solid var(--accent, #6b8afd);
+  padding: .3rem .6rem; margin: .3rem 0; font-size: .9em;
+}
+.sb-search-empty { border-left-color: var(--warn, #d08a2c); }
+.sb-search > summary { cursor: pointer; }
+.sb-search code { word-break: break-all; }
+.sb-search-none { font-size: .88em; margin: .2rem 0; }
+/* One reply of several. Numbered and separated because they are not
+   interchangeable: the first may be the model asking for something it
+   could not see, and the last the answer it wrote once it had it. */
+.sb-reply { margin: .35rem 0 .6rem; }
+.sb-reply-head { font-size: .85em; margin: 0 0 .15rem; }
+.sb-reply-head strong { color: var(--accent, #6b8afd); }
+/* Where it is all kept. Quiet, but a path the reader can open. */
+/* Whether it looked anything up, said where the task is rather than
+   inside two collapsed blocks. */
+/* The task in parts: where, what for, what, and how far. Laid out as a
+   list of questions and answers because that is what it is. */
+.sb-described { margin: .3rem 0 .4rem; font-size: .9em; }
+.sb-described dt {
+  font-weight: 600; margin-top: .35rem; display: flex; gap: .4rem;
+  align-items: center;
+}
+.sb-described dd { margin: .1rem 0 0 0; color: var(--muted, #9aa3b2); }
+.sb-part-new {
+  border-color: var(--accent, #6b8afd); color: var(--accent, #6b8afd);
+  font-weight: 400;
+}
+.sb-changed-why { font-size: .85em; margin: .3rem 0 0; }
+/* Copy, in the summary row beside the thing it copies. Small, quiet, and
+   out of the way of the words it sits among. */
+/* One task followed through the rounds: what arrived, and what changed
+   about the words. The changed parts are marked, because four paragraphs
+   with no marking give no way to tell this round's claim from last
+   round's. */
+.sb-compare-name { max-width: 22rem; }
+.sb-compare-name code { display: block; font-size: .8em; }
+.sb-grew { color: var(--accent, #6b8afd); }
+.sb-shrank { color: var(--warn, #d08a2c); }
+.sb-across { margin: .4rem 0; }
+.sb-across > summary { cursor: pointer; }
+.sb-across-table td { vertical-align: top; }
+.sb-across-when { white-space: nowrap; font-size: .85em; }
+.sb-across-states { white-space: nowrap; font-size: .9em; }
+/* A state as the model read it: the same fields in the same order. */
+.sb-whole-state {
+  border-left: 2px solid var(--line); padding-left: .5rem;
+  margin: .35rem 0; font-size: .86em;
+}
+/* The first phase of the grouping, which happens before any pair is
+   scored: states that were open on the same thing. */
+/* Everything running now: a circle per task, time across, arrows for
+   what waits on what. The name sits to the left of its circle and the
+   figures to the right, so the circles line up on the time axis and the
+   text does not push them about. */
+/* The pieces of the task a circle was clicked on. It slides open
+   rather than appearing: a panel that changes between one frame and the
+   next leaves the reader to work out what moved, and a quarter of a
+   second of movement says "this came from the thing you clicked"
+   without a word. */
+.sb-opened {
+  border-left: 3px solid var(--accent, #6b8afd);
+  padding: .3rem 0 .2rem .6rem; margin: .4rem 0 .2rem;
+  overflow: hidden;
+  animation: sb-open-up .26s ease-out;
+}
+@keyframes sb-open-up {
+  from { opacity: 0; max-height: 0; transform: translateY(-6px); }
+  to   { opacity: 1; max-height: 1400px; transform: none; }
+}
+/* Whoever asked not to be animated is not animated. */
+@media (prefers-reduced-motion: reduce) {
+  .sb-opened { animation: none; }
+}
+.sb-opened-head { display: flex; align-items: center; gap: .4rem;
+  margin: 0 0 .2rem; }
+.sb-opened-shut { padding: 0 .35rem; line-height: 1.2; }
+/* The circle whose pieces are open, marked so the picture and the panel
+   under it are plainly the same thing. */
+.sb-tt-open .sb-tt-disc {
+  stroke: var(--text, #e8ecf3); stroke-width: 3;
+}
+/* A task that is finished carries a seal rather than a filled circle,
+   because every circle is filled now. */
+.sb-tt-seal { fill: var(--ok, #4caf82); }
+/* The rows of the tree move rather than jump: opening a task pushes
+   everything below it down, and the frame grows to fit. */
+/* The panel under the picture: point at a task above, read it here.
+   The same arrangement a strategy game uses, for the same reason - a map
+   answers "where am I" and cannot answer anything else. */
+.sb-task-card {
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: .5rem .6rem; margin: .4rem 0 .3rem; min-height: 3.4rem;
+  background: var(--panel, rgba(127,127,127,.06));
+}
+.sb-card-body { display: flex; gap: .6rem; align-items: flex-start; }
+.sb-card-badge { width: 44px; height: 44px; flex: 0 0 44px; }
+.sb-card-said { flex: 1; min-width: 0; }
+.sb-card-title { font-weight: 600; margin: 0; }
+.sb-card-figures { font-size: .85em; margin: .1rem 0 .3rem; }
+.sb-card-line { margin: .2rem 0; }
+.sb-card-part { margin: .25rem 0; font-size: .9em; }
+.sb-card-empty { margin: .3rem 0; }
+/* NEXT STEPS on a project's or a top task's card: read only - they are
+   changed in the picture. The user's own steps are marked, quietly - a
+   word in the muted colour, not a second colour scheme. */
+.sb-next { margin: .45rem 0 .35rem; padding: .35rem .5rem;
+  border-left: 3px solid var(--accent); background: var(--bg);
+  border-radius: 0 4px 4px 0; }
+.sb-next .sb-card-part { margin-top: 0; }
+.sb-next-list { list-style: none; margin: .15rem 0 .3rem; padding: 0; }
+.sb-next-step { display: flex; align-items: baseline; gap: .4rem;
+  padding: .12rem 0; border-bottom: 1px solid var(--line); font-size: .9em; }
+.sb-next-step:last-child { border-bottom: 0; }
+.sb-next-step::before { content: "\25A1"; color: var(--muted); flex: 0 0 auto; }
+.sb-next-done::before { content: "\2611"; }
+.sb-next-done .sb-next-text { text-decoration: line-through; color: var(--muted); }
+.sb-next-text { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--ink); }
+.sb-next-by { font-size: .8em; color: var(--muted); font-style: italic; }
+.sb-next-none, .sb-next-note, .sb-next-waiting { font-size: .85em; }
+/* NEXT STEPS IN THE PICTURE, under the project or task they belong to:
+   in the ink and line colours of the page, so they read in both themes
+   and never compete with the task's own colour. */
+.sb-tt-step-text { font-size: 11px; fill: var(--ink); }
+.sb-tt-step-by { fill: var(--muted); font-style: italic; font-size: 10px; }
+.sb-tt-step-done .sb-tt-step-text { fill: var(--muted); }
+/* Only the words are struck through - not the cross after them. */
+.sb-tt-step-done .sb-tt-step-words { text-decoration: line-through; }
+.sb-tt-step-box rect { fill: var(--panel); stroke: var(--muted); stroke-width: 1.2; }
+.sb-tt-step-box[data-sb-step-finish] { cursor: pointer; }
+.sb-tt-step-box[data-sb-step-finish]:hover rect { stroke: var(--ok); }
+.sb-tt-step-ticked rect { fill: var(--ok); stroke: var(--ok); }
+.sb-tt-step-ticked { cursor: pointer; }
+.sb-tt-step-tick { fill: none; stroke: var(--panel); stroke-width: 1.8; }
+.sb-tt-step-delete { font-size: 22px; font-weight: 700; fill: var(--muted);
+  cursor: pointer; }
+.sb-tt-step-delete:hover { fill: var(--danger-ink); }
+.sb-tt-step-ask { font-size: 10.5px; fill: var(--danger-ink); }
+.sb-tt-step-yes, .sb-tt-step-no { font-size: 10.5px; font-weight: 600;
+  cursor: pointer; text-decoration: underline; }
+.sb-tt-step-yes { fill: var(--danger-ink); }
+.sb-tt-step-no { fill: var(--accent); }
+.sb-tt-step-plus { font-size: 10.5px; fill: var(--accent); cursor: pointer; }
+.sb-tt-step-plus:hover { text-decoration: underline; }
+.sb-tt-step-none { font-size: 10.5px; fill: var(--muted); font-style: italic; }
+.sb-tt-step-fault { font-size: 10.5px; fill: var(--danger-ink); }
+.sb-tt-step-group { transition: transform .25s ease; }
+.sb-tt-step-form { display: flex; gap: 4px; align-items: center; height: 24px; }
+.sb-tt-step-form input { flex: 1; min-width: 0; font: inherit; font-size: 11px;
+  padding: 1px 5px; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 4px; }
+.sb-tt-step-form input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.sb-tt-step-form button { font-size: 10.5px; padding: 1px 6px; }
+.sb-todo-done { border-color: var(--ok, #4caf82); color: var(--ok, #4caf82); }
+[data-sb-todo] { cursor: pointer; }
+.sb-todo-open .sb-tt-todo { stroke-width: 3; }
+.sb-todo-open .sb-tt-aside { font-weight: 600; }
+.sb-weigh { margin-right: .3rem; }
+.sb-no-picture { margin: .5rem 0; max-width: 60ch; }
+/* A working application looks different from an idle one at a glance,
+   without having to read the line. */
+.pill-working { border-color: var(--accent, #6ea8fe); }
+.sb-waiting-first { margin: .4rem 0; max-width: 62ch; }
+.sb-tally { margin: .2rem 0 .4rem; }
+.sb-as-of { margin: .1rem 0 .5rem; max-width: 70ch; }
+/* Room for one line saying what is being written, kept whether or not
+   anything is - so the drawing below never moves when a visit starts or
+   stops. Sized to the line it holds, button included. */
+.sb-doing-slot { min-height: 2.25rem; }
+.sb-doing-slot .sb-doing-now { margin: 0; }
+.sb-doing-now { margin: .1rem 0 .4rem; color: var(--text, #e8ecf3); }
+/* The one signal that cannot be scrolled away from. */
+.sb-progress { margin: .35rem 0 .5rem; max-width: 520px; }
+.sb-progress-bar { height: 8px; border-radius: 4px; overflow: hidden;
+  background: var(--line, #2a3242); }
+.sb-progress-bar span { display: block; height: 100%;
+  background: var(--accent, #6ea8fe); transition: width .4s ease-out; }
+.sb-progress-live .sb-progress-bar span { background: var(--warn, #e7b549); }
+.sb-progress-work { margin: .24rem 0 0; font-size: .86rem;
+  color: var(--text, #e8ecf3); }
+.sb-progress-said { margin: .22rem 0 0; font-size: .86rem;
+  color: var(--text, #e8ecf3); }
+/* The one being worked on pulses; the ones waiting do not. */
+/* THE WHOLE ROW, not only the circle.
+   
+   A circle sits at one point on a calendar that can be three thousand
+   pixels wide in a frame that shows eight hundred, so pulsing it alone
+   means the one signal that something is happening is visible only if
+   the reader happens to be looking at that part of the time axis -
+   measured on the live agent: the working task's circle 840 pixels left
+   of the frame's edge while the view was pinned to the recent end. The
+   task's own line runs the length of its span, so pulsing that too puts
+   the signal wherever the reader is looking. */
+.sb-tt-working .sb-tt-disc,
+.sb-tt-working .sb-tt-span { animation: sb-pulse 1.4s ease-in-out infinite; }
+.sb-tt-working .sb-tt-span { stroke-width: 3; }
+@keyframes sb-pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) {
+  .sb-tt-working .sb-tt-disc { animation: none; } }
+.sb-first-bar { height: 6px; border-radius: 3px; max-width: 320px;
+  background: var(--line, #2a3242); overflow: hidden; }
+.sb-first-bar span { display: block; height: 100%;
+  background: var(--accent, #6ea8fe); }
+.pill-working::after { content: ""; }
+.sb-waiting { color: var(--text, #e8ecf3); }
+.sb-spin { display: inline-block; width: .6rem; height: .6rem;
+  margin-right: .35rem; border: 2px solid currentColor;
+  border-right-color: transparent; border-radius: 50%;
+  animation: sb-turn 900ms linear infinite; }
+@keyframes sb-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .sb-spin { animation: none; } }
+.sb-key { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
+  margin: .2rem 0 .4rem; font-size: .82rem; color: var(--muted, #9aa3b2); }
+.sb-key span { display: inline-flex; gap: .3rem; align-items: center; }
+/* The frame SCROLLS; the picture is never squeezed to fit inside it.
+   Scaling it down is what turned it into a thumbnail as soon as a few
+   tasks were open - the rows got smaller instead of the frame getting
+   longer, which is the opposite of what opening something should do. */
+.sb-tree-frame {
+  overflow: auto; max-height: 30rem; position: relative;
+  border: 1px solid var(--line); border-radius: 6px;
+}
+/* THE TREE IS NEVER FITTED TO ITS BOX. `.sb-graph` - which the
+   dendrogram wants - says `width: 100%; height: auto; max-height: 60vh`,
+   and an SVG told to fit a box scales its whole drawing to get there.
+   That is what made expanding shrink everything: the picture grew
+   taller, the box did not, and the browser did as it was told.
+   The size here is the size in the element's own style attribute, and
+.sb-tt-row, .sb-tt-foot { transition: transform .28s ease-out; }
+/* THE FRAME TAKES ITS NEW SIZE AT ONCE.
+
+   It used to grow at the pace the rows moved, to make opening one
+   movement. But the drawing's coordinate box changes in a single step
+   and only the pixel height was animated - so for a quarter of a second
+   a taller drawing sat in a shorter box, and the browser scaled the WHOLE
+   picture down to fit and back up again. Every row moved, by an amount
+   that depended on where it was: the task just clicked jumped 16 pixels
+   and the one above it 4, which is what made opening a task look like
+   the picture being drawn again.
+
+   The movement worth seeing is the rows below making room, and they do
+   that themselves. The space the frame gains is below them, where
+   nothing has arrived yet, so taking it instantly is invisible. */
+.sb-whole-graph { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .sb-tt-row, .sb-tt-foot, .sb-whole-graph { transition: none; } }
+/* A piece appearing under its task: it fades in, and that is all.
+   
+   The limb used to DRAW ITSELF - a dash offset running from one end to
+   the other - and the rows were staggered forty milliseconds apart. Each
+   was meant to say "this came out of the thing you clicked", and together
+   they made expanding look like the picture being painted again from the
+   left. A movement that has to be waited out is not a movement that helps
+   the reader; the rows sliding down to make room already says where the
+   new ones came from. */
+.sb-tt-branch { animation: sb-branch .16s ease-out both; }
+@keyframes sb-branch {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.sb-tt-limb { fill: none; stroke-width: 1.6; opacity: .75; }
+@media (prefers-reduced-motion: reduce) {
+  .sb-tree-frame, .sb-tt-row, .sb-tt-foot { transition: none; }
+  .sb-tt-branch { animation: none; }
+}
+.sb-sort-bar {
+  display: inline-flex; gap: .3rem; align-items: center;
+  margin-left: .5rem; font-size: .82em;
+}
+.sb-sort { padding: .05rem .45rem; }
+.sb-whole-tree { margin: .3rem 0 .7rem; }
+.sb-whole-tree > summary { cursor: pointer; }
+.sb-whole-graph { cursor: default; }
+.sb-whole-graph .sb-tt-node { cursor: pointer; }
+.sb-tt-name { font-size: 11.5px; font-weight: 600; }
+.sb-tt-aside { font-size: 10.5px; fill: var(--muted, #9aa3b2); }
+.sb-tt-axis { stroke: var(--line, rgba(127,127,127,.45)); stroke-width: 1; }
+/* THE DATES ARE READ, not glanced at: a 10px grey label on a picture
+   that can be zoomed and dragged is the one piece of text a reader has to
+   squint at to place anything else. Larger, and in the colour this page
+   already uses for the thing to look at, because the axis is what every
+   other mark on the drawing is measured against. */
+.sb-tt-when { font-size: 15px; font-weight: 600; fill: var(--warn, #e7b549); }
+.sb-tt-foot .sb-tt-axis { stroke: var(--warn, #e7b549); opacity: .55; }
+/* Pinned to the bottom of what can be seen, so it does not slide with
+   the rows: a transition here would make it lag behind the scroll. */
+.sb-tt-pinned { transition: none !important; }
+.sb-anchors { margin: .4rem 0 .6rem; }
+.sb-anchors > summary { cursor: pointer; }
+.sb-anchor {
+  border-left: 3px solid var(--accent, #6b8afd);
+  padding-left: .55rem; margin: .4rem 0; font-size: .9em;
+}
+.sb-anchor-on code { word-break: break-all; }
+/* The second kind, marked apart from the first: a shared file and a
+   shared vocabulary are different claims about two states. */
+.sb-anchor-words { border-left-color: var(--ok, #4caf82); }
+.sb-anchor-words code { margin-right: .2rem; }
+.sb-anchor-states { margin: .15rem 0 0 1rem; padding: 0; font-size: .92em; }
+.sb-whole-title { font-weight: 600; }
+.sb-state-how {
+  font-weight: 400; font-size: .78em; margin-left: .35rem;
+  vertical-align: middle;
+}
+/* A state the model never saw. Shown, because this is the debugger, and
+   marked, because explaining a summary by it would be a mistake. */
+.sb-state-unseen { border-left-style: dashed; opacity: .78; }
+.sb-whole-state p { margin: .12rem 0; }
+.sb-whole-rests ul { margin: .1rem 0 .1rem 1rem; padding: 0; }
+.sb-whole-rests p { margin: .1rem 0; }
+.sb-across-states-block { margin-top: .3rem; }
+.sb-across-states-block > summary { cursor: pointer; font-size: .85em; }
+.sb-across-new { margin: .2rem 0 0 .9rem; padding: 0; font-size: .85em; }
+.sb-across-title { font-weight: 600; margin-bottom: .2rem; }
+.sb-across-part { margin: .25rem 0; font-size: .88em; }
+.sb-across-part p { margin: .05rem 0 0; color: var(--muted, #9aa3b2); }
+.sb-across-changed {
+  border-left: 3px solid var(--accent, #6b8afd); padding-left: .45rem;
+}
+.sb-across-changed .event-label { color: var(--accent, #6b8afd); }
+/* The tree, which can be moved and zoomed. The frame clips it so a
+   zoomed picture stays the size of its place on the page instead of
+   pushing everything below it down. */
+.sb-zoom-frame { overflow: hidden; }
+.sb-zoom-bar {
+  display: flex; align-items: center; gap: .35rem;
+  margin: 0 0 .25rem; font-size: .82em;
+}
+.sb-zoom-bar > span:first-child { flex: 1; }
+.sb-zoom-bar button { padding: .05rem .45rem; min-width: 1.7rem; }
+.sb-graph { cursor: grab; touch-action: pan-y; }
+.sb-graph-held { cursor: grabbing; }
+/* WHILE A DRAG IS IN PROGRESS, nothing in the frame is selectable. A
+   selection that extends past the frame's edge makes the browser scroll
+   the frame to that edge on its own - the picture shooting to the left
+   the moment the cursor left it - and that scrolling belongs to the
+   selection, not to the drag, so no amount of ignoring the pointer
+   stops it. */
+.sb-frame-held, .sb-frame-held * { user-select: none; -webkit-user-select: none; }
+.sb-tree-frame { touch-action: none; }
+/* Marked while it is zoomed, so it is obvious the picture is a detail
+   and not the whole tree. */
+.sb-graph-zoomed { outline: 1px dashed var(--accent, #6b8afd); }
+.sb-copy {
+  font-size: .78em; padding: .05rem .4rem; margin-left: .4rem;
+  vertical-align: baseline;
+}
+.sb-search-said { font-size: .9em; margin: .2rem 0 .5rem; }
+.sb-search-said > p { margin: .2rem 0; }
+.sb-badge-status {
+  border-color: var(--ok, #4caf82); color: var(--ok, #4caf82);
+}
+.sb-badge-searched {
+  border-color: var(--accent, #6b8afd); color: var(--accent, #6b8afd);
+}
+.sb-listy {
+  font-size: .85em; margin: .2rem 0 .4rem;
+  border-left: 3px solid var(--warn, #d08a2c); padding-left: .5rem;
+}
+.sb-kept-at { font-size: .85em; margin: .4rem 0 0; }
+.sb-kept-at code { word-break: break-all; }
+/* A group that is true and is not a task. Marked wherever it appears,
+   because on this page it looks exactly like one. */
+.sb-not-shown {
+  border-color: var(--warn, #d08a2c); color: var(--warn, #d08a2c);
+}
+.sb-not-shown-why {
+  border-left: 3px solid var(--warn, #d08a2c);
+  padding: .3rem .6rem; margin: .3rem 0; font-size: .9em;
+}
+.sb-not-shown-note {
+  border: 1px dashed var(--warn, #d08a2c); border-radius: 6px;
+  padding: .4rem .6rem; margin: .4rem 0; font-size: .9em;
+}
+.sb-not-shown-one {
+  display: inline-block; margin: .1rem .2rem; padding: 0 .3rem;
+  border: 1px solid var(--line, rgba(127,127,127,.35)); border-radius: 3px;
+}
+.sb-prompt {
+  max-height: 20rem; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  background: var(--line, rgba(127,127,127,.12)); border-radius: 4px;
+  padding: .4rem .5rem; margin: .3rem 0; font-size: .92em;
+}
+
+/* Where the round has got to. Named stages rather than a filling bar:
+   "scoring every pair" and "summarising task 3 of 8" are different kinds
+   of waiting, and a bar that only fills up says neither. */
+.sb-stage {
+  border: 1px solid var(--line, rgba(127,127,127,.35));
+  border-radius: 6px; padding: .4rem .6rem; margin: .4rem 0;
+}
+.sb-stage-running { border-left: 3px solid var(--accent, #6b8afd); }
+.sb-stage-list { list-style: none; margin: .3rem 0; padding: 0; font-size: .88em; }
+.sb-stage-list li {
+  display: grid; grid-template-columns: minmax(9rem, 12rem) 1fr auto;
+  gap: .2rem .6rem; padding: .1rem 0; opacity: .75;
+}
+.sb-stage-list .sb-stage-now { opacity: 1; font-weight: 600; }
+.sb-stage-detail { opacity: .8; font-weight: 400; }
+.sb-stage-cost { font-variant-numeric: tabular-nums; opacity: .8; }
+/* The prompt a stage worked on, kept. It is the one thing a reader can
+   usefully read during the ten seconds an answer takes, and it stays
+   afterwards: summarising task three does not make what was asked of
+   tasks one and two less worth reading. Open by default, because a step
+   whose prompt is behind a click has to be found before it can be read,
+   and by then the round has moved on. */
+.sb-stage-prompt { grid-column: 1 / -1; font-size: .95em; margin: .15rem 0; }
+.sb-stage-prompt > summary { cursor: pointer; opacity: .8; }
+/* Every step's prompt at once is a long page, so each is bounded and
+   scrolls on its own rather than being cut short - nothing is hidden, and
+   the next step is still reachable without twenty screens of scrolling. */
+.sb-stage-prompt .sb-prompt {
+  max-height: 22rem; overflow: auto;
+}
+.sb-stage-spinner {
+  display: inline-block; width: .6rem; height: .6rem; margin-right: .3rem;
+  border: 2px solid var(--accent, #6b8afd); border-right-color: transparent;
+  border-radius: 50%; animation: sb-spin .8s linear infinite;
+}
+@keyframes sb-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .sb-stage-spinner { animation: none; border-right-color: currentColor; }
+}
+@media (max-width: 620px) {
+  .sb-stage-list li { grid-template-columns: 1fr auto; }
+  .sb-stage-detail { grid-column: 1 / -1; }
+}
+
+/* One block per round, opened one at a time, and the comparison after.
+
+   The rounds are separate because what is being looked at is what
+   CHANGED between them; the comparison is separate because a difference
+   belongs next to both of the things it is between, not inside one. */
+.sb-round {
+  border: 1px solid var(--line, rgba(127,127,127,.35));
+  border-left: 3px solid var(--accent, #6b8afd);
+  border-radius: 6px; padding: .4rem .6rem; margin: .5rem 0;
+}
+.sb-round > summary { cursor: pointer; }
+.sb-round > summary > * { margin-right: .5rem; }
+.sb-round-body { padding: .2rem 0 .2rem .4rem; }
+.sb-compare {
+  border: 1px solid var(--line, rgba(127,127,127,.35));
+  border-radius: 6px; padding: .5rem .6rem; margin: .7rem 0 .3rem;
+}
+.sb-compare h4 { margin: .7rem 0 .2rem; font-size: .95em; }
+.sb-compare-table {
+  border-collapse: collapse; width: 100%; font-size: .88em; margin: .2rem 0;
+}
+.sb-compare-table th, .sb-compare-table td {
+  text-align: left; padding: .2rem .45rem;
+  border-bottom: 1px solid var(--line, rgba(127,127,127,.25));
+  font-variant-numeric: tabular-nums;
+}
+.sb-compare-table th { font-weight: 600; opacity: .8; }
+.sb-compare-table code { word-break: break-all; font-size: .92em; }
+.sb-compare-one { margin: .4rem 0 .8rem; }
+
+/* The calendar by when it happened, in four parts per column.
+
+   Four opacities of one colour was the first attempt and it failed in
+   the only place it mattered: on a dark background, sixteen per cent of
+   the foreground and thirty-two per cent of it are the same grey, and
+   those two mean opposite things - "I never looked at this" and "I
+   looked and nothing claimed it". They are different FACTS about the
+   user's calendar, so they get different colours rather than different
+   strengths of one, and the one that means absence is drawn as absence:
+   an outline with nothing inside it.
+
+   The hues are set once here and used by both the bars and the legend,
+   so a key that disagrees with the chart is not possible. */
+.sb-overview, .sb-ov-key {
+  --ov-now: #4f7cff;      /* worked on by this round */
+  --ov-held: #7bd0a8;     /* already in a task */
+  --ov-loose: #e0a03a;    /* read, and nothing took it */
+  --ov-unread: rgba(127, 127, 127, .55);   /* never read - an outline */
+}
+/* Lighter on a dark background, which is where the old four-opacity
+   version failed: this file switches on the system setting, so that is
+   what these follow. */
+@media (prefers-color-scheme: dark) {
+  .sb-overview, .sb-ov-key {
+    --ov-now: #86a9ff;
+    --ov-held: #6fd3a4;
+    --ov-loose: #f5c65a;
+    --ov-unread: rgba(210, 210, 210, .55);
+  }
+}
+.sb-overview .sb-ov-axis { stroke: var(--line, rgba(127,127,127,.5)); }
+.sb-overview .sb-ov-tick { font-size: 9px; fill: currentColor; opacity: .75; }
+.sb-overview .sb-ov-now { fill: var(--ov-now); }
+.sb-overview .sb-ov-held { fill: var(--ov-held); }
+.sb-overview .sb-ov-loose { fill: var(--ov-loose); }
+/* Never read: no fill at all, and an outline to say the states are there.
+   A faint fill reads as a small amount of something; an empty outline
+   reads as the absence it is. */
+.sb-overview .sb-ov-unread {
+  fill: none; stroke: var(--ov-unread); stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+.sb-ov-key {
+  display: inline-block; width: .75rem; height: .75rem; border-radius: 2px;
+  vertical-align: -1px; margin: 0 .15rem 0 .4rem;
+}
+.sb-ov-key-now { background: var(--ov-now); }
+.sb-ov-key-held { background: var(--ov-held); }
+.sb-ov-key-loose { background: var(--ov-loose); }
+.sb-ov-key-unread {
+  background: none; border: 1px dashed var(--ov-unread);
+}
+
+/* The three rounds, in order, above the last one's result. */
+.sb-rehearsal {
+  border: 1px solid var(--line, rgba(127,127,127,.35));
+  border-radius: 6px; padding: .5rem .6rem; margin: .5rem 0;
+}
+.sb-trace { margin: .3rem 0; padding-left: 1.2rem; }
+.sb-trace > li { margin: .5rem 0; }
+.sb-trace-detail { list-style: none; margin: .2rem 0; padding: 0;
+                   font-size: .9em; }
+.sb-trace-detail code { word-break: break-all; }
+
+/* What each control does. On the page rather than in a tooltip: two of
+   these buttons change the user's real records and four cannot, and that
+   is not a difference to hide behind a hover. */
+.dbg-keys {
+  flex-basis: 100%; margin: .3rem 0 0; font-size: .88em;
+  display: grid; grid-template-columns: minmax(7rem, 10rem) 1fr;
+  gap: .15rem .7rem;
+}
+.dbg-keys dt { font-weight: 600; }
+.dbg-keys dd { margin: 0; opacity: .82; }
+.dbg-keys code { word-break: break-all; }
+@media (max-width: 620px) {
+  .dbg-keys { grid-template-columns: 1fr; }
+  .dbg-keys dd { margin: 0 0 .35rem; }
+}
+
+/* The sandbox strip: made-up states in, tasks out, both named. */
+.dbg-sandbox {
+  display: flex; flex-wrap: wrap; gap: .4rem .6rem; align-items: center;
+  border: 1px dashed var(--line, rgba(127,127,127,.45));
+  border-radius: 6px; padding: .45rem .6rem; margin: .4rem 0;
+}
+.dbg-sandbox input[type="number"] { width: 5rem; }
+.dbg-sandbox #dbg-sb-where { flex-basis: 100%; font-size: .88em; }
+.dbg-sandbox code { word-break: break-all; }
+/* A sandbox result is labelled where it cannot be missed: the page looks
+   exactly like a real round otherwise, which is the point and the risk. */
+.sb-sandbox-banner {
+  border-left: 3px dashed var(--accent, #6b8afd);
+  padding: .3rem .6rem; margin: .3rem 0; font-size: .92em;
+}
+.sb-sandbox-banner code { word-break: break-all; }
+
+/* What the round kept, and how close each signal came to rebuilding.
+
+   The bar is the point of this block. "A task has drifted: 0.0008 of
+   0.05" is a number a reader has to hold two of to understand; a bar a
+   sixtieth full is the same fact at a glance, and the ones near the end
+   are the ones worth reading the words for. */
+.sb-kept {
+  border: 1px solid var(--line, rgba(127,127,127,.35));
+  border-radius: 6px; padding: .5rem .6rem; margin: .5rem 0;
+}
+.sb-kept-rebuilt { border-left: 3px solid var(--accent, #6b8afd); }
+.sb-signals { list-style: none; margin: .4rem 0 .2rem; padding: 0; }
+.sb-signal {
+  display: grid; grid-template-columns: minmax(9rem, 14rem) 1fr auto;
+  gap: .3rem .6rem; align-items: center; margin: .3rem 0; font-size: .88em;
+}
+.sb-signal-name { opacity: .85; }
+.sb-signal-track {
+  height: 6px; border-radius: 3px;
+  background: var(--line, rgba(127,127,127,.25)); overflow: hidden;
+}
+.sb-signal-fill {
+  display: block; height: 100%; background: currentColor; opacity: .45;
+}
+.sb-signal-figures { font-variant-numeric: tabular-nums; opacity: .75; }
+/* The reason sits under the row it belongs to rather than beside it: at
+   three columns it would be a column of wrapped sentences. */
+.sb-signal-why { grid-column: 1 / -1; opacity: .65; font-size: .92em; }
+.sb-signal-fired .sb-signal-name { font-weight: 600; }
+.sb-signal-fired .sb-signal-fill { opacity: .9; }
+.sb-lineage { margin-top: .4rem; font-size: .9em; }
+.sb-lineage ul { margin: .3rem 0; padding-left: 1.1rem; }
+.sb-lineage li { margin: .2rem 0; }
+.sb-took { margin: .2rem 0 .4rem; font-size: .88em; }
+.sb-took .event-label { display: block; opacity: .7; }
+.sb-task-age { font-size: .88em; opacity: .7; }
+.sb-parameters { list-style: none; margin: .2rem 0; padding: 0; }
+.sb-parameters li { margin: .4rem 0; }
+.sb-parameter-name { font-weight: 600; margin-right: .4rem; }
+.sb-parameter-why { opacity: .8; margin-top: .1rem; }
+.sb-group {
+  border: 1px solid var(--line, rgba(127,127,127,.2));
+  border-radius: 8px;
+  margin: 8px 0;
+  padding: 6px 10px;
+  background: var(--sunken, rgba(127,127,127,.04));
+}
+.sb-group > summary {
+  cursor: pointer; display: flex; gap: .6rem; align-items: baseline;
+  flex-wrap: wrap; font-size: .92em;
+}
+.sb-group-name { font-weight: 600; text-transform: capitalize; }
+.sb-group-title { opacity: .85; }
+.sb-group-body { padding: 6px 0 4px 4px; }
+.sb-summary { font-size: .9em; margin: .4rem 0; }
+.sb-part { font-size: .85em; margin: .3rem 0; }
+.sb-part .event-label { display: block; opacity: .7; }
+.sb-term {
+  font-size: .95em; padding: 0 .25rem; border-radius: 3px;
+  background: var(--sunken, rgba(127,127,127,.12));
+}
+.sb-members { list-style: none; margin: .2rem 0 0; padding: 0; }
+.sb-member {
+  border-left: 2px solid var(--line, rgba(127,127,127,.25));
+  padding: 2px 0 2px 8px; margin: 4px 0; font-size: .85em;
+}
+.sb-member-title { font-weight: 600; margin-right: .5rem; }
+.sb-member-detail { opacity: .85; }
+.sb-source code, .sb-evidence { font-size: .95em; opacity: .75; }
+.sb-prompt { margin-top: .5rem; font-size: .85em; }
+/* The picture. A list of groups says which states were put together; the
+   shape says how nearly they were not. */
+.sb-figure { margin: 4px 0 14px; }
+.sb-graph {
+  width: 100%; height: auto; display: block; max-height: 60vh;
+  border: 1px solid var(--line, rgba(127,127,127,.2));
+  border-radius: 8px;
+  background: var(--sunken, rgba(127,127,127,.04));
+}
+/* A branch of the tree. Coloured while both halves are in one group,
+   neutral once the join crosses the cut. */
+.sb-branch { fill: none; stroke-width: 1.3; }
+.sb-leaf { cursor: pointer; }
+.sb-leaf circle { stroke: var(--bg, #fff); stroke-width: 1; }
+.sb-leaf:hover circle, .sb-leaf:focus circle { stroke-width: 2.2; r: 4.5; }
+.sb-leaf-text { font-size: 10.5px; opacity: .85; }
+.sb-leaf:hover .sb-leaf-text { opacity: 1; font-weight: 600; }
+/* The cut, drawn across the tree rather than described beside it. */
+.sb-cut { stroke: var(--accent, #7aa2f7); stroke-width: 1; stroke-dasharray: 4 3; }
+.sb-cut-text { font-size: 10px; fill: var(--accent, #7aa2f7); }
+.sb-keys { display: flex; flex-wrap: wrap; gap: .3rem .9rem; margin: .5rem 0; font-size: .82em; }
+.sb-key { display: inline-flex; align-items: center; gap: .3rem; }
+.sb-key i { width: .7rem; height: .7rem; border-radius: 50%; display: inline-block; }
+.sb-figure-note { font-size: .82em; margin: .2rem 0 .4rem; }
+.sb-how { font-size: .85em; margin: .3rem 0 .6rem; }
+.sb-how-row { margin: .35rem 0; }
+.sb-how-row .event-label { display: block; opacity: .7; }
+.sb-steps { margin: .2rem 0; padding-left: 1.2rem; }
+.sb-steps li { margin: .25rem 0; }
+/* A formula is a claim about what the numbers would be; this is the
+   numbers, so it reads as figures rather than as prose. */
+.sb-worked { list-style: none; margin: .2rem 0; padding: 0;
+  font-variant-numeric: tabular-nums; }
+.sb-worked li { margin: .2rem 0; }
+.sb-worked .muted { display: inline-block; }
+.sb-worked-head { font-weight: 600; margin-top: .3rem; }
+.sb-worked-line { margin: .12rem 0 .12rem .6rem; }
+.sb-worked-line > .muted { min-width: 6.5rem; }
+.sb-worked-pair { margin: .2rem 0 .4rem; }
+.sb-worked-pair .muted { min-width: 5rem; display: inline-block; }
+.sb-pairs { margin-top: 12px; font-size: .85em; }
+.sb-table { width: 100%; border-collapse: collapse; margin-top: .4rem; }
+.sb-table th, .sb-table td {
+  text-align: left; padding: 2px 6px; vertical-align: top;
+  border-bottom: 1px solid var(--line, rgba(127,127,127,.15));
+}
+.sb-score { font-variant-numeric: tabular-nums; font-weight: 600; }
+/* A pair that did not join. Shown, because the pair that nearly joined is
+   what answers "is the threshold wrong". */
+.sb-unjoined { opacity: .5; }
+/* A state the step wrote, as a card rather than a line of text.
+
+   A state is a title, a period, what it rests on and why - so it is shown
+   the way it is stored, not flattened into one string. */
+.beat-cards { list-style: none; margin: 0; padding: 0; }
+.beat-card {
+  padding: 8px 10px;
+  margin: 6px 0;
+  border-radius: 6px;
+  background: var(--sunken, rgba(127,127,127,.07));
+  border-left: 3px solid var(--accent, #7aa2f7);
+}
+.beat-card-head {
+  display: flex; gap: .6rem; align-items: baseline;
+  justify-content: space-between; flex-wrap: wrap;
+}
+.beat-card-title { font-weight: 600; font-size: .92em; }
+.beat-card-detail { font-size: .86em; margin: .3rem 0; }
+.beat-card-part { font-size: .84em; margin: .25rem 0; }
+.beat-card-part .event-label { display: block; opacity: .7; }
+.beat-head-line { margin: 0 0 6px; font-size: .9em; }
+
+
+
+/* The gathering, round by round. Numbered, because the order is the point:
+   each folder searched in turn, the candidates ranked together, then taken
+   or left one at a time until the budget runs out. */
+.beat-trail {
+  margin: 4px 0 8px;
+  padding-left: 22px;
+  font-size: .85em;
+  line-height: 1.5;
+}
+.beat-trail li { margin: 3px 0; }
+.trail-did {
+  display: inline-block;
+  min-width: 3.4em;
+  font-size: .82em;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  opacity: .55;
+}
+.trail-titles { margin: 2px 0 2px 3.6em; opacity: .75; }
+.trail-take .trail-did { color: var(--ok, #2e7d32); opacity: .85; }
+.trail-stop .trail-did,
+.trail-skip .trail-did { color: var(--warn, #b26a00); opacity: .85; }
+.beat-context-all { max-height: none; }
+.beat-expand { margin-left: 8px; }
+.beat-analysis { margin-bottom: 10px; }
+
+/* Every item on its own line, with a boundary. Two record titles run
+   together read as one sentence that makes no sense, which is how the trail
+   first showed them. */
+.beat-trail > li {
+  padding: 3px 0;
+  border-top: 1px solid var(--line, rgba(127,127,127,.18));
+}
+.beat-trail > li:first-child { border-top: 0; }
+.trail-titles,
+.trail-order {
+  margin: 4px 0 2px 3.6em;
+  padding-left: 16px;
+}
+.trail-titles > li,
+.trail-order > li {
+  margin: 2px 0;
+  padding: 2px 0 2px 4px;
+  border-left: 2px solid var(--line, rgba(127,127,127,.25));
+  padding-left: 8px;
+}
+.trail-item { font-weight: 500; }
+.trail-count {
+  font-variant-numeric: tabular-nums;
+  font-size: .92em;
+  opacity: .7;
+  margin-left: 6px;
+}
+.trail-score {
+  display: inline-block;
+  min-width: 3em;
+  font-variant-numeric: tabular-nums;
+  opacity: .55;
+}
+.trail-why {
+  display: block;
+  margin: 1px 0 0 3.6em;
+  font-size: .92em;
+  opacity: .6;
+}
+.trail-order .trail-why,
+.trail-titles .trail-why { margin-left: 0; }
+/* A search that matched, one that fell back, and one that found nothing are
+   three different outcomes and were three identical lines. */
+.trail-hit .trail-count { color: var(--ok, #2e7d32); opacity: .9; }
+.trail-fell-back .trail-count,
+.trail-fell-back .trail-why { color: var(--warn, #b26a00); opacity: .9; }
+.trail-miss .trail-count { opacity: .45; }
+.beat-records > li {
+  padding: 2px 0 2px 8px;
+  border-left: 2px solid var(--line, rgba(127,127,127,.25));
+  margin: 3px 0;
+}
+
+/* This step's own prompt and answer, both closed. Open, they are longer than
+   everything else in the step put together. */
+.beat-call { margin: 4px 0; }
+.beat-call > summary {
+  cursor: pointer;
+  padding: 3px 0;
+  font-size: .88em;
+  opacity: .8;
+}
+.beat-call > summary:hover { opacity: 1; }
+.beat-call .beat-context { margin-top: 4px; max-height: 26em; }
+
+/* Where a step has got to, while the run is still going. */
+.beat-phase {
+  flex: 0 0 auto;
+  font-size: .78em;
+  letter-spacing: .03em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.beat-phase-waiting {
+  opacity: .5;
+  border: 1px solid var(--line, rgba(127,127,127,.3));
+}
+.beat-phase-asking {
+  background: var(--accent-soft, rgba(80,130,255,.15));
+  color: var(--accent, #3a6fd8);
+}
+.beat-phase-blocked {
+  background: rgba(178,106,0,.15);
+  color: var(--warn, #b26a00);
+}
+
+/* A result in a trail is a button when there is a record behind it, and
+   looks like the text it replaced until it is worth noticing. */
+.trail-open {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  border-bottom: 1px dotted var(--line, rgba(127,127,127,.5));
+}
+.trail-open:hover { border-bottom-style: solid; }
+
+/* The record's id, on the card and beside a result in a trail: something to
+   copy and look up, not something to read. Quiet enough to skip. */
+.cite-id,
+.trail-id {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: .74rem;
+  color: var(--muted, #8a8a8a);
+  user-select: all;
+}
+.cite-id { display: inline-block; margin: 0 0 .4rem; }
+.trail-id { margin-left: .4rem; }
+
+/* What the record says. Scrolls rather than truncating - nothing is hidden,
+   and the card does not grow to the height of a record. */
+.cite-body {
+  max-height: 11rem;
+  overflow-y: auto;
+  margin: .1rem 0 .5rem;
+  padding: .45rem .55rem;
+  border-left: 2px solid var(--line, rgba(127,127,127,.35));
+  font-size: .82rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--text, inherit);
+}
+.cite-body mark {
+  background: var(--mark, rgba(255, 214, 0, .35));
+  color: inherit;
+  border-radius: 2px;
+}
+
+/* Step 1's trail is a decision rather than an allocation: where it started,
+   and each thing it then went and asked for. */
+.trail-floor .trail-did { background: var(--accent-soft, rgba(127,127,127,.18)); }
+.trail-asked {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: .78rem;
+}
+
+/* Who chose a row, and what they chose. The model's decisions and the
+   agent's read identically from their results, and the question a reader
+   has - why did it look there - has a different answer in each case. */
+.trail-who {
+  font-size: .7rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 0 .3rem;
+  border-radius: 3px;
+  margin-left: .35rem;
+}
+.trail-who-model { background: var(--accent-soft, rgba(90,140,255,.22)); }
+.trail-who-fixed { background: var(--line, rgba(127,127,127,.18)); }
+.trail-decision { font-size: .78rem; margin-left: .35rem; }
+
+/* What it said in the turn it asked. The arguments say what it wanted; this
+   is the only account of why it wanted it. */
+.trail-said {
+  margin: .3rem 0 .1rem 1.2rem;
+  padding-left: .55rem;
+  border-left: 2px solid var(--accent-soft, rgba(90,140,255,.35));
+  font-size: .82rem;
+  white-space: pre-wrap;
+}
+
+/* The events behind a count. */
+.trail-events { margin: .3rem 0 .1rem 1.2rem; font-size: .8rem; }
+.trail-events > summary { cursor: pointer; color: var(--muted, #8a8a8a); }
+.ev-list { list-style: none; margin: .3rem 0 0; padding: 0; }
+.ev-list > li {
+  padding: .3rem 0;
+  border-top: 1px solid var(--line, rgba(127,127,127,.18));
+}
+.ev-at { font-family: var(--mono, ui-monospace, Menlo, monospace); }
+.ev-app { font-weight: 600; margin: 0 .35rem; }
+.ev-title { margin-top: .15rem; }
+.ev-url {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: .75rem;
+  color: var(--muted, #8a8a8a);
+  overflow-wrap: anywhere;
+}
+.ev-text { margin-top: .15rem; white-space: pre-wrap; }
+
+.beat-decided { list-style: none; margin: .2rem 0 .5rem; padding: 0; }
+.beat-decided > li { margin: .15rem 0; font-size: .84rem; }
+.beat-decided .trail-who { margin: 0 .35rem 0 0; }
+
+.trail-sub {
+  margin: .35rem 0 .1rem 1.2rem;
+  font-size: .74rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted, #8a8a8a);
+}
+
+.trail-states > li { margin: .2rem 0; }
+.trail-state {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  border-bottom: 1px dotted var(--line, rgba(127,127,127,.5));
+}
+.trail-state:hover { border-bottom-style: solid; }
+
+.ev-count {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: .75rem;
+  margin: 0 .3rem;
+  color: var(--muted, #8a8a8a);
+}
+
+.trail-who-code { background: var(--ok-soft, rgba(80,170,120,.22)); }
+.trail-setting {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: .74rem;
+  color: var(--muted, #8a8a8a);
+  margin-left: .35rem;
+  user-select: all;
+}
+.trail-fold .trail-did { background: var(--ok-soft, rgba(80,170,120,.18)); }
+.trail-feed {
+  max-height: 16rem;
+  overflow: auto;
+  margin: .3rem 0 0;
+  padding: .45rem .55rem;
+  border-left: 2px solid var(--line, rgba(127,127,127,.35));
+  font-size: .76rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+/* A reading lent from elsewhere. Marked, because it is what the window
+   said at some other moment - usually the same thing, never the same
+   claim. */
+.ev-borrowed {
+  color: var(--muted, #8a8a8a);
+  font-style: italic;
+}
+
+.trail-saved {
+  font-size: .78rem;
+  margin-left: .35rem;
+  color: var(--ok, #3f9d6b);
+}
+
+.trail-asked .trail-did,
+.trail-answered .trail-did {
+  background: var(--accent-soft, rgba(90,140,255,.18));
+}
+
+/* What a step is able to do, and how much of each it did. A count of none
+   is the useful half: it says the step could have and chose not to. */
+.beat-could { list-style: none; margin: .2rem 0 .3rem; padding: 0; }
+.beat-could > li { margin: .15rem 0; font-size: .84rem; }
+.beat-did-count {
+  display: inline-block;
+  min-width: 3.2rem;
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: .78rem;
+}
+.beat-did-not { color: var(--muted, #8a8a8a); }
+.beat-cannot { font-size: .8rem; margin: .1rem 0 .5rem; }
+
+/* What a phrase became. The index is searched by these, not by the
+   sentence, and a result cannot be explained by the sentence alone. */
+.trail-terms { margin: .2rem 0 .1rem 1.2rem; font-size: .78rem; }
+.trail-terms code {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  padding: 0 .2rem;
+  border-radius: 2px;
+  background: var(--line, rgba(127,127,127,.15));
+}
+
+/* Which step a section belongs to, and how far through it is. The four
+   steps were numbered and everything inside them was not. */
+.beat-sub-n {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: .78rem;
+  color: var(--muted, #8a8a8a);
+  margin-right: .35rem;
+}
+/* A label inside a numbered section, which is not itself one. */
+.beat-label {
+  margin: .4rem 0 .15rem 1.5rem;
+  font-size: .78rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted, #8a8a8a);
+}
+
+/* A row's place in its section. Two numbering schemes were running down
+   the same column and looked like one counter disagreeing with itself. */
+.trail-n {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: .74rem;
+  color: var(--muted, #8a8a8a);
+  margin-right: .4rem;
+}
+
+/* Two levels, told apart by looking.
+
+   The sections are 1.1, 1.2, 1.3 and the rows inside one are 1.2.1, 1.2.2
+   - so after 1.2.7 the next heading is 1.3, which is a step back out and
+   read as a step further in. The headings sit at the margin; everything
+   that belongs to a heading is indented under it behind a rule, so the
+   outdent is visible rather than inferred from the number. */
+.beat-inner > .beat-sub {
+  margin-left: 0;
+  opacity: .8;
+  font-weight: 600;
+}
+.beat-inner > .beat-sub .beat-sub-n { opacity: .75; }
+.beat-inner > p,
+.beat-inner > .beat-trail,
+.beat-inner > .beat-cards,
+.beat-inner > .beat-records,
+.beat-inner > .beat-context,
+.beat-inner > .beat-could,
+.beat-inner > .beat-decided,
+.beat-inner > .beat-call,
+.beat-inner > .beat-outcome,
+.beat-inner > .beat-label,
+.beat-inner > .beat-cannot,
+.beat-inner > .beat-nothing {
+  margin-left: 1.1rem;
+  padding-left: .7rem;
+  border-left: 2px solid var(--line, rgba(127,127,127,.2));
+}
+.beat-inner > .beat-trail { padding-left: .7rem; }
+
+/* What one row of a trail cost. A list of things that happened, with no
+   way to weigh them, reads as though folding and a model call are alike. */
+.trail-cost {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: .72rem;
+  color: var(--muted, #8a8a8a);
+  margin-right: .45rem;
+}
+
+/* A path or a URL a reader is meant to go and look at, so it wraps rather
+   than running off the card. */
+.state-source {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: .75rem;
+  overflow-wrap: anywhere;
+}
+
+
+/* LAST IN THE FILE ON PURPOSE. `.sb-graph` above sets
+   `width: 100%; height: auto; max-height: 60vh` for the
+   dendrogram, and an SVG told to fit a box scales its whole
+   drawing to get there - which is what kept shrinking the tree
+   when a task was opened. Two single-class rules have the same
+   weight, so the one that wins is the one written later: the
+   override has to come after the rule it overrides, and did
+   not. The tree is sized by its own style attribute and the
+   frame scrolls. */
+.sb-whole-graph {
+  display: block; cursor: grab; touch-action: none;
+  width: auto; height: auto; max-height: none; max-width: none;
+  border: 0;
+}
+
+/* What a page was about: keywords worked out from what was read on it,
+   the line that carries them, and the text itself behind a toggle. */
+.ov-about { margin: .2rem 0 .35rem 4.2rem; }
+.ov-kw { display: inline-block; margin: 0 .3rem .2rem 0; padding: 0 .45rem;
+  border-radius: .7rem; font-size: .8rem; line-height: 1.5;
+  background: var(--chip, rgba(110,168,254,.14));
+  color: var(--text, #e8ecf3); }
+.ov-about-line { font-size: .82rem; margin: .1rem 0 0; }
+.ov-read-toggle { margin-left: .2rem; }
+.ov-read { white-space: pre-wrap; word-break: break-word; font-size: .8rem;
+  max-height: 22rem; overflow: auto; margin: .3rem 0 0; padding: .5rem .6rem;
+  border-radius: .4rem; background: var(--panel-2, rgba(255,255,255,.04)); }
+
+/* A task nothing has been added to for a few days: still drawn, quieter. */
+.sb-tt-quiet .sb-tt-disc,
+.sb-tt-quiet .sb-tt-emblem,
+.sb-tt-quiet .sb-tt-label { opacity: 0.5; }
+.sb-card-quiet { font-style: italic; }
+
+/* The gaps between a task's stretches of work: joined, faintly. */
+.sb-tt-span-gap { stroke-dasharray: 2 4; opacity: 0.35; }
+
+/* The card's working: where a task's work is, and what this round did. */
+.sb-places { border-collapse: collapse; margin: 0.3rem 0; font-size: 0.85rem; }
+.sb-places th, .sb-places td { padding: 0.15rem 0.6rem 0.15rem 0; text-align: left; }
+.sb-places th { font-weight: 600; color: var(--muted, #888); }
+.sb-places td:not(:first-child), .sb-places th:not(:first-child) { text-align: right; }
+.sb-round-list { margin: 0.2rem 0 0.4rem 1.1rem; padding: 0; font-size: 0.85rem; }
+.sb-card-places, .sb-card-round { margin: 0.35rem 0; }
+
+/* A project: its heading, and the mark down the left of its tasks. */
+.sb-tt-project, .sb-tt-project-row { cursor: pointer; }
+.sb-tt-project-name { font-weight: 700; font-size: 13px; fill: var(--ink, currentColor); }
+.sb-tt-project-tick { stroke: var(--muted, #888); stroke-width: 3; opacity: 0.5; }
+.sb-tt-project-disc { opacity: 0.9; }
+.sb-tt-project-ring { fill: none; stroke-width: 1.5; stroke-dasharray: 3 2.5; opacity: 0.85; }
+/* The project's own words are in the page's text colour, which the theme
+   sets; only the tag carries the project's colour. */
+.sb-tt-project-name { fill: var(--ink, currentColor); }
+.sb-tt-project-tag { font-size: 10px; letter-spacing: 0.06em; font-weight: 800; }
+.sb-tt-project-status { font-style: italic; }
+/* From a project down to its tasks, when it is open. */
+.sb-tt-project-link { fill: none; stroke-width: 1.6; stroke-linejoin: round;
+  opacity: 0.75; pointer-events: none; }
+/* What is selected: the task or project whose card is open. */
+.sb-tt-selection { fill: var(--accent, #3d6be5); fill-opacity: 0.08;
+  stroke: var(--accent, #3d6be5); stroke-width: 2; pointer-events: none; }
+
+
+/* -- Experience ------------------------------------------------------------ */
+.xp-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap;
+  margin-bottom: 10px; }
+.xp-grid { display: grid; grid-template-columns: minmax(220px, 1fr) 3fr; gap: 12px;
+  margin-bottom: 12px; }
+.xp-grid:last-child { grid-template-columns: 3fr 2fr; }
+@media (max-width: 900px) { .xp-grid, .xp-grid:last-child { grid-template-columns: 1fr; } }
+.xp-unit { display: block; width: 100%; text-align: left; margin: 0 0 6px;
+  background: var(--bg); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+.xp-unit .muted { display: block; font-size: 12px; }
+.xp-unit.selected { border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent); }
+.xp-unit-kind { font-size: 10px; font-weight: 800; letter-spacing: 0.06em;
+  color: var(--accent); margin-right: 4px; }
+.xp-frame { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+.xp-frame svg { display: block; }
+.xp-edge { stroke: var(--muted); stroke-width: 1.4; opacity: 0.7; }
+.xp-edge-revises { stroke-dasharray: 4 3; }
+.xp-card-row { fill: var(--ink); font-size: 12px; cursor: pointer; }
+.xp-card-row:hover, .xp-card-row.selected { fill: var(--accent); }
+.xp-card-root { font-weight: 600; }
+.xp-card-done, .xp-card-set_aside { fill: var(--muted); }
+.xp-card-set_aside { text-decoration: line-through; }
+.xp-nature-example { font-size: 12px; margin-top: 2px; }
+.xp-dot { cursor: pointer; }
+.xp-dot.selected circle { stroke: var(--ink); stroke-width: 3; }
+.xp-verdict { fill: #fff; font-size: 10px; text-anchor: middle; pointer-events: none; }
+.xp-stage-card { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px;
+  margin: 10px 0; }
+.xp-stage-card h3 { margin: 0 0 6px; text-transform: capitalize; }
+.xp-principle { border-bottom: 1px solid var(--line); padding: 8px 0; }
+.xp-principle p { margin: 4px 0 0 26px; }
+.xp-patterns { margin-left: 22px; }
+.xp-pattern { padding: 4px 0; }
+.xp-toggle { background: none; border: none; color: var(--ink); cursor: pointer;
+  width: 22px; }
+.xp-records { margin: 4px 0 4px 26px; font-size: 13px; }
+.xp-work textarea { width: 100%; box-sizing: border-box; margin: 6px 0; }
+.xp-run { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
+  margin-top: 8px; }
+.xp-log { font-size: 12px; max-height: 260px; overflow: auto; }
+#xp-search-form { display: flex; gap: 6px; flex-wrap: wrap; }
+#xp-search-form input { flex: 1; min-width: 200px; }
+.xp-all-card { margin-bottom: 12px; }
+.xp-band { fill: var(--bg); stroke: var(--line); }
+.xp-band-name { fill: var(--ink); font-size: 12px; font-weight: 600; cursor: pointer; }
+.xp-band-name:hover { fill: var(--accent); }
+.xp-link { fill: none; stroke: var(--muted); stroke-width: 1.2; opacity: 0.55; }
+.xp-node { cursor: pointer; }
+.xp-principle-dot { fill: var(--accent); opacity: 0.85; }
+.xp-pattern-dot { fill: var(--ok); }
+.xp-principle-name { fill: var(--ink); font-size: 13px; font-weight: 700; }
+.xp-pattern-name { fill: var(--ink); font-size: 12px; }
+.xp-node-aside { fill: var(--muted); font-size: 11px; font-weight: 400; }
+.xp-node.selected circle { stroke: var(--ink); stroke-width: 2.5; }
+.xp-head { fill: var(--muted); }
+.xp-chain { border-left: 3px solid var(--line); margin: 6px 0; padding-left: 26px; }
+.xp-chain-match { font-weight: 600; }
+/* The round's three bars, one per kind of work. */
+.sb-progress-bars { display: grid; gap: 4px; }
+/* Delegate work: the words first, then the avatar's face. */
+.delegate-label { vertical-align: middle; }
+.delegate-icon { width: 16px; height: 16px; margin-left: 6px; vertical-align: middle; }
+.ov-todo-item .ov-todo-delegate { grid-column: 1; justify-self: start; margin: 2px 0 2px 22px;
+  padding: 1px 8px; font-size: .78rem; }
+.delegate { width: min(720px, 94vw); max-height: 88vh; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--panel); color: var(--ink); padding: 0; }
+.delegate::backdrop { background: rgba(0, 0, 0, .45); }
+.delegate-form { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px;
+  max-height: 88vh; overflow: auto; }
+.delegate-form h3 { margin: 0; color: var(--heading-bright); }
+.delegate-form label { font-size: 12px; }
+.delegate-form textarea, .delegate-form input[type="text"] { width: 100%; }
+.delegate-handed blockquote { margin: 0 0 6px; padding: 6px 10px; border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent); white-space: pre-wrap; }
+.delegate-url { word-break: break-all; }
+.delegate-wait { display: flex; gap: 8px; align-items: center; }
+.delegate-error { color: var(--err); }
+.delegate-folders ul { margin: 4px 0; padding-left: 18px; }
+.delegate-form textarea { resize: vertical; overflow: hidden; min-height: 2.2em; }
+.delegate-found summary { cursor: pointer; font-size: 12px; }
+.delegate-found ul { margin: 6px 0; padding-left: 18px; display: grid; gap: 6px; }
+.delegate-found li { font-size: .85rem; }
+.delegate-kind { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--accent); }
+.delegate-why { font-size: .75rem; }
+.delegate-folders button.link { width: auto; padding: 0 6px; background: none; border: none;
+  color: var(--muted); font-size: 1.1em; box-shadow: none; }
+.delegate-folders button.link:hover { color: var(--ink); }
+.delegate-actions { display: flex; justify-content: flex-end; gap: 8px; position: sticky;
+  bottom: -18px; background: var(--panel); padding: 8px 0 0; }
+.xp-group { margin: 14px 0 4px; font-size: .8rem; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--muted); }
+/* The Avatar panel: the avatar alive, and what it does while it works. */
+.avatar-stage-wrap { display: flex; flex-direction: column; align-items: center; gap: 8px;
+  margin: 6px 0 14px; }
+.avatar-stage { width: 220px; height: 220px; display: grid; place-items: center; }
+.avatar-svg { width: 100%; height: 100%; cursor: pointer; overflow: visible; }
+.avatar-still { width: 160px; height: 160px; image-rendering: auto; }
+.avatar-moods { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.avatar-moods .active { border-color: var(--accent); color: var(--accent); }
+/* Summary task and To do side by side, their headings level; To do under
+   it when narrow. */
+.ov-tasks-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 1fr);
+  gap: 24px; align-items: start; }
+@media (max-width: 760px) { .ov-tasks-top { grid-template-columns: 1fr; } }
+.ov-tasks-intro { min-width: 0; }
+.ov-tasks-intro .sb-progress-bars { max-width: 560px; margin-top: 8px; }
+.ov-todo { min-width: 0; border-left: 2px solid var(--line); padding-left: 14px; }
+/* Both headings the same: bright, and the same size. */
+#ov-tasks-card .ov-head { color: var(--heading-bright); font-size: 1rem; font-weight: 700;
+  letter-spacing: .04em; margin: 0 0 6px; }
+#ov-tasks-card .ov-head-count { color: var(--heading-bright); font-weight: 400; }
+.ov-todo-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.ov-todo-item { display: grid; grid-template-columns: 1fr auto; column-gap: 6px;
+  font-size: .86rem; }
+.ov-todo-item label { display: flex; flex-direction: row; flex-wrap: nowrap; gap: 6px;
+  align-items: baseline; justify-content: flex-start; cursor: pointer; margin: 0;
+  font-size: inherit; color: var(--ink); }
+.ov-todo-item input[type="checkbox"] { width: auto; flex: none; margin: 0; }
+.ov-todo-detail { grid-column: 1; font-size: .78rem; padding-left: 22px; }
+/* EVERY × THAT REMOVES SOMETHING: large enough to see and to hit. */
+.x-remove { font-size: 20px !important; line-height: 1 !important; min-width: 28px;
+  min-height: 28px; padding: 2px 8px !important; }
+.ov-todo-item .ov-todo-delete { grid-column: 2; grid-row: 1; width: auto;
+  background: none; border: none; color: var(--muted); box-shadow: none; }
+.ov-todo-confirm { grid-column: 2; grid-row: 1; display: flex; gap: 6px; align-items: center;
+  font-size: .82rem; white-space: nowrap; }
+.ov-todo-item .ov-todo-delete:hover { color: var(--ink); }
+.ov-todo-done .ov-todo-text { text-decoration: line-through; color: var(--muted); }
+.sb-progress-row { display: grid; grid-template-columns: 170px 1fr 120px;
+  align-items: center; gap: 8px; }
+.sb-progress-label, .sb-progress-count { font-size: 12px; color: var(--muted); }
+.sb-progress-count { text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) {
+  .sb-progress-row { grid-template-columns: 1fr; }
+  .sb-progress-count { text-align: left; }
+}
+/* How you work, as a tree opened a layer at a time. */
+.xp-tree { list-style: none; margin: 0; padding-left: 22px; position: relative; }
+.xp-tree-root { padding-left: 0; }
+.xp-tree li { position: relative; padding: 3px 0 3px 6px; }
+.xp-tree .xp-tree li::before { content: ""; position: absolute; left: -14px;
+  top: 0; bottom: 0; border-left: 1px solid var(--line); }
+.xp-tree .xp-tree li:last-child::before { bottom: auto; height: 14px; }
+.xp-tree .xp-tree li::after { content: ""; position: absolute; left: -14px;
+  top: 14px; width: 12px; border-top: 1px solid var(--line); }
+.xp-toggle-none { display: inline-block; width: 22px; }
+.xp-node-label { cursor: pointer; }
+.xp-node-label:hover, .xp-node-label.selected { color: var(--accent); }
+.xp-principle-label { font-weight: 700; }
+.xp-tree-record { font-size: 13px; }
+
+/* How you work: a tree of nodes */
+.xp-ptree-frame { overflow-x: auto; max-width: 100%; }
+.xp-ptree { display: block; }
+.xp-pnode { cursor: pointer; outline: none; }
+.xp-pnode-disc { stroke-width: 2; }
+.xp-pnode-root .xp-pnode-disc { fill: var(--ink); stroke: var(--ink); }
+.xp-pnode-link { fill: none; stroke: var(--muted); stroke-width: 1.3; opacity: 0.55; }
+.xp-pnode-name { font-size: 12.5px; fill: var(--ink); }
+.xp-pnode-name.muted { fill: var(--muted); font-style: italic; }
+.xp-pnode-pattern-name { font-size: 12px; }
+.xp-pnode-aside, .xp-pnode-count { font-size: 10.5px; fill: var(--muted); }
+.xp-pnode-count { text-anchor: middle; }
+.xp-pnode-head { font-size: 11px; font-weight: 600; letter-spacing: .06em;
+  text-transform: uppercase; fill: var(--muted); }
+.xp-pnode-loose .xp-pnode-disc { stroke-dasharray: 3 2.5; fill-opacity: 0.35; }
+.xp-pnode:hover .xp-pnode-disc, .xp-pnode:focus-visible .xp-pnode-disc {
+  stroke: var(--accent); stroke-width: 3; }
+.xp-pnode.selected .xp-pnode-disc { stroke: var(--accent); stroke-width: 3.5;
+  filter: drop-shadow(0 0 3px var(--accent)); }
+.xp-pnode.selected .xp-pnode-name { font-weight: 600; }
+.xp-pnode-port { fill: var(--muted); }
+
+/* What each part of a round cost */
+.sb-parts { list-style: none; margin: 2px 0 8px; padding: 0; font-size: 12px;
+  color: var(--muted); display: grid; gap: 1px; }
+.sb-parts li { display: grid; grid-template-columns: minmax(150px, max-content)
+  minmax(64px, max-content) minmax(170px, max-content) max-content;
+  gap: 12px; }
+.sb-part-name { color: var(--ink); }
+@media (max-width: 600px) {
+  .sb-parts li { grid-template-columns: 1fr 1fr; gap: 2px 10px; }
+}
+
+/* How you work, one tree per kind of nature */
+.xp-kind { margin: 4px 0 18px; padding: 10px 12px 6px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.xp-kind-head { margin: 6px 0 2px; font-size: 14px; }
+.xp-kind-head .muted { font-weight: 400; font-size: 12px; }
+
+/* A stage's work: steps, criteria, references */
+.xp-work-list { margin: 2px 0 8px 18px; padding: 0; font-size: 13px; }
+.xp-work-list li { margin: 2px 0; }
+.xp-refs { list-style: none; margin-left: 0; }
+.xp-ref-kind { display: inline-block; min-width: 54px; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.xp-ref-where { font-size: 12px; word-break: break-all; }
+.xp-ref-access { display: inline-block; margin-left: 6px; padding: 0 6px;
+  border-radius: 8px; font-size: 11px; border: 1px solid var(--line);
+  color: var(--muted); }
+.xp-ref-local, .xp-ref-public { color: var(--ok); border-color: var(--ok); }
+.xp-ref-sign-in { color: var(--warn); border-color: var(--warn); }
+.xp-ref-copy { margin: 1px 0 0 60px; font-size: 12px; color: var(--muted); }
+
+/* Projects' folders */
+.xp-unit-folder { display: block; font-size: 11px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.xp-unit-folder-edit { font-size: 11px; color: var(--accent); cursor: pointer; }
+.xp-add-folder { margin-top: 10px; display: grid; gap: 4px; font-size: 12px; }
+.xp-add-folder input { width: 100%; box-sizing: border-box; }
+
+/* The user's own projects */
+.xp-projects-head { margin-top: 18px; }
+.xp-projects-note { font-size: 12px; }
+.xp-project { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+  margin: 6px 0; font-size: 13px; display: grid; gap: 3px; }
+.xp-project-folders code { font-size: 11px; word-break: break-all; }
+.xp-project-going { color: var(--accent); font-size: 12px; }
+.xp-project-error { color: var(--err); font-size: 12px; }
+.xp-project-actions { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+.xp-add-folder textarea { width: 100%; box-sizing: border-box; font-size: 12px; }
+
+/* What the stage writer was given */
+.xp-prompt { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
+  margin: 6px 0; }
+.xp-prompt summary { cursor: pointer; font-size: 13px; }
+.xp-prompt-part { margin: 8px 0; }
+.xp-prompt-label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); margin-bottom: 2px; }
+.xp-prompt-text { white-space: pre-wrap; word-break: break-word; font-size: 12px;
+  max-height: 480px; overflow: auto; background: var(--bg); padding: 8px;
+  border-radius: 6px; margin: 0; }
+.xp-prompt-unit { margin: 6px 0; }
+.xp-prompt-unit > summary { cursor: pointer; }
+.xp-prompt-unit > .xp-prompt { margin-left: 14px; }
+.xp-decision { border-left: 3px solid var(--accent, #6a8cff); padding-left: 10px; margin: 8px 0; }
+.xp-by { font-size: 0.8em; margin-left: 6px; padding: 1px 6px; border-radius: 8px;
+  background: var(--chip-bg, rgba(127,127,127,0.15)); }
+.xp-by-user { background: rgba(80, 160, 90, 0.2); }
+.xp-by-agent { background: rgba(120, 120, 200, 0.2); }
+.xp-sub { margin: 6px 0 2px; font-weight: 600; }
+.xp-scope { display: inline-flex; gap: 4px; margin-left: 8px; }
+.xp-test-note { margin: 4px 0 8px; }
+.xp-test-bars { margin: 6px 0 10px; padding: 8px 12px; }
+.xp-test-bars-head { margin: 0 0 6px; }
+.xp-cite { font-size: 0.85em; text-decoration: none; margin-left: 1px; }
+.xp-ref-id { font-family: var(--mono, monospace); font-size: 0.8em; margin-right: 6px;
+  padding: 0 5px; border-radius: 6px; background: var(--chip-bg, rgba(127,127,127,0.15)); }
+@keyframes xp-ref-flash { from { background: rgba(255, 200, 60, 0.45); } to { background: transparent; } }
+.xp-ref-flash { animation: xp-ref-flash 1.6s ease-out; }
+
+/* The agents' work on a project: the folders they may change, the limits. */
+.xp-folders, .xp-limits { margin: 8px 0; }
+.xp-limits label { margin-right: 12px; }
+.xp-limits input { width: 9em; }
+.xp-warning { font-size: 12px; }
+/* How packages are asked for, and a request waiting for the user's answer. */
+.xp-packages-mode { margin: 8px 0; }
+.xp-packages-mode label { margin-right: 12px; }
+.xp-package-ask { border: 1px solid var(--warn); border-left-width: 4px;
+  border-radius: 6px; padding: 6px 10px; margin: 8px 0; }
+.xp-package-ask p { margin: 4px 0; }
+.xp-package-ask button { margin-right: 6px; }
+.xp-reviews ol { margin-top: 4px; }
+
+/* A run's live session: where it stands on top, like a progress bar, and
+   below it a terminal-like record, newest at the bottom - a box of its
+   own that scrolls, so following it never moves the page. */
+.xp-live { margin: 8px 0; border: 1px solid var(--line); border-radius: 8px;
+  padding: 4px 10px; }
+.xp-live > summary { cursor: pointer; }
+.xp-live-head { margin: 6px 0 4px; }
+.xp-live-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin-bottom: 4px; }
+.xp-live-state { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 10px;
+  border: 1px solid var(--line); }
+.xp-live-state-going { color: var(--ok); border-color: var(--ok); }
+.xp-live-state-paused { color: var(--warn); border-color: var(--warn); }
+.xp-live-state-waiting_for_you { color: #fff; background: var(--warn); border-color: var(--warn); }
+.xp-live-state-interrupted { color: var(--err); border-color: var(--err); }
+.xp-live-bar { display: grid; grid-template-columns: 7em minmax(80px, 1fr) auto; gap: 8px;
+  align-items: center; font-size: 12px; margin: 2px 0; }
+.xp-live-bar-label { color: var(--muted); }
+.xp-live-bar-track { background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
+  height: 10px; overflow: hidden; }
+.xp-live-bar-fill { display: block; height: 100%; background: var(--accent); }
+.xp-live-bar-full { background: var(--warn); }
+.xp-live-bar-value { font-variant-numeric: tabular-nums; color: var(--muted); }
+.xp-live-doing { margin: 4px 0; font-size: 12px; display: flex; gap: 6px; align-items: center; }
+.xp-live-doing[hidden], .xp-live-spin[hidden] { display: none; }
+.xp-live-doing { min-height: 18px; }
+.xp-live-doing-none { visibility: hidden; }
+/* As tall with Pause or Resume as without: the session below keeps its place. */
+.xp-live-line { min-height: 28px; }
+.xp-live-spin { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--line);
+  border-top-color: var(--accent); animation: xp-live-turn 0.9s linear infinite; flex: none; }
+@keyframes xp-live-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .xp-live-spin { animation: none; } }
+.xp-live-scroll { height: 360px; min-height: 120px; resize: vertical; overflow: auto;
+  overscroll-behavior: contain; position: relative;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 4px 8px; margin: 4px 0 6px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px; line-height: 1.45; }
+.xp-live-log { list-style: none; margin: 0; padding: 0; }
+.xp-live-ev { padding: 1px 0; overflow-wrap: anywhere; }
+.xp-live-at { color: var(--muted); margin-right: 6px; }
+.xp-live-who { display: inline-block; min-width: 5.5em; font-weight: 600; }
+.xp-live-who-worker .xp-live-who { color: var(--accent); }
+.xp-live-who-reviewer .xp-live-who { color: #8e6bd8; }
+.xp-live-who-you .xp-live-who { color: var(--warn); }
+.xp-live-who-run .xp-live-who { color: var(--muted); }
+.xp-live-kind-milestone, .xp-live-kind-version, .xp-live-kind-end { font-weight: 600; }
+.xp-live-kind-milestone { border-top: 1px dashed var(--line); margin-top: 3px; padding-top: 3px; }
+.xp-live-failed .xp-live-text, .xp-live-kind-error .xp-live-text { color: var(--err); }
+.xp-live-cost { color: var(--muted); }
+.xp-live-answer-yes { color: var(--ok); }
+.xp-live-answer-no { color: var(--err); }
+.xp-live-answer-wait { color: var(--warn); }
+.xp-live-ask { font-family: inherit; background: var(--panel); }
+.xp-live-foot:empty { display: none; }
+.xp-live-badge { background: var(--warn); }
+
+/* A run's versions: a line per version, a branch indented under the
+   version it began from, the head marked. */
+.xp-version-tree { list-style: none; padding-left: 0; margin: 6px 0; }
+.xp-version { padding: 3px 6px; border-left: 2px solid var(--line, #e3e6ea);
+  margin: 2px 0; }
+.xp-version button { margin-left: 4px; }
+.xp-version-head { border-left-color: var(--accent, #3d6be5);
+  background: color-mix(in srgb, var(--accent, #3d6be5) 8%, transparent); }
+.xp-version-branch { color: var(--muted, #8a8f98); margin-right: 2px; }
+.xp-version-kind { font-size: 0.85em; padding: 0 6px; border-radius: 8px;
+  border: 1px solid var(--line, #e3e6ea); }
+.xp-version-here { font-size: 0.85em; font-weight: 600; color: var(--accent, #3d6be5);
+  margin-left: 6px; }
+.xp-version-view { border: 1px solid var(--line, #e3e6ea); border-radius: 6px;
+  padding: 6px 10px; margin: 6px 0; }
+.xp-version-files { max-height: 220px; overflow: auto; }
+
+/* What to change from here, said when continuing: under Continue, or under
+   the version picked. */
+.xp-continue-words { display: block; margin: 6px 0 2px; }
+.xp-continue-words > span { display: block; font-size: 0.9em; color: var(--muted); }
+.xp-continue-words textarea { width: 100%; max-width: 760px; min-height: 3.2em;
+  font: inherit; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; resize: vertical; }
+.xp-version-continue { margin: 4px 0 2px 1.2em; }
+
+/* A line continued with the user's words: the words, and - folded - what
+   they changed in its contract, a clause a line. */
+.xp-amended { margin: 3px 0 0 1.2em; font-size: 0.92em; }
+.xp-badge-instruction { display: inline-block; font-size: 0.8em; font-weight: 600;
+  padding: 0 7px; border-radius: 8px; border: 1px solid var(--warn); color: var(--warn);
+  margin-right: 4px; }
+.xp-amended-words { white-space: pre-wrap; }
+blockquote.xp-amended-words { margin: 4px 0; padding: 2px 10px;
+  border-left: 3px solid var(--warn); color: var(--ink); }
+.xp-contract-diff > summary { cursor: pointer; color: var(--muted); font-size: 0.92em; }
+.xp-diff { margin: 4px 0; padding: 4px 0; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--ink); font-size: 12px; line-height: 1.45;
+  white-space: pre-wrap; overflow-wrap: anywhere; }
+.xp-diff > span { display: block; padding: 0 8px; }
+.xp-diff-add { background: color-mix(in srgb, var(--ok) 16%, transparent);
+  border-left: 3px solid var(--ok); }
+.xp-diff-del { background: color-mix(in srgb, var(--danger-ink) 14%, transparent);
+  border-left: 3px solid var(--danger-ink); text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--danger-ink) 60%, transparent); }
+.xp-diff-same { color: var(--muted); border-left: 3px solid transparent; }
+.xp-live-diff { margin: 2px 0 4px; }
+
+/* THE CONTRACT IN FORCE, on top of each run and never folded: the goal, the
+   scope, the line's words, and each deliverable with where it stands - its
+   criteria a click away. A version's own contract is drawn the same, muted,
+   and says it is not in force. */
+.xp-contract-now { margin: 8px 0; padding: 6px 12px 4px; border: 1px solid var(--line);
+  border-left: 3px solid var(--accent); border-radius: 6px; background: var(--panel); }
+.xp-contract-title { margin: 2px 0 4px; font-size: 1em; }
+.xp-contract-where { font-weight: 400; color: var(--muted); margin-left: 6px; }
+.xp-contract-line { margin: 2px 0; overflow-wrap: anywhere; }
+.xp-contract-words { margin: 4px 0; }
+.xp-contract-deliverables { list-style: none; padding-left: 0; margin: 2px 0 4px; }
+.xp-deliverable > summary { cursor: pointer; padding: 1px 0; overflow-wrap: anywhere; }
+.xp-deliverable-body { margin: 2px 0 6px 1.4em; padding-left: 8px;
+  border-left: 2px solid var(--line); }
+.xp-deliverable-body p { margin: 3px 0; }
+.xp-criteria { margin: 2px 0; padding-left: 1.4em; }
+.xp-status { display: inline-block; min-width: 4.6em; text-align: center; font-size: 0.8em;
+  padding: 0 6px; border-radius: 8px; border: 1px solid var(--line); color: var(--muted); }
+.xp-status-done { color: var(--ok); border-color: var(--ok); }
+.xp-status-working { color: var(--accent); border-color: var(--accent); }
+.xp-status-set_aside { text-decoration: line-through; }
+.xp-contract-not-in-force { border-left-color: var(--line); border-style: dashed;
+  background: transparent; }
+.xp-contract-not-in-force .xp-contract-line,
+.xp-contract-not-in-force .xp-deliverable > summary { color: var(--muted); }
+/* The contract's goal and the instruction in force, whole - wrapped, never
+   cut. */
+.xp-live-contract { font-size: 0.92em; margin: 0 0 3px; overflow-wrap: anywhere; }
+.xp-live-instruction { font-size: 0.92em; margin: 0 0 4px; max-height: 8em; overflow: auto; }
+.xp-live-instruction-words { white-space: pre-wrap; overflow-wrap: anywhere;
+  border-left: 3px solid var(--accent); padding: 1px 0 1px 8px; margin: 2px 0; }
+
+/* A line of the session, whole: its preview, and all of it a click away -
+   code and arguments as they were written, newlines kept. */
+.xp-live-text { white-space: pre-wrap; }
+.xp-live-more { display: inline; margin-left: 4px; }
+.xp-live-more > summary { display: inline; cursor: pointer; color: var(--accent);
+  font-size: 11px; list-style: none; }
+.xp-live-more > summary::-webkit-details-marker { display: none; }
+.xp-live-more[open] > summary { color: var(--muted); }
+.xp-live-full { display: block; white-space: pre-wrap; overflow-wrap: anywhere;
+  margin: 3px 0 6px; padding: 6px 8px; background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 5px; font: inherit; max-height: 16rem;
+  overflow: auto; overscroll-behavior: contain; }
+
+/* A sound when the run ends: a box beside Start and Continue. */
+.xp-sound { font-size: 12px; color: var(--muted); margin-left: 8px; white-space: nowrap; }
+.xp-sound input { vertical-align: -2px; margin-right: 3px; }
+.xp-live-sound { margin: 2px 0; font-size: 12px; }
+.xd-clear-ask { color: var(--ink); }
+
+/* A RUN'S TOKENS, ADDED UP: two panels on one time axis - 2px step lines,
+   each who in its colour, the total in the page's ink and a little heavier;
+   end dots ringed in the panel's colour, a hairline grid, the ink of the
+   page for every word and number. The chart's box is as tall as the chart,
+   its axis included, from the start. */
+.xp-calls { margin: 4px 0 8px; }
+.xp-calls-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center;
+  font-size: 12px; margin: 4px 0 2px; color: var(--ink); }
+.xp-calls-key { display: inline-flex; align-items: center; gap: 5px; }
+/* The legend's names are buttons: one hides or shows its line. */
+button.xp-calls-key { font: inherit; color: inherit; background: none; border: 0;
+  padding: 2px 4px; border-radius: 4px; cursor: pointer; }
+button.xp-calls-key:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); }
+button.xp-calls-key:focus-visible { outline: 2px solid var(--accent, currentColor); }
+.xp-calls-key-off { opacity: 0.45; text-decoration: line-through; }
+.xp-calls-swatch { display: inline-block; width: 14px; height: 2px; border-radius: 1px; }
+.xp-calls-key-total .xp-calls-swatch { height: 3px; }
+.xp-calls-ring { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  border: 2px solid var(--muted); background: var(--panel); }
+.xp-calls-sum { margin-left: auto; font-variant-numeric: tabular-nums; }
+.xp-calls-chart { position: relative; width: 100%; min-height: 40px; outline: none;
+  overflow: hidden; }
+.xp-calls-chart:focus-visible { box-shadow: 0 0 0 2px var(--accent); border-radius: 6px; }
+.xp-calls-svg { display: block; overflow: visible; }
+.xp-calls-svg text { font-size: 10.5px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.xp-calls-svg .xp-calls-panel { font-size: 11px; fill: var(--ink); }
+.xp-calls-svg .xp-calls-endlabel { fill: var(--ink); }
+.xp-calls-grid { stroke: var(--line); stroke-width: 1; }
+.xp-calls-base { stroke: var(--muted); stroke-opacity: 0.55; stroke-width: 1; }
+.xp-calls-tickmark { stroke: var(--muted); stroke-opacity: 0.55; }
+.xp-calls-break { stroke: var(--panel); stroke-width: 6; }
+.xp-calls-cross { stroke: var(--muted); stroke-width: 1; pointer-events: none; }
+.xp-calls-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.xp-calls-line-total { stroke-width: 2.5; }
+.xp-calls-end, .xp-calls-dot { stroke: var(--panel); stroke-width: 2; }
+.xp-call-failed { fill: var(--panel); stroke-width: 2; }
+.xp-calls-tip { position: absolute; z-index: 5; pointer-events: none; max-width: 340px;
+  background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 9px; font-size: 12px; line-height: 1.45;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14); }
+.xp-calls-tip[hidden] { display: none; }
+.xp-calls-tip-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+.xp-calls-tip-who { display: flex; align-items: center; gap: 6px; }
+.xp-calls-tip-key { display: inline-block; width: 12px; height: 2px; border-radius: 1px;
+  flex: none; }
+.xp-calls-table { margin: 2px 0; font-size: 12px; }
+.xp-calls-rows { border-collapse: collapse; width: 100%; margin: 4px 0; }
+.xp-calls-rows th, .xp-calls-rows td { text-align: left; padding: 2px 8px 2px 0;
+  border-bottom: 1px solid var(--line); vertical-align: top; }
+.xp-calls-rows .num { text-align: right; font-variant-numeric: tabular-nums; }
+.xp-calls-rows-box { max-height: 15rem; overflow: auto; overscroll-behavior: contain; }
+.xp-calls-rows thead th { position: sticky; top: 0; background: var(--panel); }
+.xp-calls-row-failed td { color: var(--err); }
+
+/* The full transcript's files, under a run. */
+.xp-transcript { margin: 2px 0 6px; font-size: 12px; }
+.xp-transcript code { overflow-wrap: anywhere; }
+
+/* A version without slides: said so, and where it stood in a line. */
+.xp-version-noslides { margin: 6px 0 2px; }
+.xp-version-slides-note { margin: 6px 0 4px; font-size: 12px; }
+
+/* The user's own description of a project they added. */
+.xp-about { display: block; font-size: 12px; margin: 4px 0; overflow-wrap: anywhere; }
+.xp-about-label { font-weight: 600; color: var(--muted); margin-right: 6px; }
+.xp-about-words { white-space: pre-wrap; color: var(--ink); }
+.xp-about-edit { color: var(--accent); cursor: pointer; margin-left: 6px; font-size: 11px; }
+.xp-about-editing { display: grid; gap: 4px; }
+.xp-about-editing textarea { width: 100%; box-sizing: border-box; font: inherit; }
+.xp-about-buttons { display: flex; gap: 6px; }
+#xp-unit-about .xp-about { font-size: 13px; margin: -4px 0 10px; }
+
+/* A project's folders - and the folders the agents may change: a list,
+   each with × to take it out after asking in place. */
+.xp-folder-list { list-style: none; margin: 4px 0; padding: 0; font-size: 12px; }
+.xp-folder { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 2px 0; }
+.xp-folder code { overflow-wrap: anywhere; font-size: 11px; }
+.xp-folder-x { border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+  border-radius: 50%; width: 18px; height: 18px; line-height: 14px; padding: 0;
+  font-size: 13px; cursor: pointer; flex: none; }
+.xp-folder-x:hover, .xp-folder-x:focus-visible { color: var(--err); border-color: var(--err); }
+.xp-folder-ask { color: var(--ink); }
+.xp-folder-asking code { text-decoration: line-through; color: var(--muted); }
+
+/* A unit's learning, under its name in Projects and tasks. */
+.xp-unit-open { cursor: pointer; }
+.xp-learning { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  margin-top: 4px; font-size: 12px; }
+.xp-learning-now { font-weight: 600; }
+
+/* How you work, on the overview: principles and when each was last seen. */
+.ov-principle { margin: 6px 0; }
+.ov-principle summary { cursor: pointer; }
+.ov-patterns { margin: 4px 0 8px 18px; font-size: 13px; }
+.ov-quiet { color: var(--warn, #b26b00); }
+
+/* A new project, and rows that move. */
+.xp-plus { margin-left: 8px; font-weight: 700; }
+.xp-new { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.xp-new-folder { display: flex; gap: 8px; align-items: center; }
+.xp-unit[draggable="true"] { cursor: grab; }
+.xp-order-note { font-size: 12px; margin: 0; }
+.xp-order-row { display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin: 2px 0 6px; }
+.xp-unit.xp-dragging { opacity: .4; }
+
+/* How you work on the overview: drawn with the tasks' own picture, at its
+   own size in a frame that scrolls and is dragged - never fitted to the box. */
+.ov-pr-frame { overflow: auto; cursor: grab; }
+.ov-pr-frame.sb-frame-held { cursor: grabbing; }
+.ov-pr-graph { max-width: none; max-height: none; display: block; }
+.ov-pr-row { cursor: pointer; }
+.ov-pr-row.sb-tt-quiet { opacity: 0.45; }
+.ov-pr-row.sb-tt-open .ov-pr-name { text-decoration: underline; }
+.ov-principle-card:empty { display: none; }
+
+/* A nature, opened where it is listed. */
+.xp-nature-open { cursor: pointer; text-decoration: underline dotted; }
+.xp-nature-detail { margin: 6px 0 8px 12px; padding-left: 8px;
+  border-left: 2px solid var(--line); font-size: 13px; }
+/* Every example of a nature, newest first, in a list that scrolls. */
+.xp-nature-examples { list-style: none; margin: 4px 0 8px; padding: 0;
+  max-height: 420px; overflow-y: auto; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--panel); }
+.xp-nature-example-row { padding: 6px 10px; border-bottom: 1px solid var(--line);
+  color: var(--ink); }
+.xp-nature-example-row:last-child { border-bottom: 0; }
+.xp-nx-head { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
+.xp-nx-where { font-size: 12px; }
+.xp-nx-summary { margin-top: 2px; }
+/* The user's own words in a case, quoted - what the case is. */
+.xp-nx-said { margin-top: 3px; }
+.xp-nx-said blockquote { margin: 2px 0 2px 4px; padding: 1px 0 1px 8px;
+  border-left: 3px solid var(--accent); font-style: italic; color: var(--ink);
+  overflow-wrap: anywhere; }
+.xp-nx-count { font-size: 12px; }
+.xp-nx-places { list-style: none; margin: 3px 0 0; padding: 0; font-size: 12px; }
+.xp-nx-places code { word-break: break-all; color: var(--ink); }
+.xp-nature-history { margin: 4px 0 8px; }
+.xp-nature-history > summary { cursor: pointer; color: var(--accent); }
+.xp-nature-versions { margin: 4px 0 0 18px; padding: 0; }
+.xp-nature-versions > li { margin: 4px 0 8px; }
+.record-body { white-space: pre-wrap; font-size: 0.82rem; }
+
+/* A run's results: the slides in a frame, the deliverables as a table. */
+.xp-results, .xp-todo { margin: 8px 0; }
+.xp-results h4, .xp-todo h4 { margin: 8px 0 4px; }
+.xp-deck-frame { width: 100%; height: min(70vh, 620px); border: 1px solid var(--line, #e3e6ea);
+                 border-radius: 8px; background: var(--panel, #fff); }
+/* A version's slides: a 16:9 slide and the bar beneath it, as tall as the
+   box's width makes it - the page scales the slide to whatever it gets. */
+.xp-deck-frame.xp-version-slides { height: auto; aspect-ratio: 16 / 10; max-height: 82vh;
+                 min-height: 240px; }
+/* With each slide's notes beside it: wider, so the slide keeps its size. */
+.xp-deck-frame.xp-version-slides.xp-slides-with-notes { aspect-ratio: 21 / 9; min-height: 300px; }
+.xp-deliverables { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.xp-deliverables th, .xp-deliverables td { text-align: left; vertical-align: top;
+                 padding: 4px 8px; border-bottom: 1px solid var(--line, #e3e6ea); }
+.xp-deliverables code { word-break: break-all; }
+
+/* The in-card "are you sure" before a delete. */
+.event-sure { flex-basis: 100%; margin-bottom: 4px; }
+.event-why-said { flex-basis: 100%; width: 100%; resize: vertical;
+  background: var(--bg); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 8px; margin-bottom: 4px; }
+.lesson-said { margin: 4px 0; font-style: italic; }
+
+/* Lessons: each kind, each lesson, and its complete record. */
+.lessons { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 12px; }
+.lesson { border-left: 3px solid var(--line, #ccc); padding-left: 10px; }
+.lesson-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.lesson-text { margin: 4px 0; font-weight: 500; }
+.lesson-why { margin: 2px 0 4px; font-size: 0.92em; }
+.lesson-raw { white-space: pre-wrap; word-break: break-word; font-size: 0.85em;
+  max-height: 420px; overflow: auto; background: var(--bg); padding: 8px;
+  border-radius: 6px; margin: 6px 0 0; }
+.lesson-kind details summary { cursor: pointer; }
+/* What an edit changed: the field, what it was, what it is. */
+.lesson-changes { list-style: none; padding: 0; margin: 4px 0; font-size: 0.92em;
+  display: grid; gap: 2px; }
+.lesson-field { font-weight: 600; margin-right: 4px; }
+.lesson-before { text-decoration: line-through; color: var(--muted); }
+.lesson-after { font-weight: 500; }
+
+/* Editing an event, in its card. */
+.event-edit { flex-basis: 100%; display: grid; gap: 8px; }
+.event-edit label { display: grid; gap: 3px; font-size: 0.92em; }
+.event-edit input, .event-edit select, .event-edit textarea {
+  background: var(--bg); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 6px; padding: 5px 7px; font: inherit; }
+.event-edit textarea { resize: vertical; }
+.event-edit-note { margin: 0; font-size: 0.9em; color: var(--muted); }
+.event-edit-repeat { display: flex; gap: 6px; flex-wrap: wrap; align-items: end; }
+.event-edit-every { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.event-edit-every input[type=number] { width: 5em; }
+.event-edit [hidden] { display: none !important; }
+.event-edit-buttons { display: flex; gap: 8px; }
+.toast-notification { display: grid; gap: 6px; }
+.toast-notification .toast-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* Chat follow-ups: asked about a reply or a phrase in it, shown under it. */
+.msg[data-message] { white-space: normal; }
+.msg .msg-text { white-space: pre-wrap; }
+.fu-form { display: flex; gap: 6px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+.fu-form .fu-about { font-weight: 600; font-size: 12px; color: var(--muted); }
+.fu-form .fu-input { flex: 1 1 220px; min-width: 0; padding: 4px 8px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+.followups { display: grid; gap: 6px; margin-top: 8px; }
+.followup { border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 8px; background: var(--panel); padding: 6px 8px; }
+.fu-head { display: flex; gap: 6px; align-items: baseline; }
+.fu-title { flex: 1; font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+.fu-toggle, .fu-close { background: transparent; color: var(--muted); border: 0;
+  padding: 0 4px; font-size: 14px; line-height: 1; cursor: pointer; }
+.fu-toggle:hover, .fu-close:hover { color: var(--ink); }
+.fu-body { white-space: pre-wrap; margin-top: 4px; font-size: 13px; }
+.followup.folded .fu-body { display: none; }
+#fu-pick { position: absolute; z-index: 50; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+
+/* IN THE MARGIN: the follow-ups a column on the LEFT - the side the replies
+   they ask about are on - each card at the height of the words it asks
+   about (placed by layoutFollowUps); the conversation to its right. */
+#chat-log { position: relative; --fu-w: 300px; }
+#chat-log.fu-margin-mode.has-notes { padding-left: calc(var(--fu-w) + 22px); }
+#chat-log.fu-margin-mode .followups { display: contents; }
+#chat-log.fu-margin-mode .followups > .followup,
+#chat-log.fu-margin-mode .followups > .fu-form {
+  position: absolute; left: 6px; width: var(--fu-w); margin: 0;
+  box-sizing: border-box; transition: top .15s ease; }
+#chat-log.fu-margin-mode .followups > .fu-form {
+  background: var(--panel); border: 1px solid var(--line);
+  border-left: 3px solid var(--accent); border-radius: 8px; padding: 6px 8px; }
+#chat-log.fu-margin-mode .fu-form .fu-input { flex-basis: 100%; }
+mark.fu-anchor { background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: inherit; border-radius: 3px; padding: 0 1px; }
+mark.fu-anchor.fu-active { background: color-mix(in srgb, var(--accent) 42%, transparent); }
+.followup.fu-active, .fu-form.fu-active {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+
+/* Deleting a lesson: the button on its head, the question under it. */
+.lesson-head button.lesson-delete { margin-left: auto; }
+/* WHAT YOU DID, in columns - when, what, the title, the button - so every
+   title starts at the same place, whatever the badge says. */
+.lesson-did-head { display: grid; align-items: baseline; gap: 8px;
+  grid-template-columns: 12em 9.5em minmax(0, 1fr) auto; }
+.lesson-did-when { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lesson-did-head .lesson-act { justify-self: start; white-space: nowrap; }
+.lesson-did-title { min-width: 0; overflow-wrap: anywhere; }
+.lesson-did-head button.lesson-delete { margin-left: 0; }
+@media (max-width: 640px) {
+  .lesson-did-head { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .lesson-did-when { grid-column: 1 / -1; }
+}
+.lesson-sure { display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  margin: 6px 0; padding: 6px 8px; border: 1px solid var(--line);
+  border-radius: 6px; }
+.lesson-sure[hidden] { display: none; }
+.lesson-sure .danger:not(.secondary) { background: var(--danger-fill); color: #fff;
+  border: 1px solid var(--danger-fill); font-weight: 600; }
+.lesson-head button.danger.secondary { color: var(--danger-ink);
+  border-color: var(--danger-ink); }
+
+/* Experience: one list. What is at work now - found from what the user is
+   doing - has a green edge; everything else ever learned is listed the same
+   way without it. */
+.xp-unit.xp-unit-active { box-shadow: inset 0 0 0 2px var(--ok); }
+
+/* A task's history, opened from its card. */
+.sb-history-open { margin-left: 8px; vertical-align: middle; }
+.sb-history { border-left: 3px solid var(--line); padding: 4px 0 4px 10px;
+  margin: 6px 0 10px; }
+.sb-history[hidden] { display: none; }
+.sb-history-list, .sb-history-from { margin: 4px 0 8px; padding-left: 18px; }
+.sb-history-from .sb-history-from { margin-top: 2px; }
+.sb-history-said { font-size: 12px; margin-top: 2px; }
+
+/* A principle's or pattern's earlier versions. */
+.ov-history { margin: 4px 0 8px; }
+.ov-history summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.xp-folder-ask .danger { background: var(--danger-fill); color: #fff; border-color: var(--danger-fill); }
+
+/* -------------------------------------------------------- chat sidebar
+   The conversations beside the conversation (chat-navigation.js; ported from
+   PR #4). Two columns only once the sidebar exists - a page without the
+   script keeps the conversation at full width - and a drawer on a narrow
+   screen. The follow-ups' margin is measured inside the conversation, so it
+   is unaffected by the column beside it. */
+.chat-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px;
+  height: 74vh; min-height: 320px; }
+.chat-layout.has-sidebar { grid-template-columns: 248px minmax(0, 1fr); }
+.chat-layout.has-sidebar.sidebar-collapsed { grid-template-columns: minmax(0, 1fr); }
+.chat-workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.chat-workspace .chat-card { flex: 1; height: auto; min-height: 0; margin-bottom: 0; }
+.chat-workspace #chat-log { min-height: 0; overflow-wrap: anywhere; }
+.chat-workspace #chat-input { min-width: 0; flex: 1; }
+.chat-toolbar { display: flex; align-items: center; gap: 10px; min-height: 36px;
+  margin-bottom: 8px; color: var(--muted); }
+.chat-toolbar [data-chat-title] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-sidebar { display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  padding: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+.chat-sidebar-head { display: flex; align-items: center; justify-content: space-between;
+  padding: 0 4px 8px; }
+.chat-nav-icon { background: transparent; color: var(--muted); padding: 5px 8px; flex-shrink: 0; }
+.chat-nav-icon:hover { background: var(--bg); color: var(--ink); }
+.chat-new { display: flex; align-items: center; gap: 8px; text-align: left;
+  background: var(--bg); border: 1px solid var(--line); color: var(--ink); margin-bottom: 12px; }
+.chat-new:hover { border-color: var(--muted); }
+.chat-sidebar-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.chat-section-label { display: flex; align-items: center; justify-content: space-between;
+  padding: 7px 8px; font-size: 12px; font-weight: 600; color: var(--muted); }
+button.chat-general { background: transparent; width: 100%; text-align: left; border-radius: 8px; }
+button.chat-general:hover { background: var(--bg); }
+.chat-sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+button.chat-nav-row { display: block; width: 100%; min-width: 0; padding: 8px 10px;
+  color: var(--ink); background: transparent; text-align: left; border: 1px solid transparent;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+button.chat-nav-row:hover { background: var(--bg); }
+button.chat-nav-row.selected { background: var(--bg); border-color: var(--line); font-weight: 600; }
+.chat-project-heading { display: flex; align-items: center; border-radius: 8px; }
+.chat-project-heading.selected { background: var(--bg); }
+.chat-project-heading .chat-nav-row { flex: 1; }
+.chat-project-history { padding-left: 18px; }
+.chat-nav-empty { padding: 4px 10px; margin: 0 0 8px; font-size: 12px; }
+.chat-nav-status { padding: 6px 8px 0; font-size: 12px; overflow-wrap: anywhere; }
+.chat-nav-status:empty { display: none; }
+.chat-project-form { padding: 6px 8px 12px; }
+.chat-project-form > div { display: flex; gap: 6px; margin-top: 8px; }
+.chat-layout button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chat-layout button:disabled, #chat-form button:disabled { opacity: .5; cursor: default; }
+.chat-sidebar-backdrop { display: none; }
+.chat-layout [hidden] { display: none !important; }
+@media (max-width: 700px) {
+  .chat-layout, .chat-layout.has-sidebar { grid-template-columns: minmax(0, 1fr);
+    height: 72dvh; min-height: 250px; }
+  .chat-sidebar { position: fixed; inset: 0 auto 0 0; width: min(290px, 85vw);
+    height: 100dvh; z-index: 101; border-radius: 0;
+    padding: max(14px, env(safe-area-inset-top)) 12px max(14px, env(safe-area-inset-bottom)); }
+  .chat-sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 100;
+    background: rgb(0 0 0 / 35%); border-radius: 0; padding: 0; }
+  body:has(.sidebar-drawer-open) { overflow: hidden; }
+}
+
+/* Settings: the model list and the button that asks Codex for a new one. */
+.model-picker { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.model-picker select { flex: 1; min-width: 0; }
+.model-picker .refresh-models { flex-shrink: 0; }
+
+/* ------------------------------------------------------- chat debugger */
+.chat-debugger-shell { max-width: 1500px; margin: 0 auto; }
+.chat-debugger-heading, .chat-debugger-section-head, .chat-debugger-run-meta {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.chat-debugger-heading h2 { margin: 0 0 5px; font-size: 16px; }
+.chat-debugger-heading p { margin: 0; max-width: 80ch; }
+.chat-debugger-custom { display: grid; gap: 8px; max-width: 850px; margin-top: 18px; }
+.chat-debugger-custom label { font-weight: 600; color: var(--ink); }
+.chat-debugger-custom .chat-debugger-continue { display: flex; flex-direction: row;
+  align-items: center; gap: 7px; font-weight: 400; color: var(--muted); }
+.chat-debugger-custom .chat-debugger-continue input { width: auto; }
+.chat-debugger-custom textarea { width: 100%; resize: vertical; }
+.chat-debugger-custom p { margin: 0; }
+.chat-debugger-custom button { justify-self: start; }
+.chat-debugger-columns { display: grid; grid-template-columns: minmax(280px, .9fr) minmax(320px, 1.1fr);
+  gap: 14px; margin-top: 14px; }
+.chat-debugger-section-head h3 { margin: 0; font-size: 14px; }
+.chat-debugger-test { display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.chat-debugger-test p { margin: 4px 0 0; }
+.chat-debugger-history #chat-debugger-runs { max-height: 520px; overflow-y: auto; }
+button.chat-debugger-run { display: flex; width: 100%; align-items: center;
+  justify-content: space-between; gap: 10px; text-align: left; padding: 9px 6px; border: 0;
+  border-bottom: 1px solid var(--line); border-radius: 0; background: transparent;
+  color: var(--ink); cursor: pointer; }
+button.chat-debugger-run:hover { background: var(--bg); }
+button.chat-debugger-run.selected { background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); }
+.chat-debugger-run > span:first-child { display: grid; gap: 4px; min-width: 0; }
+.chat-debugger-run-prompt, .chat-debugger-prompt-content { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-debugger-run-prompt { font-weight: 400; color: var(--muted); font-size: 12px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.chat-debugger-run small { color: var(--muted); }
+.chat-debugger-prompt-content { max-height: 420px; }
+.chat-debugger-transcript { margin-top: 14px; }
+.chat-debugger-checks { list-style: none; padding: 0; }
+.chat-debugger-checks li { padding: 7px 0; }
+.chat-debugger-checks .passed strong { color: var(--ok); }
+.chat-debugger-checks .failed strong, .chat-debugger-error { color: var(--err); }
+.chat-debugger-truncated { color: var(--warn); font-weight: 600; }
+.chat-debugger-event { border-top: 1px solid var(--line); padding: 8px 0; }
+.chat-debugger-event summary { display: flex; justify-content: space-between; gap: 12px; cursor: pointer; }
+.chat-debugger-event pre { max-height: 420px; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 850px) { .chat-debugger-columns { grid-template-columns: 1fr; } }
+
+/* EVERY PART OF A RUN THE SAME SIZE AS IT GROWS - its own scrollbar when
+   there is more of it: the contract, the versions, the version shown, the
+   transcript's files, the lists, the to-do, the results, the report, a
+   line's "all of it", the live session (above). The page around them stays
+   the height it is while a run goes; nothing in them is out of reach - each
+   box scrolls, and a long line wraps. */
+.xp-run { overflow-wrap: anywhere; }
+.xp-contract-box { max-height: 20rem; overflow: auto; overscroll-behavior: contain;
+  margin: 6px 0; }
+.xp-contract-box > .xp-contract-now { margin: 0; }
+.xp-transcript-list { max-height: 10rem; overflow: auto; overscroll-behavior: contain; }
+.xp-run > details > .xp-work-list, .xp-todo, .xp-deliverables-box {
+  max-height: 16rem; overflow: auto; overscroll-behavior: contain; }
+.xp-version-list { max-height: 16rem; overflow: auto; overscroll-behavior: contain; }
+.xp-version-picked { max-height: 52rem; overflow: auto; overscroll-behavior: contain; }
+
+/* A run's live session: "N new" at its foot when lines came while you read
+   above them - pressed, down to the newest. */
+.xp-live-new { position: sticky; bottom: 4px; display: block; margin: 4px 0 0 auto;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18); font-family: system-ui, sans-serif; }
+.xp-live-new[hidden] { display: none; }
+
+/* THE VERSIONS AS A TREE: a commit graph in a box of its own size - a row
+   per version, the newest on top, its lanes on the left; the head ringed in
+   the accent, the version shown filled and its row marked; what each
+   changed in a line, cut with an ellipsis (whole on hover), and its files
+   as +added ~changed -deleted. */
+.xp-versions-module { margin: 8px 0; }
+.xp-versions-title { margin: 4px 0; font-size: 1em; }
+.xp-versions-title .muted { font-weight: 400; }
+.xp-version-graph { height: 184px; overflow: auto; overscroll-behavior: contain;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+.xp-version-graph > p { margin: 8px 10px; }
+/* Nothing in it yet: no empty box held open. */
+.xp-version-graph:has(> p) { height: auto; }
+.xp-vlog { position: relative; }
+.xp-vlog-lanes { position: absolute; left: 0; top: 0; display: block; }
+.xp-vlog-rows { list-style: none; margin: 0; padding: 0; }
+.xp-vrow { height: var(--xp-vrow, 26px); display: flex; align-items: center; gap: 8px;
+  padding: 0 8px 0 6px; cursor: pointer; white-space: nowrap; font-size: 12.5px;
+  overflow-wrap: normal; }
+.xp-vrow:hover { background: var(--panel); }
+.xp-vrow:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.xp-vrow-shown { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.xp-vrow-shown:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.xp-vrow-id { font-family: ui-monospace, Consolas, monospace; font-weight: 600; flex: none; }
+.xp-vrow-title { flex: 1 1 auto; min-width: 6em; overflow: hidden; text-overflow: ellipsis; }
+.xp-vrow-tag { flex: none; font-size: 11px; font-weight: 600; color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 9px; padding: 0 6px; }
+.xp-vrow-when { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  font-size: 11px; font-variant-numeric: tabular-nums; }
+.xp-vfiles { flex: none; display: inline-flex; gap: 4px; font-size: 11px;
+  font-family: ui-monospace, Consolas, monospace; }
+.xp-vfiles-add { color: var(--ok); }
+.xp-vfiles-mod { color: var(--warn); }
+.xp-vfiles-del { color: var(--err); }
+.xp-vedge { fill: none; stroke: var(--muted); stroke-opacity: 0.6; stroke-width: 2; }
+.xp-vnode-dot { fill: var(--panel); stroke: var(--muted); stroke-width: 2; }
+.xp-vnode-head { stroke: var(--accent); stroke-width: 3; }
+.xp-vnode-shown { fill: var(--accent); stroke: var(--ink); stroke-width: 2; }
+/* The version shown, said as a commit: its title whole, its points, its
+   files folded in a box of their own size. */
+.xp-vmsg { border-left: 3px solid var(--accent); padding: 2px 10px; margin: 6px 0; }
+.xp-vmsg-title { margin: 0 0 4px; font-size: 1em; display: flex; gap: 8px; }
+.xp-vmsg-body { margin: 2px 0 4px 18px; padding: 0; font-size: 13px; }
+.xp-vmsg-files > summary { cursor: pointer; }
+.xp-vmsg-files-box { max-height: 12rem; overflow: auto; overscroll-behavior: contain;
+  font-size: 12px; }
+.xp-vmsg-files-added strong { color: var(--ok); }
+.xp-vmsg-files-modified strong { color: var(--warn); }
+.xp-vmsg-files-deleted strong { color: var(--err); }
+.xp-version-picked > .xp-version-hint { margin: 4px 0; font-size: 12px; }
+.xp-version-from-row { margin: 6px 0 2px; }
+.xp-version-showing { margin: 6px 0; padding: 4px 10px; border-left: 3px solid var(--accent);
+  background: var(--bg); border-radius: 0 6px 6px 0; }
+
+/* A WAY'S HEADING in the Experience debugger: its name, and beside it where
+   its run stands - with the spinner while it works - Stop and Clear. The
+   run's own state chip and spinner are not said twice under it. */
+.xd-way-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px;
+  margin-bottom: 2px; }
+.xd-variant .xd-way-name { margin: 0; }
+.xd-way-live { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.xd-variant .xp-live-line > .xp-live-state,
+.xd-variant .xp-live-doing .xp-live-spin { display: none; }
+
+/* THE THREE WAYS AS TABS: one way's whole view at a time; each tab says how
+   its way stands - a spinner while it goes - so all three are seen at a
+   glance without switching. */
+.xd-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 10px 0 0;
+  border-bottom: 1px solid var(--line); }
+.xd-tab { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px;
+  background: none; border: 1px solid transparent; border-bottom: none;
+  border-radius: 8px 8px 0 0; color: var(--muted); cursor: pointer; font: inherit;
+  margin-bottom: -1px; }
+.xd-tab:hover { color: var(--ink); background: var(--bg); }
+.xd-tab.selected { color: var(--ink); background: var(--panel); border-color: var(--line);
+  font-weight: 600; }
+.xd-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.xd-tab-badge { display: inline-flex; align-items: center; gap: 4px; font-weight: 400; }
+.xd-badge { font-size: 11px; padding: 0 7px; border-radius: 9px; border: 1px solid var(--line);
+  color: var(--muted); }
+.xd-badge-going { color: var(--ok); border-color: var(--ok); }
+.xd-badge-paused, .xd-badge-waiting_for_you { color: var(--warn); border-color: var(--warn); }
+.xd-badge-failed, .xd-badge-interrupted { color: var(--err); border-color: var(--err); }
+.xd-variants .xd-variant { border-top-left-radius: 0; }
+.xd-variant[hidden] { display: none; }
+
+/* A way's own tree of cards and stages, and the stage opened under it -
+   each a box of its own size. */
+.xd-work-tree { margin: 8px 0; }
+.xd-work-tree > h4 { margin: 4px 0; }
+.xd-tree { max-height: 22rem; overflow: auto; overscroll-behavior: contain; }
+.xd-stage, #xp-work-stage { max-height: 32rem; overflow: auto; overscroll-behavior: contain; }
+/* The lessons package card on the Overview. */
+.ov-lp-buttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 6px; }
+#ov-lp-progress { min-height: 1.2em; }
+.ov-lp-stats, .ov-lp-load { margin-top: 8px; font-size: 13px; line-height: 1.5; }
+.ov-lp-items { margin: 4px 0 0; padding-left: 18px; columns: 2; font-size: 12px; }
+.ov-lp-load { border-top: 1px solid var(--line); padding-top: 8px; }
+.ov-lp-history { margin-top: 8px; font-size: 12px; }
+.ov-lp-history ul { margin: 4px 0 0; padding-left: 18px; }
+.ov-lp-zip { font-family: monospace; }
+
+/* ---------------------------------------------------------- connections
+   The people list beside the person chosen from it; below it on a narrow
+   screen. */
+.cx-toolbar input[type="search"] { flex: 1 1 220px; min-width: 0; }
+.cx-toolbar .cx-inline { flex-direction: row; align-items: center; gap: 6px; }
+.cx-toolbar .cx-inline select { width: auto; }
+.cx-form { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+  margin-bottom: 12px; background: var(--bg); }
+.cx-form[hidden] { display: none; }
+.cx-form input, .cx-form select { background: var(--panel); }
+/* The people down the left - their own scroll - the one chosen on the right. */
+.cx-grid { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(0, 2.6fr);
+  gap: 12px; align-items: start; margin-bottom: 12px; }
+@media (max-width: 900px) { .cx-grid { grid-template-columns: minmax(0, 1fr); } }
+.cx-side h2 { display: flex; align-items: center; gap: 4px; }
+.cx-side .cx-count { margin-left: auto; font-size: 12px; font-weight: 400; }
+.cx-side-tools { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.cx-side-tools .cx-inline { flex-direction: row; align-items: center; gap: 6px; }
+.cx-side-tools .cx-inline select { width: auto; }
+.cx-side .cx-list { max-height: calc(100vh - 260px); overflow: auto; }
+@media (max-width: 900px) { .cx-side .cx-list { max-height: none; } }
+.cx-add-box .grid { grid-template-columns: minmax(0, 1fr); }
+.cx-group { margin-bottom: 8px; }
+.cx-group summary { cursor: pointer; display: flex; align-items: center; gap: 8px;
+  padding: 4px 2px; font-weight: 600; }
+.cx-group-count { font-size: 11px; font-weight: 400; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; }
+.cx-rows { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 0 4px; }
+button.cx-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "pic name level" "pic work news"; gap: 0 10px; width: 100%;
+  align-items: center;
+  text-align: left; background: none; color: inherit; border: 1px solid transparent;
+  border-radius: 8px; padding: 6px 8px; font: inherit; }
+button.cx-row:hover { background: var(--bg); }
+button.cx-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button.cx-row.selected { background: var(--bg); border-color: var(--line);
+  box-shadow: inset 3px 0 0 var(--accent); }
+.cx-row-name { grid-area: name; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cx-row-work { grid-area: work; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cx-row .cx-level { grid-area: level; justify-self: end; align-self: center; }
+.cx-row-news { grid-area: news; text-align: right; white-space: nowrap; }
+/* A level out of five: closeness, or how much a thing to know matters. */
+.cx-level { display: inline-flex; gap: 2px; vertical-align: middle; }
+.cx-level i { width: 6px; height: 6px; border-radius: 50%; display: inline-block;
+  border: 1px solid var(--muted); opacity: .55; }
+.cx-level i.on { background: var(--accent); border-color: var(--accent); opacity: 1; }
+.cx-person { border-left: 1px solid var(--line); padding-left: 14px; min-width: 0; }
+@media (max-width: 900px) {
+  .cx-person { border-left: 0; padding-left: 0; border-top: 1px solid var(--line);
+    padding-top: 10px; }
+}
+.cx-person-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* A picture, or initials on the person's own colour. */
+.cx-avatar { grid-area: pic; width: 32px; height: 32px; border-radius: 50%; object-fit: cover;
+  flex: none; border: 1px solid var(--line); background: var(--bg); }
+.cx-avatar-big { width: 56px; height: 56px; }
+.cx-avatar-none { display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 650; color: #fff; border: 0;
+  background: hsl(var(--cx-hue, 210) 45% 45%); }
+.cx-avatar-big.cx-avatar-none { font-size: 20px; }
+.cx-person-head h4 { margin: 0 0 6px; font-size: 16px; }
+.cx-person h4 { margin: 14px 0 6px; font-size: 13px; }
+.cx-edit textarea { resize: vertical; }
+.cx-mine { font-size: 10px; color: var(--accent); border: 1px solid var(--accent);
+  border-radius: 999px; padding: 0 6px; margin-left: 4px; }
+.cx-edit button.danger.secondary { color: var(--danger-ink); border-color: var(--danger-ink); }
+.cx-sure input, .cx-sure select { width: auto; flex: 1 1 160px; min-width: 0; }
+.cx-sure .danger:not(.secondary) { background: var(--danger-fill); color: #fff;
+  border: 1px solid var(--danger-fill); font-weight: 600; }
+.cx-list-plain { list-style: none; margin: 0; padding: 0; }
+.cx-list-plain > li { padding: 5px 0; border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere; }
+.cx-list-plain > li:last-child { border-bottom: 0; }
+.cx-activity { display: flex; flex-direction: column; gap: 1px; }
+.cx-activity-when { font-size: 12px; font-weight: 600; }
+.cx-reason { font-style: italic; }
+.cx-source { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.cx-source button { margin-left: auto; }
+button.cx-x { line-height: 1; padding: 2px 8px; }
+.cx-source-add { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.cx-source-add input { flex: 1 1 180px; width: auto; min-width: 0; }
+.cx-summary summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+#cx-lessons h4 { margin: 12px 0 4px; font-size: 13px; }
+.cx-progress { max-width: 420px; }
+.cx-beat { margin: 4px 0 8px; }
+.cx-beat .sb-progress { margin: 2px 0; }
+/* What you need to know, on the Overview. */
+.ov-know-items { list-style: none; margin: 6px 0 0; padding: 0; }
+.ov-know-item { padding: 8px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.ov-know-item:last-child { border-bottom: 0; }
+.ov-know-head { display: flex; align-items: center; gap: 8px; }
+.ov-know-why summary { cursor: pointer; }
+.cx-person a, #cx-sources a, #ov-know a { color: var(--accent); }
+
+/* Your profiles: your picture beside what is known of you. */
+.cx-me { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
+.cx-add-profiles { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+#cx-add-links { display: flex; flex-direction: column; gap: 6px; }
+.cx-add-profiles button { align-self: flex-start; }
+.lesson-summary { margin: 6px 0 10px; }
+.lesson-restore { margin-top: 4px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+/* The inbox beside your profiles; each item's answer in a row. */
+.cx-top > .card { flex: 1 1 320px; min-width: 0; }
+.cx-inbox-item { padding: 8px 0; border-bottom: 1px solid var(--border, #e5e7eb); }
+.cx-inbox-do { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+.cx-inbox-do input { flex: 1 1 160px; min-width: 0; }
+.cx-field-time { font-size: 11px; color: var(--muted, #6b7280); margin-left: 6px;
+  font-weight: normal; }
+
+/* You, beside People: your picture, opening your own profile. */
+.cx-me-open { padding: 0; border: 2px solid transparent; border-radius: 50%;
+  background: none; cursor: pointer; vertical-align: middle; line-height: 0; }
+.cx-me-open.selected, .cx-me-open:focus-visible { border-color: var(--accent, #2563eb); }
+.cx-link-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.cx-link-row .cx-add-link { flex: 2 1 200px; min-width: 0; }
+.cx-link-row .cx-add-label { flex: 1 1 120px; min-width: 0; }
+.cx-me-note { font-size: 12px; }
+
+/* A run waiting on its model: the card in its session, its state beside
+   each project in the list, and how many wait for you on the tab. */
+.xp-model-ask a.small { margin-right: 6px; font-size: 12px; }
+.xp-unit-run:empty { display: none; }
+.xp-unit-run .xp-live-state { font-size: 11px; padding: 0 6px; margin-left: 6px; }
+.tab-wait { margin-left: 6px; font-size: 11px; font-weight: 600; color: #fff;
+  background: var(--warn); border-radius: 10px; padding: 0 6px; }
+
+/* A person's details, shown - and the lists of the form after Edit. */
+.cx-facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px;
+  margin: 8px 0 10px; align-items: baseline; }
+.cx-facts dt { color: var(--muted); font-size: 12px; }
+.cx-facts dd { margin: 0; }
+.cx-affiliations { margin: 0; padding: 0; list-style: none; }
+.cx-affiliations li + li { margin-top: 2px; }
+.cx-chip { display: inline-block; font-size: 12px; padding: 0 8px; border-radius: 10px;
+  border: 1px solid var(--line); margin: 0 2px 2px 0; }
+.cx-chip-main { border-color: var(--accent, #3b82f6); font-weight: 600; }
+.cx-summary { white-space: pre-wrap; }
+.cx-multi { display: flex; flex-direction: column; gap: 4px; }
+.cx-multi-row { display: flex; gap: 6px; align-items: center; }
+.cx-multi-row input:not([type="radio"]) { flex: 1; min-width: 0; }
+.cx-main, .cx-edit .cx-multi-row label.cx-main { display: flex; flex-direction: row;
+  align-items: center; gap: 3px; font-size: 12px; color: var(--muted); white-space: nowrap;
+  margin: 0; }
+.cx-multi > button { align-self: flex-start; }
+
+/* Settings in two views, and an API's address, key and billing. */
+.settings-views { display: flex; gap: 6px; margin: 0 0 12px; }
+.settings-view-tab { background: transparent; color: var(--muted); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 14px; }
+.settings-view-tab.active { color: var(--ink, inherit); border-color: var(--accent, #3b82f6);
+  font-weight: 600; }
+#model-register-panel tr.provider-kind th { text-align: left; padding-top: 10px;
+  color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.api-billing { border: 1px solid var(--warn); border-left-width: 4px; border-radius: 6px;
+  padding: 6px 10px; font-size: 13px; }
+.provider-key-note a { font-weight: 600; }
+
+/* The models, in order, and adding one. */
+.model-chain { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-direction: column;
+  gap: 6px; }
+.model-link { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 8px;
+  border: 1px solid var(--line); border-radius: 8px; }
+.model-link .chain-n { font-weight: 700; min-width: 1.5em; }
+.model-link .chain-name { display: flex; flex-direction: column; min-width: 12em; }
+.model-link .chain-model { max-width: 18em; }
+.model-link .chain-why { flex-basis: 100%; font-size: 12px; }
+.model-add { margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+.model-kind { display: flex; flex-direction: column; gap: 4px; border: none; padding: 0; }
+.model-kind label { display: flex; flex-direction: row; gap: 6px; align-items: center; }
+.model-kind input[type="radio"] { width: auto; padding: 0; margin: 0; flex: none; }
+.model-more { margin-top: 10px; }
+#model-chain-cost { margin: 6px 0; }
+
+/* A page of the agent opened again elsewhere: this one says so. */
+
+
+/* The computer's usage, in the Debugger tab. */
+.dbg-usage { margin: 14px 0; display: flex; flex-direction: column; gap: 12px; }
+.dbg-usage > h2 { margin: 6px 0 0; font-size: 17px; }
+
+/* You, above your contacts. */
+.cx-me-row { display: flex; align-items: center; gap: 8px; margin: 0 0 10px;
+  padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+
+/* THE CONVERSATION, the same in its own window (chat.html) and in the Chat
+   tab: a header saying who answers, then the conversation filling what is
+   left of the height. */
+.chat-only { display: flex; flex-direction: column; gap: 10px; }
+.chat-head { display: flex; align-items: baseline; gap: 10px; }
+.chat-head h1 { font-size: 15px; margin: 0; }
+.chat-only .chat-layout { flex: 1; height: auto; min-height: 0; }
+.chat-only .chat-card { flex: 1; height: auto; min-height: 0; }
+body.chat-window { margin: 0; }
+/* The Delegate work box alone, filling a window of its own (app.js,
+   DELEGATE_SOLO): nothing else of the page shows behind it. */
+body.delegate-solo > :not(#delegate):not(#toast) { display: none !important; }
+body.delegate-solo { margin: 0; overflow: hidden; }
+body.delegate-solo .delegate { width: 100vw; max-width: 100vw; height: 100vh;
+  max-height: 100vh; margin: 0; border: 0; border-radius: 0; box-sizing: border-box; }
+body.delegate-solo .delegate-form { max-height: 100vh; box-sizing: border-box; }
+body.delegate-solo .delegate::backdrop { background: var(--panel); }
+.delegate-started { font-size: 15px; margin: 24px 0; }
+.delegate-items { margin: 0; padding-left: 18px; font-size: 12px; }
+.delegate-items code { word-break: break-all; }
+.delegate-asked { margin: 0 0 6px; }
+body.chat-window .chat-only { height: 100vh; height: 100dvh; padding: 12px; box-sizing: border-box; }
+#chat .chat-only { height: calc(100vh - 120px); min-height: 360px; }
+.model-link .chain-effort { max-width: 12em; }
+
+/* The calendar's day view: a row each half hour, events at their times. */
+.cal-views { display: inline-flex; gap: 4px; }
+.cal-views button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.cal-dayview { position: relative; max-height: 640px; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 8px; }
+.cal-slots { position: relative; }
+.cal-slot { height: 22px; box-sizing: border-box; border-top: 1px dashed var(--line);
+  margin-left: 64px; cursor: pointer; position: relative; }
+.cal-slot.hour { border-top: 1px solid var(--line); }
+.cal-slot:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.cal-slot-time { position: absolute; left: -60px; top: -8px; width: 52px; text-align: right;
+  font-size: 11px; color: var(--muted); }
+.cal-events { position: absolute; top: 0; left: 64px; right: 4px; height: 0; }
+.cal-event { position: absolute; display: flex; }
+.cal-event .cal-chip { width: 100%; height: 100%; align-items: flex-start; overflow: hidden; }
+.cal-now { position: absolute; left: 0; right: 0; height: 2px; background: var(--err); }
+.cal-add-when { display: flex; gap: 8px; flex-wrap: wrap; }
+.cal-add-notify { flex-direction: row; align-items: center; gap: 6px; }
+.cal-add-notify input { width: auto; }
+.lesson-subhead { margin: 12px 0 6px; font-size: 13px; }
+.lessons-in-force .lesson-head { align-items: flex-start; }
+.lessons-in-force .lesson-text { flex: 1; }
+
+/* The core promises and the tiers, in a work's contract. */
+.xp-promises { list-style: none; padding-left: 0; margin: 4px 0 8px; }
+.xp-promises li { margin: 4px 0; line-height: 1.45; }
+.xp-promise-state, .xp-tier { display: inline-block; font-size: 11px; padding: 0 6px;
+  border-radius: 8px; border: 1px solid var(--line); white-space: nowrap; }
+.xp-promise-yes { color: var(--ok); border-color: var(--ok); }
+.xp-promise-no { color: var(--err); border-color: var(--err); }
+.xp-promise-needs_user { color: var(--warn); border-color: var(--warn); }
+.xp-promise-untried { color: var(--muted); }
+.xp-promise-failed { color: var(--err); }
+.xp-tier-core { font-weight: 600; }
+.xp-tier-polish { color: var(--muted); }
+.xp-for-user ul { margin: 4px 0 8px; padding-left: 18px; }
+
+/* How to use the drawing: said in the State heartbeat panel, not on the
+   Overview, where it is read every day. */
+#overview .sb-click-hint { display: none; }
+
+/* The Web search card says what it is for and how the model searches. */
+.web-search-explained p { margin: 4px 0; }
+.web-search-explained ul { margin: 2px 0 6px; padding-left: 18px; }
+
+/* WHAT YOU NEED TO KNOW, as a newspaper's front page. One family - the
+   Times' own, with Georgia after it - and the page's own ink, paper and
+   rules, so it reads the same in the dark. The masthead and the lead
+   headline carry it; everything else stays quiet. */
+.ov-know-tools { justify-content: flex-end; }
+.paper { --paper-serif: "Times New Roman", Times, Georgia, serif;
+  font-family: var(--paper-serif); color: var(--ink); }
+.paper-mast { text-align: center; border-top: 4px double var(--ink);
+  border-bottom: 1px solid var(--ink); padding: 10px 0 0; margin-bottom: 14px;
+  /* A <header>, but the paper's own: not the page's header, which stays at
+     the top as the page scrolls - this one scrolls with the paper, and never
+     over the tabs. */
+  position: static; display: block; z-index: auto; background: none; }
+.paper-title { font-family: var(--paper-serif); font-size: clamp(30px, 4.4vw, 52px);
+  font-weight: 700; letter-spacing: -0.01em; line-height: 1.05; margin: 0 0 8px; }
+.paper-dateline { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  border-top: 1px solid var(--ink); padding: 5px 2px; font-size: 13px; font-style: italic; }
+.paper-front { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 0 26px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.paper-front-whole { grid-template-columns: minmax(0, 1fr); }
+.paper-brief { border-left: 1px solid var(--line); padding-left: 22px; }
+.paper-brief-head { font-family: var(--paper-serif); font-size: 17px; font-weight: 700;
+  margin: 0 0 8px; padding-bottom: 4px; border-bottom: 2px solid var(--ink); }
+.paper-brief > section { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.paper-brief > section:last-child { border-bottom: 0; }
+.paper-stories { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0; margin-top: 14px; }
+.paper-stories > section { padding: 0 18px 14px; border-left: 1px solid var(--line); }
+.paper-stories > section:first-child { border-left: 0; padding-left: 0; }
+.paper-kicker { margin: 0 0 3px; font-size: 13px; font-style: italic; color: var(--muted); }
+.paper-urgent .paper-kicker { color: var(--danger-ink); font-style: normal; font-weight: 700; }
+.paper-headline { font-family: var(--paper-serif); font-weight: 700; margin: 0 0 6px;
+  line-height: 1.15; }
+.paper-lead .paper-headline { font-size: clamp(24px, 2.8vw, 34px); line-height: 1.08; }
+.paper-stories .paper-headline { font-size: 19px; }
+.paper-brief .paper-headline { font-size: 15px; margin-bottom: 2px; }
+.paper-standfirst { font-size: 17px; font-style: italic; line-height: 1.4; margin: 0 0 8px; }
+.paper-body { font-size: 15.5px; line-height: 1.55; margin: 0 0 6px; max-width: 70ch; }
+.paper-brief .paper-body { font-size: 14px; line-height: 1.45; }
+.paper-lead > .paper-body:first-letter { float: left; font-size: 3.1em; line-height: 0.85;
+  font-weight: 700; padding: 4px 6px 0 0; }
+.paper-byline { font-size: 13px; color: var(--muted); margin: 0; }
+.paper-byline a { color: inherit; }
+.paper-picture { margin: 0 0 10px; }
+/* Why a story is on its page; a broad one's kicker quieter than a close one's. */
+/* The Language debugger. */
+.lang-table { width: 100%; border-collapse: collapse; margin: 4px 0 14px; font-size: 0.92em; }
+.lang-table th, .lang-table td { text-align: left; vertical-align: top; padding: 5px 8px;
+  border-bottom: 1px solid var(--line); }
+.lang-rule { display: inline-block; padding: 0 6px; border-radius: 6px; font-size: 0.85em;
+  border: 1px solid var(--line); white-space: nowrap; }
+.lang-internal { color: var(--accent); border-color: var(--accent); }
+.lang-display { color: var(--ok, #2e9e5b); border-color: var(--ok, #2e9e5b); }
+.lang-unspecified { color: var(--warn); border-color: var(--warn); }
+.lang-head { margin-top: 16px; }
+.lang-table td > div + div { margin-top: 2px; }
+.lang-inline li { margin-bottom: 6px; }
+.paper-because { font-size: 0.85em; color: var(--muted); margin: 2px 0 4px; }
+.paper-kicker.paper-broad { opacity: 0.75; font-style: italic; }
+/* A page's picture WHOLE, at its own shape: a chart or a screenshot cut to
+   3:2 lost its edges and seemed to run past its frame. Never taller than a
+   page should give it. A portrait (below) is still cut to its frame. */
+.paper-picture img { display: block; width: 100%; height: auto; max-height: 440px;
+  object-fit: contain; background: color-mix(in srgb, var(--line) 40%, transparent); }
+.paper-stories .paper-picture img, .paper-brief .paper-picture img { max-height: 220px; }
+.paper-picture figcaption { font-size: 12px; color: var(--muted); padding-top: 3px;
+  border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.paper-portrait { float: right; width: 34%; margin: 2px 0 8px 14px; }
+.paper-portrait img { aspect-ratio: 4 / 5; object-fit: cover; max-height: none; }
+.paper-picture-story.paper-portrait { width: 40%; }
+.paper-empty { font-style: italic; color: var(--muted); padding: 10px 0; margin: 0; }
+@media (max-width: 760px) {
+  .paper-front { grid-template-columns: minmax(0, 1fr); }
+  .paper-brief { border-left: 0; padding-left: 0; border-top: 1px solid var(--ink);
+    margin-top: 12px; padding-top: 8px; }
+  .paper-stories > section { border-left: 0; padding: 12px 0 0;
+    border-top: 1px solid var(--line); }
+}
+
+.paper-issues { font-style: italic; display: inline-flex; gap: 6px; align-items: baseline; }
+.paper-issues select { font-family: var(--paper-serif); font-style: normal; font-size: 13px;
+  max-width: 22em; }
+
+/* The lessons learned: each with its tools and what it rests on. */
+.lesson-rule .lesson-head { flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.lesson-rule-tools { display: flex; gap: 6px; margin: 4px 0; flex-wrap: wrap; }
+.lesson-rule-why ul { margin: 4px 0; padding-left: 18px; }
+.lesson-reword { display: flex; gap: 6px; margin: 4px 0; }
+.lesson-reword input { flex: 1; min-width: 0; }
+
+/* A settings card shown, until Edit: its values plain, not boxes to type in. */
+.settings-edit-bar { display: flex; gap: 6px; justify-content: flex-end; margin-bottom: 6px; }
+/* Save, once something is changed: at the top of the card, kept in sight
+   just under the page's header while the card is, however long the card -
+   not at the bottom, where the messages that pop up would cover it. */
+.settings-save-bar { position: sticky; top: calc(var(--header-h, 92px) + 8px); z-index: 5;
+  align-items: center;
+  margin: 0 0 10px; padding: 8px 10px; background: var(--panel, var(--bg));
+  border: 1px solid var(--accent); border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); }
+.settings-save-bar[hidden] { display: none; }
+/* A switch in a setting's row: a box, from the left, not a field's width. */
+.setting-row input[type="checkbox"] { width: 18px; height: 18px; padding: 0; margin: 6px 0 0;
+  justify-self: start; accent-color: var(--accent); cursor: pointer; }
+.setting-row .privacy-says { grid-column: 2 / -1; max-width: 62ch; }
+.settings-shown input:disabled, .settings-shown select:disabled,
+.settings-shown textarea:disabled { background: transparent; border-color: transparent;
+  color: var(--ink); opacity: 1; -webkit-appearance: none; appearance: none; }
+
+/* A kind's principles and patterns, above its lessons. */
+.lesson-groups { margin: 4px 0 10px; }
+.lesson-principle { padding: 4px 0; border-bottom: 1px solid var(--line); }
+.lesson-patterns ul { margin: 4px 0; padding-left: 18px; }
+
+/* Reading debugger: the topics, weightiest first, and the latest pieces. */
+.reading-topics, .reading-pieces { list-style: none; padding: 0; margin: 6px 0 12px;
+  display: grid; gap: 8px; }
+.reading-topics li { display: grid; grid-template-columns: minmax(8em, 16em) minmax(60px, 1fr) auto;
+  gap: 8px; align-items: center; }
+.reading-topics .reading-latest { grid-column: 1 / -1; font-size: 0.9em; }
+.reading-topic-name { font-weight: 600; overflow-wrap: anywhere; }
+.reading-topic-bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.reading-topic-bar span { display: block; height: 100%; background: var(--accent); }
+.reading-piece { border-left: 3px solid var(--line); padding-left: 10px; }
+.reading-piece-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.reading-points { margin: 4px 0; padding-left: 18px; font-size: 0.95em; }
+
+/* A card head with a button at its right. */
+.card-head-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+/* Customized Recommendation: the row of pages under the masthead, a page's
+   own head, what in a story is new to the reader, and their say on it. */
+.paper-pages { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px;
+  padding-top: 6px; border-top: 1px solid var(--line); }
+.paper-page-tab { background: none; border: 0; padding: 2px 0; color: var(--muted);
+  font: inherit; cursor: pointer; border-bottom: 2px solid transparent; }
+.paper-page-tab.active { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
+.paper-page-no { font-variant-numeric: tabular-nums; opacity: 0.7; margin-right: 2px; }
+.paper-section { margin: 14px 0 6px; font-size: 1.15em; border-bottom: 1px solid var(--line);
+  padding-bottom: 4px; }
+.paper-new { margin: 4px 0; font-size: 0.95em; }
+.paper-say { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.paper-say button.chosen { border-color: var(--ink); font-weight: 600; }
+/* Times of day: a box each. */
+.times-control { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.times-one { display: inline-flex; gap: 2px; align-items: center; }
+
+/* Whether a model on the list is given pictures. */
+.chain-sees.on { border-color: var(--ok, #2e7d32); }
+
+/* OCR: the five languages, each supported or not yet. */
+.ocr-list { list-style: none; padding: 0; margin: 6px 0 10px; display: flex; flex-wrap: wrap;
+  gap: 6px 14px; }
+.ocr-none { font-weight: 600; }
+/* A language not yet here: ticked on its own, for the download. */
+.ocr-pick { flex-direction: row; align-items: center; gap: 6px; font-size: inherit;
+  color: inherit; cursor: pointer; }
+.ocr-pick input[type="checkbox"] { width: 16px; height: 16px; margin: 0; padding: 0;
+  accent-color: var(--accent); }
+.ocr-pick-note { margin-left: 8px; }
+
+/* Waiting for a time: each open one, and those lately settled. */
+.pending-list { list-style: none; padding: 0; margin: 6px 0; display: grid; gap: 8px; }
+.pending-list li { border-left: 3px solid var(--line); padding-left: 10px; display: grid; gap: 2px; }
+.pending-list li button { justify-self: start; }
+
+/* Customized Recommendation, a tab of its own: the pages and issues down the
+   left, the page chosen on the right - as the Experience tab. */
+.rec-grid { display: grid; grid-template-columns: minmax(200px, 1fr) 4fr; gap: 12px;
+  align-items: start; }
+@media (max-width: 900px) { .rec-grid { grid-template-columns: 1fr; } }
+/* Not held at the top while the paper scrolls: the page's own header is
+   there, and it went under it. */
+.rec-side { display: block; }
+.rec-side-head { margin: 10px 0 6px; font-size: 1em; }
+.rec-issue { display: grid; gap: 4px; font-size: 0.92em; }
+.rec-page { display: block; width: 100%; text-align: left; margin: 0 0 6px;
+  background: var(--bg); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 10px; cursor: pointer; font: inherit; }
+.rec-page .muted { display: block; font-size: 12px; }
+.rec-page.selected { border-color: var(--accent); font-weight: 600; }
+/* What the user said of a story: kept, a colour each. */
+.paper-said { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px;
+  border-radius: 999px; margin: 4px 0 0; border: 1px solid currentColor; }
+.paper-said-more { color: var(--ok, #2e7d32); }
+.paper-said-less { color: var(--err, #c62828); }
+.paper-said-knew { color: var(--accent); }
+.paper-say button.chosen { border-color: currentColor; font-weight: 700; }
+
+/* Modules: each with what it does, what turning it off means, what it spent. */
+.modules-list { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 12px; }
+/* The bar's colour: what the function spent beside the others, pale to deep
+   red (--heat, 0-100%, set on each row). */
+.module-row { border-left: 5px solid color-mix(in oklab, var(--danger-fill) var(--heat, 0%),
+  var(--line)); padding-left: 10px; display: grid; gap: 3px; }
+.module-row.module-off { opacity: 0.85; }
+.module-heat-key { display: flex; align-items: center; gap: 8px; margin: 4px 0 10px; }
+.module-heat-scale { flex: none; width: 72px; height: 8px; border-radius: 4px;
+  background: linear-gradient(90deg, color-mix(in oklab, var(--danger-fill) 12%, var(--line)),
+    var(--danger-fill)); }
+/* The tick, the name and whether it is on, in one line from the left; what
+   it does beneath, starting where the name starts. */
+.module-row label { flex-direction: row; justify-content: flex-start; align-items: center;
+  gap: 10px; font-size: inherit; color: var(--ink); }
+.module-row label input[type="checkbox"] { width: 16px; height: 16px; margin: 0; padding: 0;
+  flex: none; accent-color: var(--accent); cursor: pointer; }
+.module-row > div { padding-left: 26px; }
+.module-what { font-size: 0.95em; }
+.module-manual { margin: 2px 0 0; padding-left: 18px; font-size: 0.9em; }
+.module-off-says { font-size: 0.92em; }
+.module-spent { font-size: 0.88em; font-variant-numeric: tabular-nums; }
+
+/* When an issue is made, on its own tab. */
+.rec-times { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+
+/* Privacy: what is left without a switch, and what it costs. */
+.privacy-says { font-size: 0.9em; margin-top: 3px; display: grid; gap: 2px; }
+.privacy-cost { color: var(--warn-ink, var(--muted)); }

@@ -1,0 +1,65 @@
+# Packaging configuration (sections 104, 117).
+# Development installs use this file; release artifacts are produced by build.py.
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "personalized-agent"
+version = "1.0.0"
+description = "Cross-platform desktop AI agent with activity awareness, a knowledge graph and a scheduler"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Personalized Agent Project" }]
+keywords = ["agent", "desktop", "knowledge-graph", "assistant"]
+classifiers = [
+    "Environment :: X11 Applications",
+    "Environment :: Win32 (MS Windows)",
+    "Environment :: MacOS X",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+# Pinned lower bounds mirror requirements.txt so a clean environment reproduces
+# the same build (section 104).
+dependencies = [
+    "anthropic>=1.0.0",
+    "cryptography>=42.0",
+    "psutil>=5.9",
+    "watchdog>=4.0",
+    "pillow>=10.0",
+    "keyring>=25.0",
+    "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pyflakes>=3.2"]
+build = ["pyinstaller>=6.0"]
+
+[project.scripts]
+personalized-agent = "personalized_agent.__main__:main"
+
+[project.gui-scripts]
+personalized-agent-desktop = "personalized_agent.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["personalized_agent*"]
+
+[tool.setuptools.package-data]
+"personalized_agent" = [
+    "api/web/*",
+    "api/web/lang/*",
+    "resources/characters/*/manifest.json",
+    "resources/characters/*/*/*.png",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
