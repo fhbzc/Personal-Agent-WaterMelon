@@ -419,11 +419,15 @@ class AgentApplication:
             log.warning("agent protocol disabled: %s", exc)
             self.identity = None
 
-        # Section 14.16: the Debugger topology comes from this registration.
-        from .debugger import register_builtin_tests, register_system
+        # Section 14.16: the Debugger topology comes from this registration -
+        # in a build that carries it. A build made with --no-debugger (every
+        # released download) has no such package, and importing it here
+        # stopped the application before it started.
+        if debugger_available():
+            from .debugger import register_builtin_tests, register_system
 
-        register_system(self)
-        register_builtin_tests(self)
+            register_system(self)
+            register_builtin_tests(self)
         # Section 14.33: the master switch is applied at startup, so a user who
         # turned monitoring off does not find it collecting again next launch.
         self.observability_service.set_monitoring(
