@@ -32,13 +32,23 @@ class ActivityAggregationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.agent = TemporaryAgent()
         self.app = self.agent.app
-        now = datetime.now(timezone.utc)
-        self.plan = [(0, 2, "Editor", 1800), (0, 4, "Browser", 600),
-                     (1, 3, "Editor", 3600), (2, 5, "Chat", 900)]
-        for days_ago, hours_ago, name, seconds in self.plan:
+        # Each wholly inside the local day it is meant for, whatever the time
+        # now: "two hours ago" just after midnight was yesterday, and the
+        # test failed when the suite reached it then. A period counts from
+        # its start, so today's also start after midnight - as long as the
+        # part of today that has passed allows.
+        now = datetime.now().astimezone()
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        passed = (now - midnight).total_seconds()
+        today = lambda share: midnight + timedelta(seconds=passed * share)
+        earlier = lambda days, hour: midnight - timedelta(days=days) + timedelta(hours=hour)
+        self.plan = [(today(0.9), "Editor", min(1800.0, passed * 0.4)),
+                     (today(0.5), "Browser", min(600.0, passed * 0.2)),
+                     (earlier(1, 12), "Editor", 3600), (earlier(2, 12), "Chat", 900)]
+        for when, name, seconds in self.plan:
             self.app.raw_store.add_event(ListenerEvent(
                 event_type="application.focus_ended", source="application", application=name,
-                timestamp=now - timedelta(days=days_ago, hours=hours_ago),
+                timestamp=when.astimezone(timezone.utc),
                 data={"duration_seconds": seconds}))
 
     def tearDown(self) -> None:
