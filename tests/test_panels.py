@@ -1204,10 +1204,13 @@ class OverviewInteractionRenderTests(unittest.TestCase):
             "/api/status": {"pending_raw_data": {"events": 0, "edits": 0},
                             "library": {"records": 0, "folders": {}}},
         }
+        # What the page asks on its own every few seconds (whether a piece of
+        # work is going) is not an answer to a click: on a slow machine one
+        # fell inside a test's few hundred milliseconds and was counted.
         harness = (
             "<script>window.__asked=[];const STUB=" + json.dumps(stub) + ";"
             "window.fetch=(u)=>{const p=String(u).split('?')[0];"
-            "window.__asked.push(p);"
+            "if(p!=='/api/work/going')window.__asked.push(p);"
             "return Promise.resolve({ok:true,status:200,statusText:'OK',"
             "json:()=>Promise.resolve(STUB[p]||{})});};</script>"
             "<script>" + script + "</script>"
