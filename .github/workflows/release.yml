@@ -65,6 +65,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      # torch's Linux wheels on PyPI bring CUDA with them - three gigabytes in
+      # every Linux download, over GitHub's limit for a release file - though
+      # the sentence model runs on the processor. The CPU-only wheel goes in
+      # first; requirements.txt then finds torch already there. (Windows and
+      # macOS wheels on PyPI are CPU-only already.)
+      - name: Install the CPU-only torch (Linux)
+        if: matrix.target == 'linux'
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -126,6 +137,11 @@ jobs:
               take "$d/*-linux-x86_64.tar.gz"    PersonalizedAgent-portable-linux-x86_64.tar.gz ;;
           esac
           ls -l release
+          # GitHub takes no release file of 2 GiB or more: stop here, not at publishing.
+          for f in release/*; do
+            size=$(wc -c < "$f")
+            [ "$size" -lt 2147483648 ] || { echo "too large for a release: $f ($size bytes)"; exit 1; }
+          done
 
       - name: Attest where each download was built from
         uses: actions/attest-build-provenance@v2
