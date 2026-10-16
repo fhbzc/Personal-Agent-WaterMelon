@@ -12,7 +12,13 @@ way you would want it done. All on your own computer.
 </p>
 
 <p align="center">
-<a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest">Download</a> ·
+<b>Download:</b> <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalizedAgent-Setup-windows-x64.exe"><b>Windows</b></a> ·
+<a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalizedAgent-macos.pkg"><b>macOS</b></a> ·
+<a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalizedAgent-linux-x86_64.deb"><b>Linux</b></a>
+<sub>(<a href="#install">other formats</a>)</sub>
+</p>
+
+<p align="center">
 <a href="#your-privacy">Privacy</a> ·
 <a href="#install">Install</a> ·
 <a href="#using-it">Using it</a> ·
