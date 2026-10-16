@@ -42,8 +42,9 @@ class ActivityAggregationTests(unittest.TestCase):
         passed = (now - midnight).total_seconds()
         today = lambda share: midnight + timedelta(seconds=passed * share)
         earlier = lambda days, hour: midnight - timedelta(days=days) + timedelta(hours=hour)
-        self.plan = [(today(0.9), "Editor", min(1800.0, passed * 0.4)),
-                     (today(0.5), "Browser", min(600.0, passed * 0.2)),
+        # (whole seconds: a period's length is reported to a tenth)
+        self.plan = [(today(0.9), "Editor", min(1800, int(passed * 0.4))),
+                     (today(0.5), "Browser", min(600, int(passed * 0.2))),
                      (earlier(1, 12), "Editor", 3600), (earlier(2, 12), "Chat", 900)]
         for when, name, seconds in self.plan:
             self.app.raw_store.add_event(ListenerEvent(
@@ -71,11 +72,15 @@ class ActivityAggregationTests(unittest.TestCase):
         self.assertEqual(round(sum(u["seconds"] for u in yesterday), 1), 3600.0)
 
     def test_the_current_focus_period_counts_before_the_user_switches_apps(self) -> None:
+        # On an agent of its own: the activity set up above is today's, and
+        # in the first hours of a day it falls inside this test's last hour.
+        agent = TemporaryAgent()
+        self.addCleanup(agent.cleanup)
         now = datetime.now(timezone.utc)
-        self.app.raw_store.add_event(ListenerEvent(
+        agent.app.raw_store.add_event(ListenerEvent(
             event_type="application.focused", source="application", application="Editor",
             timestamp=now - timedelta(minutes=4), data={"window_title": "draft.md"}))
-        usage = self.app.raw_store.application_usage(since=now - timedelta(hours=1), until=now)
+        usage = agent.app.raw_store.application_usage(since=now - timedelta(hours=1), until=now)
         editor = next(entry for entry in usage if entry["application"] == "Editor")
         self.assertAlmostEqual(editor["seconds"], 240.0, delta=1.0)
 
