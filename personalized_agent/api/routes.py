@@ -76,6 +76,10 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     @route("GET", "/api/settings")
     def get_settings(_request: Any) -> Any:
         fields = app.config.schema()
+        if not debugger_built_in:
+            # Section 14.33, as amended: a build without the Debugger shows no
+            # switch for collecting what only the Debugger would show.
+            fields = [field for field in fields if field["section"] != "Debugger"]
         reasoning = _primary_reasoning()
         for field in fields:
             if field["key"] == "primary_reasoning_effort":

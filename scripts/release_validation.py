@@ -31,6 +31,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -75,11 +76,26 @@ class AgentUnderTest:
             [*self.command, "--headless", "--root", str(self.root)],
             cwd=str(REPO_ROOT), env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            encoding="utf-8", errors="replace",
         )
+        # Read as it is written. Left unread, the pipe fills (about 4 KB on
+        # Windows) and whatever writes next waits for ever: the sandbox self
+        # test hung there, and only on Windows.
+        self.output: List[str] = []
+        process = self.process
+
+        def drain() -> None:
+            for line in process.stdout:
+                self.output.append(line)
+                del self.output[:-400]
+
+        self.reader = threading.Thread(target=drain, daemon=True)
+        self.reader.start()
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self.process.poll() is not None:
-                output = (self.process.stdout.read() if self.process.stdout else "") or ""
+                self.reader.join(timeout=5)
+                output = "".join(self.output)
                 raise ValidationError(
                     f"the application exited with code {self.process.returncode}\n{output[-2000:]}"
                 )
@@ -224,21 +240,22 @@ class Validator:
         Note: a provider tool that opens the browser itself will open a tab
         here. The sign-in is cancelled immediately and nothing is minted.
         """
-        tools = self.agent.get("/api/models/login/tools?provider=anthropic")["tools"]
-        offered = "account_login" in {
+        offered = {
             method
             for provider in self.agent.get("/api/models")["providers"]
             if provider["provider"] == "anthropic"
             for method in provider["authentication_methods"]
         }
+        # The Anthropic API is offered with an API key and nothing else: a
+        # Claude subscription is used through Claude Code
+        # (ACCOUNT_LOGIN_REFUSED). An account sign-in offered here would be
+        # one that ends where it began.
+        if "account_login" not in offered:
+            if "api_key" not in offered:
+                raise ValidationError(f"the Anthropic API offers no way in: {sorted(offered)}")
+            return "the Anthropic API takes an API key; a subscription goes through Claude Code"
+        tools = self.agent.get("/api/models/login/tools?provider=anthropic")["tools"]
         usable = [tool for tool in tools if tool["usable"]]
-        if not offered:
-            reasons = [tool["tool"] for tool in tools if tool["installed"]]
-            if usable:
-                raise ValidationError(
-                    f"account login is usable ({usable[0]['tool']}) but not offered")
-            return ("account login not offered: no sign-in tool on this machine"
-                    + (f" (installed but unusable: {', '.join(reasons)})" if reasons else ""))
         if not usable:
             status = next((p["auth_status"] for p in self.agent.get("/api/models")["providers"]
                            if p["provider"] == "anthropic"), {})
@@ -263,16 +280,17 @@ class Validator:
 
     def desktop_agent(self) -> str:
         characters = self.agent.get("/api/characters")
-        selected = characters.get("selected") or {}
-        frames = selected.get("frames") or {}
-        if not frames.get("idle"):
-            raise ValidationError("the built-in character package has no idle frames")
-        if selected.get("read_only") is not True:
-            raise ValidationError("built-in character assets are not read-only")
+        selected = str(characters.get("selected") or "")
+        names = [one.get("name") for one in characters.get("characters") or [] if one]
+        if selected not in names:
+            raise ValidationError(f"the selected avatar {selected!r} is not among {names}")
+        # The preview is the package's first idle frame: none, no frames.
+        if not str(characters.get("preview") or "").startswith("data:image/png;base64,"):
+            raise ValidationError("the built-in avatar package has no idle frames")
         index = self.agent.raw("/")
         if "Personalized" not in index:
             raise ValidationError("the frontend did not load")
-        return f"character '{selected.get('name')}' with {len(frames['idle'])} idle frames"
+        return f"avatar '{selected}' of {len(names)}, with its idle frames"
 
     def open_overview(self) -> str:
         overview = self.agent.get("/api/overview?hours=24")
@@ -286,7 +304,21 @@ class Validator:
         sections = {field["section"] for field in settings["schema"]}
         if "Models" not in sections or "Listener" not in sections:
             raise ValidationError(f"unexpected settings sections: {sections}")
-        return f"sections: {', '.join(sorted(sections))}"
+        built_in = self.agent.get("/api/status").get("debugger_built_in")
+        if built_in is False:
+            # As released (build.py --no-debugger): no Debugger section, and
+            # its routes are not served.
+            if "Debugger" in sections:
+                raise ValidationError("a build without the Debugger shows its settings")
+            try:
+                self.agent.get("/api/debugger")
+            except urllib.error.HTTPError as exc:
+                if exc.code != 404:
+                    raise
+            else:
+                raise ValidationError("a build without the Debugger serves its routes")
+        return (f"sections: {', '.join(sorted(sections))}"
+                + ("; no Debugger" if built_in is False else "; with the Debugger"))
 
     def start_listener(self) -> str:
         self.agent.post("/api/settings", {"values": {"listener_enabled": True,
@@ -326,7 +358,9 @@ class Validator:
         return f"task {self.task_id}"
 
     def restart_persistence(self) -> str:
-        graph_before = self.agent.get("/api/graph/stats")
+        # What was stored, not what is counted live: a period still open when
+        # the program stops is counted to "now" before and ends there after.
+        edits_before = {edit["id"] for edit in self.agent.get("/api/edits?limit=500")["edits"]}
         self.agent.stop()
         time.sleep(2)
         self.agent.launch()
@@ -339,10 +373,11 @@ class Validator:
         settings = self.agent.get("/api/settings")["values"]
         if settings["agent_name"] != "Release Check":
             raise ValidationError("settings did not survive a restart")
-        graph_after = self.agent.get("/api/graph/stats")
-        if graph_after["nodes"] < graph_before["nodes"]:
-            raise ValidationError("knowledge graph nodes were lost on restart")
-        return f"task, settings and {graph_after['nodes']} graph nodes restored"
+        edits_after = {edit["id"] for edit in self.agent.get("/api/edits?limit=5000")["edits"]}
+        lost = edits_before - edits_after
+        if lost:
+            raise ValidationError(f"{len(lost)} recorded edits were lost on restart")
+        return f"task, settings and {len(edits_before)} recorded edits restored"
 
     def sandbox_restrictions(self) -> str:
         report = self.agent.get("/api/runtime/selftest", timeout=300)

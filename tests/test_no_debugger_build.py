@@ -42,6 +42,7 @@ print(json.dumps({
     "status_route": ("GET", "/api/status") in routes,
     "debugger_routes": sorted(p for (_m, p) in routes if p.startswith("/api/debugger")),
     "loaded": sorted(m for m in sys.modules if m.startswith("personalized_agent.debugger")),
+    "sections": sorted({f["section"] for f in routes[("GET", "/api/settings")](None)["schema"]}),
 }))
 '''
 
@@ -61,6 +62,10 @@ class AReleasedBuildStartsTests(unittest.TestCase):
         self.assertTrue(said["status_route"])
         self.assertEqual(said["debugger_routes"], [])
         self.assertEqual(said["loaded"], [])
+        # Its one setting, collecting for the Debugger, is not shown either;
+        # the Heartbeat's are the agent's own work and stay.
+        self.assertNotIn("Debugger", said["sections"])
+        self.assertIn("Heartbeat", said["sections"])
 
 
 if __name__ == "__main__":
