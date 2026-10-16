@@ -124,6 +124,12 @@ class TheSchedulerTests(_Base):
         gov.samples.clear()
         gov.samples.extend([20.0] * 3)
         gov.free_gb, gov.free_share = 3.2, 0.4         # room for two: 3.2 GB / 1.5
+        # and processors for more than two (one run per four cores)
+        from unittest import mock
+        cores = mock.patch("personalized_agent.agent.work.governor.os.cpu_count",
+                           return_value=16)
+        cores.start()
+        self.addCleanup(cores.stop)
         units = [self._project(f"Piece {n}") for n in range(4)]
         said = [self.work.start(unit, f"Piece {n}: a short note") for n, unit in enumerate(units)]
         started = [one for one in said if one.get("run")]

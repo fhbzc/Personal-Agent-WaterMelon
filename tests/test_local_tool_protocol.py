@@ -133,6 +133,9 @@ class ThroughTheAgentTests(unittest.TestCase):
     def _converse(self, provider_id, replies):
         provider = self.app.models.provider(provider_id)
         provider.executable = lambda: provider_id
+        if hasattr(provider, "_resolve"):
+            # Installed, whether or not this machine has it.
+            provider._resolve = lambda: ("cli", provider_id, None)
         provider._auth_status = lambda force=False: (
             {"logged_in": True} if provider_id == "codex" else {"loggedIn": True})
         self.app.config.set("primary_provider", provider_id)

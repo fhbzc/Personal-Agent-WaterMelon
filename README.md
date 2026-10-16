@@ -342,6 +342,7 @@ workflow. Only how it gets onto your computer differs.
 | How | Run it. It asks for your language and where to keep your data, installs, and adds a Start menu / Applications entry | Unzip anywhere and run `PersonalizedAgent` |
 | Language, start at sign-in, Explorer's *Delegate work* entry | Set up by the installer | Set up by the program on its first start |
 | Removing it | Uninstall from Settings → Apps (Windows) or the usual way; the extra entries go with it | Delete the folder. Turn off *Start at sign-in* in Settings first, or the entry stays |
+| Best for | Most people | Trying it out, or keeping it on a USB drive |
 
 **Your data folder.** The installer asks where to keep your data: one folder
 for everything the agent learns and makes.
@@ -358,7 +359,6 @@ for everything the agent learns and makes.
   contacts and keys, so you can try a new version on a fresh folder without
   touching your usual one.
 - Uninstalling leaves the data folder where it is.
-| Best for | Most people | Trying it out, or keeping it on a USB drive |
 
 Neither contains the developer **Debugger** tabs; see
 [Build it from source](#build-it-from-source) if you want them.

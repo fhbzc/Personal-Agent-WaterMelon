@@ -1481,6 +1481,18 @@ def install(workspace: str | None = None, protected: list | None = None,
     _workspace = _resolve(_workspace)
 
     real_open = builtins.open
+    real_os_open = os.open
+
+    # THE NULL DEVICE WHERE THE SYSTEM WILL NOT OPEN IT: a process in an
+    # AppContainer on some Windows (Windows Server, as GitHub's runners) is
+    # refused "nul" itself, so subprocess.DEVNULL and pytest's start failed
+    # with "Permission denied: 'nul'". There, a file of the run's own stands
+    # in for it: what is written goes nowhere that matters, a read is empty.
+    null_stand_in = os.path.join(_workspace, RUNTIME_DIR, "null-device")
+
+    def _null_stand_in_flags(flags):
+        written = flags & (getattr(os, "O_WRONLY", 0) | getattr(os, "O_RDWR", 0))
+        return flags | getattr(os, "O_CREAT", 0) | (getattr(os, "O_TRUNC", 0) if written else 0)
 
     def guarded_open(file, mode="r", *args, **kwargs):
         if isinstance(file, (str, bytes, os.PathLike)):
@@ -1488,12 +1500,17 @@ def install(workspace: str | None = None, protected: list | None = None,
                 _check_write(file, "open")
             else:
                 _check_read(file, "open")
-        return real_open(file, mode, *args, **kwargs)
+        try:
+            return real_open(file, mode, *args, **kwargs)
+        except PermissionError:
+            if not (isinstance(file, (str, bytes, os.PathLike)) and _is_null_device(file)):
+                raise
+            os.makedirs(os.path.dirname(null_stand_in), exist_ok=True)
+            stand_in_mode = mode if _is_write_mode(str(mode)) else str(mode).replace("r", "a+", 1)
+            return real_open(null_stand_in, stand_in_mode, *args, **kwargs)
 
     builtins.open = guarded_open
     io.open = guarded_open
-
-    real_os_open = os.open
 
     def guarded_os_open(path, flags, *args, **kwargs):
         write_flags = getattr(os, "O_WRONLY", 0) | getattr(os, "O_RDWR", 0) | getattr(os, "O_CREAT", 0)
@@ -1501,7 +1518,13 @@ def install(workspace: str | None = None, protected: list | None = None,
             _check_write(path, "os.open")
         else:
             _check_read(path, "os.open")
-        return real_os_open(path, flags, *args, **kwargs)
+        try:
+            return real_os_open(path, flags, *args, **kwargs)
+        except PermissionError:
+            if not _is_null_device(path):
+                raise
+            os.makedirs(os.path.dirname(null_stand_in), exist_ok=True)
+            return real_os_open(null_stand_in, _null_stand_in_flags(flags), 0o600)
 
     os.open = guarded_os_open
 

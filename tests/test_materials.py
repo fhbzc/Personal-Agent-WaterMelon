@@ -326,6 +326,12 @@ class ADeliverableIsTypedAndPinnedDownTests(_Base):
         run("add", "app.js")
         run("commit", "-q", "-m", "Draw the tree per kind")
         sha = run("rev-parse", "HEAD").stdout.strip()
+        # A short hash of digits alone is read as a number, not a commit
+        # (stages._HASH) - about one commit in 25 starts so; make another.
+        from personalized_agent.heartbeat.experience.stages import _HASH
+        while not _HASH.fullmatch(sha[:7]):
+            run("commit", "-q", "--amend", "--no-edit", "--date", "now")
+            sha = run("rev-parse", "HEAD").stdout.strip()
         notes = self.home / "notes.md"
         notes.write_text("# what to keep", encoding="utf-8")
 

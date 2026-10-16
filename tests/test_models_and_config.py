@@ -303,12 +303,17 @@ class CredentialIsolationTests(unittest.TestCase):
 
     def test_account_login_is_not_offered_when_it_cannot_be_completed(self) -> None:
         """Sections 75.1 and 77: never advertise a method that always dead-ends."""
+        from personalized_agent.models.providers import anthropic_provider
+
         provider = self.app.models.provider("anthropic")
         provider._ambient_credential = lambda: None
         provider._cli_available = staticmethod(lambda: None)
-        methods = [m.value for m in provider.get_auth_methods()]
-        self.assertEqual(methods, ["api_key"])
-        self.assertFalse(provider.can_initiate_login())
+        # Whatever this machine has installed: no tool here can finish it.
+        with unittest.mock.patch.object(anthropic_provider, "available_backend",
+                                        lambda: None):
+            methods = [m.value for m in provider.get_auth_methods()]
+            self.assertEqual(methods, ["api_key"])
+            self.assertFalse(provider.can_initiate_login())
 
     def test_account_login_is_not_offered_when_no_tool_can_finish_it(self) -> None:
         from personalized_agent.models.providers import anthropic_provider
@@ -531,6 +536,9 @@ class SignInProbeTests(unittest.TestCase):
         self.agent = TemporaryAgent()
         self.app = self.agent.app
         self.provider = self.app.models.provider("claude_code")
+        # The client is installed, whether or not this machine has it: what
+        # is asked here is what its answer means, not whether it is there.
+        self.provider._resolve = lambda: ("cli", "claude", None)
 
     def tearDown(self) -> None:
         self.agent.cleanup()
@@ -1327,6 +1335,9 @@ class LocalClientProviderTests(unittest.TestCase):
         self.agent = TemporaryAgent()
         self.app = self.agent.app
         self.provider = ClaudeCodeProvider(self.app.credentials)
+        # Installed, whether or not this machine has it (a test that asks
+        # about an absent client says so itself).
+        self.provider._resolve = lambda: ("cli", "claude", None)
 
     def tearDown(self) -> None:
         self.agent.cleanup()
@@ -1335,6 +1346,7 @@ class LocalClientProviderTests(unittest.TestCase):
         self.assertIn("claude_code", [p.provider_id for p in self.app.models.providers()])
 
     def test_this_application_stores_no_credential_for_it(self) -> None:
+        self.provider._auth_status = lambda force=False: {"loggedIn": True}
         self.assertEqual(self.provider.get_auth_methods(), [AuthMethod.NONE])
         self.assertIn("stores no credential",
                       self.provider.capability_model()["note"].lower()

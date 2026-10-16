@@ -13,6 +13,8 @@ keyring>=25.0           # OS keychain credential storage (falls back to encrypte
 tzdata>=2024.1          # named time zones where the system has no IANA database (Windows)
 comtypes>=1.4; sys_platform == 'win32'   # UI Automation: reading the window in front (19.2)
 pypdf>=4.0              # the text of a PDF the user opens (19); Word and PowerPoint need nothing
+pypdfium2>=4.0          # a scanned PDF's pages drawn as pictures, so their words can be read
+openpyxl>=3.1           # the cells of a workbook the user opens or hands over
 
 # Reading states by meaning rather than by which words they share (34.3).
 # Optional like everything else here: with no model on disk the state
@@ -25,6 +27,8 @@ pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'  # per-pixel macOS avatar
 
 # Development ---------------------------------------------------------------
 pytest>=8.0
+python-pptx>=1.0        # tests: a deck to read (the application reads it without this)
+pdfplumber>=0.11        # docs/verify_fidelity.py: the design document's original text
 # Account sign-in (section 75.2): lets the application host a provider tool
 # that renders only to a terminal, instead of handing the user to a console.
 pywinpty; sys_platform == 'win32'

@@ -56,12 +56,10 @@ FALLBACK_TORCH_VERSION = "2.5.1"
 TORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
 
 # Lines of requirements.txt that are for developing, not for running.
-SKIPPED_REQUIREMENTS = {"pytest"}
+SKIPPED_REQUIREMENTS = {"pytest", "python-pptx", "pdfplumber"}
 
-# Read by the application when they are present, though requirements.txt
-# leaves them out: documents (PDF pages as pictures, workbooks) and building
-# the release itself.
-EXTRA_PACKAGES = ["openpyxl", "pypdfium2", "pyinstaller"]
+# Needed to build the release, though requirements.txt leaves it out.
+EXTRA_PACKAGES = ["pyinstaller"]
 
 # Never pinned from the development Python. torch is pinned separately, to
 # its version without the CUDA tag; the rest are the GPU and the other

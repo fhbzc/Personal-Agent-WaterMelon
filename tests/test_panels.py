@@ -2340,7 +2340,9 @@ class DesktopConversationTests(unittest.TestCase):
         windows = (ROOT / "build" / "windows" / "build_windows.py").read_text(encoding="utf-8")
         self.assertIn("clean=not fast", windows)
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn("python build.py --fast", readme)
+        # Named as an option of build.py, however the README words it.
+        self.assertIn("python build.py", readme)
+        self.assertIn("--fast", readme)
 
     def test_quitting_is_not_queried(self) -> None:
         """Section 7.1, as amended: Quit was already the answer."""
