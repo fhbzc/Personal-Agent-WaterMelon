@@ -178,7 +178,20 @@ class ApplicationPathTests(unittest.TestCase):
     def test_default_root_is_a_single_user_directory(self) -> None:
         root = default_root()
         self.assertEqual(root.parent, Path.home())
-        self.assertTrue(str(root).endswith("PersonalizedAgent"))
+
+    def test_the_default_root_by_its_name_or_the_one_it_had_before(self) -> None:
+        """On a computer that never had the program, the folder is named for
+        it; where only the folder of its former name is there, that one is
+        kept - which this computer and a fresh one say differently."""
+        from unittest import mock
+        from personalized_agent.version import APP_DIR_NAME, FORMER_DIR_NAMES
+        with tempfile.TemporaryDirectory() as home:
+            with mock.patch.object(Path, "home", lambda: Path(home)):
+                self.assertEqual(default_root(), Path(home) / APP_DIR_NAME)
+                (Path(home) / FORMER_DIR_NAMES[0]).mkdir()
+                self.assertEqual(default_root(), Path(home) / FORMER_DIR_NAMES[0])
+                (Path(home) / APP_DIR_NAME).mkdir()
+                self.assertEqual(default_root(), Path(home) / APP_DIR_NAME)
 
     def test_explicit_override_wins(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -243,7 +243,9 @@ class TheResourceDebuggerTests(unittest.TestCase):
                          ("debugger", "Notes - try 2, Full system"))
         self.assertGreater(rows[child.pid]["memory"], 0)
         self.assertGreaterEqual(seen["totals"]["debugger"]["memory"], rows[child.pid]["memory"])
-        self.assertEqual(len(self.watch.now()["history"]), 2)
+        # Both kept - and `now` starts the sampling, which may already have
+        # taken one of its own by the time it answers.
+        self.assertGreaterEqual(len(self.watch.now()["history"]), 2)
 
     def test_what_tells_what_it_is_for(self) -> None:
         from personalized_agent.debugger.resources import ResourceWatch
