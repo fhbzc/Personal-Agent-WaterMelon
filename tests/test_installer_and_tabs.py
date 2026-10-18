@@ -43,9 +43,25 @@ class TheTabsTests(unittest.TestCase):
                          "out.tabs=[...document.querySelectorAll('#tabs button')]"
                          ".map(b=>b.textContent.trim());")
         self.assertEqual(result["err"], "")
-        self.assertEqual(result["out"]["tabs"], ["Overview", "Customized Recommendation",
-                                                 "Calendar", "Connections", "Experience",
-                                                 "Lessons", "Chat", "Settings"])
+        self.assertEqual(result["out"]["tabs"], ["Overview", "Newspaper",
+                                                 "Calendar", "Connections", "Work",
+                                                 "Chat", "Settings", "Record log"])
+
+    def test_nor_the_debuggers_record_of_computer_usage(self) -> None:
+        """Section 8, as amended 2026-10-16: what the computer was used for -
+        the total, the hours, each application - is the Debugger's, and with
+        no Debugger it is shown nowhere, not moved onto the Overview."""
+        kind, engine = _javascript_engine()
+        if kind != "chrome":
+            self.skipTest("no browser available to render the page")
+        result = _render(engine, {"/api/status": {"debugger_built_in": False}},
+                         "await applyDebuggerAvailability();await wait();"
+                         "out.left=['#dbg-usage','#ov-total','#ov-hourly','#ov-apps']"
+                         ".filter(s=>document.querySelector(s));"
+                         "out.overview=!!document.querySelector('#overview');")
+        self.assertEqual(result["err"], "")
+        self.assertTrue(result["out"]["overview"])
+        self.assertEqual(result["out"]["left"], [])
 
 
 class TheInstallerTests(unittest.TestCase):

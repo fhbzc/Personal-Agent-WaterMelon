@@ -15,8 +15,13 @@ computer - how busy its processors are, how much memory is free - and:
 * while memory is short (under 8% free), PAUSES the newest run, saying why,
   and resumes it once a fifth is free again.
 
-Nothing here touches a run of the Experience debugger: those stay in the
-agent's own process, for whoever develops it.
+THE EXPERIENCE DEBUGGER'S RUNS stay in the agent's own process, for
+whoever develops it, but are counted and kept like the rest: each of its
+ways waits in the same queue for room (runner.WorkRuns._room_for), and the
+newest run of any kind is the one paused for memory. Their processes - and
+every other the agent starts - go below normal priority by the agent's job
+(common/children.py), so whatever the user is doing comes first; with
+nothing else wanting the processors, they have all of them.
 """
 
 from __future__ import annotations
@@ -50,6 +55,19 @@ def _psutil() -> Any:
         return psutil
     except Exception:                          # pragma: no cover - required anyway
         return None
+
+
+def _began(run: Any) -> float:
+    """When a run began, as a number: a run in a child process holds a
+    clock time, one in this process the moment written down."""
+    began = getattr(run, "started_at", 0)
+    if isinstance(began, (int, float)):
+        return float(began)
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(str(began).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
 
 
 class Governor:
@@ -123,8 +141,9 @@ class Governor:
         elif calm and self.lowered:
             self._priority(children, lowest=False)
             self.lowered = False
-        if self.free_share < SHORT_MEMORY and children:
-            newest = max(children, key=lambda run: getattr(run, "started_at", 0))
+        going = [run for run in list(self.work._running.values()) if run.alive()]
+        if self.free_share < SHORT_MEMORY and going:
+            newest = max(going, key=_began)
             if newest.id not in self.paused_by_me and newest.pause(
                     why="the computer is short of memory"):
                 self.paused_by_me.append(newest.id)

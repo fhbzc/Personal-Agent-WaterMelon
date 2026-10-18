@@ -663,7 +663,7 @@ class TheRoundTests(_Base):
         self.assertIn("plan the spend", said)
 
     def test_it_runs_at_its_own_times_not_after_a_state_round(self) -> None:
-        # Customized Recommendation is made at the times of day the user chose
+        # Newspaper is made at the times of day the user chose
         # (schedule.py) - no longer a step of the state heartbeat.
         state = self.app.state_heartbeat
         record = {"done": True, "reads_until": "2026-10-11T10:00:00+00:00"}

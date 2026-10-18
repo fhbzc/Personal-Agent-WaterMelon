@@ -377,7 +377,10 @@ class ClaudeCodeProvider(ModelProvider):
         if not spec:
             return None
         if spec.get("search_path"):
-            found = shutil.which(CLI_NAME)
+            # Including one installed after this application started
+            # (platform_layer/programs.py).
+            from ...platform_layer.programs import find_program
+            found = find_program(CLI_NAME)
             if found:
                 return found
         for candidate in spec["candidates"]:

@@ -152,6 +152,17 @@ class PipRunsInsideTheGuardTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.agent.cleanup()
 
+    def test_a_debugger_way_keeps_its_own_cache(self) -> None:
+        """Shared beside the ways, the cache told one way what another had
+        installed; a way's is in its own folder. Real work keeps one shared."""
+        self.assertEqual(self.installer.cache_dir().resolve(),
+                         (self.folder.parent / ".pip-cache").resolve())
+        way = Path(self.agent.dir) / "garden-project" / "try_2" / "A"
+        policy = self.app.work.policy_for(way, sealed=[str(way.parent / "B")],
+                                          code_root=Path(self.agent.dir) / "the-code")
+        installer = self.app.work.installer_for(policy)
+        self.assertEqual(installer.cache_dir().resolve(), (way / ".pip-cache").resolve())
+
     def test_it_writes_in_the_run_and_the_cache_and_nowhere_else(self) -> None:
         cache = self.installer.cache_dir()
         work_file = self.folder / "beside-the-run.txt"

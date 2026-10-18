@@ -26,6 +26,9 @@ from personalized_agent.version import (  # noqa: E402
     APP_ID,
     APP_NAME,
     APP_SLUG,
+    FILE_NAME,
+    FORMER_PACKAGE_NAMES,
+    PACKAGE_NAME,
     PUBLISHER,
     __version__,
 )
@@ -308,8 +311,12 @@ def hidden_import_arguments(target: str) -> List[str]:
 # tzdata is the time zone database itself, as data files: Windows has none of
 # its own for zoneinfo to read, so without it a named zone cannot be resolved
 # in the packaged application (ported from PR #4).
-COLLECT_ALL_PACKAGES = {"windows": ["winpty", "comtypes", "pystray", "tzdata"],
-                        "macos": ["pystray"], "linux": ["pystray"]}
+# faster_whisper carries its voice-activity model as a data file, and
+# ctranslate2 and av their libraries: bundled whole, or a video's speech
+# cannot be read in the packaged application (runtime/video.py).
+_VIDEO = ["av", "faster_whisper", "ctranslate2"]
+COLLECT_ALL_PACKAGES = {"windows": ["winpty", "comtypes", "pystray", "tzdata", *_VIDEO],
+                        "macos": ["pystray", *_VIDEO], "linux": ["pystray", *_VIDEO]}
 
 
 def collect_arguments(target: str) -> List[str]:
@@ -514,6 +521,7 @@ def write_build_manifest(target: str, artifacts: List[Path]) -> Path:
 
 __all__ = [
     "APP_DIR_NAME", "APP_ID", "APP_NAME", "APP_SLUG", "PUBLISHER", "__version__",
+    "FILE_NAME", "PACKAGE_NAME", "FORMER_PACKAGE_NAMES",
     "BuildError", "DIST_ENV", "DIST_ROOT", "ENTRY_SCRIPT", "REPO_ROOT",
     "current_platform", "detect_cloud_sync", "dist_dir", "dist_root",
     "ensure_pyinstaller", "prepare_assets", "publish_file", "publish_tree",

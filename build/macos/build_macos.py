@@ -1,8 +1,8 @@
 """macOS release build (sections 99, 103, 105).
 
-Produces ``dist/macos/Personalized Agent.app``; when ``hdiutil`` is
-available, ``dist/macos/Personalized-Agent.dmg``; and when ``pkgbuild`` and
-``productbuild`` are, ``dist/macos/Personalized-Agent.pkg`` - an installer that
+Produces ``dist/macos/Personal Agent WaterMelon.app``; when ``hdiutil`` is
+available, ``dist/macos/PersonalAgentWaterMelon.dmg``; and when ``pkgbuild`` and
+``productbuild`` are, ``dist/macos/PersonalAgentWaterMelon.pkg`` - an installer that
 asks, as a choice ticked by default, whether the agent starts when the user
 signs in (the only page of the macOS Installer that can ask: Installation
 Type). The program makes it so itself (``--autostart on|off``): the same
@@ -27,6 +27,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from build.common import (  # noqa: E402
+    FILE_NAME,
     APP_ID,
     APP_NAME,
     BuildError,
@@ -46,7 +47,9 @@ from build.common import (  # noqa: E402
 )
 
 TARGET = "macos"
-BUNDLE_NAME = "Personalized Agent"
+BUNDLE_NAME = APP_NAME
+#: The application as it was named before (to 1.0.0): replaced by this one.
+FORMER_BUNDLE_NAMES = ("Personalized Agent",)
 HERE = Path(__file__).resolve().parent
 
 USAGE_DESCRIPTIONS = {
@@ -97,7 +100,9 @@ def patch_info_plist(app: Path) -> None:
         info = plistlib.load(handle)
     info.update(
         {
-            "CFBundleName": BUNDLE_NAME,
+            # The menu bar's name; the bundle's folder keeps the 1.0.0 name,
+            # so an upgrade replaces it in place.
+            "CFBundleName": APP_NAME,
             "CFBundleDisplayName": APP_NAME,
             "CFBundleIdentifier": APP_ID,
             "CFBundleShortVersionString": __version__,
@@ -118,7 +123,15 @@ def patch_info_plist(app: Path) -> None:
 def sign_and_notarize(app: Path) -> None:
     identity = os.environ.get("MACOS_SIGN_IDENTITY")
     if not identity:
-        print("note: MACOS_SIGN_IDENTITY is not set - skipping code signing and notarization.")
+        # SIGNED AGAIN ALL THE SAME, by no one. PyInstaller signs the bundle
+        # as it makes it, and the Info.plist written above no longer matches
+        # that signature. macOS then refuses the application its keychain
+        # (error -67030, "make sure executable is signed") - and the agent
+        # quit on start, its identity key unstored, before its window or
+        # its menu-bar icon appeared.
+        print("note: MACOS_SIGN_IDENTITY is not set - signing ad hoc, no notarization.")
+        run(["codesign", "--force", "--deep", "--sign", "-", str(app)])
+        run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)])
         return
     entitlements = HERE / "entitlements.plist"
     run([
@@ -145,7 +158,7 @@ def build_dmg(app: Path) -> Path | None:
     staging = staging_dir(TARGET)
     dmg_staging = staging / "dmg-contents"
     dmg_staging.mkdir(parents=True)
-    dmg = staging / "Personalized-Agent.dmg"
+    dmg = staging / f"{FILE_NAME}.dmg"
     shutil.copytree(app, dmg_staging / app.name, symlinks=True)
     os.symlink("/Applications", dmg_staging / "Applications")
     run([
@@ -154,7 +167,7 @@ def build_dmg(app: Path) -> Path | None:
     ])
     if not dmg.exists():
         return None
-    published = publish_file(dmg, dist_dir(TARGET) / "Personalized-Agent.dmg")
+    published = publish_file(dmg, dist_dir(TARGET) / f"{FILE_NAME}.dmg")
     remove_tree(staging, description="staging directory")
     return published
 
@@ -162,6 +175,11 @@ def build_dmg(app: Path) -> Path | None:
 #: Run as root by the Installer: the program is run as the user at the
 #: console, whose LaunchAgent and settings these are.
 _AS_THE_USER = """#!/bin/sh
+# The application as it was named before is replaced by this one: left,
+# its sign-in entry would be another copy's.
+for FORMER in {former}; do
+  [ "$FORMER" = "{bundle}" ] || rm -rf "/Applications/$FORMER.app"
+done
 USER_NAME=$(stat -f%Su /dev/console)
 [ -z "$USER_NAME" ] || [ "$USER_NAME" = "root" ] && exit 0
 sudo -u "$USER_NAME" "/Applications/{bundle}.app/Contents/MacOS/{bundle}" --autostart {state} || true
@@ -202,7 +220,9 @@ def build_pkg(app: Path) -> Path | None:
     for folder, state in ((scripts_off, "off"), (scripts_on, "on")):
         folder.mkdir(parents=True)
         script = folder / "postinstall"
-        script.write_text(_AS_THE_USER.format(bundle=BUNDLE_NAME, state=state), encoding="utf-8")
+        script.write_text(_AS_THE_USER.format(
+            bundle=BUNDLE_NAME, state=state,
+            former=" ".join(f'"{one}"' for one in FORMER_BUNDLE_NAMES)), encoding="utf-8")
         script.chmod(0o755)
     # The application first, saying "off"; then, if ticked, "on" - so a
     # choice left unticked is not turned on by the program's own default.
@@ -214,7 +234,7 @@ def build_pkg(app: Path) -> Path | None:
     distribution = work / "distribution.xml"
     distribution.write_text(_DISTRIBUTION.format(name=APP_NAME, app_id=APP_ID,
                                                  version=__version__), encoding="utf-8")
-    product = staging / "Personalized-Agent.pkg"
+    product = staging / f"{FILE_NAME}.pkg"
     command = ["productbuild", "--distribution", str(distribution),
                "--package-path", str(work), str(product)]
     identity = os.environ.get("MACOS_INSTALLER_IDENTITY")
@@ -223,7 +243,7 @@ def build_pkg(app: Path) -> Path | None:
     run(command)
     if not product.exists():
         return None
-    published = publish_file(product, dist_dir(TARGET) / "Personalized-Agent.pkg")
+    published = publish_file(product, dist_dir(TARGET) / f"{FILE_NAME}.pkg")
     remove_tree(staging, description="staging directory")
     return published
 

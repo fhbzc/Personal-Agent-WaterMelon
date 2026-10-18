@@ -27,6 +27,8 @@ window.createChatNavigation = function ({ api, onOpen }) {
       <button type="button" class="chat-nav-icon" data-close aria-label="Close the sidebar">☰</button></div>
     <button type="button" class="chat-new" data-new><span aria-hidden="true">＋</span> New chat</button>
     <div class="chat-sidebar-scroll">
+      <div class="chat-section-label" data-pinned-label hidden>Pinned</div>
+      <nav class="chat-pinned" aria-label="Pinned"></nav>
       <div class="chat-section-label">Chats</div>
       <nav class="chat-history" aria-label="Conversations"></nav>
     </div>
@@ -107,18 +109,177 @@ window.createChatNavigation = function ({ api, onOpen }) {
     return button;
   }
 
-  function historyRows(host, conversations) {
-    if (!conversations.length) {
+  function historyRows(host, conversations, emptyText) {
+    if (!conversations.length && emptyText) {
       const empty = document.createElement("p");
       empty.className = "chat-nav-empty muted";
-      empty.textContent = "No conversations yet";
+      empty.textContent = emptyText;
       host.appendChild(empty);
     }
     for (const conversation of conversations) {
+      const line = document.createElement("div");
+      line.className = "chat-nav-line";
+      // Not `data-conversation`: that is the row's own button, which is
+      // what anything looking a conversation up in the list must find.
+      line.dataset.line = conversation.id;
       const button = row(conversation.title || "New chat", state.conversation === conversation.id,
         () => openConversation(conversation.id));
       button.dataset.conversation = conversation.id;
-      host.appendChild(button);
+      // EACH ONE HAS ITS OWN MENU, as in other chat applications: pin it
+      // to the top, rename it, or delete it - asked once, in the row.
+      const more = document.createElement("button");
+      more.type = "button";
+      more.classList.add("chat-nav-more");
+      more.textContent = "⋯";
+      more.title = "Pin, rename or delete";
+      more.setAttribute("aria-label", "Pin, rename or delete");
+      more.setAttribute("aria-haspopup", "menu");
+      more.disabled = state.busy;
+      more.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openMenu(line, conversation, more);
+      });
+      line.append(button, more);
+      host.appendChild(line);
+    }
+  }
+
+  function closeMenu() {
+    document.querySelectorAll(".chat-nav-menu").forEach((one) => one.remove());
+    document.querySelectorAll(".chat-nav-line.menu-open")
+      .forEach((one) => one.classList.remove("menu-open"));
+  }
+
+  function openMenu(line, conversation, opener) {
+    const wasOpen = line.classList.contains("menu-open");
+    closeMenu();
+    if (wasOpen) return;
+    line.classList.add("menu-open");
+    const menu = document.createElement("div");
+    menu.classList.add("chat-nav-menu");
+    menu.setAttribute("role", "menu");
+    const item = (text, action, danger) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute("role", "menuitem");
+      button.textContent = text;
+      if (danger) button.classList.add("danger-text");
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        closeMenu();
+        action();
+      });
+      menu.appendChild(button);
+      return button;
+    };
+    const first = item(conversation.pinned_at ? "Unpin" : "Pin",
+      () => pinConversation(conversation, !conversation.pinned_at));
+    item("Rename", () => startRename(line, conversation));
+    item("Delete", () => askToDelete(line, conversation), true);
+    // ABOVE THE PAGE, not inside the list: the list scrolls, and a menu
+    // inside it was cut off at its edge - Delete was below the fold. Placed
+    // under the row's button, or above it where there is no room below.
+    menu.style.position = "fixed";
+    menu.style.visibility = "hidden";
+    document.body.appendChild(menu);
+    const at = opener.getBoundingClientRect();
+    const tall = menu.offsetHeight;
+    const below = at.bottom + 4 + tall <= window.innerHeight;
+    menu.style.top = `${Math.max(4, below ? at.bottom + 4 : at.top - tall - 4)}px`;
+    menu.style.left = `${Math.max(4, at.right - menu.offsetWidth)}px`;
+    menu.style.visibility = "";
+    first.focus();
+    opener.setAttribute("aria-expanded", "true");
+  }
+
+  // Anywhere else, or Escape: the menu goes.
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest?.(".chat-nav-menu")) closeMenu();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeMenu();
+  });
+  // Above the page, it would stay put while its row scrolled away.
+  $s(".chat-sidebar-scroll").addEventListener("scroll", closeMenu, { passive: true });
+
+  async function pinConversation(conversation, pinned) {
+    try {
+      await api.post("/api/conversation/pin", { id: conversation.id, pinned });
+      await refresh();
+    } catch (error) {
+      status(`Could not pin the conversation: ${error.message}`);
+    }
+  }
+
+  function startRename(line, conversation) {
+    line.replaceChildren();
+    line.classList.add("renaming");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.classList.add("chat-nav-rename");
+    input.value = conversation.title || "";
+    input.maxLength = 120;
+    input.setAttribute("aria-label", "New name");
+    let done = false;
+    const finish = async (save) => {
+      if (done) return;
+      done = true;
+      const title = input.value.trim();
+      if (!save || !title || title === conversation.title) {
+        render();
+        return;
+      }
+      try {
+        await api.post("/api/conversation/rename", { id: conversation.id, title });
+        conversation.title = title;
+        render();
+        status("");
+      } catch (error) {
+        render();
+        status(`Could not rename the conversation: ${error.message}`);
+      }
+    };
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { event.preventDefault(); finish(true); }
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); finish(false); }
+    });
+    input.addEventListener("blur", () => finish(true));
+    line.appendChild(input);
+    input.focus();
+    input.select();
+  }
+
+  function askToDelete(line, conversation) {
+    line.replaceChildren();
+    line.classList.add("asking");
+    const said = document.createElement("span");
+    said.className = "chat-nav-ask";
+    said.textContent = "Delete this conversation? It cannot be brought back.";
+    const yes = document.createElement("button");
+    yes.type = "button";
+    yes.classList.add("small", "danger");
+    yes.textContent = "Delete";
+    yes.addEventListener("click", () => deleteConversation(conversation.id));
+    const no = document.createElement("button");
+    no.type = "button";
+    no.className = "small secondary";
+    no.textContent = "Keep";
+    no.addEventListener("click", () => render());
+    line.append(said, yes, no);
+    yes.focus();
+  }
+
+  async function deleteConversation(id) {
+    try {
+      await api.post("/api/conversation/delete", { id });
+      state.conversations = state.conversations.filter((one) => one.id !== id);
+      // The one on screen gone with it: an empty chat in its place.
+      if (state.conversation === id) newChat();
+      else render();
+      status("");
+    } catch (error) {
+      render();
+      status(`Could not delete the conversation: ${error.message}`);
     }
   }
 
@@ -128,8 +289,15 @@ window.createChatNavigation = function ({ api, onOpen }) {
     if (title) title.textContent = current?.title || "New chat";
     const list = $s(".chat-history");
     list.replaceChildren();
-    // Every conversation, those once filed under a project too: one list.
-    historyRows(list, state.conversations);
+    // PINNED, above the rest; then every other conversation, those once
+    // filed under a project too: one list.
+    const pinned = state.conversations.filter((one) => one.pinned_at);
+    const pinnedList = $s(".chat-pinned");
+    pinnedList.replaceChildren();
+    $s("[data-pinned-label]").hidden = !pinned.length;
+    historyRows(pinnedList, pinned, "");
+    historyRows(list, state.conversations.filter((one) => !one.pinned_at),
+      pinned.length ? "" : "No conversations yet");
   }
 
   async function refresh() {

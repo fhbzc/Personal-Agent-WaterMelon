@@ -648,8 +648,10 @@ class Task:
                                  for centre in list(centres)[:PARTS_KEPT]]
 
     #: What a profile keeps when it is built again from the states: which
-    #: states the name was written from is about the name, not the states.
-    KEPT_THROUGH_A_REBUILD = ("summarised", "summarised_sampled")
+    #: states the name was written from is about the name, not the states;
+    #: and the states the model took out of it, which it is offered again
+    #: only in a round it also gains others (heartbeat, `kicked_out`).
+    KEPT_THROUGH_A_REBUILD = ("summarised", "summarised_sampled", "kicked_out")
 
     def start_profile(self) -> None:
         """Begin keeping a profile; `take` fills it in."""
@@ -888,6 +890,27 @@ def fits(task: Task, vector: Sequence[float], places: Sequence[str],
             "elsewhere": elsewhere if lacking > shared else ""}
 
 
+def leaning(task: Task, leisure_of: Optional[Dict[str, Optional[bool]]]) -> Optional[bool]:
+    """Whether a task is one of LEISURE (True) or of WORK (False), by most of
+    its states whose kind is known - or None while none of them is. A state
+    joins only a task of its own kind: grouped together, the evening's films
+    took the day's work into them and the other way round."""
+    if not leisure_of or not task.members:
+        return None
+    # BY ALL ITS STATES, not by those whose kind was said: a task of two
+    # hundred states, fourteen of them written since kinds were, was called
+    # one of leisure on eight against six. Leisure when most of the task is
+    # said to be; work likewise; neither while most of it said nothing.
+    total = len(task.members)
+    enjoyed = sum(1 for one in task.members if leisure_of.get(one) is True)
+    worked = sum(1 for one in task.members if leisure_of.get(one) is False)
+    if enjoyed * 2 > total:
+        return True
+    if worked * 2 > total:
+        return False
+    return None
+
+
 def place(tasks: Sequence[Task], arrivals: Sequence[str],
           vectors: Dict[str, Sequence[float]],
           places_of: Dict[str, Sequence[str]],
@@ -896,7 +919,9 @@ def place(tasks: Sequence[Task], arrivals: Sequence[str],
           accept_at: float = ACCEPT_AT, counts: float = PLACE_COUNTS,
           far: float = FAR, tie_within: float = TIE_WITHIN,
           dormant: Sequence[Task] = (),
-          revive_at: float = REVIVE_AT) -> Dict[str, Any]:
+          revive_at: float = REVIVE_AT,
+          leisure_of: Optional[Dict[str, Optional[bool]]] = None,
+          barred: Optional[Dict[str, Iterable[str]]] = None) -> Dict[str, Any]:
     """Put each new state in the task it belongs to, or leave it loose.
 
     A DORMANT task competes too, when the state shares its places strongly:
@@ -923,14 +948,25 @@ def place(tasks: Sequence[Task], arrivals: Sequence[str],
             loose.append(state)
             continue
         scored = []
+        # ITS OWN KIND ONLY: leisure with leisure, work with work.
+        mine = (leisure_of or {}).get(state)
+
+        def other_kind(task: Task) -> bool:
+            if mine is None:
+                return False
+            theirs = leaning(task, leisure_of)
+            return theirs is not None and theirs != mine
+        # And not a task the model took this state out of, this round
+        # (`barred`, state -> task ids).
+        not_in = set((barred or {}).get(state) or ())
         for task in tasks:
-            if task.retired_at or task.archived_at:
+            if task.retired_at or task.archived_at or other_kind(task) or task.id in not_in:
                 continue
             said = fits(task, vector, places_of.get(state, ()), specific,
                         accept_at, counts, far)
             scored.append((said["score"], task, said))
         for task in dormant:
-            if task.retired_at:
+            if task.retired_at or other_kind(task) or task.id in not_in:
                 continue
             said = fits(task, vector, places_of.get(state, ()), specific,
                         accept_at, counts, far)

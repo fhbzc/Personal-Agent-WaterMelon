@@ -552,7 +552,7 @@ class SettingsViewsTests(unittest.TestCase):
         # The user's or the agent's words are not the application's.
         self.assertEqual(out["message"], "Settings")
         self.assertEqual(out["placeholder"], "搜索姓名、机构、标签…")
-        self.assertEqual(out["views"], ["通用", "显示", "头像", "功能", "隐私", "其他"])
+        self.assertEqual(out["views"], ["通用", "显示", "头像", "功能", "隐私", "快捷键", "其他"])
         self.assertIn("显示语言", out["labels"])
         self.assertEqual(out["lang"], "zh-CN")
 

@@ -1,5 +1,5 @@
 """WHAT THE USER READ - kept as a log of pieces, in English, for what to
-recommend to them next (Customized Recommendation).
+recommend to them next (Newspaper).
 
 After each agent heartbeat, what was read since the last time - the pages
 the browser opened (its history), how long each window was in front, and
@@ -130,10 +130,13 @@ For each, whatever language it is in, write down what it was:
   - points: the one to three things it said that someone who read it would
     now know - facts, findings, claims, news; not "it discusses X"
   - summary: one sentence
+  - purpose: why they looked at it - "work" (their job, studies, research, a
+    task they are doing, however personal) or "leisure" (films, music,
+    shows, games, recaps, sport, browsing they simply enjoy)
 
 Return ONLY this JSON object:
 {{"pieces": [{{"id": "...", "kind": "...", "topics": ["..."], "entities": ["..."],
-              "points": ["..."], "summary": "..."}}]}}"""
+              "points": ["..."], "summary": "...", "purpose": "work or leisure"}}]}}"""
 
 
 def _now() -> datetime:
@@ -502,8 +505,9 @@ class ReadingLog:
                 self.db.execute(
                     "INSERT INTO reading_pieces (id, first_at, last_at, url, url_key, title, "
                     "title_key, app, kind, topics, entities, points, summary, seconds, visits, "
-                    "characters, fetched, engagement, topic_id, vector, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, ?, ?)",
+                    "characters, fetched, engagement, topic_id, vector, created_at, updated_at, "
+                    "purpose) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, ?, ?, ?)",
                     (new_id("read"), one["first"], one["last"], one["url"][:1000],
                      url_key(one["url"]) if one["url"] else "", one["title"][:300],
                      title_key(one["title"]), one["app"][:80],
@@ -513,7 +517,12 @@ class ReadingLog:
                      round(one["seconds"], 1), max(1, one["visits"]), characters,
                      int(bool(one.get("fetched"))),
                      engagement(one["seconds"], max(1, one["visits"]), characters),
-                     _iso(), _iso()))
+                     _iso(), _iso(),
+                     # Leisure or work: an interest is judged by a different
+                     # rule for each (connections/recommend.py).
+                     str(p.get("purpose") or "").strip().lower()
+                     if str(p.get("purpose") or "").strip().lower() in ("work", "leisure")
+                     else ""))
                 written += 1
             self.progress.update(done=min(len(kept), start + len(part)), total=len(kept))
         return written

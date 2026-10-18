@@ -262,6 +262,9 @@ class TwoRoundsOfTheSameFolderTests(unittest.TestCase):
             beat = app.state_heartbeat
             beat.models = _Models(delay)
             beat.room = _Room(allowed)
+            # The pool decides how many go at once (common/pool.py): with the
+            # real room it would be how busy this computer is, not the test.
+            beat.pool.room = beat.room
             anchor = utcnow().replace(hour=0, minute=0, second=0,
                                       microsecond=0)
             count = [0]

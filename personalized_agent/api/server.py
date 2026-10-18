@@ -22,6 +22,8 @@ import hashlib
 import json
 import logging
 import mimetypes
+import socket
+import sys
 import threading
 import urllib.parse
 from datetime import datetime, timezone
@@ -59,7 +61,7 @@ class ClientGone(Exception):
 #: The page shown when a sign-in link is not good: plain, because the user
 #: arrived at it from a click and needs to know what to click instead.
 SIGN_IN_REFUSED = """<!doctype html><html><head><meta charset="utf-8">
-<title>Personalized Agent - open it again</title></head>
+<title>Personal Agent WaterMelon - open it again</title></head>
 <body style="font-family:system-ui,sans-serif;max-width:34em;margin:4em auto;
 line-height:1.5;padding:0 16px">
 <h1 style="font-size:1.3em">This link has already been used, or has expired</h1>
@@ -136,7 +138,7 @@ class ApiServer:
 
         class RequestHandler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
-            server_version = f"PersonalizedAgent/{__version__}"
+            server_version = f"PersonalAgentWaterMelon/{__version__}"
 
             def log_message(self, fmt: str, *args: Any) -> None:  # quieter logs
                 # The request line of a sign-in carries its ticket.
@@ -362,6 +364,20 @@ class ApiServer:
 
         class Server(ThreadingHTTPServer):
             daemon_threads = True
+            # ONE PROGRAM ON THE PORT. On Windows the SO_REUSEADDR that
+            # HTTPServer sets lets a second program bind a port already being
+            # listened on, without an error, and the system then hands each
+            # connection to either of them: an agent's sign-in link was
+            # answered by another agent that had never issued it ("This link
+            # has already been used, or has expired"). Bound exclusively
+            # there; on macOS and Linux a listening port is never shared.
+            allow_reuse_address = not sys.platform.startswith("win")
+
+            def server_bind(self) -> None:
+                exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+                if exclusive is not None:
+                    self.socket.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+                super().server_bind()
             # AND NOT WAITED FOR ON THE WAY OUT. `block_on_close` defaults
             # to True, so `server_close` joins every handler thread - and
             # with HTTP/1.1 keep-alive a handler sits in `handle_one_request`
@@ -388,7 +404,13 @@ class ApiServer:
                     return
                 super().handle_error(request, client_address)
 
-        self._httpd = Server((host, port), RequestHandler)
+        try:
+            self._httpd = Server((host, port), RequestHandler)
+        except OSError as exc:
+            log.error("port %s on %s is in use by another program: the agent's "
+                      "page cannot be served there (Settings > System > API port)",
+                      port, host)
+            raise OSError(f"port {port} is in use by another program") from exc
         # A tenth of a second rather than the default half: this is how
         # long `shutdown` waits for the accept loop to notice, and it is
         # paid on every quit.

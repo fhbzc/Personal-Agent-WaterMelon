@@ -220,6 +220,10 @@ class Drafts:
             context = self.collect(draft)
             self._set(draft_id, status=DRAFTING, context=context)
             plan = self.plan(draft, context)
+            # The user's own title, where they gave one.
+            given = str((draft.get("options") or {}).get("title") or "").strip()
+            if given:
+                plan["title"] = given
             self._set(draft_id, status=READY, plan=plan, plan_by="agent", error="")
         except Exception as exc:
             log.exception("could not draft the plan of %s", draft_id)
@@ -398,19 +402,27 @@ class Drafts:
                   unit_id=unit["id"])
         return dict(said, unit=unit["id"], draft=draft_id)
 
-    def compose(self, draft_id: str, instruction: str = "") -> Dict[str, Any]:
+    def compose(self, draft_id: str, instruction: str = "", title: str = "") -> Dict[str, Any]:
         """The user's instruction, as they wrote it in the box - then the
-        context collected and the plan drafted, for them to approve."""
+        context collected and the plan drafted, for them to approve. A
+        `title` the user gave (the shortcut's box) is the work's title: said
+        to the planner with the instruction, and the plan's own in place of
+        the one the planner would have named it."""
         draft = self.get(draft_id)
         if draft is None:
             return {"error": "no such piece of work"}
         if draft["status"] != WRITING:
             return {"error": "its plan is already being drafted", "draft": draft}
         instruction = str(instruction or "").strip()[:20000]
+        title = " ".join(str(title or "").split())[:120]
+        if title:
+            instruction = f"{title}\n\n{instruction}" if instruction else title
         if not (instruction or str(draft.get("text") or "").strip() or draft.get("folders")
                 or draft.get("files") or draft.get("unit_id")):
             return {"error": "say what you want done"}
         options = dict(draft.get("options") or {}, instruction=instruction)
+        if title:
+            options["title"] = title
         self._set(draft_id, options=options, status=COLLECTING)
         self._collect_apart(draft_id)
         return {"draft": self.get(draft_id)}

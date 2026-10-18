@@ -17,6 +17,7 @@ One set of rules, read from the same settings, applied by one function.
 from __future__ import annotations
 
 import os
+import sys
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Sequence
@@ -79,15 +80,34 @@ def rules_from(config) -> dict:
     }
 
 
+def program_folder() -> str:
+    """Where the installed program is - "" when it is run from the source,
+    whose folder is the code someone is working on, which is their work.
+    On macOS the whole application bundle."""
+    if not getattr(sys, "frozen", False):
+        return ""
+    here = Path(sys.executable).resolve().parent
+    for one in [here, *here.parents]:
+        if one.suffix.lower() == ".app":
+            return str(one)
+    return str(here)
+
+
 def excluded_folders(config: Any) -> List[str]:
     """The folders never listened to: THE AGENT'S DATA FOLDER, always - set
     when it was installed (or with --root), and not a line of the setting
     that could be taken out, or the agent would record its own writing as
-    the user's activity - and then the setting's own lines."""
+    the user's activity - and THE PROGRAM'S OWN FOLDER, where it is installed:
+    the default exclusions cover it only where it is put by default (Program
+    Files, AppData), and one installed anywhere else was being watched. Then
+    the setting's own lines."""
     out: List[str] = []
     root = str(config.get("agent_root") or "").strip() if config is not None else ""
     if root:
         out.append(root)
+    program = program_folder()
+    if program and program not in out:
+        out.append(program)
     for line in config.lines("listener_directory_exclusions") if config is not None else ():
         if line not in out:
             out.append(line)

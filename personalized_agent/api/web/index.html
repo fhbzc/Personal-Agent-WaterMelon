@@ -3,25 +3,34 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Personalized Agent</title>
+<title>Personal Agent WaterMelon</title>
+<!-- THE DELEGATE WORK BOX ALONE, from its first frame: marked before the
+     page is drawn, so the rest of it never shows while app.js loads -
+     opened from the shortcut, it looked like the home page first. -->
+<script>if (/[?&]solo=delegate(&|$)/.test(location.search)) document.documentElement.classList.add("delegate-solo");</script>
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <header>
-  <h1>Personalized&nbsp;Agent</h1>
+  <h1>Personal Agent&nbsp;WaterMelon</h1>
   <nav id="tabs">
     <button data-tab="overview" class="active">Overview</button>
-    <button data-tab="recommend">Customized Recommendation</button>
+    <button data-tab="recommend">Newspaper</button>
     <button data-tab="calendar">Calendar</button>
     <button data-tab="connections">Connections</button>
-    <button data-tab="experience">Experience</button>
-    <button data-tab="lessons">Lessons</button>
+    <button data-tab="experience">Work</button>
     <button data-tab="chat">Chat</button>
     <button data-tab="settings">Settings</button>
+    <!-- What was recorded, by which Privacy switch: the user's, in every build. -->
+    <button data-tab="recordlog">Record log</button>
     <!-- FOR WHOEVER DEVELOPS THE AGENT: the Debugger, then every debugger.
          An installed build has none of them (applyDebuggerAvailability). -->
     <button data-tab="debugger">Debugger</button>
-    <button data-tab="xdebug">Experience debugger</button>
+    <button data-tab="xdebug">Work debugger</button>
+    <button data-tab="resourcedebug">Resource debugger</button>
+    <!-- The lessons: how the agent reads what the user did - for whoever
+         develops it, not shown in an installed build. -->
+    <button data-tab="lessons">Lessons debugger</button>
     <button data-tab="naturedebug">Nature debugger</button>
     <button data-tab="readingdebug">Reading debugger</button>
     <button data-tab="languagedebug">Language debugger</button>
@@ -47,6 +56,14 @@
       <div class="ov-tasks-top">
         <div class="ov-tasks-intro">
           <h3 class="ov-head">Summary task</h3>
+          <!-- RUN NOW: a round at once; the next regular one is counted
+               from when this one finishes (app.js, refreshOvRound). A
+               button of the card's own, as "Make an issue now" is - not a
+               small grey one beside the text. -->
+          <div class="ov-lp-buttons ov-round-now">
+            <button type="button" id="ov-round-run">Update tasks now</button>
+            <span id="ov-round-next" class="muted"></span>
+          </div>
           <div class="muted">The tasks the agent has grouped out of what it
             has seen, most urgent first. Click one to open it.</div>
           <div class="ov-strip-slot"></div>
@@ -139,7 +156,7 @@
     </div>
   </section>
 
-  <!-- ------------------------------------------ Customized Recommendation -->
+  <!-- ------------------------------------------ Newspaper -->
   <!-- WHAT YOU WOULD LEARN THE MOST FROM: an issue a day (or at the times you
        chose), a page per topic - the pages and the issues down the left, the
        page chosen on the right, as the Experience tab. -->
@@ -156,6 +173,43 @@
     <div class="rec-grid">
       <nav class="card rec-side" id="rec-pages" aria-label="Pages"></nav>
       <div class="card rec-main" id="ov-know"><p class="muted">Reading&hellip;</p></div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------- Resource debugger -->
+  <!-- WHAT THE APPLICATION COSTS THE COMPUTER: its processes' processors,
+       memory and graphics by what each is for, and its folders on disk -
+       asked every two seconds while the tab is open (app.js, "resource
+       debugger"; debugger/resources.py). -->
+  <section id="resourcedebug" class="tab">
+    <div class="rd-shell">
+      <div class="rd-head">
+        <h2>Resource debugger</h2>
+        <p class="muted">What this application, and every process it started, costs the
+          computer - looked at every two seconds while this tab is open.</p>
+      </div>
+      <div id="rd-now" class="rd-now"><p class="muted">Taking the first look…</p></div>
+      <div id="rd-legend" class="rd-legend"></div>
+      <div class="rd-charts">
+        <section class="card"><h3>Processors</h3>
+          <p class="muted">A share of the whole computer, all its cores.</p>
+          <div id="rd-cpu-chart" class="rd-chart"></div></section>
+        <section class="card"><h3>Memory</h3>
+          <p class="muted">What each process holds in memory.</p>
+          <div id="rd-memory-chart" class="rd-chart"></div></section>
+        <section class="card" id="rd-gpu-card"><h3>Graphics</h3>
+          <p class="muted">A share of the graphics processor's busiest engine.</p>
+          <div id="rd-gpu-chart" class="rd-chart"></div></section>
+      </div>
+      <section class="card"><h3>Processes</h3>
+        <div id="rd-processes" class="rd-scroll"></div></section>
+      <section class="card">
+        <div class="rd-section-head"><h3>On disk</h3>
+          <span id="rd-disk-when" class="muted"></span>
+          <button type="button" class="small secondary" id="rd-measure">Measure again</button></div>
+        <div id="rd-disk"></div></section>
+      <section class="card"><h3>Left from before</h3>
+        <div id="rd-leftovers"></div></section>
     </div>
   </section>
 
@@ -210,8 +264,8 @@
   <!-- ---------------------------------------------------- Connections -->
   <!-- THE PEOPLE AROUND YOU: added by the agent from what was on your
        screen, looked up on the public web, or added by you. Every change you
-       make here - with its reason, if you give one - is one of your
-       connection lessons, listed under "Your changes". -->
+       make here - with its reason, if you give one - is evidence the agent
+       learns from, listed under "Your changes". -->
   <section id="connections" class="tab">
     <!-- As the Experience tab: the people down the left, the one chosen -
          their profile and what they have been doing - on the right. -->
@@ -219,7 +273,7 @@
       <strong>Connections</strong>
       <span class="muted">the people around you. The agent adds them from what
         you had on screen and from public pages; what you set here is yours, and
-        each change you make is kept as one of your connection lessons.</span>
+        each change you make teaches the agent how you want them kept.</span>
     </div>
     <!-- What the boxes suggest as one types: the labels and organisations
          already in use, so one thing is written one way. -->
@@ -342,7 +396,7 @@
        of the agent it is for. Nothing here is grouped or retrieved. -->
   <section id="lessons" class="tab">
     <div class="card">
-      <h2>Lessons</h2>
+      <h2>Lessons debugger</h2>
       <p class="muted">What the agent has learned from what you did, kind by
         kind. Each lesson is a reading of one thing you did, with the complete
         record it was read from. Unlike your experience, lessons are never
@@ -427,11 +481,30 @@
          Experience. -->
     <div class="dbg-xd" id="dbg-xd">
       <div class="dbg-timeline-head">
-        <strong>Experience debugger</strong>
+        <strong>Work debugger</strong>
         <span class="muted">the same work three ways: one model alone, no context, full</span>
       </div>
       <div class="dbg-xd-body" id="dbg-xd-body">
         <p class="muted">Loading.</p>
+      </div>
+    </div>
+    <!-- TRY THE RETRIEVAL: what a run would be given of your experience for
+         a step - a tool for whoever develops the agent, here beside the
+         debugger rather than in Work. -->
+    <div class="xp-grid xp-search-grid">
+      <div class="card xp-search">
+        <h2>Try the retrieval</h2>
+        <form id="xp-search-form">
+          <input id="xp-search-q" placeholder="what the agent is about to do">
+          <select id="xp-search-kind">
+            <option value="">any step</option>
+            <option value="goal,plan">planning</option>
+            <option value="evaluation,adjustment">evaluating</option>
+            <option value="evaluation,delivery">final check</option>
+          </select>
+          <button type="submit" class="small">Search</button>
+        </form>
+        <div id="xp-search-out"></div>
       </div>
     </div>
   </section>
@@ -446,13 +519,14 @@
     </div>
     <div class="xp-grid">
       <div class="xp-units card">
-        <h2>Projects and tasks</h2>
+        <h2>Projects</h2>
         <div class="xp-order-row">
           <p class="muted xp-order-note">The most lately active first.</p>
           <button type="button" class="small xp-plus" id="xp-plus"
             title="A new project: its title, what it is for, and its folders"
             aria-label="New project">+</button>
         </div>
+        <div id="xp-auto" class="xp-auto"></div>
         <div id="xp-new" class="xp-new" hidden>
           <input id="xp-new-title" type="text" placeholder="Title">
           <textarea id="xp-new-description" rows="3"
@@ -480,25 +554,18 @@
         <div id="xp-work" class="xp-work"></div>
       </div>
     </div>
-    <div class="xp-grid">
-      <div class="card xp-search">
-        <h2>Try the retrieval</h2>
-        <form id="xp-search-form">
-          <input id="xp-search-q" placeholder="what the agent is about to do">
-          <select id="xp-search-kind">
-            <option value="">any step</option>
-            <option value="goal,plan">planning</option>
-            <option value="evaluation,adjustment">evaluating</option>
-            <option value="evaluation,delivery">final check</option>
-          </select>
-          <button type="submit" class="small">Search</button>
-        </form>
-        <div id="xp-search-out"></div>
-      </div>
-    </div>
   </section>
 
   <section id="statebeat" class="tab">
+    <!-- NOT THIS WORK: what the summary and status calls said is about
+         something else - taken out to the pile once switched on; until
+         then only shown here (app.js, loadNotThisWork). -->
+    <details class="card" id="ntw-card">
+      <summary><strong>Not this work</strong>
+        <span class="muted" id="ntw-count"></span></summary>
+      <p class="panel-note" id="ntw-note"></p>
+      <div id="ntw-list"></div>
+    </details>
     <div class="dbg-beat" id="dbg-statebeat">
       <div class="dbg-timeline-head">
         <strong>State heartbeat</strong>
@@ -643,6 +710,8 @@
       <button type="button" class="settings-view-tab" role="tab"
         data-settings-view="privacy">Privacy</button>
       <button type="button" class="settings-view-tab" role="tab"
+        data-settings-view="shortcuts">Shortcuts</button>
+      <button type="button" class="settings-view-tab" role="tab"
         data-settings-view="others">Others</button>
     </div>
     <div class="settings-pane" data-settings-pane="general">
@@ -708,6 +777,17 @@
       <h3>Startup</h3>
       <p class="panel-note">Whether the agent starts when you sign in to this computer.</p>
       <div id="settings-form-startup"></div>
+    </div>
+    <!-- UPDATES: from the published releases only (platform_layer/updater.py). -->
+    <div class="card" id="updates-card">
+      <h3>Updates</h3>
+      <p class="panel-note">New versions come from this project's releases on GitHub.</p>
+      <div id="settings-form-updates"></div>
+      <p id="updates-status" class="muted"></p>
+      <div id="updates-versions"></div>
+      <div class="ov-lp-buttons">
+        <button type="button" id="updates-check" class="secondary">Check now</button>
+      </div>
     </div>
     <div class="card" id="heartbeat-settings-card">
       <h3>Heartbeats</h3>
@@ -810,6 +890,20 @@
     <!-- PRIVACY: what is listened to, each its own switch - what it records,
          what is left without it, and what it costs the computer. -->
     <div class="settings-pane" data-settings-pane="privacy" hidden>
+    <!-- MACOS PERMISSIONS: macOS asks for each on its own; listed here so
+         they are given in one sitting, Full Disk Access first (app.js,
+         renderMacPermissions). Shown only on a Mac. -->
+    <div class="card" id="mac-permissions-card" hidden>
+      <h3>macOS permissions</h3>
+      <p class="panel-note">macOS asks for each of these on its own, and only you can
+        switch them on, in System Settings. Start with Full Disk Access: it also covers
+        your Desktop, Documents and Downloads folders, so macOS will not ask about each
+        of them. After an update, macOS may ask for them again.</p>
+      <div id="mac-permissions-list"></div>
+      <div class="ov-lp-buttons">
+        <button type="button" id="mac-permissions-check" class="secondary">Check again</button>
+      </div>
+    </div>
     <div class="card" id="privacy-card">
       <h3>Privacy</h3>
       <p class="panel-note">What the agent listens to, each its own switch - all on
@@ -817,6 +911,16 @@
         the computer does more work. <strong>Changing these changes performance:</strong>
         reading the text on screen and taking pictures of windows cost the most.</p>
       <div id="settings-form-privacy"></div>
+    </div>
+    </div>
+    <!-- SHORTCUTS: keys that work in every program, each the user's to set
+         (app.js, renderShortcuts; platform_layer/hotkeys.py). -->
+    <div class="settings-pane" data-settings-pane="shortcuts" hidden>
+    <div class="card" id="shortcuts-card">
+      <h3>Shortcuts</h3>
+      <p class="panel-note">Keys that work in every program while the agent runs. To
+        change one, click Change and press the keys you want.</p>
+      <div id="shortcuts-list"><p class="muted">Reading&hellip;</p></div>
     </div>
     </div>
     <div class="settings-pane" data-settings-pane="others" hidden>
@@ -874,6 +978,33 @@
         </div>
       </div>
     </div>
+    </div>
+  </section>
+
+  <!-- RECORD LOG: what was recorded lately, from every source, each with
+       the Privacy switch that recorded it - the evidence for choosing which
+       to turn off - and what the filters kept out (app.js, loadRecordLog).
+       In every build: it is the user's, not the developer's. -->
+  <section id="recordlog" class="tab">
+    <div class="card">
+      <h3>Record log</h3>
+      <p class="panel-note">The latest 100 things the agent recorded, from every
+        source. Each says which switch in Settings › Privacy recorded it: turn that
+        switch off and nothing like it is recorded again. Open one to see all of it.</p>
+      <div id="recordlog-list"><p class="muted">Reading&hellip;</p></div>
+    </div>
+    <div class="card">
+      <h3>Hidden in what was kept</h3>
+      <p class="panel-note">The latest records a password or a code was cut out of
+        before they were kept, as they were kept: each field it was in, with the place
+        marked. What was there before is never stored, so it cannot be shown.</p>
+      <div id="recordlog-hidden"></div>
+    </div>
+    <div class="card">
+      <h3>Kept out</h3>
+      <p class="panel-note">What the Privacy rules kept out since the agent last
+        started: from which source and by which rule. What was in it is never kept.</p>
+      <div id="recordlog-dropped"></div>
     </div>
   </section>
 
@@ -1135,6 +1266,24 @@
   <button type="button" id="reauth-go" class="small">Sign in again</button>
   <button type="button" id="reauth-dismiss" class="small secondary"
           title="Dismiss. The model stays unusable; its state is still shown in Settings.">Dismiss</button>
+</div>
+<!-- WHAT IS NEW, after an update: the release's own description, shown the
+     first time the page is opened on the new version (app.js, renderUpdates). -->
+<dialog id="update-notes" class="update-notes" aria-labelledby="update-notes-title">
+  <h3 id="update-notes-title"></h3>
+  <p id="update-notes-from" class="muted"></p>
+  <div id="update-notes-text" class="update-notes-text"></div>
+  <div class="ov-lp-buttons">
+    <a id="update-notes-page" target="_blank" rel="noopener">The release on GitHub</a>
+    <button type="button" id="update-notes-close">OK</button>
+  </div>
+</dialog>
+<!-- macOS has not allowed something a switch that is on needs: said once,
+     with the way to the page where they are all given. -->
+<div id="macperm-banner" class="reauth" hidden>
+  <span id="macperm-text"></span>
+  <button type="button" id="macperm-go" class="small">Allow them</button>
+  <button type="button" id="macperm-dismiss" class="small secondary">Not now</button>
 </div>
 <!-- DELEGATE WORK - and every start of work: what was handed over, the
      context the agent collected, and its high-level plan for the user to

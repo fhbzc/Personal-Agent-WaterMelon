@@ -1,8 +1,8 @@
 """Linux release build (sections 99, 103).
 
 Produces ``dist/linux/PersonalizedAgent/`` with a launchable binary and, when
-the tooling is present, ``PersonalizedAgent.AppImage`` and/or
-``personalized-agent_<version>_amd64.deb``.  A tar.gz is always produced so a
+the tooling is present, ``PersonalAgentWaterMelon.AppImage`` and/or
+``personal-agent-watermelon_<version>_amd64.deb``.  A tar.gz is always produced so a
 build is never left without a distributable artifact.
 """
 
@@ -18,8 +18,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from build.common import (  # noqa: E402
+    FILE_NAME,
+    FORMER_PACKAGE_NAMES,
     APP_NAME,
-    APP_SLUG,
+    PACKAGE_NAME,
     PUBLISHER,
     BuildError,
     __version__,
@@ -39,7 +41,7 @@ from build.common import (  # noqa: E402
 )
 
 TARGET = "linux"
-BINARY_NAME = "PersonalizedAgent"
+BINARY_NAME = FILE_NAME
 HERE = Path(__file__).resolve().parent
 
 DESKTOP_ENTRY = """[Desktop Entry]
@@ -71,7 +73,7 @@ def build_binary() -> Path:
 def write_desktop_entry(path: Path, exec_name: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        DESKTOP_ENTRY.format(app_name=APP_NAME, exec_name=exec_name, slug=APP_SLUG,
+        DESKTOP_ENTRY.format(app_name=APP_NAME, exec_name=exec_name, slug=PACKAGE_NAME,
                              version=__version__),
         encoding="utf-8",
     )
@@ -81,11 +83,11 @@ def write_desktop_entry(path: Path, exec_name: str) -> Path:
 def build_tarball() -> Path:
     staging = staging_dir(TARGET)
     archive = shutil.make_archive(
-        str(staging / f"{APP_SLUG}-{__version__}-linux-x86_64"),
+        str(staging / f"{PACKAGE_NAME}-{__version__}-linux-x86_64"),
         "gztar", root_dir=str(dist_dir(TARGET)), base_dir=BINARY_NAME,
     )
     published = publish_file(
-        Path(archive), dist_dir(TARGET) / f"{APP_SLUG}-{__version__}-linux-x86_64.tar.gz"
+        Path(archive), dist_dir(TARGET) / f"{PACKAGE_NAME}-{__version__}-linux-x86_64.tar.gz"
     )
     remove_tree(staging, description="staging directory")
     return published
@@ -101,12 +103,12 @@ def build_appimage() -> Path | None:
         shutil.rmtree(appdir)
     (appdir / "usr" / "bin").mkdir(parents=True)
     shutil.copytree(dist_dir(TARGET) / BINARY_NAME, appdir / "usr" / "bin" / BINARY_NAME)
-    write_desktop_entry(appdir / f"{APP_SLUG}.desktop", "AppRun")
+    write_desktop_entry(appdir / f"{PACKAGE_NAME}.desktop", "AppRun")
     icon_source = HERE / "app.png"
     if icon_source.exists():
-        shutil.copy2(icon_source, appdir / f"{APP_SLUG}.png")
+        shutil.copy2(icon_source, appdir / f"{PACKAGE_NAME}.png")
     else:  # AppImage requires an icon file to exist
-        (appdir / f"{APP_SLUG}.png").write_bytes(_placeholder_png())
+        (appdir / f"{PACKAGE_NAME}.png").write_bytes(_placeholder_png())
     apprun = appdir / "AppRun"
     apprun.write_text(
         "#!/bin/sh\n"
@@ -128,22 +130,26 @@ def build_deb() -> Path | None:
     root = work_dir(TARGET) / "deb"
     if root.exists():
         shutil.rmtree(root)
-    install_dir = root / "opt" / APP_SLUG
+    install_dir = root / "opt" / PACKAGE_NAME
     install_dir.mkdir(parents=True)
     shutil.copytree(dist_dir(TARGET) / BINARY_NAME, install_dir, dirs_exist_ok=True)
 
     bin_dir = root / "usr" / "bin"
     bin_dir.mkdir(parents=True)
-    launcher = bin_dir / APP_SLUG
-    launcher.write_text(f'#!/bin/sh\nexec /opt/{APP_SLUG}/{BINARY_NAME} "$@"\n', encoding="utf-8")
+    launcher = bin_dir / PACKAGE_NAME
+    launcher.write_text(f'#!/bin/sh\nexec /opt/{PACKAGE_NAME}/{BINARY_NAME} "$@"\n', encoding="utf-8")
     launcher.chmod(0o755)
 
-    write_desktop_entry(root / "usr" / "share" / "applications" / f"{APP_SLUG}.desktop", APP_SLUG)
+    write_desktop_entry(root / "usr" / "share" / "applications" / f"{PACKAGE_NAME}.desktop", PACKAGE_NAME)
 
     control_dir = root / "DEBIAN"
     control_dir.mkdir(parents=True)
     (control_dir / "control").write_text(
-        f"Package: {APP_SLUG}\n"
+        f"Package: {PACKAGE_NAME}\n"
+        # The package of the name before (to 1.0.0): this one replaces it.
+        f"Replaces: {', '.join(FORMER_PACKAGE_NAMES)}\n"
+        f"Conflicts: {', '.join(FORMER_PACKAGE_NAMES)}\n"
+        f"Provides: {', '.join(FORMER_PACKAGE_NAMES)}\n"
         f"Version: {__version__}\n"
         f"Section: utils\n"
         f"Priority: optional\n"
@@ -154,7 +160,7 @@ def build_deb() -> Path | None:
         f" and a scheduler. Bundles its own runtime.\n",
         encoding="utf-8",
     )
-    output = dist_dir(TARGET) / f"{APP_SLUG}_{__version__}_{arch}.deb"
+    output = dist_dir(TARGET) / f"{PACKAGE_NAME}_{__version__}_{arch}.deb"
     run(["dpkg-deb", "--build", "--root-owner-group", str(root), str(output)], check=False)
     return output if output.exists() else None
 
@@ -173,7 +179,7 @@ def build() -> int:
     ensure_pyinstaller()
     prepare_assets()
     binary = build_binary()
-    write_desktop_entry(dist_dir(TARGET) / f"{APP_SLUG}.desktop", APP_SLUG)
+    write_desktop_entry(dist_dir(TARGET) / f"{PACKAGE_NAME}.desktop", PACKAGE_NAME)
     artifacts = [binary, build_tarball()]
     for optional in (build_appimage(), build_deb()):
         if optional:

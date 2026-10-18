@@ -518,8 +518,8 @@ class TheFirstGroupingWaitsForEnoughStatesTests(unittest.TestCase):
     def test_it_says_what_it_is_waiting_for_and_how_far_along(self) -> None:
         verdict = self.beat.due_now()
         self.assertFalse(verdict["run"], verdict["why"])
-        self.assertEqual(verdict["waiting_for"], 100)
-        self.assertIn("Waiting for the first 100 states", verdict["why"])
+        self.assertEqual(verdict["waiting_for"], 20)
+        self.assertIn("Waiting for the first 20 states", verdict["why"])
         self.assertIn("so far", verdict["why"])
 
     def test_and_the_hours_do_not_override_it(self) -> None:
@@ -1406,6 +1406,14 @@ class NothingExpensiveOnTheWayInOrOutTests(unittest.TestCase):
         import time
 
         self._write(60)
+        # A port of its own: the default is the user's running agent's, and
+        # on Windows it was shared with it, unseen, until the port was held
+        # exclusively (api/server.py).
+        import socket
+        probe = socket.socket()
+        probe.bind(("127.0.0.1", 0))
+        self.app.config.set("api_port", probe.getsockname()[1])
+        probe.close()
         self.app.start()
         began = time.perf_counter()
         self.app.stop()

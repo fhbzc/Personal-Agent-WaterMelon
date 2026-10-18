@@ -144,6 +144,9 @@ class ThroughTheAgentTests(unittest.TestCase):
         prompts = []
 
         def answer(command, **kwargs):
+            if list(command[1:]) == ["exec", "--help"]:
+                # What the installed Codex knows (codex_provider._takes).
+                return subprocess.CompletedProcess(command, 0, "--ignore-user-config\n", "")
             prompts.append(kwargs["input"])
             text = next(replies)
             if provider_id == "codex":

@@ -224,6 +224,11 @@ class ModelRequest:
     #: too - Glob and Grep), denied every place listed: all the agents may
     #: not read (`filesystem.unreadable_for`). None: not offered at all.
     native_read: Optional[List[str]] = field(default=None, repr=False, compare=False)
+    #: WHAT THIS CALL READS MUST STAY SEALED: a run whose folders are kept
+    #: from one another (each way and each try of the Work debugger). A
+    #: client that reads by itself where nothing confines it is passed over
+    #: (`ModelManager.invoke`, `READS_UNCONFINED`).
+    sealed_reading: bool = field(default=False, repr=False, compare=False)
     #: Runs a tool the model calls natively - for a client that offers the
     #: tools that way (Claude Code, over MCP): (name, arguments) -> what it
     #: returned. With it, such a client runs the tools during the call and

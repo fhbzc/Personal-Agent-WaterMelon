@@ -58,7 +58,7 @@ class WhichModuleTests(unittest.TestCase):
         self.assertEqual(modules.module_of("connections", by_user=True), "recommend:by_you")
         self.assertTrue(modules.is_manual("recommend:by_you"))
         self.assertEqual(modules.module_name("recommend:by_you"),
-                         "Customized Recommendation (started by you)")
+                         "Newspaper (started by you)")
         # What the user starts anyway is not "by you" twice.
         self.assertEqual(modules.module_of("work_run", by_user=True), "manual_work")
 
@@ -222,7 +222,7 @@ class ByTheUserTests(unittest.TestCase):
         self.assertIn("recommend:by_you", spent)
         self.assertEqual(spent["recommend:by_you"]["of_automatic"], 0.0)
         said = modules.described(self.app.config, spent)
-        self.assertIn("Customized Recommendation (started by you)",
+        self.assertIn("Newspaper (started by you)",
                       [one["name"] for one in said["manual_parts"]])
 
 
@@ -259,7 +259,7 @@ class TheChartByModuleTests(unittest.TestCase):
         result = _render(self.engine, stub, steps)
         self.assertEqual(result["err"], "")
         legend = result["out"]["legend"]
-        for name in ("Started by you", "Task organisation", "Customized Recommendation",
+        for name in ("Started by you", "Task organisation", "Newspaper",
                      "Calendar management"):
             self.assertIn(name, legend)
         self.assertNotIn("Other", legend)

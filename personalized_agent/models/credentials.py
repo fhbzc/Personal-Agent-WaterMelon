@@ -18,6 +18,7 @@ import logging
 import os
 import stat
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -47,6 +48,40 @@ except Exception:  # pragma: no cover - optional dependency
 
 SERVICE_NAME = "personalized-agent"
 DISABLE_KEYRING_ENV = "PERSONALIZED_AGENT_NO_KEYRING"
+#: Left in the credentials folder when the system keychain refused to keep a
+#: secret: from then on this installation keeps its secrets in the encrypted
+#: file instead, without asking the keychain again.
+KEYCHAIN_REFUSED = "keychain-refused"
+
+
+def keychain_unreliable() -> str:
+    """Why this copy of the program should not keep secrets in the system
+    keychain, or "" when it may.
+
+    A macOS application signed by nobody - ad hoc, which is all a build
+    without a developer's certificate can be - is known to the keychain by
+    the exact bytes of this version. The next version is another program
+    to it: it asks the user again before handing over what this one kept,
+    and a "Deny" leaves the agent without its keys, its identity made
+    afresh. So such a build keeps them in its encrypted file instead.
+    """
+    if sys.platform != "darwin" or not getattr(sys, "frozen", False):
+        return ""
+    bundle = next((one for one in Path(sys.executable).resolve().parents
+                   if one.suffix == ".app"), None)
+    if bundle is None:
+        return ""
+    try:
+        done = children.run_short(["codesign", "-dv", str(bundle)],
+                                  capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=15)
+    except Exception:  # pragma: no cover - codesign is part of macOS
+        return ""
+    said = f"{done.stderr or ''}{done.stdout or ''}"
+    if "Signature=adhoc" in said or "not signed" in said:
+        return ("this build is not signed by a developer, so macOS would ask "
+                "again for the keychain after every update")
+    return ""
 
 
 def service_name_for(data_dir: Path) -> str:
@@ -89,10 +124,22 @@ class CredentialManager:
         )
         if use_keyring is None:
             use_keyring = True
-        keyring_usable = _KEYRING_AVAILABLE and use_keyring and not env_disabled
-        self._backend = "keyring" if keyring_usable else (
-            "encrypted-file" if _CRYPTO_AVAILABLE else "plaintext-file"
-        )
+        self._refused_path = self.data_dir / KEYCHAIN_REFUSED
+        #: Whether the keychain may be touched at all by this manager.
+        self._keychain_allowed = _KEYRING_AVAILABLE and use_keyring and not env_disabled
+        #: The keychain refused a secret once, or is not to be relied on:
+        #: what it held before is read from it once and moved into the
+        #: file, and nothing more is written there.
+        self._keychain_refused = self._refused_path.exists()
+        if self._keychain_allowed and not self._keychain_refused:
+            why = keychain_unreliable()
+            if why:
+                log.info("secrets are kept in an encrypted file in %s: %s",
+                         self.data_dir, why)
+                self._keychain_refused = True
+                self._remember_refusal(why)
+        keyring_usable = self._keychain_allowed and not self._keychain_refused
+        self._backend = "keyring" if keyring_usable else self._file_backend()
         self._fernet = self._load_fernet() if self._backend == "encrypted-file" else None
         self._cache: Dict[str, str] = {}
         self._load_all()
@@ -101,6 +148,36 @@ class CredentialManager:
     @property
     def backend(self) -> str:
         return self._backend
+
+    @staticmethod
+    def _file_backend() -> str:
+        return "encrypted-file" if _CRYPTO_AVAILABLE else "plaintext-file"
+
+    def _keychain_said_no(self, error: Exception) -> None:
+        """THE KEYCHAIN REFUSED A SECRET, so the encrypted file keeps them.
+
+        macOS refuses an application whose signature does not match it
+        (error -67030), and a Linux desktop may have no keyring service
+        running. Either way the agent cannot go without its keys - it died
+        on start when its identity key could not be stored - so they are
+        kept the way they are kept where there is no keychain at all, and
+        that is remembered."""
+        log.warning("the system keychain would not keep a secret (%s); this "
+                    "installation keeps its secrets in an encrypted file in %s "
+                    "from now on", error, self.data_dir)
+        with self._lock:
+            self._backend = self._file_backend()
+            self._keychain_refused = True
+            if self._backend == "encrypted-file" and self._fernet is None:
+                self._fernet = self._load_fernet()
+            self._load_all()
+        self._remember_refusal(f"{type(error).__name__}: {error}")
+
+    def _remember_refusal(self, why: str) -> None:
+        try:
+            self._refused_path.write_text(f"{why}\n", encoding="utf-8")
+        except OSError:  # pragma: no cover - the folder is the agent's own
+            log.debug("could not remember the keychain's refusal", exc_info=True)
 
     def _restrict(self, path: Path) -> None:
         try:
@@ -163,8 +240,11 @@ class CredentialManager:
     def set(self, key: str, value: str) -> None:
         SECRETS.register(value)
         if self._backend == "keyring":
-            keyring.set_password(self.service_name, key, value)
-            return
+            try:
+                keyring.set_password(self.service_name, key, value)
+                return
+            except Exception as exc:
+                self._keychain_said_no(exc)
         with self._lock:
             self._cache[key] = value
         self._flush()
@@ -178,7 +258,20 @@ class CredentialManager:
             SECRETS.register(value)
             return value
         with self._lock:
-            return self._cache.get(key)
+            value = self._cache.get(key)
+        if value is None and self._keychain_refused and self._keychain_allowed:
+            # Kept in the keychain before: read from there ONCE and moved
+            # into the file, so macOS asks about it at most once.
+            try:
+                value = keyring.get_password(self.service_name, key)
+            except Exception:
+                value = None
+            if value is not None:
+                SECRETS.register(value)
+                with self._lock:
+                    self._cache[key] = value
+                self._flush()
+        return value
 
     def delete(self, key: str) -> None:
         value = self.get(key)
@@ -192,6 +285,11 @@ class CredentialManager:
         with self._lock:
             self._cache.pop(key, None)
         self._flush()
+        if self._keychain_refused and self._keychain_allowed:
+            try:
+                keyring.delete_password(self.service_name, key)
+            except Exception:
+                pass
 
     def has(self, key: str) -> bool:
         return bool(self.get(key))

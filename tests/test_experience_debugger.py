@@ -153,8 +153,10 @@ class AProjectAndItsFoldersTests(_DebuggerBase):
     def test_three_subfolders_are_made_and_it_is_not_in_experience(self) -> None:
         project = self._project()
         self.assertTrue(project["id"].startswith("dbg_"))
+        # In the project's first try: tries sit side by side in its folder.
         for name in ("A", "B", "C"):
-            self.assertTrue((self.chosen / name).is_dir(), name)
+            self.assertTrue((self.chosen / "try_1" / name).is_dir(), name)
+        self.assertEqual(project["tries"], [1])
         self.assertEqual([one["variant"] for one in project["variants"]],
                          ["single", "noctx", "full"])
         listed = self._get("/api/debugger/experience/projects")["projects"]
@@ -167,10 +169,10 @@ class AProjectAndItsFoldersTests(_DebuggerBase):
             "action": "update", "id": project["id"], "instruction": "write it shorter"})
         self.assertEqual(changed["project"]["instruction"], "write it shorter")
         # Removed: its records, not its files.
-        (self.chosen / "C" / "kept.txt").write_text("mine")
+        (self.chosen / "try_1" / "C" / "kept.txt").write_text("mine")
         self._post("/api/debugger/experience/projects", {"action": "remove", "id": project["id"]})
         self.assertEqual(self._get("/api/debugger/experience/projects")["projects"], [])
-        self.assertTrue((self.chosen / "C" / "kept.txt").is_file())
+        self.assertTrue((self.chosen / "try_1" / "C" / "kept.txt").is_file())
 
     def test_some_folders_are_refused(self) -> None:
         from personalized_agent.api.errors import ApiError
@@ -181,7 +183,7 @@ class AProjectAndItsFoldersTests(_DebuggerBase):
                 self._project(folder=folder)
         self._project()
         with self.assertRaises(ApiError):         # another project's folder
-            self._project(folder=str(self.chosen / "A"))
+            self._project(folder=str(self.chosen / "try_1" / "A"))
 
 
 class TheInstructionIsGivenAtStartTests(_DebuggerBase):
@@ -216,8 +218,8 @@ class EachWayWritesAndReadsOnlyItsOwnTests(_DebuggerBase):
 
     def test_its_policy_and_its_tools(self) -> None:
         project = self._project()
-        folders = {"single": self.chosen / "A",
-                   "noctx": self.chosen / "B", "full": self.chosen / "C"}
+        folders = {"single": self.chosen / "try_1" / "A",
+                   "noctx": self.chosen / "try_1" / "B", "full": self.chosen / "try_1" / "C"}
         for name, folder in folders.items():
             (folder / "secret.txt").write_text(f"made by {name}")
         (self.chosen / "shared.txt").write_text("the user's")
@@ -228,8 +230,11 @@ class EachWayWritesAndReadsOnlyItsOwnTests(_DebuggerBase):
             # Writable: its own subfolder, and nothing else at all.
             self.assertEqual(Path(policy.write_root).resolve(), own.resolve())
             self.assertEqual(list(policy.extra_writable), [])
-            self.assertEqual(sorted(str(p) for p in policy.sealed_paths),
-                             sorted(str(p.resolve()) for p in others))
+            # The other two ways sealed - among what else a way may not read
+            # (test_debugger_reads) - and never its own.
+            sealed = {str(p) for p in policy.sealed_paths}
+            self.assertTrue({str(p.resolve()) for p in others} <= sealed, sealed)
+            self.assertNotIn(str(own.resolve()), sealed)
             said = tools.call("write_file", {"path": "mine.md", "content": "ok"})
             self.assertNotIn("error", said, said)
             self.assertTrue((own / "mine.md").is_file())
@@ -243,16 +248,17 @@ class EachWayWritesAndReadsOnlyItsOwnTests(_DebuggerBase):
             for other in others:
                 said = tools.call("read_file", {"path": str(other / "secret.txt")})
                 self.assertEqual(said.get("error"), "security_violation", said)
-                self.assertIn("another benchmark variant's folder", said["message"])
+                self.assertIn("closed to this work", said["message"])
                 said = tools.call("list_dir", {"path": str(other)})
                 self.assertEqual(said.get("error"), "security_violation", said)
                 said = tools.call("find_files", {"root": str(other), "pattern": "*"})
                 self.assertEqual(said.get("error"), "security_violation", said)
-            # The parent is listed - without the other ways in it.
-            listed = [one["name"] for one in tools.call("list_dir", {"path": str(self.chosen)})
+            # The try's folder is listed - without the other ways in it.
+            listed = [one["name"] for one in tools.call("list_dir", {"path": str(own.parent)})
                       ["entries"]]
             self.assertIn(own.name, listed)
-            self.assertIn("shared.txt", listed)
+            self.assertIn("shared.txt", [one["name"] for one in tools.call(
+                "list_dir", {"path": str(self.chosen)})["entries"]])
             for other in others:
                 self.assertNotIn(other.name, listed)
             found = tools.call("find_files", {"root": str(self.chosen), "pattern": "**/*.txt"})
@@ -279,13 +285,13 @@ class EachWayWritesAndReadsOnlyItsOwnTests(_DebuggerBase):
         if isolation_status().get("backend") != "appcontainer":
             self.skipTest("no AppContainer isolation here")
         project = self._project()
-        (self.chosen / "B" / "secret.txt").write_text("theirs")
+        (self.chosen / "try_1" / "B" / "secret.txt").write_text("theirs")
         (self.chosen / "shared.txt").write_text("the user's")
         _unit, _runtime, tools = self._tools(project, "single")
         said = tools.call("run_python", {"code": (
             "import _io\n"
             f"for path in [r'{self.chosen / 'shared.txt'}', "
-            f"r'{self.chosen / 'B' / 'secret.txt'}']:\n"
+            f"r'{self.chosen / 'try_1' / 'B' / 'secret.txt'}']:\n"
             "    try:\n"
             "        print('READ', _io.FileIO(path).read().decode())\n"
             "    except Exception as exc:\n"
@@ -311,7 +317,7 @@ class TheSingleModelTests(_DebuggerBase):
         # Its model calls, for the chart: every one the single model's.
         self.assertEqual({one["who"] for one in run["calls"]}, {"single"})
         self.assertEqual(len(run["calls"]), run["plan"]["total"]["calls"])
-        folder = self.chosen / "A"
+        folder = self.chosen / "try_1" / "A"
         self.assertEqual((folder / "alone.md").read_text(), "made alone")
         # No reviewer, no contract, no cards, no stages.
         self.assertEqual(models.reviewed_rounds, 0)
@@ -357,7 +363,7 @@ class BuilderAndReviewerTests(_DebuggerBase):
         from personalized_agent.heartbeat.experience.store import ExperienceStore
         self.past = ExperienceStore(self.app.db).add_stage({
             "task_id": "task-past", "kind": "plan",
-            "summary": "planned the notes ZEBRAQUOKKA style", "states": [],
+            "summary": "planned how to write the notes, ZEBRAQUOKKA style", "states": [],
             "began": "2026-01-01T00:00:00", "ended": "2026-01-01T00:00:00"})
         # The index of the user's stages is made once, by whoever searches
         # first: made now, so what follows is compared with it in place.
@@ -472,16 +478,16 @@ class TheLogFolderTests(_DebuggerBase):
         self.app.work.open_folder = opened.append
         project = self._project()
         unit_id = f"{project['id']}:full"
-        for run_id, folder, unit in (("run_dbg", self.chosen / "C", unit_id),
+        for run_id, folder, unit in (("run_dbg", self.chosen / "try_1" / "C", unit_id),
                                      ("run_out", self.chosen, unit_id),
-                                     ("run_odd", self.chosen / "B", "task-x")):
+                                     ("run_odd", self.chosen / "try_1" / "B", "task-x")):
             self.app.db.execute(
                 "INSERT INTO work_runs (id, unit_id, unit_name, folder, status, "
                 "started_at, updated_at) VALUES (?, ?, 'x', ?, 'done', '2026-10-01', "
                 "'2026-10-01')", (run_id, unit, str(folder)))
         said = self._post("/api/work/open_logs", {"run": "run_dbg"})
-        self.assertEqual(Path(said["opened"]), self.chosen / "C" / "run_logs")
-        self.assertEqual(opened, [self.chosen / "C" / "run_logs"])
+        self.assertEqual(Path(said["opened"]), self.chosen / "try_1" / "C" / "run_logs")
+        self.assertEqual(opened, [self.chosen / "try_1" / "C" / "run_logs"])
         for run_id in ("run_out", "run_odd"):
             with self.assertRaises(ApiError):
                 self._post("/api/work/open_logs", {"run": run_id})
@@ -523,9 +529,9 @@ class ClearingAWayTests(_DebuggerBase):
         for variant in ("single", "noctx"):
             self._start(project, variant)
             self.assertEqual(self._finished(project, variant)["status"], "done")
-        single = self.chosen / "A"
-        noctx = self.chosen / "B"
-        full = self.chosen / "C"
+        single = self.chosen / "try_1" / "A"
+        noctx = self.chosen / "try_1" / "B"
+        full = self.chosen / "try_1" / "C"
         self.assertTrue((single / "alone.md").is_file())
         self.assertTrue((noctx / "notes.md").is_file())
         (full / "c_made.txt").write_text("the full way's")
@@ -575,21 +581,21 @@ class ClearingAWayTests(_DebuggerBase):
         models = _Models(gate=True)
         self.app.work.models = models
         project = self._project()
-        (self.chosen / "B" / "b_kept.txt").write_text("still here")
-        (self.chosen / "A" / "a_made.txt").write_text("A's")
+        (self.chosen / "try_1" / "B" / "b_kept.txt").write_text("still here")
+        (self.chosen / "try_1" / "A" / "a_made.txt").write_text("A's")
         self._start(project, "noctx")
         self.assertTrue(_until(lambda: models.waiting >= 1, 30))
         # B goes, A is idle: B is refused...
         with self.assertRaises(ApiError) as caught:
             self._clear(project, "noctx")
         self.assertIn("going", str(caught.exception))
-        self.assertTrue((self.chosen / "B" / "b_kept.txt").is_file())
+        self.assertTrue((self.chosen / "try_1" / "B" / "b_kept.txt").is_file())
         self.assertIsNotNone(self._run_row(project, "noctx"))
         # ...and A, beside it, is cleared.
         said = self._clear(project, "single")
         self.assertEqual(said["files"], 1)
-        self.assertEqual(list((self.chosen / "A").iterdir()), [])
-        self.assertTrue((self.chosen / "B" / "b_kept.txt").is_file())
+        self.assertEqual(list((self.chosen / "try_1" / "A").iterdir()), [])
+        self.assertTrue((self.chosen / "try_1" / "B" / "b_kept.txt").is_file())
         self.assertTrue(self._run_row(project, "noctx")["alive"])
         models.gate.set()
         self._finished(project, "noctx")
@@ -604,9 +610,9 @@ class ClearingAWayTests(_DebuggerBase):
         project = self._project()
         self._start(project, "single")
         self.assertEqual(self._finished(project, "single")["status"], "done")
-        (self.chosen / "B" / "b_made.txt").write_text("B's")
-        (self.chosen / "C" / "deep").mkdir()
-        (self.chosen / "C" / "deep" / "c_made.txt").write_text("C's")
+        (self.chosen / "try_1" / "B" / "b_made.txt").write_text("B's")
+        (self.chosen / "try_1" / "C" / "deep").mkdir()
+        (self.chosen / "try_1" / "C" / "deep" / "c_made.txt").write_text("C's")
         (self.chosen / "input.csv").write_text("the user's own")
         said = self._post("/api/debugger/experience/projects",
                           {"action": "clear_all", "id": project["id"]})
@@ -615,8 +621,8 @@ class ClearingAWayTests(_DebuggerBase):
         self.assertGreaterEqual(said["files"], 3)
         self.assertEqual(set(said["ways"]), {"single", "noctx", "full"})
         for folder in ("A", "B", "C"):
-            self.assertTrue((self.chosen / folder).is_dir())
-            self.assertEqual(list((self.chosen / folder).iterdir()), [], folder)
+            self.assertTrue((self.chosen / "try_1" / folder).is_dir())
+            self.assertEqual(list((self.chosen / "try_1" / folder).iterdir()), [], folder)
         self.assertIsNone(self._run_row(project, "single"))
         self.assertEqual((self.chosen / "input.csv").read_text(), "the user's own")
         listed = self._get("/api/debugger/experience/projects")["projects"]
@@ -627,14 +633,14 @@ class ClearingAWayTests(_DebuggerBase):
         models = _Models(gate=True)
         self.app.work.models = models
         project = self._project()
-        (self.chosen / "A" / "a_kept.txt").write_text("A's")
+        (self.chosen / "try_1" / "A" / "a_kept.txt").write_text("A's")
         self._start(project, "noctx")
         self.assertTrue(_until(lambda: models.waiting >= 1, 30))
         with self.assertRaises(ApiError) as caught:
             self._post("/api/debugger/experience/projects",
                        {"action": "clear_all", "id": project["id"]})
         self.assertIn("going", str(caught.exception))
-        self.assertTrue((self.chosen / "A" / "a_kept.txt").is_file())
+        self.assertTrue((self.chosen / "try_1" / "A" / "a_kept.txt").is_file())
         self.assertIsNotNone(self._run_row(project, "noctx"))
         models.gate.set()
         self._finished(project, "noctx")
@@ -647,7 +653,7 @@ class ClearingAWayTests(_DebuggerBase):
         from personalized_agent.agent.work import debug_projects as dp
         from personalized_agent.runtime import isolation
         project = self._project()
-        way = self.chosen / "B"
+        way = self.chosen / "try_1" / "B"
         for n in range(300):
             folder = way / ".packages" / f"pkg{n // 30}"
             folder.mkdir(parents=True, exist_ok=True)
@@ -682,7 +688,7 @@ class ClearingAWayTests(_DebuggerBase):
         import threading
         from personalized_agent.agent.work import debug_projects as dp
         project = self._project()
-        way = self.chosen / "C"
+        way = self.chosen / "try_1" / "C"
         for n in range(200):
             folder = way / "work" / f"part{n // 20}"
             folder.mkdir(parents=True, exist_ok=True)
@@ -714,7 +720,7 @@ class ClearingAWayTests(_DebuggerBase):
         target = Path(self.agent.dir) / "elsewhere"
         target.mkdir()
         (target / "precious.txt").write_text("not the project's")
-        link = self.chosen / "A" / "into_elsewhere"
+        link = self.chosen / "try_1" / "A" / "into_elsewhere"
         kind = _link(link, target)
         if not kind:
             self.skipTest("this machine can make neither a symbolic link nor a junction")
@@ -723,7 +729,7 @@ class ClearingAWayTests(_DebuggerBase):
         self.assertEqual(said["links"], 1, said)
         self.assertFalse(os.path.lexists(link), kind)
         self.assertEqual((target / "precious.txt").read_text(), "not the project's")
-        self.assertEqual(list((self.chosen / "A").iterdir()), [])
+        self.assertEqual(list((self.chosen / "try_1" / "A").iterdir()), [])
 
     def test_a_ways_folder_that_is_a_link_is_left_alone(self) -> None:
         import os
@@ -732,7 +738,7 @@ class ClearingAWayTests(_DebuggerBase):
         target = Path(self.agent.dir) / "somewhere"
         target.mkdir()
         (target / "precious.txt").write_text("not the project's")
-        way = self.chosen / "B"
+        way = self.chosen / "try_1" / "B"
         _shutil.rmtree(way)
         if not _link(way, target):
             self.skipTest("this machine can make neither a symbolic link nor a junction")

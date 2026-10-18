@@ -850,6 +850,8 @@ class TheVersionOpensAsSlidesTests(unittest.TestCase):
             "out.fit={frame:frame.clientHeight,stage:stage.clientHeight,"
             "  wide:stage.clientWidth,bar:doc.querySelector('.bar').offsetHeight,"
             "  window:window.innerHeight,notes:notes?notes.offsetHeight:0,"
+            "  beside:notes?notes.getBoundingClientRect().left>=stage.getBoundingClientRect().right-1:false,"
+            "  stickies:doc.querySelectorAll('.note.on details.sticky').length,"
             "  scrolls:[doc.scrollingElement,notes].filter(Boolean)"
             "    .some(el=>el.scrollHeight>el.clientHeight+1)};")
         harness = (
@@ -899,9 +901,13 @@ class TheVersionOpensAsSlidesTests(unittest.TestCase):
         # The slide fills the stage's width, and the stage is its height.
         self.assertLessEqual(abs(fit["stage"] - fit["wide"] * 720 / 1280), 2, fit)
         self.assertLess(fit["stage"], fit["window"], fit)
-        # The frame as tall as the slide, the bar and the notes under it -
+        # The notes BESIDE the slide, as sticky notes - and the frame as
+        # tall as the slide or the notes, whichever is taller, and the bar:
         # nothing in it scrolls.
-        self.assertLessEqual(abs(fit["frame"] - fit["stage"] - fit["bar"] - fit["notes"]), 2, fit)
+        if fit["notes"]:
+            self.assertTrue(fit["beside"], fit)
+            self.assertGreaterEqual(fit["stickies"], 1, fit)
+        self.assertLessEqual(abs(fit["frame"] - max(fit["stage"], fit["notes"]) - fit["bar"]), 2, fit)
         self.assertFalse(fit["scrolls"], fit)
 
 

@@ -367,7 +367,7 @@ class WorkTools:
         self.known_hosts: set = set()
         self.handlers: Dict[str, Callable[[Dict[str, Any]], Any]] = {
             "list_dir": self.list_dir, "read_file": self.read_file,
-            "find_files": self.find_files, "write_file": self.write_file,
+            "read_video": self.read_video, "find_files": self.find_files, "write_file": self.write_file,
             "delete_file": self.delete_file,
             "run_python": self.run_python, "web_search": self.web_search,
             "install_packages": self.install_packages,
@@ -427,6 +427,21 @@ class WorkTools:
                      "kept. Another binary file is read with run_python.",
                      _schema({"path": {"type": "string"},
                               "from_line": {"type": "integer"}}, ["path"])),
+            ToolSpec("read_video", "Watch a VIDEO file (mp4, mov, mkv, webm, ...): "
+                     "frames taken evenly over the part asked for - as pictures where "
+                     "you can see them, each with the words read in it - and what is "
+                     "SAID in it, line by line with its time. start and end are seconds "
+                     "(the whole video unless asked; speech is read 30 minutes at a "
+                     "time); frames is how many (12 unless asked, at most 40). Look "
+                     "closer at a moment by asking for a short part with more frames. "
+                     "The frames and the transcript are kept in the work's own folder, "
+                     "under videos/, to open by their paths; a video read again is "
+                     "read from there.",
+                     _schema({"path": {"type": "string"},
+                              "start": {"type": "number"},
+                              "end": {"type": "number"},
+                              "frames": {"type": "integer"},
+                              "speech": {"type": "boolean"}}, ["path"])),
             ToolSpec("find_files", "Find files under a folder by name pattern "
                      "(glob, e.g. **/*.py), optionally containing some text - at most "
                      "200 found.",
@@ -634,8 +649,44 @@ class WorkTools:
                     "token or encoded data - searches are words, not data")
         return None
 
+    def read_video(self, args: Dict[str, Any]) -> Any:
+        """A video, read on this computer into frames and what is said -
+        written only into the work's own folder (runtime/video.py)."""
+        where = self._readable(str(args.get("path") or ""))
+        from ...runtime import video
+        if not video.is_video(where):
+            return {"error": f"{where.name} is not a video this reads "
+                             f"({', '.join(video.VIDEOS)})"}
+        from ...runtime.filesystem import validate_write_path
+        home = Path(validate_write_path(str(self.folder / "videos"), self.runtime.policy))
+        refused = self._refuse_locked(home)
+        if refused:
+            return refused
+
+        def seconds(key: str) -> Optional[float]:
+            try:
+                return float(args[key]) if args.get(key) is not None else None
+            except (TypeError, ValueError):
+                return None
+        try:
+            from ...runtime import documents
+            said = video.read_video(where, home.parent, start=seconds("start") or 0.0,
+                                    end=seconds("end"), frames=int(args.get("frames") or 0)
+                                    or video.FRAMES,
+                                    speech=args.get("speech") is not False,
+                                    hiding=documents._hides(), stopped=self.stopped)
+        except Exception as exc:
+            return {"error": f"could not read {where.name}: {exc}"[:400]}
+        # What it wrote is the agent's own, not the user's doing.
+        self._claim([str(one) for one in Path(said["folder"]).iterdir()])
+        return video.for_model(said, MOST_CHARS)
+
     def read_file(self, args: Dict[str, Any]) -> Any:
         where = self._readable(str(args.get("path") or ""))
+        from ...runtime import video
+        if video.is_video(where):
+            # A video is watched, not read as bytes.
+            return self.read_video({"path": str(where)})
         from ...runtime import documents
         if documents.needs_reading(where):
             # A picture or a document: read once, kept as a copy, read from

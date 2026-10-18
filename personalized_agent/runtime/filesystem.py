@@ -89,8 +89,7 @@ def check_not_protected(resolved: Path, policy: WorkspacePolicy, operation: str)
 
 
 #: Said of a sealed folder (see WorkspacePolicy.sealed_paths).
-SEALED_MESSAGE = ("that is another benchmark variant's folder: this variant may "
-                  "not read it")
+SEALED_MESSAGE = ("that folder is closed to this work: it may not be read")
 
 
 def is_sealed(resolved: Path, policy: WorkspacePolicy) -> bool:

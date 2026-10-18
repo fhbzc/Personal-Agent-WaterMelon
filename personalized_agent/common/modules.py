@@ -23,7 +23,7 @@ MODULES: List[Dict[str, str]] = [
              "their summaries and next steps; the agent heartbeat ticks the next steps it "
              "sees done.",
      "off": "No new tasks, summaries or next steps, and none ticked. Customized "
-            "Recommendation and Experience lose the background of what you are working on."},
+            "Recommendation and Work lose the background of what you are working on."},
     {"key": "calendar", "setting": "module_calendar_enabled", "name": "Calendar management",
      "what": "The agent heartbeat's notification step - reminders added, filled in and "
              "closed, and what waits for a time; invitations and agreed times acted on at "
@@ -33,25 +33,25 @@ MODULES: List[Dict[str, str]] = [
     {"key": "connections", "setting": "module_connections_enabled", "name": "Connections",
      "what": "PASSIVE: the agent heartbeat finds the people in what is on your screen and "
              "adds or updates them in your contacts; the connection lessons learned. (Looking "
-             "your contacts up on the web is ACTIVE, and Customized Recommendation's.)",
+             "your contacts up on the web is ACTIVE, and Newspaper's.)",
      "off": "Contacts are no longer added or updated from what is on your screen. Your "
-            "contacts are still looked up on the web while Customized Recommendation is on - "
+            "contacts are still looked up on the web while Newspaper is on - "
             "turn it off too to stop that."},
     {"key": "recommend", "setting": "module_recommend_enabled",
-     "name": "Customized Recommendation",
+     "name": "Newspaper",
      "what": "What you read kept as a log, and an issue at the times you chose: your topics "
              "searched on the web, and - ACTIVELY - your contacts looked up on the web, their "
              "public profiles filled in and their news found.",
      "off": "No issue is made and nothing read is kept; your contacts are no longer looked "
             "up on the web (from your screen they still are, while Connections is on). "
             "\"Make an issue now\" still works."},
-    {"key": "experience", "setting": "module_experience_enabled", "name": "Experience learning",
+    {"key": "experience", "setting": "module_experience_enabled", "name": "Work learning",
      "what": "Beside each state round, your work natures grouped into patterns and "
              "principles; how sure each work nature is, learned from what you do with it. "
-             "(A task learned into stages is yours to start, in Experience - not a function "
+             "(A task learned into stages is yours to start, in Work - not a function "
              "here.)",
      "off": "What was learned is still used; the natures are no longer grouped by "
-            "themselves. Learning a task into stages in Experience still works."},
+            "themselves. Learning a task into stages in Work still works."},
 ]
 
 #: WHAT THE USER STARTS, counted apart from the functions and from one
@@ -64,7 +64,7 @@ MANUAL_GROUPS = [
     ("manual_chat", "Chat"),
     ("manual_scheduled", "Scheduled tasks"),
     ("manual_lessons", "Lessons"),
-    ("experience_manual", "Experience: tasks into stages"),
+    ("experience_manual", "Work: tasks into stages"),
     ("manual_other", "Diagnostics and the rest"),
 ]
 MANUAL_KEYS = tuple(key for key, _name in MANUAL_GROUPS)

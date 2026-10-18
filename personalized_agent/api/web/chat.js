@@ -317,7 +317,11 @@ function followUpBox(about, question) {
   box.querySelector(".fu-question").textContent = shortened(question, 160);
   box.querySelector(".fu-question").title = question;
   const toggle = box.querySelector(".fu-toggle");
-  toggle.addEventListener("click", () => {
+  // THE WHOLE TOP ROW folds it, like a header - not only the small
+  // triangle, which was the one place a click did anything. The cross
+  // still deletes it, and nothing else.
+  box.querySelector(".fu-head").addEventListener("click", (event) => {
+    if (event.target.closest(".fu-close")) return;
     const folded = box.classList.toggle("folded");
     toggle.setAttribute("aria-expanded", String(!folded));
     toggle.textContent = folded ? "\u25b8" : "\u25be";

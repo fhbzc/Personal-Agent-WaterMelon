@@ -90,6 +90,34 @@ def _print_sign_in(root: Path | None) -> int:
     return 0
 
 
+def _port_problem(root: Path | None) -> str:
+    """Why the page cannot be served where the settings put it - "" when it
+    can. Read from the settings file, not loaded: nothing is opened yet."""
+    from .common.own_interface import DEFAULT_PORT, port_holder
+    from .common.paths import AppPaths, resolve_root
+
+    paths = AppPaths(resolve_root(root))
+    try:
+        values = json.loads(paths.settings_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        values = {}
+    values = values if isinstance(values, dict) else {}
+    host = values.get("api_host") or "127.0.0.1"
+    try:
+        port = int(values.get("api_port") or DEFAULT_PORT)
+    except (TypeError, ValueError):
+        port = DEFAULT_PORT
+    holder = port_holder(host, port)
+    if not holder:
+        return ""
+    return (f"Port {port} is in use by {holder}, so {APP_NAME} cannot open its page "
+            f"there, and it has not started.\n\n"
+            f"If that is another copy of {APP_NAME} that did not close, end it (Task "
+            f"Manager on Windows, Activity Monitor on macOS) and start {APP_NAME} again. "
+            f"Otherwise choose another port: set \"api_port\" in {paths.settings_file} "
+            f"to a free number between 1024 and 65535.")
+
+
 def _follow_autostart(application, root: Path | None, headless: bool) -> None:
     from .platform_layer.autostart import Autostart, launch_command
     # And Explorer's "Delegate work", started the way the agent was.
@@ -112,10 +140,20 @@ def _set_autostart(root: Path | None, on: bool) -> int:
     from .common.paths import AppPaths, resolve_root
     from .platform_layer.autostart import Autostart, launch_command
 
+    from .platform_layer.autostart import HELD_BY_ANOTHER
+
     paths = AppPaths.create(resolve_root(root))
     config = ConfigStore(paths.data_dir, path=paths.settings_file)
-    config.set("start_at_login", on)
     startup = Autostart(launch_command(root))
+    holder = startup.holder()
+    if holder:
+        # Another copy's entry: not taken, and not taken away.
+        config.set("start_at_login", False)
+        if on:
+            print(HELD_BY_ANOTHER.format(app=APP_NAME, holder=holder), file=sys.stderr)
+            return 6
+        return 0
+    config.set("start_at_login", on)
     startup.set(on)
     print(f"{APP_NAME} {'starts' if on else 'does not start'} when you sign in "
           f"({startup.where()}).")
@@ -185,6 +223,20 @@ def _set_explorer_menu(root: Path | None, on: bool) -> int:
         explorer_menu.install(launch_command(root), None)
     else:
         explorer_menu.remove()
+    return 0
+
+
+def _set_updates(root: Path | None, mode: str) -> int:
+    """`--updates install|ask|off`: how new versions are taken, as the
+    installer's box was left - ticked, by themselves; unticked, asked first.
+    Then exit."""
+    from .common.config.store import ConfigStore
+    from .common.paths import AppPaths, resolve_root
+
+    paths = AppPaths.create(resolve_root(root))
+    config = ConfigStore(paths.data_dir, path=paths.settings_file)
+    config.set("updates", mode)
+    print(f"{APP_NAME}: updates {mode}.")
     return 0
 
 
@@ -266,6 +318,9 @@ def main(argv: list[str] | None = None) -> int:
                         dest="display_language",
                         help="the language the agent is shown in, kept as the setting; "
                              "then exit (the installer, in the language it was run in)")
+    parser.add_argument("--updates", choices=("install", "ask", "off"), default=None,
+                        help="how new versions are taken - installed by themselves, "
+                             "asked first, or not looked for; then exit (the installer)")
     parser.add_argument("--delegate", metavar="PATH", default=None,
                         help="hand a file or folder to the agent as a piece of work "
                              "(Explorer's \"Delegate work\"): it opens on its plan")
@@ -283,6 +338,8 @@ def main(argv: list[str] | None = None) -> int:
         return _set_autostart(args.root or args.data_dir, args.autostart == "on")
     if args.display_language:
         return _set_display_language(args.root or args.data_dir, args.display_language)
+    if args.updates:
+        return _set_updates(args.root or args.data_dir, args.updates)
     if args.delegate is not None:
         return _delegate(args.root or args.data_dir, args.delegate)
     if args.explorer_menu:
@@ -311,6 +368,18 @@ def main(argv: list[str] | None = None) -> int:
         except AlreadyRunning as exc:
             _report_already_running(str(exc), headless=args.headless)
             return 3
+
+    # THE PORT, before anything starts. The page is served there, and the
+    # page starts last: a port another program held was found only after
+    # the listeners were already running, and was said as "could not start"
+    # with no reason. Now it is asked first, and said plainly.
+    if guard is not None and not args.no_api:
+        said = _port_problem(args.root or args.data_dir)
+        if said:
+            guard.release()
+            _report(f"{APP_NAME} could not start: its port is in use", said,
+                    headless=args.headless)
+            return 5
 
     try:
         application = AgentApplication(root=args.root or args.data_dir)
@@ -351,6 +420,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.headless:
         stop = threading.Event()
+        # An update is installed once this program has quit (updater.py).
+        updater = getattr(application, "updater", None)
+        if updater is not None:
+            updater.quit = stop.set
 
         def handle_signal(_signum, _frame):
             stop.set()

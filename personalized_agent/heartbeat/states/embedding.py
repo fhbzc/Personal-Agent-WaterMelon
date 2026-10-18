@@ -91,6 +91,14 @@ class Embedder:
     #: How long the child may take to load, and to answer one batch.
     LOAD_SECONDS = 300
     ANSWER_SECONDS = 120
+    #: HOW LONG IT STAYS ONCE NOTHING HOLDS IT. Let go the moment the last
+    #: piece of work was done, it was loaded again a second later by the
+    #: next one - a round's pieces each hold it on their own - and on one
+    #: morning that was three loads of 27 to 34 seconds inside a minute and
+    #: a half, each used for two to four seconds. Kept this long after its
+    #: last use, the pieces of one round share one load, and it is still
+    #: gone a couple of minutes after the round.
+    LINGER_SECONDS = 120.0
 
     def __init__(self, config: Any = None, db: Any = None) -> None:
         self.config = config
@@ -103,6 +111,8 @@ class Embedder:
         self._holders = 0
         self._failed = ""
         self._loaded_ms = 0
+        self._last_used = 0.0
+        self._timer: Optional[threading.Timer] = None
 
     # -- what it is ---------------------------------------------------------
     @property
@@ -138,22 +148,48 @@ class Embedder:
                 self._holders = max(0, self._holders - 1)
                 last = self._holders == 0
             if last:
-                self.release()
+                self._let_go_later()
 
     def release(self) -> None:
-        """End the child, if nothing holds it - its memory goes with it."""
+        """End the child now, if nothing holds it - its memory goes with it."""
         with self._using:
             with self._lock:
                 if self._holders:
                     return
                 child, self._child = self._child, None
+                timer, self._timer = self._timer, None
+            if timer is not None:
+                timer.cancel()
             if child is not None:
                 _end(child)
                 log.info("embedding model %s released", self.name)
 
+    def _let_go_later(self) -> None:
+        """Release once nothing has used it for LINGER_SECONDS."""
+        with self._lock:
+            self._last_used = time.monotonic()
+            if not self._running():
+                return
+            if self._timer is not None:
+                self._timer.cancel()
+            linger = float(self.LINGER_SECONDS)
+            self._timer = threading.Timer(linger, self._release_if_idle)
+            self._timer.daemon = True
+            self._timer.start()
+
+    def _release_if_idle(self) -> None:
+        with self._lock:
+            idle = time.monotonic() - self._last_used
+            waiting = self._holders or idle < float(self.LINGER_SECONDS) - 0.05
+        if not waiting:
+            self.release()
+
     def _running(self) -> bool:
         child = self._child
-        return child is not None and child.poll() is None
+        try:
+            return child is not None and child.poll() is None
+        except OSError:          # its handle already closed, as at exit
+            return False
 
     def _start(self) -> bool:
         """The child, started and loaded - or why it could not be."""
@@ -187,8 +223,8 @@ class Embedder:
             return False
         self._child = child
         self._loaded_ms = int((time.perf_counter() - began) * 1000)
-        log.info("embedding model %s loaded in %d ms, in process %s",
-                 self.name, self._loaded_ms, child.pid)
+        log.info("embedding model %s loaded in %d ms, in process %s, for %s",
+                 self.name, self._loaded_ms, child.pid, _asked_by())
         return True
 
     def available(self) -> bool:
@@ -216,7 +252,7 @@ class Embedder:
                 return self._embed(texts, while_ok)
             finally:
                 if not self._holders:
-                    self.release()
+                    self._let_go_later()
 
     def _embed(self, texts: Sequence[str],
                while_ok: Optional[Callable[[], bool]] = None
@@ -375,6 +411,18 @@ class Embedder:
                 rows)
         except Exception:            # pragma: no cover - a cache, not a record
             log.debug("could not keep %d vectors", len(rows), exc_info=True)
+
+
+def _asked_by() -> str:
+    """The first caller outside this file - which piece of work loaded it."""
+    frame = sys._getframe(1)
+    here = __file__
+    while frame is not None and frame.f_code.co_filename == here:
+        frame = frame.f_back
+    if frame is None:
+        return "?"
+    module = str(frame.f_globals.get("__name__", "?")).replace("personalized_agent.", "")
+    return f"{module}.{frame.f_code.co_name}"
 
 
 def text_of(state: Any) -> str:

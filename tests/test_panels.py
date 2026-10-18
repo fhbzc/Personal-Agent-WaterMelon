@@ -131,7 +131,7 @@ class FrontendSurfaceTests(unittest.TestCase):
         exists, which was true throughout."""
         import collections
 
-        names = re.findall(r'id="([^"]+)"', self.html)
+        names = re.findall(r'\bid="([^"]+)"', self.html)
         twice = sorted(name for name, n
                        in collections.Counter(names).items() if n > 1)
         self.assertEqual(twice, [], f"one id, two elements: {twice}")
@@ -7550,10 +7550,11 @@ class TheExperiencePanelTests(unittest.TestCase):
         self.assertNotIn("PROJECT", out["units"])
         # Each row learned from itself: Update once learned, Start before,
         # what it has cost - and none for a project made for the agents.
-        self.assertIn("Update learning learned up to 2026-10-05 10:00 · 12,345 tokens "
-                      "spent learning it (7 calls)", out["units"])
-        self.assertIn("Start learning not learned yet · nothing spent learning it yet",
-                      out["units"])
+        # And beside the button, whether it is updated by itself.
+        self.assertIn("Update learning Update by itself learned up to 2026-10-05 10:00 · "
+                      "12,345 tokens spent learning it (7 calls)", out["units"])
+        self.assertIn("Start learning Update by itself not learned yet · nothing spent "
+                      "learning it yet", out["units"])
         self.assertEqual(out["units"].count("learning"), 4)
         self.assertEqual(out["dots"], 2)
         self.assertEqual(out["edges"], 1)

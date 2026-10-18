@@ -357,7 +357,7 @@ def write_package(target: Path) -> Path:
     art.body.resize((512, 512), Image.LANCZOS).save(layers / "body.png")
     art.leaves.resize((512, 512), Image.LANCZOS).save(layers / "leaves.png")
     manifest = {"name": NAME, "display_name": DISPLAY_NAME, "version": "1.0.0",
-                "author": "Personalized Agent", "states": list(STATES), "size": [128, 128],
+                "author": "Personal Agent WaterMelon", "states": list(STATES), "size": [128, 128],
                 "rig": RIG}
     (target / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return target

@@ -142,6 +142,7 @@ from ...runtime.sandbox import SandboxRuntime
 from .packages import ASK, AUTO, Installer, PACKAGES_DIR, mode_of, validate
 from .tools import WorkTools, compact_experience, experience_text, stage_key_info
 from .transcript import Transcript, answer_text, ensure_readme, transcript_files
+from ...version import APP_NAME
 from .versions import (LOGS_DIR, SLIDES_DIR, VERSIONS_DIR, VersionError, VersionStore,
                        file_changes, keep_files, keep_granted, keep_tree, restore_files,
                        restore_granted, restore_tree, sha_of_file, with_message)
@@ -387,7 +388,10 @@ def retryable_failure(exc: BaseException) -> bool:
                                   AvailabilityState.RATE_LIMITED):
             return True
     text = str(exc).lower()
-    return any(one in text for one in ("did not answer within", "timed out", "timeout"))
+    # And a client that started without its input: Claude Code waits only a
+    # few seconds for it (common/children._input_file) - the next try has it.
+    return any(one in text for one in ("did not answer within", "timed out", "timeout",
+                                       "no stdin data received"))
 
 
 #: THEN, FOR AS LONG AS IT LASTS: a call that failed for the moment is made
@@ -743,8 +747,11 @@ def environment_rules(folders: str, network: str, debug: bool = False) -> str:
     native = NATIVE_SHUT if not native_code_loads() else NATIVE_LOADS
     return ENVIRONMENT_RULES.format(
         folders=folders, network=network, native=native,
-        more_closed=("; the other two ways' folders of this Experience debugger "
-                     "project, and the application's own code" if debug else ""),
+        # NOT SAID WHY: a way that is told it is one of three in a debugger
+        # knows it is being compared - the thing its letter-named folder is
+        # there to keep from it.
+        more_closed=("; other folders closed to this work, and the application's "
+                     "own code" if debug else ""),
         run_seconds=RUN_SECONDS, run_most=RUN_MOST_SECONDS, job_most=JOB_MOST_SECONDS,
         job_wait=JOB_MOST_WAIT)
 
@@ -2057,8 +2064,16 @@ class WorkRuns:
         self.in_subprocess = False
         self.paths: Any = None
         #: How much of the computer the runs may have (governor.py), and the
-        #: runs asked for while there was no room, first asked first started.
+        #: runs asked for while there was no room, first asked first started
+        #: - the user's own and the Experience debugger's ways alike.
         self.governor: Any = None
+        #: The one pool everything side by side takes its places in
+        #: (common/pool.py): a run starts when the governor AND the pool have
+        #: room - the first always may, as the first of each kind does.
+        self.pool: Any = None
+        #: A debugger way that waited for room and then could not start:
+        #: why, by its unit, until it is started or asked about again.
+        self.waited_out: Dict[str, str] = {}
         self.waiting: List[Dict[str, Any]] = []
         self._lock = threading.Lock()
         #: What installs a run's packages, given the work's policy: pip under
@@ -2265,12 +2280,15 @@ class WorkRuns:
 
         THE USER'S OWN WORK: one run at a time, among their own runs. THE
         EXPERIENCE DEBUGGER'S: one run at a time of each way of each of its
-        projects - its ways may run side by side, and beside the user's own;
-        neither kind waits for the other."""
+        projects - its ways may run side by side, and beside the user's own,
+        as the computer has room: each waits its turn as any run does
+        (`_room_for`)."""
         if unit.get("debug"):
             if any(run.alive() and run.unit.get("id") == unit["id"]
                    for run in self._running.values()):
                 return "this one is already going; stop it first"
+            if any(one["unit"].get("id") == unit.get("id") for one in self.waiting):
+                return "this one is already waiting to start"
             return ""
         if self.in_subprocess:
             # Each in a process of its own: several pieces of work may go at
@@ -2361,16 +2379,23 @@ class WorkRuns:
 
     def start(self, unit: Dict[str, Any], instruction: str = "",
               limits: Any = None, packages: Any = None,
-              sound: Any = False) -> Dict[str, Any]:
+              sound: Any = False, given_room: bool = False) -> Dict[str, Any]:
         """Start a run. `packages` is "ask" - the user approves each install,
         the default - or "auto". `sound`: a sound is played when this
-        session ends (see `Run._ring`)."""
+        session ends (see `Run._ring`). `given_room`: started from the
+        queue, its turn come (`start_waiting`)."""
         with self._lock:
             busy = self._busy(unit)
             if busy:
                 return {"error": busy}
             if not instruction.strip() and not self.has_history(unit):
                 return {"error": "this is new work: say what you want done"}
+            if unit.get("debug") and not given_room:
+                waits = self._wait_for_room("start", unit, {
+                    "instruction": instruction, "limits": limits,
+                    "packages": packages, "sound": sound})
+                if waits:
+                    return waits
             if self.in_subprocess and not unit.get("debug"):
                 return self._apart("start", unit, instruction=instruction,
                                    limits=limits, packages=packages, sound=sound)
@@ -2386,7 +2411,7 @@ class WorkRuns:
     def continue_run(self, run_id: str, unit: Dict[str, Any],
                      limits: Any = None, packages: Any = None,
                      from_version: str = "", instruction: str = "",
-                     sound: Any = False) -> Dict[str, Any]:
+                     sound: Any = False, given_room: bool = False) -> Dict[str, Any]:
         """Carry a run on from where it stopped, with new limits - and, if
         `packages` is given, a new choice of asking; else the one it had.
         `sound` is this session's own choice: whether one is played when it
@@ -2419,6 +2444,13 @@ class WorkRuns:
             busy = self._busy(unit)
             if busy:
                 return {"error": busy}
+            if unit.get("debug") and not given_room:
+                waits = self._wait_for_room("continue", unit, {
+                    "run_id": run_id, "limits": limits, "packages": packages,
+                    "from_version": from_version, "instruction": instruction,
+                    "sound": sound})
+                if waits:
+                    return waits
             if self.in_subprocess and not unit.get("debug"):
                 return self._apart("continue", unit, run_id=run_id, limits=limits,
                                    packages=packages, from_version=from_version,
@@ -2467,18 +2499,59 @@ class WorkRuns:
                        if milestone and rolled else {})}
 
     # -- each run in a process of its own (child.py) --------------------------------
+    def _room_for(self, head: bool = False) -> str:
+        """Why one more run may not start now - "" when it may. EVERY RUN
+        COUNTS, the user's and the Experience debugger's ways alike: the
+        computer (governor.py) and everything else going side by side
+        (common/pool.py) must both have room. And one asked for earlier
+        and still waiting goes first - `head`: asked for the first of them."""
+        if self.waiting and not head:
+            return "runs asked for earlier are waiting first"
+        going = sum(1 for run in self._running.values() if run.alive())
+        room, why = (self.governor.room(going) if self.governor is not None
+                     else (True, ""))
+        if room and self.pool is not None:
+            room, why = self.pool.may_start("work", key="work-waiting")
+        return "" if room else (why or "there is no room now")
+
+    def _wait_for_room(self, kind: str, unit: Dict[str, Any],
+                       args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """A run kept waiting while there is no room - None when there is,
+        and it starts now. A debugger way waits in the same queue as the
+        user's own runs, and is started where it would have been."""
+        why = self._room_for()
+        if not why:
+            return None
+        self.waiting.append({"kind": kind, "unit": unit, "args": args,
+                             "at": _now(), "why": why,
+                             "debug": bool(unit.get("debug"))})
+        self.waited_out.pop(str(unit.get("id") or ""), None)
+        return {"waiting": True, "why": why, "position": len(self.waiting)}
+
     def _apart(self, kind: str, unit: Dict[str, Any], **args: Any) -> Dict[str, Any]:
         """A run started in a child process - now, or, while the computer
         has no room for it, when it has (governor.py)."""
-        going = sum(1 for run in self._running.values()
-                    if run.alive() and not getattr(run, "debug", False))
-        room, why = (self.governor.room(going) if self.governor is not None
-                     else (True, ""))
-        if not room:
-            self.waiting.append({"kind": kind, "unit": unit, "args": args,
-                                 "at": _now(), "why": why})
-            return {"waiting": True, "why": why, "position": len(self.waiting)}
+        waits = self._wait_for_room(kind, unit, args)
+        if waits:
+            return waits
         return self._launch(kind, unit, args)
+
+    def waiting_of(self, unit_id: str) -> Optional[Dict[str, Any]]:
+        """A run of this unit waiting for room - why, since when, and how
+        far along the queue - or None."""
+        for at, one in enumerate(list(self.waiting)):
+            if one["unit"].get("id") == unit_id:
+                return {"why": one.get("why", ""), "since": one.get("at", ""),
+                        "position": at + 1, "kind": one.get("kind", "start")}
+        return None
+
+    def unwait(self, unit_id: str) -> bool:
+        """A waiting run of this unit not started after all."""
+        with self._lock:
+            kept = [one for one in self.waiting if one["unit"].get("id") != unit_id]
+            gone = len(kept) != len(self.waiting)
+            self.waiting[:] = kept
+        return gone
 
     def _launch(self, kind: str, unit: Dict[str, Any], args: Dict[str, Any]
                 ) -> Dict[str, Any]:
@@ -2493,17 +2566,36 @@ class WorkRuns:
         """The runs asked for while there was no room, started now that there
         is - first asked, first started."""
         started = []
-        with self._lock:
-            while self.waiting:
-                going = sum(1 for run in self._running.values()
-                            if run.alive() and not getattr(run, "debug", False))
-                room, _why = (self.governor.room(going) if self.governor is not None
-                              else (True, ""))
-                if not room:
-                    break
-                one = self.waiting.pop(0)
-                started.append(self._launch(one["kind"], one["unit"], one["args"]))
-        return started
+        while True:
+            with self._lock:
+                if not self.waiting:
+                    return started
+                head = self.waiting.pop(0)
+                why = self._room_for(head=True)
+                if why:
+                    self.waiting.insert(0, head)
+                    head["why"] = why
+                    return started
+                if not head.get("debug"):
+                    started.append(self._launch(head["kind"], head["unit"], head["args"]))
+                    continue
+            # A debugger way runs in this process: started as its button
+            # would, outside the lock its start takes.
+            started.append(self._start_waited(head))
+
+    def _start_waited(self, one: Dict[str, Any]) -> Dict[str, Any]:
+        unit, args = one["unit"], dict(one["args"])
+        try:
+            if one["kind"] == "continue":
+                said = self.continue_run(args.pop("run_id"), unit, given_room=True, **args)
+            else:
+                said = self.start(unit, given_room=True, **args)
+        except Exception as exc:              # pragma: no cover - said on the way
+            log.warning("a waiting run could not start", exc_info=True)
+            said = {"error": str(exc)}
+        if said.get("error"):
+            self.waited_out[str(unit.get("id") or "")] = str(said["error"])
+        return said
 
     # -- versions ------------------------------------------------------------------
     @staticmethod
@@ -3900,7 +3992,7 @@ class Run:
         try:
             raw.add_event(ListenerEvent(
                 event_type=f"agent.work.{action.replace(' ', '_')}",
-                source="agent", application="Personalized Agent",
+                source="agent", application=APP_NAME,
                 data={"by": "agent", "run": self.id,
                       "project": self.unit.get("name", ""),
                       "action": action, "paths": list(paths)[:50],
@@ -4461,6 +4553,11 @@ class Run:
     def _end_version(self) -> None:
         """The version a session ends with - finished, paused at a limit,
         stopped, or ended otherwise - named for how it ended."""
+        try:
+            self.plan["active_seconds_ended"] = round(
+                self._active_before() + self._minutes() * 60, 1)
+        except Exception:        # pragma: no cover - a record, not the work
+            log.debug("could not carry the run's time", exc_info=True)
         reason = self.stop_reason or ""
         if self.status == DONE:
             kind = "finished"
@@ -4534,12 +4631,32 @@ class Run:
             profile["only_tasks"] = self.project_tasks or ["-"]
         return compact_experience(self.retriever.find(profile))
 
-    @property
-    def _stages_shown(self) -> set:
-        """The past stages this run has handed its reviewer already."""
-        if not hasattr(self, "_shown_set"):
-            self._shown_set = set()
-        return self._shown_set
+    # -- what the reviewer was given for a card, kept ---------------------------------
+    def experience_given(self, key: str) -> Optional[Dict[str, Any]]:
+        """What the reviewer was given of the user's past work for this card
+        and use the first time (`Review`), or None."""
+        if not key:
+            return None
+        rows = self.owner.db.query("SELECT found FROM work_run_experience "
+                                   "WHERE run_id = ? AND key = ?", (self.id, key))
+        if not rows:
+            return None
+        try:
+            said = json.loads(rows[0]["found"] or "{}")
+        except ValueError:
+            return None
+        return said if isinstance(said, dict) else None
+
+    def keep_experience_given(self, key: str, found: Dict[str, Any]) -> None:
+        if not key:
+            return
+        try:
+            self.owner.db.execute(
+                "INSERT OR IGNORE INTO work_run_experience (run_id, key, found, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (self.id, key, json.dumps(found, ensure_ascii=False, default=str), _now()))
+        except Exception:                      # pragma: no cover - retrieved again then
+            log.debug("could not keep what the reviewer was given", exc_info=True)
 
     def _unreadable(self) -> Optional[List[str]]:
         """Every place this run may not read, worked out once a run - None
@@ -4585,12 +4702,29 @@ class Run:
     def _in_english(self, profile: Dict[str, Any]) -> Dict[str, Any]:
         """A question to the user's record, its words said as the English
         words the work would be recorded under (SEARCH_WORDS) - asked once
-        for each text in a run - and with the stages it was handed already,
-        to be counted against them."""
-        asked = dict(profile, seen=sorted(self._stages_shown))
+        for each text in a run. Each question is ranked on its own: a stage
+        handed over for another card is not held against this one - each
+        reviewer's call is new, and holds none of what an earlier one was
+        given."""
+        asked = dict(profile)
+        # THE WORK'S GOAL beside each question, as English words too: a
+        # stage from a project like this one is ranked above one that only
+        # shares its words (retrieve.LIKENESS["like_this"]).
+        goal = str(self._contract_profile().get("text") or "").strip()
+        if goal:
+            asked["goal_text"] = " ".join(self._english_words(goal)) or goal
         text = str(profile.get("text") or "").strip()
         if not text:
             return asked
+        words = self._english_words(text)
+        if words:
+            asked["text"] = " ".join(words)
+            asked["said_as"] = text
+        return asked
+
+    def _english_words(self, text: str) -> List[str]:
+        """A text as the English words the work would be recorded under -
+        asked of the model once for each text in a run."""
         if not hasattr(self, "_english"):
             self._english = {}
         if text not in self._english:
@@ -4606,10 +4740,7 @@ class Run:
             except Exception:                       # pragma: no cover - its own words
                 log.warning("the search words could not be asked for", exc_info=True)
             self._english[text] = words
-        if self._english[text]:
-            asked["text"] = " ".join(self._english[text])
-            asked["said_as"] = text
-        return asked
+        return self._english[text]
 
     def _open_stages(self, ids: List[str]) -> Dict[str, Any]:
         """Past stages of the user's record, each opened to its key
@@ -4822,6 +4953,11 @@ class Run:
             unreadable = self._unreadable()
             if unreadable is not None:
                 request = replace(request, native_read=unreadable)
+        # A WAY OR A TRY OF THE WORK DEBUGGER, kept apart from the others:
+        # every call's reading stays sealed - no model that reads by itself
+        # where nothing keeps it out (models/manager.READS_UNCONFINED).
+        if isinstance(self.unit.get("debug"), dict) and not request.sealed_reading:
+            request = replace(request, sealed_reading=True)
         attempt = 0
         # Since when this call has failed for the moment; and whether you
         # were already asked about it - then a failure waits for you again.
@@ -5087,6 +5223,14 @@ class Run:
     def _part(self, value: str) -> None:
         self._local_state().part = value
 
+    def _active_before(self) -> float:
+        """The run's own time in its sessions before this one - carried in
+        its plan, set when this session began."""
+        if not hasattr(self, "_active_carried"):
+            self._active_carried = float(self.plan.get("active_seconds_ended") or
+                                         self.plan.get("active_seconds") or 0.0)
+        return self._active_carried
+
     def _record_call(self, who: str, part: str, started: float,
                      read: Dict[str, int], tokens_out: int, error: str) -> None:
         """ONE MODEL CALL, kept for the chart of the run's calls over time:
@@ -5101,10 +5245,15 @@ class Run:
             if self.variant == SINGLE and named == "builder":
                 named = "single"
             number = int(self.plan.get("calls_made") or 0) + 1
+            # THE RUN'S OWN TIME when it ended: this session's - not paused,
+            # not waiting for the user - on top of the sessions before it.
+            active = self._active_before() + self._minutes() * 60
+            self.plan["active_seconds"] = round(active, 1)
             entry = {"n": number,
                      "started": datetime.fromtimestamp(started, timezone.utc).isoformat(),
                      "finished": datetime.fromtimestamp(finished, timezone.utc).isoformat(),
                      "seconds": round(max(0.0, finished - started), 2),
+                     "active": round(active, 1),
                      "who": named, "part": str(part or "")[:120],
                      "tokens_in": int(read.get("tokens_in") or 0),
                      "tokens_out": int(tokens_out or 0)}
@@ -6081,7 +6230,8 @@ class Run:
         for card in waiting[:CRITERIA_PER_ROUND]:
             if not self._going():
                 return
-            review = Review(self, self._card_profile(card, {}), self._reviewer_context(card))
+            review = Review(self, self._card_profile(card, {}), self._reviewer_context(card),
+                            same_as=f"criteria:{card.get('id', '')}")
             said = review.ask(REVIEW_CARD.format(
                 card=json.dumps({"id": card["id"], "title": card["title"],
                                  "statement": card["statement"],
@@ -6152,7 +6302,8 @@ class Run:
             [one.get("claim") for one in summary.get("claims") or []
              if isinstance(one, dict)])
         review = Review(self, self._card_profile(card, summary),
-                        self._reviewer_context(card, recent=True))
+                        self._reviewer_context(card, recent=True),
+                        same_as=f"round:{card.get('id', '')}")
         judged = review.ask(REVIEW_ROUND.format(
             summary=json.dumps({k: v for k, v in summary.items() if k != "written_by"},
                                ensure_ascii=False)[:14000],
@@ -6265,9 +6416,8 @@ class Run:
                 if one.get("path"):
                     from ...runtime.filesystem import is_app_code, is_closed, is_sealed
                     if is_sealed(self._resolve(str(one["path"])), self.runtime.policy):
-                        problems.append(f"claim {number}: {one['path']} is in another "
-                                        "benchmark variant's folder, which this one may "
-                                        "not read")
+                        problems.append(f"claim {number}: {one['path']} is in a "
+                                        "folder closed to this work, which it may not read")
                     elif is_app_code(self._resolve(str(one["path"])), self.runtime.policy) \
                             or is_closed(self._resolve(str(one["path"])), self.runtime.policy):
                         problems.append(f"claim {number}: {one['path']} is where no "
@@ -6892,10 +7042,12 @@ class Run:
 
     # -- the reviewer's contexts ----------------------------------------------------------------
     def _contract_profile(self, words: str = "") -> Dict[str, Any]:
+        # Asked of every question to the record, a run's too that has not
+        # been given its work yet: what it does not have, it does not say.
         return {"kinds": ["goal", "plan"],
-                "text": " ".join(filter(None, [self.unit.get("name", ""),
-                                               self.instruction, words])),
-                "tasks": self.project_tasks}
+                "text": " ".join(filter(None, [(getattr(self, "unit", None) or {}).get("name", ""),
+                                               getattr(self, "instruction", ""), words])),
+                "tasks": getattr(self, "project_tasks", [])}
 
     def _card_profile(self, card: Dict[str, Any], summary: Dict[str, Any]
                       ) -> Dict[str, Any]:
@@ -6972,7 +7124,12 @@ class Review:
     question, and any asked after it in the same context."""
 
     def __init__(self, run: Run, profile: Dict[str, Any], context: str,
-                 work: bool = True) -> None:
+                 work: bool = True, same_as: str = "") -> None:
+        """`same_as`: the card, and what it is asked for ("criteria:<card>",
+        "round:<card>") - THE SAME CARD IS GIVEN THE SAME past work every
+        time: what it was given the first time is kept (`Run.experience_given`),
+        reopened or reviewed again or carried on after the application closed,
+        even while learning changes the record meanwhile."""
         self.run = run
         self.work = work
         #: A reviewer with NO CONTEXT (the Experience debugger's second way):
@@ -6987,12 +7144,13 @@ class Review:
                 "the evidence.")}]
             return
         found: Dict[str, Any] = {}
-        if run.retriever is not None:
+        kept = run.experience_given(same_as) if same_as else None
+        if kept is not None:
+            found = kept
+        elif run.retriever is not None:
             asked = run._in_english(profile)
-            said = run.retriever.find(asked)
-            # Handed over now: counted against them in this run's next look.
-            run._stages_shown.update(one["id"] for one in said.get("matches") or [])
-            found = compact_experience(said)
+            found = compact_experience(run.retriever.find(asked))
+            run.keep_experience_given(same_as, found)
         self.messages = [{"role": "user", "content": (
             context
             + "\n\nHOW THE USER WORKS, FROM THEIR OWN PAST WORK - first the RULES "

@@ -76,8 +76,7 @@ PROTECTED_ENV = "AGENT_PROTECTED_PATHS"
 #: in the Experience debugger, the other two ways' folders. Separated by
 #: os.pathsep.
 SEALED_ENV = "AGENT_SEALED_PATHS"
-SEALED_REASON = ("that is another benchmark variant's folder: this variant may "
-                 "not read it")
+SEALED_REASON = ("that folder is closed to this work: it may not be read")
 #: The application's own code, set for a way of the Experience debugger:
 #: never READ from here - the user's decision, so a way being measured does
 #: not learn how the system that measures it works. Writing is left to the

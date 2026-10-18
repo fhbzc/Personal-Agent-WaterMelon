@@ -435,6 +435,37 @@ class ChoosingAProviderTests(unittest.TestCase):
                      "data-chain-down", "data-chain-remove"):
             self.assertIn(said, source)
 
+    def test_the_last_model_can_be_removed_and_stays_removed(self) -> None:
+        from personalized_agent.models.base import ModelRequest
+        from personalized_agent.models.manager import ModelUnavailable
+        from personalized_agent.api.routes import build_routes
+
+        class _Req:
+            def __init__(self, body):
+                self.body = body
+
+            def get(self, key, default=None):
+                return self.body.get(key, default)
+        routes = build_routes(self.app)
+        routes[("POST", "/api/models/chain")](
+            _Req({"chain": [{"provider": "offline", "model": "offline-1"}]}))
+        self.assertEqual(len(self.app.models.chain()), 1)
+        routes[("POST", "/api/models/chain")](_Req({"chain": []}))
+        # Empty - not the model from before the list, back as if never removed.
+        self.assertEqual(self.app.models.chain(), [])
+        self.assertEqual(self.app.models.describe()["chain"], [])
+        with self.assertRaises(ModelUnavailable) as said:
+            self.app.models.invoke(ModelRequest(messages=[{"role": "user",
+                                                           "content": "hello"}]))
+        self.assertIn("no model on your list", said.exception.availability.reason)
+        # And one added again is used.
+        routes[("POST", "/api/models/chain")](
+            _Req({"chain": [{"provider": "offline", "model": "offline-1"}]}))
+        self.assertEqual(len(self.app.models.chain()), 1)
+        source = (Path(__file__).resolve().parents[1]
+                  / "personalized_agent" / "api" / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn('chain.length === 1 ? " disabled"', source)
+
     def test_the_listing_says_which_provider_is_in_use(self) -> None:
         described = self.app.models.describe()
         in_use = described["roles"]["primary"]["provider"]

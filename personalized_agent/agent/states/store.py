@@ -52,6 +52,16 @@ SOURCES = (SOURCE_USER, SOURCE_AGENT, SOURCE_TASK)
 #: means to do for them.
 ABOUT_USER = "user"
 ABOUT_AGENT = "agent"
+#: A state's `kind` in its metadata when it is the part of a day that is no
+#: piece of work - meals, rest, entertainment, chatting with friends. It is
+#: recorded and shown, and never grouped into a task.
+ROUTINE = "routine"
+#: What a state is for, in its metadata's `kind`: WORK; LEISURE - done for
+#: enjoyment, grouped into tasks of its own, never mixed with work, and what
+#: the recommendations treat as a pastime; or ROUTINE (above).
+WORK = "work"
+LEISURE = "leisure"
+KINDS = (WORK, LEISURE, ROUTINE)
 
 ACTIVE = "active"
 DONE = "done"
@@ -927,5 +937,6 @@ def _parse_moment(value: Optional[str]) -> Optional[datetime]:
 
 
 __all__ = ["State", "StateStore", "window_for", "SOURCE_USER", "SOURCE_AGENT",
-           "SOURCE_TASK", "SOURCES", "ABOUT_USER", "ABOUT_AGENT",
+           "SOURCE_TASK", "SOURCES", "ABOUT_USER", "ABOUT_AGENT", "ROUTINE", "WORK",
+           "LEISURE", "KINDS",
            "ACTIVE", "DONE", "RETIRED"]

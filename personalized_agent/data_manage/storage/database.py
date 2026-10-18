@@ -229,6 +229,12 @@ ADDED_COLUMNS = (
     ("conversations", "project_id", "TEXT REFERENCES chat_projects(id)"),
     # Where its files are kept (agent/dialog/files.py), once it wrote one.
     ("conversations", "folder", "TEXT"),
+    # When the user pinned it to the top of the chat's list; NULL, not pinned.
+    ("conversations", "pinned_at", "TEXT"),
+    # Which try of a Work debugger project is shown and started from.
+    ("debug_projects", "current_try", "INTEGER"),
+    # Why a thing was read or watched: work, or leisure (heartbeat/reading).
+    ("reading_pieces", "purpose", "TEXT NOT NULL DEFAULT ''"),
     # The lesson a notification action taught, beside why it was taken.
     ("calendar_actions", "lesson", "TEXT"),
     # What a model call read from the prompt cache and wrote to it.
@@ -460,7 +466,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     created_at TEXT NOT NULL,
     title      TEXT NOT NULL DEFAULT '',
     project_id TEXT REFERENCES chat_projects(id),
-    folder     TEXT
+    folder     TEXT,
+    pinned_at  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -910,6 +917,19 @@ CREATE TABLE IF NOT EXISTS work_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_work_runs_unit ON work_runs(unit_id, started_at);
 
+-- What a run's reviewer was given of the user's past work for each card, the
+-- first time: the same card is given the same again - reopened, reviewed
+-- again, or carried on after the application closed - even while learning
+-- changes the record. Here, not in the run's plan: the plan is kept with the
+-- run's versions, in the work's own folder, where the work agent reads.
+CREATE TABLE IF NOT EXISTS work_run_experience (
+    run_id      TEXT NOT NULL,
+    key         TEXT NOT NULL,                 -- what it was for: "<use>:<card id>"
+    found       TEXT NOT NULL DEFAULT '{}',
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (run_id, key)
+);
+
 -- Folders the user granted a project's work, beside its own folder: the
 -- agent may create, change and delete anything in them. Granted with a
 -- warning to keep a copy elsewhere; never inside the application's state.
@@ -1195,12 +1215,13 @@ CREATE TABLE IF NOT EXISTS reading_pieces (
     topic_id    TEXT NOT NULL DEFAULT '',
     vector      TEXT,
     created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    updated_at  TEXT NOT NULL,
+    purpose     TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_reading_pieces_url ON reading_pieces(url_key);
 CREATE INDEX IF NOT EXISTS idx_reading_pieces_title ON reading_pieces(title_key);
 CREATE INDEX IF NOT EXISTS idx_reading_pieces_topic ON reading_pieces(topic_id);
--- The user's say on a story of Customized Recommendation, for its topic.
+-- The user's say on a story of Newspaper, for its topic.
 -- Agreed, its time not known yet (heartbeat/core/pending.py).
 CREATE TABLE IF NOT EXISTS pending_confirmations (
     id          TEXT PRIMARY KEY,

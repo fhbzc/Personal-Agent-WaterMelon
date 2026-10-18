@@ -119,6 +119,23 @@ _MAC_LIBRARY_SECRETS = (
 )
 
 
+#: The assistants' folders in the home, and the folders in them that hold
+#: only the record of their sessions - readable; everything else in them
+#: (sign-ins, settings, caches) is not.
+SESSIONS_KEPT_IN = {".claude": ("projects",), ".codex": ("sessions", "archived_sessions")}
+
+
+def _all_but(folder: Path, kept: Iterable[str]) -> List[Path]:
+    """Each entry of `folder` but those named - the folder whole, where it
+    cannot be listed."""
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return [folder] if folder.exists() else []
+    keep = {one.lower() for one in kept}
+    return [folder / name for name in names if name.lower() not in keep]
+
+
 def credential_stores(home: Optional[Path] = None) -> List[Path]:
     """Where the user's sign-ins live, under their home.
 
@@ -140,7 +157,14 @@ def credential_stores(home: Optional[Path] = None) -> List[Path]:
         names = []
     for name in names:
         lower = name.lower()
-        if name.startswith("."):
+        if lower in SESSIONS_KEPT_IN:
+            # AN ASSISTANT'S OWN FOLDER: its sign-in and settings closed,
+            # the record of its sessions open - what the user did with it
+            # is knowledge a piece of work may draw on (a lesson learned in
+            # one). The debugger's ways are kept from the sessions of the
+            # agent's own code and of the other tries (debug_projects).
+            found += _all_but(home / name, SESSIONS_KEPT_IN[lower])
+        elif name.startswith("."):
             found.append(home / name)
         elif _WINDOWS and (lower == "appdata" or lower.startswith("ntuser")):
             found.append(home / name)
@@ -1544,7 +1568,7 @@ class _WinApi:
         pointer = ct.c_void_p()
         result = self.CreateAppContainerProfile(
             name, name.replace(".", " "),
-            "Code the Personalized Agent runs for a piece of work", None, 0,
+            "Code Personal Agent WaterMelon runs for a piece of work", None, 0,
             ct.byref(pointer))
         if result & 0xFFFFFFFF == 0x800700B7:     # the profile already exists
             result = self.DeriveAppContainerSid(name, ct.byref(pointer))

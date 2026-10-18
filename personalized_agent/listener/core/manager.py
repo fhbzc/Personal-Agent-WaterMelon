@@ -116,7 +116,12 @@ class ListenerManager:
             # recorded is still evidence about who touched a file while it
             # was in front (section 19, as amended).
             self.privacy.remember_what_was_in_front(event)
-            if not self.privacy.allows(event, category):
+            refused = self.privacy.refusal(event, category)
+            if refused is not None:
+                # Kept out - and said so in the Record log: which rule, never
+                # what was in it.
+                from .filtered import note
+                note(event.source, category, event.event_type, refused, event.application or "")
                 if self.observability is not None:
                     self.observability.increment("listener.events_filtered")
                 self.tracer.event(

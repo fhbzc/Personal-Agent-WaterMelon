@@ -12,6 +12,16 @@ from the source, this Python with run.py - with the same root, and headless
 if it is headless. The setting is the truth (`start_at_login`); each start
 of the application puts the system's entry back in line with it, so a moved
 installation is followed and one switched off stays off.
+
+ONE ENTRY, AND IT IS NOT TAKEN FROM ANOTHER COPY. The entry has one name on
+every system, so two copies of the program - an installed one and one run
+from the source - share it. Each start used to write itself into it, and the
+copy started last was the one started at sign-in; one switched off took the
+other's entry away with it. Now an entry that starts ANOTHER copy, still on
+this machine, is that copy's: not overwritten, not removed, and turning
+starting at sign-in on here is refused, saying which copy holds it (the
+installer's last page and Settings both ask first). An entry whose program
+is gone is nobody's, and is taken.
 """
 
 from __future__ import annotations
@@ -22,12 +32,15 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Sequence
 
 from ..version import APP_NAME
 
 #: The name the entry goes by, on every system.
 ENTRY = "PersonalizedAgent"
+#: What turning it on says when another copy holds the entry.
+HELD_BY_ANOTHER = ("Another copy of {app} already starts when you sign in ({holder}). "
+                   "Turn it off there first, or leave this one off.")
 MAC_LABEL = "org.personalizedagent.agent"
 LINUX_FILE = "personalized-agent.desktop"
 WINDOWS_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -133,6 +146,36 @@ class Autostart:
             return self._registry_().get() is not None
         return (self.plist_path() if self.system == "macos" else self.desktop_path()).exists()
 
+    def _entry(self) -> List[str]:
+        """The command the entry there now starts, or [] when there is none."""
+        try:
+            if self.system == "windows":
+                value = self._registry_().get()
+                return _split_windows(value) if value else []
+            if self.system == "macos":
+                path = self.plist_path()
+                if not path.exists():
+                    return []
+                return [str(one) for one in
+                        plistlib.loads(path.read_bytes()).get("ProgramArguments") or []]
+            path = self.desktop_path()
+            if not path.exists():
+                return []
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.startswith("Exec="):
+                    return shlex.split(line[len("Exec="):])
+        except Exception:                    # unreadable: nobody's to keep
+            return []
+        return []
+
+    def holder(self) -> str:
+        """The other copy of the program the entry starts - "" when the entry
+        is this copy's, there is none, or its program is no longer here."""
+        theirs = _program_of(self._entry())
+        if not theirs or theirs == _program_of(self.command):
+            return ""
+        return theirs if Path(theirs).exists() else ""
+
     def current(self) -> bool:
         """Whether there is an entry, and it starts what is running now."""
         if self.system == "windows":
@@ -165,7 +208,9 @@ class Autostart:
 
     def follow(self, wanted: bool) -> bool:
         """The system's entry put in line with the setting; whether anything
-        was changed."""
+        was changed. Another copy's entry is left as it is, either way."""
+        if self.holder():
+            return False
         if wanted and not self.current():
             self.set(True)
             return True
@@ -175,4 +220,29 @@ class Autostart:
         return False
 
 
-__all__ = ["Autostart", "launch_command", "ENTRY", "MAC_LABEL", "LINUX_FILE"]
+def _split_windows(value: str) -> List[str]:
+    """A Run key's command line, split as Windows does for a program path."""
+    out: List[str] = []
+    for one in shlex.split(value, posix=False):
+        out.append(one[1:-1] if len(one) >= 2 and one[0] == one[-1] == '"' else one)
+    return out
+
+
+def _program_of(command: Sequence[str]) -> str:
+    """Which copy of the program a command starts: the program itself, or -
+    run from the source - the run.py it gives Python. Compared as the system
+    compares paths."""
+    if not command:
+        return ""
+    first = str(command[0])
+    name = Path(first).name.lower()
+    if name.startswith("python") and len(command) > 1 and str(command[1]).endswith(".py"):
+        first = str(command[1])
+    try:
+        return os.path.normcase(os.path.abspath(first))
+    except (TypeError, ValueError):
+        return ""
+
+
+__all__ = ["Autostart", "launch_command", "ENTRY", "MAC_LABEL", "LINUX_FILE",
+           "HELD_BY_ANOTHER"]

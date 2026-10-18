@@ -148,9 +148,12 @@ class TheEnvironmentIsSaidTests(unittest.TestCase):
         for words in ("run logs", "where sign-ins and", "ONLY in C:/work", "WAL mode",
                       "NEW Python process", "ENDS WHEN IT ENDS", "background=true",
                       "job_status", "at most 900", "no shell", "pip run from code",
-                      "No network.", "other two ways' folders", "NATIVE LIBRARIES"):
+                      "No network.", "other folders closed to this work", "NATIVE LIBRARIES"):
             self.assertIn(words, said)
-        self.assertNotIn("other two ways", environment_rules("C:/work", "x"))
+        self.assertNotIn("closed to this work", environment_rules("C:/work", "x"))
+        # A way is never told it is one of several being compared.
+        for words in ("debugger", "variant", "other two ways", "benchmark"):
+            self.assertNotIn(words, said.lower())
         for system in (AGENT_SYSTEM, ALONE_SYSTEM):
             self.assertIn("{environment}", system)
             self.assertNotIn("{network}", system)

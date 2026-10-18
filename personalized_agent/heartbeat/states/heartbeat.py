@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import copy
 import math
 import os
 import re
@@ -72,7 +73,8 @@ from .tasks import TIE_WITHIN as _TIE_WITHIN
 from .tasks import (ARCHIVE_AFTER_DAYS, HALF_LIFE_STATES, LOOSE_KEPT_DAYS,
                     RECENT_READ,
                     REVIVE_AT, Task as _Task, fits as _fits,
-                    place as place_states, specificity as _specificity)
+                    place as place_states, specificity as _specificity,
+                    leaning as _leaning)
 from .workspace import ANCHORS_UNDER as _ANCHORS_UNDER
 from .workspace import WORDS_AGREE, WORDS_UNDER
 from .workspace import anchor as _workspace_anchor
@@ -184,6 +186,7 @@ STATES_PER_STATUS = 8
 #: every grouping without anything saying so.
 from ...agent.states.store import SOURCE_AGENT as _OBSERVED_AGENT
 from ...agent.states.store import SOURCE_USER as _OBSERVED_USER
+from ...agent.states.store import LEISURE, WORK
 
 OBSERVED = (_OBSERVED_USER, _OBSERVED_AGENT)
 
@@ -743,6 +746,11 @@ the states, which keep the form they have.
   "buried": {"title": "ONLY when concrete is false and a task is buried "
                       "here: its title, written as titles are above",
              "states": ["the NUMBERS of the shown states about it"]},
+  "not_this_work": ["the NUMBERS of the shown states that are plainly about "
+                    "something else - other work, a chat, browsing or a "
+                    "pastime on another subject - and so not this task. Only "
+                    "one clearly about something else: a state that could be "
+                    "this work stays. [] when every one belongs."],
   "reasoning": "why these belong together, in terms of what you can see",
   "evidence": ["what this rests on, named by its content - a file, a page, "
                "a paper, or the words a state used. NEVER an id."]{in_english}
@@ -807,6 +815,12 @@ Return ONLY this JSON object and nothing else:
   "changed": true or false - whether the status you were shown is now wrong,
   "why": "one sentence: what in the states that moved changed it, or why "
          "nothing did",
+  "not_this_work": ["the NUMBERS of the ARRIVED states (arrived 1, arrived "
+                    "2...) that are plainly about something else - other "
+                    "work, a chat, browsing or a pastime on another subject "
+                    "- and so not this task. Only one clearly about something "
+                    "else: a state that could be this work stays. [] when "
+                    "every one belongs."],
   "urgency": 1 to 7 - HOW SOON THIS NEEDS THE USER, not how much it
              matters. 7 a deadline inside a day or something already
              late; 6 a fixed date this week; 5 someone is waiting on it;
@@ -1308,6 +1322,14 @@ class _Node:
         # round" is measured by.
         self.updated_at = getattr(state, "updated_at", None) or self.created_at
         self.status = str(getattr(state, "status", "") or "")
+        #: The part of a day that is no piece of work, as the review that
+        #: wrote it said: never grouped into a task.
+        self.routine = str(metadata.get("kind") or "").lower() == "routine"
+        #: Done for enjoyment (True), towards something (False), or not said
+        #: - a state written before it was asked (None). Grouped only with
+        #: its own kind.
+        said = str(metadata.get("kind") or "").lower()
+        self.leisure = True if said == "leisure" else False if said == "work" else None
         self.said = _terms(" ".join([self.title, self.detail]))
         self.rests_on = _terms(" ".join(self.evidence + self.sources))
 
@@ -1606,6 +1628,26 @@ def _writer_said(writer: Any) -> str:
     return f"{model} ({provider})" if provider else model
 
 
+def _numbered_in(said: Any, shown: Sequence[str]) -> List[str]:
+    """The ids of the shown states named by NUMBER (1 for the first) - a
+    number off the list dropped, and nothing when more than half are named:
+    an answer that says most of a task is not it is no answer to act on."""
+    if not isinstance(said, list):
+        return []
+    numbers = []
+    for value in said:
+        try:
+            numbers.append(int(str(value).strip().lstrip("#").split()[-1]))
+        except (TypeError, ValueError, IndexError):
+            continue
+    picked = [shown[n - 1] for n in dict.fromkeys(numbers)
+              if 1 <= n <= len(shown) and shown[n - 1]]
+    present = [one for one in shown if one]
+    if not picked or len(picked) * 2 > len(present):
+        return []
+    return picked
+
+
 def _buried_in(said: Any, group: Dict[str, Any]) -> Dict[str, Any]:
     """The task the model named inside a group it turned down, by the ids
     of the shown states it is about - or nothing.
@@ -1898,7 +1940,8 @@ def _a_piece_as_drawn(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _marked(node: Dict[str, Any], hidden: set) -> Dict[str, Any]:
+def _marked(node: Dict[str, Any], hidden: set,
+            leisure: Optional[set] = None) -> Dict[str, Any]:
     """A drawn row, saying whether a summary thought it worth drawing.
 
     The judgement is on the stored task, not on the round's copy of it,
@@ -1909,6 +1952,8 @@ def _marked(node: Dict[str, Any], hidden: set) -> Dict[str, Any]:
     out = dict(node)
     which = str(out.get("task_id") or out.get("id") or "")
     out["hidden"] = which in hidden
+    # A task of LEISURE: the page's "work activity" leaves it out.
+    out["leisure"] = which in (leisure or set()) or bool(out.get("leisure"))
     return out
 
 
@@ -2058,6 +2103,54 @@ def _not_a_place(key: str, own: str = "") -> bool:
                 parts[3:]) in _EVERYWHERE):
             return True                     # c:/users/me, .../desktop
     return False
+
+
+#: What counts as a place, as the grouping reads it - raised whenever that
+#: changes, because it changes what a task is: the tasks are found again,
+#: once, with the new reading (`_shape`).
+PLACES_READ_AS = 2
+#: A site with this many different pages in what one round reads is where
+#: the user goes for everything - a search engine, a video site, the mail -
+#: and not where any one piece of work is.
+PAGES_OF_A_SITE_FOR_EVERYTHING = 40
+_A_DOCUMENT = re.compile(
+    r"\.(pptx?|docx?|xlsx?|pdf|py|md|txt|ipynb|tex|csv|json)\b")
+_UNDER_A_HOME = re.compile(r"^[a-z]:/|^/(home|users|mnt|volumes)(/|$)")
+
+
+def _site_of(place: str) -> str:
+    """The site a page is on, or "" for what is not a page."""
+    if "/" not in place:
+        return ""
+    host = place.split("/", 1)[0]
+    return host if "." in host else ""
+
+
+def _telling(places: Sequence[str], pages_of: Dict[str, Set[str]]) -> List[str]:
+    """ONLY THE PLACES THAT SAY WHICH WORK IT WAS.
+
+    A folder or a file on disk; a document by its name; a page two levels
+    into a site that is not visited for everything. Not a window's title,
+    an application's name, a conversation's title, a site's front page:
+    each of those turns up in every kind of work - the mail beside a
+    project, the chat beside a talk - and credited as a shared place it
+    put a day of one piece of work into another. Measured on a week of
+    labelled states, reading only these put an eighth fewer states in
+    the wrong task; more were left in no task instead, which is the
+    cheaper mistake - a state left out is not said to be other work.
+    """
+    kept: List[str] = []
+    for place in places:
+        if _UNDER_A_HOME.match(place) or _A_DOCUMENT.search(place):
+            kept.append(place)
+            continue
+        site = _site_of(place)
+        if not site:
+            continue
+        deep = len([part for part in place.split("/")[1:] if part]) >= 2
+        if deep and len(pages_of.get(site, ())) < PAGES_OF_A_SITE_FOR_EVERYTHING:
+            kept.append(place)
+    return kept
 
 
 def _utc(value: Any) -> str:
@@ -2235,6 +2328,12 @@ class StateHeartbeat:
                                      library=library, embedder=self.embedder,
                                      models=models)
         self.experience.room = self.room
+        # THE ONE POOL everything side by side takes its places in
+        # (common/pool.py) - the application's, set when it is made; its own
+        # until then.
+        from ...common.pool import Pool
+        self.pool = Pool(self.room)
+        self.experience.pool = self.pool
         # Shown is decided here: a real piece of work, with enough of it.
         self.experience.is_shown = lambda task: (
             (task.described or {}).get("concrete") is not False
@@ -3434,7 +3533,10 @@ class StateHeartbeat:
         # nothing runs and the panel SAYS it is waiting and for what;
         # above it, the first round goes at once. Once a picture exists
         # this stops applying and the hours take over.
-        enough = max(1, int(self.config.get("state_first_round_states", 100)))
+        # Twenty: a hundred kept a new installation's Overview empty for a
+        # day or two of use, and twenty is enough for a first few tasks of
+        # five (the user asked for it).
+        enough = max(1, int(self.config.get("state_first_round_states", 20)))
         if self._nothing_to_show():
             waiting = self._never_read()
             if waiting < enough:
@@ -3491,6 +3593,69 @@ class StateHeartbeat:
                 "counted": counted,
                 "why": (f"{hours:.1f} hours since the last round finished, "
                         f"and it waits {every:g}." + tail)}
+
+    def _undo_the_places_regroup(self, kept: "Kept") -> None:
+        """THE REGROUP A NEW READING OF PLACES FORCED, undone - once.
+
+        For a few hours one build recorded how places are read among the
+        settings of the tree, so starting it rebuilt every task: twelve
+        pieces of work merged into one, most states in none. Its rebuild is
+        the only one whose record carries `places_read_as`. Undone: the
+        tasks it retired are live again, with their names, summaries and
+        projects; the tasks it made are retired; and its record no longer
+        counts as the last rebuild. The states since are placed again by
+        the next rounds, as new states are."""
+        if self.config.get("state_places_regroup_undone"):
+            return
+        try:
+            rows = self.db.query(
+                "SELECT id, ran_at, lineage, shape FROM state_task_runs "
+                "WHERE scope = ? AND rebuilt = 1 ORDER BY ran_at DESC LIMIT 1", (LIVE,))
+        except Exception:        # pragma: no cover - no such table yet
+            return
+        if not rows:
+            self.config.set("state_places_regroup_undone", True, internal=True)
+            return
+        run = dict(rows[0])
+
+        def loaded(value: Any, empty: Any) -> Any:
+            try:
+                said = json.loads(value) if isinstance(value, str) else value
+            except ValueError:
+                return empty
+            return said if isinstance(said, type(empty)) else empty
+        shape = loaded(run.get("shape"), {})
+        if "places_read_as" not in shape:
+            self.config.set("state_places_regroup_undone", True, internal=True)
+            return
+        lineage = [one for one in loaded(run.get("lineage"), []) if isinstance(one, dict)]
+        made = [str(one.get("task")) for one in lineage
+                if one.get("task") and one.get("kind") in ("merged from", "split from", "new")]
+        retired_from = {str(old) for one in lineage for old in (one.get("from") or [])}
+        # And what it retired without making anything of it: retired within
+        # a minute of the run, by the run.
+        at = str(run.get("ran_at") or "")
+        try:
+            moment = datetime.fromisoformat(at)
+            lo = (moment - timedelta(minutes=2)).isoformat()
+            hi = (moment + timedelta(minutes=2)).isoformat()
+            for row in self.db.query(
+                    "SELECT id FROM state_tasks WHERE scope = ? AND retired_at >= ? "
+                    "AND retired_at <= ?", (LIVE, lo, hi)):
+                retired_from.add(str(dict(row)["id"]))
+        except ValueError:
+            pass
+        retired_from -= set(made)
+        for task_id in sorted(retired_from):
+            self.db.execute("UPDATE state_tasks SET retired_at = NULL, updated_at = ? "
+                            "WHERE id = ? AND scope = ?",
+                            (datetime.now(timezone.utc).isoformat(), task_id, LIVE))
+        if made:
+            kept.retire(made)
+        self.db.execute("UPDATE state_task_runs SET rebuilt = 0 WHERE id = ?", (run["id"],))
+        self.config.set("state_places_regroup_undone", True, internal=True)
+        log.warning("undid the regroup of %s: %d tasks live again, %d retired",
+                    at, len(retired_from), len(made))
 
     def _begin_round(self, where: _Where) -> str:
         """Draw the line this round reads up to, and say it has begun."""
@@ -3574,6 +3739,21 @@ class StateHeartbeat:
             except Exception:    # pragma: no cover - a read, not a step
                 return set()
         return set(self._answered_recently("hidden", 2.0, look) or set())
+
+    def _leisure_tasks(self) -> set:
+        """The stored tasks of LEISURE: most of their states whose kind was
+        said, said leisure (`tasks.leaning`)."""
+        def look():
+            try:
+                kinds = {row["id"]: row["kind"] for row in self.db.query(
+                    "SELECT id, json_extract(metadata, '$.kind') AS kind FROM states "
+                    "WHERE json_extract(metadata, '$.kind') IN (?, ?)", (WORK, LEISURE))}
+                said = {one: kind == LEISURE for one, kind in kinds.items()}
+                return {task.id for task in Kept(self.db, LIVE).live()
+                        if _leaning(task, said) is True}
+            except Exception:    # pragma: no cover - a read, not a step
+                return set()
+        return set(self._answered_recently("leisure", 2.0, look) or set())
 
     def _how_much_is_blank(self) -> int:
         """How many tasks and pieces have no words on them, right now."""
@@ -3709,7 +3889,7 @@ class StateHeartbeat:
         if not held.get("done") or not until:
             return []
         left = []
-        # (What the user needs to know - Customized Recommendation - is made
+        # (What the user needs to know - Newspaper - is made
         # at the times of day they chose, by its own clock: not a step here.)
         # THE LESSONS - every kind, the work's natures among them - when
         # something is new since they were last learned.
@@ -4196,6 +4376,57 @@ class StateHeartbeat:
         # yes or no - and asked several times per drawing.
         return bool(self._answered_recently("resuming", 2.0, look))
 
+    def when_next(self) -> Dict[str, Any]:
+        """Whether a round is running, when the last one finished, and when
+        the next regular one is due - which is the usual hours after the
+        last one FINISHED, whoever started it: a round run now puts the
+        next regular one off by as long."""
+        done = str(self.config.get("state_round_completed_at", "") or "")
+        every = self._every_hours()
+        due = ""
+        try:
+            if done:
+                finished = datetime.fromisoformat(done)
+                if finished.tzinfo is None:
+                    finished = finished.replace(tzinfo=timezone.utc)
+                due = (finished + timedelta(hours=every)).isoformat()
+        except ValueError:
+            due = ""
+        return {"running": bool(self._visits_in_flight.get(LIVE, 0))
+                or self._round_in_progress(),
+                "completed_at": done, "every_hours": every, "next_at": due}
+
+    def start_now(self) -> Dict[str, Any]:
+        """RUN NOW, from the Overview: a round begun at once, on a thread of
+        its own, and answered straight away - the round takes minutes, and
+        the Overview draws its progress as it goes.
+
+        ONE ROUND AT A TIME, whoever started it. While a round is going -
+        the regular one, or one run now - this does nothing and says so
+        (the user asked for exactly that); and while one run now is going,
+        the timer begins no other: its visits only carry that one on, and
+        a visit is never two at once (`_run_visit`'s lock). An unfinished
+        round the timer has given up on (`state_round_exhausted`) is not
+        "going", and this runs."""
+        going = bool(self._visits_in_flight.get(LIVE, 0)) or (
+            self._round_in_progress()
+            and not bool(self.config.get("state_round_exhausted", False)))
+        if going:
+            return dict(self.when_next(), started=False, running=True,
+                        why="A round is already running; this one was not started.")
+
+        def run() -> None:
+            from ...common.observability import started
+            try:
+                # Run with the button: its calls the user's.
+                with started.now(("state_heartbeat",)):
+                    self.run_once(trigger="manual", scope=LIVE)
+            except Exception:    # pragma: no cover - a round, not the page
+                log.warning("the round started from the Overview failed", exc_info=True)
+
+        threading.Thread(target=run, name="state-round-now", daemon=True).start()
+        return dict(self.when_next(), started=True, running=True)
+
     def _round_in_progress(self) -> bool:
         """Whether a round has begun and not finished."""
         try:
@@ -4420,6 +4651,8 @@ class StateHeartbeat:
             self._at(report, "reading the states",
                      f"the window this round covers, in {where.name}")
             kept = Kept(self.db, where.scope)
+            if where.scope == LIVE:
+                self._undo_the_places_regroup(kept)
             live = kept.live()
             # THE LINE THIS ROUND READS UP TO, drawn before the first
             # state is read and kept across an interruption. A round
@@ -4437,6 +4670,21 @@ class StateHeartbeat:
                     str(window.get("why", ""))
                     + f" {before - len(nodes)} state(s) that arrived after "
                       f"this round drew its line are left for the next one.")
+            # ROUTINE IS NOT A TASK. Meals, rest, a video, the news, a chat
+            # with a friend: grouped with everything else, they made tasks
+            # of their own and, worse, the piles they made took work in -
+            # replayed over a labelled week, most of the states put in the
+            # wrong task went into a task that was mostly routine, and
+            # with the routine left out the wrong share of work fell by a
+            # third. They are counted and left out of the grouping.
+            routine = [node for node in nodes if node.routine]
+            if routine:
+                nodes = [node for node in nodes if not node.routine]
+                report["routine"] = {
+                    "states": len(routine),
+                    "why": ("the part of a day that is no piece of work, as "
+                            "the review that wrote each one said; recorded, "
+                            "and never grouped into a task")}
             report["window"] = window
             report["states"] = [node.to_dict() for node in nodes]
             report["states_considered"] = len(nodes)
@@ -5030,6 +5278,9 @@ class StateHeartbeat:
                     if summary.get("buried") and task.profiled:
                         self._take_out_what_is_buried(
                             task, summary["buried"], kept, where, report)
+                    if summary.get("not_this_work") and task.profiled:
+                        self._take_out_other_work(task, summary["not_this_work"],
+                                                  where, report, "summary")
                 # ITS NEXT STEPS. Cleared of what the call was shown as soon
                 # as the call was answered - with a name or without one,
                 # with a list or without one - and kept whole when it never
@@ -5057,6 +5308,7 @@ class StateHeartbeat:
 
             at_once(_to_summarise(), _summarise_one, self.room,
                     going=lambda: self._going(where), landed=_land,
+                    pool=self.pool, kind="grouping",
                     told=lambda running, allowed, why: self._say_at_once(
                         report, running, allowed, why))
             report["summarising_all"] = []
@@ -5632,10 +5884,25 @@ class StateHeartbeat:
         move. A setting that appears not to work is worse than one that
         is not there.
         """
+        # NOT HOW PLACES ARE READ. That was here, and changing it rebuilt
+        # every task from the tree at the next start: on a real calendar of
+        # 2,843 states the rebuild merged twelve different pieces of work
+        # into one and left most states in none. A new reading of places
+        # applies from the next state on, as the appending rounds read
+        # them - never by regrouping what is kept.
         return {"stands_out": self._stands_out(),
                 "min_nodes": self._min_nodes(),
                 "barely_taller": BARELY_TALLER,
                 "enough_children": ENOUGH_CHILDREN}
+
+    def _reshaped(self, was: Dict[str, Any]) -> List[str]:
+        """The settings changed since the tasks were built - only those
+        both record. One the record does not have was not changed: it did
+        not exist (an upgrade adds settings; it must not regroup everyone),
+        and one the record has that is no setting now is not one either."""
+        shape = self._shape()
+        return [name for name, value in shape.items()
+                if was and name in was and was.get(name) != value]
 
     def _resummarise_after(self) -> float:
         return float(self.config.get("state_task_resummarise_after",
@@ -5688,7 +5955,7 @@ class StateHeartbeat:
         # or the setting would look broken.
         self._evidence_now = {}
         was = kept.shape_at_last_rebuild()
-        reshaped = bool(was) and was != self._shape()
+        reshaped = bool(self._reshaped(was))
         if (vectors and (live or Kept(self.db, where.scope).archived())
                 and not (reshaped and not self._resuming_a_round())):
             return self._keep_continuous(nodes, vectors, source, report,
@@ -5776,10 +6043,8 @@ class StateHeartbeat:
             # because it is about the settings rather than about the
             # states: has the way the tree is read been changed since the
             # tasks were found?
-            shape = self._shape()
             was = kept.shape_at_last_rebuild()
-            moved = [name for name, value in shape.items()
-                     if was and was.get(name) != value]
+            moved = self._reshaped(was)
             verdict["signals"].append({
                 "name": "the grouping is read differently now",
                 "value": ", ".join(moved) if moved else "nothing changed",
@@ -5824,7 +6089,8 @@ class StateHeartbeat:
             self._at(report, "looking at what fits nowhere",
                      f"{len(waiting)} states, clustered among themselves")
             self._live_for_pile = list(live)
-            became, waiting = self._tasks_from_pile(waiting, vectors, where)
+            became, waiting = self._piles_apart(
+                waiting, vectors, where, {node.id: node.leisure for node in nodes})
             if became:
                 live.extend(became)
                 verdict["rebuild"] = False
@@ -5933,6 +6199,10 @@ class StateHeartbeat:
                      "and matching them against the tasks already here")
             live, lineage = self._rebuild(nodes, merges, live, vectors,
                                           kept, where)
+            # Read off the tree, a task may hold both kinds: the smaller
+            # part, when it is a task's worth, made a task of its own.
+            live.extend(self._kinds_apart(live, {node.id: node.leisure for node in nodes},
+                                          kept, where, nodes, vectors))
         else:
             # Nothing was joined to anything. What this round scored is
             # each new state against each task's centre, which is a
@@ -6089,6 +6359,46 @@ class StateHeartbeat:
         groups = [[where[one] for one in task["states"] if one in where]
                   for task in drawn]
         return drawn, groups
+
+    def _piles_apart(self, waiting: Sequence[str], vectors: Dict[str, List[float]],
+                     where: _Where, leisure_of: Dict[str, Optional[bool]]
+                     ) -> Tuple[List[Task], List[str]]:
+        """What fits nowhere, made into tasks KIND BY KIND: the leisure among
+        itself, the rest among itself - never one task of both."""
+        enjoyed = [one for one in waiting if leisure_of.get(one) is True]
+        rest = [one for one in waiting if leisure_of.get(one) is not True]
+        made: List[Task] = []
+        left: List[str] = []
+        for group in (rest, enjoyed):
+            if not group:
+                continue
+            these, still = self._tasks_from_pile(group, vectors, where)
+            made += these
+            left += still
+        return made, left
+
+    def _kinds_apart(self, live: List[Task], leisure_of: Dict[str, Optional[bool]],
+                     kept: Kept, where: _Where, nodes: Sequence[_Node],
+                     vectors: Dict[str, List[float]]) -> List[Task]:
+        """A task holding both leisure and work, its smaller part taken out as
+        a task of its own when it is a task's worth (`_split_off`)."""
+        made: List[Task] = []
+        for task in list(live):
+            enjoyed = [one for one in task.members if leisure_of.get(one) is True]
+            worked = [one for one in task.members if leisure_of.get(one) is False]
+            if not enjoyed or not worked:
+                continue
+            smaller = enjoyed if len(enjoyed) <= len(worked) else worked
+            if len(smaller) < self._min_nodes():
+                continue
+            new = self._split_off(
+                task, smaller, kept, where,
+                {"kind": "split from", "from": [task.id],
+                 "why": "leisure and work are kept apart"},
+                nodes=nodes, vectors=vectors)
+            if new is not None:
+                made.append(new)
+        return made
 
     def _tasks_from_pile(self, waiting: Sequence[str],
                          vectors: Dict[str, List[float]],
@@ -6440,6 +6750,15 @@ class StateHeartbeat:
                     if one and one not in out and not _not_a_place(one, own):
                         out.append(one)
             places_of[node.id] = out
+        # The places that tell which work it was, and only those.
+        pages_of: Dict[str, Set[str]] = {}
+        for out in places_of.values():
+            for place in out:
+                site = _site_of(place)
+                if site:
+                    pages_of.setdefault(site, set()).add(place)
+        for node in nodes:
+            places_of[node.id] = _telling(places_of[node.id], pages_of)
             began = _utc(node.starts_at) or _utc(node.created_at) or ""
             # WHEN IT WAS LAST SEEN, not when it was expected to end. A
             # state's end is sometimes a guess at the future - "runs to
@@ -6510,6 +6829,141 @@ class StateHeartbeat:
             spread = math.sqrt(sum(w * (d - mean) ** 2
                                    for w, d in zip(weights, apart)) / total)
             task.radius, task.spread = mean, spread
+
+    #: A task smaller than this is not re-checked: one state out of five
+    #: is too little to judge the rest by.
+    RECHECK_FROM = 6
+    #: The most of the record of what was taken out kept, newest last.
+    TAKEN_OUT_KEPT = 1000
+
+    def _take_out_other_work(self, task: Task, state_ids: Sequence[str], where: _Where,
+                             report: Dict[str, Any], by: str) -> List[str]:
+        """NOT THIS WORK: states the model, summing a task up or saying where
+        it stands, said are plainly about something else - taken out to the
+        pile - which is offered to no task again, only made a task of its
+        own where enough of it is alike, so nothing bounces back. Made in the
+        call already made for the task: no call of its own.
+
+        A task smaller than RECHECK_FROM keeps them; and one that would lose
+        more than half of itself keeps them - then they may be what it is.
+        What was taken out is kept, newest last, to be read and undone."""
+        members = list(task.members)
+        out = [one for one in dict.fromkeys(state_ids) if one in members]
+        if not out or len(members) < self.RECHECK_FROM or len(out) * 2 > len(members):
+            return []
+        # OFF until measured against the user's labelled week: what the
+        # model said is only noted on the round's report, for a reader to
+        # look at, and nothing is moved.
+        if not bool(self.config.get("state_take_out_other_work", False)):
+            said = {"at": task_now(), "task": task.id, "states": list(out), "by": by}
+            report.setdefault("not_this_work_said", []).append(said)
+            # Kept, newest last, for the page to show (State heartbeat
+            # debugger): what would have been taken out, and nothing was.
+            if where.scope == LIVE:
+                kept_said = list(self.config.get("state_not_this_work_said") or [])
+                kept_said.append(said)
+                self.config.set("state_not_this_work_said", kept_said[-300:], internal=True)
+            return []
+        try:
+            nodes = [_Node(state) for state in where.states.by_ids(members)]
+            vectors, _how = self._vectors(nodes, where)
+        except Exception:
+            log.debug("could not take states out of %s", task.id, exc_info=True)
+            return []
+        places_of, when_of = self._what_and_when(nodes)
+        gone = set(out)
+        rest = [one for one in members if one not in gone]
+        if not isinstance(task.profile.get("summarised"), list):
+            task.profile["summarised"] = list(members)
+        said_apart = list(task.profile.get("not_the_same") or [])
+        task.members = rest
+        if vectors:
+            self._profile(task, places_of, when_of, vectors)
+            # Its states that could not be read stay in it, unjudged.
+            task.members = task.members + [one for one in rest
+                                           if one not in vectors and one not in task.members]
+        task.profile["not_the_same"] = said_apart
+        # Offered back to this task only in a round it gains others too.
+        kicked = [one for one in task.profile.get("kicked_out") or [] if one not in gone]
+        task.profile["kicked_out"] = (kicked + out)[-500:]
+        task.happened = {"kind": "not this work", "lost_ids": list(out), "by": by}
+        kept = Kept(self.db, where.scope)
+        kept.save([task])
+        kept.set_loose(out)
+        entry = {"at": task_now(), "task": task.id, "states": list(out), "by": by}
+        report.setdefault("not_this_work", []).append(entry)
+        if where.scope == LIVE:
+            record = list(self.config.get("state_not_this_work") or [])
+            record.append(entry)
+            self.config.set("state_not_this_work", record[-self.TAKEN_OUT_KEPT:], internal=True)
+        return out
+
+    def _recheck_members_once(self, live: List[Task], kept: Kept, where: _Where,
+                              report: Dict[str, Any]) -> None:
+        """EVERY TASK'S STATES JUDGED AGAIN, ONCE, by the rules now.
+
+        States went into tasks by rules since made stricter - reading a
+        WeChat article or the new-tab news while a robot task was the
+        nearest kept a robot task "active" for two weeks. A new rule only
+        judges new states, so each state already in a task is judged as a
+        new one would be, against the task WITHOUT it: one that would not be
+        placed there now goes to the pile, where the next rounds find it a
+        task. Nothing is merged and nothing regrouped. A task that would
+        lose more than half of itself is left as it is - then the states
+        that do not fit may be what it is. What moved is kept, to be read
+        and undone."""
+        if self.config.get("state_members_rechecked"):
+            return
+        moved: Dict[str, List[str]] = {}
+        left_alone: List[str] = []
+        specific = _specificity(live)
+        for task in live:
+            if len(task.members) < self.RECHECK_FROM:
+                continue
+            try:
+                nodes = [_Node(state) for state in where.states.by_ids(list(task.members))]
+                vectors, _how = self._vectors(nodes, where)
+            except Exception:
+                log.debug("could not re-check %s", task.id, exc_info=True)
+                continue
+            if not vectors:
+                continue
+            places_of, when_of = self._what_and_when(nodes)
+            judged = [one for one in task.members if one in vectors]
+            misfits = []
+            for one in judged:
+                probe = copy.deepcopy(task)
+                probe.members = [other for other in task.members if other != one]
+                self._profile(probe, places_of, when_of, vectors)
+                said = _fits(probe, vectors[one], places_of.get(one, ()), specific,
+                             self._accept_at())
+                if not said["fits"]:
+                    misfits.append(one)
+            if not misfits:
+                continue
+            if len(misfits) * 2 > len(judged):
+                left_alone.append(task.id)
+                continue
+            out = set(misfits)
+            rest = [one for one in task.members if one not in out]
+            unread = [one for one in rest if one not in vectors]
+            if not isinstance(task.profile.get("summarised"), list):
+                task.profile["summarised"] = list(task.members)
+            said_apart = list(task.profile.get("not_the_same") or [])
+            task.members = rest
+            self._profile(task, places_of, when_of, vectors)
+            # Its states the round could not read stay in it, unjudged.
+            task.members = task.members + [one for one in unread if one not in task.members]
+            task.profile["not_the_same"] = said_apart
+            task.happened = {"kind": "rechecked", "lost_ids": list(misfits)}
+            kept.save([task])
+            kept.set_loose(misfits)
+            moved[task.id] = list(misfits)
+        record = {"at": task_now(), "moved": moved, "left_alone": left_alone}
+        self.config.set("state_members_rechecked", record, internal=True)
+        report["rechecked"] = record
+        log.warning("re-checked the tasks' states: %d moved out of %d tasks; %d left alone",
+                    sum(len(one) for one in moved.values()), len(moved), len(left_alone))
 
     def _split_off(self, task: Task, taken: Sequence[str], kept: Kept,
                    where: _Where, born_of: Dict[str, Any],
@@ -6850,6 +7304,10 @@ class StateHeartbeat:
         self._places_now, self._when_now = places_of, when_of
         resuming = self._resuming_a_round()
         stamp = task_now()
+        # The re-check of the states already in tasks (_recheck_members_once)
+        # is NOT run: previewed read-only on the user's tasks it moved real
+        # work out with the misfits and left the task it was for alone. To
+        # be measured against the labelled week before it runs anywhere.
 
         # A TASK FROM BEFORE PROFILES is given one from the states of it
         # this round holds - which on the round that first does this is the
@@ -6926,9 +7384,43 @@ class StateHeartbeat:
         self._at(report, "putting the new states in their tasks",
                  f"{len(arrivals)} new, against {len(live)} task(s), by "
                  f"meaning and by where the work is")
-        placed = place_states(live, arrivals, vectors, places_of, when_of,
+        leisure_of = {node.id: node.leisure for node in nodes}
+        self._leisure_now = leisure_of
+        # THE PILE OFFERED AGAIN, every round, with the new states: a task
+        # that has grown may now be where one of them belongs. Offered is
+        # not taken - each goes in only where it fits as a new state would,
+        # and then the task's next status call may take it out again.
+        offered = list(arrivals)
+        if (not resuming and bool(self.config.get("state_task_reoffer_pile", False))):
+            new = set(arrivals)
+            offered += [one for one in kept.loose() if one in known and one not in new]
+            offered.sort(key=lambda one: when_of.get(one, ("", ""))[0])
+        # A STATE THE MODEL TOOK OUT OF A TASK is offered back to that task
+        # only in a round the task gains others too - then it rides on the
+        # status call made for them, and never brings a call of its own.
+        barred: Dict[str, set] = {}
+        for task in live:
+            for one in task.profile.get("kicked_out") or []:
+                barred.setdefault(str(one), set()).add(task.id)
+        placed = place_states(live, offered, vectors, places_of, when_of,
                               specific, accept_at=self._accept_at(),
-                              dormant=archive)
+                              dormant=archive, leisure_of=leisure_of, barred=barred)
+        gained = set((placed.get("placed") or {}).values())
+        again = [one for one in placed["loose"] if barred.get(one, set()) & gained]
+        if again:
+            second = place_states([task for task in live if task.id in gained], again,
+                                  vectors, places_of, when_of, specific,
+                                  accept_at=self._accept_at(), leisure_of=leisure_of)
+            for one, task_id in (second.get("placed") or {}).items():
+                placed["placed"][one] = task_id
+                task = next((each for each in live if each.id == task_id), None)
+                if task is not None:
+                    task.profile["kicked_out"] = [x for x in task.profile.get("kicked_out") or []
+                                                  if x != one]
+            taken_back = set(second.get("placed") or {})
+            placed["loose"] = [one for one in placed["loose"] if one not in taken_back]
+            placed.setdefault("evidence", {}).update(second.get("evidence") or {})
+        report["pile_offered"] = len(offered) - len(arrivals)
         self._evidence_now = dict(placed.get("evidence") or {})
         loose = list(placed["loose"])
         revived: List[Dict[str, Any]] = []
@@ -6952,7 +7444,11 @@ class StateHeartbeat:
             if not vector or not archive:
                 continue
             best = None
+            mine = leisure_of.get(state)
             for task in archive:
+                theirs = _leaning(task, leisure_of)
+                if mine is not None and theirs is not None and theirs != mine:
+                    continue
                 said = _fits(task, vector, places_of.get(state, ()), specific,
                              self._accept_at())
                 if said["fits"] and (best is None or said["rank"] > best[0]):
@@ -7020,7 +7516,7 @@ class StateHeartbeat:
             self._at(report, "looking at what fits nowhere",
                      f"{len(waiting)} states, clustered among themselves")
             self._live_for_pile = list(live) + list(archive)
-            made, waiting = self._tasks_from_pile(waiting, vectors, where)
+            made, waiting = self._piles_apart(waiting, vectors, where, leisure_of)
             for task in made:
                 # A NEW TASK MAY BE AN OLD ONE, resumed somewhere new. Five
                 # states together say more than one, so the pile's tasks
@@ -7579,6 +8075,7 @@ class StateHeartbeat:
         tasks - when it was worked on, how much, and how urgent and
         important its most pressing part is."""
         out = []
+        leisure_ids = self._leisure_tasks()
         for project in projects:
             members = [tasks[one] for one in project.tasks if one in tasks]
             if not members:
@@ -7616,6 +8113,8 @@ class StateHeartbeat:
                 # working is not a piece of work either.
                 "hidden": all((task.described or {}).get("concrete") is False
                               for task in members),
+                # Of leisure when every task in it is.
+                "leisure": all(task.id in leisure_ids for task in members),
                 "status_at": str(project.described.get("status_at") or ""),
                 "written_by": dict(project.described.get("written_by") or {}),
             })
@@ -7774,6 +8273,7 @@ class StateHeartbeat:
                     job[4], job[5], report, counted=False,
                     most=900 if job[6] is not None else 400),
                 self.room, going=lambda: self._going(where), landed=_land,
+                pool=self.pool, kind="grouping",
                 told=lambda running, allowed, why: self._say_at_once(
                     report, running, allowed, why))
         # The page reads the projects off the report; give it the new words.
@@ -9248,6 +9748,13 @@ class StateHeartbeat:
             buried = _buried_in(answered.get("buried"), group)
             if buried:
                 out["buried"] = buried
+        # NOT THIS WORK: shown states the model says are about something
+        # else - taken out of the task by `_take_out_other_work`.
+        shown = [str((one.get("member") or {}).get("id") or "")
+                 for one in group.get("sample") or []]
+        other = _numbered_in(answered.get("not_this_work"), shown)
+        if other:
+            out["not_this_work"] = other
         # The four parts, and WHICH of them this call actually sent. The
         # difference matters: a part that came back empty was left out on
         # purpose - it is kept as it was - and one that came back with
@@ -9446,6 +9953,8 @@ class StateHeartbeat:
             return
         self._spent(report, said)
         summary["status_call"] = said
+        if said.get("not_this_work") and getattr(task, "profiled", False):
+            self._take_out_other_work(task, said["not_this_work"], where, report, "status")
         if where.scope != SANDBOX:
             self._also_status(task.id)
         report.setdefault("status_calls", []).append(
@@ -9592,7 +10101,9 @@ class StateHeartbeat:
                               waiting_for="where it stands now")
         return {"asked": asked, "instruction": instruction,
                 "arrived": len(arrived), "left": len(left), "todo": shown,
-                "todo_scope": todo_scope}
+                "todo_scope": todo_scope,
+                # By their numbers, for "not_this_work".
+                "arrived_ids": [node.id for node in arrived[:STATES_PER_STATUS]]}
 
     def _status_asked(self, report: Dict[str, Any], task: Any,
                       asking: Dict[str, Any]) -> Dict[str, Any]:
@@ -9647,6 +10158,9 @@ class StateHeartbeat:
         for part in ("urgency", "importance"):
             out[part] = _a_number_between(answered.get(part), 1, 7)
         out["weighed"] = str(answered.get("weighed") or "").strip()[:300]
+        other = _numbered_in(answered.get("not_this_work"), asking.get("arrived_ids") or [])
+        if other:
+            out["not_this_work"] = other
         if out["changed"]:
             out["status"] = said[:600]
             english = _without_ids(str(answered.get("status_in_english") or "").strip())
@@ -11485,6 +11999,7 @@ class StateHeartbeat:
         # appearing to undo itself between visits.
         known = self._last_known_names()
         hidden = self._not_worth_drawing()
+        leisure = self._leisure_tasks()
 
         def trim(node: Dict[str, Any]) -> Dict[str, Any]:
             summary = node.get("summary") or {}
@@ -11568,10 +12083,10 @@ class StateHeartbeat:
             # The rows are asked instead, every row is sent, and the page
             # decides. It hides them by default and has a button to show
             # them.
-            "plan": {"nodes": [_marked(_with_last_name(one, known), hidden)
+            "plan": {"nodes": [_marked(_with_last_name(one, known), hidden, leisure)
                                for one in (plan.get("nodes") or [])],
                      "edges": list(plan.get("edges") or [])},
-            "layers": [_marked(trim(one), hidden)
+            "layers": [_marked(trim(one), hidden, leisure)
                        for one in (held.get("layers") or [])],
             # NO TITLES. Measured, not guessed: the titles of 767 states
             # are 85KB of the 190KB these rows cost, and nothing in the

@@ -2,7 +2,7 @@
   "name": "watermelon",
   "display_name": "Watermelon",
   "version": "1.0.0",
-  "author": "Personalized Agent",
+  "author": "Personal Agent WaterMelon",
   "states": [
     "idle",
     "talking",

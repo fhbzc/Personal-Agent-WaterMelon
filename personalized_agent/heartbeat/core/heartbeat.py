@@ -312,7 +312,16 @@ pages it read - not the user's own activity. Write ONE state for each run
 in the window, with "whose": "agent": its title a sentence whose subject is
 the agent ("The agent worked on ..."), its detail what it did, its materials
 those events. Nothing else is drawn from them: they are not the user's
-work, habits or nature. Every other state is "whose": "user".""",
+work, habits or nature. Every other state is "whose": "user".
+
+WORK, LEISURE OR ROUTINE. Give every state a "kind" beside its other fields.
+Anything done towards something - a project, a paper, a job, a course, an
+application, a trip being planned - is "kind": "work", however personal.
+What is done for enjoyment - films, music, shows, games, recaps, sport,
+hobbies, the news, browsing for fun, chatting with friends - is "kind":
+"leisure". The rest of a day that is neither - meals, rest, errands,
+chores - is "kind": "routine"; it stays on the calendar and is never grouped
+into a task.""",
         "returns": """{
   "state_analysis": "what the user appears to be doing and what matters now",
   "states": [
@@ -336,6 +345,7 @@ work, habits or nature. Every other state is "whose": "user".""",
      "materials": ["the event ids, from the ids lines, of what this "
                    "state's work was done with or on"],
      "reasoning": "how that evidence gets you to this state",
+     "kind": "work, leisure or routine",
      "whose": "user, or agent for the agent's own work run"}
   ]
 }""",
@@ -2638,8 +2648,9 @@ class AgentHeartbeat:
         """
         if self.states is None or not isinstance(requested, list):
             return []
-        from ...agent.states.store import (ABOUT_AGENT, ABOUT_USER, SOURCE_AGENT,
-                                           SOURCES, State, window_for)
+        from ...agent.states.store import (ABOUT_AGENT, ABOUT_USER, KINDS,
+                                           SOURCE_AGENT, SOURCES, State,
+                                           window_for)
 
         written = []
         # Numbered as they were asked for, so step 2 can say which of them
@@ -2728,6 +2739,13 @@ class AgentHeartbeat:
                     # in front of it. Script, not model.
                     ("looked_at", looked_at),
                     ("written_by", written_by),
+                    # ROUTINE, said by the review: the part of a day that
+                    # is no piece of work. It is kept out of the tasks.
+                    # Work, leisure or routine, as the review said - kept
+                    # as said, so a state from before it was asked (none)
+                    # is told apart from one said to be work.
+                    ("kind", str(entry.get("kind") or "").strip().lower()
+                     if str(entry.get("kind") or "").strip().lower() in KINDS else ""),
                     # And which run: what else that run wrote - the nature
                     # records - is found from it.
                     ("heartbeat_run", task_id)) if value},
@@ -4295,9 +4313,8 @@ class AgentHeartbeat:
                 "Say in a sentence what you are looking for and why, then "
                 "call `open_by_id` to "
                 "read anything whose id you can see - an event_, edit_, "
-                "state_, task_ or notif_ - exactly and in full. You "
-                "will be asked again with what comes back, and you can keep "
-                "asking.\n"
+                "state_, task_ or notif_ - exactly and in full. You are "
+                "asked again with what comes back.\n"
                 "\n  - If you have enough, ANSWER. Return ONLY this JSON "
                 "object and nothing else:\n" + shape["returns"])
         else:

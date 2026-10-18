@@ -96,6 +96,9 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         return {
             "values": app.config.all(),
             "schema": fields,
+            # Another copy of the program that already starts at sign-in:
+            # this one's switch cannot be saved on while it does.
+            "start_at_login_held_by": _start_held_by(),
             "choices": {
                 "providers": [p.provider_id for p in app.models.providers()],
                 "models": [
@@ -120,6 +123,13 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                              "listener_assistant_content_tools": _assistant_tool_notes(),
                              "primary_reasoning_effort": effort_notes},
         }
+
+    def _start_held_by() -> str:
+        startup = getattr(app, "autostart", None)
+        try:
+            return startup.holder() if startup is not None else ""
+        except Exception:                    # the system's own, unreadable
+            return ""
 
     def _language_label(code: str) -> str:
         from ..common.languages import label_of
@@ -217,6 +227,183 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         """Section 25, as amended: the state must be visible without digging."""
         return {"monitoring_enabled": bool(app.config.get("listener_enabled"))}
 
+    @route("GET", "/api/shortcuts")
+    def shortcuts(request: Any) -> Any:
+        """SETTINGS > SHORTCUTS: each shortcut, its keys, whether they are
+        held - and the button beside selected text."""
+        from ..platform_layer import hotkeys
+        held = getattr(app, "shortcuts", None)
+        said = held.describe() if held is not None else hotkeys.describe_without(app.config)
+        said["selection_button"] = bool(app.config.get("delegate_selection_button", True))
+        return said
+
+    @route("POST", "/api/shortcuts")
+    def shortcuts_change(request: Any) -> Any:
+        """New keys for a shortcut ("" for none), held at once - refused,
+        and the old ones kept, when they cannot be."""
+        from ..platform_layer import hotkeys
+        if request.get("selection_button") is not None:
+            app.config.set("delegate_selection_button", bool(request.get("selection_button")))
+        key = str(request.get("key") or "")
+        if key:
+            combo = str(request.get("combo") or "")
+            held = getattr(app, "shortcuts", None)
+            try:
+                if held is not None:
+                    held.change(key, combo)
+                else:
+                    if key not in hotkeys.BY_KEY:
+                        raise hotkeys.ShortcutError("no such shortcut")
+                    app.config.set(hotkeys.BY_KEY[key]["setting"],
+                                   hotkeys.parse(combo)[0] if combo else "")
+            except hotkeys.ShortcutError as exc:
+                raise ApiError(str(exc), 409)
+        return shortcuts(request)
+
+    @route("GET", "/api/record_log")
+    def record_log(request: Any) -> Any:
+        """THE RECORD LOG: the latest things recorded, from every source,
+        each with the Privacy switch that recorded it and where a password
+        or a code was hidden in it; and what the filters kept out since the
+        agent started, by which rule - never what was in it."""
+        from ..listener.core import filtered
+        try:
+            limit = max(1, min(200, int(request.get("limit") or 100)))
+        except (TypeError, ValueError):
+            limit = 100
+        events = app.raw_store.recent_events(limit=limit)
+        # WHERE SOMETHING WAS HIDDEN: the record as it was kept, with the
+        # fields that hold "[hidden]" - never what was there before, which
+        # was never stored.
+        changed = []
+        for one in app.raw_store.recent_with_hidden(50):
+            shown = _recorded(one)
+            shown["fields"] = _hidden_fields(one.to_dict())
+            shown.pop("detail", None)
+            changed.append(shown)
+        return {"events": [_recorded(one) for one in events], "changed": changed,
+                "dropped": filtered.recent(100), "dropped_counts": filtered.counts(),
+                "rules": filtered.WHY, "since": filtered.STARTED}
+
+    #: Which Privacy switch records each kind of source.
+    RECORDED_BY = {"application": "listener_application_enabled",
+                   "screen": "listener_screen_enabled",
+                   "screenshot": "listener_screenshots_enabled",
+                   "browser": "listener_browser_enabled",
+                   "filesystem": "listener_filesystem_enabled",
+                   "assistant": "listener_assistant_enabled",
+                   "integration": "listener_integrations_enabled"}
+
+    def _hidden_fields(value: Any, path: str = "") -> List[Dict[str, str]]:
+        """Each field of a kept record that holds "[hidden]", by its path
+        ("data.title"), with what it says now."""
+        out: List[Dict[str, str]] = []
+        if isinstance(value, dict):
+            for key, inner in value.items():
+                out += _hidden_fields(inner, f"{path}.{key}" if path else str(key))
+        elif isinstance(value, list):
+            for at, inner in enumerate(value):
+                out += _hidden_fields(inner, f"{path}[{at}]")
+        elif isinstance(value, str) and "[hidden]" in value:
+            # Around the first one, where the field is long.
+            first = value.index("[hidden]")
+            start = max(0, first - 200)
+            text = ("..." if start else "") + value[start:start + 600] + (
+                "..." if len(value) > start + 600 else "")
+            out.append({"field": path, "text": text})
+        return out[:10]
+
+    def _recorded(event: Any) -> Dict[str, Any]:
+        """One recorded event as the Record log shows it: a title, a line
+        of what it holds, which switch recorded it, and the whole of it."""
+        from ..common.config.schema import SCHEMA_BY_KEY
+        providers = getattr(getattr(app, "listener", None), "_providers", {}) or {}
+        provider = providers.get(event.source)
+        category = getattr(provider, "category", "") or (
+            "integration" if str(event.source).startswith("integration") else str(event.source))
+        switch = RECORDED_BY.get(category)
+        data = event.data if isinstance(event.data, dict) else {}
+
+        def first(*keys: str) -> str:
+            for key in keys:
+                value = data.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            return ""
+        title = first("title", "window_title", "url", "path", "destination_path", "project",
+                      "name") or str(event.event_type)
+        if event.application and event.application.lower() not in title.lower():
+            title = f"{event.application}: {title}"
+        about = first("text", "content", "summary", "url", "path", "source_path")
+        whole = json.dumps(event.to_dict(), ensure_ascii=False, default=str)
+        return {"id": event.id, "at": event.to_dict().get("timestamp"),
+                "source": event.source, "category": category, "type": event.event_type,
+                "by_agent": str(event.source) == "agent" or data.get("by") == "agent",
+                "switch": ({"key": switch, "label": SCHEMA_BY_KEY[switch].label}
+                           if switch in SCHEMA_BY_KEY else None),
+                "title": title[:200], "about": about[:300],
+                "hidden": whole.count("[hidden]"),
+                "detail": event.to_dict()}
+
+    @route("GET", "/api/updates")
+    def updates(_request: Any) -> Any:
+        """Which version this is, the latest release, and what is being done."""
+        return app.updater.status()
+
+    @route("POST", "/api/updates/check")
+    def updates_check(_request: Any) -> Any:
+        """Looked for at once (on the updater's own thread)."""
+        return app.updater.check_now()
+
+    @route("POST", "/api/updates/seen")
+    def updates_seen(_request: Any) -> Any:
+        """The window of what is new in this version was closed."""
+        return app.updater.seen()
+
+    @route("POST", "/api/updates/install")
+    def updates_install(request: Any) -> Any:
+        """The user's "Install this version" - one of the newer ones listed."""
+        version = str(request.get("version") or "")
+        listed = {one.get("tag") for one in app.updater.status().get("versions") or []}
+        if version and version not in listed:
+            raise ApiError("that version is not one of the newer releases", 404)
+        return app.updater.install_now(version)
+
+    @route("GET", "/api/permissions")
+    def system_permissions(_request: Any) -> Any:
+        """What the operating system must allow, beside each switch that
+        needs it - on every platform (platform_layer/permissions.py)."""
+        from ..platform_layer import permissions
+        return permissions.status(app.config)
+
+    @route("POST", "/api/permissions/open")
+    def system_permission_open(request: Any) -> Any:
+        """The place in the system's settings where one is switched on,
+        opened on the user's click; then how it stands."""
+        from ..platform_layer import permissions
+        key = str(request.require("key"))
+        if key not in permissions.catalog():
+            raise ApiError("no such permission here", 404)
+        return {"opened": permissions.open_place(key), **permissions.status(app.config)}
+
+    @route("GET", "/api/permissions/macos")
+    def macos_permissions(_request: Any) -> Any:
+        """What macOS allows the agent, of what its switches need - looked
+        at, never asked (platform_layer/macos_permissions.py)."""
+        from ..platform_layer import macos_permissions
+        return macos_permissions.status(app.config)
+
+    @route("POST", "/api/permissions/macos/open")
+    def macos_permission_open(request: Any) -> Any:
+        """The user's click: ask macOS where it lets a program ask, and open
+        the pane of System Settings where it is switched on."""
+        from ..platform_layer import macos_permissions
+        key = request.require("key")
+        if key not in macos_permissions.PANES:
+            raise ApiError("there is no such permission")
+        opened = macos_permissions.open_pane(str(key))
+        return {"opened": opened, **macos_permissions.status(app.config)}
+
     @route("GET", "/api/settings/defaults")
     def settings_defaults(_request: Any) -> Any:
         """Section 12.1: what this user has chosen, and what the program ships."""
@@ -261,6 +448,12 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             if effort not in codex.reasoning_options(model_id)["efforts"]:
                 raise ApiError(f"The selected Codex model does not take the "
                                f"reasoning effort {effort!r}")
+        if values.get("start_at_login") is True and _start_held_by():
+            # Before anything is written: the entry is another copy's.
+            from ..platform_layer.autostart import HELD_BY_ANOTHER
+            from ..version import APP_NAME
+            raise ApiError(HELD_BY_ANOTHER.format(app=APP_NAME, holder=_start_held_by()),
+                           status=409)
         applied = app.config.update(values)
         # A model belongs to a provider. Changing one without the other leaves
         # the agent asking a provider for a model it has never heard of, which
@@ -429,8 +622,10 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         """THE MODELS, IN ORDER, as the user arranged them: [{provider, model}]
         - each call goes to the first that works."""
         chain = request.get("chain")
-        if not isinstance(chain, list) or not chain:
-            raise ApiError("the list needs at least one model", 400)
+        # EMPTY IS ALLOWED: the user may remove every model, and then nothing
+        # that needs one runs until one is added.
+        if not isinstance(chain, list):
+            raise ApiError("the list of models is missing", 400)
         try:
             app.models.set_chain(chain)
         except ValueError as exc:
@@ -1004,6 +1199,40 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             raise ApiError(str(exc), 404) from exc
         return app.conversations.conversation(conversation_id)
 
+    @route("POST", "/api/conversation/rename")
+    def rename_conversation(request: Any) -> Any:
+        """The user's own name for a conversation, from the chat's list."""
+        conversation_id = request.require("id")
+        title = request.require("title")
+        if not isinstance(conversation_id, str) or not isinstance(title, str):
+            raise ApiError("a conversation's id and its name must be text")
+        if not title.strip():
+            raise ApiError("a conversation's name cannot be empty")
+        if not app.conversations.rename(conversation_id, title):
+            raise ApiError("there is no such conversation", 404)
+        return {"renamed": conversation_id, "title": title.strip()[:120]}
+
+    @route("POST", "/api/conversation/pin")
+    def pin_conversation(request: Any) -> Any:
+        """Pinned to the top of the chat's list, or unpinned."""
+        conversation_id = request.require("id")
+        if not isinstance(conversation_id, str):
+            raise ApiError("a conversation's id must be text")
+        pinned = request.get("pinned", True) is not False
+        if not app.conversations.pin(conversation_id, pinned):
+            raise ApiError("there is no such conversation", 404)
+        return {"pinned": pinned, "id": conversation_id}
+
+    @route("POST", "/api/conversation/delete")
+    def delete_conversation(request: Any) -> Any:
+        """A conversation taken off the chat's list, with everything said in it."""
+        conversation_id = request.require("id")
+        if not isinstance(conversation_id, str):
+            raise ApiError("a conversation's id must be text")
+        if not app.conversations.delete(conversation_id):
+            raise ApiError("there is no such conversation", 404)
+        return {"deleted": conversation_id}
+
     @route("GET", "/api/chat/projects")
     def chat_projects(_request: Any) -> Any:
         return {"projects": app.conversations.projects()}
@@ -1128,8 +1357,50 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             units.append(str(request.get("unit")))
         if request.get("stop"):
             return {"stopping": [one for one in units if experience.stop_learning(one)]}
+        if experience.auto_running():
+            return {"error": "Automatic learning is running - wait for it to finish",
+                    "started": []}
         return {"started": experience.learn(units),
                 "learning": {one: experience.learning_of(one) for one in units}}
+
+    @route("GET", "/api/pool")
+    def pool_status(_request: Any) -> Any:
+        """What is going side by side now, of every kind, and how many may."""
+        return app.pool.status()
+
+    @route("GET", "/api/experience/auto")
+    def experience_auto(_request: Any) -> Any:
+        """The automatic update: its times, the next one, the run going."""
+        return app.learning_clock.status()
+
+    @route("POST", "/api/experience/auto")
+    def experience_auto_set(request: Any) -> Any:
+        """Its times ({"times": "03:00, 15:00"}), or one project on or off
+        ({"unit": ..., "on": false})."""
+        clock = app.learning_clock
+        if request.get("times") is not None:
+            clock.set_times(str(request.get("times") or ""))
+        if request.get("unit"):
+            clock.set_opted(str(request.get("unit")), bool(request.get("on")))
+        return clock.status()
+
+    @route("POST", "/api/experience/remove")
+    def experience_remove(request: Any) -> Any:
+        """Remove a project, as the user confirmed on the page: what was
+        learned from it is deleted, the natures it showed kept."""
+        unit = str(request.get("unit") or "").strip()
+        if not unit:
+            return {"error": "which project?"}
+        return app.state_heartbeat.experience.remove_unit(unit)
+
+    @route("GET", "/api/experience/stage_detail")
+    def experience_stage_detail(request: Any) -> Any:
+        """One stage's natures and what it is found by - asked when its card
+        is opened, not with every picture."""
+        said = app.state_heartbeat.experience.stage_detail(str(request.require("stage")))
+        if said is None:
+            raise ApiError("no such stage", 404)
+        return said
 
     @route("GET", "/api/experience/graph")
     def experience_graph(request: Any) -> Any:
@@ -1561,7 +1832,10 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         {id, variant} - everything that one way wrote in its folder, and its
         runs, gone: its folder stays, empty, and the other two ways and the
         project as they are; clear_all {id} - the three ways cleared so, all
-        or none (not while any goes)."""
+        or none (not while any goes); new_try {id} - the next try, its own
+        folder and three ways, blind to every other try; use_try {id, try} -
+        which try is shown and started from; remove_try {id} - that try's
+        folder, everything in it, its runs and its sessions, deleted."""
         projects = _debug_projects()
         action = str(request.get("action") or "create")
         if action == "create":
@@ -1580,8 +1854,18 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                                   str(request.require("variant")))
         elif action == "clear_all":
             said = projects.clear_all(str(request.require("id")))
+        elif action == "new_try":
+            # The next try, blind to every other, and shown.
+            said = projects.new_try(str(request.require("id")))
+        elif action == "use_try":
+            said = projects.use_try(str(request.require("id")), request.require("try"))
+        elif action == "remove_try":
+            # The try shown, its folder and all in it, deleted (confirmed on
+            # the page first).
+            said = projects.remove_try(str(request.require("id")))
         else:
-            raise ApiError("action is create, update, remove, clear or clear_all", 400)
+            raise ApiError("action is create, update, remove, clear, clear_all, new_try, "
+                           "use_try or remove_try", 400)
         if said.get("error"):
             raise ApiError(said["error"], 404 if said["error"] == "no such project" else 400)
         return said
@@ -1611,7 +1895,7 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             raise ApiError("no such run", 404)
         parsed = parse_unit(run["unit_id"])
         if parsed is None:
-            raise ApiError("that run is not one of the Experience debugger's", 409)
+            raise ApiError("that run is not one of the Work debugger's", 409)
         project = str(request.get("project") or parsed[0])
         variant = str(request.get("variant") or parsed[1])
         words = str(request.get("words") or request.get("instruction") or "")
@@ -1626,9 +1910,20 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
 
     @route("GET", "/api/debugger/experience/runs")
     def debugger_experience_runs(request: Any) -> Any:
-        """One way's runs - each as /api/work/runs gives a run."""
-        return {"runs": _debug_projects().runs(str(request.require("project")),
-                                               str(request.require("variant")))}
+        """One way's runs - each as /api/work/runs gives a run - and, while
+        it waits for room to start, how it waits."""
+        project, variant = str(request.require("project")), str(request.require("variant"))
+        return {"runs": _debug_projects().runs(project, variant),
+                "waiting": _debug_projects().waiting(project, variant)}
+
+    @route("POST", "/api/debugger/experience/unwait")
+    def debugger_experience_unwait(request: Any) -> Any:
+        """A way waiting for room, not started after all."""
+        said = _debug_projects().unwait(str(request.require("project")),
+                                        str(request.require("variant")))
+        if said.get("error"):
+            raise ApiError(said["error"], 404)
+        return said
 
     @route("GET", "/api/debugger/experience/tree")
     def debugger_experience_tree(request: Any) -> Any:
@@ -1775,6 +2070,49 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     @route("GET", "/api/state_heartbeat")
     def state_heartbeat(_request: Any) -> Any:
         return app.state_heartbeat.status()
+
+    @route("GET", "/api/state_heartbeat/not_this_work")
+    def state_not_this_work(request: Any) -> Any:
+        """WHAT THE MODEL SAID IS NOT THIS WORK, newest first: each task, the
+        states it would take out, and the call that said so - and whether
+        anything was taken out (only once it is switched on)."""
+        on = bool(app.config.get("state_take_out_other_work", False))
+        said = list(app.config.get("state_not_this_work" if on
+                                   else "state_not_this_work_said") or [])[::-1][:100]
+        ids = sorted({one for entry in said for one in entry.get("states") or []}
+                     | {str(entry.get("task") or "") for entry in said})
+        titles: Dict[str, Dict[str, str]] = {}
+        try:
+            for at in range(0, len(ids), 400):
+                part = ids[at:at + 400]
+                for row in app.db.query(
+                        f"SELECT id, title, starts_at FROM states WHERE id IN "
+                        f"({','.join('?' * len(part))})", tuple(part)):
+                    titles[row["id"]] = {"title": str(row["title"] or ""),
+                                         "at": str(row["starts_at"] or "")}
+                for row in app.db.query(
+                        f"SELECT id, json_extract(described, '$.title') AS title FROM "
+                        f"state_tasks WHERE id IN ({','.join('?' * len(part))})", tuple(part)):
+                    titles[row["id"]] = {"title": str(row["title"] or ""), "at": ""}
+        except Exception:        # pragma: no cover - read what can be read
+            pass
+        return {"on": on, "said": [
+            {"at": entry.get("at"), "by": entry.get("by"),
+             "task": {"id": entry.get("task"),
+                      "title": (titles.get(str(entry.get("task"))) or {}).get("title", "")},
+             "states": [{"id": one, **titles.get(one, {"title": "", "at": ""})}
+                        for one in entry.get("states") or []]}
+            for entry in said]}
+
+    @route("GET", "/api/state_heartbeat/next")
+    def state_heartbeat_next(_request: Any) -> Any:
+        """Whether a round runs, and when the next regular one is due."""
+        return app.state_heartbeat.when_next()
+
+    @route("POST", "/api/state_heartbeat/start")
+    def state_heartbeat_start(_request: Any) -> Any:
+        """Run now, from the Overview: begun, and answered at once."""
+        return app.state_heartbeat.start_now()
 
     @route("POST", "/api/state_heartbeat/run")
     def state_heartbeat_run(request: Any) -> Any:
@@ -2502,6 +2840,35 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             if getattr(app, "chat_debugger", None) is None:
                 app.chat_debugger = ChatDebugger(app)
             return app.chat_debugger
+
+    # ---------------------------------------------------- resource debugger
+    # What the application costs the computer, as it goes: its processes'
+    # processors, memory and graphics, by what each is for, and its folders
+    # on disk (debugger/resources.py). Sampled only while its tab asks.
+    resources_made = _threading.Lock()
+
+    def _resources() -> Any:
+        from ..debugger.resources import ResourceWatch
+
+        with resources_made:
+            if getattr(app, "resource_watch", None) is None:
+                app.resource_watch = ResourceWatch(app)
+            return app.resource_watch
+
+    @route("GET", "/api/debugger/resources")
+    def resource_debugger_now(_request: Any) -> Any:
+        return _resources().now()
+
+    @route("POST", "/api/debugger/resources/disk")
+    def resource_debugger_disk(_request: Any) -> Any:
+        """The folders measured again, behind the page."""
+        return _resources().measure_disk()
+
+    @route("POST", "/api/debugger/resources/leftovers")
+    def resource_debugger_leftovers(_request: Any) -> Any:
+        """The processes an earlier run of the application left, ended -
+        each with what it started."""
+        return {"ended": app.end_leftovers()}
 
     @route("GET", "/api/debugger/chat")
     def chat_debugger_runs(_request: Any) -> Any:

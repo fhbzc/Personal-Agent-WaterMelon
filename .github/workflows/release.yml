@@ -126,15 +126,15 @@ jobs:
           take() { src=$(ls $1 2>/dev/null | head -1 || true); [ -n "$src" ] || { echo "missing: $1"; exit 1; }; cp "$src" "release/$2"; }
           case "${{ matrix.target }}" in
             windows)
-              take "$d/PersonalizedAgent-Setup*.exe"            PersonalizedAgent-Setup-windows-x64.exe
-              take "$d/PersonalizedAgent-*-windows-portable.zip" PersonalizedAgent-portable-windows-x64.zip ;;
+              take "$d/PersonalAgentWaterMelon-Setup*.exe"            PersonalAgentWaterMelon-Setup-windows-x64.exe
+              take "$d/PersonalAgentWaterMelon-*-windows-portable.zip" PersonalAgentWaterMelon-portable-windows-x64.zip ;;
             macos)
-              take "$d/Personalized-Agent.pkg" PersonalizedAgent-macos.pkg
-              take "$d/Personalized-Agent.dmg" PersonalizedAgent-macos.dmg ;;
+              take "$d/PersonalAgentWaterMelon.pkg" PersonalAgentWaterMelon-macos.pkg
+              take "$d/PersonalAgentWaterMelon.dmg" PersonalAgentWaterMelon-macos.dmg ;;
             linux)
-              take "$d/*.deb"                    PersonalizedAgent-linux-x86_64.deb
-              take "$d/*.AppImage"               PersonalizedAgent-linux-x86_64.AppImage
-              take "$d/*-linux-x86_64.tar.gz"    PersonalizedAgent-portable-linux-x86_64.tar.gz ;;
+              take "$d/*.deb"                    PersonalAgentWaterMelon-linux-x86_64.deb
+              take "$d/*.AppImage"               PersonalAgentWaterMelon-linux-x86_64.AppImage
+              take "$d/*-linux-x86_64.tar.gz"    PersonalAgentWaterMelon-portable-linux-x86_64.tar.gz ;;
           esac
           ls -l release
           # GitHub takes no release file of 2 GiB or more: stop here, not at publishing.
@@ -163,6 +163,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          sparse-checkout: docs/release-notes
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -172,16 +176,34 @@ jobs:
         run: |
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
+      # WHAT THIS VERSION CHANGES first - the README's update log entry,
+      # kept in docs/release-notes/<tag>.md, which the application's "what
+      # is new" window shows after an update - then how the downloads are
+      # made and checked.
+      - name: Release notes
+        run: |
+          notes="source/docs/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$notes" ]; then cat "$notes" > body.md; echo >> body.md; echo "---" >> body.md; echo >> body.md; fi
+          cat >> body.md <<'TEXT'
+          Downloads for every system are below. They are built without the Debugger, by this repository's
+          release workflow, from the commit this release is tagged at.
+
+          **Check a download:** compare it with `SHA256SUMS.txt`, and confirm where it was built from with
+          `gh attestation verify <file> --repo REPOSITORY`.
+
+          The builds are not code-signed: Windows SmartScreen and macOS Gatekeeper warn on first start.
+          See the README's *First start* section.
+          TEXT
+          sed -i "s#REPOSITORY#${GITHUB_REPOSITORY}#; s/^          //" body.md
+          cat body.md
+      # PUBLISHED AS A PRE-RELEASE: there to download and try, and offered
+      # by no application's updates (platform_layer/updater.py reads no
+      # pre-release) until it is made the latest by hand:
+      #   gh release edit <tag> --prerelease=false --latest
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
-          body: |
-            Downloads for every system are below. They are built without the Debugger, by this repository's
-            release workflow, from the commit this release is tagged at.
-
-            **Check a download:** compare it with `SHA256SUMS.txt`, and confirm where it was built from with
-            `gh attestation verify <file> --repo ${{ github.repository }}`.
-
-            The builds are not code-signed: Windows SmartScreen and macOS Gatekeeper warn on first start.
-            See the README's *First start* section.
+          prerelease: true
+          make_latest: false
+          body_path: body.md

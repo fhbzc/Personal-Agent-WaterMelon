@@ -1,7 +1,7 @@
 """Windows release build (sections 99, 102, 105).
 
-Produces ``dist/windows/PersonalizedAgent/PersonalizedAgent.exe`` and, when Inno
-Setup is available, ``dist/windows/PersonalizedAgent-Setup.exe`` with a Start
+Produces ``dist/windows/PersonalAgentWaterMelon/PersonalAgentWaterMelon.exe`` and,
+when Inno Setup is available, ``dist/windows/PersonalAgentWaterMelon-Setup.exe`` with a Start
 Menu entry, an icon, user-level configuration and a clean uninstall.
 
 Build releases from the build environment, not from a developer's own Python:
@@ -26,6 +26,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from build.common import (  # noqa: E402
+    FILE_NAME,
     APP_DIR_NAME,
     APP_NAME,
     PUBLISHER,
@@ -47,7 +48,7 @@ from build.common import (  # noqa: E402
 )
 
 TARGET = "windows"
-EXE_NAME = "PersonalizedAgent"
+EXE_NAME = FILE_NAME
 HERE = Path(__file__).resolve().parent
 
 VERSION_RESOURCE = """VSVersionInfo(
@@ -130,7 +131,7 @@ def build_installer() -> Path | None:
     script = HERE / "installer.iss"
     if not iscc:
         print("note: Inno Setup (iscc) not found - skipping the installer. "
-              "Install Inno Setup 6 to produce PersonalizedAgent-Setup.exe.")
+              f"Install Inno Setup 6 to produce {EXE_NAME}-Setup.exe.")
         return None
     run([
         iscc,

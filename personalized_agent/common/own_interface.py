@@ -23,6 +23,8 @@ out (section 9, as amended).
 from __future__ import annotations
 
 import re
+import socket
+import sys
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
@@ -45,6 +47,44 @@ def our_port(config: Any = None) -> int:
         return int(get("api_port", DEFAULT_PORT) or DEFAULT_PORT)
     except (TypeError, ValueError):
         return DEFAULT_PORT
+
+
+def port_holder(host: str, port: int) -> str:
+    """"" when the page can be served at host:port; otherwise who holds the
+    port, as precisely as can be told - "python.exe (process 1234)", or
+    "another program".
+
+    Asked the way the server binds (api/server.py): exclusively on Windows,
+    where a shared port would answer the agent's sign-in links from
+    somewhere else; with SO_REUSEADDR elsewhere, where it only lets the
+    agent's own last run, closing, not stand in the way.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+        if exclusive is not None:
+            probe.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        elif not sys.platform.startswith("win"):
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind((host, int(port)))
+        return ""
+    except OSError:
+        pass
+    finally:
+        probe.close()
+    try:
+        import psutil
+        for held in psutil.net_connections(kind="tcp"):
+            if (held.laddr and held.laddr.port == int(port) and held.pid
+                    and held.status == psutil.CONN_LISTEN):
+                try:
+                    name = psutil.Process(held.pid).name()
+                except Exception:
+                    name = "a program"
+                return f"{name} (process {held.pid})"
+    except Exception:                       # not allowed to look, or no psutil
+        pass
+    return "another program"
 
 
 def is_our_own_interface(url: object, port: Optional[int] = None) -> bool:

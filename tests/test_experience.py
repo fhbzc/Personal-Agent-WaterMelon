@@ -299,7 +299,7 @@ class TheWorkIsATreeOfCardsTests(_Base):
 
         self._built()
         said = Retriever(self.app.db, self.app.library, Flat()).retrieve(
-            "build the rows", seeds=5)
+            "split the rows into pieces, then built the expanding rows", seeds=5)
         # A line each: the card it was an attempt at, and its level ...
         lines = {line["summary"]: line for line in compact_experience(said)["stages"]}
         self.assertEqual(lines["built the expanding rows"]["card"], "Rows expand")
@@ -895,11 +895,39 @@ class TheRetrievalRanksByWhatAStageIsTests(_Base):
 
     def test_only_its_kind_and_the_next_in_the_loop_are_looked_at(self) -> None:
         own = self._stage("evaluation", "judged the figure")
-        near = self._stage("adjustment", "changed the figure after the verdict")
+        near = self._stage("adjustment", "changed the figure after it was judged")
         other = self._stage("goal", "judged the figure goal")
         ids, _said = self._ids({"kind": "evaluation", "text": "judged the figure"})
         self.assertEqual(ids[:2], [own["id"], near["id"]])
         self.assertNotIn(other["id"], ids)
+
+    def test_a_stage_of_a_project_like_this_one_comes_first(self) -> None:
+        """Two stages say the same; the one whose project's stages say what
+        this work's goal says - a bakery's website beside a bakery's website
+        - comes before the one from a project about something else."""
+        def stage(task, summary):
+            return self.store.add_stage({
+                "task_id": task, "kind": "execution", "medium": "code",
+                "summary": summary, "card_id": "", "states": [],
+                "began": "2026-09-01", "ended": "2026-09-01"})
+        for summary in ("bakery orders page", "bakery menu with prices",
+                        "bakery delivery slots"):
+            stage("shop", summary)
+        for summary in ("telescope mount calibration", "telescope star charts",
+                        "telescope eyepiece list"):
+            stage("stars", summary)
+        alike = stage("shop", "sign-in form with password reset")
+        other = stage("stars", "sign-in form with password reset")
+        ids, said = self._ids({"kind": "execution", "text": "sign-in form password",
+                               "goal_text": "a bakery website with orders and delivery"})
+        self.assertEqual(ids[:2], [alike["id"], other["id"]])
+        why = {one["id"]: one["why"] for one in said["matches"]}
+        self.assertTrue(any(one.startswith("a project like this one")
+                            for one in why[alike["id"]]))
+        # Without the goal, neither goes first for it.
+        ids, said = self._ids({"kind": "execution", "text": "sign-in form password"})
+        self.assertFalse(any(one.startswith("a project like this one")
+                             for match in said["matches"] for one in match["why"]))
 
     def test_the_words_count_before_the_type(self) -> None:
         words = self._stage("evaluation", "the robustness table robustness checks",
@@ -1373,7 +1401,8 @@ class AStageFindsItsNaturesDirectlyTests(_Base):
             folder=USER_NATURE, title="The user wants one idea a slide.",
             summary="x", source="experience", metadata={"nature_kind": "work"}))
         self.store.link_stage_nature(stage["id"], record.id)
-        said = self.experience.retriever().retrieve("check the slides", seeds=1)
+        # Two words in common - one is no match (retrieve.MIN_SHARED_WORDS).
+        said = self.experience.retriever().retrieve("check the slides on the projector", seeds=1)
         found = {rule["id"] for rule in said["rules"] if rule["kind"] == "nature"}
         self.assertIn(record.id, found)
 
@@ -1401,6 +1430,34 @@ class AStageCarriesItsNaturesTests(_Base):
         self.assertEqual(said[stage["id"]]["natures"][0]["kind"], "work")
         self.assertEqual(said[stage["id"]]["natures"][0]["pattern"], "Slides carry one idea")
         self.assertEqual(said[other["id"]]["natures"], [])
+
+
+class ThePictureCarriesTheStagesAloneTests(_Base):
+    """A project's picture reads no nature record - while a project is
+    learned they change, and each picture read them all again; a stage's
+    natures are asked for when its card is opened."""
+
+    def test_natures_come_with_the_card_not_the_picture(self) -> None:
+        from unittest import mock
+        from personalized_agent.data_manage.library import USER_NATURE, Record
+        stage = self.store.add_stage({"task_id": "t", "kind": "evaluation",
+                                      "summary": "tried the slides on the projector",
+                                      "states": [], "began": "1", "ended": "1"})
+        record = self.app.library.write(Record(
+            folder=USER_NATURE, title="Judges a slide by one idea on it.",
+            summary="x", source="experience", metadata={"nature_kind": "work"}))
+        self.store.link_stage_nature(stage["id"], record.id)
+        unit = {"id": "t", "kind": "task", "name": "Slides", "tasks": []}
+        with mock.patch.object(self.experience, "_shown_units", return_value=[unit]),                 mock.patch("personalized_agent.heartbeat.experience.service.nature_records",
+                           side_effect=AssertionError("read the natures")):
+            graph = self.experience.graph("t")
+        self.assertEqual([one["id"] for one in graph["stages"]], [stage["id"]])
+        self.assertNotIn("natures", graph["stages"][0])
+        said = self.experience.stage_detail(stage["id"])
+        self.assertEqual([one["title"] for one in said["natures"]],
+                         ["Judges a slide by one idea on it."])
+        self.assertIn("words", said["found_by"])
+        self.assertIsNone(self.experience.stage_detail("stage_nowhere"))
 
 
 class ARoundsStagesUseItsCutoffTests(_Base):
@@ -1999,15 +2056,15 @@ class WhatIsFoundIsWhatIsAskedAboutTests(_Base):
             {"kinds": ["evaluation", "plan"], "text": "booking payment"})
         self.assertEqual(found["matches"][0]["id"], about["id"])
 
-    def test_a_stage_seen_already_in_the_run_gives_way(self) -> None:
-        first = self._stage("tested the booking payment refunds")
-        second = self._stage("tested the booking payment receipts flow")
+    def test_a_stage_seen_already_in_the_run_keeps_its_place(self) -> None:
+        """A stage given before no longer gives way (2026-10-17): each
+        reviewer's call is new and holds none of what an earlier one was given."""
+        self._stage("tested the booking payment refunds")
+        self._stage("tested the booking payment receipts flow")
         profile = {"kind": "evaluation", "text": "booking payment"}
         ranked = [one["id"] for one in self.experience.retriever().find(profile)["matches"]]
-        top = ranked[0]
-        other = second["id"] if top == first["id"] else first["id"]
-        again = self.experience.retriever().find(dict(profile, seen=[top]))
-        self.assertEqual(again["matches"][0]["id"], other)
+        again = self.experience.retriever().find(dict(profile, seen=[ranked[0]]))
+        self.assertEqual([one["id"] for one in again["matches"]], ranked)
 
     def test_a_way_of_judging_is_found_by_its_own_words(self) -> None:
         from personalized_agent.agent.work.tools import compact_experience
@@ -2029,7 +2086,9 @@ class WhatIsFoundIsWhatIsAskedAboutTests(_Base):
         self.assertEqual([one["statement"] for one in said["rules"]["principles"]],
                          ["Judges by risk"])
 
-    def test_the_most_shown_principles_come_every_time(self) -> None:
+    def test_a_principle_comes_only_when_the_step_bears_on_it(self) -> None:
+        """The most-shown principles came with every question, whatever it
+        was about; now none comes to a step nothing of it bears on."""
         from personalized_agent.agent.work.tools import compact_experience
         nature = self._nature("Tries it by hand")
         pattern = self.store.save_pattern({"layer": "pattern", "statement": "Tries things",
@@ -2040,5 +2099,4 @@ class WhatIsFoundIsWhatIsAskedAboutTests(_Base):
                                  "nature_kind": "work"})
         said = compact_experience(self.experience.retriever().find(
             {"kind": "evaluation", "text": "astronomy telescope"}))
-        self.assertEqual([one["statement"] for one in said["rules"]["principles"]],
-                         ["Judges by use"])
+        self.assertEqual([one["statement"] for one in said["rules"].get("principles", [])], [])

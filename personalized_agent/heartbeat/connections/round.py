@@ -156,6 +156,7 @@ DO THIS - a search of their CONTACTS, in as many steps as it takes:
 
 Return ONLY this JSON object when you are done:
 {{"items": [{{"title": "short, what the user sees first",
+             "opening": "what the story begins with - a sentence, or a short paragraph of two or three: a natural link from something specific they are doing or have asked themselves - the task, the file, the talk, the question they are stuck on - to this, so they want to read on. In passing, in their terms, as a friend who knows their work would put it; never a label like Why this matters, never flattery. Empty when there is no real link",
              "detail": "one to three plain sentences",{english}
              "people": ["the ids of the people it is about"],
              "kind": "person|across",
@@ -314,7 +315,7 @@ TODAY: {today}
 
 Update the list. Return ONLY the changes, as this JSON object:
 {{"changes": [
-  {{"op": "add", "item": {{"title": "...", "detail": "...", "people": ["ids"],
+  {{"op": "add", "item": {{"title": "...", "opening": "...", "detail": "...", "people": ["ids"],
                           "kind": "person|across|web", "for": "...", "importance": 1,
                           "why": "...", "sources": ["..."]}}}},
   {{"op": "edit", "id": "an id above", "item": {{"only the fields that change": "..."}},
@@ -329,7 +330,14 @@ Update the list. Return ONLY the changes, as this JSON object:
   - Delete only with a reason - an event past, a thing done or no longer
     true, or one that no longer bears on what they are doing.
   - importance runs 1 (worth knowing) to 5 (act on it now). At most {most}
-    items in all. An empty list of changes is a good answer."""
+    items in all. An empty list of changes is a good answer.
+  - "opening" is what an item begins with - a sentence, or a short
+    paragraph of two or three: a natural link from
+    something specific they are doing - the task, the file, the talk, the
+    question they are stuck on - to this, so they want to read on. In
+    passing, in their terms, as a friend who knows their work would put it;
+    never a label like "Why this matters", never flattery. Empty when there
+    is no real link."""
 
 #: The most items the list keeps.
 MOST_KNOW = 20
@@ -360,6 +368,7 @@ know - their contacts are searched at the same time, apart.
 
 Return ONLY this JSON object - an empty list when nothing is worth it:
 {{"items": [{{"title": "short, what the user sees first",
+             "opening": "what the story begins with - a sentence, or a short paragraph of two or three: a natural link from something specific they are doing or have asked themselves - the task, the file, the talk, the question they are stuck on - to this, so they want to read on. In passing, in their terms, as a friend who knows their work would put it; never a label like Why this matters, never flattery. Empty when there is no real link",
              "detail": "one to three plain sentences",{english}
              "for": "the task, project or activity it serves",
              "importance": 1,
@@ -677,7 +686,7 @@ class ConnectionsRound:
         user did, read and watched for it, not its heading - for what they
         have not seen: mostly close, a few broad; each story with its gain,
         why it is there and what in it is new to them."""
-        from .recommend import (BROAD_PER_PAGE, PAGE_PLAN, PER_TOPIC, TOPIC_SYSTEM,
+        from .recommend import (BROAD_PER_PAGE, LEISURE_PAGE, PAGE_PLAN, PER_TOPIC, TOPIC_SYSTEM,
                                 known_points)
 
         def handle(name: str, args: Dict[str, Any]) -> Any:
@@ -700,6 +709,7 @@ class ConnectionsRound:
             try:
                 answer = self._loop([{"role": "user", "content": PAGE_PLAN.format(
                     subjects=about,
+                    purpose=LEISURE_PAGE if page.get("leisure") else "",
                     detail="\n".join(f"- {line}" for line in page["detail"])
                     or "Nothing written down yet.",
                     known="\n".join(f"- {one}" for one in known[:10]) or "Nothing in particular.",
@@ -1242,8 +1252,8 @@ class ConnectionsRound:
             return items, [{"op": "add", "id": one["id"], "title": one["title"],
                             "why": "the round's model budget was used up"}
                            for one in items[len(current):]]
-        shown = [{key: one.get(key) for key in ("id", "title", "detail", "people", "names",
-                                                "kind", "for", "importance", "why",
+        shown = [{key: one.get(key) for key in ("id", "title", "opening", "detail", "people",
+                                                "names", "kind", "for", "importance", "why",
                                                 "sources", "added_at")} for one in current]
         response = self._ask([{"role": "user", "content": UPDATE.format(
             current=json.dumps(shown, ensure_ascii=False, default=str)[:30000],
@@ -1310,6 +1320,10 @@ class ConnectionsRound:
                         "for": str(one.get("for") or "general")[:160],
                         "importance": importance,
                         "why": str(one.get("why") or "")[:600],
+                        # How the story begins: the link to the user's own
+                        # work, said in passing rather than labelled.
+                        **({"opening": str(one["opening"]).strip()[:700]}
+                           if str(one.get("opening") or "").strip() else {}),
                         "sources": [str(s)[:300] for s in one.get("sources") or []][:8],
                         **({"image_url": str(one["image_url"])[:500]}
                            if str(one.get("image_url") or "").startswith("http") else {}),

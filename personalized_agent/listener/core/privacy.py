@@ -240,19 +240,24 @@ class PrivacyFilter:
 
     # -- event level --------------------------------------------------------
     def allows(self, event: ListenerEvent, category: str) -> bool:
+        return self.refusal(event, category) is None
+
+    def refusal(self, event: ListenerEvent, category: str) -> Optional[str]:
+        """Which rule keeps this event out (a key of `filtered.WHY`), or None
+        when it is kept - so the Record log can say which rule it was."""
         if not self.category_enabled(category):
-            return False
+            return "switch_off"
         if not self.application_allowed(event.application):
-            return False
+            return "application_list"
         data: Dict[str, Any] = event.data or {}
         if not self.website_allowed(data.get("url")):
-            return False
+            return "website_list"
         # Section 19, as amended: a file event is the user's only if the user
         # was there. Applied to files alone - a page visited or a window
         # brought to the front is already somebody doing something.
         if str(event.event_type).startswith("filesystem."):
             if not self.someone_is_here():
-                return False
+                return "not_here"
             # And whose doing it was, asked where there is a path to ask about.
             if bool(self.config.get("listener_only_what_the_user_did", True)):
                 where = (data.get("path") or data.get("destination_path")
@@ -263,7 +268,7 @@ class PrivacyFilter:
                     except (AttributeError, ValueError, OSError):  # pragma: no cover
                         when = time.time()
                     if not self.the_user_did_this(where, data, when):
-                        return False
+                        return "not_yours"
         for key in ("path", "source_path", "destination_path"):
             if key in data:
                 # The agent writing its own memory is not the user doing
@@ -272,12 +277,12 @@ class PrivacyFilter:
                 # and downloads the user keeps there, and those are exactly
                 # the activity worth seeing.
                 if was_written_by_agent(data.get(key)):
-                    return False
+                    return "agents_own"
                 if not self.path_allowed(data.get(key)):
-                    return False
+                    return "excluded_folder"
                 if not self.file_name_allowed(data.get(key)):
-                    return False
-        return True
+                    return "ignored_name"
+        return None
 
     def describe(self) -> Dict[str, Any]:
         return {

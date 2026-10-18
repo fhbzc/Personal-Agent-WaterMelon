@@ -96,6 +96,16 @@ class ResolvedModel:
         }
 
 
+#: CLIENTS THAT READ BY THEMSELVES, WHERE NOTHING CONFINES THEM. Codex runs
+#: its own commands in its own sandbox, which keeps it from writing and NOT
+#: from reading - so the folders a run may not read (another way's, another
+#: try's) are open to it. Claude Code is told every place it may not read
+#: (`ModelRequest.native_read`); a model reached by its API reads nothing
+#: but what it is sent. Until Codex runs inside the run's own isolation, a
+#: call whose reading must stay sealed is not given to it.
+READS_UNCONFINED = frozenset({"codex"})
+
+
 class ModelUnavailable(Exception):
     def __init__(self, resolved: ResolvedModel, availability: ModelAvailability) -> None:
         super().__init__(f"{resolved.label}: {availability.reason or availability.state.value}")
@@ -244,6 +254,8 @@ class ModelManager:
                 out.append(ResolvedModel(role, provider_id, model_id, False))
         if out:
             return out
+        if self.config.get("model_chain_emptied"):
+            return []
         out = [self._primary(role)]
         fallback = self._fallback(role)
         # Kept as it was set, the same model too: asked afresh, by its own check.
@@ -275,6 +287,9 @@ class ModelManager:
                 entry["effort"] = effort
             kept.append(entry)
         self.config.set("model_chain", kept)
+        # EMPTIED BY THE USER, and so empty: not the models from before the
+        # list (`chain`), which would come back as if never removed.
+        self.config.set("model_chain_emptied", not kept, internal=True)
         if kept:
             self.config.set("primary_provider", kept[0]["provider"])
             self.config.set("primary_model", kept[0]["model"])
@@ -320,7 +335,10 @@ class ModelManager:
             parsed = self._parse_override(self.config.get(override_key, ""))
             if parsed:
                 return ResolvedModel(role, parsed[0], parsed[1], True)
-        return self.chain(role)[0]
+        chain = self.chain(role)
+        # With the list emptied, what there was before it - only to be named:
+        # `invoke` asks none.
+        return chain[0] if chain else self._primary(role)
 
     def _primary(self, role: str = "primary") -> ResolvedModel:
         primary_provider = str(self.config.get("primary_provider"))
@@ -544,6 +562,28 @@ class ModelManager:
         failure is raised: it is the one the user put first."""
         resolved = self.resolve(role)
         candidates = [resolved] if resolved.is_override else self.chain(role)
+        if not candidates:
+            raise ModelUnavailable(resolved, ModelAvailability(
+                False, AvailabilityState.MODEL_UNAVAILABLE,
+                reason="there is no model on your list - add one in Settings > General > Models",
+                failure_class=FailureClass.USER_ACTION_REQUIRED))
+        if getattr(request, "sealed_reading", False):
+            confined = [one for one in candidates
+                        if one.provider_id not in READS_UNCONFINED]
+            if not confined:
+                raise ModelUnavailable(candidates[0], ModelAvailability(
+                    False, AvailabilityState.PERMISSION_DENIED,
+                    reason=("this run's folders are kept apart from one another, and "
+                            f"{candidates[0].label} reads by itself where nothing keeps "
+                            "it out - put Claude Code or a model reached by its API on "
+                            "your list of models (Settings > General) for this run"),
+                    failure_class=FailureClass.USER_ACTION_REQUIRED))
+            if len(confined) != len(candidates):
+                request.emit_debug("model_resolution", {
+                    "role": role, "requested": candidates[0].to_dict(),
+                    "chosen": confined[0].to_dict(), "fallback_used": True,
+                    "decision": "passed over: it reads where this run may not"})
+            candidates = confined
         first: Optional[ModelUnavailable] = None
         for at, one in enumerate(candidates):
             last = at == len(candidates) - 1

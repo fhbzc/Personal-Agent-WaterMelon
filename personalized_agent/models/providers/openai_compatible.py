@@ -42,6 +42,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+from ...version import APP_NAME
 from ..base import (
     AuthMethod,
     AuthStatus,
@@ -226,7 +227,7 @@ class OpenAICompatibleProvider(ModelProvider):
             headers["Content-Type"] = "application/json"
         if self.provider_id == "openrouter":
             # OpenRouter's own attribution headers: optional, and harmless.
-            headers["X-Title"] = "Personalized Agent"
+            headers["X-Title"] = APP_NAME
         call = urllib.request.Request(base + path, data=data, headers=headers, method=method)
         try:
             with urllib.request.urlopen(call, timeout=timeout) as response:

@@ -62,7 +62,11 @@ def environment() -> dict:
     existing = os.environ.get("PYTHONPATH", "")
     path = os.pathsep.join([str(TESTS), str(REPO_ROOT)] +
                            ([existing] if existing else []))
-    return dict(os.environ, PERSONALIZED_AGENT_NO_KEYRING="1", PYTHONPATH=path)
+    # No keychain, no sound and no dialog on the machine running them -
+    # tests/support.py says the same, and this reaches those that do not
+    # import it.
+    return dict(os.environ, PERSONALIZED_AGENT_NO_KEYRING="1", PA_NO_SOUND="1",
+                PA_NO_DIALOGS="1", PYTHONPATH=path)
 
 
 def test_files(patterns: List[str]) -> List[Path]:
@@ -168,6 +172,15 @@ def items(classes: Dict[str, List[str]]) -> List[Tuple[float, List[str]]]:
     return out
 
 
+def below_normal() -> Dict[str, object]:
+    """How a test process is started: a step below the programs in use, so
+    a full run never makes the computer - or the application being worked
+    in - slow to answer. With nothing else wanting it, it has it all."""
+    if sys.platform.startswith("win"):
+        return {"creationflags": 0x00004000}         # BELOW_NORMAL_PRIORITY_CLASS
+    return {"preexec_fn": lambda: os.nice(5)}
+
+
 def run_item(names: List[str], name_filter: Optional[str]) -> Tuple[int, str, float, int, Dict[str, float]]:
     with tempfile.TemporaryDirectory(prefix="pa-times-") as work:
         times_file = Path(work) / "times.json"
@@ -176,7 +189,8 @@ def run_item(names: List[str], name_filter: Optional[str]) -> Tuple[int, str, fl
             command += ["-k", name_filter]
         started = time.time()
         completed = subprocess.run(command, capture_output=True, text=True,
-                                   cwd=str(REPO_ROOT), env=environment())
+                                   cwd=str(REPO_ROOT), env=environment(),
+                                   **below_normal())
         try:
             said = json.loads(times_file.read_text(encoding="utf-8"))
         except (OSError, ValueError):

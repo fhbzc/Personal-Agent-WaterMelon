@@ -142,6 +142,9 @@ class _Fake:
         self.on = wanted
         return True
 
+    def holder(self):
+        return ""
+
     def where(self):
         return "a test's"
 
@@ -195,6 +198,119 @@ class ChangedInSettingsTests(unittest.TestCase):
 
         build_routes(self.app)[("POST", "/api/settings")](_Req())
         self.assertFalse(self.app.autostart.on)
+
+
+class AnotherCopysEntryTests(unittest.TestCase):
+    """One entry for every copy of the program. One still on this machine
+    keeps it: not overwritten, not removed, and turning it on here refused.
+    One whose program is gone is nobody's."""
+
+    def setUp(self) -> None:
+        self.dir = Path(tempfile.mkdtemp())
+        self.other = self.dir / "Other" / "PersonalizedAgent.exe"
+        self.other.parent.mkdir()
+        self.other.write_bytes(b"")
+        self.registry = _Registry()
+        self.registry.value = f'"{self.other}"'
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _here(self):
+        return Autostart(COMMAND, system="win32", registry=self.registry)
+
+    def test_it_is_neither_taken_nor_taken_away(self) -> None:
+        it = self._here()
+        self.assertEqual(Path(it.holder()), self.other)
+        self.assertFalse(it.follow(True))
+        self.assertFalse(it.follow(False))
+        self.assertEqual(self.registry.value, f'"{self.other}"')
+
+    def test_a_copy_run_from_the_source_holds_it_too(self) -> None:
+        script = self.dir / "checkout" / "run.py"
+        script.parent.mkdir()
+        script.write_text("", encoding="utf-8")
+        self.registry.value = f'"C:\\Python312\\pythonw.exe" "{script}" --headless'
+        self.assertEqual(Path(self._here().holder()), script)
+
+    def test_this_copys_own_entry_is_its_own(self) -> None:
+        it = Autostart([str(self.other), "--headless"], system="win32", registry=self.registry)
+        self.assertEqual(it.holder(), "")
+        self.assertTrue(it.follow(True), "its own entry, written as it now runs")
+
+    def test_an_entry_whose_program_is_gone_is_taken(self) -> None:
+        self.other.unlink()
+        it = self._here()
+        self.assertEqual(it.holder(), "")
+        self.assertTrue(it.follow(True))
+        self.assertIn("Program Files", self.registry.value)
+
+    def test_the_installers_tick_is_refused_and_untick_takes_nothing(self) -> None:
+        import contextlib
+        import io
+        from personalized_agent.__main__ import main
+
+        real = startup.Autostart
+        registry = self.registry
+        startup.Autostart = lambda command, *a, **k: real(COMMAND, system="win32",
+                                                          registry=registry)
+        root = self.dir / "root"
+        said = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(said):
+                self.assertEqual(main(["--autostart", "on", "--root", str(root)]), 6)
+            self.assertIn("already starts when you sign in", said.getvalue())
+            self.assertEqual(main(["--autostart", "off", "--root", str(root)]), 0)
+        finally:
+            startup.Autostart = real
+        self.assertEqual(self.registry.value, f'"{self.other}"', "the other copy's, untouched")
+
+
+class RefusedInSettingsTests(unittest.TestCase):
+
+    def setUp(self) -> None:
+        self.agent = TemporaryAgent()
+        self.app = self.agent.app
+
+    def tearDown(self) -> None:
+        self.agent.cleanup()
+
+    def test_it_cannot_be_saved_on_while_another_copy_holds_it(self) -> None:
+        from personalized_agent.api.errors import ApiError
+        from personalized_agent.api.routes import build_routes
+
+        class _Held(_Fake):
+            def holder(self):
+                return r"D:\Elsewhere\PersonalizedAgent.exe"
+
+        self.app.autostart = _Held(COMMAND)
+        self.app.config.set("start_at_login", False)
+        routes = build_routes(self.app)
+        self.assertEqual(routes[("GET", "/api/settings")](None)["start_at_login_held_by"],
+                         r"D:\Elsewhere\PersonalizedAgent.exe")
+
+        class _Req:
+            body = {"values": {"start_at_login": True}}
+
+        with self.assertRaises(ApiError) as refused:
+            routes[("POST", "/api/settings")](_Req())
+        self.assertEqual(refused.exception.status, 409)
+        self.assertIn("already starts when you sign in", str(refused.exception))
+        self.assertFalse(self.app.config.get("start_at_login"), "nothing was written")
+
+
+class TheInstallerAsksFirstTests(unittest.TestCase):
+    """The installer's own side, read from its script: the last page refuses a
+    tick another copy holds, in every language it speaks."""
+
+    def test_its_last_page_and_its_words(self) -> None:
+        text = (Path(__file__).resolve().parents[1] / "build" / "windows"
+                / "installer.iss").read_text(encoding="utf-8-sig")
+        self.assertIn("function AutostartHolder", text)
+        self.assertIn("CustomMessage('StartAtLoginTaken')", text)
+        from personalized_agent.common.languages import DISPLAY_CODES
+        for code in DISPLAY_CODES:
+            self.assertIn(f"\n{code}.StartAtLoginTaken=", text)
 
 
 if __name__ == "__main__":

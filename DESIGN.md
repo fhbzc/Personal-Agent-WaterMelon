@@ -41,7 +41,7 @@ flowchart TB
     end
 
     subgraph L5["⑤ Reading · each morning"]
-        R1[Customized Recommendation] --> R2[(an issue,<br/>a page per task)]
+        R1[Newspaper] --> R2[(an issue,<br/>a page per task)]
     end
 
     subgraph L6["⑥ Work · when you hand it over"]
@@ -71,7 +71,7 @@ The names are **duties, not modules**; the second column is what to grep for.
 | **② Reflection** | `heartbeat/core/`: the **agent heartbeat** | every 900 s | states, people, notifications, ticks on task next steps |
 | **③ Grouping** | `heartbeat/states/`: the **state heartbeat** | every 12 h, and after a round left work | tasks, projects, English copies, lessons |
 | **④ Action** | `scheduler/` | every 60 s | the notifications that fall due |
-| **⑤ Reading** | `heartbeat/reading/`, `heartbeat/connections/recommend.py` | its own clock, 08:00 by default | the reading log, topics, a Customized Recommendation issue |
+| **⑤ Reading** | `heartbeat/reading/`, `heartbeat/connections/recommend.py` | its own clock, 08:00 by default | the reading log, topics, a Newspaper issue |
 | **⑥ Work** | `agent/work/` | only you | whatever the work makes, in its folder, with a README |
 
 The agent heartbeat's steps are fixed and read-only: **states** (what you
@@ -285,7 +285,7 @@ no cookies, and never a message to anyone. The third is you: adding, editing,
 merging and deleting. Your own profile is protected: what the agent finds
 about you goes to an inbox for you to accept or dismiss.
 
-**Customized Recommendation**: a newspaper made for you each morning. What
+**Newspaper**: a newspaper made for you each morning. What
 you read (pages, how long each was in front, the words on screen) becomes a
 **reading log** of topics. Each current task, project and topic gets a page,
 searched on the public web *from its detail*, never from its heading. Stories

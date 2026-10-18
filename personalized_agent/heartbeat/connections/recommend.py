@@ -38,7 +38,7 @@ import json
 import math
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ..reading.topics import cosine, decayed
 
@@ -86,6 +86,28 @@ INTEREST_DAYS = 2
 INTEREST_DAYS_SECONDS = 60
 INTEREST_SECONDS = 600
 INTEREST_PIECES = 3
+#: LEISURE IS AN INTEREST ONLY WHEN IT LASTS. Work read for ten minutes is
+#: worth following; one film recap watched for seventeen minutes made a page
+#: of an actor's next film. A topic the user reads or watches for pleasure
+#: (most of its pieces said "leisure") is an interest when it came back on
+#: `LEISURE_DAYS` different days at least `LEISURE_SPAN_DAYS` apart from first
+#: to last, within `LEISURE_DAYS_BACK` - and something of it lately.
+LEISURE_DAYS = 3
+LEISURE_SPAN_DAYS = 7
+LEISURE_DAYS_BACK = 30
+
+#: What a page of something enjoyed is told: more of the pleasure, not
+#: lessons in it. Watching a great deal of piano is liking piano, not
+#: wanting to learn it.
+LEISURE_PAGE = """
+THEY ENJOY THIS AS A PASTIME - not work, and not something they are setting
+out to learn. Recommend more of what they enjoy, in the form they enjoy it:
+someone who listens to piano gets pieces, performances, recordings and
+concerts - not lessons, technique, gear or news about the trade - unless
+what they watched was itself lessons. Someone who watches film recaps gets
+films and shows of the kind they watched, not the industry or an actor's
+career.
+"""
 #: What was looked up to get one thing done - how to fix an error, an
 #: assistant's help with a problem (reading/log.py) - is not an interest:
 #: the problem was the user's, the subject was not.
@@ -111,7 +133,7 @@ says where it came from."""
 
 PAGE_PLAN = """A PAGE OF THEIR NEWSPAPER. It is about:
 {subjects}
-
+{purpose}
 WHAT THEY ACTUALLY DID, READ AND WATCHED FOR IT - the detail, newest first.
 Your searches come from THIS, not from the headings above: the specific
 names, works, people, places, methods, tools, the exact kind of thing they
@@ -155,6 +177,7 @@ Return ONLY this JSON object - at most {most} stories, an empty list when
 nothing is worth it:
 {{"heading": "the page's name, two to four words",
   "items": [{{"title": "short, what the user sees first",
+             "opening": "what the story begins with - a sentence, or a short paragraph of two or three: a natural link from what they did, read or watched above - the very thing, by name - to this, so they want to read on. In passing, as a friend who knows them would put it; never a label like Why this matters, never flattery. Empty when there is no real link",
              "detail": "one to three plain sentences: what it says",{english}
              "relation": "close or broad",
              "because": "which of the things above it follows from, in a few words",
@@ -208,6 +231,25 @@ def _loads(text: Any, default: Any) -> Any:
     return value if value is not None else default
 
 
+def _task_leisure(db: Any, members: List[str], since: str) -> Tuple[bool, List[str]]:
+    """Whether a task is one of LEISURE - most of its states whose kind was
+    said, said leisure (heartbeat/core: work, leisure or routine) - and the
+    days it was done on lately, for the rule a pastime is judged by."""
+    kinds: List[str] = []
+    days: List[str] = []
+    for at in range(0, len(members), 400):
+        part = members[at:at + 400]
+        for row in db.query(f"SELECT starts_at, metadata FROM states WHERE id IN "
+                            f"({','.join('?' * len(part))})", tuple(part)):
+            kind = str(_loads(row["metadata"], {}).get("kind") or "")
+            if kind in ("work", "leisure"):
+                kinds.append(kind)
+            if str(row["starts_at"] or "") >= since:
+                days.append(str(row["starts_at"]))
+    leisure = bool(kinds) and kinds.count("leisure") * 2 > len(kinds)
+    return leisure, days
+
+
 def _states_of(db: Any, members: List[str], most: int) -> List[Dict[str, Any]]:
     """A task's latest states - a few hundred ids at a time."""
     rows: List[Dict[str, Any]] = []
@@ -250,12 +292,20 @@ def subjects(db: Any, now: Optional[datetime] = None,
         for task_id in _loads(row["tasks"], []):
             project_of.setdefault(str(task_id), dict(row))
     grouped: Dict[str, Dict[str, Any]] = {}
+    back = (now - timedelta(days=LEISURE_DAYS_BACK)).isoformat()
     for row in tasks:
         said = _loads(row["described"], {})
-        # What a summary judged not to be a task - watching videos between
-        # things, keeping up with chats - is not a page: what was watched
-        # and read in it comes in as the reading log's topics.
-        if not isinstance(said, dict) or not said.get("title") or said.get("concrete") is False:
+        if not isinstance(said, dict) or not said.get("title"):
+            continue
+        members = [str(one) for one in _loads(row["members"], [])]
+        pleasure, days = _task_leisure(db, members, back)
+        # What a summary judged not to be a task - keeping up with chats
+        # between things - is not a page. But a task of LEISURE is, by its
+        # own rule: watching films was judged "not a task", and every
+        # recommendation that followed from it was lost.
+        if said.get("concrete") is False and not pleasure:
+            continue
+        if pleasure and not lasting_interest([{"last_at": one} for one in days]):
             continue
         states = _states_of(db, [str(one) for one in _loads(row["members"], [])], MOST_DETAIL)
         last = str((states[0] if states else {}).get("starts_at") or "")
@@ -290,11 +340,13 @@ def subjects(db: Any, now: Optional[datetime] = None,
         if mine is None:
             mine = grouped[key] = {
                 "key": key, "kind": "work", "weight": weight, "last_at": last, "detail": [],
-                "measured": [],
+                "measured": [], "leisure": pleasure,
                 "title": str(project["name"]) if project else str(said["title"]),
                 "text": _project_english(project) if project else measured[0],
                 "tasks": []}
         mine["tasks"].append(str(said["title"]))
+        # A project is one of leisure only when every task of it is.
+        mine["leisure"] = bool(mine["leisure"]) and pleasure
         mine["detail"] += lines
         mine["measured"] += measured
         mine["weight"] = max(mine["weight"], weight)
@@ -307,12 +359,18 @@ def subjects(db: Any, now: Optional[datetime] = None,
         topics = db.query("SELECT id, label, centre FROM reading_topics")
     except Exception:
         topics = []
+    back = (now - timedelta(days=LEISURE_DAYS_BACK)).isoformat()
     for topic in topics:
-        pieces = [dict(row) for row in db.query(
-            "SELECT title, summary, points, engagement, last_at, vector, seconds, kind "
-            "FROM reading_pieces WHERE topic_id = ? AND last_at >= ? AND seconds >= ?",
-            (topic["id"], since, SEEN_SECONDS)) if row["kind"] not in NOT_INTERESTS]
-        if not interest(pieces):
+        # A month of it, for the leisure rule; the last days, for the rest.
+        lasting = [dict(row) for row in db.query(
+            "SELECT title, summary, points, engagement, last_at, vector, seconds, kind, "
+            "purpose FROM reading_pieces WHERE topic_id = ? AND last_at >= ? AND seconds >= ?",
+            (topic["id"], min(back, since), SEEN_SECONDS)) if row["kind"] not in NOT_INTERESTS]
+        pieces = [row for row in lasting if str(row["last_at"]) >= since]
+        if not pieces:
+            continue
+        pleasure = leisure(lasting)
+        if not (lasting_interest(lasting) if pleasure else interest(pieces)):
             continue
         pieces.sort(key=lambda row: -decayed(row["engagement"], row["last_at"], now))
         lines = []
@@ -322,6 +380,7 @@ def subjects(db: Any, now: Optional[datetime] = None,
                          f"{str(row['summary'] or '')[:300]}"
                          + (f" ({'; '.join(points)})" if points else ""))
         out.append({"key": f"topic:{topic['id']}", "kind": "interest", "topic_id": topic["id"],
+                    "leisure": pleasure,
                     "title": str(topic["label"]), "detail": lines,
                     "weight": round(sum(decayed(row["engagement"], row["last_at"], now)
                                         for row in pieces), 4),
@@ -330,6 +389,28 @@ def subjects(db: Any, now: Optional[datetime] = None,
                     "anchors": [_loads(row["vector"], []) for row in pieces
                                 if row.get("vector")][:MOST_DETAIL * 2]})
     return out
+
+
+def leisure(pieces: Sequence[Dict[str, Any]]) -> bool:
+    """Whether a topic is read or watched for pleasure: most of the pieces
+    whose purpose was said, said leisure. Unsaid (read before it was asked)
+    counts for neither."""
+    said = [str(one.get("purpose") or "") for one in pieces]
+    said = [one for one in said if one in ("work", "leisure")]
+    return bool(said) and said.count("leisure") * 2 > len(said)
+
+
+def lasting_interest(pieces: Sequence[Dict[str, Any]]) -> bool:
+    """A pleasure that lasts (`LEISURE_DAYS`, above): on enough different
+    days, far enough apart."""
+    days = sorted({str(one.get("last_at") or "")[:10] for one in pieces if one.get("last_at")})
+    if len(days) < LEISURE_DAYS:
+        return False
+    try:
+        span = (datetime.fromisoformat(days[-1]) - datetime.fromisoformat(days[0])).days
+    except ValueError:
+        return False
+    return span >= LEISURE_SPAN_DAYS
 
 
 def interest(pieces: Sequence[Dict[str, Any]]) -> bool:
@@ -407,6 +488,11 @@ def plan_pages(found: List[Dict[str, Any]], embed: Optional[Callable[[List[str]]
                 closeness = cosine(pages[i]["vector"], pages[j]["vector"])
                 if pages[i]["subjects"][0]["kind"] == pages[j]["subjects"][0]["kind"]:
                     closeness += 0.1
+                # Something enjoyed and a piece of work share a page last of
+                # all: a page is told one or the other.
+                if bool(pages[i]["subjects"][0].get("leisure")) != bool(
+                        pages[j]["subjects"][0].get("leisure")):
+                    closeness -= 1.0
                 if closeness > best:
                     best, pair = closeness, (i, j)
         i, j = pair
@@ -427,6 +513,8 @@ def plan_pages(found: List[Dict[str, Any]], embed: Optional[Callable[[List[str]]
                     else "page:" + "+".join(sorted(one["key"] for one in members)),
                     "title": " · ".join(one["title"] for one in members[:2]),
                     "kind": members[0]["kind"],
+                    # Enjoyed, not worked at: every subject on it.
+                    "leisure": all(bool(one.get("leisure")) for one in members),
                     "subjects": [{"key": one["key"], "title": one["title"], "kind": one["kind"],
                                   "topic_id": one.get("topic_id", ""),
                                   "topics": one.get("topics", [])} for one in members],

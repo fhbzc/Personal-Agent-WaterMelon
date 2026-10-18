@@ -1,4 +1,4 @@
-"""Customized Recommendation (heartbeat/connections/recommend.py, schedule.py):
+"""Newspaper (heartbeat/connections/recommend.py, schedule.py):
 a page for each thing the user is doing, searched from its detail; each
 story checked in code for how near it is to the page - mostly close, a few
 broad among them, loose ones not printed, what was read or shown left out;

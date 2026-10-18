@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 
 MOST_BYTES = 2 * 1024 * 1024
 TIMEOUT = 15.0
-AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) PersonalizedAgent/1.0"
+AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) PersonalAgentWaterMelon/1.0"
 TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg",
          "image/gif": "gif", "image/webp": "webp"}
 #: Tried again for one who had none at most this often (seconds).

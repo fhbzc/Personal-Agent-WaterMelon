@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -316,7 +317,7 @@ class AgentApplication:
                              hiding=lambda: bool(self.config.get("listener_hide_credentials",
                                                                  True)))
         # WHAT THE USER READ, kept after each agent heartbeat - for
-        # Customized Recommendation. Sites the listener keeps out stay out.
+        # Newspaper. Sites the listener keeps out stay out.
         from .heartbeat.reading import ReadingLog
         self.reading = ReadingLog(
             self.db, self.raw_store, self.models, self.config,
@@ -369,6 +370,12 @@ class AgentApplication:
         self.connections_round.embedder = getattr(self.state_heartbeat, "embedder", None)
         from .heartbeat.connections.schedule import IssueClock
         self.issue_clock = IssueClock(self.config, self.connections_round, self.connections)
+        self.state_heartbeat.pool.counts("newspaper", lambda: (
+            ["an issue"] if self.connections_round.running() else []))
+        # WORK LEARNING, UPDATED BY ITSELF at the times chosen: every
+        # project that changed - its own clock (experience/auto.py).
+        from .heartbeat.experience.auto import LearningClock
+        self.learning_clock = LearningClock(self.config, self.state_heartbeat.experience)
         # PACKAGE ALL LESSONS and LOAD LESSONS (Overview): every lesson -
         # the experience, each work project's tree, the notification lessons,
         # the natures - packed into one folder in the workspace and a zip of
@@ -405,10 +412,25 @@ class AgentApplication:
         self.work.paths = self.paths
         self.work.in_subprocess = bool(self.config.get("work_in_subprocess", True))
         self.work.governor = Governor(self.work)
+        # ONE POOL FOR EVERYTHING SIDE BY SIDE (common/pool.py): the state
+        # heartbeat's, made with its room; the runs of work and an issue of
+        # the Newspaper counted in it by asking them.
+        self.pool = self.state_heartbeat.pool
+        self.work.pool = self.pool
+        self.pool.counts("work", lambda: [
+            run.id for run in list(self.work._running.values()) if run.alive()])
         # Work handed over, and every piece of work started: context, a plan
         # the user checks, then the run (agent/work/delegate.py).
         from .agent.work.delegate import Drafts
         self.drafts = Drafts(self)
+
+        # UPDATES from the project's published releases (platform_layer/
+        # updater.py): never while a piece of work runs. `quit` is set by
+        # whatever runs the agent - the desktop, or the headless loop.
+        from .platform_layer.updater import Updater
+        self.updater = Updater(self.config, self.data_dir,
+                               notify=self.notifications.notify,
+                               working=lambda: bool(self.work.going_now()))
 
         # -- protocol -------------------------------------------------------
         self.app_registry = ApplicationRegistry(self.db)
@@ -789,6 +811,21 @@ class AgentApplication:
             made += 1
         return made
 
+    def leftover_marks(self) -> list:
+        """What only this application's own processes carry on their
+        command line: the folder the agents' code loads its guard from, and
+        the one each run in a process of its own is told about."""
+        from .agent.work.child import children_dir
+        return [str(self.paths.guard_dir), str(children_dir(self.paths))]
+
+    def end_leftovers(self) -> int:
+        try:
+            from .common.children import end_leftovers
+            return end_leftovers(self.leftover_marks())
+        except Exception:    # pragma: no cover - looked at next start
+            log.warning("could not look for processes left from before", exc_info=True)
+            return 0
+
     def start(self, with_api: bool = True) -> None:
         with self._lock:
             if self._started:
@@ -814,6 +851,11 @@ class AgentApplication:
             # nobody had numbers for.
             import time as _time
 
+            # LEFT FROM BEFORE: whatever an earlier run of the application
+            # left going - its job or watcher could not end it - is ended
+            # (common/children.py), behind the start.
+            threading.Thread(target=self.end_leftovers, name="leftovers",
+                             daemon=True).start()
             spent = {}
             for name, begin in (("ListenerManager", self.listener.start),
                                 ("Scheduler", self.scheduler.start),
@@ -821,6 +863,7 @@ class AgentApplication:
                                 ("RawHousekeeping", self.housekeeping.start),
                                 ("StateHeartbeat", self.state_heartbeat.start),
                                 ("IssueClock", self.issue_clock.start),
+                                ("LearningClock", self.learning_clock.start),
                                 ("Triggers", self.triggers.start),
                                 ("WorkGovernor", self.work.governor.start)):
                 began = _time.perf_counter()
@@ -876,6 +919,10 @@ class AgentApplication:
                                in sorted(spent.items(),
                                          key=lambda one: -one[1])))
             self._start_spent = spent
+            # Only a packaged program updates: run from source, the code is
+            # the developer's checkout and is updated with git.
+            if getattr(sys, "frozen", False):
+                self.updater.start()
             self._started = True
             self.observability.set_state("application.started", True)
             self.bus.publish("application.started", self.status())
@@ -1089,8 +1136,15 @@ class AgentApplication:
             import time as _time
 
             spent = {}
+            self.updater.stop()
             self.work.governor.stop()
-            for component in (self.state_heartbeat, self.issue_clock, self.triggers,
+            # The learning clock told first, at once: it must not read a run
+            # the closing stops as finished - that run is carried on at the
+            # next start. Then the state heartbeat, first to be waited for:
+            # a round in flight holds the way out.
+            self.learning_clock.halt()
+            for component in (self.state_heartbeat, self.learning_clock,
+                              self.issue_clock, self.triggers,
                               self.housekeeping,
                               self.heartbeat, self.scheduler, self.listener):
                 name = type(component).__name__
@@ -1205,6 +1259,9 @@ class AgentApplication:
             # Debugger at all, so the interface can leave it out rather than
             # offering a tab whose every request would answer 404.
             "debugger_built_in": debugger_available(),
+            # Whether the bubble beside the avatar shows notifications: when
+            # it does, the page does not show them again (ui/desktop.py).
+            "speaks_in_bubble": bool(getattr(self, "speaks_in_bubble", False)),
             "root": str(self.root),
             "relocated_from": self.relocated_from,
             "data_dir": str(self.data_dir),

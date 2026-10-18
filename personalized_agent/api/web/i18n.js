@@ -174,7 +174,7 @@
 
   // English is written in this browser's own English, or American English.
   const localeOf = (language) => LOCALES[language]
-    || (/^en/i.test(navigator.language || "") ? navigator.language : "en-US");
+    || (/^en\b/i.test(navigator.language || "") ? navigator.language : "en-US");
 
   // The display language this page was drawn in last time - its dates are
   // right from the first one drawn, before the settings are read.

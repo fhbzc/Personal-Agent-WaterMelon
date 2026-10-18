@@ -117,7 +117,10 @@ class ConfigStore:
     #:
     #: ``state_heartbeat_every_hours`` was 6: states are grouped every 12
     #: hours.
-    MOVED_DEFAULTS = {"raw_activity_keep_days": 14, "state_heartbeat_every_hours": 6.0}
+    #: ``state_first_round_states`` was 100, which kept a new installation's
+    #: Overview empty for a day or two of use; it is 20.
+    MOVED_DEFAULTS = {"raw_activity_keep_days": 14, "state_heartbeat_every_hours": 6.0,
+                      "state_first_round_states": 100}
     #: The settings whose moved default has been applied, kept in the file.
     MOVED_MARK = "defaults_moved"
 

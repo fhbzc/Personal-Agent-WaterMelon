@@ -20,13 +20,14 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from ...common import children
 from ...common.config.schema import REASONING_EFFORTS
-from ...version import __version__
+from ...version import APP_NAME, __version__
 from ..base import (
     AuthMethod,
     AuthStatus,
@@ -46,6 +47,7 @@ from ..base import (
 # How tools travel through a transcript is shared with Claude Code; the words
 # they are offered in (TOOL_PROTOCOL below) are this client's own.
 from .local_tools import as_written, describe_tools, leading_tool_call, tool_results
+from .mcp_bridge import SERVER_NAME
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +74,58 @@ MODELS: List[ModelDescriptor] = [
     ModelDescriptor("gpt-5.6-luna", "GPT-5.6 Luna"),
     ModelDescriptor("gpt-5.5", "GPT-5.5"),
 ]
+
+#: CODEX'S OWN TOOLS, OFF for every call the agent makes: its shell, its
+#: code mode, its web search, the computer and browser it can drive, the
+#: plugins, apps, hooks and skills the user installed for their own use.
+#: The agent's calls carry web pages and other people's words; what they
+#: may do is the agent's tools, run under its own guard - never a tool of
+#: the user's Codex, which nothing here confines. A name an older or newer
+#: Codex does not know is only warned about by it.
+OWN_TOOLS_OFF = ("shell_tool", "unified_exec", "code_mode", "code_mode_host",
+                 "computer_use", "browser_use", "browser_use_external", "apps",
+                 "plugins", "remote_plugin", "hooks", "goals", "memories",
+                 "image_generation", "view_image", "skill_search",
+                 "skill_mcp_dependency_install", "tool_suggest",
+                 # Agents of its own, started mid-answer: outside the agent's
+                 # sight, its guard and its count of what a run spent.
+                 "multi_agent", "multi_agent_v2")
+
+#: Off for every call, the agent's tools served or not: what Codex would
+#: run by itself - its shell, the user's computer and browser, plugins.
+#: CODE MODE is what is left on when the agent's tools are served to it
+#: (`NATIVE_TOOLS`): Codex calls every tool through it, an MCP server's too.
+CODE_MODE = ("code_mode", "code_mode_host")
+
+#: How the agent's tools are offered when they are served to Codex natively
+#: (`ModelRequest.tool_runner`, over MCP - see mcp_bridge): as the tools of
+#: one MCP server, "pa", and nothing else.
+NATIVE_TOOLS = (
+    "Your tools for this conversation are served to you directly, as the tools "
+    "of the MCP server named `pa`: call them as tools. Each named in your "
+    "instructions as `name` is that server's tool `name` (run_python is pa's "
+    "run_python, and so on). They are really run - the agent executes each call "
+    "in its own sandbox and gives you back what it returned; reading and writing "
+    "files is done with them. The program you are running inside has no other "
+    "tools for you: its own shell and file editing are switched off, so do not "
+    "try them. When you have what you need, answer as you were asked."
+)
+
+#: The agent's own tools for the web, by every name they go by: with the
+#: model's own search (`ModelRequest.builtin_web`) they are not offered, and
+#: Codex's web search is, in their place.
+WEB_TOOL_NAMES = ("web_search", "fetch_page", "fetch_url")
+WEB_NOTE = (
+    "SEARCH THE WEB WITH YOUR OWN WEB SEARCH. Where your instructions name "
+    "web_search, fetch_page or fetch_url, use it instead - it does the same. "
+    "Public pages only: never sign in to anything, never post or send anything."
+)
+
+#: How long the agent's own MCP server is waited for at the start of a call.
+MCP_STARTUP_SECONDS = 30
+#: A tool of the agent's is not cut off by Codex: the agent runs it, may
+#: wait for the user in it (an install to approve), and ends it itself.
+MCP_TOOL_SECONDS = 24 * 3600
 
 TOOL_PROTOCOL = (
     "You may use one of the tools listed below. To use one, reply with a single "
@@ -106,7 +160,10 @@ class CodexProvider(ModelProvider):
         self._cached_models: Optional[List[ModelDescriptor]] = None
 
     def executable(self) -> Optional[str]:
-        return shutil.which(CLI_NAME)
+        # Including a Codex installed after this application started, which
+        # this process's own PATH does not show (platform_layer/programs.py).
+        from ...platform_layer.programs import find_program
+        return find_program(CLI_NAME)
 
     @staticmethod
     def _model_cache_path() -> Path:
@@ -313,7 +370,7 @@ class CodexProvider(ModelProvider):
 
         try:
             ask(1, "initialize", {"clientInfo": {
-                "name": "personalized_agent", "title": "Personalized Agent",
+                "name": "personalized_agent", "title": APP_NAME,
                 "version": __version__}})
             send({"method": "initialized", "params": {}})
             models = [MODELS[0]]
@@ -430,9 +487,9 @@ class CodexProvider(ModelProvider):
                                  authentication_valid=True, checked_at=now,
                                  failure_class=FailureClass.TEMPORARY)
 
-    def _prompt(self, request: ModelRequest) -> str:
+    def _prompt(self, request: ModelRequest, native: bool = False) -> str:
         parts: List[str] = []
-        system = self._system(request)
+        system = self._system(request, native=native)
         if system:
             parts.append(f"System instructions:\n{system}")
         for message in request.messages:
@@ -458,20 +515,26 @@ class CodexProvider(ModelProvider):
         parts.append("Assistant:")
         return "\n\n".join(parts)
 
-    def _system(self, request: ModelRequest) -> str:
+    def _system(self, request: ModelRequest, native: bool = False) -> str:
         pieces = [request.system] if request.system else []
-        if request.tools:
+        if request.tools and native:
+            pieces.append(NATIVE_TOOLS)
+        elif request.tools:
             # Each tool with its whole argument schema (local_tools.describe_tools).
             pieces.append(TOOL_PROTOCOL.format(tools=describe_tools(request.tools)))
         return "\n\n".join(piece for piece in pieces if piece)
 
     def _command(self, request: ModelRequest, model: str,
-                 pictures: Sequence[str] = ()) -> List[str]:
+                 pictures: Sequence[str] = (), bridge: Any = None) -> List[str]:
         command = [
             self.executable() or CLI_NAME,
             "exec", "--json", "--ephemeral", "--skip-git-repo-check",
             "--sandbox", "read-only",
         ]
+        if model == "default":
+            # The user's configuration is not loaded (`_own_tools_off`); the
+            # model it names is still the one "default" means.
+            model = self._configured_model() or model
         if model != "default":
             command.extend(["--model", model])
         effort = request.reasoning_effort
@@ -483,12 +546,106 @@ class CodexProvider(ModelProvider):
                 raise ValueError(f"The Codex model {model!r} does not take the reasoning "
                                  f"effort {effort!r}. Choose another in Settings > Models.")
             command.extend(["-c", f"model_reasoning_effort={json.dumps(effort)}"])
+        elif self._configured("model_reasoning_effort") in REASONING_EFFORTS:
+            command.extend(["-c", "model_reasoning_effort="
+                            + json.dumps(self._configured("model_reasoning_effort"))])
         # THE PICTURES IN THE CONVERSATION, given as pictures: each written
         # to a file of its own for this call (`_pictures`), the latest few.
         for picture in pictures:
             command.extend(["--image", picture])
+        # After the effort is known to be one the model takes: a setting to
+        # correct is refused before anything is started, even Codex's help.
+        command.extend(self._own_tools_off(native=bridge is not None,
+                                           web=bool(request.builtin_web)))
+        if bridge is not None:
+            # The agent's tools, natively: this call's server and no other
+            # (the user's own are not loaded - `_own_tools_off`).
+            command.extend([
+                "-c", f"mcp_servers.{SERVER_NAME}.url={json.dumps(bridge.url)}",
+                "-c", f"mcp_servers.{SERVER_NAME}.startup_timeout_sec={MCP_STARTUP_SECONDS}",
+                "-c", f"mcp_servers.{SERVER_NAME}.tool_timeout_sec={MCP_TOOL_SECONDS}",
+                # Called without asking: no one can answer Codex's approval
+                # in a call, and what each of these tools may do is decided
+                # by the agent's own guard, which runs it.
+                "-c", f'mcp_servers.{SERVER_NAME}.default_tools_approval_mode="approve"'])
         command.append("-")
         return command
+
+    def _own_tools_off(self, native: bool = False, web: bool = False) -> List[str]:
+        """WHAT CODEX MAY USE OF ITS OWN: what the agent can still hold to
+        its permissions, and nothing else (`OWN_TOOLS_OFF`).
+
+        The user's configuration is not loaded - its MCP servers, plugins,
+        hooks and rules, which the agent never granted - with the sign-in
+        still theirs; a Codex too old to skip it has its MCP servers emptied
+        instead. Its web search is its own when the settings say the
+        model's (`web`), as Claude Code's is. Its code mode stays on when
+        the agent's tools are served to it (`native`): Codex calls every
+        tool through it. Its shell, file editing and picture viewing stay
+        off - Codex's sandbox cannot be kept out of the places the agents
+        may not read (sign-ins, keys, the application's state)."""
+        flags: List[str] = []
+        if self._takes("--ignore-user-config"):
+            flags.append("--ignore-user-config")
+        else:
+            flags.extend(["-c", "mcp_servers={}"])
+        if self._takes("--ignore-rules"):
+            flags.append("--ignore-rules")
+        flags.extend(["-c", f'web_search="{"live" if web else "disabled"}"'])
+        # No agent of its own below this one: its multi-agent tools stay in
+        # code mode's list whatever the feature says, and a helper started
+        # there works outside the agent's sight, guard and count.
+        flags.extend(["-c", "agents.max_depth=0",
+                      "-c", "agents.max_concurrent_threads_per_session=1"])
+        for name in OWN_TOOLS_OFF:
+            if native and name in CODE_MODE:
+                continue
+            flags.extend(["-c", f"features.{name}=false"])
+        return flags
+
+    def _takes(self, flag: str) -> bool:
+        """Whether the installed Codex knows this option of `codex exec` -
+        asked once per program file (`codex exec --help`)."""
+        cli = self.executable()
+        if not cli:
+            return False
+        try:
+            key = (cli, os.stat(cli).st_mtime_ns)
+        except OSError:
+            key = (cli, 0)
+        known = getattr(self, "_help", None)
+        if not known or known[0] != key:
+            try:
+                done = children.run(
+                    [cli, "exec", "--help"], capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=STATUS_TIMEOUT_SECONDS,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    if sys.platform.startswith("win") else 0)
+                said = (done.stdout or "") + (done.stderr or "")
+            except (OSError, subprocess.SubprocessError):
+                said = ""
+            known = self._help = (key, said)
+        return flag in known[1]
+
+    @staticmethod
+    def _configured(key: str) -> Optional[str]:
+        """One value of the user's Codex configuration - the model it names,
+        or how hard it thinks - read from it, nothing else of it used: what
+        "default" has always meant."""
+        try:
+            import tomllib
+        except ImportError:                  # pragma: no cover - Python 3.10
+            return None
+        home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+        try:
+            with open(home / "config.toml", "rb") as handle:
+                value = tomllib.load(handle).get(key)
+        except (OSError, ValueError):
+            return None
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    def _configured_model(self) -> Optional[str]:
+        return self._configured("model")
 
     #: Pictures given to one call, at most: the latest.
     MOST_PICTURES = 4
@@ -582,29 +739,64 @@ class CodexProvider(ModelProvider):
         if not cli:
             verdict = self.check_availability(model)
             raise ModelInvocationError(verdict.reason or "Codex is unavailable", verdict)
+        web = bool(request.builtin_web) and any(
+            tool.name in WEB_TOOL_NAMES for tool in request.tools or [])
+        if web:
+            # Its own search in place of the agent's web tools, as Claude
+            # Code's (Settings > Web search: the model's own).
+            request = replace(request, tools=[tool for tool in request.tools
+                                              if tool.name not in WEB_TOOL_NAMES],
+                              system="\n\n".join(one for one in (request.system, WEB_NOTE)
+                                                 if one))
+        request = replace(request, builtin_web=web)
+        if request.tools and callable(request.tool_runner):
+            from .mcp_bridge import ToolBridge
+            with ToolBridge(request.tools, request.tool_runner) as bridge:
+                return self._invoke(request, model, bridge)
+        return self._invoke(request, model, None)
+
+    def _invoke(self, request: ModelRequest, model: str, bridge: Any) -> ModelResponse:
         pictures = self._pictures(request)
         try:
-            command = self._command(request, model, pictures)
+            command = self._command(request, model, pictures, bridge=bridge)
         except ValueError as exc:
             self._forget_pictures(pictures)
             raise ModelInvocationError(str(exc), ModelAvailability(
                 available=False, state=AvailabilityState.MODEL_UNAVAILABLE,
                 reason=str(exc), failure_class=FailureClass.USER_ACTION_REQUIRED)) from exc
-        prompt = self._prompt(request)
+        prompt = self._prompt(request, native=bridge is not None)
         cwd = str(self.workspace) if self.workspace else None
         # Exactly what the client is handed, for a debugger watching this call.
         request.emit_debug("provider_request", {
             "provider": self.provider_id, "model": model,
             "command": command, "input": prompt, "cwd": cwd,
         })
+        # WITH THE AGENT'S TOOLS RUNNING IN IT, a call ends when it falls
+        # silent - a tool of the agent's at work is not silence - or the run
+        # is stopped, never at a fixed time (as Claude Code's calls do).
+        watched: Dict[str, Any] = {}
+        if bridge is not None:
+            from .claude_code_provider import _Stream
+            stream = _Stream(request, bridge, self.timeout_seconds)
+            watched = {"on_line": stream.line, "watch": stream.watch}
+        else:
+            watched = {"timeout": self.timeout_seconds}
         try:
             completed = children.run(
                 command, input=prompt, capture_output=True,
-                text=True, encoding="utf-8", errors="replace", timeout=self.timeout_seconds,
-                cwd=cwd,
+                text=True, encoding="utf-8", errors="replace",
+                cwd=cwd, **watched,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
                 if sys.platform.startswith("win") else 0,
             )
+        except children.Ended as exc:
+            message = ("the call was ended: the run was stopped" if exc.reason == "cancelled"
+                       else f"Codex {exc.reason}")
+            raise ModelInvocationError(message, ModelAvailability(
+                available=False, state=AvailabilityState.PROVIDER_UNAVAILABLE
+                if exc.reason != "cancelled" else AvailabilityState.UNKNOWN_ERROR,
+                reason=message, failure_class=FailureClass.TEMPORARY
+                if exc.reason != "cancelled" else FailureClass.UNKNOWN)) from exc
         except subprocess.TimeoutExpired as exc:
             message = f"Codex did not answer within {int(self.timeout_seconds)}s"
             raise ModelInvocationError(message, ModelAvailability(
@@ -640,7 +832,8 @@ class CodexProvider(ModelProvider):
         return ModelResponse(text="" if tool_calls else text, tool_calls=tool_calls,
                              usage=usage, stop_reason=stop_reason,
                              raw_content=as_written(text, tool_calls),
-                             model=model, provider=self.provider_id)
+                             model=model, provider=self.provider_id,
+                             tool_exchanges=list(bridge.calls) if bridge is not None else [])
 
     def usage(self) -> UsageSnapshot:
         return self._usage

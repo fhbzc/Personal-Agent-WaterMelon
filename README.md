@@ -2,7 +2,7 @@
   <img src="docs/images/watermelon.png" width="120" alt="The Watermelon avatar">
 </p>
 
-<h1 align="center">Personal Agent · WaterMelon</h1>
+<h1 align="center">Personal Agent WaterMelon</h1>
 
 <p align="center">
 <b>An agent that learns you.</b> It watches how you work - with as little
@@ -13,7 +13,7 @@ way you would want it done. All on your own computer.
 
 <p align="center">
 <b>Download:</b> <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalizedAgent-Setup-windows-x64.exe"><b>Windows</b></a> ·
-<a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalizedAgent-macos.pkg"><b>macOS</b></a> ·
+<a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalizedAgent-macos.dmg"><b>macOS</b></a> ·
 <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalizedAgent-linux-x86_64.deb"><b>Linux</b></a>
 <sub>(<a href="#install">other formats</a>)</sub>
 </p>
@@ -24,6 +24,7 @@ way you would want it done. All on your own computer.
 <a href="#using-it">Using it</a> ·
 <a href="#build-it-from-source">Build from source</a> ·
 <a href="#check-that-a-download-is-genuine">Verify a download</a> ·
+<a href="#update-log">Update log</a> ·
 <a href="DESIGN.md">How it works</a>
 </p>
 
@@ -139,17 +140,19 @@ any of your accounts.
   <sub>The people in your work, and one person's card: public profiles, what happened, and the changes you made.</sub>
 </p>
 
-**Customized Recommendation.** Each day, things worth reading for your
+**Newspaper.** Each day, things worth reading for your
 current tasks and interests, chosen to tell you something you do not already
 know. *More like this* and *Not interested* tune it.
 
 <p align="center">
-  <img src="docs/images/recommendation.png" width="100%" alt="Customized Recommendation: a newspaper front page with a lead story, In brief, and pages per topic"><br>
+  <img src="docs/images/recommendation.png" width="100%" alt="Newspaper: a newspaper front page with a lead story, In brief, and pages per topic"><br>
   <sub>Today's issue: the front page, a page for each topic, why each story is there and what in it is new to you.</sub>
 </p>
 
 **Chat.** Ask it about your work, or ask it to do something. Files it makes
-in a conversation are kept in `workspace/Chat/<conversation title>/`.
+in a conversation are kept in `workspace/Chat/<conversation title>/`. The ×
+beside a conversation in the list deletes it, after asking once; the files it
+made stay.
 
 <p align="center">
   <img src="docs/images/chat.png" width="100%" alt="Chat: a conversation about the week's work, with a follow-up question in the margin"><br>
@@ -196,7 +199,8 @@ from a promise.
 - **No account, no server of ours, no telemetry.** There is no service your
   data is uploaded to, and nothing is collected about you or about how you
   use it.
-- **Everything it keeps is in one folder you own** (`PersonalizedAgent/`):
+- **Everything it keeps is in one folder you own** (`PersonalAgentWaterMelon/`;
+  an installation from before v0.2.0 keeps `PersonalizedAgent/`):
   what it learned as plain Markdown files in `workspace/data/` that you can
   open, edit or delete, and its database and settings in `internal/`. Delete
   the folder, and everything it ever kept is gone.
@@ -219,7 +223,7 @@ piece of work uses. That model is your choice, in **Settings → Models**:
 - **A model on your own machine** (Ollama, LM Studio, or anything with an
   OpenAI-compatible address): then your activity is never sent to a model
   service. **The only thing that still goes out is web searches**:
-  Connections and Customized Recommendation look things up on the web on
+  Connections and Newspaper look things up on the web on
   their own, with search words drawn from your current tasks and the people
   in them, so a search engine can see those topics. Turn those two off in
   Settings → Functions, and with a local model **nothing leaves your
@@ -234,7 +238,7 @@ passwords, one-time codes and keys (see below).
 | --- | --- | --- |
 | The text a step needs (a window of recent activity, your chat message, the files a piece of work uses), with passwords and codes already filtered out | **Only the model you chose**: nowhere, with a local model | When a step runs |
 | Pictures | Only to a model that can see pictures | A model that reads text only gets the words, read locally |
-| Web searches (the words come from your current tasks and the people in them) and the public pages they find | Brave Search (with your key) or DuckDuckGo, then the pages themselves, **with no cookies and no sign-in** | When Connections or Customized Recommendation run (turn them off and they stop), or when a piece of work you started needs the web |
+| Web searches (the words come from your current tasks and the people in them) and the public pages they find | Brave Search (with your key) or DuckDuckGo, then the pages themselves, **with no cookies and no sign-in** | When Connections or Newspaper run (turn them off and they stop), or when a piece of work you started needs the web |
 | One-time downloads | Hugging Face (the embedding model, once), Google (the testing browser), PyPI (packages a piece of work needs) | Only the first time, or **only when you click Install / Approve** |
 
 ### You choose what it watches
@@ -273,6 +277,11 @@ Beyond the switches:
   <sub>Settings → Privacy: one switch per source, each saying what the agent loses without it and what it costs your computer.</sub>
 </p>
 
+<p align="center">
+  <img src="docs/images/settings-folders.png" width="620" alt="Settings → Others → Directory exclusions: the agent's data folder first, with a lock, and the folders you added"><br>
+  <sub>Settings → Others: the folders it never watches. Its own data folder is always first, locked.</sub>
+</p>
+
 ### You choose what it does
 
 **Settings → Functions** lists what runs by itself, each with its own switch
@@ -281,7 +290,7 @@ and **what it cost over the last 72 hours**:
 - **Task organisation**: grouping your notes into tasks and projects.
 - **Calendar management**: notifications and reminders.
 - **Connections**: the people in your work.
-- **Customized Recommendation**: the daily reading.
+- **Newspaper**: the daily reading.
 - **Experience learning**: learning projects you choose.
 
 Turn one off and it stops, along with its model calls. Only the core
@@ -332,11 +341,23 @@ Download from the **[latest release](https://github.com/fhbzc/Personal-Agent-Wat
 | System | Installer (recommended) | Portable (no install) |
 | --- | --- | --- |
 | **Windows** 10/11, x64 | [PersonalizedAgent-Setup-windows-x64.exe](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalizedAgent-Setup-windows-x64.exe) | [PersonalizedAgent-portable-windows-x64.zip](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalizedAgent-portable-windows-x64.zip) |
-| **macOS** 11+, Apple Silicon | [PersonalizedAgent-macos.pkg](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalizedAgent-macos.pkg) | [PersonalizedAgent-macos.dmg](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalizedAgent-macos.dmg) |
+| **macOS** 11+, Apple Silicon | [PersonalizedAgent-macos.dmg](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalizedAgent-macos.dmg): open it and drag the app into Applications | [PersonalizedAgent-macos.pkg](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalizedAgent-macos.pkg): an installer instead, which needs your password and cannot update itself |
 | **Linux** x86-64 | [PersonalizedAgent-linux-x86_64.deb](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalizedAgent-linux-x86_64.deb) | [PersonalizedAgent-linux-x86_64.AppImage](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalizedAgent-linux-x86_64.AppImage) · [tar.gz](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalizedAgent-portable-linux-x86_64.tar.gz) |
 
 Every release also has **`SHA256SUMS.txt`**, the checksum of each file; see
 [Check that a download is genuine](#check-that-a-download-is-genuine).
+
+**Updates.** Once a day the program looks for newer releases here and tells
+you. **Settings → General → Updates** lists every newer version with what it
+says is new; press **Install this version** on the one you want, and it is
+downloaded, checked against that release's `SHA256SUMS.txt`, and installed -
+never while a piece of work is running - and the program starts again on it
+and shows what is new. Only published releases count: nothing reaches you
+from the code until it is released. You can instead have the newest
+installed by itself (also a box in the Windows installer, unticked), or
+nothing looked for. The Windows installer, the macOS app dragged in from the
+`.dmg` and the Linux AppImage update themselves; the portable folder, the
+`.deb` and the macOS `.pkg` are told there is a new version and where it is.
 
 ### Installer or portable?
 
@@ -345,7 +366,7 @@ workflow. Only how it gets onto your computer differs.
 
 | | Installer | Portable |
 | --- | --- | --- |
-| How | Run it. It asks for your language and where to keep your data, installs, and adds a Start menu / Applications entry | Unzip anywhere and run `PersonalizedAgent` |
+| How | Run it. It asks for your language and where to keep your data, installs, and adds a Start menu / Applications entry | Unzip anywhere and run `PersonalAgentWaterMelon` |
 | Language, start at sign-in, Explorer's *Delegate work* entry | Set up by the installer | Set up by the program on its first start |
 | Removing it | Uninstall from Settings → Apps (Windows) or the usual way; the extra entries go with it | Delete the folder. Turn off *Start at sign-in* in Settings first, or the entry stays |
 | Best for | Most people | Trying it out, or keeping it on a USB drive |
@@ -353,6 +374,10 @@ workflow. Only how it gets onto your computer differs.
 **Your data folder.** The installer asks where to keep your data: one folder
 for everything the agent learns and makes.
 
+- **By default it is a `data` folder inside the program's folder.** A folder
+  that needs administrator rights to write to (Program Files, the Windows
+  folder) cannot be used, because the program works as you, without them: the
+  installer says so and will not go on until you choose another.
 - **Choose an empty folder, or one that holds only an earlier Personal
   Agent's data** (its `workspace` and `internal` folders). Everything in the
   data folder belongs to the agent and is never listened to, so a folder with
@@ -364,7 +389,18 @@ for everything the agent learns and makes.
 - **A different folder is a different agent**, with its own calendar,
   contacts and keys, so you can try a new version on a fresh folder without
   touching your usual one.
-- Uninstalling leaves the data folder where it is.
+- Uninstalling leaves the data folder where it is, even inside the
+  program's folder.
+- **Where your API keys are kept.** On Windows, in Windows' own credential
+  store. On macOS (the downloaded app is not signed by an Apple developer,
+  so macOS would ask again after every update) and on Linux without a
+  keyring, they are kept encrypted in the data folder, with the key that
+  opens them beside them. So keep that folder out of iCloud Drive, Dropbox
+  and other synced folders, and don't send it to anyone whole.
+- **One copy starts at sign-in.** If another copy of the program already
+  does (one run from the source, say), the installer's last page will not
+  finish with *Start at sign-in* ticked, and Settings will not save it on,
+  until you untick it or turn it off in the other copy.
 
 Neither contains the developer **Debugger** tabs; see
 [Build it from source](#build-it-from-source) if you want them.
@@ -377,9 +413,14 @@ this is a free, open-source project, so your system will warn once:
 - **Windows.** SmartScreen shows *"Windows protected your PC"*. Click
   **More info → Run anyway**. Some antivirus programs are wary of unsigned
   Python applications; you can check the file as below.
-- **macOS.** *"Personalized Agent can't be opened because Apple cannot check
+- **macOS.** *"Personal Agent WaterMelon can't be opened because Apple cannot check
   it."* Right-click the app (or the `.pkg`) → **Open** → **Open**, or allow it
-  in **System Settings → Privacy & Security**.
+  in **System Settings → Privacy & Security**. Then **Settings → Privacy →
+  macOS permissions** lists what macOS needs you to allow, with a button to
+  each; allow **Full Disk Access** first, and macOS will not ask about your
+  Desktop, Documents and Downloads folders one by one. Because the app is not
+  signed by an Apple developer, macOS forgets these permissions after each
+  update, and the same page shows which to allow again.
 - **Linux.** No warning. For the AppImage, `chmod +x` it first.
 
 Nothing about the program depends on being signed. To know the file is the
@@ -396,13 +437,13 @@ download with `SHA256SUMS.txt` from the same release:
 
 ```powershell
 # Windows (PowerShell)
-Get-FileHash .\PersonalizedAgent-Setup-windows-x64.exe -Algorithm SHA256
+Get-FileHash .\PersonalAgentWaterMelon-Setup-windows-x64.exe -Algorithm SHA256
 ```
 ```bash
 # macOS
-shasum -a 256 PersonalizedAgent-macos.pkg
+shasum -a 256 PersonalAgentWaterMelon-macos.pkg
 # Linux
-sha256sum PersonalizedAgent-linux-x86_64.deb
+sha256sum PersonalAgentWaterMelon-linux-x86_64.deb
 # or check every file you downloaded at once
 sha256sum --check --ignore-missing SHA256SUMS.txt
 ```
@@ -416,7 +457,7 @@ open, and GitHub signs a statement of which commit and which workflow made
 it. With the [GitHub CLI](https://cli.github.com/):
 
 ```bash
-gh attestation verify PersonalizedAgent-Setup-windows-x64.exe --repo fhbzc/Personal-Agent-WaterMelon
+gh attestation verify PersonalAgentWaterMelon-Setup-windows-x64.exe --repo fhbzc/Personal-Agent-WaterMelon
 ```
 
 It prints the commit the file was built from; open that commit on GitHub to
@@ -458,13 +499,14 @@ read the exact code. You can also read the build's log under the repository's
    interested*, deleting a person or an event: each is kept as a lesson, and
    only your own actions change what it learns.
 
-Where things are. The data folder is chosen when you install it
-(`C:\Users\<you>\PersonalizedAgent` by default) or, from source, with
+Where things are. The data folder is chosen when you install it (on
+Windows a `data` folder inside the program's folder by default) or, from
+source, with
 `python run.py --root <folder>`; Settings → General shows it, and the
 listener never reads it:
 
 ```
-PersonalizedAgent/
+PersonalAgentWaterMelon/
 ├── workspace/          everything the agent makes, and the only place it may write
 │   ├── agent_work/     work you delegated, one folder each
 │   ├── Chat/           files made in chat, one folder per conversation
@@ -511,8 +553,8 @@ The result is in `dist/<platform>/`:
 
 | Platform | What `build.py` makes | Also needs |
 | --- | --- | --- |
-| Windows | `PersonalizedAgent.exe` in a folder, a portable `.zip`, and `PersonalizedAgent-Setup.exe` | [Inno Setup 6](https://jrsoftware.org/isinfo.php) for the installer |
-| macOS | `Personalized Agent.app`, a `.dmg` and a `.pkg` | Xcode command-line tools |
+| Windows | `PersonalAgentWaterMelon.exe` in a folder, a portable `.zip`, and `PersonalAgentWaterMelon-Setup.exe` | [Inno Setup 6](https://jrsoftware.org/isinfo.php) for the installer |
+| macOS | `Personal Agent WaterMelon.app`, a `.dmg` and a `.pkg` | Xcode command-line tools |
 | Linux | a folder, a `.tar.gz`, a `.deb` and an AppImage | `dpkg-deb`, `appimagetool` |
 
 Other options: `--fast` (skip the tests and checks), `--no-installer`
@@ -525,6 +567,114 @@ table for each language (`personalized_agent/api/web/lang/`). Run
 `python scripts/interface_words.py` to list what is missing, translate it into
 every language, and merge it with `--merge`; a test fails until each table
 has it.
+
+---
+
+## Update log
+
+The newest version first. Each earlier version links to its release, where
+everything it changed is written down.
+
+### v0.2.0 (2026-10-17)
+
+- **A new name: Personal Agent WaterMelon**, on screen and in the files you
+  download. An existing installation is updated in place; your data and
+  settings stay where they are. On a Mac, if you drag the new app in by hand,
+  delete the old *Personalized Agent* app from Applications.
+- **Updates from inside the app.** Settings → General → Updates lists every
+  newer release with what it changes; install the one you choose, or let the
+  newest install by itself (off by default). Each download is checked against
+  the release's checksums, nothing is installed while a piece of work runs,
+  and after an update the app shows what is new.
+- **macOS: the app no longer closes as soon as it starts.** Keys are kept in
+  the encrypted file in your data folder, and Settings → Privacy lists the
+  permissions macOS needs, each with a button to its pane - Full Disk Access
+  first. The `.dmg` is now the main Mac download.
+- **Windows installer.** The data folder defaults to a `data` folder inside
+  the program's folder, and a folder that needs administrator rights is
+  refused. Only one copy can start at sign-in. The Start menu no longer has
+  an entry without a window.
+- **Chat:** each conversation has a ⋯ menu to pin, rename or delete it, and a
+  follow-up note folds from its whole top row.
+- **Tasks are grouped by where the work really is** - folders, files and the
+  pages you read - not by window titles. Meals, rest and errands are kept out
+  of tasks; what you do for fun becomes tasks of its own, never mixed with
+  work, so recommendations can follow it too. The first grouping comes after
+  20 states instead of 100.
+- **Newspaper** (formerly Customized Recommendation): each story opens with how it ties to what
+  you are doing. Work and study topics count after a short time; pastimes
+  only once they last, and a page about a pastime recommends more of what you
+  enjoy, not lessons in it.
+- **Settings → Privacy shows what your system must allow** beside each switch -
+  allowed or not, with a link that opens the exact place to switch it on (on a
+  Mac: Full Disk Access, Accessibility, Automation, Screen Recording,
+  Notifications; on Windows: notifications).
+- **Lessons are no longer a tab of their own**; the Lessons package stays on the
+  Overview.
+- **Record log**, a new tab: the latest 100 things the agent recorded, each
+  with the Privacy switch that recorded it - open one to see all of it -
+  where a password or code was hidden (marked in place), and what the
+  Privacy rules kept out, by rule.
+- **Work runs can watch videos**: frames and what is said, read on your
+  computer and kept in the run's own folder.
+- The Overview switches between **work activity** and **full activity**
+  (leisure too), and **Update tasks now** groups your tasks at once. The
+  last model on the list can now be removed.
+- **Ctrl+Alt+D (Windows)** pops up a Delegate work box at once, from any
+  program: a title, a description, the folders and files - then Create shows
+  the plan to approve. Change the keys, or turn the button
+  beside selected text off, in Settings → Shortcuts.
+- **Work learning updates itself** each day at the times you choose (03:00
+  unless you change it): every project whose tasks or folders changed is
+  learned again. Untick a project to leave it to its button. While it runs,
+  Start and Update wait; if the app closes, it carries on at the next start.
+- **Remove a project** from Work (top right of its row, after you confirm):
+  what was learned from it is deleted and no longer used in work. What it
+  showed about how you work stays.
+- **Work gets less, and closer, of your experience** - only past steps that
+  really share the step's words, and those from projects like this one first:
+  about a third of what it was given before.
+- **One pool for everything that runs side by side** - runs of your work,
+  projects being learned, the grouping of your tasks, Newspaper - shared out
+  evenly first, then by what matters most, within what your computer has
+  free. Automatic learning runs several projects at once, and groups the new
+  natures it found when it is done.
+- **Your own programs come first.** Everything the app starts runs a step
+  below them: with nothing else wanting the processors it still has them all.
+  Anything left running after the app was ended is ended at its next start.
+- **Work debugger:** a try can be removed (its folder, runs and sessions), and
+  each way keeps its own package cache. Its ways wait their turn in the same
+  pool, and start by themselves. A new **Resource debugger** (in builds from
+  source) shows what the app and everything it started cost in processors,
+  memory, graphics and disk. No more console windows flashing on
+  the taskbar while the app reads your git history.
+- **Work:** opening a project is quick even while projects are being learned
+  (a turning wheel shows while it loads), and the two columns keep the same
+  width whichever project is open.
+- **Work (formerly Experience) and the Work debugger.** The debugger tries
+  the same instruction again in tries - `try_1`, `try_2`, ... of the project's
+  folder - and each try cannot read any other try, nor Claude Code or Codex
+  sessions started in one. "Try the retrieval" moved into the Work debugger.
+  A run's token chart can be read across clock time or across the time the
+  run actually spent running, pauses left out.
+- **Codex does Work with the agent's tools.** The agent's tools are handed
+  to Codex as real tools, as they are to Claude Code, so a builder or reviewer
+  on Codex reads and writes the work. The agent's calls no longer load your own
+  Codex setup - its plugins, MCP servers, browser and computer use; Codex's own
+  web search is used when Settings > Web search says the model's own. Your
+  sign-in, model and effort are still yours.
+- **Fixes:** a refresh keeps the panel you were on; a run's token chart
+  shows from the start; Hide/Show avatar now says the right thing, and the avatar comes
+  back on screen after an external monitor is unplugged; a notification is
+  shown once, not twice; Claude Code or Codex installed after the agent
+  started is found; a port already in use is reported by name; the local
+  embedding model stays loaded between pieces of work; a run no longer fails when
+  a busy computer slows the start of a model call.
+
+### Earlier versions
+
+- [v0.1.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.1.0) -
+  the first public release.
 
 ---
 

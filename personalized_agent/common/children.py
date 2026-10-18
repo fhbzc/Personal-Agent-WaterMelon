@@ -26,6 +26,17 @@ Short system calls - a notification, a look at the active window - run
 every second or two on Linux and macOS and end within seconds; they are
 not given a watcher, which would cost a Python start each time. On Windows
 they join the job too, which costs nothing.
+
+BELOW NORMAL PRIORITY: every child starts a step below the user's own
+programs (on Windows its priority class, which what it starts inherits;
+elsewhere the watcher's niceness, which its child inherits). It is not a
+limit: with the processors free, a child has all of them; only while the
+user's programs want them do they go first.
+
+LEFT FROM BEFORE (`leftovers`, `end_leftovers`): should one ever be left -
+the job could not be made, or the watcher was killed with the agent - the
+processes carrying the marks of this application's own folders are found
+when it starts again, and ended.
 """
 
 from __future__ import annotations
@@ -38,7 +49,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +57,12 @@ log = logging.getLogger(__name__)
 WATCH_FLAG = "--watch-child"
 
 _WINDOWS = sys.platform.startswith("win")
+#: Windows' priority classes, as creation flags: below normal is a child's.
+BELOW_NORMAL = 0x00004000
+_PRIORITY_CLASSES = (0x00000040 | BELOW_NORMAL | 0x00000020 | 0x00008000
+                     | 0x00000080 | 0x00000100)
+#: How much lower than the agent a watched child runs, elsewhere.
+NICER_BY = 5
 _job = None
 _job_lock = threading.Lock()
 
@@ -202,6 +219,10 @@ def watch_main(argv: Sequence[str]) -> int:
     signal.signal(signal.SIGTERM, end)
     if os.getppid() != agent:              # gone before we got here
         return 137
+    try:                                   # below the user's own programs
+        os.nice(NICER_BY)
+    except (OSError, AttributeError):
+        pass
     if whole:
         if sys.version_info >= (3, 11):
             child = subprocess.Popen(command, process_group=0)
@@ -224,6 +245,71 @@ def watch_main(argv: Sequence[str]) -> int:
             end()
 
 
+# -- left from before ----------------------------------------------------------------
+def _said(line: str) -> str:
+    """A command line, its paths as they are: a path written inside
+    Python's own quotes has its backslashes doubled."""
+    return os.path.normcase(line.replace("\\\\", "\\"))
+
+
+def leftovers(marks: Sequence[str]) -> List[Any]:
+    """The processes an earlier run of this application left: a command
+    line carrying one of `marks` - this application's own folders, which
+    no other program names - not started by this process. psutil
+    processes; none when it cannot look."""
+    try:
+        import psutil
+    except Exception:                       # pragma: no cover - required anyway
+        return []
+    wanted = [os.path.normcase(str(mark)) for mark in marks if str(mark).strip()]
+    if not wanted:
+        return []
+    me = psutil.Process(os.getpid())
+    try:
+        mine = {me.pid, *(one.pid for one in me.children(recursive=True))}
+    except Exception:                       # pragma: no cover - looked at next time
+        mine = {me.pid}
+    found = []
+    for process in psutil.process_iter(["pid", "cmdline"]):
+        if process.pid in mine:
+            continue
+        try:
+            line = _said(" ".join(process.info.get("cmdline") or []))
+        except Exception:                   # gone, or not ours to read
+            continue
+        if any(mark in line for mark in wanted):
+            found.append(process)
+    # Only the top of each: what one of them started ends with it.
+    pids = {one.pid for one in found}
+    tops = []
+    for process in found:
+        try:
+            if process.ppid() not in pids:
+                tops.append(process)
+        except Exception:
+            continue
+    return tops
+
+
+def end_leftovers(marks: Sequence[str]) -> int:
+    """End what an earlier run of this application left (`leftovers`), each
+    with everything it started. How many were ended."""
+    ended = 0
+    for process in leftovers(marks):
+        try:
+            for one in [*process.children(recursive=True), process]:
+                try:
+                    one.kill()
+                except Exception:
+                    pass
+            ended += 1
+        except Exception:                   # gone already
+            continue
+    if ended:
+        log.info("ended %d process(es) an earlier run of the application left", ended)
+    return ended
+
+
 # -- the two ways in ------------------------------------------------------------------
 def popen(command: Sequence[str], short: bool = False, whole_tree: bool = False,
           **kwargs: Any) -> subprocess.Popen:
@@ -232,6 +318,20 @@ def popen(command: Sequence[str], short: bool = False, whole_tree: bool = False,
     on Windows a sandboxed child's own job does that."""
     command = list(command)
     if _WINDOWS:
+        # NO WINDOW OF ITS OWN. A console program (git, say) started from a
+        # process with no console - the installed application, or tests run
+        # in the background - was given a new console window, one for every
+        # call: a reading of commits flashed windows on the taskbar without
+        # end. Unless the caller asked for a console or none at all.
+        flags = int(kwargs.get("creationflags") or 0)
+        own = (getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10)
+               | getattr(subprocess, "DETACHED_PROCESS", 0x8))
+        if not flags & own:
+            flags |= getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        if not flags & _PRIORITY_CLASSES:
+            # BELOW NORMAL, unless the caller chose (module docstring).
+            flags |= BELOW_NORMAL
+        kwargs["creationflags"] = flags
         process = subprocess.Popen(command, **kwargs)
         _into_the_job(process)
         return process
@@ -278,6 +378,43 @@ class Ended(Exception):
         self.stderr = stderr
 
 
+def _input_file(input: Any, kwargs: Dict[str, Any]) -> Tuple[Any, str]:
+    """THE INPUT IN A FILE, there before the child starts - opened for it as
+    its standard input, and the file's name, to remove once it has ended.
+
+    It was written to a pipe by a thread of this process once the child had
+    started. Claude Code waits only three seconds for its input and then
+    gives up ("no stdin data received in 3s"): with this process busy - two
+    runs, a learning and a heartbeat at once on a loaded computer - the
+    thread was not given its turn in time, and calls failed, a run of work
+    with them. A file needs no turn: it is all there from the first read.
+    The same bytes as the pipe carried: text as the pipe would have written
+    it (its line ends too)."""
+    import tempfile
+    if isinstance(input, (bytes, bytearray)):
+        data = bytes(input)
+    else:
+        text = str(input)
+        if kwargs.get("text") or kwargs.get("encoding") or kwargs.get("universal_newlines"):
+            text = text.replace("\n", os.linesep)
+        data = text.encode(kwargs.get("encoding") or "utf-8", kwargs.get("errors") or "strict")
+    handle, name = tempfile.mkstemp(prefix="pa-input-")
+    with os.fdopen(handle, "wb") as written:
+        written.write(data)
+    return open(name, "rb"), name
+
+
+def _done_with(held: Any, name: str) -> None:
+    try:
+        held.close()
+    except OSError:
+        pass
+    try:
+        os.unlink(name)
+    except OSError:                         # pragma: no cover - the temp folder's
+        pass
+
+
 def _run_watched(command: Sequence[str], input: Any, on_line: Any, watch: Any,
                  short: bool, whole_tree: bool,
                  **kwargs: Any) -> subprocess.CompletedProcess:
@@ -288,18 +425,16 @@ def _run_watched(command: Sequence[str], input: Any, on_line: Any, watch: Any,
     fixed time limit would end it while it is still working."""
     kwargs["stdout"] = subprocess.PIPE
     kwargs["stderr"] = subprocess.PIPE
-    kwargs["stdin"] = subprocess.PIPE if input is not None else subprocess.DEVNULL
-    process = popen(command, short=short, whole_tree=whole_tree, **kwargs)
+    held, name = (_input_file(input, kwargs) if input is not None else (None, ""))
+    kwargs["stdin"] = held if held is not None else subprocess.DEVNULL
+    try:
+        process = popen(command, short=short, whole_tree=whole_tree, **kwargs)
+    except BaseException:
+        if held is not None:
+            _done_with(held, name)
+        raise
     out: list = []
     err: list = []
-
-    def feed() -> None:
-        try:
-            if input is not None:
-                process.stdin.write(input)
-            process.stdin.close()
-        except (OSError, ValueError):
-            pass
 
     def read_out() -> None:
         for line in process.stdout:
@@ -314,7 +449,7 @@ def _run_watched(command: Sequence[str], input: Any, on_line: Any, watch: Any,
         for line in process.stderr:
             err.append(line)
 
-    threads = [threading.Thread(target=one, daemon=True) for one in (feed, read_out, read_err)]
+    threads = [threading.Thread(target=one, daemon=True) for one in (read_out, read_err)]
     for thread in threads:
         thread.start()
     try:
@@ -322,7 +457,7 @@ def _run_watched(command: Sequence[str], input: Any, on_line: Any, watch: Any,
             reason = watch() if watch is not None else None
             if reason:
                 end_tree(process)
-                for thread in threads[1:]:
+                for thread in threads:
                     thread.join(5)
                 raise Ended(str(reason), "".join(out), "".join(err))
             try:
@@ -332,6 +467,9 @@ def _run_watched(command: Sequence[str], input: Any, on_line: Any, watch: Any,
     except BaseException:
         end_tree(process)
         raise
+    finally:
+        if held is not None:
+            _done_with(held, name)
     for thread in threads:
         thread.join(10)
     return subprocess.CompletedProcess(list(command), process.returncode,
@@ -354,11 +492,19 @@ def run(command: Sequence[str], *, input: Any = None,
     if capture_output:
         kwargs.setdefault("stdout", subprocess.PIPE)
         kwargs.setdefault("stderr", subprocess.PIPE)
-    if input is not None:
-        kwargs.setdefault("stdin", subprocess.PIPE)
-    process = popen(command, short=short, whole_tree=whole_tree, **kwargs)
+    held, name = None, ""
+    if input is not None and "stdin" not in kwargs:
+        held, name = _input_file(input, kwargs)
+        kwargs["stdin"] = held
     try:
-        out, err = process.communicate(input, timeout=timeout)
+        process = popen(command, short=short, whole_tree=whole_tree, **kwargs)
+    except BaseException:
+        if held is not None:
+            _done_with(held, name)
+        raise
+    try:
+        out, err = process.communicate(None if held is not None else input,
+                                       timeout=timeout)
     except subprocess.TimeoutExpired:
         end_tree(process)
         try:
@@ -370,6 +516,9 @@ def run(command: Sequence[str], *, input: Any = None,
     except BaseException:
         end_tree(process)
         raise
+    finally:
+        if held is not None:
+            _done_with(held, name)
     return subprocess.CompletedProcess(list(command), process.returncode,
                                        out, err)
 

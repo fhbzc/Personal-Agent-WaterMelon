@@ -189,8 +189,10 @@ class TheModelsInOrderTests(unittest.TestCase):
         said = routes[("POST", "/api/models/chain")](Request({"chain": [
             {"provider": "third", "model": "m1"}, {"provider": "first", "model": "m1"}]}))
         self.assertEqual([one["label"] for one in said["chain"]], ["third/m1", "first/m1"])
+        # Emptied is allowed (the last model can be removed); no list is not.
+        self.assertEqual(routes[("POST", "/api/models/chain")](Request({"chain": []}))["chain"], [])
         with self.assertRaises(ApiError):
-            routes[("POST", "/api/models/chain")](Request({"chain": []}))
+            routes[("POST", "/api/models/chain")](Request({}))
 
 
 if __name__ == "__main__":

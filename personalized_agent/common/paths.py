@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from ..version import APP_DIR_NAME, APP_SLUG
+from ..version import APP_DIR_NAME, APP_SLUG, FORMER_DIR_NAMES
 
 log = logging.getLogger(__name__)
 
@@ -83,7 +83,11 @@ def app_code_root() -> Path:
     they run is not kept out of it (see `code_root_for_children`)."""
     bundle = getattr(sys, "_MEIPASS", None)
     if is_frozen() and bundle:
-        return Path(bundle).resolve()
+        # THE WHOLE FOLDER IT WAS INSTALLED IN, not only the bundle inside
+        # it: the executable, its uninstaller, and whatever else is there.
+        installed = Path(sys.executable).resolve().parent
+        bundled = Path(bundle).resolve()
+        return installed if bundled == installed or installed in bundled.parents else bundled
     package = Path(__file__).resolve().parents[1]
     holder = package.parent
     interpreter = {os.path.normcase(str(Path(p).resolve()))
@@ -110,17 +114,25 @@ def code_root_for_children() -> Optional[Path]:
 
 
 def default_root() -> Path:
-    """The documented default when the launcher supplies nothing."""
-    return Path.home() / APP_DIR_NAME
+    """The documented default when the launcher supplies nothing - or, where
+    only a data folder of the name the program had before is there, that
+    one: an installation from before the rename keeps its data."""
+    home = Path.home()
+    named = home / APP_DIR_NAME
+    if not named.exists():
+        for former in FORMER_DIR_NAMES:
+            if (home / former).is_dir():
+                return home / former
+    return named
 
 
 def legacy_conventional_dir() -> Path:
     """Where application state lived before section 110.1 consolidated it."""
     if sys.platform.startswith("win"):
         base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-        return Path(base) / APP_DIR_NAME
+        return Path(base) / FORMER_DIR_NAMES[0]
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / APP_DIR_NAME
+        return Path.home() / "Library" / "Application Support" / FORMER_DIR_NAMES[0]
     base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
     return Path(base) / APP_SLUG
 

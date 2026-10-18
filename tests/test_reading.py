@@ -1,4 +1,4 @@
-"""What the user read, kept as a log for Customized Recommendation
+"""What the user read, kept as a log for Newspaper
 (heartbeat/reading): the events put together into pieces, the reading told
 from the tools, the thin ones read again from the public web - never an
 address that does something when opened - written down in English, and

@@ -2112,9 +2112,9 @@ class TheStateHeartbeatPanelRendersTests(unittest.TestCase):
             "document.title=JSON.stringify({err:err,said:said,share:share});",
             {"pic": picture})
         self.assertEqual(verdict["err"], "", verdict["err"])
-        # No bar for Customized Recommendation: it runs on its own clock,
+        # No bar for Newspaper: it runs on its own clock,
         # not in the state round.
-        self.assertNotIn("Customized Recommendation", verdict["share"])
+        self.assertNotIn("Newspaper", verdict["share"])
         self.assertNotIn("searching the web", verdict["said"])
         self.assertIn("Notification lessons=width:40%", verdict["share"])
         self.assertIn("matching them to the lessons (10 of 30)", verdict["said"])

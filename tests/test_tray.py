@@ -98,9 +98,12 @@ class TheTrayIconTests(unittest.TestCase):
             work()
         self.assertEqual(desktop.ran, [("chat",), ("open", "/#overview"), ("character",),
                                        ("quit",)])
-        # Hidden, it offers to show it again.
-        desktop.agent_window = type("W", (), {"state": lambda s: "withdrawn"})()
+        # Hidden, it offers to show it again - as the desktop keeps it, not
+        # as the window is asked from the tray's thread.
+        desktop.character_hidden = True
         self.assertEqual(items[2].text, "Show avatar")
+        desktop.character_hidden = False
+        self.assertEqual(items[2].text, "Hide avatar")
 
     def test_the_checks_read_the_settings(self) -> None:
         tray = Tray(_Desktop())

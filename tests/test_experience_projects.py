@@ -327,3 +327,75 @@ class ThePanelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ARemovedProjectTests(_ProjectBase):
+    """Remove on a project: what was learned from it is deleted and found by
+    no search again, and it is not listed or learned again; the natures it
+    showed stay - another project may rest on them too."""
+
+    def _learned(self, unit, summary):
+        store = self.experience.store
+        card = store.add_card({"unit_id": unit, "task_id": unit, "title": f"{summary} card",
+                               "type": "code", "statement": summary})
+        stage = store.add_stage({"task_id": unit, "kind": "execution", "medium": "code",
+                                 "summary": summary, "card_id": card["id"], "states": [],
+                                 "began": "2026-09-01", "ended": "2026-09-01"})
+        return card, stage
+
+    def test_its_stages_go_and_the_natures_stay(self) -> None:
+        gone = self._post({"action": "create", "name": "Garden planner",
+                           "paths": [str(self.one)]})["project"]["unit_id"]
+        kept = self._post({"action": "create", "name": "Pond survey",
+                           "paths": [str(self.two)]})["project"]["unit_id"]
+        store = self.experience.store
+        card, stage = self._learned(gone, "watering schedule for the tomato beds")
+        later = store.add_stage({"task_id": gone, "kind": "evaluation", "medium": "code",
+                                 "summary": "checked the tomato watering schedule",
+                                 "card_id": card["id"], "states": [],
+                                 "began": "2026-09-02", "ended": "2026-09-02"})
+        store.add_edge(later["id"], stage["id"], "evaluates")
+        _card, other = self._learned(kept, "watering schedule for the pond plants")
+        store.link_stage_nature(stage["id"], "rec_shared_nature")
+        store.link_stage_nature(other["id"], "rec_shared_nature")
+        self.assertIn(stage["id"], [one["id"] for one in self.experience.retriever().find(
+            {"text": "tomato watering schedule"})["matches"]])
+
+        said = self.routes[("POST", "/api/experience/remove")](_Request({"unit": gone}))
+        self.assertEqual(said.get("removed"), gone)
+        self.assertEqual(store.stages([gone]), [])
+        self.assertEqual([c for c in store.cards() if c["unit_id"] == gone], [])
+        self.assertEqual(store.edges([stage["id"], later["id"]]), [])
+        self.assertIsNone(store.workspace(gone))
+        # Found by no search again; the other project's stage still is.
+        found = [one["id"] for one in self.experience.retriever().find(
+            {"text": "watering schedule"})["matches"]]
+        self.assertNotIn(stage["id"], found)
+        self.assertIn(other["id"], found)
+        # The nature stays, still shown by the other project's stage.
+        self.assertEqual(store.natures_of_stages([other["id"], stage["id"]]),
+                         {other["id"]: ["rec_shared_nature"]})
+        # Not listed, and not learned again.
+        self.assertNotIn(gone, [one["id"] for one in self.experience.units()])
+        self.assertIn(kept, [one["id"] for one in self.experience.units()])
+        self.assertEqual(self.experience.learn([gone]), [])
+
+    def test_not_while_it_is_being_learned(self) -> None:
+        unit = self._post({"action": "create", "name": "Garden planner",
+                           "paths": [str(self.one)]})["project"]["unit_id"]
+        self.experience.learning_progress[unit] = {"running": True}
+        try:
+            said = self.experience.remove_unit(unit)
+        finally:
+            self.experience.learning_progress.pop(unit, None)
+        self.assertIn("error", said)
+        self.assertIn(unit, [one["id"] for one in self.experience.units()])
+
+    def test_the_page_asks_first(self) -> None:
+        script = (Path(__file__).resolve().parents[1] / "personalized_agent" / "api"
+                  / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("data-xp-remove-yes", script)
+        self.assertIn("Remove this project?", script)
+        # The click on Remove only asks; the request is sent from the answer.
+        at = script.index("removeAt.dataset.xpRemove)")
+        self.assertLess(at, script.index('"/api/experience/remove"'))

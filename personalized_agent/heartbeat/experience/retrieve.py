@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .index import StageIndex, terms_of
 from .patterns import nature_records
@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 #: side was measured to add useful context; the user asked for more, now
 #: that a stage records the work itself, and the nearer steps still count
 #: for more (FALLOFF).
-STEPS_AROUND = 3
+STEPS_AROUND = 1
 
 #: How many matched stages seed the chains.
 SEEDS = 5
@@ -70,17 +70,50 @@ RELEVANT_SHARE = 0.25
 #: How much each likeness counts, once the words match: a share more of
 #: the words' score for each.
 LIKENESS = {"kind": 0.15, "type": 0.15, "place": 0.1, "level": 0.1,
-            "environment": 0.1, "project": 0.3, "shows": 0.05}
+            "environment": 0.1, "project": 0.3, "shows": 0.05,
+            # A PROJECT LIKE THIS ONE: the stage's project's goal sharing the
+            # distinctive words of this work's goal - a website with
+            # accounts beside another one, not beside the agent's own
+            # internals that happen to say "token" too. As much as the
+            # share of the goal's words it has.
+            "like_this": 0.6}
 
-#: A stage handed over already in this run counts this much of itself: the
-#: same three stages were given to every question of a run.
-SEEN_ALREADY = 0.5
+#: How close to the most alike past project another must be to count as
+#: alike too - its share of that one's score; at LIKE_FROM it counts nothing,
+#: as close as that one, all of LIKENESS["like_this"].
+LIKE_FROM = 0.5
+
 
 #: A nature found by its own words, as much as one linked to a matched stage.
 NATURE_BY_WORDS = 1.0
 
+#: STRICTER MATCHING (2026-10-17, measured on the user's own run first): a
+#: match on words is a match on DISTINCTIVE words. A word in more than this
+#: share of the user's stages - "task", "token" in a record of building an
+#: agent - says nothing of which work a stage is, and counts for nothing;
+#: so do these fillers, whatever their share.
+GENERIC_SHARE = 0.10
+#: ...once there are this many stages to tell by: in a small record every
+#: word is in a large share of it, and none would be left to match on.
+GENERIC_FROM = 50
+IGNORED_WORDS = frozenset({"per", "app", "apps", "via", "etc", "eg", "ie", "vs"})
+#: A stage is a match only when it shares this many distinctive words with
+#: the step: one shared word was enough, and "task", "shared" brought the
+#: grouping of the user's states to a website's build.
+MIN_SHARED_WORDS = 2
+#: WHAT IT SAYS DECIDES: a stage qualifies by its words alone, beside the
+#: best match's words; its likenesses (same kind, shows how the user judges)
+#: then order those that qualify - they no longer carry a weak match over.
+WORDS_DECIDE = True
+#: A RULE MUST BEAR ON THE STEP: a nature found by its own words shares this
+#: many distinctive words with it; and of each kind - nature, pattern,
+#: principle - only those scoring at least this share of the best are
+#: handed over, however few. The quotas are a most, not a number to fill.
+NATURE_MIN_WORDS = 2
+RULE_MIN_SHARE = 0.3
+
 #: The principles with the most support, given every time.
-ALWAYS_PRINCIPLES = 3
+ALWAYS_PRINCIPLES = 0
 
 #: A step away from a matched stage is worth this much of it.
 FALLOFF = 0.7
@@ -230,18 +263,60 @@ class Retriever:
 
         words = list(dict.fromkeys(terms_of(profile.get("text", ""))))
         rarity = self.index.rarity(words) if words else {}
+        # rarity is log(1 + N/df): the share of stages a word is in, back
+        # from it - more than GENERIC_SHARE, and it tells no work apart.
+        counted = len(self.index.indexed()) if words else 0
+        distinctive = {w for w in words if w not in IGNORED_WORDS and (
+            counted < GENERIC_FROM or (rarity.get(w, 0.0) > 0 and 1.0 / max(
+                1e-9, math.exp(rarity[w]) - 1.0) <= GENERIC_SHARE))}
+        # As many words as the step has to give, up to MIN_SHARED_WORDS.
+        needed = min(MIN_SHARED_WORDS, max(1, len(distinctive)))
         # Only the terms a stage is compared by: the step's words, and the
         # places ("env:..."). Every term of every stage was fetched - 53,235
         # rows, the slowest part of a search - to look up a handful in each.
         found_terms = self.index.terms([s["id"] for s in stages],
                                        only=words, places=True)
+        # A PROJECT LIKE THIS ONE: this work's goal, in English words
+        # (`goal_text`), against each past project's stages as a whole - a
+        # project's few top cards say too little to compare. Each goal word
+        # counts by its rarity and by the share of the project's stages that
+        # say it; the projects are then put against the closest one, and
+        # only those near it (from LIKE_FROM of its score) count as alike.
+        goal_words = [w for w in dict.fromkeys(terms_of(profile.get("goal_text", "")))
+                      if w not in IGNORED_WORDS]
+        project_of = {s["id"]: (cards.get(s.get("card_id") or "") or {}).get("unit_id")
+                      or s["task_id"] for s in every_stage}
+        alike: Dict[str, float] = {}
+        alike_words: Dict[str, List[str]] = {}
+        if goal_words:
+            goal_rarity = self.index.rarity(goal_words)
+            said = self.index.terms(list(project_of), only=goal_words)
+            size: Dict[str, int] = {}
+            uses: Dict[str, Dict[str, int]] = {}
+            for stage_id, project in project_of.items():
+                size[project] = size.get(project, 0) + 1
+                for w in said.get(stage_id, {}):
+                    if w in goal_rarity:
+                        uses.setdefault(project, {})[w] = uses.get(project, {}).get(w, 0) + 1
+            score_of = {project: sum(goal_rarity[w] * n / size[project]
+                                     for w, n in used.items())
+                        for project, used in uses.items()}
+            best = max(score_of.values(), default=0.0)
+            for project, score in score_of.items():
+                if best > 0 and score >= LIKE_FROM * best:
+                    alike[project] = (score / best - LIKE_FROM) / (1 - LIKE_FROM)
+                    alike_words[project] = sorted(
+                        uses[project], key=lambda w: -goal_rarity[w] * uses[project][w])
+
+        def like_this(stage: Dict[str, Any]) -> Tuple[float, List[str]]:
+            project = project_of.get(stage["id"])
+            return alike.get(project, 0.0), alike_words.get(project, [])
         environment = set(profile.get("environment") or [])
         tasks = set(profile.get("tasks") or [])
         mine_type = str(profile.get("type") or "")
         mine_before = list(profile.get("before") or [])
         mine_level = str(profile.get("level") or "")
 
-        seen = set(profile.get("seen") or [])
         ranked = []
         for stage in stages:
             card = cards.get(stage.get("card_id") or "")
@@ -259,8 +334,11 @@ class Retriever:
             shows = (int(((work.get("decision") or {}).get("by")) == "user")
                      + int(bool((work.get("output") or {}).get("specification")))
                      + int(bool((stage.get("evaluation") or {}).get("words"))))
-            matched_words = [w for w in words if w in terms]
+            similar, similar_words = like_this(stage)
+            matched_words = [w for w in words if w in terms and w in distinctive]
             score = sum(rarity.get(w, 0.0) * terms[w] for w in matched_words)
+            if len(matched_words) < needed:
+                score = 0.0
             if words:
                 # WHAT IT SAYS FIRST: the likenesses count only on top of a
                 # match on words, as shares more of it.
@@ -270,9 +348,8 @@ class Retriever:
                                  + LIKENESS["level"] * same_level
                                  + LIKENESS["environment"] * min(1, place_level)
                                  + LIKENESS["project"] * same_project
-                                 + LIKENESS["shows"] * min(1, shows))
-                if stage["id"] in seen:
-                    total *= SEEN_ALREADY
+                                 + LIKENESS["shows"] * min(1, shows)
+                                 + LIKENESS["like_this"] * similar)
                 key = (round(total, 6), round(score, 6), str(stage.get("began") or ""))
             else:
                 # Nothing said in words: by its likenesses alone, as before.
@@ -294,6 +371,8 @@ class Retriever:
                     one.split(":", 2)[-1] for one in shared_places[:4]))
             if same_project:
                 why.append("same project")
+            if similar:
+                why.append("a project like this one: " + ", ".join(similar_words[:5]))
             if shows:
                 why.append("shows how you decide and judge")
             if matched_words:
@@ -301,10 +380,12 @@ class Retriever:
             ranked.append((key, stage["id"], why))
         ranked.sort(key=lambda one: one[0], reverse=True)
         if words:
-            # Only what matches - and well enough beside the best.
-            best = ranked[0][0][0] if ranked else 0.0
+            # Only what matches - and well enough beside the best: by its
+            # words alone (WORDS_DECIDE), its likenesses then ordering them.
+            at = 1 if WORDS_DECIDE else 0
+            best = max((one[0][at] for one in ranked), default=0.0)
             ranked = [one for one in ranked
-                      if one[0][1] > 0 and one[0][0] >= RELEVANT_SHARE * best]
+                      if one[0][1] > 0 and one[0][at] >= RELEVANT_SHARE * best]
             if not ranked:
                 out["none_close"] = ("no past stage is close to this: nothing in "
                                      "the user's record matches its words")
@@ -412,11 +493,16 @@ class Retriever:
                 for term in terms_here:
                     counts[term] = counts.get(term, 0) + 1
             total_natures = max(1, len(said_of))
-            weight_of = {w: math.log(1 + total_natures / counts[w])
-                         for w in words if counts.get(w)}
+            telling = [w for w in words if w not in IGNORED_WORDS and counts.get(w)
+                       and (total_natures < GENERIC_FROM
+                            or counts[w] / total_natures <= GENERIC_SHARE)]
+            weight_of = {w: math.log(1 + total_natures / counts[w]) for w in telling}
             whole = sum(math.log(1 + total_natures) for _w in words) or 1.0
             for record_id, terms_here in said_of.items():
-                hit = sum(weight_of.get(w, 0.0) for w in words if w in terms_here)
+                shared = [w for w in telling if w in terms_here]
+                if len(shared) < min(NATURE_MIN_WORDS, max(1, len(telling))):
+                    continue
+                hit = sum(weight_of[w] for w in shared)
                 if hit > 0:
                     nature_score[record_id] = nature_score.get(record_id, 0.0) \
                         + NATURE_BY_WORDS * hit / whole
@@ -498,7 +584,8 @@ class Retriever:
         quotas = dict(KEPT_PER_KIND, **(kept or {}))
         chosen = []
         for kind in ("principle", "pattern", "nature"):
-            mine = sorted((rule for rule in rules if rule["kind"] == kind),
+            mine = sorted((rule for rule in rules if rule["kind"] == kind
+                           and rule["score"] >= RULE_MIN_SHARE),
                           key=lambda rule: rule["score"], reverse=True)
             chosen += mine[:max(0, int(quotas.get(kind, 0)))]
         out["rules"] = chosen

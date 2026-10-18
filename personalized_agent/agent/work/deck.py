@@ -584,20 +584,28 @@ def _visual_list(deck: Dict[str, Any]) -> List[Dict[str, Any]]:
     return slides
 
 
+def _sticky(title: str, body: str) -> str:
+    """One part of a slide's notes as a STICKY NOTE beside it, as a note is
+    beside a reply in Chat: its title the top row, which folds it."""
+    return (f'<details class="sticky" open><summary>{_e(title)}</summary>'
+            f'<div class="sticky-body">{body}</div></details>')
+
+
 def notes_html(notes: Any) -> str:
-    """A slide's notes as they are shown beside it."""
+    """A slide's notes as they are shown beside it: a sticky note for each
+    part - what it shows, its key terms, how to read it, what to take."""
     notes = notes if isinstance(notes, dict) else {}
     parts = []
     if notes.get("shows"):
-        parts.append(f'<h3>What it shows</h3><p>{_e(notes["shows"])}</p>')
+        parts.append(_sticky("What it shows", f'<p>{_e(notes["shows"])}</p>'))
     if notes.get("terms"):
-        parts.append("<h3>Key terms</h3><dl>" + "".join(
+        parts.append(_sticky("Key terms", "<dl>" + "".join(
             f'<dt>{_e(one.get("term"))}</dt><dd>{_e(one.get("means"))}</dd>'
-            for one in notes["terms"] if isinstance(one, dict)) + "</dl>")
+            for one in notes["terms"] if isinstance(one, dict)) + "</dl>"))
     if notes.get("read"):
-        parts.append(f'<h3>How to read it</h3><p>{_e(notes["read"])}</p>')
+        parts.append(_sticky("How to read it", f'<p>{_e(notes["read"])}</p>'))
     if notes.get("takeaway"):
-        parts.append(f'<h3>What to take from it</h3><p>{_e(notes["takeaway"])}</p>')
+        parts.append(_sticky("What to take from it", f'<p>{_e(notes["takeaway"])}</p>'))
     return "".join(parts) or '<p class="no-notes">No explanation was written for this slide.</p>'
 
 
@@ -674,9 +682,20 @@ html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
 .deck { height:100%; display:flex; flex-direction:column; }
 .main { flex:1; display:flex; min-height:0; }
 .stage { flex:1; position:relative; overflow:hidden; min-height:0; min-width:0; }
-/* the slide's notes, beside it: what it shows, its terms, how to read it */
-.notes { width:34%; max-width:460px; min-width:240px; overflow:auto; padding:14px 18px;
-  border-left:1px solid var(--line); background:var(--panel); font-size:15px; line-height:1.55; }
+/* the slide's notes, beside it: a sticky note for each part - what it shows,
+   its terms, how to read it, what to take - as a note is beside a reply in
+   Chat, each folded from its title */
+.notes { width:30%; max-width:380px; min-width:220px; overflow:auto; padding:10px 12px;
+  background:transparent; font-size:14px; line-height:1.5; }
+.sticky { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent);
+  border-radius:8px; padding:6px 10px; margin:0 0 8px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+.sticky > summary { cursor:pointer; user-select:none; list-style:none; display:flex;
+  align-items:baseline; gap:6px; font-size:12px; font-weight:650; letter-spacing:.04em;
+  text-transform:uppercase; color:var(--muted); }
+.sticky > summary::-webkit-details-marker { display:none; }
+.sticky > summary::after { content:"\\25BE"; margin-left:auto; }
+.sticky:not([open]) > summary::after { content:"\\25B8"; }
+.sticky-body { margin-top:4px; }
 .note { display:none; }
 .note.on { display:block; }
 .note h3 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted);
@@ -689,8 +708,7 @@ html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
 .no-notes { color:var(--muted); font-style:italic; }
 @media (max-width: 720px) {
   .main { flex-direction:column; }
-  .notes { width:auto; max-width:none; min-width:0; max-height:42%; border-left:0;
-    border-top:1px solid var(--line); }
+  .notes { width:auto; max-width:none; min-width:0; max-height:42%; }
 }
 .frame { position:absolute; left:50%; top:50%; width:1280px; height:720px;
   transform:translate(-50%, -50%) scale(var(--k, .5)); transform-origin:50% 50%; }
@@ -817,14 +835,14 @@ ul.points { margin:8px 0 0; padding-left:1.2em; display:grid; gap:8px; max-width
 .bar { position:relative; }
 :fullscreen .bar { opacity:.35; transition:opacity .2s; }
 :fullscreen .bar:hover { opacity:1; }
-/* IN A FRAME OF THE APPLICATION'S PAGE, not full screen: the notes UNDER
-   the slide, whole, and the slide the frame's full width - the frame is
-   made as tall as both, so nothing in it scrolls. Beside the slide they
-   took a third of the width and scrolled three times its height. */
-.framed .main { flex-direction:column; }
-.framed .stage { flex:none; }
-.framed .notes { width:auto; max-width:none; min-width:0; max-height:none; overflow:visible;
-  flex:none; border-left:0; border-top:1px solid var(--line); }
+/* IN A FRAME OF THE APPLICATION'S PAGE, not full screen: the sticky notes
+   BESIDE the slide, whole - the frame is made as tall as the slide or the
+   notes, whichever is taller, so nothing in it scrolls; a note folded makes
+   it shorter again. (As one flat panel beside the slide they scrolled three
+   times its height; as notes that fold, they fit.) */
+.framed .main { align-items:flex-start; }
+.framed .stage { flex:1 1 auto; }
+.framed .notes { max-height:none; overflow:visible; flex:none; }
 """
 
 SCRIPT = """
@@ -836,10 +854,10 @@ SCRIPT = """
   let at = 0;
   // The slide is drawn at 1280 x 720 and scaled to the box it is in.
   const fit = () => {
-    // In a frame, with notes: the notes below, the slide as wide as the frame.
-    const below = Boolean(notes) && window.parent !== window && !document.fullscreenElement;
-    document.body.classList.toggle('framed', below);
-    stage.style.height = below ? (stage.clientWidth * 720 / 1280) + 'px' : '';
+    // In a frame, with notes: the notes beside, the slide as tall as its width.
+    const beside = Boolean(notes) && window.parent !== window && !document.fullscreenElement;
+    document.body.classList.toggle('framed', beside);
+    stage.style.height = beside ? (stage.clientWidth * 720 / 1280) + 'px' : '';
     const k = Math.min(stage.clientWidth / 1280, stage.clientHeight / 720);
     frame.style.setProperty('--k', String(k > 0 ? k : 0.5));
     tell();
@@ -853,14 +871,15 @@ SCRIPT = """
   const tell = () => {
     if (window.parent === window || document.fullscreenElement) return;
     const slide = stage.clientWidth * 720 / 1280;
-    // The notes under it, as tall as the slide's own notes are: told again
-    // whenever another slide is shown.
-    const below = document.body.classList.contains('framed');
-    const wanted = Math.ceil(slide + (below ? notes.offsetHeight : 0)
+    // The notes beside it: as tall as the slide or as its notes, whichever
+    // is taller - told again whenever another slide is shown or a note is
+    // folded.
+    const beside = document.body.classList.contains('framed');
+    const wanted = Math.ceil(Math.max(slide, beside ? notes.scrollHeight : 0)
       + (bar ? bar.offsetHeight : 0));
     if (wanted > 0 && Math.abs(wanted - told) > 1) {
       told = wanted;
-      window.parent.postMessage({ deckHeight: wanted, notesBelow: below }, '*');
+      window.parent.postMessage({ deckHeight: wanted, notesBelow: beside }, '*');
     }
   };
   const show = (n) => {
@@ -891,6 +910,8 @@ SCRIPT = """
   window.addEventListener('resize', fit);
   document.addEventListener('fullscreenchange', fit);
   if (window.ResizeObserver) new ResizeObserver(fit).observe(stage);
+  // A note folded or opened: the frame as tall as what is left.
+  if (notes) notes.addEventListener('toggle', () => tell(), true);
   fit();
   // #3 opens at the third slide.
   show((parseInt(location.hash.slice(1), 10) || 1) - 1);

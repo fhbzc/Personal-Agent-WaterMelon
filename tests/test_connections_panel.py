@@ -485,7 +485,7 @@ class TheConnectionsPanelTests(unittest.TestCase):
         self.assertTrue(out["beatBar"])
 
     def test_customized_recommendation_is_a_paper_of_pages(self) -> None:
-        """An issue of Customized Recommendation: a page per topic - the web's
+        """An issue of Newspaper: a page per topic - the web's
         and the contacts' together - turned at the top; each story saying
         what in it is new to the reader, and taking their say."""
         stub = self._stub()
@@ -540,7 +540,7 @@ class TheConnectionsPanelTests(unittest.TestCase):
         self.assertEqual(result["err"], "")
         out = result["out"]
         self.assertEqual(out["second"], "recommend", "right after the Overview")
-        self.assertIn("Customized Recommendation", out["mast"])
+        self.assertIn("Newspaper", out["mast"])
         self.assertIn("No. 13", out["mast"])
         self.assertIn("Next issue", out["when"])
         self.assertTrue(out["leftOfMain"], "the pages down the left, the paper on the right")
@@ -559,8 +559,58 @@ class TheConnectionsPanelTests(unittest.TestCase):
         self.assertIn("Already knew", out["saidAfter"])
         self.assertEqual(out["sentAgain"], 1)
 
+    def test_a_story_begins_with_how_it_ties_to_the_users_work(self) -> None:
+        """Not a label saying why it is here: the story's first sentence
+        ties it to something the user is doing, and the rest follows."""
+        stub = self._stub()
+        stories = [
+            {"id": "s1", "title": "Ten-slide talks that land", "kind": "web",
+             "opening": "While you trim the soil talk to fifteen minutes,",
+             "detail": "two groups show how they cut theirs to ten slides.",
+             "why": "Your talk is next week.", "because": "the soil talk",
+             "topic_id": "t1", "sources": ["https://talks.example.org/t"], "score": 0.9},
+            {"id": "s2", "title": "Kiln prices fall", "kind": "web",
+             "detail": "A plain one.", "because": "the pottery class",
+             "topic_id": "t1", "sources": ["https://kiln.example.org/k"], "score": 0.5}]
+        stub["/api/connections/briefing"] = {
+            "briefing": {"id": "b9", "at": "2026-10-14T08:00:00+00:00", "issue": 13,
+                         "items": stories, "stats": {"paper": {
+                             "front": ["s1", "s2"], "brief": [],
+                             "pages": [{"key": "t1", "title": "Talks",
+                                        "stories": ["s1", "s2"]}]}}},
+            "issues": [{"id": "b9", "at": "2026-10-14T08:00:00+00:00", "issue": 13,
+                        "stories": 2}],
+            "says": {}, "progress": {"running": False},
+            "schedule": {"next": "2026-10-15T08:00:00+01:00", "times": ["08:00"]}}
+        steps = (
+            "click(document.querySelector('#tabs button[data-tab=\"recommend\"]'));"
+            "await followKnowCard();await wait(300);"
+            "const card=document.querySelector('#recommend');"
+            "const sections=[...card.querySelectorAll('section')];"
+            "const lead=sections.find(s=>text(s).includes('Ten-slide'));"
+            "const plain=sections.find(s=>text(s).includes('Kiln prices'));"
+            "out.opening=text(lead.querySelector('.paper-opening'));"
+            "out.leadBody=text(lead.querySelector('.paper-body'));"
+            "out.colours=[getComputedStyle(lead.querySelector('.paper-opening')).color,"
+            "getComputedStyle(lead.querySelector('.paper-body')).color];"
+            "out.plainOpening=!!plain.querySelector('.paper-opening');"
+            "out.leadText=text(lead);"
+            "out.plainText=text(plain);")
+        result = _render(self.engine, stub, steps)
+        self.assertEqual(result["err"], "")
+        out = result["out"]
+        # Its own paragraph, first, in its own colour; then the story.
+        self.assertEqual(out["opening"], "While you trim the soil talk to fifteen minutes,")
+        self.assertEqual(out["leadBody"], "two groups show how they cut theirs to ten slides.")
+        self.assertNotEqual(out["colours"][0], out["colours"][1])
+        self.assertFalse(out["plainOpening"])
+        self.assertNotIn("Why it is here", out["leadText"])
+        self.assertNotIn("Your talk is next week.", out["leadText"])
+        # One without an opening keeps the reason it had.
+        self.assertIn("Why it is here: the pottery class", out["plainText"])
+
     def test_the_times_of_day_are_set_on_its_own_tab(self) -> None:
-        """When an issue is made: on Customized Recommendation's tab, not in
+        """When an issue is made: on Newspaper's tab, not in
         Settings - changed where it stands, no Edit: a time added, set and
         kept at once; one taken off with its × - the last one too: then no
         issue is made by itself, only with the button, and it says so."""
@@ -664,7 +714,7 @@ class TheConnectionsPanelTests(unittest.TestCase):
         # Said, with when it will be.
         self.assertTrue(result["out"]["text"].startswith("No issue yet:"))
         self.assertIn("at the times set in Settings", result["out"]["text"])
-        self.assertEqual(result["out"]["title"], "Customized Recommendation")
+        self.assertEqual(result["out"]["title"], "Newspaper")
 
 
 if __name__ == "__main__":

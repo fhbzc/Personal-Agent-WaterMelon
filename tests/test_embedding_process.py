@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import time
 import unittest
 
 from personalized_agent.heartbeat.states.embedding import (
@@ -13,8 +14,17 @@ class TheModelIsHeldWhileInUseTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.embedder = Embedder()
+        # Kept a moment after its last use, not two minutes, for the test.
+        self.embedder.LINGER_SECONDS = 0.5
         if not self.embedder.available():
             self.skipTest("no embedding model on this machine")
+
+    def _gone_after_a_while(self) -> None:
+        for _ in range(40):
+            if not self.embedder.status()["loaded"]:
+                return
+            time.sleep(0.1)
+        self.fail("still loaded long after its last use")
 
     def tearDown(self) -> None:
         self.embedder.release()
@@ -28,18 +38,31 @@ class TheModelIsHeldWhileInUseTests(unittest.TestCase):
             self.embedder.embed(["a third"])
             self.assertEqual(self.embedder._child.pid, pid)
         self.assertEqual((len(first), len(first[0])), (2, 384))
-        self.assertFalse(self.embedder.status()["loaded"])
+        self._gone_after_a_while()
 
     def test_a_reading_with_nothing_holding_it_lets_it_go(self) -> None:
         self.assertEqual(len(self.embedder.embed(["alone"])), 1)
-        self.assertFalse(self.embedder.status()["loaded"])
+        self._gone_after_a_while()
 
     def test_two_holders_keep_it_until_the_last_is_done(self) -> None:
         with self.embedder.loaded():
             with self.embedder.loaded():
                 self.embedder.embed(["held twice"])
             self.assertTrue(self.embedder.status()["loaded"])
-        self.assertFalse(self.embedder.status()["loaded"])
+        self._gone_after_a_while()
+
+    def test_the_next_piece_of_work_finds_it_still_loaded(self) -> None:
+        """A round's pieces each hold it on their own. Let go the moment the
+        first was done, the next loaded it again - 27 to 34 seconds each, three
+        times in a minute and a half. Kept a while, they share one load."""
+        with self.embedder.loaded():
+            self.embedder.embed(["the first piece"])
+            pid = self.embedder._child.pid
+        self.assertTrue(self.embedder.status()["loaded"], "let go at once")
+        with self.embedder.loaded():
+            self.embedder.embed(["the next piece"])
+            self.assertEqual(self.embedder._child.pid, pid, "loaded again")
+        self._gone_after_a_while()
 
 
 class PairsAreScoredWithoutTheModelTests(unittest.TestCase):

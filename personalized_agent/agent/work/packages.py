@@ -250,7 +250,13 @@ class Installer:
         self.sandbox_enabled = sandbox_enabled
 
     def cache_dir(self) -> Path:
-        """agent_work/.pip-cache - beside the works' folders, in none."""
+        """agent_work/.pip-cache - beside the works' folders, in none. For a
+        way of the Work debugger (a policy that shuts the application's code,
+        WorkspacePolicy.code_root), in ITS OWN folder: a cache beside it was
+        the try's, shared by the three ways, and what one had downloaded told
+        another what it had done."""
+        if getattr(self.policy, "code_root", None):
+            return Path(self.policy.write_root) / PIP_CACHE_DIR
         return Path(self.policy.write_root).parent / PIP_CACHE_DIR
 
     def pip_policy(self, run_dir: Path) -> WorkspacePolicy:

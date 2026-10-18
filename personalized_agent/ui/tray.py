@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from ..version import APP_NAME
+
 log = logging.getLogger(__name__)
 
 try:                                   # pragma: no cover - depends on install
@@ -89,7 +91,7 @@ def icon_image(characters: Any, name: str, size: int = ICON_SIZE) -> Any:
 def tooltip(app: Any) -> str:
     """The tray icon's words: the avatar's name - and, when it is not the
     standard one, the data folder, so it is plain which agent this is."""
-    name = (app.avatar_name() if hasattr(app, "avatar_name") else "") or "Personalized Agent"
+    name = (app.avatar_name() if hasattr(app, "avatar_name") else "") or APP_NAME
     try:
         from ..common.paths import default_root
         root = getattr(app, "root", None)
@@ -115,10 +117,17 @@ class Tray:
         return run
 
     def _character_shown(self, _item: Any = None) -> bool:
+        """As the desktop keeps it - never asked of Tk from this thread."""
+        return not bool(getattr(self.desktop, "character_hidden", False))
+
+    def refresh_menu(self) -> None:
+        """The menu's words built again: Windows builds them only when told."""
+        if self.icon is None:
+            return
         try:
-            return self.desktop.agent_window.state() != "withdrawn"
-        except Exception:
-            return True
+            self.icon.update_menu()
+        except Exception:      # pragma: no cover - the icon has gone
+            log.debug("could not rebuild the tray menu", exc_info=True)
 
     def _menu(self) -> Any:
         item, menu = pystray.MenuItem, pystray.Menu

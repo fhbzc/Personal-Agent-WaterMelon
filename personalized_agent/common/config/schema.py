@@ -291,6 +291,15 @@ SETTINGS_SCHEMA: List[SettingField] = [
                  "way, in your own part of it: the Run key on Windows, a LaunchAgent "
                  "on macOS, an autostart entry on Linux. On by default; the installer "
                  "asks on its last page."),
+    SettingField("updates", "Updates", "choice", "ask", "General",
+                 "New versions, from this project's published releases on GitHub "
+                 "(never a merge or a pre-release). By default you are told, and "
+                 "choose which newer version to install; or the newest is "
+                 "installed by itself - never while a piece of work is running, "
+                 "and the agent starts again on it; or nothing is looked for. "
+                 "Where this copy cannot replace itself - run from source, a "
+                 "portable folder, the macOS .pkg - you are only told.",
+                 choices=["ask", "install", "off"]),
     SettingField("display_language", "Display language", "choice",
                  _default_display(), "General",
                  "The language you see: this application's screens, and "
@@ -522,10 +531,14 @@ SETTINGS_SCHEMA: List[SettingField] = [
                  "are written and nothing ever says what they add up to."),
     SettingField("state_heartbeat_at_once", "Work on several at once, at most",
                  "int", 3, "Heartbeat",
-                 "How many model calls the state heartbeat may have going at "
-                 "once - task and project summaries, and each project's stages "
-                 "- when they do not depend on each other. The most, not the "
-                 "usual: before each call it looks at the computer and leaves "
+                 "How many things the agent may have going at once, of every "
+                 "kind together - runs of your work, projects being learned, "
+                 "task and project summaries, an issue of Newspaper. Shared out "
+                 "evenly first, one of each before a second of any; when there is "
+                 "room for fewer, what you started goes first, then the grouping "
+                 "of your tasks, then Newspaper, then the learning updated by "
+                 "itself. The most, not the "
+                 "usual: before each one starts it looks at the computer and leaves "
                  "room for you. At the computer, at most two; half the processor "
                  "left free for you (a quarter while you are away); at least two "
                  "gigabytes or a fifth of memory left free; on battery at most "
@@ -712,17 +725,15 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
                  "an empty panel until the top of the hour.",
                  minimum=5, maximum=3600),
     SettingField("state_first_round_states",
-                 "States needed before the first grouping", "int", 100,
+                 "States needed before the first grouping", "int", 20,
                  "Heartbeat",
                  "WHILE THERE IS NOTHING TO SHOW, this is the whole rule: "
                  "the first grouping waits for this many states the "
                  "grouping has never read, and runs as soon as they are "
                  "there rather than waiting the usual hours. Below it "
-                 "nothing runs at all, and the hours do not change that - "
-                 "a dozen states grouped into a dozen tasks of one is a "
-                 "drawing of a list, which is what grouping exists to "
-                 "replace. Once there IS a picture, this stops applying "
-                 "and the hours take over.",
+                 "nothing runs at all, and the hours do not change that. "
+                 "Once there IS a picture, this stops applying and the "
+                 "hours take over.",
                  minimum=1, maximum=100000),
     SettingField("greet_on_start", "Say hello when the agent is up",
                  "bool", False, "General",
@@ -751,18 +762,18 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
                  hidden=True),
     SettingField("module_connections_enabled", "Connections", "bool", True, "Modules",
                  "Contacts kept from what is on your screen.", hidden=True),
-    SettingField("module_recommend_enabled", "Customized Recommendation", "bool", True,
+    SettingField("module_recommend_enabled", "Newspaper", "bool", True,
                  "Modules", "The reading log, and an issue at the times you chose - your contacts "
                  "looked up on the web with it.", hidden=True),
-    SettingField("module_experience_enabled", "Experience learning", "bool", True, "Modules",
+    SettingField("module_experience_enabled", "Work learning", "bool", True, "Modules",
                  "Work natures grouped and learned from by themselves.", hidden=True),
     SettingField("work_in_subprocess", "Each run in a process of its own", "bool", True,
                  "Work",
                  "Each run of your work goes in a process of its own, within what the "
                  "computer has free; off, in the agent's own process.", hidden=True),
-    SettingField("recommend_times", "Customized Recommendation, each day at", "string",
+    SettingField("recommend_times", "Newspaper, each day at", "string",
                  "08:00", "Heartbeat",
-                 "When a new issue of Customized Recommendation is made: one or more "
+                 "When a new issue of Newspaper is made: one or more "
                  "times of day, in this computer's time zone. Times missed while the "
                  "computer was off make one issue when it is back. None at all: no "
                  "issue by itself, only when asked for.", hidden=True),
@@ -827,6 +838,14 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
     # --- Retrieval budget (section 44) ------------------------------------
 
     # --- Listener privacy (section 25) ------------------------------------
+    # SETTINGS > SHORTCUTS: set on a card of their own, not as rows
+    # (platform_layer/hotkeys.py; app.js, renderShortcuts).
+    SettingField("shortcut_delegate_work", "Delegate work shortcut", "string", "Ctrl+Alt+D",
+                 "Shortcuts", "The keys that open an empty Delegate work box, from any "
+                 "program. Empty for none.", hidden=True),
+    SettingField("delegate_selection_button", "Button beside selected text", "bool", True,
+                 "Shortcuts", "A small Delegate work button beside text you select, for a "
+                 "few seconds (Windows).", hidden=True),
     SettingField("listener_enabled", "Enable activity monitoring", "bool", True, "Listener",
                  "The master switch for everything the agent observes. Always on - "
                  "not offered in Settings: what is listened to is chosen one source "

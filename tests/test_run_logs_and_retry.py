@@ -432,6 +432,12 @@ class AModelCallIsTriedAgainTests(_RunBase):
             False, AvailabilityState.PROVIDER_UNAVAILABLE,
             failure_class=FailureClass.USER_ACTION_REQUIRED))))
         self.assertFalse(retry(ValueError("did not answer within 300s")))
+        # A client that started without its input (Claude Code waits three
+        # seconds for it): the next try has it.
+        self.assertTrue(retry(ModelInvocationError(
+            "Warning: no stdin data received in 3s, proceeding without it.",
+            ModelAvailability(False, AvailabilityState.UNKNOWN_ERROR,
+                              failure_class=FailureClass.UNKNOWN))))
 
 
 if __name__ == "__main__":

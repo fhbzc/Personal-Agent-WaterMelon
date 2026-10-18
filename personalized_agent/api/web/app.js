@@ -1,4 +1,4 @@
-/* Personalized Agent - frontend.
+/* Personal Agent WaterMelon - frontend.
    Every panel reads through the backend API; nothing touches storage directly. */
 "use strict";
 
@@ -359,10 +359,10 @@ function xpEditing(selector) {
    since, it is drawn.) */
 function xpPut(el, html) {
   if (!el) return false;
-  if (el._xpHtml === html && el._xpFirst === el.firstChild
+  if (el._xpHtml === xpShows(html) && el._xpFirst === el.firstChild
       && el._xpCount === el.childNodes.length) return false;
   el.innerHTML = html;
-  el._xpHtml = html;
+  el._xpHtml = xpShows(html);
   el._xpFirst = el.firstChild;
   el._xpCount = el.childNodes.length;
   return true;
@@ -425,9 +425,15 @@ function xpLearning(unit) {
       <button type="button" class="small secondary" data-xp-learn-stop="${id}">Stop</button>
       <span class="muted">${escapeHtml(cost)}</span></div>`;
   }
+  // WHILE THE AUTOMATIC UPDATE RUNS, the buttons wait for it.
+  const held = (experienceState.auto || {}).running;
   return `<div class="xp-learning">
-    <button type="button" class="small" data-xp-learn="${id}">${l.until
+    <button type="button" class="small" data-xp-learn="${id}"${held
+      ? ` disabled title="Automatic learning is running - wait for it to finish"` : ""}>${l.until
       ? "Update learning" : "Start learning"}</button>
+    <label class="xp-auto-one" title="Learned again by itself, at the times above, when it has changed">
+      <input type="checkbox" data-xp-auto-unit="${id}"${unit.auto === false ? "" : " checked"}>
+      Update by itself</label>
     <span class="muted">${learned} · ${escapeHtml(cost)}</span>
     ${l.error ? `<span class="xp-project-error">${escapeHtml(l.error)}</span>` : ""}</div>`;
 }
@@ -446,7 +452,17 @@ async function loadExperience(full) {
       ? `, ${status.waiting} waiting for room` : ""}`;
   // While something is being learned, the rows say how it goes.
   clearTimeout(experienceState.learnTimer);
+  experienceState.learnTimer = null;
   if (status.learning || status.waiting) {
+    experienceState.learnTimer = setTimeout(() => loadExperience(false), 3000);
+  }
+  try {
+    experienceState.auto = await api.get("/api/experience/auto");
+  } catch (err) {
+    experienceState.auto = null;
+  }
+  xpDrawAuto();
+  if ((experienceState.auto || {}).running && !experienceState.learnTimer) {
     experienceState.learnTimer = setTimeout(() => loadExperience(false), 3000);
   }
   experienceState.units = status.units || [];
@@ -456,6 +472,43 @@ async function loadExperience(full) {
   xpDrawUnits();
   await xpLoadProjects();
   await xpOpenUnit();
+}
+
+/* LEARNING UPDATED BY ITSELF: the times of day, changed where they stand
+   (as the Newspaper's), and the run going now. */
+function xpDrawAuto() {
+  const host = $("#xp-auto");
+  if (!host) return;
+  const auto = experienceState.auto;
+  if (!auto) { host.innerHTML = ""; return; }
+  if (host.contains(document.activeElement)) return;
+  const done = (auto.finished || []).length;
+  host.innerHTML = `<div class="xp-auto-times"><strong>Update by itself each day at</strong></div>
+    <p class="muted xp-auto-note">${auto.running
+      ? `Automatic learning is running: ${done} of ${(auto.units || []).length} projects done.
+         Start and Update wait until it finishes.`
+      : (auto.times || []).length
+        ? "Each project ticked below is learned again when its states or folders have changed."
+        : "No time chosen: projects are learned only when you press Start or Update."}</p>`;
+  const control = recommendTimesControl((auto.times || []).join(", "));
+  let waiting = null;
+  control.addEventListener("change", () => {
+    clearTimeout(waiting);
+    waiting = setTimeout(async () => {
+      try {
+        experienceState.auto = await api.post("/api/experience/auto", { times: control.value });
+        toast(control.value ? "Saved: learning is updated each day at " + control.value
+          : "Saved: learning is updated only when you ask");
+      } catch (err) {
+        toast(err.message, "error");
+      }
+    }, 600);
+  });
+  const line = host.querySelector(".xp-auto-times");
+  line.appendChild(control);
+  if (auto.time_zone) {
+    line.insertAdjacentHTML("beforeend", `<span class="muted">(${escapeHtml(auto.time_zone)})</span>`);
+  }
 }
 
 /* The list of projects and tasks - not while a description in it is being
@@ -471,6 +524,13 @@ function xpDrawUnits() {
       data-xp-row="${escapeHtml(unit.id)}"
       title="${unit.active ? "At work now - found from what you are doing"
         : "Learned from; not at work now"}">
+      ${experienceState.removing === unit.id ? `<div class="xp-unit-ask" role="alert">
+        Remove this project? What was learned from it is deleted and no longer
+        used in work. What it showed about how you work stays.
+        <button type="button" class="small danger" data-xp-remove-yes="${escapeHtml(unit.id)}">Remove</button>
+        <button type="button" class="small secondary" data-xp-remove-no="${escapeHtml(unit.id)}">Keep it</button>
+      </div>` : `<button type="button" class="xp-unit-remove link" data-xp-remove="${
+        escapeHtml(unit.id)}" title="Remove this project and what was learned from it">Remove</button>`}
       <div class="xp-unit-open" data-xp-unit="${escapeHtml(unit.id)}" role="button"
         tabindex="0">
         ${escapeHtml(xpName(unit.name))}
@@ -545,9 +605,9 @@ async function watchWorkGoing() {
       });
       $$("[data-xp-unit-run]").forEach((span) => {
         const html = xpUnitRunBadge(span.dataset.xpUnitRun);
-        if (span._xpHtml !== html) {
+        if (span._xpHtml !== xpShows(html)) {
           span.innerHTML = html;
-          span._xpHtml = html;
+          span._xpHtml = xpShows(html);
         }
       });
       setTabWaiting("experience", mine);
@@ -565,7 +625,7 @@ setTimeout(watchWorkGoing, 1000);
 async function xpOpenUnit(force = false) {
   $$("#xp-units .xp-unit").forEach((row) => row.classList.toggle("selected",
     (row.querySelector("[data-xp-unit]") || {}).dataset?.xpUnit === experienceState.unit));
-  if (experienceState.unit) await xpLoadGraph(experienceState.unit);
+  if (experienceState.unit) await xpLoadGraph(experienceState.unit, force);
   await xpLoadRuns(force);
 }
 
@@ -876,23 +936,44 @@ function xpDot(stage, cx, cy, r, where) {
     <title>${escapeHtml(`${stage.kind}: ${stage.summary}`)}</title></g>`;
 }
 
+/* AN ARROWHEAD OF ITS OWN for each drawing. One id shared by every drawing
+   on the page meant every arrow used the first drawing's head - and where
+   that drawing was hidden (another tab, a way not in front), no arrow had a
+   head at all. */
+let xpMarkerCount = 0;
+function xpMarkerId(base) {
+  xpMarkerCount += 1;
+  return `${base}-${xpMarkerCount}`;
+}
+
+/* WHAT A DRAWING SHOWS, its arrowheads' numbers left out: each draw takes a
+   new number, so the same picture drawn again never read as the same - and
+   every "nothing changed, leave it" check redrew it anyway, taking the
+   reader's selection and scroll with it. */
+const XP_MARKER_NUMBER = /\b((?:xp-head|sb-arrow|sb-tt-arrow)-)\d+/g;
+function xpShows(html) {
+  return String(html).replace(XP_MARKER_NUMBER, "$1");
+}
+
 /* A DIRECTED EDGE: from the stage depended on to the stage that depends on
    it - the way the work went - stopping short of the dot so the arrowhead
    shows. */
-function xpArrow(x1, y1, x2, y2, r, kind) {
+function xpArrow(x1, y1, x2, y2, r, kind, head = "xp-head") {
   const dx = x2 - x1;
   const dy = y2 - y1;
   const length = Math.hypot(dx, dy) || 1;
   const end = Math.max(0, length - r - 2);
   return `<line x1="${x1.toFixed(1)}" y1="${y1}" x2="${(x1 + dx * end / length)
     .toFixed(1)}" y2="${(y1 + dy * end / length).toFixed(1)}"
-    class="xp-edge xp-edge-${escapeHtml(kind || "")}" marker-end="url(#xp-head)">
+    class="xp-edge xp-edge-${escapeHtml(kind || "")}" marker-end="url(#${head})">
     <title>${escapeHtml(kind || "")}</title></line>`;
 }
 
-const XP_HEAD = `<defs><marker id="xp-head" viewBox="0 0 8 8" refX="7" refY="4"
+function xpHead(id) {
+  return `<defs><marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4"
   markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z"
   class="xp-head"/></marker></defs>`;
+}
 
 function xpKey() {
   return `<p class="sb-key">${Object.entries(XP_KIND_COLOUR).map(([kind, colour]) =>
@@ -901,15 +982,31 @@ function xpKey() {
 }
 
 /* -- one piece of work ---------------------------------------------------- */
-async function xpLoadGraph(unitId) {
+async function xpLoadGraph(unitId, chosen = false) {
+  // CHOSEN BY THE USER: the panel is switched at once - the project's name,
+  // and a wheel turning while its picture is read - not left on the last
+  // one until it comes. And only the latest asked is drawn: a slow answer
+  // for a project clicked past is dropped.
+  const asked = (experienceState.graphAsked || 0) + 1;
+  experienceState.graphAsked = asked;
+  if (chosen) {
+    const unit = experienceState.units.find((one) => one.id === unitId);
+    if (unit) $("#xp-graph-title").textContent = xpName(unit.name);
+    $("#xp-graph").innerHTML = `<div class="xp-loading" role="status">
+      <span class="xp-loading-wheel" aria-hidden="true"></span>Loading</div>`;
+  }
+  let graph;
   try {
-    experienceState.graph = await api.get(
+    graph = await api.get(
       xpScoped(`/api/experience/graph?unit=${encodeURIComponent(unitId)}`));
   } catch (err) {
-    $("#xp-graph").innerHTML = `<p class="muted">${escapeHtml(err.message)}</p>`;
+    if (asked === experienceState.graphAsked) {
+      $("#xp-graph").innerHTML = `<p class="muted">${escapeHtml(err.message)}</p>`;
+    }
     return;
   }
-  const graph = experienceState.graph;
+  if (asked !== experienceState.graphAsked || unitId !== experienceState.unit) return;
+  experienceState.graph = graph;
   // A project or a task is headed by its name, nothing more.
   $("#xp-graph-title").textContent = xpName(graph.unit.name);
   xpDrawUnitAbout();
@@ -931,7 +1028,7 @@ function xpGraphSvg(graph, where = "unit") {
   const stages = graph.stages || [];
   if (!stages.length) {
     return `<p class="muted">Nothing learned of this yet - Start learning
-      it in Projects and tasks.</p>`;
+      it in Projects.</p>`;
   }
   const { rows, rowOf } = xpRows(graph);
   const column = xpColumns(stages, graph.edges);
@@ -943,16 +1040,17 @@ function xpGraphSvg(graph, where = "unit") {
   const x = (s) => left + 12 + (column.get(s.id) || 0) * gap;
   const y = (s) => 20 + rowOf(s) * step;
   const at = new Map(stages.map((s) => [s.id, s]));
+  const head = xpMarkerId("xp-head");
   const lines = (graph.edges || []).map((e) => {
     const a = at.get(e.source); const b = at.get(e.target);
     if (!a || !b) return "";
-    return xpArrow(x(b), y(b), x(a), y(a), 8, e.kind);
+    return xpArrow(x(b), y(b), x(a), y(a), 8, e.kind, head);
   }).join("");
   const labels = rows.map((card, i) => xpCardLabel(card, 6, 24 + i * step,
     where, 38)).join("");
   const dots = stages.map((s) => xpDot(s, x(s), y(s), 8, where)).join("");
   return `${xpKey()}<div class="xp-frame"><svg width="${width}" height="${height}">${
-    XP_HEAD}${lines}${labels}${dots}</svg></div>`;
+    xpHead(head)}${lines}${labels}${dots}</svg></div>`;
 }
 
 /* WHAT THE STAGE SAYS ABOUT THE WORK: what it was for, what was done, what
@@ -1333,6 +1431,23 @@ function xpReviews(stage) {
     </li>`).join("")}</ol></div>`;
 }
 
+/* WHAT A STAGE SHOWED OF THE USER, and what it is found by: asked for when
+   its card is opened - the pictures carry the stages alone. Drawn again
+   once they come, if it is still the one open. */
+async function xpStageDetail(stage, stageId, where) {
+  if (stage.natures !== undefined || stage.detailAsked) return;
+  stage.detailAsked = true;
+  try {
+    const said = await api.get(`/api/experience/stage_detail?stage=${encodeURIComponent(stageId)}`);
+    stage.natures = said.natures || [];
+    stage.found_by = said.found_by || {};
+  } catch (err) {
+    stage.natures = [];
+  }
+  const view = XP_VIEWS[where];
+  if (view && experienceState[view.stage] === stageId) xpShowStage(stageId, where);
+}
+
 function xpShowStage(stageId, where) {
   const view = XP_VIEWS[where];
   const graphs = view.graphs();
@@ -1360,7 +1475,9 @@ function xpShowStage(stageId, where) {
     <p>${xpCite(stage.summary)}</p>
     ${xpStageWork(stage.work || {}, stage)}
     ${said.verdict ? `<p><strong>Verdict:</strong> ${escapeHtml(said.verdict)}</p>` : ""}
-    ${(XP_VIEWS[where] || {}).work ? xpReviews(stage) : xpStageNatures(stage)}
+    ${(XP_VIEWS[where] || {}).work ? xpReviews(stage) : stage.natures === undefined
+      ? `<p class="muted xp-stage-natures">Reading what it shows about you…</p>`
+      : xpStageNatures(stage)}
     ${xpFoundBy(stage)}
     ${(said.criteria || []).length ? `<p><strong>Checked:</strong> ${
       said.criteria.map(escapeHtml).join("; ")}</p>` : ""}
@@ -1375,6 +1492,7 @@ function xpShowStage(stageId, where) {
   $$(`${frame} [data-xp-stage]`).forEach((g) =>
     g.classList.toggle("selected", g.dataset.xpStage === stageId));
   $$(`${frame} [data-xp-card]`).forEach((g) => g.classList.remove("selected"));
+  if (!view.work) xpStageDetail(stage, stageId, where);
 }
 
 
@@ -1667,11 +1785,11 @@ function xpRunPatch(run) {
   if (!box) return;
   const put = (selector, html, text) => {
     const at = box.querySelector(selector);
-    if (!at || at._xpHtml === html) return;
+    if (!at || at._xpHtml === xpShows(html)) return;
     const top = at.scrollTop;
     const bottom = top > 0 && at.scrollHeight - top - at.clientHeight < 24;
     if (text) at.textContent = html; else at.innerHTML = html;
-    at._xpHtml = html;
+    at._xpHtml = xpShows(html);
     at.scrollTop = bottom ? at.scrollHeight : top;
   };
   put(`[data-xp-run-totals="${key}"]`, xpRunTotals(run));
@@ -1850,6 +1968,47 @@ function xpCallsNice(value) {
   return step * power;
 }
 
+/* THE X AXIS: the clock ("time"), or the run's own time ("spent") - what it
+   had run when each call ended, paused stretches and waits for the user left
+   out, as the run counted it. Calls from before it counted are estimated:
+   every gap longer than a pause is taken out. One choice, kept in this
+   browser. */
+let xpCallsAxisChosen = "";
+function xpCallsAxis() {
+  if (xpCallsAxisChosen) return xpCallsAxisChosen;
+  try {
+    return localStorage.getItem("xp-calls-axis") === "spent" ? "spent" : "time";
+  } catch (_err) {
+    return "time";
+  }
+}
+
+function xpCallsSpent(calls) {
+  const order = calls.slice().sort((a, b) => xpCallsTimes(a).end - xpCallsTimes(b).end
+    || Number(a.n) - Number(b.n));
+  const at = new Map();
+  let est = 0;
+  let prev = null;
+  let estimated = false;
+  order.forEach((call) => {
+    const { end } = xpCallsTimes(call);
+    const own = Math.max(0, Number(call.seconds || 0)) * 1000;
+    if (prev === null) est = own;
+    else {
+      const gap = Math.max(0, end - prev);
+      est += gap > XP_CALLS_GAP ? own : gap;
+    }
+    prev = end;
+    if (call.active !== undefined && call.active !== null) {
+      est = Number(call.active) * 1000;
+    } else {
+      estimated = true;
+    }
+    at.set(Number(call.n), est);
+  });
+  return { at, estimated };
+}
+
 function xpCallsTimes(call) {
   const end = Date.parse(call.finished) || Date.parse(call.started) || 0;
   const start = Math.min(Date.parse(call.started) || end, end);
@@ -1860,8 +2019,9 @@ function xpCallsTimes(call) {
    been taken by then - by each who made calls, and by all of them. A failed
    call took nothing. `lines`: who has a line - each who, then the total,
    always last, drawn on top. */
-function xpCallsCumulative(calls) {
-  const order = calls.slice().sort((a, b) => xpCallsTimes(a).end - xpCallsTimes(b).end
+function xpCallsCumulative(calls, spent = null) {
+  const tOf = (call) => (spent ? spent.at.get(Number(call.n)) || 0 : xpCallsTimes(call).end);
+  const order = calls.slice().sort((a, b) => tOf(a) - tOf(b)
     || Number(a.n) - Number(b.n));
   const present = new Set(order.map((one) => one.who));
   const whos = [...XP_CALLS_WHO.filter((one) => present.has(one.who)),
@@ -1878,7 +2038,7 @@ function xpCallsCumulative(calls) {
     sums[""].out += tout;
     const cum = {};
     Object.entries(sums).forEach(([who, sum]) => { cum[who] = { in: sum.in, out: sum.out }; });
-    return { call, n: Number(call.n), t: xpCallsTimes(call).end, cum };
+    return { call, n: Number(call.n), t: tOf(call), cum };
   });
   return { points, lines: [...whos, XP_CALLS_TOTAL], whos, sums,
            total: { in: sums[""].in, out: sums[""].out } };
@@ -1887,7 +2047,14 @@ function xpCallsCumulative(calls) {
 /* Time to x: the calls' stretches of activity laid side by side, each as
    wide as its share of the time worked, with a short break between two
    that a long pause parts. */
-function xpCallsTimeScale(calls, x0, x1) {
+function xpCallsTimeScale(calls, x0, x1, spent = null) {
+  if (spent) {
+    // The run's own time: one stretch from its start, no breaks - there
+    // are no pauses in it.
+    const most = Math.max(60 * 1000, ...[...spent.at.values()]);
+    const span = { from: 0, to: most, lo: 0, hi: most * 1.02, x0, x1, spent: true };
+    return { x: (t) => x0 + (t / span.hi) * (x1 - x0), spans: [span] };
+  }
   const ends = calls.map((one) => xpCallsTimes(one).end).sort((a, b) => a - b);
   const spans = [];
   ends.forEach((t) => {
@@ -1925,6 +2092,17 @@ function xpCallsTimeScale(calls, x0, x1) {
 function xpCallsTicks(spans) {
   const STEPS = [10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 21600]
     .map((s) => s * 1000);
+  if (spans.length === 1 && spans[0].spent) {
+    // Time spent: how long it had run, from nothing.
+    const span = spans[0];
+    const perMs = (span.x1 - span.x0) / (span.hi || 1);
+    const step = STEPS.find((s) => s * perMs >= 72) || STEPS[STEPS.length - 1];
+    const ticks = [];
+    for (let t = 0; t <= span.hi; t += step) {
+      ticks.push({ t, label: t ? xpCallsDuration(t / 1000) : "0" });
+    }
+    return ticks;
+  }
   const ticks = [];
   let lastDay = "";
   spans.forEach((span, index) => {
@@ -1965,8 +2143,9 @@ function xpCallsSvg(calls, width) {
   const outTop = inBase + L.gap;
   const outBase = outTop + L.outHeight;
   const height = outBase + L.axis;
-  const { x, spans } = xpCallsTimeScale(calls, x0 + 6, x1 - 6);
-  const sums = xpCallsCumulative(calls);
+  const spent = xpCallsAxis() === "spent" ? xpCallsSpent(calls) : null;
+  const { x, spans } = xpCallsTimeScale(calls, x0 + 6, x1 - 6, spent);
+  const sums = xpCallsCumulative(calls, spent);
   const { points } = sums;
   const hidden = xpCallsHidden();
   const lines = sums.lines.filter((line) => !hidden.has(xpCallsKeyOf(line)));
@@ -2094,6 +2273,14 @@ function xpCallsLegend(calls) {
   }
   keys.push(`<span class="muted xp-calls-sum">${calls.length} call${calls.length === 1 ? ""
     : "s"}</span>`);
+  // The x axis: the clock, or the run's own time.
+  const axis = xpCallsAxis();
+  const estimated = axis === "spent" && xpCallsSpent(calls).estimated;
+  keys.push(`<span class="xp-calls-axis" role="group" aria-label="Across">${
+    [["time", "Clock time"], ["spent", "Time spent"]].map(([key, label]) =>
+      `<button type="button" class="small${axis === key ? "" : " secondary"}"
+        data-xp-calls-axis="${key}" aria-pressed="${axis === key}">${label}</button>`).join("")}${
+    estimated ? `<span class="muted"> earlier calls estimated</span>` : ""}</span>`);
   return keys.join("");
 }
 
@@ -2130,6 +2317,9 @@ function xpCallsTip(tip, point, lines) {
   const { start, end } = xpCallsTimes(call);
   const seconds = call.seconds !== undefined ? call.seconds : (end - start) / 1000;
   line("muted", `${when(call.started)} → ${when(call.finished)} · ${xpCallsDuration(seconds)}`);
+  if (call.active !== undefined && call.active !== null) {
+    line("muted", `${xpCallsDuration(call.active)} of the run's own time by then`);
+  }
   if (call.tokens_in_cached || call.tokens_in_cache_written) {
     line("muted", `of what went in: ${Number(call.tokens_in_cached || 0).toLocaleString()
     } read from the cache, ${Number(call.tokens_in_cache_written || 0).toLocaleString()
@@ -2182,7 +2372,14 @@ function xpCallsDraw(runId) {
   const box = $(`[data-xp-calls-chart="${key}"]`);
   if (!box) return;
   const width = Math.floor(box.clientWidth);
-  if (!width) return;
+  if (!width) {
+    // NOT LAID OUT YET - a tab not shown, a way of the Work debugger not the
+    // one in front, a panel just drawn: drawn the moment it has a width.
+    // It used to wait for the run's next call, so a chart stood empty until
+    // the run moved on.
+    xpCallsWhenSized(box, runId);
+    return;
+  }
   if (!kept.list.length) {
     box.innerHTML = `<p class="muted">No model calls yet - what they take is added up here
       as they are made.</p>`;
@@ -2253,9 +2450,43 @@ function xpCallsDraw(runId) {
 document.addEventListener("click", (event) => {
   const key = event.target.closest && event.target.closest("button[data-xp-calls-key]");
   if (key) xpCallsToggle(key.dataset.xpCallsKey);
+  // The x axis, for every chart: the clock or the run's own time.
+  const axis = event.target.closest && event.target.closest("button[data-xp-calls-axis]");
+  if (axis) {
+    xpCallsAxisChosen = axis.dataset.xpCallsAxis === "spent" ? "spent" : "time";
+    try { localStorage.setItem("xp-calls-axis", xpCallsAxisChosen); } catch (_err) { /* kept here */ }
+    xpCallsDrawAll();
+  }
 });
 
 /* Every chart in a part of the page, drawn. */
+/* A chart box with no width yet, watched until it has one - then drawn,
+   and let go. */
+const xpCallsUnsized = new Map();
+let xpCallsSizer = null;
+function xpCallsWhenSized(box, runId) {
+  if (typeof ResizeObserver === "undefined") return;
+  if (!xpCallsSizer) {
+    xpCallsSizer = new ResizeObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.target.isConnected) {
+          xpCallsSizer.unobserve(entry.target);
+          xpCallsUnsized.delete(entry.target);
+          return;
+        }
+        if (entry.contentRect.width < 1) return;
+        const which = xpCallsUnsized.get(entry.target);
+        xpCallsSizer.unobserve(entry.target);
+        xpCallsUnsized.delete(entry.target);
+        if (which) xpCallsDraw(which);
+      });
+    });
+  }
+  if (xpCallsUnsized.has(box)) return;
+  xpCallsUnsized.set(box, runId);
+  xpCallsSizer.observe(box);
+}
+
 function xpCallsDrawAll(scope) {
   $$("[data-xp-calls-chart]", scope || document).forEach((box) => {
     xpCallsDraw(box.dataset.xpCallsChart);
@@ -3108,12 +3339,12 @@ function xpVersionsPut(runId) {
   // `newestFirst`: rows come in on top - scrolled down, the box keeps the
   // rows you read where they were; at the top, it shows the newest.
   const put = (at, html, newestFirst) => {
-    if (!at || at._xpHtml === html) return;
+    if (!at || at._xpHtml === xpShows(html)) return;
     const left = at.scrollLeft;
     const top = at.scrollTop;
     const tall = at.scrollHeight;
     at.innerHTML = html;
-    at._xpHtml = html;
+    at._xpHtml = xpShows(html);
     at.scrollLeft = left;
     at.scrollTop = newestFirst && top > 0 ? top + (at.scrollHeight - tall) : top;
   };
@@ -3676,9 +3907,9 @@ function xpDrawTitleRun(going) {
         : `<button type="button" class="small secondary" data-xp-stop="${id}"
             title="It wraps up: slides of what exists, and a to-do list">Stop</button>`}`;
   }
-  if (box._xpHtml !== html) {
+  if (box._xpHtml !== xpShows(html)) {
     box.innerHTML = html;
-    box._xpHtml = html;
+    box._xpHtml = xpShows(html);
   }
 }
 
@@ -3722,11 +3953,11 @@ async function xpLoadRuns(force = false) {
     const treeBox = $("#xp-work-tree");
     if (treeBox && (tree.cards || []).length) {
       const html = xpGraphSvg(tree, "work");
-      if (treeBox._xpHtml !== html) {
+      if (treeBox._xpHtml !== xpShows(html)) {
         const frame = treeBox.querySelector(".xp-frame");
         const at = frame ? [frame.scrollLeft, frame.scrollTop] : [0, 0];
         treeBox.innerHTML = html;
-        treeBox._xpHtml = html;
+        treeBox._xpHtml = xpShows(html);
         const again = treeBox.querySelector(".xp-frame");
         if (again) [again.scrollLeft, again.scrollTop] = at;
       }
@@ -3830,7 +4061,7 @@ async function xpLoadRuns(force = false) {
   // What it was drawn for - with each run's versions as they are now loaded.
   panel._xpSig = sigOf();
   const treeBox = $("#xp-work-tree");
-  if (treeBox) treeBox._xpHtml = xpGraphSvg(tree, "work");
+  if (treeBox) treeBox._xpHtml = xpShows(xpGraphSvg(tree, "work"));
   // How far making the files readable has got: looked at, and followed
   // while it goes.
   xpReadingFollow();
@@ -3904,6 +4135,13 @@ document.addEventListener("change", (event) => {
       .forEach((other) => { other.checked = at.checked; });
   } else if (at.matches("#xp-sound")) {
     experienceState.startSound = at.checked;
+  } else if (at.matches("[data-xp-auto-unit]")) {
+    const unit = at.dataset.xpAutoUnit;
+    api.post("/api/experience/auto", { unit, on: at.checked }).then((said) => {
+      experienceState.auto = said;
+      const row = experienceState.units.find((one) => one.id === unit);
+      if (row) row.auto = at.checked;
+    }).catch((err) => toast(err.message, "error"));
   }
 });
 
@@ -3922,14 +4160,42 @@ $("#experience")?.addEventListener("click", async (event) => {
     }
     return;
   }
+  // REMOVE A PROJECT: asked first, in its row.
+  const removeAt = event.target.closest("[data-xp-remove], [data-xp-remove-yes], [data-xp-remove-no]");
+  if (removeAt) {
+    event.stopPropagation();
+    if (removeAt.dataset.xpRemove) {
+      experienceState.removing = removeAt.dataset.xpRemove;
+    } else if (removeAt.dataset.xpRemoveNo) {
+      experienceState.removing = null;
+    } else {
+      const unit = removeAt.dataset.xpRemoveYes;
+      experienceState.removing = null;
+      try {
+        const said = await api.post("/api/experience/remove", { unit });
+        if (said.error) toast(said.error);
+        else {
+          toast("Removed");
+          if (experienceState.unit === unit) experienceState.unit = null;
+        }
+      } catch (err) {
+        toast(err.message);
+      }
+      await loadExperience(false);
+      return;
+    }
+    xpDrawUnits();
+    return;
+  }
   const learnAt = event.target.closest("[data-xp-learn]");
   const learnStopAt = event.target.closest("[data-xp-learn-stop]");
   if (learnAt || learnStopAt) {
     event.stopPropagation();
     try {
-      await api.post("/api/experience/learn", learnAt
+      const said = await api.post("/api/experience/learn", learnAt
         ? { units: [learnAt.dataset.xpLearn] }
         : { units: [learnStopAt.dataset.xpLearnStop], stop: true });
+      if (said && said.error) toast(said.error);
     } catch (err) {
       toast(err.message);
     }
@@ -4373,6 +4639,16 @@ $$("#tabs button").forEach((button) => {
       window.chatDebuggerPanel.deactivate();
     }
     activeTab = button.dataset.tab;
+    // THE PANEL IN THE ADDRESS, so a refresh opens the panel being looked
+    // at - not the one the page was first opened on, which the address
+    // went on naming (the page opens the tab after the #). Replaced, not
+    // added: switching tabs is not a trail to walk back through.
+    if (typeof DELEGATE_SOLO === "undefined" || !DELEGATE_SOLO) {
+      const keep = activeTab === "chat" ? location.search : "";
+      try {
+        history.replaceState(null, "", `${location.pathname}${keep}#${activeTab}`);
+      } catch (_err) { /* an address it may not change: left as it was */ }
+    }
     if (activeTab === "chat") {
       // The conversations again, and the follow-ups put back in their
       // margin: it was measured while the tab had no width.
@@ -4387,12 +4663,14 @@ $$("#tabs button").forEach((button) => {
     if (activeTab === "statebeat" && typeof loadStateBeat === "function") {
       loadStateBeat();
       loadStateBeatConnections();
+      if (typeof loadNotThisWork === "function") loadNotThisWork();
     }
     // Read when opened and after each change, not every fifteen seconds:
     // a list that redraws itself would take the person being edited out
     // from under the user.
     if (activeTab === "connections") loadConnections();
     if (activeTab === "experience") loadExperience(true);
+    if (activeTab === "resourcedebug") rdTick();
     if (activeTab === "overview") ovCentreTheCurrent();
     refresh();
   });
@@ -4523,8 +4801,6 @@ const USAGE_PARTS = ["overview", "history", "hourly", "pages", "files", "assista
 const NATURE_PARTS = ["principles"];
 const OVERVIEW_PARTS = Object.keys(OVERVIEW_ASKS).filter((part) => !USAGE_PARTS.includes(part)
   && !NATURE_PARTS.includes(part));
-//: In a build without the Debugger they are on the Overview again.
-let usageOnOverview = false;
 
 /* ------------------------------------------------- the lessons package
 
@@ -5404,7 +5680,7 @@ function renderPrinciples(tree) {
   const bar = ovRecentBar();
   if (!every.length) {
     host.innerHTML = `<p class="muted">No principles yet: they are grouped
-      from what your projects teach once you learn them in Experience.</p>`;
+      from what your projects teach once you learn them in Work.</p>`;
     return;
   }
   if (!rows.length) {
@@ -7449,6 +7725,86 @@ function shortened(text, most = 80) {
    still say so. */
 let codexModelsRefreshing = false;
 
+/* WHAT THE OPERATING SYSTEM MUST ALLOW, beside each switch that needs it
+   (platform_layer/permissions.py): allowed, not allowed, or that it cannot
+   be told - and, where it is not allowed or cannot be told, a link to the
+   place it is switched on. Looked at again whenever the page comes back
+   into view: that is where the user has just been. */
+const SYS_PERMISSIONS = {
+  full_disk: "Full Disk Access",
+  accessibility: "Accessibility",
+  automation: "Automation: System Events",
+  screen: "Screen & System Audio Recording",
+  notifications: "Notifications",
+  x11_session: "An X11 session",
+};
+const SYS_PERMISSION_HOW = {
+  macos: {
+    notifications: "macOS shows the agent's messages as Script Editor's: allow its "
+      + "notifications. macOS does not let a program see whether they are allowed.",
+  },
+  windows: {
+    notifications: "Turn notifications on, and Personal Agent WaterMelon in the list "
+      + "of programs that may send them.",
+  },
+  linux: {
+    x11_session: "Wayland lets no program see which window is in front, nor take a "
+      + "picture of it. Sign in with an X11 session (for example GNOME on Xorg) for "
+      + "this switch to work.",
+  },
+};
+const sysPermissions = { data: null };
+
+function sysPermissionsDraw() {
+  const data = sysPermissions.data;
+  if (!data) return;
+  const items = new Map((data.items || []).map((one) => [one.key, one]));
+  $$("[data-sys-permission-for]").forEach((box) => {
+    const keys = (data.by_switch || {})[box.dataset.sysPermissionFor] || [];
+    const lines = keys.map((key) => items.get(key)).filter((one) => one && one.needed);
+    box.innerHTML = lines.map((one) => {
+      const state = one.granted === true ? `<span class="sys-permission-state ok">allowed</span>`
+        : one.granted === false
+          ? `<span class="sys-permission-state missing">not allowed</span>`
+          : `<span class="sys-permission-state">cannot be told from here</span>`;
+      const how = (SYS_PERMISSION_HOW[data.platform] || {})[one.key];
+      const open = one.granted !== true && one.can_open
+        ? ` <button type="button" class="small secondary" data-sys-permission-open="${
+          escapeHtml(one.key)}">${data.platform === "windows" ? "Open Windows Settings"
+          : "Open System Settings"}</button>` : "";
+      return `<div><strong>Needs ${escapeHtml(SYS_PERMISSIONS[one.key] || one.key)}:</strong>
+        ${state}${open}${how && one.granted !== true
+          ? `<div class="muted">${escapeHtml(how)}</div>` : ""}</div>`;
+    }).join("");
+  });
+}
+
+async function refreshSysPermissions() {
+  try {
+    sysPermissions.data = await api.get("/api/permissions");
+    sysPermissionsDraw();
+  } catch (err) {
+    console.warn(err);
+  }
+}
+
+document.addEventListener("click", async (event) => {
+  const at = event.target.closest && event.target.closest("[data-sys-permission-open]");
+  if (!at) return;
+  at.disabled = true;
+  try {
+    sysPermissions.data = await api.post("/api/permissions/open",
+      { key: at.dataset.sysPermissionOpen });
+    sysPermissionsDraw();
+  } catch (err) {
+    toast(err.message, "error");
+    at.disabled = false;
+  }
+});
+window.addEventListener("focus", () => {
+  if (activeTab === "settings") refreshSysPermissions();
+});
+
 async function loadSettings() {
   // The panel needs to know which values are the user's own (section 12.1).
   const [data, models, defaults] = await Promise.all([
@@ -7459,6 +7815,7 @@ async function loadSettings() {
   renderModels(models, data.choices);
   renderSettings({ ...data, user_defaults: defaults.user_defaults || {} });
   loadWebSearch();
+  refreshSysPermissions();
 }
 
 /* THE WEB SEARCH: whether a Brave Search key is set - never the key. */
@@ -7732,8 +8089,13 @@ function renderModelChain(models) {
   host.innerHTML = chain.map((one, i) => {
     const p = (models.providers || []).find((x) => x.provider === one.provider) || {};
     const av = one.availability;
-    const ready = (one.auth_status || {}).state === "authenticated"
-      || (p.authentication_methods || []).includes("none");
+    // Signed in - or needing no sign-in AND found: a local client that is
+    // not installed (Codex, Claude Code) needs no sign-in either, and was
+    // shown "ready" while every call to it said it was not installed.
+    const authState = (one.auth_status || p.auth_status || {}).state;
+    const ready = authState === "authenticated"
+      || ((p.authentication_methods || []).includes("none")
+          && !["not_configured", "authentication_required"].includes(authState));
     let badge;
     if (av && !av.available) {
       badge = `<span class="badge ${av.requires_user_action ? "err" : "warn"}">${
@@ -7770,12 +8132,16 @@ function renderModelChain(models) {
         i === 0 ? " disabled" : ""} aria-label="Up">↑</button>
       <button type="button" class="small secondary" data-chain-down="${i}"${
         i === chain.length - 1 ? " disabled" : ""} aria-label="Down">↓</button>
-      <button type="button" class="small secondary" data-chain-remove="${i}"${
-        chain.length === 1 ? " disabled" : ""}>Remove</button>
+      <button type="button" class="small secondary" data-chain-remove="${i}">Remove</button>
       ${av && !av.available && av.reason ? `<div class="chain-why muted">${
         escapeHtml(av.reason)}</div>` : ""}
     </li>`;
   }).join("");
+  // EVERY ONE REMOVED: said, so an empty list does not look like a fault.
+  if (!chain.length) {
+    host.innerHTML = `<li class="muted model-chain-empty">No model on the list.
+      Nothing that needs one - states, summaries, work, chat - runs until you add one.</li>`;
+  }
   // WHAT THE ORDER COSTS: an API billed by the token below a service on a
   // subscription answers whenever the service cannot - its usage limit
   // reached overnight, its sign-in expired - and a long run reads millions
@@ -7852,7 +8218,7 @@ document.addEventListener("click", async (event) => {
   const remove = at("data-chain-remove");
   if (remove) {
     chain.splice(Number(remove.getAttribute("data-chain-remove")), 1);
-    if (chain.length) await saveModelChain(chain, "Removed from the list");
+    await saveModelChain(chain, "Removed from the list");
     return;
   }
   if (at("data-chain-refresh")) {
@@ -8569,6 +8935,662 @@ $("#browser-remove").addEventListener("click", async () => {
   catch (err) { toast(err.message, "error"); }
 });
 
+/* RUN NOW (Overview > Summary task): the state heartbeat's round begun at
+   once, and the next regular one counted from when it finishes. */
+function renderOvRound(said) {
+  const button = $("#ov-round-run");
+  const line = $("#ov-round-next");
+  if (!button || !line || !said) return;
+  button.disabled = Boolean(said.running);
+  button.textContent = said.running ? "Updating tasks…" : "Update tasks now";
+  if (said.running) {
+    line.textContent = "A round is running now; the tasks change as it goes.";
+  } else if (said.next_at) {
+    line.textContent = `Next regular round: ${clock(said.next_at)}`;
+  } else {
+    line.textContent = "";
+  }
+}
+
+async function refreshOvRound() {
+  try { renderOvRound(await api.get("/api/state_heartbeat/next")); }
+  catch (err) { console.warn(err); }
+}
+
+$("#ov-round-run")?.addEventListener("click", async () => {
+  try {
+    const said = await api.post("/api/state_heartbeat/start", {});
+    renderOvRound(said);
+    if (!said.started) toast(said.why || "A round is already running; this one was not started.");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+});
+
+/* SETTINGS > SHORTCUTS: each shortcut with its keys, Change (then press
+   the keys), Turn off and Default - held at once, or refused and said why
+   when another program has them; and the button beside selected text. */
+const shortcutEdit = { recording: "", said: null };
+
+async function refreshShortcuts() {
+  const host = $("#shortcuts-list");
+  if (!host) return;
+  try {
+    shortcutEdit.said = await api.get("/api/shortcuts");
+  } catch (err) {
+    host.textContent = err.message;
+    return;
+  }
+  renderShortcuts();
+}
+
+function shortcutKeys(combo) {
+  const keys = document.createElement("span");
+  keys.classList.add("shortcut-keys");
+  if (!combo) {
+    keys.classList.add("muted");
+    keys.textContent = "Off";
+    return keys;
+  }
+  combo.split("+").forEach((one) => {
+    const key = document.createElement("kbd");
+    key.textContent = one;
+    keys.appendChild(key);
+  });
+  return keys;
+}
+
+function renderShortcuts() {
+  const host = $("#shortcuts-list");
+  const said = shortcutEdit.said;
+  if (!host || !said) return;
+  host.innerHTML = "";
+  if (!said.available && said.why) {
+    const why = document.createElement("p");
+    why.classList.add("muted");
+    why.textContent = said.why;
+    host.appendChild(why);
+  }
+  (said.shortcuts || []).forEach((one) => {
+    const row = document.createElement("div");
+    row.classList.add("shortcut-row");
+    row.dataset.shortcut = one.key;
+    const words = document.createElement("div");
+    words.classList.add("shortcut-words");
+    const name = document.createElement("strong");
+    name.textContent = one.name;
+    const what = document.createElement("div");
+    what.classList.add("muted");
+    what.textContent = one.what;
+    words.append(name, what);
+    const recording = shortcutEdit.recording === one.key;
+    const keys = recording ? document.createElement("span") : shortcutKeys(one.combo);
+    if (recording) {
+      keys.classList.add("shortcut-keys", "shortcut-recording");
+      keys.textContent = "Press the keys… (Esc to cancel)";
+    }
+    const buttons = document.createElement("div");
+    buttons.classList.add("shortcut-buttons");
+    const change = document.createElement("button");
+    change.type = "button";
+    change.dataset.shortcutChange = one.key;
+    change.textContent = recording ? "Cancel" : "Change";
+    buttons.appendChild(change);
+    if (one.combo) {
+      const off = document.createElement("button");
+      off.type = "button";
+      off.className = "secondary";
+      off.dataset.shortcutOff = one.key;
+      off.textContent = "Turn off";
+      buttons.appendChild(off);
+    }
+    if (one.combo !== one.default) {
+      const back = document.createElement("button");
+      back.type = "button";
+      back.className = "secondary";
+      back.dataset.shortcutDefault = one.key;
+      back.textContent = `Back to ${one.default}`;
+      buttons.appendChild(back);
+    }
+    row.append(words, keys, buttons);
+    if (one.problem) {
+      const problem = document.createElement("div");
+      problem.classList.add("shortcut-problem");
+      problem.textContent = one.problem;
+      row.appendChild(problem);
+    }
+    host.appendChild(row);
+  });
+  // The button beside selected text: the other way to hand text over.
+  const label = document.createElement("label");
+  label.classList.add("shortcut-row", "shortcut-toggle");
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.id = "shortcut-selection-button";
+  box.checked = Boolean(said.selection_button);
+  const words = document.createElement("span");
+  words.innerHTML = "";
+  const name = document.createElement("strong");
+  name.textContent = "Delegate work button beside selected text";
+  const what = document.createElement("div");
+  what.classList.add("muted");
+  what.textContent = "A small button that appears for a few seconds next to text you select (Windows).";
+  words.append(name, what);
+  label.append(box, words);
+  host.appendChild(label);
+}
+
+async function saveShortcut(body, done) {
+  try {
+    shortcutEdit.said = await api.post("/api/shortcuts", body);
+    if (done) toast(done);
+  } catch (err) {
+    toast(err.message, "error");
+  }
+  shortcutEdit.recording = "";
+  renderShortcuts();
+}
+
+/* What a key press is called in a shortcut - or "" for a modifier alone. */
+function shortcutKeyName(event) {
+  const code = event.code || "";
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
+  const named = { Space: "Space", Insert: "Insert", Delete: "Delete", Home: "Home",
+    End: "End", PageUp: "PageUp", PageDown: "PageDown", ArrowLeft: "Left",
+    ArrowUp: "Up", ArrowRight: "Right", ArrowDown: "Down" };
+  return named[code] || "";
+}
+
+document.addEventListener("keydown", (event) => {
+  if (!shortcutEdit.recording) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.key === "Escape") {
+    shortcutEdit.recording = "";
+    renderShortcuts();
+    return;
+  }
+  const key = shortcutKeyName(event);
+  if (!key) return;                         // a modifier alone: wait for the key
+  const combo = [event.ctrlKey && "Ctrl", event.altKey && "Alt", event.shiftKey && "Shift",
+    event.metaKey && "Win", key].filter(Boolean).join("+");
+  saveShortcut({ key: shortcutEdit.recording, combo }, `Shortcut set: ${combo}`);
+}, true);
+
+document.addEventListener("click", (event) => {
+  const change = event.target.closest?.("[data-shortcut-change]");
+  if (change) {
+    const key = change.dataset.shortcutChange;
+    shortcutEdit.recording = shortcutEdit.recording === key ? "" : key;
+    renderShortcuts();
+    return;
+  }
+  const off = event.target.closest?.("[data-shortcut-off]");
+  if (off) {
+    saveShortcut({ key: off.dataset.shortcutOff, combo: "" }, "Shortcut turned off");
+    return;
+  }
+  const back = event.target.closest?.("[data-shortcut-default]");
+  if (back) {
+    const one = ((shortcutEdit.said || {}).shortcuts || [])
+      .find((s) => s.key === back.dataset.shortcutDefault);
+    if (one) saveShortcut({ key: one.key, combo: one.default }, `Shortcut set: ${one.default}`);
+  }
+});
+
+document.addEventListener("change", (event) => {
+  if (event.target?.id === "shortcut-selection-button") {
+    saveShortcut({ selection_button: event.target.checked },
+      event.target.checked ? "The button beside selected text is on"
+        : "The button beside selected text is off");
+  }
+});
+
+/* NOT THIS WORK (State heartbeat debugger): what the model, summing a task
+   up or saying where it stands, said is plainly about something else - each
+   task with the states it named and the call that said so. Switched off,
+   nothing is moved and this is the place to judge whether it should be. */
+async function loadNotThisWork() {
+  const list = $("#ntw-list");
+  if (!list) return;
+  let said;
+  try {
+    said = await api.get("/api/state_heartbeat/not_this_work");
+  } catch (err) {
+    list.textContent = err.message;
+    return;
+  }
+  $("#ntw-note").textContent = said.on
+    ? "Switched on: these states were taken out of their tasks, to the pile."
+    : "Switched off: nothing was moved. This is what would have been taken out, for you to judge.";
+  const entries = said.said || [];
+  $("#ntw-count").textContent = entries.length
+    ? `${entries.length} time${entries.length === 1 ? "" : "s"}` : "none yet";
+  list.innerHTML = "";
+  if (!entries.length) {
+    list.innerHTML = `<p class="muted">The model has not named any state as not its task's work yet.</p>`;
+    return;
+  }
+  entries.forEach((entry) => {
+    const block = document.createElement("div");
+    block.classList.add("ntw-entry");
+    const head = document.createElement("div");
+    head.classList.add("ntw-head");
+    const task = document.createElement("strong");
+    task.textContent = entry.task.title || entry.task.id;
+    const when = document.createElement("span");
+    when.classList.add("muted");
+    when.textContent = ` ${clock(entry.at)} · ${entry.by === "summary" ? "summary" : "status"} call`;
+    head.append(task, when);
+    block.appendChild(head);
+    const rows = document.createElement("ul");
+    entry.states.forEach((state) => {
+      const row = document.createElement("li");
+      row.textContent = `${(state.at || "").slice(0, 16).replace("T", " ")}  ${state.title || state.id}`;
+      rows.appendChild(row);
+    });
+    block.appendChild(rows);
+    list.appendChild(block);
+  });
+}
+
+/* THE RECORD LOG: the latest things recorded, from every source, each with
+   the Privacy switch that recorded it and where a password or a code was
+   hidden in it; opened, all of it. Then what the filters kept out, by rule.
+   Drawn again only when something new was recorded, and what is open stays
+   open. */
+const recordLog = { sig: "", open: new Set() };
+const RECORD_RULES = {
+  switch_off: "Its switch in Settings › Privacy is off",
+  application_list: "The application allowlist or denylist",
+  website_list: "The website allowlist or denylist",
+  not_here: "Only while you are here: nobody was at the computer",
+  not_yours: "Only what you did yourself: a program did it, not you",
+  agents_own: "The agent's own files",
+  excluded_folder: "An excluded folder",
+  ignored_name: "An ignored file name",
+  credentials: "A screenshot whose words held a password or a code",
+};
+
+/* Text with every "[hidden]" in it marked, as elements - never as HTML. */
+function recordMarked(host, text) {
+  String(text || "").split("[hidden]").forEach((part, at) => {
+    if (at) {
+      const mark = document.createElement("mark");
+      mark.classList.add("record-mark");
+      mark.textContent = "[hidden]";
+      host.appendChild(mark);
+    }
+    if (part) host.appendChild(document.createTextNode(part));
+  });
+  return host;
+}
+
+function recordHead(one) {
+  const head = document.createElement("summary");
+  const when = document.createElement("span");
+  when.classList.add("muted", "record-when");
+  when.textContent = clock(one.at);
+  const by = document.createElement("span");
+  by.classList.add("record-switch");
+  by.textContent = one.by_agent ? "The agent's own work"
+    : one.switch ? one.switch.label : one.source;
+  const title = recordMarked(document.createElement("span"), one.title);
+  title.classList.add("record-title");
+  head.append(when, by, title);
+  if (one.hidden) {
+    const hid = document.createElement("span");
+    hid.classList.add("record-hidden");
+    hid.textContent = one.hidden === 1 ? "1 password or code hidden"
+      : `${one.hidden} passwords or codes hidden`;
+    head.appendChild(hid);
+  }
+  return head;
+}
+
+function renderRecordHidden(changed) {
+  const host = $("#recordlog-hidden");
+  if (!host) return;
+  host.innerHTML = "";
+  if (!changed.length) {
+    host.innerHTML = `<p class="muted">Nothing was hidden in the last 7 days.</p>`;
+    return;
+  }
+  changed.forEach((one) => {
+    const item = document.createElement("details");
+    item.classList.add("record-item");
+    item.open = true;
+    item.appendChild(recordHead(one));
+    (one.fields || []).forEach((field) => {
+      const row = document.createElement("div");
+      row.classList.add("record-field");
+      const name = document.createElement("code");
+      name.textContent = field.field;
+      row.appendChild(name);
+      row.appendChild(recordMarked(document.createElement("span"), field.text));
+      item.appendChild(row);
+    });
+    host.appendChild(item);
+  });
+}
+
+async function loadRecordLog(force = false) {
+  const list = $("#recordlog-list");
+  const dropped = $("#recordlog-dropped");
+  if (!list || !dropped) return;
+  let said;
+  try {
+    said = await api.get("/api/record_log");
+  } catch (err) {
+    list.textContent = `Could not read the record log: ${err.message}`;
+    return;
+  }
+  const sig = JSON.stringify([(said.events || []).map((one) => one.id),
+    (said.changed || []).map((one) => one.id), said.dropped_counts || {}]);
+  if (!force && sig === recordLog.sig) return;
+  recordLog.sig = sig;
+  renderRecordHidden(said.changed || []);
+  list.innerHTML = "";
+  if (!(said.events || []).length) {
+    list.innerHTML = `<p class="muted">Nothing recorded yet.</p>`;
+  }
+  (said.events || []).forEach((one) => {
+    const item = document.createElement("details");
+    item.classList.add("record-item");
+    item.dataset.record = one.id;
+    if (recordLog.open.has(one.id)) item.open = true;
+    item.addEventListener("toggle", () => {
+      if (item.open) recordLog.open.add(one.id);
+      else recordLog.open.delete(one.id);
+    });
+    item.appendChild(recordHead(one));
+    if (one.about) {
+      const about = recordMarked(document.createElement("p"), one.about);
+      about.classList.add("muted", "record-about");
+      item.appendChild(about);
+    }
+    const whole = recordMarked(document.createElement("pre"),
+      JSON.stringify(one.detail, null, 2));
+    whole.classList.add("record-detail");
+    item.appendChild(whole);
+    list.appendChild(item);
+  });
+  dropped.innerHTML = "";
+  const counts = Object.entries(said.dropped_counts || {}).filter(([, n]) => n > 0);
+  if (!counts.length) {
+    dropped.innerHTML = `<p class="muted">Nothing was kept out since the agent started.</p>`;
+    return;
+  }
+  const totals = document.createElement("ul");
+  totals.classList.add("record-rules");
+  counts.sort((a, b) => b[1] - a[1]).forEach(([rule, n]) => {
+    const row = document.createElement("li");
+    row.textContent = `${RECORD_RULES[rule] || rule}: ${n}`;
+    totals.appendChild(row);
+  });
+  dropped.appendChild(totals);
+  const latest = document.createElement("ul");
+  latest.classList.add("record-dropped");
+  (said.dropped || []).forEach((one) => {
+    const row = document.createElement("li");
+    row.textContent = [clock(one.at), one.category || one.source,
+      one.application || "", one.type, RECORD_RULES[one.why] || one.why]
+      .filter(Boolean).join(" - ");
+    latest.appendChild(row);
+  });
+  dropped.appendChild(latest);
+}
+
+/* UPDATES (Settings > General): which version this is, the latest release,
+   and what is being done about it. Installed by themselves by default; the
+   choice is the setting above the buttons (platform_layer/updater.py). */
+const UPDATE_CHOICES = {
+  ask: "Tell me, and I choose the version",
+  install: "Install the newest by itself",
+  off: "Don't look for updates",
+};
+
+function renderUpdates(said) {
+  const line = $("#updates-status");
+  if (!line || !said) return;
+  const parts = [`This is version ${said.current}.`];
+  if (said.mode === "off") {
+    parts.push("Updates are not looked for.");
+  } else if (said.doing) {
+    parts.push(`Now: ${said.doing}.`);
+  } else if (said.newer) {
+    parts.push(`Version ${said.latest} is available.`);
+    if (!said.can_install) {
+      parts.push("This copy cannot update itself: download it from the releases page.");
+    }
+  } else if (said.checked_at) {
+    parts.push("It is the latest.");
+  }
+  if (said.error) parts.push(`The last look failed: ${said.error}`);
+  line.textContent = parts.join(" ");
+  renderUpdateVersions(said);
+  showWhatIsNew(said.just_updated);
+}
+
+/* EVERY VERSION NEWER THAN THIS ONE, newest first, each with what it says
+   of itself and its own button: the user installs the one they choose.
+   Never an older one - it may not read what a newer one wrote. */
+function renderUpdateVersions(said) {
+  const host = $("#updates-versions");
+  if (!host) return;
+  host.innerHTML = "";
+  if (said.mode === "off") return;
+  (said.versions || []).forEach((one) => {
+    const row = document.createElement("div");
+    row.classList.add("update-version");
+    const head = document.createElement("div");
+    head.classList.add("update-version-head");
+    const name = document.createElement("strong");
+    name.textContent = `Version ${one.tag}`;
+    head.appendChild(name);
+    if (one.published) {
+      const when = document.createElement("span");
+      when.classList.add("muted");
+      when.textContent = clock(one.published);
+      head.appendChild(when);
+    }
+    if (one.can_install && !said.doing) {
+      const install = document.createElement("button");
+      install.type = "button";
+      install.classList.add("small");
+      install.textContent = "Install this version";
+      install.addEventListener("click", async () => {
+        try {
+          renderUpdates(await api.post("/api/updates/install", { version: one.tag }));
+          toast("Updating: the agent closes and starts again on the new version");
+        } catch (err) {
+          toast(err.message, "error");
+        }
+      });
+      head.appendChild(install);
+    } else if (one.page) {
+      const link = document.createElement("a");
+      link.href = one.page;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = "The release on GitHub";
+      head.appendChild(link);
+    }
+    row.appendChild(head);
+    const notes = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "What is new";
+    const text = document.createElement("div");
+    text.classList.add("update-notes-text");
+    text.textContent = one.notes || "This release says nothing more about itself.";
+    notes.append(summary, text);
+    row.appendChild(notes);
+    host.appendChild(row);
+  });
+}
+
+/* WHAT IS NEW, once, after an update: the release's own description - as
+   written on GitHub, so shown as written - until it is closed. */
+function showWhatIsNew(news) {
+  const box = $("#update-notes");
+  if (!box || !news || box.open || showWhatIsNew.shown) return;
+  showWhatIsNew.shown = true;
+  $("#update-notes-title").textContent = `Updated to version ${news.to}`;
+  $("#update-notes-from").textContent = news.from ? `From version ${news.from}.` : "";
+  $("#update-notes-text").textContent = news.notes || "This release says nothing more about itself.";
+  const page = $("#update-notes-page");
+  page.hidden = !news.page;
+  if (news.page) page.href = news.page;
+  try { box.showModal(); } catch (err) { box.setAttribute("open", ""); }
+}
+
+$("#update-notes-close")?.addEventListener("click", async () => {
+  $("#update-notes").close?.();
+  $("#update-notes").removeAttribute("open");
+  try { await api.post("/api/updates/seen", {}); } catch (err) { /* shown again next time */ }
+});
+
+async function refreshUpdates() {
+  try { renderUpdates(await api.get("/api/updates")); }
+  catch (err) { console.warn("updates", err); }
+}
+
+$("#updates-check")?.addEventListener("click", async () => {
+  try {
+    renderUpdates(await api.post("/api/updates/check", {}));
+    // The look runs on its own thread: shown when it has answered.
+    setTimeout(refreshUpdates, 4000);
+  } catch (err) {
+    toast(err.message, "error");
+  }
+});
+
+/* MACOS PERMISSIONS (Settings > Privacy). macOS asks for each kind of
+   access on its own and only the user can switch one on, so they are
+   listed together to be given in one sitting - Full Disk Access first,
+   since it also covers the Desktop, Documents and Downloads folders and
+   spares macOS's three questions about them. Looked at again whenever the
+   window comes back, which is when the user returns from System Settings.
+   (platform_layer/macos_permissions.py) */
+const MAC_PERMISSIONS = {
+  full_disk: { name: "Full Disk Access",
+    why: "Your Desktop, Documents and Downloads folders, and Safari's history. "
+      + "Allowed first, it spares the questions macOS would ask about each folder.",
+    how: "Click +, choose Personal Agent WaterMelon in Applications, and switch it on." },
+  accessibility: { name: "Accessibility",
+    why: "The titles of the windows you work in.",
+    how: "Switch on Personal Agent WaterMelon." },
+  automation: { name: "Automation: System Events",
+    why: "Which application is in front.",
+    how: "Under Personal Agent WaterMelon, switch on System Events." },
+  screen: { name: "Screen & System Audio Recording",
+    why: "Pictures of the window in front, for the words in slides and figures. macOS "
+      + "names this permission with audio too; the agent never records any sound.",
+    how: "Switch on Personal Agent WaterMelon. macOS may ask to quit and reopen it." },
+};
+const macPermissions = { data: null, dismissed: false };
+
+function renderMacPermissions(data) {
+  macPermissions.data = data;
+  const applies = Boolean(data && data.applies);
+  const card = $("#mac-permissions-card");
+  if (card) card.hidden = !applies;
+  const banner = $("#macperm-banner");
+  if (!applies) {
+    if (banner) banner.hidden = true;
+    return;
+  }
+  const list = $("#mac-permissions-list");
+  if (list) {
+    list.innerHTML = "";
+    (data.items || []).forEach((item) => {
+      const said = MAC_PERMISSIONS[item.key];
+      if (!said) return;
+      const row = document.createElement("div");
+      row.classList.add("mac-permission");
+      row.dataset.permission = item.key;
+      const head = document.createElement("div");
+      head.classList.add("mac-permission-head");
+      const name = document.createElement("strong");
+      name.textContent = said.name;
+      const state = document.createElement("span");
+      state.classList.add("mac-permission-state");
+      if (!item.needed) {
+        state.textContent = "Not needed with your Privacy switches";
+      } else if (item.granted === true) {
+        state.textContent = "Allowed";
+        state.classList.add("ok");
+      } else if (item.granted === false) {
+        state.textContent = "Not allowed";
+        state.classList.add("missing");
+      } else {
+        state.textContent = "Cannot be told";
+      }
+      head.append(name, state);
+      const why = document.createElement("div");
+      why.classList.add("muted");
+      why.textContent = said.why;
+      row.append(head, why);
+      if (item.needed && item.granted !== true) {
+        const how = document.createElement("div");
+        how.classList.add("mac-permission-how");
+        how.textContent = said.how;
+        const open = document.createElement("button");
+        open.type = "button";
+        open.classList.add("small");
+        open.textContent = "Open System Settings";
+        open.addEventListener("click", async () => {
+          try {
+            renderMacPermissions(await api.post("/api/permissions/macos/open", { key: item.key }));
+          } catch (err) {
+            toast(err.message, "error");
+          }
+        });
+        row.append(how, open);
+      }
+      list.appendChild(row);
+    });
+  }
+  const missing = (data.missing || []).length;
+  if (banner) {
+    banner.hidden = !missing || macPermissions.dismissed;
+    $("#macperm-text").textContent = missing === 1
+      ? "macOS has not yet allowed one thing the agent needs."
+      : `macOS has not yet allowed ${missing} things the agent needs.`;
+  }
+}
+
+async function refreshMacPermissions() {
+  try {
+    renderMacPermissions(await api.get("/api/permissions/macos"));
+  } catch (err) {
+    console.warn(err);
+  }
+}
+
+$("#mac-permissions-check")?.addEventListener("click", refreshMacPermissions);
+// What is new after an update is shown wherever the page opens, not only on
+// Settings.
+refreshUpdates();
+$("#macperm-go")?.addEventListener("click", () => {
+  const tab = $('#tabs button[data-tab="settings"]');
+  if (tab) tab.click();
+  settingsView("privacy");
+  refreshMacPermissions();
+});
+$("#macperm-dismiss")?.addEventListener("click", () => {
+  // Not now: for as long as this page is open. It is said again next time.
+  macPermissions.dismissed = true;
+  $("#macperm-banner").hidden = true;
+});
+// Back from System Settings: what was just switched on shows as allowed.
+window.addEventListener("focus", () => {
+  if (macPermissions.data && macPermissions.data.applies) refreshMacPermissions();
+});
+refreshMacPermissions();
+
 /* THE HEARTBEATS' INTERVALS, set in minutes: the agent heartbeat's kept
    in seconds, the state heartbeat's in hours. */
 const HEARTBEAT_MINUTES = {
@@ -8884,7 +9906,7 @@ const PRIVACY_LISTENING = {
     off: "Pages visited are not known from the browser's history - only from titles.",
     cost: "Light: the history is read once a minute." },
   listener_filesystem_enabled: { group: "Files and tools",
-    off: "Files created and changed are not known: Experience learns less of your work.",
+    off: "Files created and changed are not known: the agent learns less of your work.",
     cost: "Moderate: the watched folders are followed; many busy folders cost more." },
   listener_integrations_enabled: { group: "Files and tools",
     off: "Applications' own integrations (such as an editor's) report nothing.",
@@ -8945,6 +9967,7 @@ function settingsChanged(row, key, value, label) {
   settingsEdit.hostOf[key] = host.id;
   const bar = host.querySelector(`[data-save-bar="${host.id}"]`);
   if (bar) bar.hidden = false;
+  if (key === "start_at_login") startupHeld();
 }
 
 document.addEventListener("click", async (event) => {
@@ -8982,6 +10005,9 @@ document.addEventListener("click", async (event) => {
 function renderSettings(data) {
   // The agent's data folder: shown, never listened to, never changed here.
   settingsEdit.dataFolder = String(((data || {}).values || {}).agent_root || "");
+  // Another copy of the program already starts at sign-in (autostart.py).
+  settingsEdit.startHeldBy = String((data || {}).start_at_login_held_by || "");
+  settingsEdit.startOn = Boolean(((data || {}).values || {}).start_at_login);
   // DISPLAY: the language the agent writes and speaks in, its avatar and
   // the size of its text - each under its own heading. Every other setting
   // is in Others; the models have General.
@@ -8994,6 +10020,8 @@ function renderSettings(data) {
   // what it costs the computer.
   const PRIVACY_SETTINGS = PRIVACY_LISTENING;
   refreshBrowserCard();
+  // Looked at beside the settings, never in their way.
+  if (typeof refreshMacPermissions === "function") refreshMacPermissions();
   const container = $("#settings-form");
   // Display's own settings; where there is no Display, with the rest.
   const display = $("#settings-form-display") || container;
@@ -9005,6 +10033,10 @@ function renderSettings(data) {
   // Starting when the user signs in, on General.
   const startup = $("#settings-form-startup") || container;
   if (startup !== container) startup.innerHTML = "";
+  // Updates, on General.
+  const updatesHost = $("#settings-form-updates") || container;
+  if (updatesHost !== container) updatesHost.innerHTML = "";
+  if (typeof refreshUpdates === "function") refreshUpdates();
   container.innerHTML = "";
   if (display !== container) display.innerHTML = "";
   if (avatarHost) avatarHost.innerHTML = "";
@@ -9028,13 +10060,14 @@ function renderSettings(data) {
     const beat = field.key in HEARTBEAT_MINUTES;
     const heard = field.key in PRIVACY_SETTINGS;
     const starts = field.key === "start_at_login";
+    const updating = field.key === "updates";
     const section = looks ? AVATAR_SETTINGS[field.key] : mine ? DISPLAY_SETTINGS[field.key]
       : beat ? "Heartbeats" : heard ? PRIVACY_SETTINGS[field.key].group
-      : starts ? "Startup" : field.section;
-    const key = `${looks ? "a" : mine ? "d" : beat ? "h" : heard ? "p" : starts ? "s" : "o"}|${
-      section}`;
+      : starts ? "Startup" : updating ? "Updates" : field.section;
+    const key = `${looks ? "a" : mine ? "d" : beat ? "h" : heard ? "p" : starts ? "s"
+      : updating ? "u" : "o"}|${section}`;
     hostOf[key] = looks ? avatarHost : mine ? display : beat ? beats : heard ? privacy
-      : starts ? startup : container;
+      : starts ? startup : updating ? updatesHost : container;
     (sections[key] = sections[key] || []).push(field);
   });
   Object.entries(sections).forEach(([key, fields]) => {
@@ -9064,7 +10097,8 @@ function renderSettings(data) {
         const selectedValue = field.key === "primary_model" && value && !String(value).includes("/")
           ? `${data.values.primary_provider}/${value}` : value;
         // Each option by its full name where the server gives one.
-        const labels = (data.choice_labels || {})[field.key] || {};
+        const labels = field.key === "updates" ? UPDATE_CHOICES
+          : (data.choice_labels || {})[field.key] || {};
         control.innerHTML = options
           .map((o) => `<option value="${escapeHtml(String(o))}" ${
             o === selectedValue ? "selected" : ""}>${escapeHtml(
@@ -9268,6 +10302,14 @@ function renderSettings(data) {
             escapeHtml(heard.cost)}</div>`;
         row.appendChild(said);
       }
+      // What the operating system must allow for it, filled in once looked at
+      // (sysPermissionsDraw).
+      if (heard || field.key === "notifications_enabled") {
+        const allowed = document.createElement("div");
+        allowed.className = "sys-permission";
+        allowed.dataset.sysPermissionFor = field.key;
+        row.appendChild(allowed);
+      }
       const note = ((data.choice_notes || {})[field.key] || {})[value];
       if (note) {
         const line = document.createElement("div");
@@ -9283,9 +10325,34 @@ function renderSettings(data) {
   });
   // Each card shown, until Edit.
   if (typeof avatarFormDrawn === "function") avatarFormDrawn(data);
-  [...new Set([beats, display, avatarHost, privacy, startup, container])].forEach((host) => {
+  [...new Set([beats, display, avatarHost, privacy, startup, updatesHost, container])].forEach((host) => {
     if (host && host.id) settingsEditBar(host);
   });
+  startupHeld();
+}
+
+/* STARTING AT SIGN-IN, WHEN ANOTHER COPY ALREADY DOES. The system's entry
+   is one for every copy of the program, and it is not taken from a copy
+   still on this machine (autostart.py): while the switch here is on, it
+   says which copy holds it and its card cannot be saved until it is off. */
+function startupHeld() {
+  const host = typeof document !== "undefined" ? $("#settings-form-startup") : null;
+  if (!host) return;
+  const on = "start_at_login" in settingsEdit.pending
+    ? Boolean(settingsEdit.pending.start_at_login) : Boolean(settingsEdit.startOn);
+  const held = Boolean(settingsEdit.startHeldBy) && on;
+  let note = host.querySelector("[data-start-held]");
+  if (!note) {
+    note = document.createElement("div");
+    note.className = "start-held-note";
+    note.dataset.startHeld = "1";
+    host.appendChild(note);
+  }
+  note.hidden = !held;
+  note.textContent = held ? `Another copy of Personal Agent WaterMelon already starts when you sign in: ${
+    settingsEdit.startHeldBy}. Untick this to save, or turn it off in that copy first.` : "";
+  const save = host.querySelector("[data-settings-save]");
+  if (save) save.disabled = held;
 }
 
 /* -------------------------------------------------------------- debugger */
@@ -10865,10 +11932,10 @@ function knowFrontPage(briefing, issues = []) {
         `<option value="${escapeHtml(one.id)}"${briefing && one.id === briefing.id
           ? " selected" : ""}>${one.issue ? `No. ${one.issue}, ` : ""}${escapeHtml(
           knowIssueTime(one.at))}</option>`).join("")}</select></label>` : "";
-  // An issue from before Customized Recommendation keeps its own name.
+  // An issue from before Newspaper keeps its own name.
   const mast = `<header class="paper-mast">
       <h2 class="paper-title">${briefing ? "What you need to know"
-        : "Customized Recommendation"}</h2>
+        : "Newspaper"}</h2>
       <div class="paper-dateline"><span>${escapeHtml(number)}${escapeHtml(when
         ? `worked out ${when}` : "")}</span>
         ${picker || `<span>From your current tasks, your contacts and the public web</span>`}</div>
@@ -10909,7 +11976,7 @@ function knowPaper(briefing, issues, paper) {
           ? " selected" : ""}>${one.issue ? `No. ${one.issue}, ` : ""}${escapeHtml(
           knowIssueTime(one.at))}</option>`).join("")}</select></label>` : "";
   const mast = `<header class="paper-mast">
-      <h2 class="paper-title">Customized Recommendation</h2>
+      <h2 class="paper-title">Newspaper</h2>
       <div class="paper-dateline"><span>${briefing.issue ? `No. ${briefing.issue}, ` : ""}${
         escapeHtml(knowIssueTime(briefing.at))}</span>
         ${picker || `<span>From what you read, your tasks, your contacts and the public web</span>`}</div>
@@ -11007,16 +12074,22 @@ function knowStory(item, place, issue = "") {
     ${place !== "brief" ? knowPicture(item, place) : ""}
     ${item.explore ? `<p class="paper-kicker">Something different</p>`
       : item.for ? `<p class="paper-kicker${item.relation === "broad" ? " paper-broad" : ""}">${
-      urgent ? "Act on it now, for " : item.relation === "broad" ? "Related, for " : "For "}${
+      // A story of a topic's page is labelled with the page, as a section
+      // is: "For" a page's name said nothing of why it was there - its
+      // opening says that.
+      /^(topic|page):/.test(String(item.page || "")) ? ""
+        : urgent ? "Act on it now, for " : item.relation === "broad" ? "Related, for " : "For "}${
       escapeHtml(item.for)}</p>` : ""}
     <${heading} class="paper-headline">${escapeHtml(item.title)}</${heading}>
-    ${place === "lead" && item.why ? `<p class="paper-standfirst">${escapeHtml(item.why)}</p>` : ""}
+    ${place === "lead" && item.why && !item.opening
+      ? `<p class="paper-standfirst">${escapeHtml(item.why)}</p>` : ""}
+    ${item.opening ? `<p class="paper-opening">${escapeHtml(item.opening)}</p>` : ""}
     ${item.detail ? `<p class="paper-body">${escapeHtml(item.detail)}</p>` : ""}
     ${byline.length || sources.length ? `<p class="paper-byline">${escapeHtml(byline.join(", "))}${
       sources.length ? ` <a href="${escapeHtml(sources[0])}" target="_blank"
         rel="noopener noreferrer"${issue && item.id ? ` data-know-open="${escapeHtml(item.id)}"
         data-issue="${escapeHtml(issue)}"` : ""}>Read the source</a>` : ""}</p>` : ""}
-    ${item.because ? `<p class="paper-because"><strong>Why it is here:</strong> ${
+    ${item.because && !item.opening ? `<p class="paper-because"><strong>Why it is here:</strong> ${
       escapeHtml(item.because)}</p>` : ""}
     ${item.new_to_you ? `<p class="paper-new"><strong>New to you:</strong> ${
       escapeHtml(item.new_to_you)}</p>` : ""}
@@ -11107,6 +12180,7 @@ async function loadStateBeatConnections() {
 async function refresh() {
   try {
     const status = await api.get("/api/status");
+    speaksInBubble = Boolean(status.speaks_in_bubble);
     const app = status.application || {};
     // WHAT IT IS DOING, IF IT IS DOING ANYTHING. A grouping round is one
     // model call per task - minutes on a busy folder - and an application
@@ -11134,7 +12208,7 @@ async function refresh() {
       `${status.models.primary.label}${status.paths?.frozen ? ` · ${say("packaged")}` : ""}`
       + doing;
     $("#status-pill").title =
-      `${app.name || "Personalized Agent"} ${app.version || ""}\n` +
+      `${app.name || "Personal Agent WaterMelon"} ${app.version || ""}\n` +
       `${say(`internal data: ${status.paths?.internal_data || "?"}`)}\n` +
       `${say(`workspace: ${status.runtime?.policy?.workspace_root || "?"}`)}`;
     renderReauth(status.reauthentication_required);
@@ -11142,9 +12216,8 @@ async function refresh() {
       // The token chart is drawn again now the tab is on screen: drawn at
       // load in a hidden tab, it had no width to draw at.
       try { renderTokenChart(); } catch (err) { /* one panel, not the tab */ }
-      await loadOverview(usageOnOverview
-        ? Object.keys(OVERVIEW_ASKS).filter((part) => !NATURE_PARTS.includes(part))
-        : OVERVIEW_PARTS);
+      await loadOverview(OVERVIEW_PARTS);
+      refreshOvRound();
     }
     if (activeTab === "naturedebug") await loadOverview(NATURE_PARTS);
     if (activeTab === "readingdebug") await loadReading();
@@ -11155,6 +12228,7 @@ async function refresh() {
       await loadPending();
     }
     if (activeTab === "lessons") await loadLessons();
+    if (activeTab === "recordlog") await loadRecordLog();
     // Not redrawn while something is changed and not saved, or being typed
     // into: what is typed would go.
     if (activeTab === "settings" && !Object.keys(settingsEdit.pending).length
@@ -11223,8 +12297,9 @@ $("#reauth-go")?.addEventListener("click", () => openModelSettings(reauthState.p
    last open is opened again. */
 function settingsView(view) {
   // Every view there is - one not listed here opened General instead.
-  const chosen = ["others", "display", "avatar", "modules", "privacy"].includes(view)
-    ? view : "general";
+  const chosen = ["others", "display", "avatar", "modules", "privacy", "shortcuts"]
+    .includes(view) ? view : "general";
+  if (chosen === "shortcuts" && typeof refreshShortcuts === "function") refreshShortcuts();
   $$("[data-settings-pane]").forEach((pane) => {
     pane.hidden = pane.dataset.settingsPane !== chosen;
   });
@@ -11283,7 +12358,15 @@ async function openModelSettings(provider) {
    pointing in its general direction. */
 const reauthState = { provider: "" };
 
+/* ONCE, NOT TWICE. Where the agent runs with its avatar, every notification
+   is said in the bubble beside it, with its buttons; the page showed it again
+   as a card of its own - the same words twice, and the page's copy marked it
+   read under the bubble. Only an agent with no avatar (headless) leaves it to
+   the page. */
+let speaksInBubble = false;
+
 async function pollNotifications() {
+  if (speaksInBubble) return;
   try {
     const data = await api.get("/api/notifications?unread=true&limit=5");
     if (Number(data.remind_later_minutes)) remindLaterMinutes = Number(data.remind_later_minutes);
@@ -13630,7 +14713,7 @@ function stateBeatDraw(host, html) {
   // parser's order, entities normalised, `open` without its value - so a
   // comparison with the string that produced it is false every time, and
   // this whole guard did nothing at all in its first version.
-  if (stateBeat.drawn === html && host.dataset.sbDrawn === "1") return;
+  if (stateBeat.drawn === xpShows(html) && host.dataset.sbDrawn === "1") return;
   if (stateBeatHolding(host)) {
     stateBeat.pending = { host: host, html: html };
     return;
@@ -13641,7 +14724,7 @@ function stateBeatDraw(host, html) {
   const was = sbWhereItWas();
   host.innerHTML = html;
   host.dataset.sbDrawn = "1";
-  stateBeat.drawn = html;
+  stateBeat.drawn = xpShows(html);
   stateBeatRestore(was);
 }
 
@@ -15405,7 +16488,7 @@ function sbProgressBars(share, said, xp, after) {
       `${named} of ${patterns} ${label.toLowerCase()} patterns named`);
   };
   // THE STEPS AFTER A ROUND: each kind of lesson - where it stands between
-  // rounds, how far while it runs. (Customized Recommendation has none: it
+  // rounds, how far while it runs. (Newspaper has none: it
   // runs on its own clock, not in the round - recommend.py.)
   after = after || {};
   const lessons = after.lessons || null;
@@ -15708,11 +16791,10 @@ function sbProgressStrip(picture) {
         if (buried || sbShowingHidden()) {
           bits.push(`<button type="button" class="small secondary"
             data-sb-hidden="${sbShowingHidden() ? "off" : "on"}"
-            title="Only tasks: the groupings worth drawing as tasks. Full
-                   activity: also everything else you did - the groupings a
-                   summary judged not to be a task. They are still described,
-                   last, and count towards the round being finished.">${
-              sbShowingHidden() ? "show only tasks" : "show full activity"
+            title="Work activity: the tasks of your work only. Full
+                   activity: everything you did - the tasks of leisure too,
+                   and the groupings a summary judged not to be a task.">${
+              sbShowingHidden() ? "show work activity" : "show full activity"
             }</button>`);
         }
         if (!bits.length) return "";
@@ -16218,13 +17300,15 @@ function sbOnlyShown(picture) {
     .filter(Number.isFinite);
   const starts = moments("began");
   const ends = moments("ended");
+  // WORK ACTIVITY: the tasks of work only - not what a summary judged not
+  // to be a task, and not the tasks of leisure. Full activity is all of it.
   out.plan = Object.assign({}, plan, {
-    nodes: every.filter((one) => !one.hidden),
+    nodes: every.filter((one) => !one.hidden && !one.leisure),
     // The time axis of the whole, so hiding rows leaves it where it was.
     span: starts.length
       ? [Math.min(...starts), Math.max(...ends, ...starts)] : null,
   });
-  out.layers = (picture.layers || []).filter((one) => !one.hidden);
+  out.layers = (picture.layers || []).filter((one) => !one.hidden && !one.leisure);
   return out;
 }
 
@@ -16319,7 +17403,7 @@ if (DELEGATE_SOLO) {
   // The agent's name in it: the listener knows the agent's own windows by
   // it (listener/providers/screen.py), and must not read this one as the
   // user's activity.
-  document.title = "Delegate work - Personalized Agent";
+  document.title = "Delegate work - Personal Agent WaterMelon";
   $("#delegate").addEventListener("close", () => setTimeout(() => window.close(), 60));
   // Sized and put in the middle of the screen from here: only the page knows
   // the screen as the window is measured - in its own units, at whatever
@@ -16573,13 +17657,13 @@ document.addEventListener("click", async (event) => {
         // Said in the box, which then closes with its window.
         $("#delegate-body").innerHTML = `<p class="delegate-started">${said.waiting
           ? `Waiting to start: ${escapeHtml(said.why || "")}`
-          : "Started. Follow it in Experience."}</p>`;
+          : "Started. Follow it in Work."}</p>`;
         $(".delegate-actions").hidden = true;
         setTimeout(() => $("#delegate").close(), 1800);
         return;
       }
       $("#delegate").close();
-      toast(said.waiting ? `Waiting to start: ${said.why}` : "Started - see it in Experience");
+      toast(said.waiting ? `Waiting to start: ${said.why}` : "Started - see it in Work");
       if (activeTab === "experience") {
         if (said.unit) experienceState.unit = said.unit;
         await loadExperience(false);
@@ -16695,8 +17779,10 @@ function drawWhatIsRunningNow(whole) {
   // the panel, because a blank reads as a fault. Returning early here
   // left whatever was on screen before, which is worse than either.
   if (picture) {
+    // What "work activity" leaves out: the groupings judged not a task,
+    // and the tasks of leisure.
     picture.hidden_count = (((recent || {}).plan || {}).nodes || [])
-      .filter((one) => one.hidden).length;
+      .filter((one) => one.hidden || one.leisure).length;
   }
   // THE WHOLE THING, KEPT. What is drawn has had the rejected rows taken
   // out of it, so redrawing from it when the button is pressed would
@@ -16886,6 +17972,9 @@ function drawWhatIsRunningNow(whole) {
 }
 
 function stateBeatWholeTree(report) {
+  // Its own arrowhead (see xpMarkerId): the Overview and the debugger draw
+  // this picture at once.
+  const sbArrow = xpMarkerId("sb-arrow");
   const plan = report.plan || {};
   const pieces = plan.nodes || [];
   // SAY WHY THERE IS NO PICTURE. Returning nothing left a blank where a
@@ -17118,7 +18207,7 @@ function stateBeatWholeTree(report) {
     const mid = Math.max(x1 + 10, (x1 + x2) / 2);
     return `<path d="M${x1.toFixed(1)} ${y1} H${mid.toFixed(1)}
       V${y2} H${x2.toFixed(1)}" class="sb-tt-edge"
-      marker-end="url(#sb-arrow)"><title>${escapeHtml(
+      marker-end="url(#${sbArrow})"><title>${escapeHtml(
       `${from.title} must be done before ${to.title}`)}</title></path>`;
   }).join("");
 
@@ -17309,7 +18398,7 @@ function stateBeatWholeTree(report) {
       data-sb-zoom="${sbTreeZoom()}"
       preserveAspectRatio="xMinYMin meet" role="img"
       aria-label="the active tasks, when each began, and what waits on what">
-      <defs><marker id="sb-arrow" viewBox="0 0 8 8" refX="7" refY="4"
+      <defs><marker id="${sbArrow}" viewBox="0 0 8 8" refX="7" refY="4"
         markerWidth="6" markerHeight="6" orient="auto">
         <path d="M0 0 L8 4 L0 8 z" class="sb-tt-head"/></marker></defs>
       <g class="sb-tt-edges">${drawn}</g>
@@ -17376,6 +18465,7 @@ function stateBeatWholeTree(report) {
 }
 
 function stateBeatTechTree(task) {
+  const sbTtArrow = xpMarkerId("sb-tt-arrow");
   const plan = task.plan || {};
   const pieces = plan.nodes || [];
   if (pieces.length < 2) return "";
@@ -17420,7 +18510,7 @@ function stateBeatTechTree(task) {
     const x2 = across(to.began);
     const y2 = y(to.id);
     const bend = (x1 + x2) / 2;
-    return `<path class="sb-tt-edge" marker-end="url(#sb-tt-arrow)"
+    return `<path class="sb-tt-edge" marker-end="url(#${sbTtArrow})"
       d="M ${x1.toFixed(1)} ${y1} C ${bend.toFixed(1)} ${y1},
          ${bend.toFixed(1)} ${y2}, ${(x2 - 9).toFixed(1)} ${y2}"></path>`;
   }).join("");
@@ -17455,7 +18545,7 @@ function stateBeatTechTree(task) {
     <svg viewBox="0 0 ${width} ${height}" class="sb-graph"
       preserveAspectRatio="xMidYMin meet" role="img"
       aria-label="the pieces of this task over time, and what depended on what">
-      <defs><marker id="sb-tt-arrow" viewBox="0 0 8 8" refX="7" refY="4"
+      <defs><marker id="${sbTtArrow}" viewBox="0 0 8 8" refX="7" refY="4"
         markerWidth="7" markerHeight="7" orient="auto-start-reverse">
         <path d="M 0 1 L 7 4 L 0 7 z"></path></marker></defs>
       <line class="sb-tt-axis" x1="${left + 40}" y1="${height - 22}"
@@ -19389,7 +20479,7 @@ function dbgStateMonthBounds(anchor) {
 async function loadDebuggerStates() {
   const host = $("#dbg-states-body");
   if (!host) return;
-  const { from, to } = dbgStateMonthBounds(stateBeat.anchor);
+  const { from, to } = dbgStateMonthBounds(dbgStates.anchor);
   try {
     const days = Math.ceil((to - from) / DAY_MS) + 2;
     const data = await api.get(
@@ -19417,8 +20507,8 @@ function stateBeatOn(date) {
 function renderDebuggerStates() {
   const host = $("#dbg-states-body");
   if (!host) return;
-  const { from, to } = dbgStateMonthBounds(stateBeat.anchor);
-  $("#dbg-states-range").textContent = stateBeat.anchor.toLocaleDateString(
+  const { from, to } = dbgStateMonthBounds(dbgStates.anchor);
+  $("#dbg-states-range").textContent = dbgStates.anchor.toLocaleDateString(
     undefined, { month: "long", year: "numeric" });
 
   if (!stateBeat.states.length) {
@@ -19433,7 +20523,7 @@ function renderDebuggerStates() {
   const cells = [];
   for (let day = new Date(first); day <= to || cells.length % 7; day.setDate(day.getDate() + 1)) {
     const date = new Date(day);
-    const outside = date.getMonth() !== stateBeat.anchor.getMonth();
+    const outside = date.getMonth() !== dbgStates.anchor.getMonth();
     const states = stateBeatOn(date);
     const key = String(startOfDay(date).getTime());
     // A cell is one square of a month grid, so it can hold about four chips
@@ -19474,13 +20564,13 @@ function wireDebuggerStates() {
   const next = $("#dbg-states-next");
   if (!prev || !next) return;
   prev.addEventListener("click", () => {
-    stateBeat.anchor = new Date(stateBeat.anchor.getFullYear(),
-                                stateBeat.anchor.getMonth() - 1, 1);
+    dbgStates.anchor = new Date(dbgStates.anchor.getFullYear(),
+                                dbgStates.anchor.getMonth() - 1, 1);
     loadDebuggerStates();
   });
   next.addEventListener("click", () => {
-    stateBeat.anchor = new Date(stateBeat.anchor.getFullYear(),
-                                stateBeat.anchor.getMonth() + 1, 1);
+    dbgStates.anchor = new Date(dbgStates.anchor.getFullYear(),
+                                dbgStates.anchor.getMonth() + 1, 1);
     loadDebuggerStates();
   });
   const collapse = $("#dbg-states-collapse");
@@ -19542,12 +20632,9 @@ async function applyDebuggerAvailability() {
     return;
   }
   if (available) return;
-  // What the computer was used for stays: back on the Overview.
-  const usage = $("#dbg-usage");
-  if (usage) {
-    $("#overview")?.appendChild(usage);
-    usageOnOverview = true;
-  }
+  // What the computer was used for is the Debugger's (section 8, as amended
+  // 2026-10-16): with no Debugger it is not shown anywhere.
+  $("#dbg-usage")?.remove();
   document.querySelector('[data-tab="debugger"]')?.remove();
   document.querySelector("#debugger")?.remove();
   // The Experience debugger's routes are the Debugger's too.
@@ -19562,7 +20649,7 @@ async function applyDebuggerAvailability() {
   document.querySelector("#chatdebug")?.remove();
   // EVERY DEBUGGER: an installed build is for the user, not for whoever
   // develops the agent - run from Python, they are all there.
-  ["naturedebug", "readingdebug", "languagedebug"].forEach((name) => {
+  ["naturedebug", "readingdebug", "languagedebug", "resourcedebug", "lessons"].forEach((name) => {
     document.querySelector(`[data-tab="${name}"]`)?.remove();
     document.querySelector(`#${name}`)?.remove();
   });
@@ -19571,6 +20658,346 @@ async function applyDebuggerAvailability() {
   document.querySelector('[data-tab="statebeat"]')?.remove();
 }
 
+
+/* ------------------------------------------------------- resource debugger
+
+   WHAT THE APPLICATION COSTS THE COMPUTER, as it goes (debugger/
+   resources.py): its own process and every one it started - by what each is
+   for - every two seconds while this tab is open, and nothing while it is
+   not. Three charts of the last fifteen minutes, one measure each and one
+   axis each: processors (a share of the whole computer), memory, graphics.
+   Each is the application's parts STACKED - the top edge is all of it - in
+   the token chart's validated colours, always the same colour for the same
+   part, named in a legend above; the whole computer's own use, other
+   programs too, is the dashed line in ink on the processors' chart, so what
+   is ours reads against it. Hovering shows a crosshair and every part's
+   value then; the process table beneath is the same numbers as a table.
+   Then the folders on disk, and what an earlier run left going. */
+const RD = { timer: null, data: null, open: new Set(), diskAt: "", endAsk: false,
+             hover: {} };
+const RD_KINDS = ["app", "embedding", "work", "debugger", "models", "other"];
+
+function rdColour(kind) {
+  const set = sbIsDark() ? TOKEN_COLOURS.dark : TOKEN_COLOURS.light;
+  const at = RD_KINDS.indexOf(kind);
+  return set[at < 0 ? RD_KINDS.length - 1 : at];
+}
+
+function rdLabel(kind) {
+  const found = ((RD.data || {}).kinds || []).find((one) => one.id === kind);
+  return found ? found.label : kind;
+}
+
+function rdPercent(value) {
+  const n = Number(value || 0);
+  return `${n < 10 ? n.toFixed(1) : n.toFixed(0)}%`;
+}
+
+function rdClock(seconds) {
+  return new Date(seconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit",
+    second: "2-digit" });
+}
+
+/* Asked again every two seconds while the tab is open and the page is in
+   view; the server stops sampling once nobody asks. */
+function rdTick() {
+  clearTimeout(RD.timer);
+  if (activeTab !== "resourcedebug") return;
+  RD.timer = setTimeout(rdTick, 2000);
+  if (document.hidden) return;
+  api.get("/api/debugger/resources").then((said) => {
+    RD.data = said;
+    rdDraw();
+  }).catch((err) => {
+    $("#rd-now").innerHTML = `<p class="muted">${escapeHtml(err.message)}</p>`;
+  });
+}
+
+function rdDraw() {
+  const data = RD.data || {};
+  const latest = data.latest || {};
+  const machine = latest.machine || {};
+  const totals = latest.totals || {};
+  const sum = (field) => RD_KINDS.reduce((all, kind) => all + Number((totals[kind] || {})[field] || 0), 0);
+  const disk = (data.disk || {}).places || [];
+  const onDisk = disk.reduce((all, place) => all + Number(place.bytes || 0), 0);
+  if (!latest.t) {
+    $("#rd-now").innerHTML = `<p class="muted">Taking the first look…</p>`;
+  } else {
+    const gpu = data.gpu || {};
+    $("#rd-now").innerHTML = `
+      <div class="rd-figure"><span class="rd-figure-value">${rdPercent(sum("cpu"))}</span>
+        <span class="muted">of the processors (${Number(machine.cores || 0)} cores) -
+        the whole computer is at ${rdPercent(machine.cpu)}</span></div>
+      <div class="rd-figure"><span class="rd-figure-value">${lpBytes(sum("memory"))}</span>
+        <span class="muted">of memory - ${lpBytes(machine.memory_used)} of
+        ${lpBytes(machine.memory_total)} in use on the computer</span></div>
+      <div class="rd-figure"><span class="rd-figure-value">${gpu.measured
+        ? rdPercent(sum("gpu")) : "-"}</span>
+        <span class="muted">${gpu.measured ? `of the graphics processor${
+          machine.gpu == null ? "" : ` - the computer's at ${rdPercent(machine.gpu)}`}${
+          sum("gpu_memory") ? `, ${lpBytes(sum("gpu_memory"))} of its memory` : ""}`
+          : escapeHtml(gpu.how || "graphics not measured")}</span></div>
+      <div class="rd-figure"><span class="rd-figure-value">${(data.disk || {}).measured_at
+        ? lpBytes(onDisk) : "…"}</span>
+        <span class="muted">on disk${(data.disk || {}).measuring ? " - being measured" : ""}</span></div>`;
+  }
+  rdLegend();
+  rdChart("cpu", (point) => point.cpu, rdPercent, (point) => point.machine_cpu);
+  rdChart("memory", (point) => point.memory, lpBytes);
+  if ((data.gpu || {}).measured) {
+    $("#rd-gpu-card").hidden = false;
+    rdChart("gpu", (point) => point.gpu, rdPercent);
+  } else {
+    $("#rd-gpu-card").hidden = true;
+  }
+  rdProcesses(latest.processes || []);
+  if ((data.disk || {}).measured_at !== RD.diskAt || (data.disk || {}).measuring !== RD.diskMeasuring) {
+    RD.diskAt = (data.disk || {}).measured_at;
+    RD.diskMeasuring = (data.disk || {}).measuring;
+    rdDisk(data.disk || {});
+  }
+  rdLeftovers(data.leftovers || []);
+}
+
+function rdLegend() {
+  const html = RD_KINDS.map((kind) => `<span class="rd-key"><span class="rd-swatch"
+      style="background:${rdColour(kind)}"></span>${escapeHtml(rdLabel(kind))}</span>`).join("")
+    + `<span class="rd-key"><span class="rd-swatch rd-swatch-line"></span>The whole computer
+      (processors)</span>`;
+  const at = $("#rd-legend");
+  if (at._rdHtml !== html) {
+    at.innerHTML = html;
+    at._rdHtml = html;
+  }
+}
+
+/* ONE CHART: the parts stacked over the minutes kept. `take` gives a
+   sample's values by part; `whole`, if given, a line of the computer's own. */
+function rdChart(name, take, say, whole) {
+  const box = $(`#rd-${name}-chart`);
+  const points = ((RD.data || {}).history || []);
+  if (points.length < 2) {
+    box.innerHTML = `<p class="muted">The line starts in a moment.</p>`;
+    return;
+  }
+  const width = Math.max(320, box.clientWidth || 640);
+  const height = 170;
+  const pad = { left: 56, right: 12, top: 10, bottom: 22 };
+  const t0 = points[0].t;
+  const t1 = points[points.length - 1].t;
+  const span = Math.max(1, t1 - t0);
+  const x = (t) => pad.left + (t - t0) / span * (width - pad.left - pad.right);
+  const stacks = points.map((point) => {
+    let below = 0;
+    const values = take(point) || {};
+    return RD_KINDS.map((kind) => {
+      const from = below;
+      below += Math.max(0, Number(values[kind] || 0));
+      return [from, below];
+    });
+  });
+  let top = Math.max(...stacks.map((one) => one[one.length - 1][1]),
+                     ...(whole ? points.map((p) => Number(whole(p) || 0)) : [0]));
+  top = name === "memory" ? Math.max(top * 1.1, 2 ** 28) : Math.max(5, Math.ceil(top * 1.15 / 5) * 5);
+  const y = (v) => height - pad.bottom - v / top * (height - pad.top - pad.bottom);
+  const areas = RD_KINDS.map((kind, k) => {
+    if (!stacks.some((one) => one[k][1] > one[k][0])) return "";
+    const upper = points.map((p, i) => `${x(p.t).toFixed(1)},${y(stacks[i][k][1]).toFixed(1)}`);
+    const lower = points.map((p, i) => `${x(p.t).toFixed(1)},${y(stacks[i][k][0]).toFixed(1)}`).reverse();
+    return `<polygon points="${upper.concat(lower).join(" ")}" fill="${rdColour(kind)}"
+      fill-opacity="0.85" stroke="var(--panel)" stroke-width="1"/>`;
+  }).join("");
+  const line = whole ? `<polyline points="${points.map((p) => `${x(p.t).toFixed(1)},${
+    y(Number(whole(p) || 0)).toFixed(1)}`).join(" ")}" fill="none" stroke="var(--ink)"
+    stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round"/>` : "";
+  const ticks = [0, top / 2, top].map((v) => `<line x1="${pad.left}" x2="${width - pad.right}"
+      y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-width="1"/>
+    <text x="${pad.left - 6}" y="${y(v) + 4}" text-anchor="end" class="rd-axis">${escapeHtml(say(v))}</text>`).join("");
+  const times = `<text x="${pad.left}" y="${height - 6}" class="rd-axis">${rdClock(t0)}</text>
+    <text x="${width - pad.right}" y="${height - 6}" text-anchor="end" class="rd-axis">${rdClock(t1)}</text>`;
+  const hover = RD.hover[name];
+  let cross = "";
+  if (hover != null && points[hover]) {
+    const hx = x(points[hover].t);
+    cross = `<line x1="${hx}" x2="${hx}" y1="${pad.top}" y2="${height - pad.bottom}"
+      stroke="var(--muted)" stroke-width="1"/>`;
+  }
+  box.innerHTML = `<svg class="rd-svg" width="${width}" height="${height}" role="img"
+      aria-label="${escapeHtml(name)} over the last minutes, by what it is for - the table below has the numbers"
+      data-rd-chart="${escapeHtml(name)}">${ticks}${areas}${line}${times}${cross}
+      <rect x="${pad.left}" y="${pad.top}" width="${width - pad.left - pad.right}"
+        height="${height - pad.top - pad.bottom}" fill="transparent"/></svg>
+    <div class="rd-tip" hidden></div>`;
+  const svg = box.querySelector("svg");
+  const tip = box.querySelector(".rd-tip");
+  const show = (index) => {
+    const point = points[index];
+    const values = take(point) || {};
+    const rows = RD_KINDS.filter((kind) => Number(values[kind] || 0) > 0).map((kind) =>
+      `<div class="rd-tip-row"><span class="rd-swatch" style="background:${rdColour(kind)}"></span>
+        ${escapeHtml(rdLabel(kind))}<span class="rd-tip-value">${escapeHtml(say(values[kind]))}</span></div>`);
+    const total = RD_KINDS.reduce((all, kind) => all + Number(values[kind] || 0), 0);
+    tip.innerHTML = `<div class="muted">${rdClock(point.t)}</div>
+      <div class="rd-tip-row"><strong>In all</strong><span class="rd-tip-value">${
+        escapeHtml(say(total))}</span></div>${rows.join("")}${whole
+        ? `<div class="rd-tip-row">The whole computer<span class="rd-tip-value">${
+          escapeHtml(say(whole(point)))}</span></div>` : ""}`;
+    tip.hidden = false;
+    const left = x(point.t);
+    tip.style.left = `${Math.min(Math.max(0, left + 12), width - 240)}px`;
+    tip.style.top = "8px";
+  };
+  svg.addEventListener("mousemove", (event) => {
+    const box2 = svg.getBoundingClientRect();
+    const at = event.clientX - box2.left;
+    let best = 0;
+    points.forEach((p, i) => {
+      if (Math.abs(x(p.t) - at) < Math.abs(x(points[best].t) - at)) best = i;
+    });
+    RD.hover[name] = best;
+    let mark = svg.querySelector(".rd-cross");
+    if (!mark) {
+      mark = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      mark.setAttribute("class", "rd-cross");
+      mark.setAttribute("stroke", "var(--muted)");
+      svg.appendChild(mark);
+    }
+    const hx = x(points[best].t);
+    mark.setAttribute("x1", hx); mark.setAttribute("x2", hx);
+    mark.setAttribute("y1", pad.top); mark.setAttribute("y2", height - pad.bottom);
+    show(best);
+  });
+  svg.addEventListener("mouseleave", () => {
+    RD.hover[name] = null;
+    tip.hidden = true;
+    svg.querySelector(".rd-cross")?.remove();
+  });
+  if (hover != null && points[hover]) show(hover);
+}
+
+/* EVERY PROCESS, under what it is for - the largest first. */
+function rdProcesses(rows) {
+  const groups = new Map();
+  rows.forEach((row) => {
+    const key = `${row.kind}\u0000${row.owner}`;
+    if (!groups.has(key)) groups.set(key, { kind: row.kind, owner: row.owner, rows: [] });
+    groups.get(key).rows.push(row);
+  });
+  const measured = ((RD.data || {}).gpu || {}).measured;
+  const ordered = [...groups.values()].map((group) => ({ ...group,
+    cpu: group.rows.reduce((all, r) => all + Number(r.cpu || 0), 0),
+    memory: group.rows.reduce((all, r) => all + Number(r.memory || 0), 0),
+    gpu: group.rows.reduce((all, r) => all + Number(r.gpu || 0), 0),
+    gpuMemory: group.rows.reduce((all, r) => all + Number(r.gpu_memory || 0), 0) }))
+    .sort((a, b) => RD_KINDS.indexOf(a.kind) - RD_KINDS.indexOf(b.kind) || b.memory - a.memory);
+  const cell = (value, say) => `<td class="rd-num">${value == null ? "-" : escapeHtml(say(value))}</td>`;
+  const body = ordered.map((group) => `<tbody>
+      <tr class="rd-group"><th colspan="3" scope="rowgroup"><span class="rd-swatch"
+          style="background:${rdColour(group.kind)}"></span>${escapeHtml(group.owner)}
+          <span class="muted">${group.owner === rdLabel(group.kind)
+            ? `processes: ${group.rows.length}`
+            : `${escapeHtml(rdLabel(group.kind))} - processes: ${group.rows.length}`}</span></th>
+        ${cell(group.cpu, rdPercent)}${cell(group.memory, lpBytes)}${measured
+          ? `${cell(group.gpu, rdPercent)}${cell(group.gpuMemory, lpBytes)}` : ""}</tr>
+      ${group.rows.sort((a, b) => b.memory - a.memory).map((row) => `<tr>
+        <td class="rd-name" title="${escapeHtml(row.command || "")}">${escapeHtml(row.name)}</td>
+        <td class="rd-num">${Number(row.pid)}</td>
+        <td class="muted">${escapeHtml(new Date(row.started).toLocaleTimeString())}</td>
+        ${cell(row.cpu, rdPercent)}${cell(row.memory, lpBytes)}${measured
+          ? `${cell(row.gpu, rdPercent)}${cell(row.gpu_memory, lpBytes)}` : ""}</tr>`).join("")}
+    </tbody>`).join("");
+  const html = `<table class="rd-table"><thead><tr><th scope="col">Process</th>
+      <th scope="col" class="rd-num">PID</th><th scope="col">Started</th>
+      <th scope="col" class="rd-num">Processors</th><th scope="col" class="rd-num">Memory</th>
+      ${measured ? `<th scope="col" class="rd-num">Graphics</th>
+      <th scope="col" class="rd-num">Graphics memory</th>` : ""}</tr></thead>${body}</table>`;
+  $("#rd-processes").innerHTML = rows.length ? html : `<p class="muted">Taking the first look…</p>`;
+}
+
+/* THE FOLDERS: each with its size and files, its largest parts inside -
+   opened ones stay open as it is measured again. */
+function rdDisk(disk) {
+  const places = disk.places || [];
+  const largest = Math.max(1, ...places.map((place) => Number(place.bytes || 0)));
+  $("#rd-measure").disabled = Boolean(disk.measuring);
+  $("#rd-disk-when").textContent = disk.measuring ? "Being measured…"
+    : disk.measured_at ? `Measured at ${new Date(disk.measured_at).toLocaleTimeString()}` : "";
+  if (!places.length) {
+    $("#rd-disk").innerHTML = `<p class="muted">${disk.measuring ? "Measuring its folders…"
+      : "Nothing measured yet."}</p>`;
+    return;
+  }
+  $("#rd-disk").innerHTML = places.map((place) => `<details class="rd-place"
+      data-rd-place="${escapeHtml(place.path)}"${RD.open.has(place.path) ? " open" : ""}>
+      <summary><span class="rd-place-name">${escapeHtml(place.label)}</span>
+        <span class="rd-bar" aria-hidden="true"><span style="width:${
+          (Number(place.bytes || 0) / largest * 100).toFixed(1)}%"></span></span>
+        <span class="rd-num">${lpBytes(place.bytes)}</span>
+        <span class="muted rd-num">${Number(place.files || 0).toLocaleString()} files</span></summary>
+      <p class="muted"><code>${escapeHtml(place.path)}</code>${place.exists ? ""
+        : " - not there any more"}${place.cut_short ? " - too many files to count in time; more than this" : ""}</p>
+      ${(place.parts || []).length ? `<table class="rd-table rd-parts"><tbody>${place.parts.map((part) =>
+        `<tr><td>${part.rest ? `<span class="muted">${escapeHtml(part.name)}</span>`
+          : `<code>${escapeHtml(part.name)}</code>`}</td>
+          <td class="rd-num">${lpBytes(part.bytes)}</td>
+          <td class="rd-num muted">${Number(part.files || 0).toLocaleString()} files</td></tr>`).join("")}
+        </tbody></table>` : ""}
+    </details>`).join("");
+}
+
+/* WHAT AN EARLIER RUN LEFT GOING - normally nothing: the operating system
+   ends every process the application started when it ends. */
+function rdLeftovers(found) {
+  const html = !found.length
+    ? `<p class="muted">None - every process this application started belongs to it now.</p>`
+    : `<p>Left going by an earlier run of the application: ${found.length}</p>
+      <table class="rd-table"><tbody>${found.map((one) => `<tr>
+        <td class="rd-name" title="${escapeHtml(one.command || "")}">${escapeHtml(one.name)}</td>
+        <td class="rd-num">${Number(one.pid)}</td><td class="rd-num">${lpBytes(one.memory)}</td>
+        <td class="muted">since ${escapeHtml(new Date(one.started).toLocaleString())}</td></tr>`).join("")}
+      </tbody></table>
+      ${RD.endAsk ? `<p class="xd-try-ask" role="alert">End them, with everything they
+          started? What they were doing is lost.
+          <button type="button" class="small danger" data-rd-end-yes="1">End them</button>
+          <button type="button" class="small secondary" data-rd-end-no="1">Keep</button></p>`
+        : `<button type="button" class="small secondary danger-text" data-rd-end="1">End them</button>`}`;
+  const at = $("#rd-leftovers");
+  if (at._rdHtml !== html) {
+    at.innerHTML = html;
+    at._rdHtml = html;
+  }
+}
+
+document.addEventListener("click", async (event) => {
+  const at = (selector) => event.target.closest && event.target.closest(selector);
+  if (!at("#resourcedebug")) return;
+  if (at("#rd-measure")) {
+    $("#rd-measure").disabled = true;
+    try { await api.post("/api/debugger/resources/disk", {}); } catch (err) { toast(err.message); }
+    rdTick();
+    return;
+  }
+  if (at("[data-rd-end]")) { RD.endAsk = true; rdLeftovers((RD.data || {}).leftovers || []); return; }
+  if (at("[data-rd-end-no]")) { RD.endAsk = false; rdLeftovers((RD.data || {}).leftovers || []); return; }
+  if (at("[data-rd-end-yes]")) {
+    RD.endAsk = false;
+    try {
+      const said = await api.post("/api/debugger/resources/leftovers", {});
+      toast(`Processes ended: ${Number(said.ended || 0)}`);
+    } catch (err) {
+      toast(err.message);
+    }
+    rdTick();
+  }
+});
+
+document.addEventListener("toggle", (event) => {
+  const place = event.target.closest && event.target.closest("[data-rd-place]");
+  if (!place) return;
+  if (place.open) RD.open.add(place.dataset.rdPlace);
+  else RD.open.delete(place.dataset.rdPlace);
+}, true);
 
 /* ------------------------------------------------------- token usage
 
@@ -19594,8 +21021,8 @@ const dbgTokens = { calls: [], since: "", metric: "total_tokens", open: true,
 /* BY MODULE: each call's module (common/modules.py), as its name. */
 const MODULE_NAMES = { core: "Activity and states", tasks: "Task organisation",
   calendar: "Calendar management", connections: "Connections",
-  recommend: "Customized Recommendation", experience: "Experience learning",
-  experience_manual: "Experience: tasks into stages (started by you)",
+  recommend: "Newspaper", experience: "Work learning",
+  experience_manual: "Work: tasks into stages (started by you)",
   manual: "Started by you", other: "Other",
   "heartbeat (before modules)": "Agent heartbeat (before modules)" };
 
@@ -20223,7 +21650,8 @@ const XD_VARIANTS = [
 ];
 const xdState = { open: true, projects: [], project: null, newOpen: false, newFolder: "",
                   drafts: {}, editing: null, removeAsk: false, clearAsk: "", clearAllAsk: false, runs: {},
-                  runVariant: {}, timer: null, loading: false, way: "", waySnaps: {} };
+                  runVariant: {}, timer: null, loading: false, way: "", waySnaps: {},
+                  waiting: {} };
 
 /* EACH WAY'S OWN TREE of cards and stages - how its work evolved - drawn and
    opened as the Experience tab draws the agents' work on a piece of work
@@ -20365,10 +21793,23 @@ function xdClearLine(v, folder, going) {
    how), interrupted - or not started. From the live session while it is
    followed - the freshest word - else from the runs' list; the runs' list
    saying it is over is over, whatever the session said last. */
+/* A WAY WAITING FOR ROOM: everything going side by side shares the
+   computer (common/pool.py), and a way started while there is none waits
+   its turn, then starts by itself. Its wait - why, how far along - or null. */
+function xdWaits(variant) {
+  const said = (xdState.waiting || {})[variant] || {};
+  return said.why ? said : null;
+}
+
 function xdWayState(v) {
   const runs = xdState.runs[v.variant] || [];
   const going = runs.find((run) => run.alive);
   const latest = going || runs[0];
+  const waits = going ? null : xdWaits(v.variant);
+  if (waits) {
+    return { state: "waiting_room", words: "waiting for room", latest, going: null,
+             waits, data: {} };
+  }
   if (!latest) return { state: "none", words: "not started", latest: null, going: null };
   const live = xpLiveState(latest.id);
   const data = live.open ? live.data : null;
@@ -20395,6 +21836,21 @@ function xdWayLive(v) {
   const folder = shown.folder || xdUnder(project.folder || "", v.folder);
   const way = xdWayState(v);
   const parts = [];
+  const refused = ((xdState.waiting || {})[v.variant] || {}).could_not_start;
+  if (way.waits) {
+    parts.push(`<span class="xp-live-state xp-live-state-waiting_room"
+      data-xd-way-state="waiting_room">${escapeHtml(way.words)}</span>`);
+    parts.push(`<span class="muted xd-way-wait">${escapeHtml(way.waits.why)} - ${
+      Number(way.waits.position) === 1 ? "next in line"
+        : `${Number(way.waits.position)} in line`}; it starts by itself</span>`);
+    parts.push(`<button type="button" class="small secondary" data-xd-unwait="${
+      escapeHtml(v.variant)}">Don't start it</button>`);
+    return parts.join(" ");
+  }
+  if (refused && !way.going) {
+    parts.push(`<span class="danger-text">Its turn came, but it could not start: ${
+      escapeHtml(refused)}</span>`);
+  }
   if (way.latest) {
     parts.push(`<span class="xp-live-state xp-live-state-${escapeHtml(way.state)}"
       data-xd-way-state="${escapeHtml(way.state)}">${escapeHtml(way.words)}</span>`);
@@ -20437,9 +21893,9 @@ function xdWayPatch(variant) {
   const v = XD_VARIANTS.find((one) => one.variant === variant);
   if (!v) return;
   const put = (at, html) => {
-    if (!at || at._xpHtml === html) return;
+    if (!at || at._xpHtml === xpShows(html)) return;
     at.innerHTML = html;
-    at._xpHtml = html;
+    at._xpHtml = xpShows(html);
   };
   put($(`#dbg-xd [data-xd-way-live="${CSS.escape(variant)}"]`), xdWayLive(v));
   put($(`#dbg-xd [data-xd-tab-badge="${CSS.escape(variant)}"]`), xdWayBadge(v));
@@ -20530,11 +21986,11 @@ function xdTreePatch(v) {
   const box = $(`#xd-tree-${v.variant}`);
   if (!box) return;
   const html = xdTreeHtml(v);
-  if (box._xpHtml === html) return;
+  if (box._xpHtml === xpShows(html)) return;
   const frame = box.querySelector(".xp-frame");
   const at = frame ? [frame.scrollLeft, frame.scrollTop] : [0, 0];
   box.innerHTML = html;
-  box._xpHtml = html;
+  box._xpHtml = xpShows(html);
   const again = box.querySelector(".xp-frame");
   if (again) [again.scrollLeft, again.scrollTop] = at;
   xdStageAgain(v);
@@ -20590,7 +22046,7 @@ function xdVariant(project, v, shown) {
       <label><input type="radio" name="xd-packages-${id}" value="auto"
         data-xd-field="packages-${id}"${mode === "auto" ? " checked" : ""}>
         Auto</label></div>
-    ${going ? "" : `<p class="xd-actions">${runs.length ? xdGoOn(runs[0], id)
+    ${going || xdWaits(v.variant) ? "" : `<p class="xd-actions">${runs.length ? xdGoOn(runs[0], id)
         : `<label class="xd-instruction">Instruction <textarea rows="3" maxlength="8000"
             data-xd-field="instruction-${id}"
             placeholder="what you want done">${escapeHtml(xdDraft(
@@ -20624,6 +22080,42 @@ function xdGoOn(latest, id) {
       disabled>Start</button> <span class="muted">started - continue its run below</span>`;
 }
 
+/* THE TRIES: the same instruction tried again, each in its own subfolder
+   of the project's folder, each blind to every other - its ways may read
+   no other try's folder, nor the Claude Code or Codex sessions held in
+   one. The one shown is the one started and continued here. */
+function xdTries(project) {
+  const tries = project.tries || [1];
+  const shown = Number(project.try) || 1;
+  return `<div class="xd-tries" role="group" aria-label="Tries">
+      <span class="muted">Try</span>
+      ${tries.map((n) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.classList.add("small");
+        if (n !== shown) button.classList.add("secondary");
+        button.dataset.xdTry = String(n);
+        if (n === shown) button.setAttribute("aria-pressed", "true");
+        button.textContent = String(n);
+        return button.outerHTML;
+      }).join("")}
+      <button type="button" class="small secondary" data-xd-new-try="1">New try</button>
+      ${tries.length > 1 ? xdState.removeTryAsk === shown
+        ? `<span class="xd-try-ask" role="alert">Remove try ${shown}? Its folder
+            <code>${escapeHtml(project.try_folder || "")}</code> and everything in it - what
+            its three ways made and what you wrote there - is deleted, with its runs and the
+            Claude Code and Codex sessions of work in it. This cannot be undone.
+            <button type="button" class="small danger" data-xd-remove-try-yes="${shown}">Remove try ${shown}</button>
+            <button type="button" class="small secondary" data-xd-remove-try-no="1">Keep it</button></span>`
+        : `<button type="button" class="small secondary danger-text" data-xd-remove-try="${shown}"${
+            (project.variants || []).some((v) => v.alive)
+              ? ` disabled title="A way of this try is going: stop it first"` : ""}>Remove this try</button>`
+        : ""}
+      <span class="muted xd-try-folder">Sees none of the other tries:
+        <code>${escapeHtml(project.try_folder || "")}</code></span>
+    </div>`;
+}
+
 function xdDraw() {
   const project = xdState.project;
   const list = xdState.projects.length ? `<ul class="xd-list">${xdState.projects.map((p) =>
@@ -20654,6 +22146,7 @@ function xdDraw() {
           <button type="button" class="small secondary" data-xd-clear-all-no="1">Keep them</button>`
           : `<button type="button" class="small secondary" data-xd-remove="1">Remove</button>
           ${xdClearAllButton()}`}</p>
+      ${xdTries(project)}
       <div class="xd-tabs" role="tablist" aria-label="The three ways">${XD_VARIANTS.map((v) => `
         <button type="button" role="tab" class="xd-tab${v.variant === shown ? " selected" : ""}"
           id="xd-tab-${escapeHtml(v.variant)}" data-xd-tab="${escapeHtml(v.variant)}"
@@ -20678,9 +22171,11 @@ function xdSig() {
   return JSON.stringify([
     xdState.projects.map((p) => [p.id, p.name, (p.variants || []).map((v) => Boolean(v.alive))]),
     project ? [project.id, project.name, project.description, project.instruction,
-               project.folder, (project.variants || []).map((v) => v.folder || "")] : null,
+               project.folder, (project.variants || []).map((v) => v.folder || ""),
+               project.try, (project.tries || []).join(",")] : null,
     xdState.newOpen, xdState.newFolder, xdState.editing, xdState.removeAsk, xdState.clearAsk,
     XD_VARIANTS.map((v) => (xdState.runs[v.variant] || []).map(xpRunSig)),
+    XD_VARIANTS.map((v) => Boolean(xdWaits(v.variant))),
     XD_VARIANTS.map((v) => Boolean(((experienceState.xdTrees[v.variant] || {}).stages || []).length))]);
 }
 
@@ -20698,7 +22193,7 @@ async function loadDebuggerExperience(force = false) {
   try {
     projects = (await api.get("/api/debugger/experience/projects")).projects || [];
   } catch (err) {
-    body.innerHTML = `<p class="muted">The Experience debugger is not available in this build.</p>`;
+    body.innerHTML = `<p class="muted">The Work debugger is not available in this build.</p>`;
     body._xpSig = "";
     return;
   }
@@ -20706,17 +22201,22 @@ async function loadDebuggerExperience(force = false) {
   // The one open; else the one open last time; else the newest - a project
   // is never left closed just because the page was loaded again.
   const wanted = xdState.project ? xdState.project.id : (xdState.closed ? "" : xdRemembered());
-  const chosen = (wanted && xdState.projects.find((p) => p.id === wanted))
+  // By the project, whichever of its tries is shown: "<id>~<try>" is a try
+  // of "<id>".
+  const baseOf = (id) => String(id || "").split("~")[0];
+  const chosen = (wanted && xdState.projects.find((p) => baseOf(p.id) === baseOf(wanted)))
     || (!xdState.project && !xdState.closed ? xdState.projects[0] : null);
   xdState.project = chosen || null;
   if (xdState.project) xdRemember(xdState.project);
   const runsNow = {};
   const treesNow = {};
+  const waitsNow = {};
   if (xdState.project) {
     const id = encodeURIComponent(xdState.project.id);
     const got = await Promise.all(XD_VARIANTS.map((v) => Promise.all([
       api.get(`/api/debugger/experience/runs?project=${id}&variant=${v.variant}`)
-        .then((r) => r.runs || []).catch(() => []),
+        .then((r) => { waitsNow[v.variant] = r.waiting || {}; return r.runs || []; })
+        .catch(() => []),
       v.variant === "single" ? Promise.resolve({})
         : api.get(`/api/debugger/experience/tree?project=${id}&variant=${v.variant}`)
           .catch(() => ({}))])));
@@ -20725,6 +22225,7 @@ async function loadDebuggerExperience(force = false) {
     });
   }
   xdState.runs = runsNow;
+  xdState.waiting = waitsNow;
   experienceState.xdTrees = treesNow;
   const kept = xpVersionsState();
   kept.idle = kept.idle || {};
@@ -20738,7 +22239,9 @@ async function loadDebuggerExperience(force = false) {
       all.push(run);
     });
   });
-  const alive = all.some((run) => run.alive);
+  // A way waiting for room is followed as one going is: it starts by itself.
+  const alive = all.some((run) => run.alive)
+    || XD_VARIANTS.some((v) => Boolean(xdWaits(v.variant)));
   if (!force && xpPanelSame(body, xdSig())) {
     // Only what is live: each run in place, each way's heading, tab and tree.
     all.forEach(xpRunPatch);
@@ -20762,7 +22265,7 @@ async function loadDebuggerExperience(force = false) {
   body._xpSig = xdSig();
   XD_VARIANTS.forEach((v) => {
     const tree = $(`#xd-tree-${v.variant}`);
-    if (tree) tree._xpHtml = xdTreeHtml(v);
+    if (tree) tree._xpHtml = xpShows(xdTreeHtml(v));
     if (tree) xdStageAgain(v);
   });
   all.forEach((run) => {
@@ -20847,6 +22350,18 @@ async function xdClick(event) {
     await loadDebuggerExperience(true);
     return;
   }
+  const tryAt = at("[data-xd-try]");
+  if ((tryAt || at("[data-xd-new-try]")) && xdState.project) {
+    try {
+      await api.post("/api/debugger/experience/projects", tryAt
+        ? { action: "use_try", id: xdState.project.id, try: Number(tryAt.dataset.xdTry) }
+        : { action: "new_try", id: xdState.project.id });
+    } catch (err) {
+      toast(err.message);
+    }
+    await loadDebuggerExperience(true);
+    return;
+  }
   const editAt = at("[data-xd-edit]");
   if (editAt) {
     xdState.editing = editAt.dataset.xdEdit;
@@ -20879,6 +22394,35 @@ async function xdClick(event) {
     xdState.removeAsk = Boolean(at("[data-xd-remove]"));
     xdState.clearAsk = "";
     xdState.clearAllAsk = false;
+    await loadDebuggerExperience(true);
+    return;
+  }
+  // REMOVE A TRY: asked first, in the row of tries; then its folder and all
+  // in it deleted.
+  if (at("[data-xd-remove-try]") || at("[data-xd-remove-try-no]")) {
+    const asking = at("[data-xd-remove-try]");
+    xdState.removeTryAsk = asking ? Number(asking.dataset.xdRemoveTry) : 0;
+    await loadDebuggerExperience(true);
+    return;
+  }
+  if (at("[data-xd-remove-try-yes]") && xdState.project) {
+    if (xdState.removingTry) return;
+    xdState.removingTry = true;
+    at("[data-xd-remove-try-yes]").disabled = true;
+    try {
+      const said = await api.post("/api/debugger/experience/projects", { action: "remove_try",
+        id: xdState.project.id });
+      const left = (said.not_removed || []).length + (said.left_alone || []).length;
+      toast(`Removed try ${said.removed_try}: ${Number(said.files || 0)} file${said.files === 1 ? "" : "s"}, ${
+        Number(said.runs || 0)} run${said.runs === 1 ? "" : "s"} and ${
+        Number(said.sessions || 0)} session${said.sessions === 1 ? "" : "s"}${left
+        ? ` - ${left} could not be removed` : ""}.`);
+      if (said.project) xdState.project = said.project;
+    } catch (err) {
+      toast(err.message);
+    }
+    xdState.removeTryAsk = 0;
+    xdState.removingTry = false;
     await loadDebuggerExperience(true);
     return;
   }
@@ -20973,6 +22517,18 @@ async function xdClick(event) {
     await loadDebuggerExperience(true);
     return;
   }
+  const unwaitAt = at("[data-xd-unwait]");
+  if (unwaitAt && xdState.project) {
+    unwaitAt.disabled = true;
+    try {
+      await api.post("/api/debugger/experience/unwait", { project: xdState.project.id,
+        variant: unwaitAt.dataset.xdUnwait });
+    } catch (err) {
+      toast(err.message);
+    }
+    await loadDebuggerExperience(true);
+    return;
+  }
   const startAt = at("[data-xd-start]");
   if (startAt && xdState.project) {
     const variant = startAt.dataset.xdStart;
@@ -20985,11 +22541,13 @@ async function xdClick(event) {
     // be pressed.
     startAt.textContent = "Starting\u2026";
     try {
-      await api.post("/api/debugger/experience/start", { project: xdState.project.id, variant,
+      const said = await api.post("/api/debugger/experience/start", {
+        project: xdState.project.id, variant,
         instruction, limits: xdLimits(startAt),
         packages: xdDraft(`packages-${variant}`, "auto"),
         sound: xdDraft(`sound-${variant}`, "1") === "1" });
       delete xdState.drafts[`instruction-${variant}`];
+      if (said && said.waiting) toast(`Waiting for room: ${said.why}. It starts by itself.`);
     } catch (err) {
       toast(err.message);
     }

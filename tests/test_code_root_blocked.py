@@ -163,10 +163,12 @@ class TheToolsTests(_WithRuns):
 
     def test_the_ways_are_still_sealed_from_each_other(self) -> None:
         runtime, tools = self._debug_tools("single")
-        (self.chosen / "B" / "theirs.txt").write_text("theirs")
-        said = tools.call("read_file", {"path": str(self.chosen / "B" / "theirs.txt")})
-        self.assertIn("another benchmark variant's folder", said.get("message", ""), said)
-        self.assertEqual(sorted(Path(p).name for p in runtime.policy.sealed_paths), ["B", "C"])
+        (self.chosen / "try_1" / "B" / "theirs.txt").write_text("theirs")
+        said = tools.call("read_file", {"path": str(self.chosen / "try_1" / "B" / "theirs.txt")})
+        self.assertIn("closed to this work", said.get("message", ""), said)
+        names = {Path(p).name for p in runtime.policy.sealed_paths}
+        self.assertTrue({"B", "C"} <= names, names)
+        self.assertNotIn("A", names, "its own folder")
 
 
 class ARunHoldsTheSealTests(_WithRuns):

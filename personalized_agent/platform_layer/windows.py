@@ -209,7 +209,7 @@ class WindowsNotificationProvider(PlatformNotificationProvider):
         "$n.Item(1).AppendChild($t.CreateTextNode($env:PA_BODY)) > $null;"
         "$toast = [Windows.UI.Notifications.ToastNotification]::new($t);"
         "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("
-        "'Personalized Agent').Show($toast);"
+        "$env:PA_APP).Show($toast);"
     )
 
     def __init__(self) -> None:
@@ -230,7 +230,9 @@ class WindowsNotificationProvider(PlatformNotificationProvider):
     def send_notification(self, title: str, message: str) -> bool:
         if not self._powershell:
             return False
-        env = dict(os.environ, PA_TITLE=title, PA_BODY=message)
+        from ..version import APP_NAME
+        # Shown as who it is from.
+        env = dict(os.environ, PA_TITLE=title, PA_BODY=message, PA_APP=APP_NAME)
         try:
             completed = children.run_short(
                 [self._powershell, "-NoProfile", "-NonInteractive", "-Command", self._SCRIPT],

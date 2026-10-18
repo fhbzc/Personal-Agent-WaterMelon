@@ -19,6 +19,34 @@ os.environ["PERSONALIZED_AGENT_NO_KEYRING"] = "1"
 # Nor play a sound on the machine running them - however they are run, with
 # pytest's conftest.py or without it.
 os.environ["PA_NO_SOUND"] = "1"
+# Nor show a folder or file dialog (common/chooser.py). Set in conftest.py
+# for pytest only, so under scripts/run_tests.py - unittest - a test that
+# reached a "Choose..." route opened the real dialog, at whatever folder the
+# person running them had last chosen.
+os.environ["PA_NO_DIALOGS"] = "1"
+
+
+# NOR OPEN A WINDOW ON THE SCREEN OF WHOEVER RUNS THEM. A file manager on a
+# test's folder kept appearing during test runs; a test that reaches the
+# real file manager or browser fails here, naming what it tried to open,
+# instead of opening it. A test that means to check the opening replaces
+# these itself.
+class OpenedOnScreen(AssertionError):
+    pass
+
+
+def _not_on_screen(*args, **_kwargs):
+    raise OpenedOnScreen(f"a test tried to open {args[:1]} on the screen")
+
+
+if hasattr(os, "startfile"):
+    os.startfile = _not_on_screen
+import webbrowser  # noqa: E402
+
+webbrowser.open = webbrowser.open_new = webbrowser.open_new_tab = _not_on_screen
+import personalized_agent.agent.work.runner as _runner  # noqa: E402
+
+_runner.open_in_file_manager = _not_on_screen
 
 from personalized_agent.app import AgentApplication  # noqa: E402
 
@@ -68,6 +96,12 @@ class TemporaryAgent:
         self.app.agent.runtime = self.app.runtime
         # Runs in this process: the tests give them their own models.
         self.app.work.in_subprocess = False
+        # ROOM FOR EVERY RUN: whether one waits its turn is the tests' of
+        # the governor and the pool (test_work_processes, test_delegate,
+        # test_resources_and_room) - not how busy the computer running the
+        # tests happens to be.
+        self.app.work.governor.room = lambda going: (True, "")
+        self.app.work.pool = None
         self.app.executor.runtime = self.app.runtime
         # The work runner reads its boundary from here too. Left as built, it
         # would be the real one - the user's whole home readable - and its

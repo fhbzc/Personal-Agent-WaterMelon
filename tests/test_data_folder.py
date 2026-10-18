@@ -69,7 +69,10 @@ class WhereTheDataFolderIsTests(unittest.TestCase):
         # A folder with an agent's data in it: asked, and No keeps them there.
         self.assertIn("HasAgentData(Dir)", script)
         self.assertIn("mbConfirmation, MB_YESNO) = IDYES", script)
-        self.assertIn("InsideProgramFiles(Dir)", script)
+        # One it cannot write to without an administrator: refused.
+        self.assertIn("NeedsAdmin(Dir)", script)
+        for system_folder in ("{commonpf}", "{commonpf32}", "{win}", "{commonappdata}"):
+            self.assertIn(f"Under(Folder, ExpandConstant('{system_folder}'))", script)
         for code in ("en", "zh", "es", "ja", "ko", "ru", "fr", "de", "it"):
             for key in ("DataTitle", "DataPrompt", "DataExisting", "DataProgramFiles"):
                 self.assertIn(f"\n{code}.{key}=", script.replace("\r\n", "\n"), (code, key))

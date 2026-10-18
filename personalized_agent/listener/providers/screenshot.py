@@ -42,7 +42,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ...common.events.models import ListenerEvent
 from ...platform_layer import get_platform
-from ...version import APP_NAME
+from ...version import APP_NAME, FORMER_NAMES
 from ..core.manager import STOPPING_GRACE_SECONDS
 from ..core.provider import ListenerProvider, PluginManifest
 
@@ -240,7 +240,8 @@ class ScreenshotProvider(ListenerProvider):
             return False
         if pid and pid == os.getpid():
             return False
-        if APP_NAME.lower() in f"{application} {title}".lower():
+        said = f"{application} {title}".lower()
+        if any(name.lower() in said for name in (APP_NAME, *FORMER_NAMES)):
             return False
         haystack = f"{application} {title}".lower()
         for pattern in self.config.lines("listener_screen_excluded_applications"):
@@ -326,6 +327,8 @@ class ScreenshotProvider(ListenerProvider):
             # its words can be hidden, a picture of them cannot.
             self._taken[key] = (now, measured["fingerprint"])
             self.held_back += 1
+            from ..core.filtered import note
+            note(self.provider_id, self.category, "screen.shot", "credentials", application)
             return None
         path = self._save(image, application, title, today)
         if path is None:

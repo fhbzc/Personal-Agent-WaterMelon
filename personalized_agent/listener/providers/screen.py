@@ -38,7 +38,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ...common.events.models import ListenerEvent
 from ...platform_layer import get_platform
-from ...version import APP_NAME
+from ...version import APP_NAME, FORMER_NAMES
 from ..core.provider import ListenerProvider, PluginManifest
 from ..core.manager import STOPPING_GRACE_SECONDS
 
@@ -313,7 +313,8 @@ class ScreenProvider(ListenerProvider):
         """
         if reading.pid and reading.pid == os.getpid():
             return True
-        return APP_NAME.lower() in f"{reading.application} {reading.title}".lower()
+        said = f"{reading.application} {reading.title}".lower()
+        return any(name.lower() in said for name in (APP_NAME, *FORMER_NAMES))
 
     def _excluded(self, application: str, title: str) -> bool:
         """Windows the user has said not to read.

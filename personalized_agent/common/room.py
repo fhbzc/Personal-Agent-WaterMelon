@@ -218,7 +218,8 @@ class Room:
 def at_once(items: Iterable[Any], work: Callable[[Any], Any],
             room: Optional[Room], going: Callable[[], bool] = lambda: True,
             landed: Optional[Callable[[Any, Any, Optional[BaseException]], Any]] = None,
-            told: Optional[Callable[[int, int, str], None]] = None) -> int:
+            told: Optional[Callable[[int, int, str], None]] = None,
+            pool: Any = None, kind: str = "work") -> int:
     """Each item through `work`, as many at once as `room` allows.
 
     `items` is read one at a time, on this thread, as there is room for the
@@ -229,36 +230,62 @@ def at_once(items: Iterable[Any], work: Callable[[Any], Any],
     `told(running, allowed, why)` hears each time the number changes.
     With no room given, one at a time.
 
+    WITH THE POOL (pool.py), each takes a place of `kind` there before it
+    starts and gives it back when it ends: how many go at once is decided
+    with everything else the agent has going, not this alone.
+
     Returns how many were started.
     """
     finished: "queue.Queue[Tuple[Any, Any, Optional[BaseException]]]" = queue.Queue()
+    # This batch's place in the pool's line, while it waits.
+    key = f"{kind}:batch-{id(finished)}"
     source = iter(items)
     running, started, stopped, exhausted = 0, 0, False, False
 
-    def run(item: Any) -> None:
+    def run(item: Any, place: Any = None) -> None:
         try:
             finished.put((item, work(item), None))
         except BaseException as exc:   # handed to `landed`, on the caller
             finished.put((item, None, exc))
+        finally:
+            if pool is not None:
+                pool.give_back(place)
 
     while True:
         while not stopped and not exhausted and going():
-            allowed, why = room.allowed(running) if room is not None \
-                else (1, "one at a time")
-            if running >= allowed:
-                break
+            place = None
+            if pool is not None:
+                place = pool.try_take(kind, key=key)
+                if place is None:
+                    break
+                allowed, why = pool.allowed()
+            else:
+                allowed, why = room.allowed(running) if room is not None \
+                    else (1, "one at a time")
+                if running >= allowed:
+                    break
             try:
                 item = next(source)
             except StopIteration:
                 exhausted = True
+                if pool is not None:
+                    pool.give_back(place)
                 break
-            threading.Thread(target=run, args=(item,), daemon=True,
+            threading.Thread(target=run, args=(item, place), daemon=True,
                              name="at-once").start()
             running += 1
             started += 1
             if told is not None:
                 told(running, allowed, why)
         if not running:
+            # Nothing of its own going: with the pool, it may only be waiting
+            # for a place - something more important first, or the computer
+            # full. Asked again, until it is stopped.
+            if pool is not None and not stopped and not exhausted and going():
+                time.sleep(LOOK_EVERY)
+                continue
+            if pool is not None:
+                pool.stop_waiting(key)
             return started
         try:
             item, result, error = finished.get(timeout=LOOK_EVERY)

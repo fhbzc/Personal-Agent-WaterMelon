@@ -129,6 +129,8 @@ class LegacyDatabaseTests(unittest.TestCase):
                 conn.execute("ALTER TABLE conversations DROP COLUMN project_id")
                 # The chat's own folder came later still (agent/dialog/files.py).
                 conn.execute("ALTER TABLE conversations DROP COLUMN folder")
+                # And pinning, later again (the chat's list, 2026-10-16).
+                conn.execute("ALTER TABLE conversations DROP COLUMN pinned_at")
                 conn.execute("INSERT INTO conversations VALUES ('legacy', '2020-01-01', 'Old chat')")
             conn.close()
             db = Database(path)
@@ -137,6 +139,8 @@ class LegacyDatabaseTests(unittest.TestCase):
                 self.assertIsNone(store.conversation("legacy")["project_id"])
                 self.assertEqual(store.folder_of("legacy"), "")
                 self.assertEqual(store.conversations()[0]["title"], "Old chat")
+                self.assertIsNone(store.conversations()[0]["pinned_at"])
+                self.assertTrue(store.pin("legacy", True))
                 project = store.create_project("New project")
                 made = store.create(project_id=project["id"])
                 self.assertEqual(store.conversation(made)["project_id"], project["id"])

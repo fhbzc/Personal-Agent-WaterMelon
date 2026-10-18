@@ -25,6 +25,13 @@ torch>=2.0               # the tensor library the sentence model runs on, in its
 transformers>=4.40       # loading and running all-MiniLM-L6-v2 locally
 pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'  # per-pixel macOS avatar transparency
 
+# Watching a video in a piece of work (runtime/video.py): its frames and its
+# sound decoded by PyAV, what is said recognised by faster-whisper on the
+# processor. Its model is about 480 megabytes, downloaded the first time a
+# video's speech is read. Without them a work run says it cannot read video.
+av>=12.0                 # a video's frames and sound
+faster-whisper>=1.0      # what is said in it, with the time it was said
+
 # Development ---------------------------------------------------------------
 pytest>=8.0
 python-pptx>=1.0        # tests: a deck to read (the application reads it without this)

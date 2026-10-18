@@ -568,6 +568,7 @@ The display updates while it remains open, and disappears when the pointer leave
 
 # 8. Overview Module
 <!-- number: 8 | label: 8. | id: s8 | page: 12 -->
+<!-- note: 2026-10-16: the user asked that what lives in the Debugger stay there: with no Debugger panel, computer usage (total time, activity by hour, usage by application) is not shown. -->
 
 Location:
 
@@ -576,6 +577,8 @@ Location:
 ```
 
 The Overview is a front page of what the user needs to know: the tasks the agent has grouped from their activity, with the to-dos beside them; what the models spent, by kind of work; and the lessons package. The Calendar is a tab of its own. The record of computer usage (section 9) sits in the Debugger in a build that carries the debuggers, and at the foot of the Overview in a build without them, such as the released installers.
+
+*Amended 2026-10-16:* the record of computer usage is the Debugger's alone. A build without the Debugger shows it nowhere - not at the foot of the Overview - for the hours spent in each application are the agent's raw material, not something the user needs to know.
 
 # 9. Activity Overview
 <!-- number: 9 | label: 9. | id: s9 | page: 13 -->
@@ -3288,12 +3291,15 @@ The panels are loaded when the Debugger is opened and refreshed with the rest of
 
 # 14.34 The Debugger Is a Build Option
 <!-- number: 14.34 | label: 14.34 | id: s14-34 | page: 40 -->
+<!-- note: 2026-10-17: a Resource debugger - what the application and every process it started cost the computer, and what it keeps on disk. -->
 
 Whether the Debugger exists is decided when the application is built. A build made from source carries the debuggers by default; `build.py --no-debugger` leaves them out, and the released installers and downloads are built that way. A build made without it does not contain it: not the panels, not the routes that serve them, not the entry that navigates to them.
 
 This is a build-time choice rather than a setting, because a setting can be turned on. The point is not to hide the Debugger from a user who has not asked for it - it is for the shipped application not to have one.
 
 Everything that depends on the Debugger must ask whether it is present rather than assume, and must behave correctly when it is not. A panel that is absent is not an error condition; it is the ordinary case.
+
+*Amended 2026-10-17:* a RESOURCE DEBUGGER, a tab of its own and, as every debugger, left out of the released builds (`debugger/resources.py`). It says what the application costs the computer: its own process and every process it started, and what those started, each put under what it is for - the application itself, the embedding model, one of the user's runs of work, a way of the Work debugger, a model call outside any run, or anything else - found from the process that started it, the folder it runs in, or a run's folder on its command line. Every two seconds while the tab is open, and not at all while it is not: each process's share of the processors (of the whole computer, all its cores), its memory, and - on Windows, from the system's own counters as Task Manager reads them - its share of the graphics processor's busiest engine and its graphics memory; on Linux with an NVIDIA card the card's use and each process's graphics memory; on macOS it says graphics are not measured. The last fifteen minutes are drawn, a chart for each, the parts stacked so the top edge is all of the application, with the whole computer's own processor use beside it; the table of processes beneath has the same numbers. Then what it keeps ON DISK - its own folder part by part, each Work debugger project's folder, the folders the user's work runs in, and the models it fetched - measured behind the page when the tab opens, every ten minutes while it is open, and when asked. And any process an earlier run of the application LEFT GOING (section 120), with a way to end them, after the user confirms.
 
 # 14.35 Token Usage Over Time
 <!-- number: 14.35 | label: 14.35 | id: s14-35 | page: 40 -->
@@ -4066,6 +4072,7 @@ Removed. The browser extension, its Debugger card and the code that reported on 
 
 # 25. Listener Privacy Controls
 <!-- number: 25 | label: 25. | id: s25 | page: 77 -->
+<!-- note: 2026-10-16: the user asked for a Record log before the Debugger - the latest hundred things recorded, each saying which privacy switch recorded it, as the evidence for choosing which to turn off - and asked whether the filtering removes a record or only hides what is important in it. -->
 
 Monitoring categories must be configurable.
 
@@ -4083,6 +4090,10 @@ All are on by default. There is no single master switch; the sources are the swi
 
 Application and website allow/deny lists, directory and file-name exclusions, and a list of windows never read are all supported. Passwords, one-time codes and keys are cut out of everything recorded before it is kept (on by default).
 
+*Amended 2026-10-16:* THE RECORD LOG, a tab of its own before the Debugger and in every build: the latest hundred things recorded, from every source, each with its time, a title, a line of what it holds, the switch in Settings > Privacy that recorded it and how many passwords or codes were hidden in it; opened, the whole record. Below it, what the rules kept out since the program started - by which rule and from which source, never what was in it, which is the point of keeping it out - with a count for each rule; the agent's own files, thousands an hour, are only counted. Two kinds of filtering are told apart there: a switch, an allow or deny list, an excluded folder or file name, "only while you are here" and "only what you did yourself" keep a record out WHOLE; hiding passwords and codes keeps the record and replaces only them with "[hidden]", except in a screenshot, which is not kept at all. Neither is decided by a model.
+
+*Amended 2026-10-16:* and the Record log shows WHERE something was hidden: the latest records of the last week with "[hidden]" in them, as they were kept - each field it is in, by name, with the place marked - and every "[hidden]" marked in the records above. What was there before is not shown: it was never stored, and keeping it to show would undo the filtering it shows. What a rule kept out is shown by its source and its rule only.
+
 ## Private Mode Is a Control
 
 Removed. Private mode was removed in October 2026; what is listened to is chosen one source at a time in Settings > Privacy.
@@ -4099,6 +4110,8 @@ Recording only that such an application was in use is not sufficient: the applic
 - How much exchange it contained
 
 This source is on by default. Session metadata is always recorded; what was said is recorded for the assistants ticked in "Record conversations from" (every one found, by default) and limited by the project lists (section 18), with the assistant's own reasoning and tool calls left out unless asked for and each turn cut at a stated length. It stays on this machine, it is covered by the same exclusions as every other source, and switching it off in Settings > Privacy stops it at once.
+
+*Amended 2026-10-17:* BESIDE EACH SWITCH, WHAT THE OPERATING SYSTEM MUST ALLOW for it, looked at without asking: allowed, not allowed, or that it cannot be told - with, where it is not allowed or cannot be told, a link that opens the very place it is switched on (`platform_layer/permissions.py`). On a Mac: Full Disk Access beside file and browser watching, Accessibility and Automation (System Events) beside the application in front and reading the screen, Screen Recording beside its pictures, and Notifications beside the notifications switch - which macOS lets no program read, only open. On Windows: notifications, off for every program or for this one, read from the user's own registry and never written; the link opens Settings at Notifications. On Linux: a Wayland session lets no program see the window in front nor picture it, chosen at sign-in rather than in a setting - said, with nothing to open. Looked at again whenever the page comes back into view, since that is where the user has just been. Nothing here changes a setting.
 
 # 26. Platform Abstraction Layer
 <!-- number: 26 | label: 26. | id: s26 | page: 78 -->
@@ -4752,6 +4765,7 @@ Removed. The state-review step, with its prompt, its verdicts and its ended and 
 
 # 37. Heartbeat Invocation Restriction
 <!-- number: 37 | label: 37. | id: s37 | page: 86 -->
+<!-- note: 2026-10-16: the user asked that every task's grouping be checked against their labelled week, and that small subjects may get a little worse; reading only telling places put fewer states in the wrong task. -->
 
 The Heartbeat subsystem is controlled by its background timing mechanism. A full heartbeat is still started only by its timer or by the Debugger.
 
@@ -5008,6 +5022,22 @@ Named stages rather than a bar that fills, because *scoring every pair* and *sum
 **The grouping anchors before it scores anything.** What a state SAYS is the model's paraphrase of a quarter of an hour: two states about one afternoon are two summaries, written separately, of different slices, and their similarity is how alike the model happened to word them. It has a high noise floor for the reason given above - one model writes every state, in a stable vocabulary, about a handful of projects. **A path is not a paraphrase.** `survey-weights/scripts/fetch.py` is the same string every time or it is absent, and two states naming it are on one piece of work whatever either of them says about it. So a first pass joins those outright, and the tree runs with them already joined.
 
 **The object, not the instrument.** What identifies work is what was open - the file, the page, the document - never what it was open in. One script edited in Sublime, run in a terminal and diffed in a git client is one workspace and three applications; a page is the same page in Firefox and in Chrome. Keying on the application does not merely add noise, it INVERTS the structure: it merges Gmail with YouTube for both being Firefox, and splits one paper across three tools. Applications are still read and still shown, and they identify nothing. There is no list of which ones to ignore - a list goes stale - only the question of whether a piece of evidence names a thing or a way of handling things. The one exception is a bare window title, where *Personalized Agent* (a repository page) and *Mozilla Firefox* (a browser) are both two capitalised words: nothing in the shape tells them apart, so the CORPUS does, since one of them also turns up as the application half of other titles.
+
+*Amended 2026-10-16:* when grouping, a state's places are only those that tell which work it was: a folder or a file on disk, a document by its name, and a page at least two levels into a site that is not visited for everything (a site with forty different pages in what one round reads is a search engine, a video site or the mail). A window's title, an application's name, a conversation's title and a site's front page are no longer places at all: each turns up beside every kind of work, and credited as a shared place it put a day of one piece of work into another. Replayed over a week of the user's labelled states, the share put in the wrong task fell from 24% to 22% and no routine state went into a task of work, at the price of more states left in no task - the cheaper mistake. A new reading of places applies from the next state on; it never regroups what is kept.
+
+*Amended 2026-10-16:* NO UPGRADE REGROUPS THE TASKS. For a few hours one build counted how places are read among the settings the tasks were built with, so starting it rebuilt every task from the tree; on the user's calendar of 2,843 states the rebuild merged twelve different pieces of work into one and left most states in none. How places are read is no such setting, and a setting the record of the last build does not have is no change: an upgrade adds settings, and must not regroup anyone. That one rebuild is undone once, at the next round, where it happened: the tasks it retired are live again, with their names, summaries and projects, the two it made are retired, and its record no longer counts as the last build. And a task is one of leisure only when most of ALL its states are said to be leisure - not most of the few whose kind was said: two hundred states, fourteen of them said, eight of those leisure, had made a piece of work leisure.
+
+*Amended 2026-10-17:* NOT THIS WORK, AND THE PILE OFFERED AGAIN - both built, both switched off until measured and approved, because both move the user's states. The call that already sums a task up, and the one that says where it stands when states arrive, also name - by the numbers of the states shown - those plainly about something else (`not_this_work`): no call of its own. Switched on, they go to the pile; a task smaller than six states, or one that would lose more than half of itself, keeps them; each removal is recorded. Switched off, what the model named is only kept and shown, in the State heartbeat debugger, for the user to judge. A re-check by meaning and places alone was measured first, against the user's labelled week, and rejected: of what it would move, only five to six in ten were really in the wrong task. And the pile - states no task took - is offered to the tasks again each round, as new states are: offered is not taken, a state goes in only where it fits; a state the model took out of a task is offered back to that task only in a round the task gains others, so it rides on the status call made for them and never brings a call of its own.
+
+*Amended 2026-10-16:* ROUTINE IS NOT A TASK. The review that writes a state says, as its `kind`, when it is the part of a day that is no piece of work - meals, rest, entertainment, the news, chatting with friends and family, errands; anything done towards something, however personal, is work. Those states stay on the calendar and are never grouped: grouped with the rest, they made tasks of their own and their piles took work in. In the replayed week most of the states put in the wrong task went into a task that was mostly routine, and with the routine left out the share of work states in the wrong task fell from 36% to 25%. States written before the review said so carry no kind and are grouped as before.
+
+*Amended 2026-10-16:* LEISURE IS A TASK, OF ITS OWN KIND. The `kind` is one of three: work, leisure - what is done for enjoyment: films, shows, music, games, sport, the news, chatting with friends, browsing for pleasure - and routine, now only meals, rest, errands and chores. Leisure is grouped and summed up like work, for what is not summed up is never recommended from; but never with work. A state joins only a task of its own kind, what fits no task is made into tasks kind by kind, and a task read off the tree holding a task's worth of both has its smaller part made a task of its own. A task is of the kind most of its states were said to be; states that carry no kind go where they fit, as before.
+
+*Amended 2026-10-16:* the Overview's picture of the tasks has two views, chosen with the button beneath it: WORK ACTIVITY - the tasks of work alone, as the page opens - and FULL ACTIVITY, everything done: the tasks of leisure as well, and the groupings a summary judged not to be a task. A task is drawn as one of leisure when most of its states whose kind was said were said to be leisure, a project when all its tasks are.
+
+*Amended 2026-10-16:* RUN NOW, beside the Overview's tasks: a round of the state heartbeat begun at once, answered straight away, its progress drawn as it goes, with a line saying when the next regular round is due. The regular rounds are counted from when the last round FINISHED, whoever started it, so a round run now puts the next regular one off by as long. One round at a time: while a round is going - regular or run now - Run now does nothing and says so, and while one run now is going the timer begins no other; its visits only carry that round on, and two visits never run at once. And the first grouping waits for 20 states, not 100: with fewer, its first tasks - five states at least, so at most two - would be broad, and as tasks are never regrouped they would go on taking in whatever came near.
+
+*Amended 2026-10-16:* the button is the card's own, as "Make an issue now" is - full size, under the Summary task heading, called "Update tasks now", and "Updating tasks..." while a round runs.
 
 **A second kind, for work that names no file.** A conversation about a paper, a week of reading, an exchange with a reviewer - none of them name a path, and all of them say *FieldNotes* or *survey-weights* over and over. So states sharing **three or more words that almost nothing else in the window uses** are anchored too. Three and not one, because one rare word in common is a coincidence - two states each mentioning Lisbon may be a trip and a restaurant - and an anchor is meant to be the part that is certain. This is not what the embedding does, and could not be: the vectors are trained to know that *paper* and *manuscript* mean the same, which is exactly wrong for a proper noun, whose whole value is that nothing else is called that. The two kinds run over disjoint states and are never joined to each other - two kinds of evidence chained together is how a chain gets long - and the debugger shows them as two.
 
@@ -6364,10 +6394,13 @@ Removed. The Data Heartbeat, with its node and edge updating, compaction and "ma
 
 # 70. Model Management
 <!-- number: 70 | label: 70. | id: s70 | page: 107 -->
+<!-- note: 2026-10-16: the user asked that the last model on the list can be removed too. -->
 
 The Personalized Agent must support multiple Large Language Model providers and let the user choose which models it thinks with, and in what order.
 
 The models are kept as one ordered list in Settings > General > Models. The first entry is the Primary Model.
+
+*Amended 2026-10-16:* the list may be emptied: the last model is removed like any other. Emptied, it stays empty - the model chosen before there was a list does not come back in its place - and every call that needs a model is refused with "there is no model on your list" until one is added; the page says so where the list was.
 
 Different model providers may use different authentication mechanisms. The architecture must therefore separate:
 
@@ -6477,6 +6510,7 @@ Supporting a mechanism means a user can complete it end to end for at least one 
 
 # 74. API Key Authentication
 <!-- number: 74 | label: 74. | id: s74 | page: 111 -->
+<!-- note: 2026-10-16: the user installed the macOS release; it showed no icon and quit at once. Run from Terminal it said the keychain refused it (-67030, executable not signed). -->
 
 Some model providers require the user to provide an API key.
 
@@ -6515,6 +6549,10 @@ They must never be:
 Where available, operating-system secure credential storage should be used.
 
 Examples include the appropriate OS credential/keychain service rather than normal configuration files.
+
+*Amended 2026-10-16:* a keychain that refuses to keep a secret does not stop the agent. macOS refuses an application whose signature does not match it, and the 1.0.0 macOS build was such an application - its Info.plist was written after it was signed - so it quit on start, its identity key unstored, before its window or its menu-bar icon appeared. The refusal is logged and remembered, and from then on that installation keeps its secrets in the encrypted file used where there is no keychain at all; what the keychain held before is still read from it. The macOS build signs the bundle again after the Info.plist is written - ad hoc when there is no signing identity - and the release check verifies that signature, since it runs with the keychain out of reach and could not see the refusal itself.
+
+*Amended 2026-10-16:* and a macOS build signed by nobody does not use the keychain at all. Signed ad hoc - all a build without a developer's certificate can be - it is known to the keychain by the exact bytes of one version, so after every update macOS would ask the user again before handing back what the last version kept, and a "Deny" would leave the agent without its keys and with a new identity. Such a build keeps its secrets in the encrypted file from its first start; anything the keychain already held is read from it once and moved into the file, so the user is asked at most once. Run from source, or signed by a developer, the keychain is used as before.
 
 # 75. Account Login / OAuth Authentication
 <!-- number: 75 | label: 75. | id: s75 | page: 112 -->
@@ -6750,6 +6788,7 @@ The Agent Core must not need to know how a particular provider authenticates.
 
 # 76.1 A Local Client as a Provider
 <!-- number: 76.1 | label: 76.1 | id: s76-1 | page: 113 -->
+<!-- note: 2026-10-17: Codex now runs with none of the user's own Codex setup, its own tools kept only where the agent's permissions still hold, and the agent's tools served to it over MCP, as to Claude Code. -->
 
 A provider need not be an API this application calls. It may be a program on the user's machine that is already licensed to answer.
 
@@ -6788,6 +6827,8 @@ Discarding it is only half. What goes back into the transcript as *what you said
 **The client answers as the agent, not as itself.** A borrowed client is a whole assistant with a tool set of its own, and that tool set is switched off here. So it must be told that the tools offered in the convention are its tools for this conversation, that calling one really runs it, and that it is not to describe what it can and cannot do in terms of the program it happens to be running inside. Without that it answers about the wrong thing: it reported that its session had no way to list scheduled tasks, in a reply written after it had listed them, because the empty set it was describing was the host's and not the agent's. A caveat like that is worse than no caveat - it is the agent telling the user, in good faith, that a working part of itself does not exist.
 
 **A tool result is not the user speaking.** The API carries a tool result on a user turn. That is the API's convention and invisible inside it, but a client that takes a transcript has to be given roles in text, and a result rendered as the user's words reads as the user pasting data in. The model then disowns the answer it builds on it - crediting its own memory for what it has just this moment looked up. What a tool returned is labelled as what it is.
+
+*Amended 2026-10-17:* CODEX TOO RUNS WITH NONE OF THE USER'S OWN, AND IS GIVEN THE AGENT'S TOOLS AS TOOLS. It had been called with the user's Codex configuration loaded, and so with what they installed for their own use - a browser, computer use, a Node REPL server, plugins, hooks - which the agent never granted; and it was offered the agent's tools only as words. Codex reaches for tools natively all the same: a real run found its reviewer trying its own shell instead of the agent's `read_file` (on that machine the shell could not even start - Codex's helper sat at a path of 260 characters), so the work was judged without being opened, and asked to write a file it answered that it could not. Now every call skips the user's configuration (`--ignore-user-config`, `--ignore-rules`; a Codex too old for that has its MCP servers emptied) with their sign-in still theirs, and, as for Claude Code, the agent's tools are served to it for the call by the agent's own MCP server (`mcp_bridge`), run by the agent under its guard, the call ended when it falls silent or the run is stopped rather than at a fixed time. ITS OWN TOOLS ARE KEPT WHERE THE AGENT'S PERMISSIONS STILL HOLD, AND ONLY THERE (`codex_provider.OWN_TOOLS_OFF`): its web search, when the settings say the model's own (as Claude Code's); its code mode, through which it calls every tool, the agent's too - measured, not assumed: inside it there is no `require`, no `process`, no `fetch`, no file of any folder, only the tools it is given; and its `apply_patch`, which stays in that list, is refused by the read-only sandbox ("writing is blocked"). Its shell, file editing and picture viewing stay off: Codex's sandbox cannot be kept out of the places the agents may not read, as Claude Code's reading tools are by rules naming them. And NO AGENT OF ITS OWN: its multi-agent tools stayed in code mode's list with the feature switched off, and a helper agent was started from there - outside the agent's sight, guard and count of what the run spent - so the depth of agents below the call is set to none (`agents.max_depth=0`), and the tools are gone. The model and the effort the user's configuration names are still read from it - only those two - so "Codex default" means what it did.
 
 ## Which Client, Chosen Explicitly
 
@@ -7601,6 +7642,11 @@ The installed application should support normal Windows application behavior inc
 
 Released installers do not include the Debugger (section 116).
 
+*Amended 2026-10-16:* the application is called **Personal Agent WaterMelon** wherever the user reads its name - windows, page titles, the tray, the installer, the Start menu, the uninstall list, the menu-bar name on macOS. What only the system reads keeps the old one, so a 1.0.0 installation upgrades in place: the program file `PersonalizedAgent.exe`, the installer's identity, the sign-in entry, the data folder's name, the download file names and the macOS bundle folder. Its own windows are still recognised as its own under either name. On screen the Experience tab is called Work, its debugger the Work debugger, and the module Work learning - in the tabs, the token chart and Settings - while the code, settings and addresses keep their names. The Start menu has no entry that runs the agent without a window; an upgrade removes the old Start menu folder and desktop shortcut that carried the former name.
+
+*Amended 2026-10-16:* and its files carry the name too: the program is `PersonalAgentWaterMelon.exe`, the downloads `PersonalAgentWaterMelon-Setup-windows-x64.exe`, `PersonalAgentWaterMelon-macos.dmg` and `PersonalAgentWaterMelon-linux-x86_64.AppImage`, the macOS application `Personal Agent WaterMelon.app`, the Linux package `personal-agent-watermelon`, and a new installation's data folder `~/PersonalAgentWaterMelon`. An upgrade loses nothing: the installer's identity is kept, the old program file is removed and an entry at sign-in that starts it is counted as this program's own, an existing `~/PersonalizedAgent` is used as it is, an update installed on macOS removes the old application, and the Linux package replaces the old one.
+<!-- note: 2026-10-16: the user asked for the name "personal agent watermelon" and for the Start menu entry without a window to go. -->
+
 ## macOS
 
 The project must produce a native macOS application bundle.
@@ -7618,6 +7664,10 @@ and:
 Personalized-Agent.pkg
 
 The .pkg is an installer whose Installation Type page asks whether the agent starts when the user signs in (ticked by default, through a LaunchAgent). A release gives both stable names (section 117).
+
+*Amended 2026-10-16:* the .dmg is the macOS download offered first: the application dragged from it into Applications is the user's own, so it can replace itself with a newer version, where the one the .pkg installs belongs to the system and could not without a password. Starting at sign-in is then the program's own setting, on by default, as it is for the portable folders. And the permissions macOS asks for one at a time - Full Disk Access, Accessibility, control of System Events, Screen Recording - are listed together in Settings > Privacy, each looked at without asking, each with what it is for and a button to its own pane of System Settings, Full Disk Access first because it also covers the Desktop, Documents and Downloads folders; the Overview says so while one that a switch which is on needs is missing.
+
+*Amended 2026-10-16:* UPDATES. Once a day, and when asked, the program reads this project's published releases - never a commit, a merge, a draft or a pre-release, so a release marked pre-release reaches nobody. By default (Settings > General > Updates) the user is told, and shown every version newer than theirs with what each says of itself, and installs the one they choose - never an older one, which may not read what a newer one wrote. Installing by itself is off by default, in Settings and in the Windows installer's box, because a release that turned out broken would otherwise reach everyone within a day; chosen, the newest is installed by itself. A version being installed is downloaded into the data folder, checked against the release's own SHA256SUMS.txt - one that does not match is deleted and never run - and installed, never while a piece of work is running: on Windows the installer runs silently once the program has quit, keeping the program folder, the data folder, the language and the user's own start at sign-in, and starts the new version; on macOS the application from the .dmg is replaced; a Linux AppImage replaces itself. Or nothing is looked for at all. A copy that cannot replace itself - run from source, a portable folder, a .deb, the .pkg's application - is only told. The new version opens with what is new: the release's own description, in a window shown until it is closed.
 
 The application bundle should contain all required runtime components.
 
@@ -8502,8 +8552,33 @@ A match counts only if its **relevance**, meaning the share of the query's weigh
 
 What was found appears in the draft beside the plan, each item with its relevance and recency. The run receives it as a list of references in its instruction, most relevant and most recent first. A one-off search is not enough once the run starts on the details, so the run also gets a tool, **`search_records`**, which searches the same records by English keywords whenever it needs to. The tool builds its index once per run and returns at most twenty matches. It is offered only where a run has the user's records: the single-model variant of the Experience debugger has none, so it is not given the tool.
 
+*Amended 2026-10-16:* the Work debugger (the Experience debugger as it was called) tries the same instruction again in TRIES: the folder the user chose holds `try_1`, `try_2`, ..., each with its three ways inside, and a new try is made with a button and shown. Each try is blind to every other: its ways may not read any other try's folder or anything under it - an evaluation the user holds in one try's folder included - nor what Claude Code or Codex sessions started anywhere under another try kept of themselves (`~/.claude/projects/<the folder>`, and each Codex session file that ran there), refused by the run's own checks and, on Windows, by the operating system. Each try's ways have their own runs, trees and versions; the first try keeps the names projects had before tries, and a project made before tries has its ways moved into `try_1` - with its runs' records - the first time it is shown with none of them going. One gap is known: Codex, as the model, runs its own commands in a sandbox that keeps it from writing but not from reading, so what it reads by itself is not confined. Until Codex runs inside the run's own isolation, no call of a Work debugger run is given to it: the next model on the user's list answers, and with none but Codex the run says why it cannot go on.
+
+*Amended 2026-10-17:* a try is measured, so it is kept from everything that would let it tune itself to the measuring: beyond the other tries and its try's other ways, it may not read the rest of its own try (what the user writes at the top of a try is their evaluation of its ways), nor the sessions Claude Code and Codex kept of work in any try but its own way; nor the agent itself - its code (the checkout, or an installed copy's whole folder), its data folder's workspace (what it learned of the user, as files), and the sessions of work in either, among them the user's sessions with the assistant that builds the agent. The top of the project's folder stays readable: it is where the user puts what the work is to be done with. A try still draws on the user's experience through the agent's tools, never as files. None of this applies to real work.
+
+*Amended 2026-10-17:* and every run - real work as much as a try - may read the record of the user's Claude Code and Codex sessions (`~/.claude/projects`, `~/.codex/sessions`): a lesson can come from one. The rest of those folders - their sign-ins, settings, history and caches - stays closed with every other store of sign-ins in the home. Those records hold whatever was said in them.
+
+*Amended 2026-10-17:* and a try's way installs its packages with a download cache in its own folder, not one beside the ways: a shared cache told one way what another had installed. Real work keeps one cache for all its runs.
+
+*Amended 2026-10-17:* a try can be REMOVED, after the user confirms: its folder and everything in it - what its three ways made and what the user wrote at its top - is deleted, its runs and its ways' trees are forgotten, and the sessions Claude Code and Codex kept of work in it are deleted too, so a try later given the same number is not handed them as its own. The other tries keep their numbers; the only try left cannot be removed (Clear all empties it).
+
+*Amended 2026-10-17:* what a step of the work is given from the user's experience is held to what bears on it. A past stage counts only if it shares at least two of the step's words that tell work apart: a word found in more than a tenth of all stages counts for nothing (once there are fifty stages to judge that by), and so do a few that say nothing ("per", "via", "app"). Its words decide whether it counts at all; what kind of stage it is, its place and the rest only order those that do. Around each stage found, one stage before and one after, not more. A nature comes with it when the step shares two of its telling words; a pattern or principle only when it bears on the step as much as a third of the best one. No principle is handed over just for being the most shown. And a stage from a PROJECT LIKE THIS ONE ranks higher: this work's goal, in English words, is put against each past project's stages as a whole, with each word counted by how rare it is and how many of that project's stages say it. The projects scoring at least half as much as the closest one count as alike, more so the closer they come. Measured again on the five questions of a real run: about a third of the tokens it was given before (4 to 7 thousand rather than 16), with the stages of the like project moved up.
+
+*Amended 2026-10-17:* a project's learning is updated BY ITSELF at the times of day the user chooses, in this computer's time zone ("03:00" unless changed; none for never), as an issue of the Newspaper is made. The run takes every project that has changed since it was last learned: a task of it has states not yet learned, or a file in one of its folders (or one of its sessions with a coding agent) is newer than how far the folder was read. Each project has its own tick, on by default. While the run goes, a project's Start and Update wait. Cut short by the application closing, the run carries on when it starts again, each project from where its learning stopped. And a project can be REMOVED, after the user confirms: its stages and cards, and their links, are deleted, found by no search again, and it is not listed or learned again. The natures, patterns and principles stay, because another project may rest on them and what they say of the user is still true.
+
+*Amended 2026-10-17:* the projects of an automatic update are learned side by side, as many as the one pool gives places (section 120). When the run is over and its projects wrote natures of the user's work, the patterns and principles are built again from them at once - the state heartbeat's step, asked for then rather than when enough new ones have come in.
+
+*Amended 2026-10-16:* "Try the retrieval" - what a run would be given of the user's experience for a step - is the Work debugger's, at its foot, and no longer in Work: it is a tool for whoever develops the agent, and a build without the Debugger has none of it.
+
+*Amended 2026-10-17:* a run's token chart is drawn across either the clock or the run's OWN TIME - what it had run when each call ended: the time it was held paused and the time it waited for the user's answers left out, and the time between its sessions too, each session's own time carried on to the next. Each call is kept with that time (`active`); for calls kept before it was, it is estimated by leaving out every gap longer than a pause, and the chart says so. Across its own time there are no breaks to draw, and the ticks say how long it had run. Which of the two is one choice, kept in the browser.
+
+*Amended 2026-10-17:* a slide's notes sit beside it as sticky notes, as a note sits beside a reply in Chat - one for what it shows, its key terms, how to read it and what to take from it, each folded from its title - in a frame of the page as when shown alone; the frame is as tall as the slide or its notes, whichever is taller, so nothing in it scrolls. And every drawing has its own arrowheads: one shared by all of them took every arrow's head away whenever the first drawing on the page was hidden.
+
+*Amended 2026-10-17:* THE SAME CARD IS GIVEN THE SAME PAST WORK. What a run's reviewer is given of the user's experience for a card - when its criteria are written, and when a round on it is reviewed - is kept the first time, in the application's database (never in the run's plan, which goes with its versions into the work's own folder), and given again when the card is opened again, reviewed again, or carried on after the application closed, even while learning changes the record meanwhile. And nothing handed over for one card is held against another: a stage given before no longer counts half - each reviewer's call is new and holds none of what an earlier one was given, so the half only gave later cards weaker stages.
+
 # 119.3 Handing Work Over From Anywhere
 <!-- number: 119.3 | label: 119.3 | id: s119-3 | page: 148 -->
+<!-- note: 2026-10-16: the user asked for a keyboard shortcut, Ctrl+Alt+D, set in Settings > Shortcuts, that opens the Delegate work box empty, to be filled in; right-click entries in other programs (a browser extension, macOS Services, file managers, editors) were planned and put off, the stores and signing not yet bought. -->
 
 *Modules: `platform_layer/explorer_menu.py`, `agent/work/handover.py`, `__main__.py` (`--delegate`), `ui/selection.py`, `ui/desktop.py`, `heartbeat/experience/store.py` (`mark_delegated`), `agent/work/delegate.py` (`output_folder_for`).*
 
@@ -8511,6 +8586,8 @@ What was found appears in the draft beside the plan, each item with its relevanc
 - **A button beside selected text (Windows).** When the user finishes a drag of at least six pixels or a double-click, the focused control is asked what it has selected **through UI Automation**, the interface screen readers use. The clipboard is never touched and no key is pressed: Ctrl+C would overwrite what the user had copied, and in a terminal it would stop the running program. Password fields and the agent's own windows are never read. A small button appears for six seconds without taking the focus. The text is held in memory only while the button shows and is dropped when it disappears, unless the user clicks it.
 - **The avatar's menu** opens the box empty, for the user to say what they want done.
 - **The to-do list** on the front page has a delegate button on each item, which hands over that to-do's text.
+
+*Amended 2026-10-16:* A KEYBOARD SHORTCUT, Ctrl+Alt+D unless the user sets others in Settings > Shortcuts, opens a QUICK DELEGATE WORK BOX, empty, on the screen at once, from whatever program is in front: the agent's own window, drawn as the avatar is, with a Title and a Description, Add folder and Add files, and Create - for the page's box, opened in a browser window of its own, took three and a half seconds of the browser starting before anything showed. Create makes the piece of work and opens the page on it, its context already being collected and its plan drafted; the title the user gave is the work's, said to the planner with the description and kept as the plan's title (and so its folder's name) in place of the one the planner would have given it. Nothing is read from the program that was in front. The keys are held with the system while the agent runs (Windows, RegisterHotKey): a combination another program already holds is refused and said so, and the keys before are kept; a shortcut needs Ctrl, Alt or Win, can be turned off, and goes back to its default with a button. The same page turns the button beside selected text on or off. On a Mac and on Linux the page says it is not available yet.
 
 Delegated work is listed under its own heading, **"Delegated work"**, in the Experience tab, separate from the projects the agent found from the user's activity.
 
@@ -8529,6 +8606,7 @@ The README is written at the wrap-up of any run that has a contract and changed 
 
 # 120. Each Run in a Process of Its Own, Within What the Computer Has Free
 <!-- number: 120 | label: 120. | id: s120 | page: 148 -->
+<!-- note: 2026-10-17: one pool for everything the agent runs side by side - balanced between kinds, then by priority; no console window for a child on Windows. -->
 
 *Modules: `agent/work/child.py`, `agent/work/governor.py`, `common/children.py`, `agent/work/runner.py` (`_apart`, `start_waiting`).*
 
@@ -8547,6 +8625,10 @@ Because runs no longer share the agent's process, several can go at once, one pe
 - **A waiting queue.** A run asked for while there is no room is not refused. It waits, with the reason shown ("the computer is busy", "short of memory", or how many runs are going already), and the first one asked for is the first one started when room appears.
 - **Busy processors.** When the average of the last three looks is 85% or more, every process of every run, child processes included, is set to the lowest priority so the user's own programs come first. The runs return to below normal once the average falls to 60%.
 - **Short memory.** When less than 8% of memory is free, the newest run is paused, with the reason shown. The governor resumes the runs it paused once more than a fifth of memory is free.
+
+*Amended 2026-10-17:* ONE POOL FOR EVERYTHING SIDE BY SIDE (`common/pool.py`). The runs of work were not the only thing going in parallel: the state heartbeat's summaries and status calls, the learning of projects (by the button and by itself) and an issue of the Newspaper each counted only their own, so together they could take the machine. Now each takes a place in one pool before it starts, and the runs and an issue are counted in it by asking them. How many places there are is decided from everything going, together, by the rules that decided the heartbeat's calls (whether the user is at the computer, the processor, memory, the battery, a provider refusing): never fewer than one. A place that comes free goes to the kind waiting with the fewest going - with room for four and four kinds waiting, one each, not all four to the runs - and between kinds with as many going, by priority: a run of the user's work, then a project they asked to learn, then the grouping of states, then the Newspaper, then the learning updated by itself. With room for only one, priority alone decides; nothing going is stopped for it. The governor above still decides, for a run, the memory and the busy processors. And no child the agent starts on Windows has a console window of its own unless it asks for one: from a process without one - the installed application, tests run in the background - every git call had opened a window.
+
+*Amended 2026-10-17:* the WORK DEBUGGER'S WAYS take their turn too. A way still runs in the agent's own process, but it is started only when the governor and the pool have room, as a run of the user's work is; while there is none it waits in the same queue - first asked, first started - and the way says so, why and how far along, with a way not to start it after all; it starts by itself when its turn comes. Every run going counts, the debugger's included, and the newest run of either kind is the one paused when memory is short. EVERY PROCESS THE AGENT STARTS runs a step below the user's own programs - on Windows its priority class, which what it starts inherits; elsewhere the watcher's niceness. It is not a limit: with nothing else wanting the processors they have all of them, and only while the user's own programs want them do those go first. A full run of the tests is started the same way. And should a process ever outlive the application - the job that ends them with it could not be made, or a watcher was killed with it - those carrying the marks of the application's own folders (the guard its children load, the folder each run in a process of its own is told about) are found and ended when it starts again.
 
 # 120.1 A Run's Own Loopback, and a Browser to Test With
 <!-- number: 120.1 | label: 120.1 | id: s120-1 | page: 148 -->
@@ -8569,6 +8651,7 @@ A run is given it only where it has a loopback of its own. There the browser is 
 
 # 120.2 A Run Waits on the Model Rather Than Failing
 <!-- number: 120.2 | label: 120.2 | id: s120-2 | page: 148 -->
+<!-- note: 2026-10-17: a call's input is in a file before the client starts (Claude Code gave up after three seconds without it), and that failure is retried. -->
 
 *Module: `agent/work/runner.py` (`_call`, `model_trouble`, `_wait_for_model`, `answer`).*
 
@@ -8581,6 +8664,8 @@ A failed call now asks the run for one of three things, decided by `model_troubl
 While a run waits, its status is *waiting for you*, and the list of runs shows that it is waiting on the model rather than on a package. The wait is recorded in the run's plan as one of the user's requests (the last fifty are kept). The time spent waiting does not count against the run's time limit. However a wait is scheduled, the run never looks at the model again sooner than a minute after the last look.
 
 The waiting run offers two buttons. **End the run** stops it as not finished, makes no further model call in that session, and lets the user continue it later. **Try again now** lets the call go out at once. Before that call is made, the models manager's **availability cache is cleared** (`invalidate`). Without that step, the cache could answer "try again now" with the failure it remembered from the last check instead of asking the model, and the button would appear to do nothing.
+
+*Amended 2026-10-17:* A CALL'S INPUT IS IN A FILE BEFORE THE CLIENT STARTS, not written to it by a thread of the agent's once it has (`common/children._input_file`). Claude Code waits three seconds for its input and then gives up ("no stdin data received in 3s"); with the agent's process busy - two debugger runs, a learning and a heartbeat at once on a loaded computer - that thread was not given its turn in time, five calls failed in a quarter of an hour, and a run of work ended with one of them. The file holds the same bytes the pipe carried and is removed when the call ends. And that failure is now one for the moment: the call is made again, not the run ended.
 
 # 121. Models in Order, and What Each Call Cost
 <!-- number: 121 | label: 121. | id: s121 | page: 148 -->
@@ -8638,6 +8723,7 @@ The few routes other applications use to connect, through the external protocol,
 
 # 124. One Lessons Engine
 <!-- number: 124 | label: 124. | id: s124 | page: 148 -->
+<!-- note: 2026-10-17: the Lessons tab became the Lessons debugger - for whoever develops the agent, not shown in an installed build; the lessons package stays on the Overview. -->
 
 Everything the agent learns about how the user wants things done is learned by one engine, `heartbeat/lessons/engine.py`. There are three kinds: **notification lessons**, **connection lessons** and **how you work** (the natures of their work, `heartbeat/lessons/natures.py`). One algorithm for all three means a fix in one is a fix in all of them.
 
@@ -8665,6 +8751,8 @@ The user's own say over a lesson - confirm, reject, pin, edit its words - always
 ## When It Runs
 
 Never on the user's click: an edit is written down, and the cycle runs with the state heartbeat's round for each kind with something new (`due`, `learn_due`), or when the user presses Learn now. A kind whose function is turned off is not learned. Patterns and principles over the lessons in force are grouped by experience's own builder (`heartbeat/lessons/groups.py`) when the lessons changed.
+
+*Amended 2026-10-17:* the lessons are no longer shown to the user. Their tab is now the LESSONS DEBUGGER, among the debuggers, and like them it is left out of an installed build: the lessons are how the agent reads what the user did - for whoever develops it. The lessons package stays on the Overview, for the user: everything learned about how they work - the lessons, what Work learned, the natures - carried to another computer and loaded there. On Connections, a change the user makes is said to teach the agent how they want their connections kept, not to be "a lesson".
 
 The lessons package (`heartbeat/lessons_package.py`) does not carry the engine's rules but the user's actions themselves; loaded on another computer, each becomes evidence there (`App.lessons_catch_up`) and is learned from again.
 
@@ -8729,9 +8817,18 @@ Issues are made by their own clock (`schedule.py`), apart from the heartbeats: a
 
 *Amended 2026-10-15:* a reading topic is a subject only when it is an INTEREST: read on two days and for a minute at least, or for ten minutes in all, or three different things read in it (an evening of papers, each open less than a minute between other windows, is one). A piece on screen less than three seconds does not count. What was looked up to get one thing done - how to fix an error, how to install something, an assistant's help with a problem - is logged as the kind `help` and is never an interest. A merged page keeps the whole list of what it was made of, so a story can be traced to each part (`heartbeat/connections/recommend.py`).
 
+*Amended 2026-10-16:* a story begins with how it ties to what the user is doing: its first sentence, written with it, links it in passing to something specific - the task, the file, the talk, the question they are stuck on, or what they read or watched on that page's subject - the way a friend who knows their work would put it, so they want to read on; never a label like "why this matters", and none at all when there is no real link. A story that has one is not also given the labelled reasons beneath it.
+
+*Amended 2026-10-16:* what is enjoyed and what is worked at are interests by different rules. The reading log says of each thing read or watched why it was - work (a job, studies, research, a task, however personal) or leisure (films, music, shows, games, recaps, sport, browsing for pleasure). Work keeps the rule above. A topic mostly of leisure is an interest only when it lasts: on three different days at least a week apart from first to last, within a month, with something of it lately - one film recap watched once for seventeen minutes had made a page of an actor's next film. A page of something enjoyed is told to recommend more of the pleasure in the form it is enjoyed - someone who listens to a great deal of piano gets pieces, performances and concerts, not lessons, unless what they watched was lessons - and enjoyed and worked-at subjects share a page only as a last resort. A story on a topic's page is labelled with the page's name alone, as a section is; its opening says why it is there.
+
+*Amended 2026-10-17:* on screen Customized Recommendation is called **Newspaper** - its tab, its masthead, its function in Settings and its settings - as each issue is laid out as one; the code and the settings keep their names (`recommend`, `module_recommend_enabled`, `recommend_times`).
+
+*Amended 2026-10-16:* a task is a subject of the recommendations by the same two rules. A task of leisure is labelled so, and reaches the recommendations even where its summary judged it "not a task" - which had kept every evening's films from them - but only when it lasts, by the rule for leisure above; a project is one of leisure only when every task of it is.
+
 # 127. Pictures and Documents
 <!-- number: 127 | label: 127. | id: s127 | page: 148 -->
 <!-- note: 2026-10-15: Russian, French, German and Italian added to the display languages - nine in all - and the whole interface shown in them from fixed tables (section 134). -->
+<!-- note: 2026-10-16: the user asked that a work run can read video - with a model's own tool where there is one, a common one where not - keeping what it makes in the run's own folder. -->
 
 `runtime/documents.py` reads what is not text - pictures, PDFs, Word, PowerPoint and Excel - so every model can use it, whether it sees pictures or not.
 
@@ -8756,6 +8853,8 @@ What was read of a file is kept as a copy named by the SHA-256 of its bytes, in 
 ## Only to Models That See Pictures
 
 A read_file tool answers with the words - always - and the picture itself, at most 1568 pixels on its longest side. Whether a model sees pictures is known from its provider and its name (`models/vision.py`), and the user can say otherwise for any model. A model that sees pictures gets the picture; one that reads text only gets the words and a line saying a picture was not shown. Codex is given its pictures with `--image`.
+
+*Amended 2026-10-16:* VIDEO. None of the models the agent runs on - the Claude API, Claude Code, Codex, the OpenAI-compatible ones - takes a video as it is, so a work run watches one with a tool of the agent's own, the same for every model (`read_video`, `runtime/video.py`; read_file passes a video to it): frames taken evenly over the part asked for, each a picture with the words read in it, and what is said, line by line with its time, recognised on the processor by faster-whisper, whose model is fetched once, the first time, runs on half the processor at most - it shares the agent's own process - and is let go two minutes after it was last used, as the embedding model is. A start, an end and how many frames narrow it to a moment; speech is read thirty minutes at a time. Everything it makes is written into the run's own folder, under `videos/`, and read from there when the video is asked for again; nothing is written beside the video. A frame whose words hold a password or a code is not kept and not shown, its words given with it hidden, as is what is said.
 
 ## Passwords and Codes Hidden Before Anything Is Kept
 
@@ -8877,12 +8976,15 @@ The exclusion is a default like any other, editable in Settings, and the agent's
 
 # 132.1 Where Chat's Files Are Kept
 <!-- number: 132.1 | label: 132.1 | id: s132-1 | page: 148 -->
+<!-- note: 2026-10-16: the user asked that each conversation in the chat's list can be deleted with a cross. -->
 
 Files a chat makes are kept per conversation, in `workspace/Chat/<conversation title>/`. The folder is chosen when the conversation first writes a file and kept from then on, even if the conversation's title changes, so its files stay in one place. When two conversations share a title, a timestamp is added to the later one's folder name, and neither writes into the other's.
 
 Scratch - generated scripts and temporary files - is kept apart, in `workspace/agent/.agent_runtime` (section 111), so a conversation's folder holds only what was made for the user.
 
 Each conversation's folder is set per tool call, not once for the chat as a whole, so two conversations going at once never mix their files.
+
+*Amended 2026-10-16:* each conversation in Chat's list has its own menu, as in other chat applications: Pin, Rename, Delete. Pinned ones are listed apart, above the rest, and are never left out of the list. A rename is the user's name for it and nothing renames it afterwards. A deletion is asked once, in the row itself, and then the conversation goes with its messages, what was summed up of them and the follow-up questions asked about them. The files it made stay where they are: they were made for the user and are the user's.
 
 # 133. Packaging
 <!-- number: 133 | label: 133. | id: s133 | page: 148 -->
@@ -8909,6 +9011,9 @@ The installer's last page asks whether the agent starts at sign-in, ticked by de
 `platform_layer/autostart.py` uses each system's own mechanism in the user's own area, needing no administrator: the HKCU Run key on Windows, a LaunchAgent on macOS, an XDG autostart entry on Linux. The setting `start_at_login` is the truth: each start puts the system's entry back in line with it, with the program as it was started now - the installed executable, or Python with run.py, the same root and headless if headless - so a moved installation is followed and one switched off stays off.
 
 *Amended 2026-10-15:* after where the program goes, the installer asks WHERE THE DATA IS KEPT - `%USERPROFILE%\PersonalizedAgent` by default, the previous choice on an upgrade, never inside Program Files - and writes it beside the program. A folder that already holds an agent's data is used only if the user says so; No keeps them on the page to choose another. Uninstalling removes the program and leaves the data folder.
+
+*Amended 2026-10-16:* the data folder is `<program folder>\data` by default, following the program folder while the user has not typed one of their own; an upgrade keeps the one chosen before. A folder that needs administrator rights to write to - Program Files, the Windows folder, ProgramData, or any folder this user cannot write to - is refused on the page itself: it says why, and Next stays off until another is chosen, for the program works as the user and never as an administrator. Uninstalling empties the program's folder and keeps the data folder inside it. And starting at sign-in is one entry for every copy of the program: an entry that starts another copy still on this machine is that copy's - never overwritten or removed by this one - so the installer's last page will not finish with it ticked, and Settings will not save it on, until it is unticked; an entry whose program is gone is nobody's and is taken. The installed program's own folder is never listened to, wherever it was installed.
+<!-- note: 2026-10-16: the user asked for the data folder under the program folder by default, refused where it needs an administrator, and for one copy only to start at sign-in - refused, not overwritten, in the installer and in Settings. -->
 
 # 134. The Interface in the Display Language
 <!-- number: 134 | label: 134. | id: s134 | page: 148 -->

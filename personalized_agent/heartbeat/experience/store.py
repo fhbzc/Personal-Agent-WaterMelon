@@ -799,6 +799,62 @@ class ExperienceStore:
         terms_written()
         return gone
 
+    def forget_unit(self, unit_id: str, task_ids: Sequence[str]) -> Dict[str, int]:
+        """A project the user removed: its stages and cards, the edges and
+        terms of them, their links to natures, its marks, threads, learning,
+        folders and prompts - gone. THE NATURES STAY, and the patterns and
+        principles over them: one may rest on other projects too, and what
+        it says of the user is still true. Only a stage leads to one no more."""
+        gone: Dict[str, int] = {}
+        ids = [str(one) for one in task_ids if str(one)] or [unit_id]
+
+        def chunks(values: List[str]):
+            for start in range(0, len(values), 400):
+                chunk = values[start:start + 400]
+                yield chunk, ", ".join("?" for _ in chunk)
+        stages: List[str] = []
+        for chunk, holes in chunks(ids):
+            stages += [row["id"] for row in self.db.query(
+                f"SELECT id FROM experience_stages WHERE scope = ? AND task_id "
+                f"IN ({holes})", (self.scope, *chunk))]
+        cards = [row["id"] for row in self.db.query(
+            "SELECT id FROM experience_cards WHERE scope = ? AND unit_id = ?",
+            (self.scope, unit_id))]
+        for chunk, holes in chunks(ids):
+            cards += [row["id"] for row in self.db.query(
+                f"SELECT id FROM experience_cards WHERE scope = ? AND task_id "
+                f"IN ({holes})", (self.scope, *chunk))]
+        cards = list(dict.fromkeys(cards))
+        from .index import terms_written
+        terms_written()
+        for table, column, values in (
+                ("stage_natures", "stage_id", stages),
+                ("stage_terms", "stage_id", stages),
+                ("experience_edges", "source", stages + cards),
+                ("experience_edges", "target", stages + cards),
+                ("experience_stages", "id", stages),
+                ("experience_cards", "id", cards),
+                ("experience_threads", "task_id", ids),
+                ("experience_marks", "task_id", ids)):
+            scoped = table not in ("stage_natures",)
+            for chunk, holes in chunks(values):
+                gone[table] = gone.get(table, 0) + self.db.execute(
+                    f"DELETE FROM {table} WHERE {column} IN ({holes})"
+                    + (" AND scope = ?" if scoped else ""),
+                    (*chunk, *((self.scope,) if scoped else ()))).rowcount
+        terms_written()
+        if self.scope == LIVE:
+            gone["experience_learning"] = self.db.execute(
+                "DELETE FROM experience_learning WHERE unit_id = ?",
+                (unit_id,)).rowcount
+        gone["experience_workspaces"] = self.db.execute(
+            "DELETE FROM experience_workspaces WHERE unit_id = ?",
+            (self._key(unit_id),)).rowcount
+        gone["experience_prompts"] = self.db.execute(
+            "DELETE FROM experience_prompts WHERE scope = ? AND unit_id = ?",
+            (self.scope, unit_id)).rowcount
+        return gone
+
     def mark_delegated(self, unit_id: str, source: str = "delegate",
                        output: str = "") -> None:
         """A project made of work the user handed over (agent/work/delegate.py):

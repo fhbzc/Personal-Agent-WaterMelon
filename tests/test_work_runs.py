@@ -626,7 +626,7 @@ class ARunIsTwoAgentsTests(unittest.TestCase):
         from personalized_agent.heartbeat.experience.store import ExperienceStore
         past = ExperienceStore(self.app.db).add_stage({
             "task_id": "task-past", "kind": "plan",
-            "summary": "planned the notes ZEBRAQUOKKA style", "states": [],
+            "summary": "planned how to write the notes, ZEBRAQUOKKA style", "states": [],
             "began": "2026-01-01T00:00:00", "ended": "2026-01-01T00:00:00"})
         models = _TwoAgents()
         self._run(models)
@@ -911,7 +911,7 @@ class WhatEachAgentCanSearchTests(unittest.TestCase):
 
 class TheRecordIsSearchedInEnglishTests(unittest.TestCase):
 
-    def test_the_words_are_asked_for_once_and_the_seen_passed_on(self) -> None:
+    def test_the_words_are_asked_for_once(self) -> None:
         from personalized_agent.agent.work.runner import SEARCH_WORDS, Run
         run = Run.__new__(Run)
         run.review_tools = None
@@ -922,11 +922,12 @@ class TheRecordIsSearchedInEnglishTests(unittest.TestCase):
             return {"keywords": ["booking page", "payment errors", " refunds "]}
 
         run._ask = ask
-        run._stages_shown.update({"stage_b", "stage_a"})
         said = run._in_english({"kind": "plan", "text": "做一个预约页面"})
         self.assertEqual(said["text"], "booking page payment errors refunds")
         self.assertEqual(said["said_as"], "做一个预约页面")
-        self.assertEqual(said["seen"], ["stage_a", "stage_b"])
+        # Nothing held against what other cards were given: each is ranked on
+        # its own.
+        self.assertNotIn("seen", said)
         self.assertTrue(asked[0][0].startswith(SEARCH_WORDS))
         run._in_english({"kind": "evaluation", "text": "做一个预约页面"})
         self.assertEqual(len(asked), 1, "asked once for the same words")

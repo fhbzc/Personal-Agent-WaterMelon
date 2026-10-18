@@ -129,15 +129,34 @@ class ConversationStore:
         return self.db.execute("DELETE FROM chat_followups WHERE id = ?",
                                (followup_id,)).rowcount > 0
 
+    def delete(self, conversation_id: str) -> bool:
+        """A conversation gone from the chat: its messages, what was summed up
+        of them and the follow-ups asked about them, with it. Whether there
+        was one. The files it made in its folder are the user's and stay."""
+        with self.db.write() as conn:
+            conn.execute(
+                "DELETE FROM chat_followups WHERE conversation_id = ? OR message_id IN "
+                "(SELECT id FROM messages WHERE conversation_id = ?)",
+                (conversation_id, conversation_id))
+            conn.execute("DELETE FROM chat_summaries WHERE conversation_id = ?",
+                         (conversation_id,))
+            conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+            gone = conn.execute("DELETE FROM conversations WHERE id = ?",
+                                (conversation_id,)).rowcount
+        return bool(gone)
+
     def conversations(self, limit: Optional[int] = 30) -> List[Dict[str, Any]]:
         """Conversations, the one last spoken in first - all of them with None.
+
+        PINNED ONES FIRST, the last pinned at the top, and never left out by
+        the limit: the user pinned them to keep them in reach.
 
         A conversation with no title of its own is named by the first thing
         the user said in it, which is what they will recognise it by.
         """
         return self.db.query(
             """
-            SELECT c.id, c.created_at, c.project_id,
+            SELECT c.id, c.created_at, c.project_id, c.pinned_at,
                    COALESCE(NULLIF(c.title, ''),
                        (SELECT substr(content, 1, 120) FROM messages
                         WHERE conversation_id = c.id AND role = 'user'
@@ -145,7 +164,8 @@ class ConversationStore:
                    COALESCE(MAX(m.created_at), c.created_at) AS updated_at,
                    COUNT(m.id) AS message_count
             FROM conversations c LEFT JOIN messages m ON m.conversation_id = c.id
-            GROUP BY c.id ORDER BY updated_at DESC, COALESCE(MAX(m.rowid), 0) DESC,
+            GROUP BY c.id ORDER BY (c.pinned_at IS NULL), c.pinned_at DESC,
+                     updated_at DESC, COALESCE(MAX(m.rowid), 0) DESC,
                      c.created_at DESC, c.id DESC LIMIT ?
             """,
             (-1 if limit is None else int(limit),),
@@ -189,3 +209,19 @@ class ConversationStore:
     def set_title(self, conversation_id: str, title: str) -> None:
         self.db.execute("UPDATE conversations SET title = ? WHERE id = ?",
                         (title[:120], conversation_id))
+
+    def rename(self, conversation_id: str, title: str) -> bool:
+        """The user's own name for a conversation. Nothing names one by
+        itself afterwards - an untitled one is shown by its first message -
+        so it stays as they put it. Whether there was one."""
+        with self.db.write() as conn:
+            return bool(conn.execute("UPDATE conversations SET title = ? WHERE id = ?",
+                                     (title.strip()[:120], conversation_id)).rowcount)
+
+    def pin(self, conversation_id: str, pinned: bool) -> bool:
+        """Pinned to the top of the list, or let back into it."""
+        from datetime import datetime, timezone
+        at = datetime.now(timezone.utc).isoformat() if pinned else None
+        with self.db.write() as conn:
+            return bool(conn.execute("UPDATE conversations SET pinned_at = ? WHERE id = ?",
+                                     (at, conversation_id)).rowcount)

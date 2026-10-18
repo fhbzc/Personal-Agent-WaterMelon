@@ -297,7 +297,7 @@ def _generate_round_package(target_dir: Path) -> Path:
         "name": "default",
         "display_name": "Aria (default)",
         "version": "1.0.0",
-        "author": "Personalized Agent",
+        "author": "Personal Agent WaterMelon",
         "states": list(STATES),
         "size": [128, 128],
         "fallback": "vector",

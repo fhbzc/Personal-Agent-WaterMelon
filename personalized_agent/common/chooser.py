@@ -134,7 +134,7 @@ def warm_up(root: Any) -> None:
     user32 = ctypes.windll.user32
     user32.FindWindowW.restype = wintypes.HWND
     user32.FindWindowW.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR)
-    title = f"Personalized Agent - getting the folder dialog ready {uuid.uuid4().hex[:8]}"
+    title = f"Personal Agent WaterMelon - getting the folder dialog ready {uuid.uuid4().hex[:8]}"
     began = time.monotonic()
 
     def out_of_sight_and_closed() -> None:

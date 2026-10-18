@@ -309,7 +309,12 @@ class GroupingWhatTheCalendarKeepsSayingTests(unittest.TestCase):
         self._write(REPLICATION + WATCHING)
         self.app.config.set("state_summaries_enabled", True)
         report = self._run()
-        record = self.app.library.get(report["summaries_written"][0]["record_id"])
+        # Both tasks are summarised at once, and either may finish first.
+        records = [self.app.library.get(one["record_id"])
+                   for one in report["summaries_written"]]
+        self.assertEqual(sorted(len(one.covers) for one in records),
+                         sorted([len(REPLICATION), len(WATCHING)]))
+        record = max(records, key=lambda one: len(one.covers))
         self.assertEqual(record.title, SUMMARY["title"])
         self.assertEqual(record.level, 1)
         self.assertEqual(len(record.covers), len(REPLICATION))

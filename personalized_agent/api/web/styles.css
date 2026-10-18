@@ -444,6 +444,68 @@ h3 .muted { font-weight: 400; font-size: 12px; margin-left: 8px; }
   background: var(--panel); border: 1px solid var(--warn); border-left-width: 3px;
   border-radius: 8px; padding: 10px 14px; font-size: 13px;
   box-shadow: 0 6px 20px rgba(0,0,0,.18); }
+/* Not this work (State heartbeat debugger) */
+#ntw-card { margin-bottom: 12px; }
+#ntw-card > summary { cursor: pointer; display: flex; gap: 10px; align-items: baseline; }
+.ntw-entry { border-top: 1px solid var(--line); padding: 8px 0; }
+.ntw-entry ul { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
+/* Settings > Shortcuts */
+.shortcut-row { display: grid; grid-template-columns: 1fr auto auto; gap: 8px 16px;
+  align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.shortcut-row:first-child { border-top: 0; }
+.shortcut-words { min-width: 0; }
+.shortcut-keys { display: inline-flex; gap: 4px; align-items: center; }
+.shortcut-keys kbd { font: inherit; font-size: 13px; padding: 2px 8px; border-radius: 5px;
+  border: 1px solid var(--line); border-bottom-width: 2px; background: var(--bg); }
+.shortcut-recording { font-size: 13px; color: var(--accent, inherit); }
+.shortcut-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.shortcut-problem { grid-column: 1 / -1; font-size: 12.5px; color: var(--bad, #b42318); }
+.shortcut-toggle { grid-template-columns: auto 1fr; cursor: pointer; }
+@media (max-width: 700px) { .shortcut-row { grid-template-columns: 1fr; } }
+/* The Record log */
+.record-item { border-top: 1px solid var(--line); padding: 6px 0; }
+.record-item > summary { display: flex; gap: 10px; align-items: baseline; cursor: pointer;
+  flex-wrap: wrap; list-style: none; }
+.record-item > summary::-webkit-details-marker { display: none; }
+.record-when { font-size: 12px; min-width: 52px; }
+.record-switch { font-size: 12px; padding: 1px 8px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted); }
+.record-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.record-hidden { font-size: 12px; color: var(--warn, var(--muted)); }
+.record-about { margin: 4px 0 0 62px; font-size: 12.5px; }
+.record-detail { margin: 6px 0 0; max-height: 360px; overflow: auto; font-size: 12px;
+  background: var(--bg); padding: 8px; border-radius: 6px; white-space: pre-wrap; }
+.record-rules, .record-dropped { margin: 6px 0; padding-left: 18px; font-size: 13px; }
+.record-mark { background: var(--warn-bg, #fde68a); color: inherit; border-radius: 3px;
+  padding: 0 2px; font-weight: 600; }
+.record-field { display: flex; gap: 8px; margin: 4px 0 0 62px; font-size: 12.5px;
+  overflow-wrap: anywhere; }
+.record-field code { color: var(--muted); flex: none; }
+.record-dropped { color: var(--muted); max-height: 280px; overflow: auto; }
+/* The Work debugger's tries */
+.xd-tries { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
+.xd-try-folder { font-size: 12px; }
+/* Run now, beside the Overview's tasks */
+.ov-round-now { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0 4px; }
+/* The newer versions, each to be chosen (Settings > General > Updates) */
+.update-version { padding: 8px 0; border-top: 1px solid var(--line); }
+.update-version-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.update-version-head button, .update-version-head a { margin-left: auto; }
+/* What is new, after an update */
+dialog.update-notes { max-width: 640px; width: calc(100% - 32px); border: 1px solid var(--line);
+  border-radius: 10px; background: var(--panel); color: var(--ink); padding: 18px 20px; }
+dialog.update-notes::backdrop { background: rgba(0,0,0,.35); }
+.update-notes-text { white-space: pre-wrap; max-height: 50vh; overflow: auto; font-size: 13px;
+  line-height: 1.5; margin: 10px 0 14px; }
+/* macOS permissions, given in one sitting (Settings > Privacy) */
+.mac-permission { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--line); }
+.mac-permission:first-child { border-top: 0; }
+.mac-permission-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.mac-permission-state { font-size: 12px; color: var(--muted); }
+.mac-permission-state.ok { color: var(--ok); }
+.mac-permission-state.missing { color: var(--danger-ink); font-weight: 600; }
+.mac-permission-how { font-size: 12px; }
+.mac-permission button { justify-self: start; }
 /* A value the user chose, and the way back (section 12.1) */
 .undo-default { margin-left: 8px; }
 
@@ -810,7 +872,8 @@ main:has(> #xdebug.active) { max-width: none; }
 /* The data folder in the list of folders never listened to: there, and
    locked - no Remove. */
 .dir-entry-fixed { opacity: 0.85; }
-.dir-entry-fixed .dir-path::before { content: "F512 A0"; }
+.start-held-note { color: var(--err); font-size: 13px; margin: 6px 0 0; }
+.dir-entry-fixed .dir-path::before { content: "\1F512\00A0"; }
 .dir-fixed-note { font-size: 11px; margin-left: 8px; }
 /* The key to the lighter part of a bar: a colour, and above it the same,
    lighter. */
@@ -2228,14 +2291,33 @@ main:has(> #xdebug.active) { max-width: none; }
 /* -- Experience ------------------------------------------------------------ */
 .xp-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap;
   margin-bottom: 10px; }
-.xp-grid { display: grid; grid-template-columns: minmax(220px, 1fr) 3fr; gap: 12px;
+/* THE SAME WIDTHS FOR EVERY PROJECT: a column's least is 0, not its widest
+   unbreakable line - a long path, a wide drawing - which pushed the main
+   column wider, and the list narrower, as each project was opened.
+   What is wider than its column scrolls inside it. */
+.xp-grid { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 3fr); gap: 12px;
   margin-bottom: 12px; }
-.xp-grid:last-child { grid-template-columns: 3fr 2fr; }
-@media (max-width: 900px) { .xp-grid, .xp-grid:last-child { grid-template-columns: 1fr; } }
+.xp-grid > * { min-width: 0; }
+.xp-grid > .xp-main { overflow-x: auto; }
+/* The retrieval trial's own grid - by its class, not by being last: moved
+   into the Work debugger, "last" became the Work tab's main grid and
+   squeezed it. */
+.xp-grid.xp-search-grid { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+@media (max-width: 900px) { .xp-grid, .xp-grid.xp-search-grid { grid-template-columns: 1fr; } }
 .xp-unit { display: block; width: 100%; text-align: left; margin: 0 0 6px;
   background: var(--bg); color: var(--ink); border: 1px solid var(--line);
   border-radius: 8px; padding: 8px 10px; cursor: pointer; }
 .xp-unit .muted { display: block; font-size: 12px; }
+/* Remove, in the row's top right; asked first, in its place. */
+.xp-unit { position: relative; }
+.xp-unit-remove { position: absolute; top: 6px; right: 8px; font-size: 12px;
+  color: var(--muted); background: none; border: 0; padding: 2px 4px; cursor: pointer; }
+.xp-unit-remove:hover, .xp-unit-remove:focus-visible { color: var(--danger-ink); }
+.xp-unit-open { padding-right: 56px; }
+.xp-unit-ask { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  font-size: 13px; margin: 0 0 6px; padding: 6px 8px; border-radius: 6px;
+  border: 1px solid var(--danger-ink); }
+.xp-unit-ask .danger { color: var(--danger-ink); border-color: var(--danger-ink); }
 .xp-unit.selected { border-color: var(--accent);
   box-shadow: inset 3px 0 0 var(--accent); }
 .xp-unit-kind { font-size: 10px; font-weight: 800; letter-spacing: 0.06em;
@@ -2734,7 +2816,7 @@ button.xp-calls-key:focus-visible { outline: 2px solid var(--accent, currentColo
 .xp-folder-ask { color: var(--ink); }
 .xp-folder-asking code { text-decoration: line-through; color: var(--muted); }
 
-/* A unit's learning, under its name in Projects and tasks. */
+/* A unit's learning, under its name in Projects. */
 .xp-unit-open { cursor: pointer; }
 .xp-learning { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
   margin-top: 4px; font-size: 12px; }
@@ -2860,7 +2942,7 @@ button.xp-calls-key:focus-visible { outline: 2px solid var(--accent, currentColo
 .followups { display: grid; gap: 6px; margin-top: 8px; }
 .followup { border: 1px solid var(--line); border-left: 3px solid var(--accent);
   border-radius: 8px; background: var(--panel); padding: 6px 8px; }
-.fu-head { display: flex; gap: 6px; align-items: baseline; }
+.fu-head { display: flex; gap: 6px; align-items: baseline; cursor: pointer; user-select: none; }
 .fu-title { flex: 1; font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
 .fu-toggle, .fu-close { background: transparent; color: var(--muted); border: 0;
   padding: 0 4px; font-size: 14px; line-height: 1; cursor: pointer; }
@@ -2957,7 +3039,13 @@ mark.fu-anchor.fu-active { background: color-mix(in srgb, var(--accent) 42%, tra
 .chat-new { display: flex; align-items: center; gap: 8px; text-align: left;
   background: var(--bg); border: 1px solid var(--line); color: var(--ink); margin-bottom: 12px; }
 .chat-new:hover { border-color: var(--muted); }
-.chat-sidebar-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.chat-sidebar-scroll { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain;
+  /* Room for the scrollbar: drawn over the content (Chrome on Windows 11
+     overlays it), it covered each row's menu at the right edge. */
+  padding-right: 12px; scrollbar-gutter: stable; }
+/* As wide as the list and no wider, whatever a title says. */
+.chat-history, .chat-pinned { min-width: 0; }
 .chat-section-label { display: flex; align-items: center; justify-content: space-between;
   padding: 7px 8px; font-size: 12px; font-weight: 600; color: var(--muted); }
 button.chat-general { background: transparent; width: 100%; text-align: left; border-radius: 8px; }
@@ -2968,6 +3056,32 @@ button.chat-nav-row { display: block; width: 100%; min-width: 0; padding: 8px 10
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 button.chat-nav-row:hover { background: var(--bg); }
 button.chat-nav-row.selected { background: var(--bg); border-color: var(--line); font-weight: 600; }
+.chat-nav-line { display: flex; align-items: center; gap: 2px; border-radius: 8px;
+  min-width: 0; max-width: 100%; }
+/* A long title shrinks and ends in an ellipsis: grown to its full width,
+   it pushed the row's menu past the edge of the list, out of sight. */
+.chat-nav-line > button.chat-nav-row { flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.chat-nav-line { position: relative; }
+button.chat-nav-more { flex: none; width: 26px; height: 26px; padding: 0; border: 0;
+  background: transparent; color: var(--muted); font-size: 16px; line-height: 1;
+  border-radius: 6px; opacity: .5; }
+/* Always there, quietly - shown only on hover, nobody found it. */
+.chat-nav-line:hover button.chat-nav-more, .chat-nav-line.menu-open button.chat-nav-more,
+button.chat-nav-more:focus-visible { opacity: 1; }
+button.chat-nav-more:hover { color: var(--ink); background: var(--bg); }
+.chat-nav-menu { position: fixed; z-index: 60;
+  display: grid; min-width: 140px; padding: 4px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.18); }
+.chat-nav-menu button { text-align: left; border: 0; background: transparent; padding: 6px 10px;
+  border-radius: 6px; color: var(--ink); font-size: 13px; }
+.chat-nav-menu button:hover, .chat-nav-menu button:focus-visible { background: var(--bg); }
+.chat-nav-menu button.danger-text { color: var(--danger-ink); }
+input.chat-nav-rename { flex: 1; min-width: 0; font-size: 13px; padding: 5px 8px; }
+.chat-nav-line.asking { flex-wrap: wrap; gap: 6px; padding: 6px 8px; background: var(--bg); }
+.chat-nav-ask { flex-basis: 100%; font-size: 12px; color: var(--ink); }
+.chat-nav-line.asking button.danger { background: var(--danger-fill); color: #fff;
+  border-color: var(--danger-fill); }
 .chat-project-heading { display: flex; align-items: center; border-radius: 8px; }
 .chat-project-heading.selected { background: var(--bg); }
 .chat-project-heading .chat-nav-row { flex: 1; }
@@ -3361,8 +3475,10 @@ button.cx-x { line-height: 1; padding: 2px 8px; }
 body.chat-window { margin: 0; }
 /* The Delegate work box alone, filling a window of its own (app.js,
    DELEGATE_SOLO): nothing else of the page shows behind it. */
-body.delegate-solo > :not(#delegate):not(#toast) { display: none !important; }
-body.delegate-solo { margin: 0; overflow: hidden; }
+body.delegate-solo > :not(#delegate):not(#toast),
+html.delegate-solo body > :not(#delegate):not(#toast) { display: none !important; }
+body.delegate-solo, html.delegate-solo body { margin: 0; overflow: hidden;
+  background: var(--panel); }
 body.delegate-solo .delegate { width: 100vw; max-width: 100vw; height: 100vh;
   max-height: 100vh; margin: 0; border: 0; border-radius: 0; box-sizing: border-box; }
 body.delegate-solo .delegate-form { max-height: 100vh; box-sizing: border-box; }
@@ -3459,6 +3575,11 @@ body.chat-window .chat-only { height: 100vh; height: 100dvh; padding: 12px; box-
 .paper-standfirst { font-size: 17px; font-style: italic; line-height: 1.4; margin: 0 0 8px; }
 .paper-body { font-size: 15.5px; line-height: 1.55; margin: 0 0 6px; max-width: 70ch; }
 .paper-brief .paper-body { font-size: 14px; line-height: 1.45; }
+/* How a story ties to the reader's own work: its first lines, in their own
+   colour, so they read apart from the story itself. */
+.paper-opening { font-size: 15.5px; line-height: 1.55; margin: 0 0 6px; max-width: 70ch;
+  color: var(--accent); }
+.paper-brief .paper-opening { font-size: 14px; line-height: 1.45; }
 .paper-lead > .paper-body:first-letter { float: left; font-size: 3.1em; line-height: 0.85;
   font-weight: 700; padding: 4px 6px 0 0; }
 .paper-byline { font-size: 13px; color: var(--muted); margin: 0; }
@@ -3638,3 +3759,85 @@ body.chat-window .chat-only { height: 100vh; height: 100dvh; padding: 12px; box-
 /* Privacy: what is left without a switch, and what it costs. */
 .privacy-says { font-size: 0.9em; margin-top: 3px; display: grid; gap: 2px; }
 .privacy-cost { color: var(--warn-ink, var(--muted)); }
+
+/* Learning updated by itself: its times, and each project's tick. */
+.xp-auto { margin: 0 0 8px; }
+.xp-auto-times { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
+.xp-auto-note { font-size: 12px; margin: 4px 0 0; }
+.xp-auto-one { display: inline-flex; gap: 4px; align-items: center; font-size: 12px;
+  color: var(--muted); cursor: pointer; }
+
+/* Remove a try: asked first, in the row of tries. */
+.xd-try-ask { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  font-size: 13px; padding: 4px 8px; border: 1px solid var(--danger-ink); border-radius: 6px; }
+.xd-try-ask .danger { color: var(--danger-ink); border-color: var(--danger-ink); }
+button.danger-text:not(:disabled) { color: var(--danger-ink); }
+
+/* A project's picture being read: a wheel turning in its place. */
+.xp-loading { display: flex; align-items: center; gap: 10px; padding: 28px 8px;
+  color: var(--muted); font-size: 14px; }
+.xp-loading-wheel { width: 22px; height: 22px; border-radius: 50%;
+  border: 3px solid var(--line); border-top-color: var(--accent);
+  animation: sb-spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .xp-loading-wheel { animation-duration: 2.4s; }
+}
+
+/* A Work debugger way waiting for room: it starts by itself. */
+.xp-live-state-waiting_room, .xd-badge-waiting_room { color: var(--muted);
+  border-color: var(--muted); border-style: dashed; }
+
+/* The Resource debugger. */
+.rd-shell { display: grid; gap: 14px; max-width: 1400px; }
+.rd-head h2 { margin: 0 0 2px; }
+.rd-now { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.rd-figure { display: grid; gap: 2px; padding: 10px 12px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; }
+.rd-figure-value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rd-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; }
+.rd-key { display: inline-flex; align-items: center; gap: 6px; }
+.rd-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+  margin-right: 4px; vertical-align: middle; flex: none; }
+.rd-swatch-line { height: 0; border-top: 2px dashed var(--ink); border-radius: 0; }
+.rd-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 14px; }
+.rd-charts > * { min-width: 0; }
+.rd-charts h3, .rd-shell h3 { margin: 0 0 2px; }
+.rd-chart { position: relative; min-height: 170px; }
+.rd-svg { display: block; max-width: 100%; }
+.rd-axis { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.rd-tip { position: absolute; z-index: 5; pointer-events: none; min-width: 200px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 8px; font-size: 12px; box-shadow: 0 2px 8px rgba(0, 0, 0, .15); }
+.rd-tip[hidden] { display: none; }
+.rd-tip-row { display: flex; align-items: center; gap: 4px; }
+.rd-tip-value { margin-left: auto; padding-left: 12px; font-weight: 600;
+  font-variant-numeric: tabular-nums; }
+.rd-scroll { overflow-x: auto; }
+.rd-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.rd-table th, .rd-table td { padding: 3px 8px; text-align: left; border-bottom: 1px solid var(--line); }
+.rd-table thead th { color: var(--muted); font-weight: 600; }
+.rd-group th { padding-top: 10px; font-weight: 600; }
+.rd-group td { font-weight: 600; }
+.rd-num { text-align: right !important; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rd-name { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rd-section-head { display: flex; align-items: center; gap: 12px; }
+.rd-section-head h3 { margin-right: auto; }
+.rd-place { border-bottom: 1px solid var(--line); padding: 6px 0; }
+.rd-place summary { display: grid; grid-template-columns: minmax(0, 2fr) minmax(80px, 1fr) auto auto;
+  align-items: center; gap: 12px; cursor: pointer; }
+.rd-place-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rd-bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.rd-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.rd-parts { margin: 4px 0 6px; }
+@media (max-width: 640px) {
+  .rd-place summary { grid-template-columns: minmax(0, 1fr) auto; }
+  .rd-place summary .rd-bar, .rd-place summary .muted { display: none; }
+}
+
+/* What the operating system must allow, beside the switch that needs it. */
+.setting-row .sys-permission { grid-column: 2 / -1; max-width: 62ch; }
+.sys-permission { font-size: 0.9em; margin-top: 3px; display: grid; gap: 4px; }
+.sys-permission:empty { display: none; }
+.sys-permission-state { font-weight: 600; color: var(--muted); }
+.sys-permission-state.ok { color: var(--ok); }
+.sys-permission-state.missing { color: var(--err); }

@@ -1,4 +1,4 @@
-﻿; Inno Setup script for the Personalized Agent (section 99).
+﻿; Inno Setup script for Personal Agent WaterMelon (section 99).
 ; Invoked by build/windows/build_windows.py with /D definitions.
 ;   Start Menu entry, application icon, user-level configuration, clean uninstall.
 ;   The last page asks whether the agent starts when the user signs in -
@@ -12,25 +12,28 @@
 ;   in it (--display-language), changed later in Settings > Display.
 
 #ifndef MyAppName
-  #define MyAppName "Personalized Agent"
+  #define MyAppName "Personal Agent WaterMelon"
 #endif
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.0"
+  #define MyAppVersion "0.2.0"
 #endif
 #ifndef MyAppPublisher
-  #define MyAppPublisher "Personalized Agent Project"
+  #define MyAppPublisher "Personal Agent WaterMelon Project"
 #endif
 #ifndef MyAppDirName
-  #define MyAppDirName "PersonalizedAgent"
+  #define MyAppDirName "PersonalAgentWaterMelon"
 #endif
 #ifndef MySourceDir
-  #define MySourceDir "..\..\dist\windows\PersonalizedAgent"
+  #define MySourceDir "..\..\dist\windows\PersonalAgentWaterMelon"
 #endif
 #ifndef MyOutputDir
   #define MyOutputDir "..\..\dist\windows"
 #endif
 
-#define MyAppExeName "PersonalizedAgent.exe"
+#define MyAppExeName "PersonalAgentWaterMelon.exe"
+; The program as its file was named before (to 1.0.0): removed on an update,
+; and its sign-in entry taken as this program's.
+#define MyFormerExeName "PersonalizedAgent.exe"
 
 [Setup]
 AppId={{7C4E7B0E-2B4E-4E6B-9E52-5F1C9C7A1D21}
@@ -41,9 +44,12 @@ AppPublisher={#MyAppPublisher}
 VersionInfoVersion={#MyAppVersion}
 DefaultDirName={autopf}\{#MyAppDirName}
 DefaultGroupName={#MyAppName}
+; Renamed from Personalized Agent (1.0.0): the Start menu folder is the new
+; name's, not the one an upgrade would otherwise keep.
+UsePreviousGroup=no
 DisableProgramGroupPage=yes
 OutputDir={#MyOutputDir}
-OutputBaseFilename=PersonalizedAgent-Setup
+OutputBaseFilename=PersonalAgentWaterMelon-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -68,6 +74,24 @@ Name: "de"; MessagesFile: "compiler:Languages\German.isl"
 Name: "it"; MessagesFile: "compiler:Languages\Italian.isl"
 
 [CustomMessages]
+en.AutoUpdate=Install updates by themselves
+zh.AutoUpdate=自动安装更新
+es.AutoUpdate=Instalar las actualizaciones automáticamente
+ja.AutoUpdate=アップデートを自動でインストールする
+ko.AutoUpdate=업데이트 자동 설치
+ru.AutoUpdate=Устанавливать обновления автоматически
+fr.AutoUpdate=Installer les mises à jour automatiquement
+de.AutoUpdate=Updates automatisch installieren
+it.AutoUpdate=Installa gli aggiornamenti automaticamente
+en.UpdatesGroup=Updates:
+zh.UpdatesGroup=更新：
+es.UpdatesGroup=Actualizaciones:
+ja.UpdatesGroup=アップデート:
+ko.UpdatesGroup=업데이트:
+ru.UpdatesGroup=Обновления:
+fr.UpdatesGroup=Mises à jour :
+de.UpdatesGroup=Updates:
+it.UpdatesGroup=Aggiornamenti:
 en.StartAtLogin=Start %1 when I sign in
 zh.StartAtLogin=登录时启动 %1
 es.StartAtLogin=Iniciar %1 al iniciar sesión
@@ -77,15 +101,15 @@ ru.StartAtLogin=Запускать %1 при входе в систему
 fr.StartAtLogin=Démarrer %1 à l'ouverture de session
 de.StartAtLogin=%1 bei der Anmeldung starten
 it.StartAtLogin=Avvia %1 all'accesso
-en.Headless=%1 (no window)
-zh.Headless=%1（无窗口）
-es.Headless=%1 (sin ventana)
-ja.Headless=%1（ウィンドウなし）
-ko.Headless=%1 (창 없음)
-ru.Headless=%1 (без окна)
-fr.Headless=%1 (sans fenêtre)
-de.Headless=%1 (ohne Fenster)
-it.Headless=%1 (senza finestra)
+en.StartAtLoginTaken=Another copy of %1 already starts when you sign in:%n%2%n%nUntick "Start %1 when I sign in" to finish, or turn it off in that copy first.
+zh.StartAtLoginTaken=已经有另一个 %1 设置了登录时启动：%n%2%n%n请取消勾选“登录时启动 %1”后再点完成，或者先在那个程序里关掉它。
+es.StartAtLoginTaken=Otra copia de %1 ya se inicia al iniciar sesión:%n%2%n%nDesmarca «Iniciar %1 al iniciar sesión» para terminar, o desactívalo primero en esa copia.
+ja.StartAtLoginTaken=別の %1 がすでにサインイン時に起動するよう設定されています：%n%2%n%n完了するには「サインイン時に %1 を起動する」のチェックを外すか、先にそちらで無効にしてください。
+ko.StartAtLoginTaken=다른 %1이(가) 이미 로그인할 때 시작되도록 설정되어 있습니다:%n%2%n%n마치려면 "로그인할 때 %1 시작" 선택을 해제하거나, 먼저 그쪽에서 끄세요.
+ru.StartAtLoginTaken=Другая копия %1 уже запускается при входе в систему:%n%2%n%nСнимите флажок «Запускать %1 при входе в систему», чтобы завершить, или сначала отключите его в той копии.
+fr.StartAtLoginTaken=Une autre copie de %1 démarre déjà à l'ouverture de session :%n%2%n%nDécochez « Démarrer %1 à l'ouverture de session » pour terminer, ou désactivez-le d'abord dans cette copie.
+de.StartAtLoginTaken=Eine andere Kopie von %1 startet bereits bei der Anmeldung:%n%2%n%nEntfernen Sie das Häkchen bei „%1 bei der Anmeldung starten“, um abzuschließen, oder schalten Sie es zuerst in jener Kopie aus.
+it.StartAtLoginTaken=Un'altra copia di %1 si avvia già all'accesso:%n%2%n%nTogli la spunta da «Avvia %1 all'accesso» per finire, oppure disattivalo prima in quella copia.
 en.DataTitle=Where to keep your data
 zh.DataTitle=数据保存位置
 es.DataTitle=Dónde guardar tus datos
@@ -104,15 +128,15 @@ ru.DataDescription=Всё, что %1 узнаёт и создаёт, храни�
 fr.DataDescription=Tout ce que %1 apprend et crée est conservé dans un seul dossier.
 de.DataDescription=Alles, was %1 lernt und erstellt, liegt in einem Ordner.
 it.DataDescription=Tutto ciò che %1 impara e crea è conservato in una cartella.
-en.DataPrompt=Choose the folder for your data (workspace and internal). A different folder is a different agent, with its own calendar, contacts and keys. It cannot be changed later from the program. Choose an empty folder, or one that holds only an earlier Personal Agent's data.
-zh.DataPrompt=选择保存数据的文件夹（workspace 和 internal）。不同的文件夹就是不同的助手，各有自己的日历、联系人和密钥。安装后不能在程序里更改。请选择空文件夹，或者只有之前 Personal Agent 数据的文件夹。
-es.DataPrompt=Elige la carpeta para tus datos (workspace e internal). Otra carpeta es otro agente, con su propio calendario, contactos y claves. No se puede cambiar después desde el programa. Elige una carpeta vacía o una que solo contenga datos de un Personal Agent anterior.
-ja.DataPrompt=データ（workspace と internal）を保存するフォルダーを選んでください。フォルダーが違えば別のエージェントになり、カレンダー・連絡先・キーもそれぞれ別です。あとからプログラム内では変更できません。空のフォルダー、または以前の Personal Agent のデータだけがあるフォルダーを選んでください。
-ko.DataPrompt=데이터(workspace, internal)를 보관할 폴더를 선택하세요. 폴더가 다르면 다른 에이전트이며 캘린더, 연락처, 키도 따로입니다. 나중에 프로그램에서 바꿀 수 없습니다. 빈 폴더나 이전 Personal Agent의 데이터만 있는 폴더를 선택하세요.
-ru.DataPrompt=Выберите папку для данных (workspace и internal). Другая папка — это другой агент со своим календарём, контактами и ключами. Позже в программе её изменить нельзя. Выберите пустую папку или папку только с данными прежнего Personal Agent.
-fr.DataPrompt=Choisissez le dossier de vos données (workspace et internal). Un autre dossier est un autre agent, avec son propre calendrier, ses contacts et ses clés. Il ne peut pas être changé ensuite depuis le programme. Choisissez un dossier vide, ou qui ne contient que les données d'un Personal Agent précédent.
-de.DataPrompt=Wählen Sie den Ordner für Ihre Daten (workspace und internal). Ein anderer Ordner ist ein anderer Agent mit eigenem Kalender, eigenen Kontakten und Schlüsseln. Er kann später im Programm nicht geändert werden. Wählen Sie einen leeren Ordner oder einen, der nur Daten eines früheren Personal Agent enthält.
-it.DataPrompt=Scegli la cartella per i dati (workspace e internal). Una cartella diversa è un agente diverso, con calendario, contatti e chiavi propri. Non può essere cambiata dopo dal programma. Scegli una cartella vuota o che contenga solo i dati di un Personal Agent precedente.
+en.DataPrompt=Choose the folder for your data (workspace and internal). A different folder is a different agent, with its own calendar, contacts and keys. It cannot be changed later from the program. Choose an empty folder, or one that holds only an earlier Personal Agent WaterMelon's data.
+zh.DataPrompt=选择保存数据的文件夹（workspace 和 internal）。不同的文件夹就是不同的助手，各有自己的日历、联系人和密钥。安装后不能在程序里更改。请选择空文件夹，或者只有之前 Personal Agent WaterMelon 数据的文件夹。
+es.DataPrompt=Elige la carpeta para tus datos (workspace e internal). Otra carpeta es otro agente, con su propio calendario, contactos y claves. No se puede cambiar después desde el programa. Elige una carpeta vacía o una que solo contenga datos de un Personal Agent WaterMelon anterior.
+ja.DataPrompt=データ（workspace と internal）を保存するフォルダーを選んでください。フォルダーが違えば別のエージェントになり、カレンダー・連絡先・キーもそれぞれ別です。あとからプログラム内では変更できません。空のフォルダー、または以前の Personal Agent WaterMelon のデータだけがあるフォルダーを選んでください。
+ko.DataPrompt=데이터(workspace, internal)를 보관할 폴더를 선택하세요. 폴더가 다르면 다른 에이전트이며 캘린더, 연락처, 키도 따로입니다. 나중에 프로그램에서 바꿀 수 없습니다. 빈 폴더나 이전 Personal Agent WaterMelon의 데이터만 있는 폴더를 선택하세요.
+ru.DataPrompt=Выберите папку для данных (workspace и internal). Другая папка — это другой агент со своим календарём, контактами и ключами. Позже в программе её изменить нельзя. Выберите пустую папку или папку только с данными прежнего Personal Agent WaterMelon.
+fr.DataPrompt=Choisissez le dossier de vos données (workspace et internal). Un autre dossier est un autre agent, avec son propre calendrier, ses contacts et ses clés. Il ne peut pas être changé ensuite depuis le programme. Choisissez un dossier vide, ou qui ne contient que les données d'un Personal Agent WaterMelon précédent.
+de.DataPrompt=Wählen Sie den Ordner für Ihre Daten (workspace und internal). Ein anderer Ordner ist ein anderer Agent mit eigenem Kalender, eigenen Kontakten und Schlüsseln. Er kann später im Programm nicht geändert werden. Wählen Sie einen leeren Ordner oder einen, der nur Daten eines früheren Personal Agent WaterMelon enthält.
+it.DataPrompt=Scegli la cartella per i dati (workspace e internal). Una cartella diversa è un agente diverso, con calendario, contatti e chiavi propri. Non può essere cambiata dopo dal programma. Scegli una cartella vuota o che contenga solo i dati di un Personal Agent WaterMelon precedente.
 en.DataExisting=This folder already has data of %1:%n%n%2%n%nUse the data that is already there?%n%nChoose No to pick another folder.
 zh.DataExisting=这个文件夹里已经有 %1 的数据：%n%n%2%n%n要使用已有的数据吗？%n%n选“否”可以选择别的文件夹。
 es.DataExisting=Esta carpeta ya tiene datos de %1:%n%n%2%n%n¿Usar los datos que ya están ahí?%n%nElige No para escoger otra carpeta.
@@ -122,15 +146,15 @@ ru.DataExisting=В этой папке уже есть данные %1:%n%n%2%n%
 fr.DataExisting=Ce dossier contient déjà des données de %1:%n%n%2%n%nUtiliser les données qui s'y trouvent?%n%nChoisissez Non pour prendre un autre dossier.
 de.DataExisting=Dieser Ordner enthält bereits Daten von %1:%n%n%2%n%nDie vorhandenen Daten verwenden?%n%nWählen Sie Nein, um einen anderen Ordner zu wählen.
 it.DataExisting=Questa cartella contiene già dati di %1:%n%n%2%n%nUsare i dati già presenti?%n%nScegli No per indicare un'altra cartella.
-en.DataProgramFiles=Choose a folder you can write to - not inside Program Files: it is not writable without administrator rights, and an upgrade would replace it.
-zh.DataProgramFiles=请选择一个你可以写入的文件夹，不要放在 Program Files 里：那里没有管理员权限不能写入，升级时也会被替换。
-es.DataProgramFiles=Elige una carpeta en la que puedas escribir, no dentro de Program Files: ahí no se puede escribir sin permisos de administrador y una actualización la reemplazaría.
-ja.DataProgramFiles=書き込みできるフォルダーを選んでください。Program Files の中は不可です（管理者権限なしでは書き込めず、更新時に置き換えられます）。
-ko.DataProgramFiles=쓸 수 있는 폴더를 선택하세요. Program Files 안은 안 됩니다. 관리자 권한 없이는 쓸 수 없고 업그레이드 때 교체됩니다.
-ru.DataProgramFiles=Выберите папку, в которую можно писать, — не внутри Program Files: туда нельзя писать без прав администратора, и обновление её заменит.
-fr.DataProgramFiles=Choisissez un dossier où vous pouvez écrire, pas dans Program Files: on ne peut pas y écrire sans droits d'administrateur, et une mise à jour le remplacerait.
-de.DataProgramFiles=Wählen Sie einen Ordner, in den Sie schreiben können - nicht in Program Files: Dort kann ohne Administratorrechte nicht geschrieben werden, und ein Update würde ihn ersetzen.
-it.DataProgramFiles=Scegli una cartella in cui puoi scrivere, non dentro Program Files: lì non si può scrivere senza diritti di amministratore e un aggiornamento la sostituirebbe.
+en.DataProgramFiles=Choose a folder you can write to. This one needs administrator rights, and %1 works as you, without them.
+zh.DataProgramFiles=请选择一个你可以写入的文件夹。这个文件夹需要管理员权限才能写入，而 %1 以你的身份运行，没有这个权限。
+es.DataProgramFiles=Elige una carpeta en la que puedas escribir. Esta requiere permisos de administrador, y %1 funciona como tú, sin ellos.
+ja.DataProgramFiles=書き込みできるフォルダーを選んでください。このフォルダーへの書き込みには管理者権限が必要ですが、%1 は管理者権限なしであなたとして動作します。
+ko.DataProgramFiles=쓸 수 있는 폴더를 선택하세요. 이 폴더는 관리자 권한이 있어야 쓸 수 있는데, %1은(는) 관리자 권한 없이 사용자 권한으로 실행됩니다.
+ru.DataProgramFiles=Выберите папку, в которую можно писать. Для этой нужны права администратора, а %1 работает от вашего имени, без них.
+fr.DataProgramFiles=Choisissez un dossier où vous pouvez écrire. Celui-ci exige des droits d'administrateur, et %1 fonctionne en votre nom, sans eux.
+de.DataProgramFiles=Wählen Sie einen Ordner, in den Sie schreiben können. Für diesen sind Administratorrechte nötig, und %1 läuft als Sie, ohne diese Rechte.
+it.DataProgramFiles=Scegli una cartella in cui puoi scrivere. Questa richiede diritti di amministratore, e %1 funziona come te, senza di essi.
 en.DataEmpty=Choose a folder for your data.
 en.DataNotOnly=%1 already holds other things (%2).%n%nThe data folder must be empty, or hold only an earlier %3's data (workspace and internal): everything in it belongs to the agent and is never listened to, so work kept there would go unseen.%n%nChoose an empty folder.
 zh.DataEmpty=请选择保存数据的文件夹。
@@ -152,23 +176,43 @@ it.DataNotOnly=%1 contiene già altre cose (%2).%n%nLa cartella dei dati deve es
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+; UPDATES install by themselves only if this is ticked; otherwise the user is
+; told and chooses the version (platform_layer/updater.py). Unticked by
+; default - a broken release would otherwise reach everyone within a day; a
+; reinstall remembers the box as it was left.
+Name: "autoupdate"; Description: "{cm:AutoUpdate}"; GroupDescription: "{cm:UpdatesGroup}"; Flags: unchecked
 
 [Files]
 Source: "{#MySourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+; What 1.0.0 put on the Start menu and the desktop under its old name -
+; and its "(no window)" shortcut, which is gone.
+Type: filesandordirs; Name: "{autoprograms}\Personalized Agent"
+Type: files; Name: "{autodesktop}\Personalized Agent.lnk"
+Type: files; Name: "{app}\{#MyFormerExeName}"
+
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\{cm:Headless,{#MyAppName}}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--headless"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-; THE LAST PAGE: ticked by default, and done in a silent install too. As the
-; user who ran the installer - the Run key is theirs, not an administrator's.
+; THE LAST PAGE: ticked by default, and done in a silent install too - but
+; not in an UPDATE, a silent install over a copy already here, which leaves
+; the user's own choice as it is. As the user who ran the installer - the Run
+; key is theirs, not an administrator's.
 ; FIRST, ALWAYS: the program shown in the language the installer was run in.
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--display-language {language}"; Flags: runhidden waituntilterminated runasoriginaluser
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--autostart on"; Description: "{cm:StartAtLogin,{#MyAppName}}"; Flags: postinstall runhidden waituntilterminated runasoriginaluser
+; How updates are taken, as the box on the tasks page was left - not in an
+; update, which keeps the user's own choice.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--updates install"; Flags: runhidden waituntilterminated runasoriginaluser; Tasks: autoupdate; Check: not AnUpdate
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--updates ask"; Flags: runhidden waituntilterminated runasoriginaluser; Tasks: not autoupdate; Check: not AnUpdate
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--autostart on"; Description: "{cm:StartAtLogin,{#MyAppName}}"; Flags: postinstall runhidden waituntilterminated runasoriginaluser; Check: not AnUpdate
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent runasoriginaluser
+; AN UPDATE (platform_layer/updater.py) runs this silently once the program
+; has quit: it is started again, on the new version.
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait runasoriginaluser; Check: AnUpdate
 
 [UninstallRun]
 ; Not started at sign-in once it is gone.
@@ -185,6 +229,14 @@ Filename: "{app}\{#MyAppExeName}"; Parameters: "--explorer-menu off"; Flags: run
 // agent's data is used only if the user says so; No keeps them on the page.
 var
   DataPage: TInputDirWizardPage;
+  // The folder chosen before (an upgrade), or '' on a first install.
+  PreviousData: String;
+  // The default last put in the box - followed while the user has not typed.
+  DataDefault: String;
+  // Said under the box while the folder needs an administrator.
+  DataNeedsAdmin: TNewStaticText;
+  // The data folder of the program being uninstalled, read before its files go.
+  UninstallDataRoot: String;
 
 function HasAgentData(Dir: String): Boolean;
 begin
@@ -221,13 +273,63 @@ begin
   if Count > 3 then Result := Result + ', ...';
 end;
 
-function InsideProgramFiles(Dir: String): Boolean;
-var
-  Folder: String;
+// Whether `Folder` is `Base` or inside it.
+function Under(Folder, Base: String): Boolean;
 begin
-  Folder := Lowercase(AddBackslash(ExpandFileName(Dir)));
-  Result := (Pos(Lowercase(AddBackslash(ExpandConstant('{commonpf}'))), Folder) = 1) or
-            (Pos(Lowercase(AddBackslash(ExpandConstant('{commonpf32}'))), Folder) = 1);
+  Result := Pos(Lowercase(AddBackslash(Base)), Lowercase(AddBackslash(Folder))) = 1;
+end;
+
+// WHETHER WRITING THERE NEEDS AN ADMINISTRATOR. The program works as the user
+// who installed it, never as an administrator, so its data folder must be one
+// they can write to. The system's own folders by name; and, when this setup is
+// not itself running as an administrator, by trying - a folder made and taken
+// away again where the data folder would go.
+function NeedsAdmin(Dir: String): Boolean;
+var
+  Folder, Probe, Up, Test: String;
+begin
+  Result := False;
+  if Trim(Dir) = '' then Exit;
+  Folder := ExpandFileName(Trim(Dir));
+  Result := Under(Folder, ExpandConstant('{commonpf}')) or
+            Under(Folder, ExpandConstant('{commonpf32}')) or
+            Under(Folder, ExpandConstant('{win}')) or
+            Under(Folder, ExpandConstant('{commonappdata}'));
+  if Result or IsAdminInstallMode then Exit;
+  Probe := RemoveBackslash(Folder);
+  while (Probe <> '') and (not DirExists(Probe)) do begin
+    Up := ExtractFileDir(Probe);
+    if (Up = Probe) or (Up = '') then Exit;
+    Probe := Up;
+  end;
+  Test := AddBackslash(Probe) + '.personalized-agent-write-test';
+  if CreateDir(Test) then
+    RemoveDir(Test)
+  else
+    Result := True;
+end;
+
+// Next only while the folder is one the user can write to - said why under
+// the box, until another is chosen.
+procedure FollowDataFolder;
+var
+  Bad: Boolean;
+begin
+  Bad := NeedsAdmin(DataPage.Values[0]);
+  DataNeedsAdmin.Visible := Bad;
+  WizardForm.NextButton.Enabled := not Bad;
+end;
+
+procedure DataFolderChanged(Sender: TObject);
+begin
+  FollowDataFolder;
+end;
+
+// AN UPDATE: a silent install over a copy already installed, as the
+// program's own updater runs it (platform_layer/updater.py).
+function AnUpdate: Boolean;
+begin
+  Result := WizardSilent and (WizardForm.PrevAppDir <> '');
 end;
 
 procedure InitializeWizard;
@@ -236,8 +338,35 @@ begin
     FmtMessage(CustomMessage('DataDescription'), ['{#MyAppName}']),
     CustomMessage('DataPrompt'), False, '');
   DataPage.Add('');
-  DataPage.Values[0] := GetPreviousData('DataFolder',
-    ExpandConstant('{%USERPROFILE}\{#MyAppDirName}'));
+  PreviousData := GetPreviousData('DataFolder', '');
+  DataPage.Values[0] := PreviousData;
+  DataPage.Edits[0].OnChange := @DataFolderChanged;
+  DataNeedsAdmin := TNewStaticText.Create(DataPage);
+  DataNeedsAdmin.Parent := DataPage.Surface;
+  DataNeedsAdmin.Left := DataPage.Edits[0].Left;
+  DataNeedsAdmin.Top := DataPage.Edits[0].Top + DataPage.Edits[0].Height + ScaleY(12);
+  DataNeedsAdmin.Width := DataPage.SurfaceWidth - DataPage.Edits[0].Left;
+  DataNeedsAdmin.AutoSize := False;
+  DataNeedsAdmin.WordWrap := True;
+  DataNeedsAdmin.Height := ScaleY(48);
+  DataNeedsAdmin.Font.Color := clRed;
+  DataNeedsAdmin.Caption := FmtMessage(CustomMessage('DataProgramFiles'), ['{#MyAppName}']);
+  DataNeedsAdmin.Visible := False;
+end;
+
+// THE DATA FOLDER IS UNDER THE PROGRAM'S BY DEFAULT: <program folder>\data,
+// following the program folder while the user has not typed one of their own.
+// An upgrade keeps the folder chosen before.
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if CurPageID = DataPage.ID then begin
+    if (PreviousData = '') and ((Trim(DataPage.Values[0]) = '') or
+                                (DataPage.Values[0] = DataDefault)) then begin
+      DataDefault := AddBackslash(WizardDirValue) + 'data';
+      DataPage.Values[0] := DataDefault;
+    end;
+    FollowDataFolder;
+  end;
 end;
 
 procedure RegisterPreviousData(PreviousDataKey: Integer);
@@ -254,8 +383,8 @@ begin
   if Dir = '' then begin
     MsgBox(CustomMessage('DataEmpty'), mbError, MB_OK);
     Result := False;
-  end else if InsideProgramFiles(Dir) then begin
-    MsgBox(CustomMessage('DataProgramFiles'), mbError, MB_OK);
+  end else if NeedsAdmin(Dir) then begin
+    MsgBox(FmtMessage(CustomMessage('DataProgramFiles'), ['{#MyAppName}']), mbError, MB_OK);
     Result := False;
   end else if OtherThings(Dir) <> '' then begin
     // Everything in it is the agent's and never listened to: a folder with
@@ -276,22 +405,107 @@ begin
                      ExpandFileName(Trim(DataPage.Values[0])), False);
 end;
 
+// The next word of a command line, quoted or not, taken off its front.
+function NextToken(var Line: String): String;
+var
+  P: Integer;
+begin
+  Line := Trim(Line);
+  if Copy(Line, 1, 1) = '"' then begin
+    Delete(Line, 1, 1);
+    P := Pos('"', Line);
+    if P = 0 then P := Length(Line) + 1;
+  end else begin
+    P := Pos(' ', Line);
+    if P = 0 then P := Length(Line) + 1;
+  end;
+  Result := Copy(Line, 1, P - 1);
+  Line := Copy(Line, P + 1, MaxInt);
+end;
+
+// The program another copy's sign-in entry starts - '' when there is no
+// entry, it is this program's, or what it starts is no longer there (then it
+// is nobody's). Run from the source, the program is the run.py Python is given.
+function AutostartHolder: String;
+var
+  Line, Prog, Script: String;
+begin
+  Result := '';
+  if not RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run',
+                             'PersonalizedAgent', Line) then Exit;
+  Prog := NextToken(Line);
+  if Prog = '' then Exit;
+  if Pos('python', Lowercase(ExtractFileName(Prog))) = 1 then begin
+    Script := NextToken(Line);
+    if Lowercase(ExtractFileExt(Script)) = '.py' then Prog := Script;
+  end;
+  if CompareText(ExpandFileName(Prog), ExpandConstant('{app}\{#MyAppExeName}')) = 0 then Exit;
+  if CompareText(ExpandFileName(Prog), ExpandConstant('{app}\{#MyFormerExeName}')) = 0 then Exit;
+  if FileExists(Prog) then Result := Prog;
+end;
+
 // Left unticked on the last page: said so, so the program's own default
-// (on) does not turn it back on at its first start.
+// (on) does not turn it back on at its first start. Ticked while another copy
+// already starts at sign-in: refused, until it is unticked.
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   ResultCode: Integer;
+  Holder: String;
 begin
   Result := True;
   if CurPageID = DataPage.ID then
     Result := CheckDataFolder;
+  if (CurPageID = wpFinished) and (not WizardSilent) and
+     (WizardForm.RunList.Items.Count > 0) and WizardForm.RunList.Checked[0] then begin
+    Holder := AutostartHolder;
+    if Holder <> '' then begin
+      MsgBox(FmtMessage(CustomMessage('StartAtLoginTaken'), ['{#MyAppName}', Holder]),
+             mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+  end;
   if (CurPageID = wpFinished) and (not WizardSilent) and
      (WizardForm.RunList.Items.Count > 0) and (not WizardForm.RunList.Checked[0]) then
     ExecAsOriginalUser(ExpandConstant('{app}\{#MyAppExeName}'), '--autostart off', '',
                        SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
-[UninstallDelete]
-; Application files only. User settings, the knowledge graph and the workspace
-; are left in place; removing them is an explicit user action.
-Type: filesandordirs; Name: "{app}"
+// UNINSTALLING TAKES THE PROGRAM AND LEAVES THE DATA. The data folder is
+// under the program's by default, so the program's folder is emptied here
+// rather than deleted whole: everything in it goes except the folder the data
+// is in. Removing the data is the user's own act.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Raw: AnsiString;
+  App, Keep, Name: String;
+  FindRec: TFindRec;
+begin
+  if CurUninstallStep = usUninstall then begin
+    if LoadStringFromFile(ExpandConstant('{app}\data_root.txt'), Raw) then
+      UninstallDataRoot := Trim(String(Raw));
+  end;
+  if CurUninstallStep = usPostUninstall then begin
+    App := AddBackslash(ExpandConstant('{app}'));
+    Keep := '';
+    if (UninstallDataRoot <> '') and Under(UninstallDataRoot, App) then begin
+      Keep := Copy(AddBackslash(ExpandFileName(UninstallDataRoot)), Length(App) + 1, MaxInt);
+      if Pos('\', Keep) > 0 then Keep := Copy(Keep, 1, Pos('\', Keep) - 1);
+    end;
+    if FindFirst(App + '*', FindRec) then
+    try
+      repeat
+        Name := FindRec.Name;
+        if (Name <> '.') and (Name <> '..') and ((Keep = '') or (CompareText(Name, Keep) <> 0)) then begin
+          if FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0 then
+            DelTree(App + Name, True, True, True)
+          else
+            DeleteFile(App + Name);
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+    RemoveDir(App);
+  end;
+end;

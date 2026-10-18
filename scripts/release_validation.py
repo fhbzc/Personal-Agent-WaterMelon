@@ -14,7 +14,7 @@ list from section 114:
 
 Usage::
 
-    python scripts/release_validation.py --executable dist/windows/PersonalizedAgent/PersonalizedAgent.exe
+    python scripts/release_validation.py --executable dist/windows/PersonalAgentWaterMelon/PersonalAgentWaterMelon.exe
     python scripts/release_validation.py --dev          # validate the source checkout instead
 
 The validated instance uses a throwaway data directory and workspace, so it
@@ -288,7 +288,7 @@ class Validator:
         if not str(characters.get("preview") or "").startswith("data:image/png;base64,"):
             raise ValidationError("the built-in avatar package has no idle frames")
         index = self.agent.raw("/")
-        if "Personalized" not in index:
+        if "Personal Agent WaterMelon" not in index:
             raise ValidationError("the frontend did not load")
         return f"avatar '{selected}' of {len(names)}, with its idle frames"
 
@@ -386,6 +386,25 @@ class Validator:
             raise ValidationError(f"sandbox self test failures: {failed}")
         return f"{len(report['checks'])} checks passed, isolation: {report['isolation']}"
 
+    def signature_intact(self) -> str:
+        """A macOS bundle's signature matches what is in it.
+
+        This run keeps the keychain out of reach, so it could not see the
+        bundle that macOS refused its keychain - an Info.plist written
+        after signing - and that bundle quit on start, before its window
+        appeared, for everyone who installed it."""
+        executable = Path(self.agent.command[-1])
+        bundle = next((one for one in executable.parents if one.suffix == ".app"), None)
+        if bundle is None:
+            return "not a macOS bundle"
+        done = subprocess.run(
+            ["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(bundle)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        if done.returncode != 0:
+            raise ValidationError(f"the signature of {bundle.name} does not match it: "
+                                  f"{(done.stderr or done.stdout).strip()[-400:]}")
+        return f"{bundle.name}: signature intact"
+
     # -- driver -------------------------------------------------------------
     def run(self) -> bool:
         steps = [
@@ -403,6 +422,7 @@ class Validator:
             (12, "create a scheduled task", self.scheduled_task),
             (13, "restart and verify persistent state", self.restart_persistence),
             (14, "verify filesystem sandbox restrictions", self.sandbox_restrictions),
+            (15, "the application's signature matches it", self.signature_intact),
         ]
         ok = True
         for number, name, fn in steps:
@@ -420,9 +440,9 @@ def resolve_command(args: argparse.Namespace) -> List[str]:
         executable = Path(args.executable)
     else:
         candidates = [
-            REPO_ROOT / "dist/windows/PersonalizedAgent/PersonalizedAgent.exe",
-            REPO_ROOT / "dist/macos/Personalized Agent.app/Contents/MacOS/Personalized Agent",
-            REPO_ROOT / "dist/linux/PersonalizedAgent/PersonalizedAgent",
+            REPO_ROOT / "dist/windows/PersonalAgentWaterMelon/PersonalAgentWaterMelon.exe",
+            REPO_ROOT / "dist/macos/Personal Agent WaterMelon.app/Contents/MacOS/Personal Agent WaterMelon",
+            REPO_ROOT / "dist/linux/PersonalAgentWaterMelon/PersonalAgentWaterMelon",
         ]
         found = [path for path in candidates if path.exists()]
         if not found:
@@ -436,7 +456,7 @@ def resolve_command(args: argparse.Namespace) -> List[str]:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Validate a Personalized Agent release artifact")
+    parser = argparse.ArgumentParser(description="Validate a Personal Agent WaterMelon release artifact")
     parser.add_argument("--executable", help="path to the built application")
     parser.add_argument("--dev", action="store_true",
                         help="validate the source checkout instead of a built artifact")

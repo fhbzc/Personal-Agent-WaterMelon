@@ -242,6 +242,17 @@ class RawStore:
         )
         return edit
 
+    def recent_with_hidden(self, limit: int = 50, days: int = 7) -> List[ListenerEvent]:
+        """The latest records something was hidden in - a password or a code
+        replaced by "[hidden]" before it was kept (common/credentials_guard).
+        Only what was kept is read: what was cut out was never stored."""
+        since = iso(utcnow() - timedelta(days=days))
+        rows = self.db.query(
+            "SELECT * FROM raw_events WHERE timestamp >= ? AND (data LIKE ? "
+            "OR metadata LIKE ? OR application LIKE ?) ORDER BY timestamp DESC LIMIT ?",
+            (since, "%[hidden]%", "%[hidden]%", "%[hidden]%", int(limit)))
+        return [ListenerEvent.from_row(r) for r in rows]
+
     def events_by_ids(self, ids: Iterable[str]) -> List[ListenerEvent]:
         """These events, exactly; any that are gone are left out."""
         wanted = [str(one) for one in ids if one][:200]

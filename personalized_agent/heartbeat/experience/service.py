@@ -8,6 +8,7 @@ import re
 import logging
 import threading
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -106,6 +107,14 @@ class Experience:
                  tasks_scope: Optional[str] = None) -> None:
         self.db = db
         self.config = config
+        #: The clock that updates the changed projects by itself (auto.py).
+        self.auto_clock: Any = None
+        #: The one pool everything side by side takes its places in
+        #: (common/pool.py); none, as many as `room` allows of its own.
+        self.pool: Any = None
+        #: The projects queued by the automatic update - after what the user
+        #: asked for, in the pool's order.
+        self._learning_auto: set = set()
         self.states = states
         self.library = library
         self.embedder = embedder
@@ -290,9 +299,12 @@ class Experience:
         found = list(writer.units(live, projects))
         for unit in found:
             unit["active"] = True
-        units = found + self.directory_units() + self.work_units()
+        # A project the user removed is not shown again.
+        removed = self.removed()
+        units = [unit for unit in found + self.directory_units() + self.work_units()
+                 if unit["id"] not in removed]
         from .stages import unit_task_ids
-        seen = {unit["id"] for unit in units}
+        seen = {unit["id"] for unit in units} | set(removed)
         covered = {one for unit in units for one in unit_task_ids(unit)}
         learned = [row["unit_id"] for row in self.db.query(
             "SELECT DISTINCT unit_id FROM experience_cards WHERE scope = ? "
@@ -836,7 +848,7 @@ class Experience:
             return True
 
         at_once((starting(job) for job in jobs), work, self.room,
-                going=going, landed=landed,
+                going=going, landed=landed, pool=self.pool, kind="learning",
                 told=lambda running, allowed, why: progress.update(
                     at_once={"running": running, "allowed": allowed, "why": why}))
         writer.used.update({name: writer.used.get(name, 0) + value
@@ -1029,7 +1041,7 @@ class Experience:
     #: The most model calls one project's learning may make in one go.
     LEARN_CALLS = 400
 
-    def learn(self, unit_ids: List[str]) -> List[str]:
+    def learn(self, unit_ids: List[str], auto: bool = False) -> List[str]:
         """Learn these projects - their stages, and what the stages show
         about the user - each from where its last learning stopped, finished
         or not, up to now. Several at once, as many as the
@@ -1037,6 +1049,11 @@ class Experience:
         Returns the ones taken on."""
         if self.scope != LIVE:
             raise ValueError("learning is the user's own experience")
+        # WHILE THE AUTOMATIC UPDATE RUNS, the buttons start nothing: it is
+        # learning the record, and two learnings would each read what the
+        # other is writing (auto.py).
+        if not auto and self.auto_running():
+            return []
         taken = []
         with self._learn_lock:
             for unit_id in unit_ids:
@@ -1046,6 +1063,10 @@ class Experience:
                 if not self._learnable(unit_id):
                     continue
                 self.learning_progress[unit_id] = {"queued": True, "step": "waiting"}
+                if auto:
+                    self._learning_auto.add(unit_id)
+                else:
+                    self._learning_auto.discard(unit_id)
                 self._learn_queue.append(unit_id)
                 taken.append(unit_id)
             if taken and not (self._learn_thread and self._learn_thread.is_alive()):
@@ -1054,6 +1075,40 @@ class Experience:
                     daemon=True)
                 self._learn_thread.start()
         return taken
+
+    def auto_running(self) -> bool:
+        return bool(self.auto_clock is not None and self.auto_clock.running())
+
+    #: The projects the user removed, by id: never shown, learned or
+    #: updated again - the record of them is gone with them.
+    REMOVED_KEY = "experience_removed_units"
+
+    def removed(self) -> Dict[str, Dict[str, Any]]:
+        said = self.config.get(self.REMOVED_KEY) or {}
+        return dict(said) if isinstance(said, dict) else {}
+
+    def remove_unit(self, unit_id: str) -> Dict[str, Any]:
+        """REMOVE A PROJECT, as the user asked (after confirming on the
+        page): what was learned from it - its stages and cards - is deleted
+        and found by no search again, and the project is not listed, learned
+        or updated again. The natures, patterns and principles stay: they
+        may rest on other projects too (ExperienceStore.forget_unit). Not
+        while it is being learned: stopped first."""
+        mine = self.learning_progress.get(unit_id) or {}
+        if mine.get("running") or mine.get("queued"):
+            return {"error": "it is being learned now - stop its learning first"}
+        live, _retired, projects = self._work(retired=False)
+        unit = next((u for u in self._shown_units(self.stages_writer(), live, projects)
+                     if u["id"] == unit_id), None)
+        if unit is None:
+            return {"error": "no such project"}
+        from .stages import unit_task_ids
+        gone = self.store.forget_unit(unit_id, unit_task_ids(unit))
+        removed = self.removed()
+        removed[unit_id] = {"name": unit.get("name", ""), "kind": unit.get("kind", ""),
+                            "at": datetime.now(timezone.utc).isoformat()}
+        self.config.set(self.REMOVED_KEY, removed, internal=True)
+        return {"removed": unit_id, "gone": gone}
 
     def stop_learning(self, unit_id: str) -> bool:
         mine = self.learning_progress.get(unit_id)
@@ -1069,27 +1124,46 @@ class Experience:
     def _learnable(self, unit_id: str) -> bool:
         """A project or task of the user's - not one made for the agents,
         which holds nothing of theirs to learn."""
+        if unit_id in self.removed():
+            return False
         unit = self.full_unit(unit_id)
         return unit is not None and unit.get("kind") != "new project"
 
     def _dispatch_learning(self) -> None:
         """Start each waiting project as soon as there is room for it."""
         running: Dict[str, threading.Thread] = {}
+        places: Dict[str, Any] = {}
         while True:
             with self._learn_lock:
                 for unit_id, thread in list(running.items()):
                     if not thread.is_alive():
                         running.pop(unit_id)
+                        if self.pool is not None:
+                            self.pool.give_back(places.pop(unit_id, None))
                 while self._learn_queue:
-                    allowed = (self.room.allowed(len(running))[0]
-                               if self.room is not None else 1)
-                    if len(running) >= max(1, allowed):
-                        break
+                    if self.pool is not None:
+                        # A place in the one pool: as many projects at once
+                        # as there is room for beside everything else.
+                        first = self._learn_queue[0]
+                        place = self.pool.try_take(
+                            "auto learning" if first in self._learning_auto else "learning",
+                            first, key=f"learning-queue-{id(self)}")
+                        if place is None:
+                            break
+                        places[self._learn_queue[0]] = place
+                    else:
+                        allowed = (self.room.allowed(len(running))[0]
+                                   if self.room is not None else 1)
+                        if len(running) >= max(1, allowed):
+                            break
                     unit_id = self._learn_queue.pop(0)
                     thread = threading.Thread(target=self._learn_one, args=(unit_id,),
                                               name=f"learning-{unit_id}", daemon=True)
                     running[unit_id] = thread
                     thread.start()
+                if not self._learn_queue and self.pool is not None:
+                    # Nothing left waiting: out of the pool's line.
+                    self.pool.stop_waiting(f"learning-queue-{id(self)}")
                 if not running and not self._learn_queue:
                     break
             time.sleep(0.5)
@@ -1228,6 +1302,9 @@ class Experience:
                         "active": bool(unit.get("active")),
                         # Its learning: learned or not, and what it has cost.
                         "learning": self.learning_of(unit["id"]),
+                        # Updated by itself at the times chosen, or not.
+                        "auto": (self.auto_clock is None
+                                 or self.auto_clock.opted_in(unit["id"])),
                         "workspace": held.get("path", ""),
                         "workspace_origin": held.get("origin", ""),
                         # Every folder of a project the user made, and what
@@ -1279,7 +1356,11 @@ class Experience:
             return {"error": "no such unit"}
         from .stages import unit_task_ids
         ids = unit_task_ids(unit)
-        stages = self._with_natures(self.store.stages(ids))
+        # THE STAGES ALONE: what each showed of the user and what it is found
+        # by are its card's, asked for when one is opened (`stage_detail`) -
+        # every nature record is a file, and while a project is learned they
+        # change, so each picture read them all again.
+        stages = self.store.stages(ids)
         return {"unit": {k: v for k, v in unit.items() if k != "tasks"},
                 "tasks": [{"id": task.id, "title": task_name(task)}
                           for task in unit["tasks"]],
@@ -1295,7 +1376,7 @@ class Experience:
         for unit in self._shown_units(writer, live, projects):
             from .stages import unit_task_ids
             ids = unit_task_ids(unit)
-            stages = self._with_natures(self.store.stages(ids))
+            stages = self.store.stages(ids)
             if not stages:
                 continue
             out.append({"unit": {k: v for k, v in unit.items() if k != "tasks"},
@@ -1326,6 +1407,16 @@ class Experience:
 
         walk(_root, 0)
         return out
+
+    def stage_detail(self, stage_id: str) -> Optional[Dict[str, Any]]:
+        """One stage's card, when it is opened: the natures it showed - each
+        with its kind and pattern - and what it is found by."""
+        stage = self.store.stage(stage_id)
+        if stage is None:
+            return None
+        said = self._with_natures([dict(stage)])[0]
+        return {"id": stage_id, "natures": said.get("natures", []),
+                "found_by": said.get("found_by", {"words": [], "places": []})}
 
     def _with_natures(self, stages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Each stage with the natures it showed - each its title, kind and

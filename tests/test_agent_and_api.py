@@ -218,7 +218,8 @@ class ApiTests(unittest.TestCase):
     def test_static_ui_is_served(self) -> None:
         with urllib.request.urlopen(f"{self.base}/", timeout=10) as response:
             body = response.read().decode("utf-8")
-        self.assertIn("Personalized", body)
+        from personalized_agent.version import APP_NAME
+        self.assertIn(f"<title>{APP_NAME}</title>", body)
 
     def test_settings_roundtrip(self) -> None:
         payload = self.get("/api/settings")

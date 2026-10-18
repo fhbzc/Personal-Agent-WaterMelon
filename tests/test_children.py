@@ -132,3 +132,64 @@ class SettingsSavedFromManyThreadsTests(unittest.TestCase):
                 self.assertEqual(config.get(f"test_thread_{n}"), 14)
         finally:
             agent.cleanup()
+
+
+@unittest.skipUnless(sys.platform == "win32", "console windows are Windows'")
+class NoWindowOfItsOwnTests(unittest.TestCase):
+    """A console program started from a process without a console was given
+    a window for every call - git, reading commits, flashed one on the
+    taskbar after another. Each child starts without one, unless asked."""
+
+    def _flags(self, **kwargs):
+        seen = {}
+        real = subprocess.Popen
+
+        class Seen(real):
+            def __init__(self, *args, **given):
+                seen.update(given)
+                super().__init__(*args, **given)
+        subprocess.Popen = Seen
+        try:
+            children.run_short([sys.executable, "-c", "pass"], capture_output=True,
+                               timeout=60, **kwargs)
+        finally:
+            subprocess.Popen = real
+        return int(seen.get("creationflags") or 0)
+
+    def test_no_window_by_default(self) -> None:
+        self.assertTrue(self._flags() & subprocess.CREATE_NO_WINDOW)
+
+    def test_a_caller_asking_for_a_console_keeps_it(self) -> None:
+        flags = self._flags(creationflags=subprocess.CREATE_NEW_CONSOLE)
+        self.assertFalse(flags & subprocess.CREATE_NO_WINDOW)
+
+
+class TheInputIsThereBeforeItIsReadTests(unittest.TestCase):
+    """A child's input is in a file before it starts - not written by a
+    thread of this process once it has: Claude Code waits three seconds for
+    its input, and a busy process missed them."""
+
+    READ_LATE = ("import sys, time; time.sleep(3.5); data = sys.stdin.buffer.read(); "
+                 "print(len(data))")
+
+    def _left(self):
+        import glob
+        import tempfile
+        return set(glob.glob(os.path.join(tempfile.gettempdir(), "pa-input-*")))
+
+    def test_read_late_and_whole_while_followed(self) -> None:
+        before = self._left()
+        said = children.run([sys.executable, "-c", self.READ_LATE], input="x" * 300_000,
+                            capture_output=True, text=True, encoding="utf-8",
+                            on_line=lambda line: None)
+        self.assertEqual(said.stdout.strip(), "300000")
+        self.assertEqual(self._left() - before, set(), "the input's file is removed")
+
+    def test_and_when_simply_run(self) -> None:
+        said = children.run([sys.executable, "-c", "import sys; print(sys.stdin.read()[::-1])"],
+                            input="abc", capture_output=True, text=True)
+        self.assertEqual(said.stdout.strip(), "cba")
+        said = children.run([sys.executable, "-c",
+                             "import sys; print(len(sys.stdin.buffer.read()))"],
+                            input=b"\x00\x01\x02", capture_output=True)
+        self.assertEqual(said.stdout.strip(), b"3")

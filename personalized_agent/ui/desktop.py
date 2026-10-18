@@ -51,6 +51,27 @@ STATE_COLORS = {
 }
 
 
+def _on_a_screen(window: Any, x: int, y: int) -> bool:
+    """Whether a point is on a screen that is there now - any of them."""
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+            from ctypes import wintypes
+            point = wintypes.POINT(int(x), int(y))
+            # MONITOR_DEFAULTTONULL: no monitor holds the point.
+            return bool(ctypes.windll.user32.MonitorFromPoint(point, 0))
+        except Exception:        # pragma: no cover - asked of Windows
+            pass
+    try:
+        left, top = window.winfo_vrootx(), window.winfo_vrooty()
+        width, height = window.winfo_vrootwidth(), window.winfo_vrootheight()
+        if width <= 1 or height <= 1:
+            width, height = window.winfo_screenwidth(), window.winfo_screenheight()
+        return left <= x < left + width and top <= y < top + height
+    except Exception:            # pragma: no cover - no screen to ask
+        return True
+
+
 def _enable_macos_pixel_transparency(window: Any, _size: int) -> bool:
     """Make a Tk toplevel transparent on macOS without hiding its contents.
 
@@ -176,9 +197,20 @@ def _watch_the_window_at_start(ui: Any) -> None:
 class DesktopAgent:
     def __init__(self, application: Any) -> None:
         self.app = application
+        # The agent speaks in the bubble beside it: the page, told so through
+        # /api/status, does not say the same thing a second time.
+        application.speaks_in_bubble = True
+        # An update is installed once this program has quit: its own Quit,
+        # on the window's thread.
+        updater = getattr(application, "updater", None)
+        if updater is not None:
+            updater.quit = lambda: self.on_main_thread(self.quit)
         self.config = application.config
         self.queue: "queue.Queue[Any]" = queue.Queue()
         self.state = "idle"
+        #: Whether the avatar is hidden (Hide avatar): kept here, where the
+        #: window's own thread changes it, for the tray's menu to read.
+        self.character_hidden = False
         self._frames: Dict[str, List[Any]] = {}
         self._frame_index = 0
         #: An avatar whose face is drawn live (agent/character/watermelon.py),
@@ -250,6 +282,7 @@ class DesktopAgent:
         self.app.bus.subscribe("character.changed", self._on_character_changed)
         self.root.after(120, self._drain_queue)
         self.root.after(400, self._animate)
+        self.root.after(self.ON_SCREEN_EVERY_MS, self._watch_the_screens)
         self._start_selection_watch()
         # The folder and application dialogs open on this thread, the one
         # that owns the windows (common/chooser.py).
@@ -531,13 +564,9 @@ class DesktopAgent:
     #: click), hiding the avatar, and quitting.
     def _on_right_click(self, event: tk.Event) -> None:
         menu = tk.Menu(self.root, tearoff=0)
-        # DELEGATE WORK: the words, then the avatar's face - lined up with the
-        # rest. Opens the box empty: say what to hand over there.
-        face = self._delegate_face()
+        # Not Delegate work (the user's choice): work is handed over from the
+        # page, Explorer's menu or the selection's button, not from here.
         say = self._words
-        menu.add_command(label=say("Delegate work"),
-                         command=lambda: self.open_box("/?solo=delegate#delegate=new"),
-                         **({"image": face, "compound": "right"} if face else {}))
         menu.add_command(label=say("Chat"), command=self.open_chat)
         menu.add_command(label=say("Overview"), command=lambda: self.open_url("/#overview"))
         # Hidden, it comes back from the tray's menu: offered only with one.
@@ -573,8 +602,35 @@ class DesktopAgent:
             return
         self._selection = selection.SelectionWatch(
             on_selection=lambda said: self.queue.put(("selection", said)),
-            on_press=lambda x, y: self.queue.put(("selection_press", (x, y))))
+            on_press=lambda x, y: self.queue.put(("selection_press", (x, y))),
+            # Settings > Shortcuts: the button can be turned off.
+            wanted=lambda: bool(self.app.config.get("delegate_selection_button", True)))
         self._selection.start()
+        self._start_shortcuts()
+
+    def _start_shortcuts(self) -> None:
+        """The keyboard shortcuts (Settings > Shortcuts) - held while the
+        agent runs; the page changes them through `app.shortcuts`."""
+        from ..platform_layer.hotkeys import Shortcuts
+        try:
+            self.app.shortcuts = Shortcuts(self.app.config,
+                                           {"delegate_work": self._delegate_by_shortcut})
+            self.app.shortcuts.start()
+        except Exception:
+            log.exception("the keyboard shortcuts could not be held")
+
+    def _delegate_by_shortcut(self) -> None:
+        """The shortcut pressed: the quick Delegate work box, empty, on the
+        screen at once - a title and a description to write (ui/quick_delegate.py).
+        Nothing is read from the program in front."""
+        self.queue.put(("call", self._show_quick_delegate))
+
+    def _show_quick_delegate(self) -> None:
+        if getattr(self, "_quick", None) is None:
+            from .quick_delegate import QuickDelegate
+            self._quick = QuickDelegate(self.root, self.app, self.open_box, self._words,
+                                        lambda fn: self.queue.put(("call", fn)))
+        self._quick.show()
 
     def _show_delegate_button(self, said: Dict[str, Any]) -> None:
         """A small "Delegate work" beside the selection, for a few seconds -
@@ -648,15 +704,58 @@ class DesktopAgent:
 
     def toggle_character(self) -> None:
         """Show or hide the character on screen; the agent keeps running,
-        and its icon beside the clock stays."""
+        and its icon beside the clock stays.
+
+        WHICH IT IS, KEPT HERE, not read back from the window: the tray's
+        menu asked Tk from the tray's own thread, which Tk does not answer
+        reliably, and Windows builds the menu's words once - so the menu
+        said "Hide" while the avatar was hidden and "Show" while it was
+        there. The menu is built again after every change."""
         try:
-            if self.agent_window.state() == "withdrawn":
+            if self.character_hidden:
                 self.agent_window.deiconify()
                 self.agent_window.attributes("-topmost", True)
+                self.character_hidden = False
+                # Shown again where it can be seen: a screen it was on may
+                # have gone.
+                self._keep_on_screen()
+                self.agent_window.lift()
             else:
                 self.agent_window.withdraw()
+                self.character_hidden = True
         except Exception:        # pragma: no cover - the window has gone
             log.debug("could not show or hide the character", exc_info=True)
+        tray = getattr(self, "tray", None)
+        if tray is not None:
+            tray.refresh_menu()
+
+    #: How often the avatar is looked at to see that it is on a screen.
+    ON_SCREEN_EVERY_MS = 3000
+
+    def _keep_on_screen(self) -> None:
+        """Back where it can be seen when the screen it was on has gone.
+
+        Moved from an external display to the laptop's own, the avatar
+        stayed where the external one had been: shown, as far as the
+        window knew, and nowhere anyone could see - so Hide and Show only
+        hid and showed it there. It goes back to the bottom right of the
+        main screen."""
+        if self.character_hidden:
+            return
+        try:
+            self.agent_window.update_idletasks()
+            x, y = self.agent_window.winfo_x(), self.agent_window.winfo_y()
+            if not _on_a_screen(self.agent_window, x + self.size // 2, y + self.size // 2):
+                log.info("the avatar was off every screen (at %s,%s): put back", x, y)
+                self._place_bottom_right()
+                self.agent_window.deiconify()
+                self.agent_window.lift()
+        except Exception:        # pragma: no cover - the window has gone
+            log.debug("could not keep the avatar on a screen", exc_info=True)
+
+    def _watch_the_screens(self) -> None:
+        self._keep_on_screen()
+        self.root.after(self.ON_SCREEN_EVERY_MS, self._watch_the_screens)
 
     def _open_workspace(self) -> None:
         webbrowser.open(self.app.policy.workspace_root.as_uri())

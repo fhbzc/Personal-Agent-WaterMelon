@@ -31,6 +31,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from ..version import APP_NAME
+
 log = logging.getLogger(__name__)
 
 LOCK_FILENAME = "agent.lock"
@@ -112,7 +114,7 @@ class SingleInstance:
         nothing about it - so do not claim a root we cannot see.
         """
         holder = self.holder()
-        parts = ["Personalized Agent is already running"]
+        parts = [f"{APP_NAME} is already running"]
         pid = holder.get("pid")
         if pid:
             started = holder.get("started_at")
