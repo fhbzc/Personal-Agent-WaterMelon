@@ -37,6 +37,7 @@ dependencies = [
     "pillow>=10.0",
     "keyring>=25.0",
     "tzdata>=2024.1",
+    "certifi>=2024.2",
 ]
 
 [project.optional-dependencies]

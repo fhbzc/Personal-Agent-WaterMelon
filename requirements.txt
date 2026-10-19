@@ -11,6 +11,7 @@ pillow>=10.0            # character package rendering (falls back to vector shap
 pystray>=0.19           # the agent's icon beside the clock (none without it)
 keyring>=25.0           # OS keychain credential storage (falls back to encrypted file)
 tzdata>=2024.1          # named time zones where the system has no IANA database (Windows)
+certifi>=2024.2         # the certificates a packaged build trusts for HTTPS on macOS and Linux
 comtypes>=1.4; sys_platform == 'win32'   # UI Automation: reading the window in front (19.2)
 pypdf>=4.0              # the text of a PDF the user opens (19); Word and PowerPoint need nothing
 pypdfium2>=4.0          # a scanned PDF's pages drawn as pictures, so their words can be read
