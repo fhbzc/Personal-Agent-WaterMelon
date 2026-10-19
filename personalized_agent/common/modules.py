@@ -19,11 +19,11 @@ CORE = {"key": "core", "name": "Activity and states",
 
 MODULES: List[Dict[str, str]] = [
     {"key": "tasks", "setting": "module_tasks_enabled", "name": "Task organisation",
-     "what": "The state heartbeat groups what you do into tasks and projects and writes "
-             "their summaries and next steps; the agent heartbeat ticks the next steps it "
-             "sees done.",
-     "off": "No new tasks, summaries or next steps, and none ticked. Customized "
-            "Recommendation and Work lose the background of what you are working on."},
+     "what": "The state heartbeat writes down what you did in each stretch as tasks, with "
+             "how long you worked on each, and groups them into projects that it names and "
+             "follows over time.",
+     "off": "No new tasks or projects. Newspaper and Work lose the background of what you "
+            "are working on."},
     {"key": "calendar", "setting": "module_calendar_enabled", "name": "Calendar management",
      "what": "The agent heartbeat's notification step - reminders added, filled in and "
              "closed, and what waits for a time; invitations and agreed times acted on at "
@@ -48,10 +48,10 @@ MODULES: List[Dict[str, str]] = [
     {"key": "experience", "setting": "module_experience_enabled", "name": "Work learning",
      "what": "Beside each state round, your work natures grouped into patterns and "
              "principles; how sure each work nature is, learned from what you do with it. "
-             "(A task learned into stages is yours to start, in Work - not a function "
+             "(A project learned into stages is yours to start, in Work - not a function "
              "here.)",
      "off": "What was learned is still used; the natures are no longer grouped by "
-            "themselves. Learning a task into stages in Work still works."},
+            "themselves. Learning a project into stages in Work still works."},
 ]
 
 #: WHAT THE USER STARTS, counted apart from the functions and from one

@@ -2573,6 +2573,12 @@ main:has(> #xdebug.active) { max-width: none; }
 /* How packages are asked for, and a request waiting for the user's answer. */
 .xp-packages-mode { margin: 8px 0; }
 .xp-packages-mode label { margin-right: 12px; }
+/* The Work form's choices on one line each, with their words: the page's
+   labels are columns and its inputs full width, which put a radio button
+   and the sound's checkbox a page away from what they say. */
+.xp-limits label, .xp-packages-mode label, label.xp-sound, label.xp-auto-one {
+  display: inline-flex; flex-direction: row; align-items: center; gap: 4px; }
+.xp-packages-mode input, label.xp-sound input, label.xp-auto-one input { width: auto; }
 .xp-package-ask { border: 1px solid var(--warn); border-left-width: 4px;
   border-radius: 6px; padding: 6px 10px; margin: 8px 0; }
 .xp-package-ask p { margin: 4px 0; }

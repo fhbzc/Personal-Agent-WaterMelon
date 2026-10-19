@@ -122,13 +122,15 @@ judge your own work. You see the run live, can pause or stop it, can go back
 to any saved version, and get a `README.md` with the result saying what was
 made and how to check it.
 
-**Experience.** Ask it to *learn* a project and it writes down how the work
-was broken into pieces and how each piece was judged. That is what the
-reviewer uses when it works on that project for you.
+**Work.** Your projects, each with a button to *learn* it: the agent writes
+down how the work was broken into pieces and how each piece was judged, and
+the reviewer uses that when it works on that project for you. Projects can
+be learned again by themselves at the times you choose, and one can be
+handed to the agents from here.
 
 <p align="center">
-  <img src="docs/images/experience.png" width="100%" alt="The Experience tab: a project learned into stages, one review stage opened"><br>
-  <sub>A project learned into stages: each deliverable's attempts, reviews and fixes, one review opened.</sub>
+  <img src="docs/images/work.png" width="100%" alt="The Work tab: projects with their learning and earlier names, one opened with what the agents may change"><br>
+  <sub>The Work tab: each project, how far it is learned and what that cost, and one opened to let the agents work on it.</sub>
 </p>
 
 **Connections.** The people in your work and what they are doing, from what
@@ -287,11 +289,11 @@ Beyond the switches:
 **Settings → Functions** lists what runs by itself, each with its own switch
 and **what it cost over the last 72 hours**:
 
-- **Task organisation**: grouping your notes into tasks and projects.
+- **Task organisation**: writing down what you did as tasks and grouping them into projects.
 - **Calendar management**: notifications and reminders.
 - **Connections**: the people in your work.
 - **Newspaper**: the daily reading.
-- **Experience learning**: learning projects you choose.
+- **Work learning**: what the projects you learn show about how you work.
 
 Turn one off and it stops, along with its model calls. Only the core
 (noting what you are doing) is always on, because everything else is built
@@ -506,7 +508,7 @@ read the exact code. You can also read the build's log under the repository's
    that opens, say what you want and click **Create**; it collects the
    context and drafts a plan. Check the plan, change what you like, and click
    **Start**. Nothing runs before that. Without a folder, it works in
-   `workspace/agent_work/<name of the work>/`. Follow it in the Experience
+   `workspace/agent_work/<name of the work>/`. Follow it in the Work
    tab.
 6. **Tell it when it gets things wrong.** *Bad notification*, *Not
    interested*, deleting a person or an event: each is kept as a lesson, and
