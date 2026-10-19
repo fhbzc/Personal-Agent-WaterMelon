@@ -223,6 +223,18 @@ class ThePagesTests(unittest.TestCase):
             "STATE [2026-10-18 08:50-09:00 UTC, 10 min]: They draft the grant aims.",
             "STATE [2026-10-18 07:00-07:30 UTC, 30 min]: They edit the budget."])
 
+    def test_a_state_of_leisure_goes_only_under_a_project_of_leisure(self) -> None:
+        work = dict(self._subject("project:grant", "work", [1.0, 0.0, 0.0]),
+                    detail=["PROJECT: The coastal-erosion grant"], leisure=False)
+        unsorted = {"key": "recent:states", "kind": "work", "title": "What you did lately",
+                    "text": "lately", "topic_id": "", "kinds": ["leisure"],
+                    "detail": ["STATE [2026-10-18 21:00-21:40 UTC, 40 min]: They watch a "
+                               "documentary on coastal erosion."],
+                    "vector": [1.0, 0.0, 0.0], "anchors": [[1.0, 0.0, 0.0]]}
+        pages = recommend.plan_pages([work, unsorted], None)
+        self.assertEqual(pages[0]["detail"], ["PROJECT: The coastal-erosion grant"],
+                         "close in meaning, but leisure is not put on a page of work")
+
     def test_a_topic_of_a_tasks_work_goes_with_it(self) -> None:
         pages = recommend.plan_pages([self._subject("w", "work", [1.0, 0.0, 0.0]),
                                       self._subject("i", "interest", [0.9, 0.1, 0.0])], None)

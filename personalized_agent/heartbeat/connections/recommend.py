@@ -374,6 +374,7 @@ def _from_recent(db: Any, back: str) -> Optional[List[Dict[str, Any]]]:
                 "leisure": True, "title": title, "text": "", "tasks": [], "project_id": pid}
         line = _event_line(row, minutes)
         mine["detail"].append(line)
+        mine.setdefault("kinds", []).append(kind)
         mine["measured"].append(f"{str(row.get('title') or '')[:160]}: "
                                 f"{str(row.get('detail') or '')[:300]}")
         mine["weight"] += minutes / 60
@@ -395,6 +396,7 @@ def _from_recent(db: Any, back: str) -> Optional[List[Dict[str, Any]]]:
         events = [line for line in small["detail"] if line.startswith("STATE [")]
         loose["detail"] += events
         loose["measured"] += small["measured"][-len(events):] if events else []
+        loose.setdefault("kinds", []).extend(small.get("kinds") or [])
         loose["weight"] += small["weight"]
         loose["last_at"] = max(loose["last_at"], small["last_at"])
         loose["leisure"] = bool(loose["leisure"]) and bool(small["leisure"])
@@ -586,7 +588,9 @@ def _mean(vectors: Sequence[Sequence[float]]) -> List[float]:
 def _unsorted_under_projects(subjects_: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """The states no run has read yet are no page of their own: each goes
     under the project it is nearest in meaning, as detail - and is left out
-    when none is near (FOLD_AT). Only with no project at all are they a
+    when none is near (FOLD_AT). A state of leisure goes only under a
+    project of leisure, one of work only under one of work: a page is
+    searched as one or the other. Only with no project at all are they a
     page, so that something is still recommended."""
     unsorted = [one for one in subjects_ if one.get("key") == "recent:states"]
     projects = [one for one in subjects_ if str(one.get("key") or "").startswith("project:")
@@ -596,8 +600,13 @@ def _unsorted_under_projects(subjects_: List[Dict[str, Any]]) -> List[Dict[str, 
     for one in unsorted:
         # Its anchors are its states' vectors, in the order of its lines,
         # then its own (plan_pages).
-        for line, anchor in zip(one.get("detail") or [], one.get("anchors") or []):
-            near = max(projects, key=lambda project: cosine(anchor, project["vector"]))
+        kinds = list(one.get("kinds") or [])
+        for at, (line, anchor) in enumerate(zip(one.get("detail") or [], one.get("anchors") or [])):
+            pleasure = (kinds[at] if at < len(kinds) else "work") == "leisure"
+            alike = [project for project in projects if bool(project.get("leisure")) == pleasure]
+            if not alike:
+                continue
+            near = max(alike, key=lambda project: cosine(anchor, project["vector"]))
             if cosine(anchor, near["vector"]) >= FOLD_AT:
                 near["detail"] = near["detail"] + [line]
                 near["anchors"] = near["anchors"] + [anchor]
