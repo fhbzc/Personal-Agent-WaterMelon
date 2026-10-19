@@ -68,8 +68,8 @@ long you worked on each, and a **To do** list you keep yourself, each with a
 **Delegate work** button.
 
 <p align="center">
-  <img src="docs/images/overview.png" width="100%" alt="The Overview: projects over the last week, and To do"><br>
-  <sub>The Overview: your projects over the last week, and your To do list.</sub>
+  <img src="docs/images/overview.png" width="100%" alt="The Overview: work and leisure projects over the last week, ordered by time worked, one opened, and To do"><br>
+  <sub>The Overview: your projects over the last week, longest worked on first and leisure apart, one opened to read it, and your To do list.</sub>
 </p>
 
 **Calendar and notifications that learn from you.** It adds reminders it
