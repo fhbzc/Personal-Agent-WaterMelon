@@ -175,7 +175,14 @@ class LeftFromBeforeTests(unittest.TestCase):
     def test_found_and_ended(self) -> None:
         import psutil
         pid = self._orphan()
+        # A process only just started may not have its command line readable
+        # yet (seen on a clean Windows machine): looked for until it is. The
+        # application looks at start-up, for what an earlier run left.
+        deadline = time.time() + 10
         found = [one.pid for one in children.leftovers([self.mark])]
+        while found != [pid] and time.time() < deadline:
+            time.sleep(0.2)
+            found = [one.pid for one in children.leftovers([self.mark])]
         self.assertEqual(found, [pid])
         self.assertEqual(children.end_leftovers([self.mark]), 1)
 
