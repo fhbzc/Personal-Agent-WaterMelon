@@ -58,18 +58,18 @@ and goes only to the model you choose.
 **It learns what you are doing, not what you type.** It notices which
 applications, documents and web pages you work with, only the sources you
 leave switched on. Every 15 minutes it writes down, in a sentence or two,
-what you were doing; every 12 hours it groups those notes into the tasks and
-projects they belong to. What it learns is stored only on your computer, as
+what you were doing; every 12 hours it writes those notes up as the tasks
+you did, and groups the week's tasks into the projects they serve. What it learns is stored only on your computer, as
 plain files you can open, and sent only to the model you choose
 ([Your privacy](#your-privacy)).
 
-**An Overview of your work.** The task you are on now, your tasks and
-projects as bars over time, and a **To do** list you keep yourself, each with
-a **Delegate work** button.
+**An Overview of your work.** Your projects as bars over time, with how
+long you worked on each, and a **To do** list you keep yourself, each with a
+**Delegate work** button.
 
 <p align="center">
-  <img src="docs/images/overview.png" width="100%" alt="The Overview: tasks and projects over the last week, one project opened with its next steps, and To do"><br>
-  <sub>The Overview: your tasks and projects over the last week, one project opened with its next steps, and your To do list.</sub>
+  <img src="docs/images/overview.png" width="100%" alt="The Overview: projects over the last week, and To do"><br>
+  <sub>The Overview: your projects over the last week, and your To do list.</sub>
 </p>
 
 **Calendar and notifications that learn from you.** It adds reminders it
@@ -141,7 +141,7 @@ any of your accounts.
 </p>
 
 **Newspaper.** Each day, things worth reading for your
-current tasks and interests, chosen to tell you something you do not already
+current projects and interests, chosen to tell you something you do not already
 know. *More like this* and *Not interested* tune it.
 
 <p align="center">
@@ -588,8 +588,87 @@ has it.
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
 
-### [v0.2.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) (2026-10-17, a [pre-release](#pre-releases))
+### [v0.2.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) (2026-10-18, a [pre-release](#pre-releases))
 
+- **Tasks and projects.** Each time the agent looks at what you have done
+  (every 12 hours, or when you press Update tasks now), it writes down the
+  separate things you did in that stretch as tasks, with how long you
+  actually worked on each. Tasks that serve the same thing, such as the same
+  paper, the same product or the same application, are grouped into
+  projects. The Overview shows your projects over time, ordered by how long
+  you worked on them. Filter them by the last days and by time worked (at
+  least 15 minutes, an hour, six hours or a day). Click one to see what it is,
+  what is being worked on, since when, and where. Leisure projects appear
+  under your work, apart from it, when you show full activity. The first run
+  writes the last week at once. The tasks of the earlier grouping are kept
+  as they were.
+- **Tasks no longer have next steps**, and the agent no longer ticks them.
+  Your own To do list on the Overview stays as it is.
+- **Newspaper: only stories close to what you are doing.** The stories a step
+  to the side are gone. Stories are still ranked by what is new to you, how
+  close they are, and how fresh. The pages are made from your latest 24
+  hours of activity, counted back state by state, each with its time. Every
+  project you worked on for an hour or more in them gets a page of its own,
+  and the pages are searched four at a time, so an issue is ready sooner.
+- **macOS:** the app reaches the web over a secure connection again, which
+  update checks and downloads need. Settings → Privacy looks again only when
+  you press Check again, and shows when it last looked. If Screen Recording
+  still says not allowed, a button quits the app and opens it again.
+- **Every piece of work is checked twice before it is called done.** A
+  quality check and a privacy check read the finished work, documents and
+  slides included. The privacy check looks for anything private that is
+  shown, sent away, or left on your computer. Each check may send the work
+  back up to three times; if it still fails, the run ends saying which check
+  it failed.
+- **Work is not "done" while something you asked for is unchecked.** A core
+  promise the tester could not try for real goes back to be fixed, and the
+  run never reports success without it.
+- **Search your files.** The agents can search the folders you work in by
+  their words: every Work project's folders, the folders you add in
+  Settings → Search your files, and, with one click, your Claude Code and
+  Codex conversation records. It is built at the lowest priority your system
+  has and waits while the computer is on battery. Caches, keys and files
+  only in the cloud are never read.
+- **A simpler Work tab.** It no longer shows the graph of what was learned
+  from a project. The panel on the right shows the steps of the agent's own
+  work.
+- **Codex runs with none of your own Codex setup** (your plugins, rules and
+  servers are left out), uses the agent's tools for reading and writing, and
+  is checked to offer no other tool before it is trusted with work that must
+  stay sealed.
+- **What the agent learns of your work is written in English**, whatever
+  language you read in, so it is searched in one language. Your own words
+  are kept as you wrote them. The same goes for a run's own notes on the
+  Work tab (its cards, steps and findings). What it delivers to you is in
+  your language, unless your instruction asks for another.
+- **The web, checked whichever search is used.** A search may not carry
+  anything that looks like a key or a password, and a page is opened only
+  when nothing of yours can travel in its address. Allowed: addresses
+  found in a search, on a page read, or in your own files; any page of a
+  site you named; documentation and reference sites; and short addresses
+  with none of your own words in them. Claude Code's own search is checked
+  before and after every search and page. Codex's own search reads only
+  OpenAI's saved copy of the web. The Connections round is held to the same
+  checks.
+- **Lesson cards.** Before the reviewer writes what each part of your work
+  must meet, it first asks itself what it needs to know about you: your
+  preferences, your naming habits, the tools you use, the formats you must
+  follow. It answers from your own files and past work, with no web at all.
+  Your own work keeps each answer, with what it rests on, and later work is
+  shown it. A question it can only answer from the web is answered for that
+  work and never kept. You can see the cards in the Lessons debugger.
+- **Full reviews when they are due, and versions only at checkpoints.** The
+  reviewer decides when to check everything since the last checkpoint: when
+  a part is finished, when a core promise first holds, after a large change.
+  A version is kept only when such a review passes, when the contract is
+  approved or changed by your words, and when the work is done. If the app
+  closes in the middle of a run, the run goes back to the last checkpoint. A
+  pause still goes on from where it stopped.
+- **What you did not say, shown as added.** The reviewer lists what you
+  would expect but did not ask for, and the builder can propose what the
+  work shows you need. Each one is marked "Added - not your words" on the
+  Work tab, with who added it and why, and you can take it out. None of them
+  ever becomes a core promise.
 - **A new name: Personal Agent WaterMelon**, on screen and in the files you
   download. An existing installation is updated in place; your data and
   settings stay where they are. On a Mac, if you drag the new app in by hand,
@@ -609,11 +688,6 @@ everything it changed is written down.
   an entry without a window.
 - **Chat:** each conversation has a ⋯ menu to pin, rename or delete it, and a
   follow-up note folds from its whole top row.
-- **Tasks are grouped by where the work really is** - folders, files and the
-  pages you read - not by window titles. Meals, rest and errands are kept out
-  of tasks; what you do for fun becomes tasks of its own, never mixed with
-  work, so recommendations can follow it too. The first grouping comes after
-  20 states instead of 100.
 - **Newspaper** (formerly Customized Recommendation): each story opens with how it ties to what
   you are doing. Work and study topics count after a short time; pastimes
   only once they last, and a page about a pastime recommends more of what you
@@ -630,9 +704,8 @@ everything it changed is written down.
   Privacy rules kept out, by rule.
 - **Work runs can watch videos**: frames and what is said, read on your
   computer and kept in the run's own folder.
-- The Overview switches between **work activity** and **full activity**
-  (leisure too), and **Update tasks now** groups your tasks at once. The
-  last model on the list can now be removed.
+- **Update tasks now** writes your tasks at once. The last model on the
+  list can now be removed.
 - **Ctrl+Alt+D (Windows)** pops up a Delegate work box at once, from any
   program: a title, a description, the folders and files - then Create shows
   the plan to approve. Change the keys, or turn the button

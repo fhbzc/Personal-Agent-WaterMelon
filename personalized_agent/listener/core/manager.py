@@ -17,7 +17,7 @@ from ...common.credentials_guard import hide_credentials
 from ...common.own_interface import scrub_sign_in
 from ...common.observability.tracing import NullTracer
 from ..core.privacy import PrivacyFilter
-from ..core.provider import ListenerProvider
+from ..core.provider import ListenerProvider, NotOnThisMachine
 
 log = logging.getLogger(__name__)
 
@@ -188,6 +188,9 @@ class ListenerManager:
             self._states[provider_id].update(
                 {"state": "running", "started_at": time.time(), "last_error": None}
             )
+        except NotOnThisMachine as exc:
+            log.info("listener provider %s not started: %s", provider_id, exc)
+            self._states[provider_id].update({"state": "failed", "last_error": str(exc)[:300]})
         except Exception as exc:  # error isolation
             log.exception("listener provider %s failed to start", provider_id)
             state = self._states.setdefault(provider_id, {})

@@ -186,5 +186,67 @@ class TheSchedulerTests(_Base):
         self.work.stop(run_id, now=True)
 
 
+class ADebuggerWayInItsOwnProcessTests(_Base):
+    """A WAY OF THE EXPERIENCE DEBUGGER goes in a process of its own too: the
+    agent holds the application's code sealed for it while that process
+    lives, and its child finds the way by the way's own id."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        from personalized_agent.agent.work.debug_projects import DebugProjects
+        self.projects = DebugProjects(self.work)
+        bench = Path(self.agent.dir) / "bench"
+        bench.mkdir()
+        self.project = self.projects.create("Tea notes", "plain", "", str(bench))["project"]
+
+    def tearDown(self) -> None:
+        from personalized_agent.runtime.isolation import CodeSeal
+        super().tearDown()
+        CodeSeal.wait(self.agent.code_root, 120)
+        CodeSeal.reset()
+
+    def test_started_shown_held_sealed_and_stopped(self) -> None:
+        from unittest import mock
+        from personalized_agent.common import paths
+        from personalized_agent.runtime.isolation import CodeSeal
+        code = self.agent.code_root
+        self.work.sandbox_enabled = True
+        with mock.patch.object(paths, "code_root_for_children", lambda: code):
+            said = self.projects.start(self.project["id"], "single",
+                                       instruction="Write a short note about tea")
+        self.assertFalse(said.get("error"), said)
+        run_id = said["run"]
+        child = self.work._running[run_id]
+        self.assertNotEqual(child.pid, os.getpid(), "not in the agent's process")
+        self.assertTrue(child.debug)
+        self.assertTrue(self.work.going(debug=True))
+        self.assertFalse(self.work.going(debug=False))
+        # The code sealed for it from before it started, while it goes.
+        self.assertEqual(CodeSeal.held(code), 1)
+        # Shown live, and listed with the rest - paused or not, as it says.
+        self.assertTrue(_wait(lambda: len(self._live(run_id).get("events") or []) >= 2))
+        listed = {one["id"]: one for one in self.work.runs(said["unit"])}
+        self.assertTrue(listed[run_id]["alive"])
+        self.assertFalse(listed[run_id]["paused"])
+        self.assertEqual(self.work.run(run_id)["unit_id"], said["unit"])
+        # Stopped: its process ends, and the code is let go with it.
+        self.assertTrue(self.work.stop(run_id, now=True))
+        self.assertTrue(_wait(lambda: child.process.poll() is not None, seconds=90))
+        self.assertTrue(_wait(lambda: CodeSeal.held(code) == 0, seconds=10))
+
+    def test_the_child_never_changes_a_seal_held_for_it(self) -> None:
+        from personalized_agent.runtime.isolation import CodeSeal
+        code = self.agent.code_root
+        CodeSeal.held_elsewhere(code)
+        self.assertTrue(CodeSeal.wait(code, timeout=1))
+        self.assertIn(Path(os.path.realpath(code)), [Path(os.path.realpath(one))
+                                                     for one in CodeSeal.sealed_roots()])
+        CodeSeal.hold(code)
+        CodeSeal.release(code)
+        CodeSeal.release(code)
+        self.assertEqual(CodeSeal.held(code), 1, "its count is not the whole of them")
+        self.assertIsNone(CodeSeal._worker, "nothing on disk changed from here")
+
+
 if __name__ == "__main__":
     unittest.main()

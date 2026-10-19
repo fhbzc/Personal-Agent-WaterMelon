@@ -85,7 +85,7 @@ class TurnedOffTests(unittest.TestCase):
 
     def test_a_heartbeat_step_of_a_module_off_is_not_run(self) -> None:
         from personalized_agent.heartbeat.core.heartbeat import _step_on
-        for step in ("step_state", "step_people", "step_notify", "step_todo"):
+        for step in ("step_state", "step_people", "step_notify"):
             self.assertTrue(_step_on(self.app.config, step))
         self._off("calendar")
         self._off("connections")
@@ -93,7 +93,6 @@ class TurnedOffTests(unittest.TestCase):
         self.assertTrue(_step_on(self.app.config, "step_state"), "the core is always on")
         self.assertFalse(_step_on(self.app.config, "step_notify"))
         self.assertFalse(_step_on(self.app.config, "step_people"))
-        self.assertFalse(_step_on(self.app.config, "step_todo"))
         # And calendar management's triggers.
         self.assertFalse(self.app.triggers.enabled())
 

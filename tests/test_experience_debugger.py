@@ -391,7 +391,21 @@ class BuilderAndReviewerTests(_DebuggerBase):
                           "past work supports", "the way the user likes",
                           "check|experience|own judgement"):
                 self.assertNotIn(words, said)
-            self.assertNotIn("search_stages", [s.name for s in request.tools or []])
+            names = [s.name for s in request.tools or []]
+            # No search of the user's own record; the web, as the full way's
+            # - but for what it must know before it writes criteria, asked
+            # with no web, as the full way's is.
+            for local in ("search_stages", "search_records", "open_stage"):
+                self.assertNotIn(local, names)
+            if "web_search" not in names:
+                self.assertIn("BEFORE YOU WRITE THE CRITERIA OF",
+                              json.dumps(request.messages, default=str))
+            # THE SAME WORK AS THE FULL WAY'S, only without the context
+            # (2026-10-18): what was asked comes first, nothing added to it.
+            self.assertIn("WHAT THEY ASKED COMES FIRST: the core promises", request.system)
+            self.assertIn("never add\n    work they did not ask for", request.system)
+        # The web, as the full way's reviewer has it.
+        self.assertTrue(any("web_search" in [s.name for s in r.tools or []] for r in reviewer))
         self.assertTrue(any("NO RECORD OF THE USER'S PAST WORK" in json.dumps(r.messages)
                             for r in reviewer))
         # Nothing written to the user's experience.

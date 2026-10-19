@@ -8053,8 +8053,15 @@
    {
     "type": "p",
     "text": "Removed. The knowledge graph panel was replaced by the library folders, and the checklist display went with it; a fixed checklist has nothing that needs showing beside the graph. The Heartbeat tab of the Debugger shows each step of a run."
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* THE NEXT-STEPS STEP IS GONE. Tasks have no next steps any more (section 37, as amended): the review's fifth step, which ticked the finished ones, is removed with them, and so is everything that showed or edited them. The user's own to-do list (section 129) is a different thing and stays.",
+    "amended": true
    }
-  ]
+  ],
+  "amendment_note": "2026-10-18: the next-steps step is gone with the tasks' next steps (section 37); the user's own to-do list stays.",
+  "amended": true
  },
  {
   "number": "36",
@@ -9419,6 +9426,11 @@
    {
     "type": "p",
     "text": "The two readers stay two readers. The status polled every few seconds is still the light copy without the text (above); the whole one is fetched once, by a panel that is being opened. Before anything has run, that request answers that nothing has, rather than failing."
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* TASKS AND PROJECTS, MADE PER RUN (section 34.5 in the code, `heartbeat/states/task_projects.py`, `project_round.py`). The grouping of states into tasks is replaced, the user's decision, measured first on a labelled week. EACH RUN that finds states written since the last one - twelve hours on the schedule, sooner when run by hand, none when nothing is new - makes ONE model call over them: the states are written down as TASKS, the distinct things the user did in that stretch, each with a title and a summary in English and a copy in the display language, its kind (work, leisure, or routine - kept, and grouped into nothing), the states it holds, how long it was actually worked on (the states' own minutes, each held to its span and the stretch's together to the stretch, scaled down alike when over) and where (its folders and pages). The writer is shown the user's PROJECTS - those with a task in the last seven days - each as one line saying what it IS, one level above any occasion, and may say a task continues one: when it serves the same thing - the same paper, the same product, the same application - whatever the activity, writing, submitting, presenting or discussing it; a shared topic, field or site is not continuing. The examples it is given are made up: one taken from the user's own subjects is an answer, and voided a measurement. PROJECTS are the week's tasks grouped by one partition over two layers - what the tasks mean (cosine of their English text, from 0.6) and what the writers said they continue - in an implementation of our own (the usual libraries are GPL). A project keeps its id while its main body goes on, measured in WORKED MINUTES, not in counts: two substantial parts (a fifth each) of different projects coming together is a merge, one coming apart in two is a split - each a new project, the old ones ended and pointing at where their work went - and a small piece coming or going changes nothing. A project's line is written when it is new, merged or split; its title is its most typical task of its latest run. A project with no task in seven days is dormant and is not continued: new work on the same thing later is new. No hierarchy and no pieces inside a task: the partition is flat. The projects are rows of `state_tasks` marked with this scheme, so Learning, Work, the English copies and the rest read them unchanged; the tasks are rows of `state_run_tasks`. The path of a task's folders was measured as a third layer and left out: one research folder pulled unrelated work together. Measured on the labelled week, written stretch by stretch as the runs would: 24 projects, the paper and its talks in one, the big subjects clean. THE SWITCH is on for everyone, this machine included: the first run marks every task and project of the earlier scheme as history - their content and their states untouched, never regrouped - and writes the last week in twelve-hour stretches, one after another, so the projects are there from the start; any state is enough to begin (the wait for twenty is gone). The Overview draws only the projects, as the tasks were drawn - a row each, with bars where it was worked on - with how long each was worked on, filtered by days and by at least 15 minutes, an hour, six hours or a day, longest worked on first, and its leisure ones shown only with full activity, under the work and headed apart from it; a project opens onto its card - what it is, what is being worked on in it, since when, where - not onto a list of its tasks (a project of one task is that task); the debugger's task panel shows each stretch written, with what was sent and what came back, and each project as a row over time with its tasks along it.",
+    "amended": true
    }
   ],
   "amendment_note": "2026-10-16: the user asked that every task's grouping be checked against their labelled week, and that small subjects may get a little worse; reading only telling places put fewer states in the wrong task.",
@@ -12060,6 +12072,16 @@
     "amended": true
    },
    {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* WHICH TOOLS CODEX HAS IS ASKED OF IT, NOT ASSUMED. Its own tools are turned off by name, and a name not on the list - a tool a later Codex adds - stays on; its multi-agent tools stayed with their feature off. So before a call whose reading must stay sealed (a way or a try of the Work debugger) is given to Codex, the installed program is asked what its code mode can call - once per program file, version and model, since which tools a model is given differs - and only what is measured to read nothing may be there: the MCP resource tools, which reach only the agent's own server, its patch tool, which the read-only sandbox refuses, the clock, and the agent's own tools (`CodexProvider.confined`, `OWN_TOOLS_ALLOWED`). Anything else, or no list that can be read, and that Codex is not used there - the call goes to the next model on the list, or is refused saying which tool it was - and its row in Settings says so. Found confined, it is used like Claude Code.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* A CLIENT'S OWN WEB TOOLS ARE HELD TO THE AGENT'S CHECKS, AND THE CHECKS ARE WIDER. The agent's own web tools check two things (`runtime/web_guard.py`): a search carries words, not data - nothing longer than a sentence, nothing that looks like a key, a token or something encoded - and a page is opened only when nothing read can travel in its address, since asking for a page sends its address to the site and a page read may tell the model to send what it read that way. The model's own search, the default, had bypassed both: Claude Code's WebFetch could open any address the model made up, and so could Codex's live search. NOW CLAUDE CODE'S WebSearch AND WebFetch ARE HOOKED: for each call they are offered with, the call's own server (the one that serves the agent's tools) answers a hook before and after each search and page - this application started as the hook (`--web-hook`), asking the call's guard - refused before it runs when the check fails, its results known after it, so a page its search found can be opened. Neither tool is allowed by the command: each is let through by the hook's answer alone, so a hook that cannot run, or a guard that cannot be asked, lets nothing through - measured with the client itself, as was that a flag taking names, left with none, swallows the next option (the hooks were lost so, and are no longer). A call with no guard to hold them to is offered the agent's own web tools instead. CODEX'S OWN SEARCH RUNS ON OPENAI'S SERVERS, where no hook of Codex's reaches (its own hooks guide says so of hosted tools): it is offered from OpenAI's cached index only (`web_search=\"cached\"`), which opens no live page, beside the agent's own web tools, which read the live web under the checks. THE CHECKS ON A PAGE ARE WIDER, the user's decision: besides an address that exists - found in a search, on a page read, in the user's instruction, files or records - or its site's front page, a page may be opened on a site the user named, on a reference site (documentation, package registries, encyclopaedias, whose owners see nobody's visits), at a known address made shorter, or, on a site already seen, at a short address with no query none of whose words is the user's alone: each either never appeared in what was read of the user's, or appeared on a public page of another site too - a page cannot make the user's words public for its own site by listing them - and no number of four digits or more of the user's at all. A site made to collect what is sent to it (request bins, tunnels) is opened only at an address that exists. The Connections round, whose web tools had no check at all, is held to the same guard, and so are the pictures it fetches from addresses the model names.",
+    "amended": true
+   },
+   {
     "type": "h",
     "text": "Which Client, Chosen Explicitly"
    },
@@ -12126,7 +12148,7 @@
     "text": "These are not defensive extras. Each one was a real failure before it was a rule, and each presented as the agent simply not answering."
    }
   ],
-  "amendment_note": "2026-10-17: Codex now runs with none of the user's own Codex setup, its own tools kept only where the agent's permissions still hold, and the agent's tools served to it over MCP, as to Claude Code.",
+  "amendment_note": "2026-10-17: Codex now runs with none of the user's own Codex setup, its own tools kept only where the agent's permissions still hold, and the agent's tools served to it over MCP, as to Claude Code. 2026-10-18: a client's own web tools are held to the agent's checks on the web (Claude Code by hooks, Codex's search cached only), and the checks on a page are wider.",
   "amended": true
  },
  {
@@ -14947,8 +14969,40 @@
    {
     "type": "p",
     "text": "The subsections say how a start is drafted (119.1), how what bears on the work is found (119.2), where work is handed over from (119.3), and what every run that made something leaves behind it (119.4)."
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* NOT DONE UNTIL EACH CORE PROMISE WAS TRIED AND HELD. A final review that found nothing to fix ended a run done even when the tester had just said a core promise was \"untried\" - seen with a client whose tester could not open the file. Now a core promise that did not hold, or that nobody could try, is a high finding of the final review, named by its promise (`Run._final`), and goes to the same rounds of fixes; still unverified after them, the run ends not finished, saying which promise was never tried for real. One only the user can check stays theirs, on their list.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* TWO FINAL CHECKS, BOTH TO PASS. After the final review, two reviewers who never saw how the work was built look at it, each in a context of its own (`Run._final_checks`): the QUALITY CHECK opens and tries it and says what the result should be, never how to write it; the PRIVACY CHECK looks through everything it made - code, documents, slides, data - for the user's private information or another real person's that the task did not ask for, for anything a program sends away that was not asked for, and for anything it installs or leaves outside its own folder (a startup entry, a service, a browser setting, a page reachable from the network). Each passes only when it could open what it checks and found nothing high or medium; one that could not look has not passed. What they find goes to a round of fixes, at most three for each, and both look again; one still failing after its three ends the run \"failed a final check\", saying which and what it found - and it can be continued. Every run is checked so: the user's own, and each way of the Work debugger, the single model too, which is given what they found and goes on until both pass. Each check is a kind of its own in the token charts - a line of its own in a run's chart of calls, and a task of its own in the application's (`work_quality_check`, `work_privacy_check`).",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* THE WORK TAB SHOWS THE AGENT'S OWN WORK. What was learned of the user's own work on a project - its stages and what they show of the user - is no longer drawn there: it is kept, and the agents use it, as the lessons are (section 124). The panel beside the projects shows the agent's own work on the one chosen, its runs and their stages; each project is still learned from its row.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* A RUN'S OWN NOTES IN ENGLISH, WHAT IT DELIVERS IN THE USER'S LANGUAGE. The builder and the reviewers write their own notes on the work in English - the cards, the stages, the questions and their answers, the findings, the summaries, the version descriptions and the reports the Work tab shows - as everything else the agent keeps for itself is (section 119.2, as amended). What a run delivers is in the user's display language: the documents, pages, slides, messages and other files it makes, the words inside its programs that their users read, and the README (section 119.4) - unless the user's instruction asks for another language, and then in that one. Code itself is written as code is. It is said once, at the top of every call of the run (`WORK_LANGUAGE`), the display language first and the English notes as the exception to it, so the Language debugger shows it as sent.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* THE FULL REVIEW IS THE REVIEWER'S TO ASK FOR, AND ONLY A CHECKPOINT IS A VERSION - the user's decisions. There is no full review every five rounds any more: with each round's review the reviewer says whether one is due now, at a milestone - a deliverable done, a core promise that now holds, the work's shape changed, a point worth coming back to, or a doubt that work done before still holds - and the application gives it what it can see as hints: the last checkpoint and the rounds since, whether the work agent says a card or the whole goal is done, the core promises not holding before the round, the deliverables done since; the call is the reviewer's. A full review covers EVERYTHING SINCE THE LAST CHECKPOINT, not the round alone: the rounds since, each with what it set out to do and came to, the files changed since (against the checkpoint's version), the cards done before it - each card those rounds touched checked against its criteria, every core promise tried again, a done card whose files changed checked again, and a card that no longer holds opened again; it is the only review that may end the run. It is one answer with room for it (36 rounds of tools), or, when more than six cards were touched, an answer a card and one that tries the promises and concludes. PASSED, IT IS A CHECKPOINT, and a version is kept; not passed, none is, and the work goes on with what it found. The versions a run keeps are its checkpoints alone: the contract approved, the contract amended by the user's new words, each full review passed, and the run done - not each round, not the final review or the deck (kept with the run done), not a pause, a stop or a limit. A run cut off - the application closed under it - goes back to its last checkpoint, as it went back to its last milestone before, and work since is done again; a pause goes on from where it stopped, its to-do list in its plan. Only a checkpoint can be gone back to. One model on its own has no reviewer, and keeps a version a turn as before.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* WHAT THE USER WOULD EXPECT AND DID NOT SAY IS ADDED, AS ADDED - the user's decision. Reviewing the contract, the reviewer lists what the work should hold that the contract leaves out, from the user's past work and what they asked, each with what it rests on, in three kinds: \"implied\" - what their own words already call for (a payment that fails charges nothing) - joins that core promise as a failure it must survive; \"needed\" - without which what they asked would not serve them - is a supporting deliverable, done with the core; \"nice\" is a polish deliverable, done once every core promise holds. None is a core promise of its own: those are the user's words alone. The work agent says what the work showed the user would need, with what showed it - a file, a record, a result - and the reviewer decides whether it is added and as which kind. Each is recorded in the contract as added, by whom and on what, shown on the Work tab as \"Added - not your words\", and the user may take each out (on a run not working at the time): its deliverable is set aside, or the failure it added to a promise dropped, and the record keeps that it was. A finding the reviewer queues on a deliverable is now a part of it - before, it became a deliverable of its own, outside the contract and with no tier; one queued on the goal itself is added as a polish deliverable, as above. The work agent still never sees the user's past work: only the plain criteria the reviewer writes from it.",
+    "amended": true
    }
-  ]
+  ],
+  "amendment_note": "2026-10-18: a run is done only when every core promise was tried and held, and when two independent final checks - quality and privacy - both pass; the Work tab shows the agent's own work, not what was learned; a run's own notes are in English, what it delivers in the display language; the full review is the reviewer's to ask for and a version is a checkpoint; what the user did not say is added as added.",
+  "amended": true
  },
  {
   "number": "119.1",
@@ -15080,6 +15134,36 @@
     "type": "p",
     "text": "*Amended 2026-10-17:* THE SAME CARD IS GIVEN THE SAME PAST WORK. What a run's reviewer is given of the user's experience for a card - when its criteria are written, and when a round on it is reviewed - is kept the first time, in the application's database (never in the run's plan, which goes with its versions into the work's own folder), and given again when the card is opened again, reviewed again, or carried on after the application closed, even while learning changes the record meanwhile. And nothing handed over for one card is held against another: a stage given before no longer counts half - each reviewer's call is new and holds none of what an earlier one was given, so the half only gave later cards weaker stages.",
     "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* THE WORK DEBUGGER'S SECOND WAY DIFFERS FROM THE FULL ONLY BY THE CONTEXT. Its reviewer had instructions of its own, shorter than the full way's, and among what they left out was what the full way's reviewer is held to first: what the user asked comes first - the core promises - and no work is added that they did not ask for. The difference measured was then partly a different way of working. Now the second way's reviewer has the same rules, without those about the user's past work; it searches the web as the full way's does, and searches nothing of the user's own record, and is given none of it. When the reviewer comes to ask its questions and answer them, the second way will ask them too, answering from the web alone.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* WHAT LEARNING WRITES IS IN ENGLISH. Every stage and card learned of the user's work, the links between them and the natures written with them are in English, whatever the user reads in (`stages.STAGE_LANGUAGE`): they are the agent's own - no longer shown to the user - read by its reviewers, matched and searched in one language, and the reviewer's own search of them was already asked in English. The user's own words, where a stage quotes them, stay as they wrote them. What was learned before stays as it was written until the project is learned again; what a run of Work writes for the user to read is in their display language, as before.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* AND STILL FOUND BY THEIR WORDS. Written in English, the stages could be read by the small English model the states are grouped with (section 37), and finding them by meaning was built and measured on the user's own record - 774 stages, asked with the steps of 187 of its own cards and of 93 cards of new work: words found something every time, meaning left four of the five best in place for new work and found nothing words had not, and it cost a second and a half a search, three minutes to read every stage the first time and the model's own process beside each run. The user decided against it: stages are found by their words alone, no embedding model is used for them, and nothing of it was kept.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* LESSON CARDS - WHAT WAS ASKED AND ANSWERED (`heartbeat/experience/lesson_cards.py`), the first part. A card is one answered question of the user's work: the question in English, the context it came up in (the project, the run, the card of its work, why it was asked), the specific answer, and the evidence it rests on, each piece typed - what the user said, the user's own code, a decision the user made, or the model's own knowledge. Its tier follows: from the user, or an assumption. NOTHING RESTING ON THE WEB IS KEPT, even partly: a page may be written to steer whoever reads it, and a lesson is read by every later run - so such an answer is used in the run that found it and gone, and a package from another computer cannot bring one in either. A card is never edited: a change is a new version that supersedes it, with the same lineage, the old one kept and marked. There is no fixed set of tags: what kinds of file and which stack the evidence points to, and the project, are worked out from the evidence; the topics are free words the model proposes. A card is found by its QUESTION, against the question asked - each word worth what it is rare among the questions kept, Chinese, Japanese and Korean in pairs of characters - one from the same project counting for more; the questions alone can be given too, to prompt questions a reviewer would not think of. Each use is recorded: which run, which card of its work, what it decided, which files. The cards are carried in the Lessons package with every version, and shown in the Lessons debugger. NOT YET: the reviewer writing and reading them as it works, and their upkeep with the state heartbeat's round - both change how a run is reviewed, and wait for the user's word.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* LESSON CARDS IN A RUN - the user's decision. Before it writes criteria - of the contract, of the contract amended by the user's words, of each card as it opens - the reviewer is asked, IN AN ANSWER OF ITS OWN WITH NO WEB, what it must know of the user to judge the work as they would: its tools to read the user's files, records and past stages, and no web search, no page and no client's own web tool. It asks what will serve later work too - their preferences, conventions, constraints, environment and the decisions they make again and again, in any kind of work, not only code - and not facts of this work alone, what their instruction already says, or guesses. WHAT IT ANSWERS THERE MAY BE KEPT, each piece of evidence checked by the application: the user's words only when they are in the instruction, their file only when it was read in that answer with the words quoted in it, a decision of theirs only on a stage it was shown or opened - anything else is the model's own, an assumption. What it leaves open it answers as it writes the criteria, the web too, for that work only: nothing found there is ever kept. ONLY THE USER'S OWN WORK KEEPS THEM: each answer a candidate card - none resting on the web, none for a question a card shown already answers - and a card it names as replaced gets a new version (`Run._what_to_know`, `Run._keep_lessons`). The full way's reviewer is SHOWN the cards whose question is most like what it is asked, after the experience retrieved for it and kept with it, so the same card is given the same ones every time; each the criteria cite is recorded as a use, by the user's own work only. A Work debugger way of the whole system reads the user's cards in the same way and keeps nothing - no card, no new version, no use; the way with no context takes the same two steps with no card shown and nothing kept; one model on its own has no reviewer. The questions and answers are the agent's own notes, in English. Still to come: their upkeep with the state heartbeat's round.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* THE USER'S OWN FILES ARE SEARCHED BY THEIR WORDS - THE LOCAL INDEX (`index/`). What was found of the user's past work was what learning had made of it; the files themselves - how they actually wrote a thing before - could only be listed and opened by name. Now the folders the user works in are kept searchable: every Work project's folders by default, the folders the user adds in Settings > Search your files (each with everything under it), and, on one click, the records of their Claude Code and Codex conversations; no other folder of theirs is read, and the agent's own data never. Each text file is kept as the words of each forty lines (SQLite FTS5: Latin words, and Chinese, Japanese and Korean in pairs of characters, so no dictionary or model is needed), every other file by its name; caches, environments, version control and the places keys are kept are never gone into, a file named like a secret is never read, and a file only in the cloud is kept by its name without being downloaded. It is built in a process of its own at the lowest priority the system has - background mode on Windows, nice 19 with the disk idle or throttled on Linux and macOS - waits while the computer is on its battery, and reads again only what changed: a few minutes after the application starts, every few hours, and soon after the folders change. The agents search it with `search_files` - the full way and the user's own runs; not the single model, nor the way with no context, which are compared by having none of the user's context (that way's builder no longer has the search of the user's records either). Only what that agent may read is ever given back - the same rules as `read_file` - and what it finds and opens goes to the model it works with, as every file it reads does; the Settings card says so.",
+    "amended": true
    }
   ],
   "amendment_note": "2026-10-15: Russian, French, German and Italian added to the display languages - nine in all - and the whole interface shown in them from fixed tables (section 134).",
@@ -15198,6 +15282,11 @@
    {
     "type": "p",
     "text": "*Amended 2026-10-17:* the WORK DEBUGGER'S WAYS take their turn too. A way still runs in the agent's own process, but it is started only when the governor and the pool have room, as a run of the user's work is; while there is none it waits in the same queue - first asked, first started - and the way says so, why and how far along, with a way not to start it after all; it starts by itself when its turn comes. Every run going counts, the debugger's included, and the newest run of either kind is the one paused when memory is short. EVERY PROCESS THE AGENT STARTS runs a step below the user's own programs - on Windows its priority class, which what it starts inherits; elsewhere the watcher's niceness. It is not a limit: with nothing else wanting the processors they have all of them, and only while the user's own programs want them do those go first. A full run of the tests is started the same way. And should a process ever outlive the application - the job that ends them with it could not be made, or a watcher was killed with it - those carrying the marks of the application's own folders (the guard its children load, the folder each run in a process of its own is told about) are found and ended when it starts again.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* THE WORK DEBUGGER'S WAYS GO EACH IN A PROCESS OF THEIR OWN TOO, as the user's runs do: a way run in the agent's process shared its time with everything else there, and a long one made the page and the other ways slow. Its process is started where the way would have started - when its turn in the same queue comes - finds its way of its project by the way's own name, and is followed, paused, answered and stopped through the same files as a run of the user's. The code seal goes with it: the AGENT holds the application's own code sealed for the way from before its process starts, waiting until the seal is on the disk, and gives it back when that process ends, however it ends; it alone counts every way that goes, so it alone changes the seal. The way's process is told the code is held for it: it takes it as sealed, and nothing it does - its own start or end - ever opens it while another way still runs.",
     "amended": true
    }
   ],
@@ -15619,6 +15708,11 @@
     "type": "p",
     "text": "*Amended 2026-10-16:* a task is a subject of the recommendations by the same two rules. A task of leisure is labelled so, and reaches the recommendations even where its summary judged it \"not a task\" - which had kept every evening's films from them - but only when it lasts, by the rule for leisure above; a project is one of leisure only when every task of it is.",
     "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* ONLY CLOSE STORIES. The pages carried a few BROAD stories - a step to the side, the same field - among the close ones; the user decided against them. A story is printed only from `CLOSE_AT` (it was printed from 0.35, now 0.42), and the search is asked for nothing else. The ranking is unchanged: gain x relevance x freshness. WHAT THE PAGES ARE MADE FROM, with tasks and projects made per run (section 37, as amended) - the user's rule: the user's STATES, newest first, until their events add up to twenty-four hours, or there are no more - at nine in the morning with one state of ten minutes, the days before are read back until the twenty-four hours are full - each given with its time and length (twelve hours at first; the user made it a day). A state already written into a task comes under that task's PROJECT, with the project's line and what is being worked on in it; one no run has read yet comes alone, its project not looked for. Not the latest run's tasks: a run started by hand may hold two hours. Routine counts toward the hours and makes no page; a project of leisure still makes one only when it lasts. A project's weight is the hours of its events among them. EVERY PROJECT IS A PAGE OF ITS OWN - the user's rule: a page is about a project, its states the detail under it, and two projects never share one; what was read and watched goes together, and onto the nearest project's page only if it must. A project is a page only with an hour of its events among the twenty-four hours: the states of one touched for less, and those no run has read yet, go each under the project page nearest it in meaning, or are left out. THE PAGES ARE SEARCHED FOUR AT A TIME: one after another, a dozen pages of two to five minutes each made an issue take twenty minutes (measured on the user's record).",
+    "amended": true
    }
   ],
   "amendment_note": "2026-10-15: a reading topic gets a page only when it is an interest - one-off glances (a product page for 12 seconds, a 4-second video, a fix looked up for an error) each made a page the user never wanted.",
@@ -15808,8 +15902,15 @@
    {
     "type": "p",
     "text": "This is distinct from the **next steps** of the user's tasks and projects, which the agent heartbeat's to-do step (`step_todo`) still ticks when the activity shows one finished - the message sent, the change deployed - each with a sentence saying why, and which the user can untick."
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-18:* There are no next steps of tasks any more (section 37, as amended), and no step ticks them; the To do list here is the user's own, unchanged.",
+    "amended": true
    }
-  ]
+  ],
+  "amendment_note": "2026-10-18: no step ticks next steps of tasks any more; the To do list is the user's own.",
+  "amended": true
  },
  {
   "number": "130",

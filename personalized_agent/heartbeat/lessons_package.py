@@ -8,7 +8,8 @@ kept of each of the user's work projects (their "work:" scopes), the
 notification lessons (the actions on the calendar and the running text drawn
 from them), and the nature records in the library's user_nature folder with
 everything said about them (their kinds, the stages and states they were
-written from, their examples and history). PACKAGE ALL LESSONS puts every one
+written from, their examples and history), and the lesson cards - each
+answered question, every version of it. PACKAGE ALL LESSONS puts every one
 of them in one folder, and a zip of it, that the user can carry or upload;
 LOAD LESSONS on the other computer merges it into what is there.
 
@@ -170,6 +171,10 @@ ROW_TABLES = (
     ("connection_action", "connection_actions", "id", "updated_at"),
     ("connection_source", "connection_sources", "id", "updated_at"),
     ("connection_lessons", "connection_lessons", "id", "updated_at"),
+    # THE LESSON CARDS - each answered question, every version of it (the
+    # user's decision: the package carries them with the rest). Not where
+    # each was used: those are this computer's runs.
+    ("lesson_card", "lesson_cards", "id", "updated_at"),
 )
 
 #: The small tables carried whole, inside the manifest.
@@ -194,6 +199,8 @@ MERGE_RULES = {
     "connection_action": "by id; added when missing",
     "connection_source": "by id; the newer updated_at is kept",
     "connection_lessons": "the summary of the older changes: the newer is kept",
+    "lesson_card": "by id; the newer updated_at is kept - never one resting on web "
+                   "content, which no computer keeps",
     "experience_edges": "added when neither its id nor the same edge (scope, "
                         "source, target, kind) is here",
     "stage_natures": "added when missing",
@@ -308,6 +315,15 @@ def ref_key(location: Any) -> str:
         text = re.sub(r"[\\/]+", "/", text).lower()
         return "//" + text[2:] if text.startswith("//") else text
     return text
+
+
+def _rests_on_web(card: Dict[str, Any]) -> bool:
+    """A lesson card resting on a web page, even partly - never kept
+    (heartbeat/experience/lesson_cards.py)."""
+    if str(card.get("tier") or "") == "web":
+        return True
+    evidence = _loads(card.get("evidence"), [])
+    return any(isinstance(one, dict) and one.get("type") == "web" for one in evidence or [])
 
 
 def carried_scope(scope: Any) -> bool:
@@ -1384,6 +1400,11 @@ class _Loading:
                     continue
                 if kind == "calendar_action":
                     self._calendar_action(row, columns, new_actions)
+                    continue
+                if kind == "lesson_card" and _rests_on_web(row):
+                    self._count(kind, "skipped")
+                    self.report["conflicts"].append(
+                        f"{kind} {row.get(key)}: rests on web content, not kept")
                     continue
                 if not kind.startswith("connection_") and \
                         not carried_scope(row.get("scope")):

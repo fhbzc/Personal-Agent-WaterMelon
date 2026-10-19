@@ -184,8 +184,9 @@ class Experience:
                                      if root is not None else None)
         # What each stage shows about the user is written with it.
         writer.library = self.library
-        # In the language the user reads.
-        writer.language = self.language()
+        # In English: the agent's own, matched and searched in one language
+        # (stages.STAGE_LANGUAGE).
+        writer.language = "English"
         # The known natures closest to the work are shown with it, so a
         # trait seen again becomes one more example of its nature; each
         # example says the project and task it was in.
@@ -194,8 +195,9 @@ class Experience:
         return writer
 
     def language(self) -> str:
-        """The user's display language, by name - what stages, cards and
-        natures are written in."""
+        """The user's display language, by name - what a run of Work writes
+        for the user to read. (The stages, cards and natures learned are in
+        English: stages.STAGE_LANGUAGE.)"""
         from ...common.languages import display_language, name_of
         return name_of(display_language(self.config))
 
@@ -319,8 +321,10 @@ class Experience:
         try:
             from ..states.tasks import Kept, Projects
             kept = Kept(self.db, self.tasks_scope)
+            # Learned units stay shown when their project became history
+            # (section 34.5).
             every_project = {project.id: project for project in
-                             Projects(self.db, self.tasks_scope).all()}
+                             Projects(self.db, self.tasks_scope).all(include_history=True)}
         except Exception:                 # pragma: no cover - a read
             log.debug("could not read the learned units", exc_info=True)
             return units
@@ -601,7 +605,7 @@ class Experience:
         from .stage_natures import StageNatures
         writer = StageNatures(self.db, self.library, self.models, self.scope,
                               embedder=self.embedder)
-        writer.language = self.language()
+        writer.language = "English"
         writer.names = self._units_of_tasks
         began = time.time()
         said = writer.write(stages, budget, going)
@@ -1246,7 +1250,7 @@ class Experience:
                 from .stage_natures import StageNatures
                 natures = StageNatures(self.db, self.library, self.models, self.scope,
                                        embedder=self.embedder)
-                natures.language = self.language()
+                natures.language = "English"
                 natures.names = self._units_of_tasks
                 natures.write(left, budget=max(1, self.LEARN_CALLS - progress["calls"]),
                               going=going)
@@ -1536,7 +1540,7 @@ class Experience:
         Applied, it merges the `sets` given, or the last dry run's."""
         from .nature_merge import NatureMerger
         merger = NatureMerger(self.db, self.library, self.models, self.scope,
-                              embedder=self.embedder, language=self.language())
+                              embedder=self.embedder, language="English")
         if dry_run:
             began = time.time()
             said = merger.preview(mode=mode, patterns=patterns, budget=budget)
@@ -1705,7 +1709,7 @@ class Experience:
         try:
             from ..states.tasks import Kept, Projects
             tasks = {task.id: task for task in Kept(self.db, self.tasks_scope).by_ids(wanted)}
-            projects = Projects(self.db, self.tasks_scope).all()
+            projects = Projects(self.db, self.tasks_scope).all(include_history=True)
         except Exception:                     # pragma: no cover - a name, not a step
             log.debug("could not name the tasks of a nature's examples", exc_info=True)
             tasks, projects = {}, []

@@ -406,6 +406,21 @@ class Updater:
         os.replace(fresh, place)
         self._reopen([str(place)])
 
+    def start_again(self) -> bool:
+        """Quit and open again - on a Mac, what makes Screen Recording,
+        switched on while the agent ran, apply (macOS answers a running
+        program as it was when it started). A packaged Mac build only."""
+        if sys.platform != "darwin" or not getattr(sys, "frozen", False) or self.quit is None:
+            return False
+        executable = Path(sys.executable).resolve()
+        bundle = next((one for one in executable.parents if one.suffix == ".app"), None)
+        if bundle is None:
+            return False
+        log.info("starting again, as the user asked")
+        self._reopen(["open", str(bundle)])
+        self.quit()
+        return True
+
     def _reopen(self, command: list) -> None:
         """Started again once this program has gone, by a shell that is not
         this program's child for long enough to be ended with it."""

@@ -32,18 +32,18 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from .store import model_task
-from ...common.languages import in_display, in_english
+from ...common.languages import in_english
 
-#: WHICH LANGUAGE A TASK'S STAGES ARE WRITTEN IN: every stage and card, all of
-#: their text, in the user's display language - whatever the states, records
-#: or files are in; the natures and each stage's keywords in English, as they
-#: are matched and searched by their words. The user's own words, quoted,
-#: stay as they wrote them.
-STAGE_LANGUAGE = in_display(
-    "every stage and card, all of their text - the user's own words, where you quote "
-    "them, stay exactly as they wrote them") + in_english(
-    "every NATURE, and each stage's KEYWORDS - they are matched and searched by their "
-    "words")
+#: WHICH LANGUAGE A TASK'S STAGES ARE WRITTEN IN: English - every stage and
+#: card, all of their text, the natures and each stage's keywords - whatever
+#: the states, records or files are in. They are the agent's own: not shown
+#: to the user (2026-10-18), read by the agents, matched and searched - by
+#: their words and by a model of meaning that reads English - which works in
+#: one language. The user's own words, quoted, stay as they wrote them.
+STAGE_LANGUAGE = in_english(
+    "every stage and card, all of their text, every NATURE and each stage's KEYWORDS - "
+    "they are matched and searched in one language; the user's own words, where you "
+    "quote them, stay exactly as they wrote them")
 from .store import (CARD_STATUSES, CHECKED_BY, EDGE_KINDS, MEDIA,
                     STAGE_KINDS, ExperienceStore, LIVE, new_id, now)
 
@@ -976,8 +976,8 @@ class StageWriter:
         #: Where what a stage shows about the user is written, with it - set
         #: by the service. With none, the stages are read for it afterwards.
         self.library = None
-        #: What stages are written in: the user's display language - set by
-        #: the service from the setting; English until it is.
+        #: What stages are written in: English (STAGE_LANGUAGE) - the
+        #: natures written with them too.
         self.language = "English"
         #: What finds the user's known natures closest to the work, so a
         #: trait seen again is added to its nature - and a task's project
@@ -2111,7 +2111,7 @@ class StageWriter:
                 ModelRequest(messages=[{"role": "user", "content": asked}],
                              system=prompt, max_tokens=12000,
                              task=model_task(self.scope, "stages"), metadata={"kind": what},
-                             language=in_display("why each stage leads to another")),
+                             language=in_english("why each stage leads to another")),
                 role="heartbeat")
         except Exception as exc:          # pragma: no cover - a call
             log.info("could not ask for %s: %s", what, exc)

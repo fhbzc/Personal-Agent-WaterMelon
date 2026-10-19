@@ -23,9 +23,10 @@ import time
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ...common import children
+from ...common.languages import in_english
 from ...common.config.schema import REASONING_EFFORTS
 from ...version import APP_NAME, __version__
 from ..base import (
@@ -58,6 +59,8 @@ STATUS_CACHE_SECONDS = 60.0
 #: How long "Refresh models" waits for the client's whole catalog.
 MODEL_REFRESH_TIMEOUT_SECONDS = 30.0
 UNREACHABLE = "_probe_failed"
+#: One listing of Codex's own tools at a time (`CodexProvider.confined`).
+_PROBING = threading.Lock()
 
 #: The picker's last resort, checked against https://learn.chatgpt.com/docs/models
 #: on 2026-10-01. It is a list to choose from, not a statement of what the
@@ -111,15 +114,48 @@ NATIVE_TOOLS = (
     "try them. When you have what you need, answer as you were asked."
 )
 
-#: The agent's own tools for the web, by every name they go by: with the
-#: model's own search (`ModelRequest.builtin_web`) they are not offered, and
-#: Codex's web search is, in their place.
+#: The agent's own tools for the web, by every name they go by. With the
+#: model's own search (`ModelRequest.builtin_web`) Codex's web search is
+#: offered BESIDE them, from OpenAI's CACHED INDEX only (`web_search=
+#: "cached"`): it runs on OpenAI's servers, where no hook of Codex's and no
+#: check of the agent's can see it (its hooks guide: hosted tools do not
+#: take the hook path), and live it could open any address the model made
+#: up - with what it read inside. Cached, it opens no live page at all; the
+#: agent's own tools, held to the agent's checks (runtime/web_guard.py),
+#: read the live web.
 WEB_TOOL_NAMES = ("web_search", "fetch_page", "fetch_url")
 WEB_NOTE = (
-    "SEARCH THE WEB WITH YOUR OWN WEB SEARCH. Where your instructions name "
-    "web_search, fetch_page or fetch_url, use it instead - it does the same. "
-    "Public pages only: never sign in to anything, never post or send anything."
+    "YOUR OWN WEB SEARCH reads an index OpenAI keeps, not the live web: use it "
+    "to find things out. To read a page as it is now, use the agent's own tools - "
+    "web_search to find its address, then fetch_url or fetch_page to read it; an "
+    "address you make up yourself is opened only where nothing you read could "
+    "travel inside it. Public pages only: never sign in to anything, never post "
+    "or send anything."
 )
+
+#: WHAT CODEX MAY OFFER OF ITS OWN to a call the agent makes, once its own
+#: tools are off (`_own_tools_off`) - measured, not assumed: the MCP
+#: resource tools, which reach only the agent's own server, and its patch
+#: tool, which its read-only sandbox refuses. Anything else - a tool a later
+#: Codex adds - and its reading is no longer known to be confined
+#: (`confined`): the turning off is by name, and a name not on the list
+#: stays on.
+OWN_TOOLS_ALLOWED = frozenset({"list_mcp_resources", "list_mcp_resource_templates",
+                               "read_mcp_resource", "apply_patch",
+                               # The time, read off the clock: offered by some
+                               # models and not others.
+                               "clock__curr_time"})
+#: The question that lists them: run in Codex's code mode, it names every
+#: tool the mode can call (`ALL_TOOLS`), and reports through an error - code
+#: mode has no console.
+PROBE_ASK = "\n".join([
+    "Debugging your runtime, nothing else: in your code mode (the exec tool), run exactly "
+    "this JavaScript and show me its full output verbatim. Do not call any other tool.",
+    "const all = ALL_TOOLS;",
+    "const names = (Array.isArray(all) ? all : Object.keys(all)).map(t => typeof t === "
+    "'string' ? t : (t.name || ''));",
+    "throw new Error('TOOLNAMES ' + JSON.stringify(names));",
+])
 
 #: How long the agent's own MCP server is waited for at the start of a call.
 MCP_STARTUP_SECONDS = 30
@@ -445,8 +481,16 @@ class CodexProvider(ModelProvider):
                               detail="Codex is not installed on this machine")
         status = self._auth_status()
         if status.get("logged_in"):
+            # Said where it is chosen: a Codex found not confined is not
+            # used where reading must stay sealed - and why (`confined`, as
+            # last found: nothing is asked of it here).
+            unconfined = sorted({said[1] for said in (getattr(self, "_confined", None)
+                                                       or {}).values() if not said[0]})
             return AuthStatus(CredentialState.AUTHENTICATED, AuthMethod.NONE,
-                              detail="signed in to Codex; this application stores no credential")
+                              detail="signed in to Codex; this application stores no credential"
+                              + ("" if not unconfined else
+                                 " - not used for the Work debugger's runs: "
+                                 + "; ".join(unconfined)))
         if status.get(UNREACHABLE):
             return AuthStatus(CredentialState.ERROR, AuthMethod.NONE,
                               detail="could not ask Codex whether it is signed in: "
@@ -579,7 +623,7 @@ class CodexProvider(ModelProvider):
         hooks and rules, which the agent never granted - with the sign-in
         still theirs; a Codex too old to skip it has its MCP servers emptied
         instead. Its web search is its own when the settings say the
-        model's (`web`), as Claude Code's is. Its code mode stays on when
+        model's (`web`) - from OpenAI's cached index only (`WEB_TOOL_NAMES`). Its code mode stays on when
         the agent's tools are served to it (`native`): Codex calls every
         tool through it. Its shell, file editing and picture viewing stay
         off - Codex's sandbox cannot be kept out of the places the agents
@@ -591,7 +635,7 @@ class CodexProvider(ModelProvider):
             flags.extend(["-c", "mcp_servers={}"])
         if self._takes("--ignore-rules"):
             flags.append("--ignore-rules")
-        flags.extend(["-c", f'web_search="{"live" if web else "disabled"}"'])
+        flags.extend(["-c", f'web_search="{"cached" if web else "disabled"}"'])
         # No agent of its own below this one: its multi-agent tools stay in
         # code mode's list whatever the feature says, and a helper started
         # there works outside the agent's sight, guard and count.
@@ -602,6 +646,76 @@ class CodexProvider(ModelProvider):
                 continue
             flags.extend(["-c", f"features.{name}=false"])
         return flags
+
+    def confined(self, model: str = "default") -> Tuple[bool, str]:
+        """WHETHER THIS CODEX'S READING IS CONFINED to the agent's own tools,
+        as the agent starts it, for this model: (yes or no, and why not).
+        Asked of the installed program once per program file and version and
+        per model - which tools a model is given differs - its code mode made
+        to list the tools it can call (`PROBE_ASK`), and kept for this
+        process. Only what `OWN_TOOLS_ALLOWED` and the agent's own server
+        name may be there. Not asked, or no list that can be read: not
+        confined. A run whose folders are kept apart uses Codex only when it
+        is (models/manager.READS_UNCONFINED)."""
+        cli = self.executable()
+        if not cli:
+            return False, "Codex is not installed"
+        try:
+            key = (cli, os.stat(cli).st_mtime_ns, model)
+        except OSError:
+            key = (cli, 0, model)
+        known = getattr(self, "_confined", None) or {}
+        if key in known:
+            return known[key]
+        with _PROBING:
+            known = getattr(self, "_confined", None) or {}
+            if key in known:
+                return known[key]
+            names = self._probe_tools(model)
+            if names is None:
+                said = (False, "what this Codex offers of its own could not be listed")
+            else:
+                extra = sorted(name for name in names
+                               if name not in OWN_TOOLS_ALLOWED
+                               and not name.startswith(f"mcp__{SERVER_NAME}__"))
+                said = (not extra, "" if not extra else
+                        "this Codex offers tools of its own the agent cannot hold to its "
+                        "permissions: " + ", ".join(extra))
+            if not said[0]:
+                log.warning("Codex is not used where reading must stay sealed: %s", said[1])
+            self._confined = {**known, key: said}
+            return said
+
+    def _probe_tools(self, model: str = "default") -> Optional[List[str]]:
+        """The names of every tool Codex's code mode can call, as the agent
+        starts it with its own tools served - or None, when no list came."""
+        from ..base import ToolSpec
+        from .mcp_bridge import ToolBridge
+        tools = [ToolSpec("probe", "Does nothing.", {"type": "object", "properties": {}})]
+        request = ModelRequest(messages=[{"role": "user", "content": PROBE_ASK}],
+                               tools=tools, tool_runner=lambda name, arguments: {"ok": True},
+                               task="diagnostic", language=in_english("the tool names"))
+        try:
+            with ToolBridge(tools, request.tool_runner) as bridge:
+                command = self._command(request, model, bridge=bridge)
+                completed = children.run(
+                    command, input=self._prompt(request, native=True), capture_output=True,
+                    text=True, encoding="utf-8", errors="replace", timeout=240,
+                    cwd=str(self.workspace) if self.workspace else None,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    if sys.platform.startswith("win") else 0)
+        except Exception:                          # pragma: no cover - not listed
+            log.info("could not list what Codex offers of its own", exc_info=True)
+            return None
+        found = re.search(r"TOOLNAMES (\[[^\]]*\])",
+                          (completed.stdout or "").replace('\\"', '"'))
+        if not found:
+            return None
+        try:
+            names = json.loads(found.group(1))
+        except ValueError:
+            return None
+        return [str(one) for one in names if str(one)] if isinstance(names, list) else None
 
     def _takes(self, flag: str) -> bool:
         """Whether the installed Codex knows this option of `codex exec` -
@@ -742,12 +856,10 @@ class CodexProvider(ModelProvider):
         web = bool(request.builtin_web) and any(
             tool.name in WEB_TOOL_NAMES for tool in request.tools or [])
         if web:
-            # Its own search in place of the agent's web tools, as Claude
-            # Code's (Settings > Web search: the model's own).
-            request = replace(request, tools=[tool for tool in request.tools
-                                              if tool.name not in WEB_TOOL_NAMES],
-                              system="\n\n".join(one for one in (request.system, WEB_NOTE)
-                                                 if one))
+            # Its own search beside the agent's web tools - cached only
+            # (`WEB_TOOL_NAMES`; Settings > Web search: the model's own).
+            request = replace(request, system="\n\n".join(
+                one for one in (request.system, WEB_NOTE) if one))
         request = replace(request, builtin_web=web)
         if request.tools and callable(request.tool_runner):
             from .mcp_bridge import ToolBridge

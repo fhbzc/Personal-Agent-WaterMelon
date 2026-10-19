@@ -24,7 +24,7 @@
                     fr: "fr-FR", de: "de-DE", it: "it-IT" };
   const ATTRIBUTES = ["placeholder", "title", "aria-label", "label"];
   // Where the words are the user's or the agent's, never the application's.
-  const LEAVE = ".msg-text, .chat-message, .fu-body, .cx-summary, .xp-live-text, textarea, pre, code";
+  const LEAVE = ".msg-text, .chat-message, .fu-body, .cx-summary, .xp-live-text, .lesson-card-words, .xp-added-words, textarea, pre, code";
   const SLOT = /\{(\d+)\}/g;
   let exact = null;
   let patterns = [];

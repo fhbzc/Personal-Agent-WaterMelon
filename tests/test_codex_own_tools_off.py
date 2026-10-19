@@ -204,9 +204,13 @@ class TheAgentsToolsServedNativelyTests(unittest.TestCase):
                 mock.patch.object(codex_provider.children, "run", run), \
                 mock.patch.dict(os.environ, {"CODEX_HOME": str(codex.folder)}):
             provider.invoke(request, "gpt-6.1-sol")
-        self.assertIn('web_search="live"', said["command"])
-        self.assertNotIn("* web_search", said["input"])
-        self.assertIn("SEARCH THE WEB WITH YOUR OWN WEB SEARCH", said["input"])
+        # FROM OPENAI'S CACHED INDEX ONLY: it runs where no check of the
+        # agent's can see it, and live it could open any address made up -
+        # so it opens none; the agent's own web tools, checked, beside it.
+        self.assertIn('web_search="cached"', said["command"])
+        self.assertNotIn('web_search="live"', said["command"])
+        self.assertIn("- web_search:", said["input"])
+        self.assertIn("YOUR OWN WEB SEARCH reads an index OpenAI keeps", said["input"])
         # The app's own search chosen (Settings > Web search): Codex's is off.
         plain = ModelRequest(messages=[], tools=self._tools())
         _provider, command = self._command(codex, plain)

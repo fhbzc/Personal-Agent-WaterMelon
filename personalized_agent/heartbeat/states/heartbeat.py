@@ -3507,7 +3507,26 @@ class StateHeartbeat:
         # about itself at the time - the panel can see those blanks and
         # so can this. What the flag is still for is stopping a round
         # that has just tried them from trying again a minute later.
-        unfinished = not held["done"] or bool(held.get("blank"))
+        # TASKS AND PROJECTS (section 34.5): the first run takes over at
+        # once and reads the last week; until something has been written,
+        # any state is enough to begin. The scheme before it - rounds of
+        # visits carried on, twenty states first - does not apply.
+        scheme = self._projects_scheme()
+        if scheme:
+            from .project_round import SWITCHED_AT
+            from .task_projects import RunTasks
+            if not self.config.get(SWITCHED_AT, ""):
+                return {"run": True, "resuming": False, "counted": counted,
+                        "why": ("Tasks and projects take over: the first run "
+                                "reads the last week's states.")}
+            if RunTasks(self.db, LIVE).count() == 0:
+                waiting = self._never_read()
+                return {"run": waiting > 0, "resuming": False, "unread": waiting,
+                        "counted": counted,
+                        "why": (f"Nothing written yet; {waiting} state(s) to read."
+                                if waiting else "Nothing written yet, and no state "
+                                                "to read.")}
+        unfinished = (not held["done"] or bool(held.get("blank"))) and not scheme
         waiting = self._still_blocked() if unfinished else None
         if waiting:
             return {"run": False, "resuming": True, "counted": counted,
@@ -3537,7 +3556,7 @@ class StateHeartbeat:
         # day or two of use, and twenty is enough for a first few tasks of
         # five (the user asked for it).
         enough = max(1, int(self.config.get("state_first_round_states", 20)))
-        if self._nothing_to_show():
+        if self._nothing_to_show() and not scheme:
             waiting = self._never_read()
             if waiting < enough:
                 return {"run": False, "resuming": False, "unread": waiting,
@@ -4428,7 +4447,10 @@ class StateHeartbeat:
         return dict(self.when_next(), started=True, running=True)
 
     def _round_in_progress(self) -> bool:
-        """Whether a round has begun and not finished."""
+        """Whether a round has begun and not finished. A run of tasks and
+        projects is one visit, never left open (section 34.5)."""
+        if self._projects_scheme():
+            return False
         try:
             held = self._round_record()
         except Exception:        # pragma: no cover - a read, not a step
@@ -4643,6 +4665,17 @@ class StateHeartbeat:
         try:
             if not self._going(where):
                 report["note"] = self._given_up(where)
+                return self._finish(report, began)
+            # TASKS AND PROJECTS (section 34.5): a run writes the new states
+            # down as tasks and groups the week's tasks into projects. What
+            # follows below is the scheme before it, kept for a switch that
+            # is turned off.
+            if self._projects_scheme():
+                from .project_round import ProjectRound
+
+                ProjectRound(self, where, report).run()
+                if report.get("round_complete") or report.get("note"):
+                    self._round_is_done(where)
                 return self._finish(report, began)
             # What is kept decides what is read: with no tasks yet this
             # is a bounded first look, and afterwards it is everything
@@ -10639,9 +10672,18 @@ class StateHeartbeat:
         windows = dict(self._windows_of(list(state_ids)).values())
         return sum(windows.values())
 
+    def _projects_scheme(self) -> bool:
+        """Whether runs write tasks and group them into projects (section
+        34.5) - on unless switched off."""
+        return bool(self.config.get("state_projects_enabled", True))
+
     def _too_short(self, task: Any) -> bool:
         """Less work in it than a task holds, so it is not one - as much as
-        that, or more, is."""
+        that, or more, is. A project of the per-run scheme is measured by
+        the minutes its tasks were worked on."""
+        profile = getattr(task, "profile", None) or {}
+        if profile.get("scheme") == "projects":
+            return float(profile.get("minutes") or 0.0) * 60 < self._least_work()
         return self._work_in(list(getattr(task, "members", None) or [])) \
             < self._least_work()
 
@@ -11828,9 +11870,47 @@ class StateHeartbeat:
     def the_picture(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         """What the page draws: every task with more work in it than a task
         holds, and nothing else. Not hidden - not there, so "show the
-        rejected groupings" does not bring back an afternoon's errand."""
+        rejected groupings" does not bring back an afternoon's errand.
+
+        With tasks and projects (section 34.5): the projects, each with how
+        long it was worked on - the page filters them by that and by when."""
+        if self._projects_scheme():
+            return self.projects_picture()
         picture = self._the_whole_picture(*args, **kwargs)
         return self._without_the_short(picture)
+
+    def projects_picture(self, scope: str = LIVE, tasks_each: int = 1000
+                         ) -> Dict[str, Any]:
+        """The projects of the per-run scheme, newest work first: the live
+        ones and the dormant ones (the page decides what its time range
+        shows), each with its latest tasks; the round's state beside."""
+        from .project_round import is_scheme_row, project_view
+        from .task_projects import RunTasks
+
+        run_tasks = RunTasks(self.db, scope)
+        kept = Kept(self.db, scope)
+        # Every one this scheme made - live, dormant, and ended in a merge or
+        # a split (the debugger draws where they went; the Overview leaves
+        # the ended out).
+        rows = [one for one in kept.all(limit=5000) if is_scheme_row(one)]
+        rows.sort(key=lambda one: one.last_seen, reverse=True)
+        # WHETHER A RUN IS DUE only while there is nothing to show: it is
+        # said only then, and it counts every state recorded - on the first
+        # load after the computer starts, read off the disk, seconds.
+        due: Dict[str, Any] = {}
+        if not rows:
+            try:
+                due = self.due_now()
+            except Exception:            # pragma: no cover - a read
+                due = {}
+        return {"scheme": "projects",
+                "projects": [project_view(one, run_tasks, tasks_each) for one in rows],
+                "tasks_written": run_tasks.count(),
+                "due": due,
+                "running": bool((self._progress or {}).get("running")),
+                "last": {key: (self._last_report or {}).get(key) for key in (
+                    "finished_at", "states_read", "calls", "note", "blocked", "error",
+                    "projects", "switched")}}
 
     def _without_the_short(self, picture: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(picture, dict):

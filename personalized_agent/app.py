@@ -376,6 +376,11 @@ class AgentApplication:
         # project that changed - its own clock (experience/auto.py).
         from .heartbeat.experience.auto import LearningClock
         self.learning_clock = LearningClock(self.config, self.state_heartbeat.experience)
+        # THE LOCAL INDEX: the user's own files searchable by their words -
+        # every Work project's folders and the folders the user adds - built
+        # in a process of its own at the lowest priority (index/service.py).
+        from .index.service import LocalIndex
+        self.local_index = LocalIndex(self)
         # PACKAGE ALL LESSONS and LOAD LESSONS (Overview): every lesson -
         # the experience, each work project's tree, the notification lessons,
         # the natures - packed into one folder in the workspace and a zip of
@@ -417,6 +422,8 @@ class AgentApplication:
         # the Newspaper counted in it by asking them.
         self.pool = self.state_heartbeat.pool
         self.work.pool = self.pool
+        # The user's own files, searched by their words: for the runs that may.
+        self.work.local_index = self.local_index
         self.pool.counts("work", lambda: [
             run.id for run in list(self.work._running.values()) if run.alive()])
         # Work handed over, and every piece of work started: context, a plan
@@ -865,7 +872,8 @@ class AgentApplication:
                                 ("IssueClock", self.issue_clock.start),
                                 ("LearningClock", self.learning_clock.start),
                                 ("Triggers", self.triggers.start),
-                                ("WorkGovernor", self.work.governor.start)):
+                                ("WorkGovernor", self.work.governor.start),
+                                ("LocalIndex", self.local_index.begin)):
                 began = _time.perf_counter()
                 begin()
                 spent[name] = round(_time.perf_counter() - began, 3)
@@ -1143,6 +1151,9 @@ class AgentApplication:
             # next start. Then the state heartbeat, first to be waited for:
             # a round in flight holds the way out.
             self.learning_clock.halt()
+            # A build going is ended: what it read is kept, and the next one
+            # does not read it again.
+            self.local_index.halt()
             for component in (self.state_heartbeat, self.learning_clock,
                               self.issue_clock, self.triggers,
                               self.housekeeping,

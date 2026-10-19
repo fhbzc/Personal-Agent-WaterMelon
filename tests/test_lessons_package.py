@@ -594,5 +594,37 @@ class LessonsPackageOverviewPanelTests(unittest.TestCase):
         self.assertIn("/api/lessons/package", result["posted"])
 
 
+class LessonCardsAreCarriedTests(unittest.TestCase):
+    """The lesson cards go with the rest of the lessons - every version - and
+    none resting on web content is ever loaded, whatever a package says."""
+
+    def setUp(self) -> None:
+        self.here, self.there = TemporaryAgent(), TemporaryAgent()
+
+    def tearDown(self) -> None:
+        self.here.cleanup()
+        self.there.cleanup()
+
+    def test_packaged_and_loaded_never_one_resting_on_the_web(self) -> None:
+        from personalized_agent.heartbeat.experience.lesson_cards import LessonCards
+        cards = LessonCards(self.here.app.db)
+        first = cards.write("Which charting library does the user use?", "Altair.",
+                            [{"type": "user_code", "ref": "plot.py"}])["card"]
+        second = cards.supersede(first["id"], answer="Altair, one theme.")["card"]
+        # One written past the rules, as a package from elsewhere might hold.
+        self.here.app.db.execute(
+            "INSERT INTO lesson_cards (id, scope, lineage, question, answer, evidence, tier, "
+            "created_at, updated_at) VALUES ('lc_web', 'live', 'lc_web', 'Which is best?', "
+            "'Whatever the page says.', '[{\"type\": \"web\"}]', 'user', '2026-10-18', "
+            "'2026-10-18')")
+        stats = self.here.app.lessons_package.package()
+        report = self.there.app.lessons_package.load(stats["zip_path"])
+        there = LessonCards(self.there.app.db)
+        self.assertEqual(sorted(one["version"] for one in there.versions(second["id"])), [1, 2])
+        self.assertIsNone(there.get("lc_web"))
+        self.assertEqual(report["kinds"]["lesson_card"]["added"], 2)
+        self.assertTrue(any("lc_web" in one and "web" in one for one in report["conflicts"]))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -97,6 +97,9 @@ TASK_MODULE = {
     "experience": "experience",
     "heartbeat": "heartbeat (before modules)",
     "work_run": "manual_work",
+    # The two final checks of a run: kinds of their own, in Work runs.
+    "work_quality_check": "manual_work",
+    "work_privacy_check": "manual_work",
     "agent_instruction": "manual_chat",
     "chat_followup": "manual_chat",
     "chat_history_summary": "manual_chat",

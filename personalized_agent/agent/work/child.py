@@ -21,9 +21,14 @@ made the rest of it slow. So each run is a CHILD PROCESS of its own:
 * it ends when the agent ends (a job object on Windows, a watcher elsewhere,
   common/children.py): a run is never left going with nobody to show it.
 
-The Experience debugger's runs stay in the agent's process: they seal the
-application's own code while they go (`WorkRuns.hold_code`), for whoever
-develops the agent.
+THE EXPERIENCE DEBUGGER'S WAYS go in a process of their own too - slowed
+no more by the agent, nor it by them. Each seals the application's own code
+from the agents' code while it goes (`WorkRuns.hold_code`): the AGENT holds
+the seal for it, from before its process starts (waiting until it is on
+disk) until that process ends, and counts every way that goes - the child
+is told the code is held for it (isolation.CodeSeal.held_elsewhere) and
+never changes the seal itself. It finds its way of its project by the
+way's own id (debug_projects.py).
 """
 
 from __future__ import annotations
@@ -101,7 +106,7 @@ class ChildRun:
         self.process = process
         self.id = str(reply["run"])
         self.unit = unit
-        self.debug = False
+        self.debug = bool(unit.get("debug"))
         self.stopping = False
         self.stop_now = False
         self.started_at = time.time()
@@ -132,6 +137,10 @@ class ChildRun:
     @property
     def used(self) -> Dict[str, Any]:
         return dict(self._snap().get("used") or {})
+
+    @property
+    def pause_asked(self) -> bool:
+        return bool((self._snap().get("session") or {}).get("progress", {}).get("pause_asked"))
 
     @property
     def activity(self) -> str:
@@ -214,13 +223,59 @@ def spawn_draft(owner: Any, draft_id: str) -> None:
 def launch(owner: Any, kind: str, unit: Dict[str, Any], **args: Any) -> Dict[str, Any]:
     """Start a child for a run and wait for its word: the run started (the
     agent then holds it as a `ChildRun`), or why not."""
-    from ...common.children import popen
     base = children_dir(owner.paths)
     folder = base / uuid.uuid4().hex[:12]
     folder.mkdir(parents=True, exist_ok=True)
+    held = _hold_code(owner, unit)
     spec = {"kind": kind, "root": str(owner.paths.root), "unit": unit.get("id"),
-            "args": args, "agent_pid": os.getpid()}
+            "args": args, "agent_pid": os.getpid(), "code_held": held is not None}
     _write_json(folder / SPEC, spec)
+    spawned: List[Any] = []
+    try:
+        return _start_child(owner, folder, unit, held, spawned)
+    finally:
+        # Given back as its process ends; or now, if none ever started.
+        if not spawned:
+            _let_code_go(held)
+
+
+def _hold_code(owner: Any, unit: Dict[str, Any]) -> Optional[Path]:
+    """A debugger way: the application's code sealed for it before its
+    process starts - None when there is nothing to hold."""
+    root = owner.code_to_hold(unit) if hasattr(owner, "code_to_hold") else None
+    if root is None:
+        return None
+    from ...runtime.isolation import CodeSeal
+    CodeSeal.hold(root)
+    if not CodeSeal.wait(root, timeout=120.0):
+        log.warning("the application's code is not sealed yet: the guard alone "
+                    "keeps this way's code from reading it")
+    return root
+
+
+def _let_code_go(held: Optional[Path]) -> None:
+    if held is not None:
+        from ...runtime.isolation import CodeSeal
+        CodeSeal.release(held)
+
+
+def _release_when_ended(process: Any, held: Optional[Path]) -> None:
+    """The seal given back as the way's process ends, however it ends."""
+    if held is None:
+        return
+    import threading
+
+    def wait() -> None:
+        try:
+            process.wait()
+        finally:
+            _let_code_go(held)
+    threading.Thread(target=wait, name="code-held-for-way", daemon=True).start()
+
+
+def _start_child(owner: Any, folder: Path, unit: Dict[str, Any],
+                 held: Optional[Path], spawned: List[Any]) -> Dict[str, Any]:
+    from ...common.children import popen
     flags = 0
     if sys.platform == "win32":
         import subprocess
@@ -230,6 +285,8 @@ def launch(owner: Any, kind: str, unit: Dict[str, Any], **args: Any) -> Dict[str
         process = popen(command(folder / SPEC), stdout=out, stderr=out,
                         stdin=__import__("subprocess").DEVNULL,
                         **({"creationflags": flags} if flags else {}))
+    spawned.append(process)
+    _release_when_ended(process, held)
     if sys.platform != "win32":
         try:
             os.setpriority(os.PRIO_PROCESS, process.pid, 5)
@@ -265,10 +322,11 @@ def child_main(argv: List[str]) -> int:
         app = AgentApplication(root=Path(spec["root"]), configure_logs=False)
         work = app.work
         work.in_subprocess = False            # here, the run is in this process
+        work.code_held_elsewhere = bool(spec.get("code_held"))
         if spec.get("kind") == "draft":
             app.drafts.collect_and_plan(str(spec.get("draft") or ""))
             return 0
-        unit = app.state_heartbeat.experience.unit(str(spec.get("unit") or ""))
+        unit = _unit_of(app, str(spec.get("unit") or ""))
         if unit is None:
             _write_json(folder / REPLY, {"error": "no such project or task"})
             return 2
@@ -288,6 +346,15 @@ def child_main(argv: List[str]) -> int:
         return 1
     _follow(run, folder, int(spec.get("agent_pid") or 0))
     return 0
+
+
+def _unit_of(app: Any, unit_id: str) -> Optional[Dict[str, Any]]:
+    """The work a run is of: a way of a debugger project, or the user's."""
+    from .debug_projects import DebugProjects, parse_unit
+    way = parse_unit(unit_id)
+    if way is not None:
+        return DebugProjects(app.work).unit(*way)
+    return app.state_heartbeat.experience.unit(unit_id)
 
 
 def snapshot(run: Any) -> Dict[str, Any]:

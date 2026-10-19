@@ -1760,12 +1760,18 @@ class Projects:
         self.db = db
         self.scope = str(scope or LIVE)
 
-    def all(self) -> List[Project]:
+    def all(self, include_history: bool = False) -> List[Project]:
+        """The projects in use - and with `include_history`, also those of
+        the scheme before tasks and projects were made per run (section
+        34.5), kept as history."""
         if self.db is None:
             return []
         try:
             rows = self.db.query("SELECT * FROM state_projects WHERE scope = ? "
                                  "ORDER BY created_at", (self.scope,))
+            if not include_history:
+                rows = [row for row in rows
+                        if not (dict(row).get("archived_at") or "")]
         except Exception:
             log.debug("the projects table is not there yet", exc_info=True)
             return []

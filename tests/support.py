@@ -102,6 +102,9 @@ class TemporaryAgent:
         # tests happens to be.
         self.app.work.governor.room = lambda going: (True, "")
         self.app.work.pool = None
+        # THE TWO FINAL CHECKS are the tests' of them (test_final_checks):
+        # the other runs' models are not asked them.
+        self.app.work.final_checks = False
         self.app.executor.runtime = self.app.runtime
         # The work runner reads its boundary from here too. Left as built, it
         # would be the real one - the user's whole home readable - and its
@@ -124,6 +127,11 @@ class TemporaryAgent:
         # a state the tests write records no window, so it counts one of
         # fifteen minutes, and a task holds more than an hour - five.
         self.app.config.set("state_task_min_hours", 1.0)
+        # The grouping tests were written for the scheme before tasks and
+        # projects were made per run (section 37, as amended 2026-10-18),
+        # which stays behind its switch; the per-run scheme has its own
+        # tests (test_task_projects.py), which turn it on.
+        self.app.config.set("state_projects_enabled", False)
 
     @property
     def workspace(self) -> Path:

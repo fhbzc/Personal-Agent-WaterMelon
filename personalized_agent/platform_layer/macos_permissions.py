@@ -18,6 +18,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -85,6 +86,10 @@ def _full_disk() -> Optional[bool]:
 
 _SYSTEM_EVENTS = ('tell application "System Events" to return name of '
                   'first process whose frontmost is true')
+#: Seconds the System Events question is waited for. Answered, it takes one
+#: or two; longer is macOS holding it behind its own question, unanswered -
+#: said as "cannot be told" rather than keeping the page waiting.
+AUTOMATION_WAIT = 3
 
 
 def _automation() -> Optional[bool]:
@@ -93,8 +98,9 @@ def _automation() -> Optional[bool]:
     try:
         done = children.run_short(["osascript", "-e", _SYSTEM_EVENTS],
                                   capture_output=True, text=True,
-                                  encoding="utf-8", errors="replace", timeout=10)
-    except Exception:  # pragma: no cover - osascript is part of macOS
+                                  encoding="utf-8", errors="replace",
+                                  timeout=AUTOMATION_WAIT)
+    except Exception:  # pragma: no cover - osascript is part of macOS; or it waited
         return None
     if done.returncode == 0:
         return True
@@ -125,9 +131,14 @@ def status(config: Any) -> Dict[str, Any]:
     if not applies():
         return {"applies": False, "items": []}
     wanted = needed(config)
+    # Only what a switch that is on needs, and all at once: the System
+    # Events question alone can take seconds.
+    looked = [key for key in ORDER if wanted[key]]
+    with ThreadPoolExecutor(max_workers=max(1, len(looked))) as pool:
+        said = dict(zip(looked, pool.map(lambda key: _CHECKS[key](), looked)))
     items: List[Dict[str, Any]] = []
     for key in ORDER:
-        items.append({"key": key, "needed": wanted[key], "granted": _CHECKS[key]()})
+        items.append({"key": key, "needed": wanted[key], "granted": said.get(key)})
     missing = [one["key"] for one in items if one["needed"] and one["granted"] is False]
     return {"applies": True, "items": items, "missing": missing}
 

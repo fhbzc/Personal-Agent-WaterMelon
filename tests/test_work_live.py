@@ -341,6 +341,8 @@ class TheApplicationClosedTests(_LiveBase):
                                            (said["run"],))[0]["status"], "paused")
         again = WorkRuns(self.app.db, self.app.policy, _TwoAgents(),
                          self.app.state_heartbeat.experience, platform=self.app.platform)
+        # Not the final checks' test (test_final_checks), as support.py's.
+        again.final_checks = False
         row = again.runs(self.unit["id"])[0]
         self.assertEqual(row["status"], INTERRUPTED)
         self.assertTrue(row["continuable"])

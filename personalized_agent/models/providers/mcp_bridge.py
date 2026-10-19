@@ -13,6 +13,10 @@ to it as an MCP server of the application's own:
   * EACH CALL RUN BY THE AGENT - `runner(name, arguments)`, the same tool
     layer, sandbox and guard as every tool call of the agent's; Claude Code
     only asks. Only the tools of the request are served, by their names.
+  * ITS OWN WEB TOOLS HELD TO THE AGENT'S CHECKS: with a web guard
+    (runtime/web_guard.py), a second address of the same server answers
+    the hooks the client runs around its WebSearch and WebFetch
+    (`hook_command`) - refused before they run, what they found known after.
   * WATCHED: while a tool runs, the call is not silent - it is working (a
     run paused, an install waiting for the user's answer, a long script) -
     so the provider's watch on the stream counts it alive (`busy`).
@@ -49,9 +53,11 @@ def tool_name(name: str) -> str:
 class ToolBridge:
     """One call's tools, served while it lasts. Use as a context manager."""
 
-    def __init__(self, tools: List[Any], runner: Callable[[str, Dict[str, Any]], Any]) -> None:
+    def __init__(self, tools: List[Any], runner: Callable[[str, Dict[str, Any]], Any],
+                 guard: Any = None) -> None:
         self.tools = {str(one.name): one for one in tools or []}
         self.runner = runner
+        self.guard = guard
         self.secret = secrets.token_urlsafe(32)
         self.calls: List[Dict[str, Any]] = []
         self._busy = 0
@@ -82,14 +88,25 @@ class ToolBridge:
                 self._empty(200 if bridge._ours(self.path) else 404)
 
             def do_POST(self) -> None:
-                if not bridge._ours(self.path):
+                # Read whole before any answer: one sent while the asker is
+                # still sending is a connection cut, not a 404 (Windows).
+                try:
+                    size = int(self.headers.get("Content-Length") or 0)
+                    raw = self.rfile.read(size)
+                except (ValueError, OSError):
+                    self._empty(400)
+                    return
+                hook = bridge.guard is not None and bridge._ours(self.path, "hook")
+                if not hook and not bridge._ours(self.path):
                     self._empty(404)
                     return
                 try:
-                    size = int(self.headers.get("Content-Length") or 0)
-                    body = json.loads(self.rfile.read(size) or b"null")
-                except (ValueError, OSError):
+                    body = json.loads(raw or b"null")
+                except ValueError:
                     self._empty(400)
+                    return
+                if hook:
+                    self._json(bridge._hook(body))
                     return
                 answers = [one for one in (bridge._answer(message) for message in
                                            (body if isinstance(body, list) else [body]))
@@ -97,8 +114,10 @@ class ToolBridge:
                 if not answers:
                     self._empty(202)
                     return
-                data = json.dumps(answers if isinstance(body, list) else answers[0],
-                                  ensure_ascii=False, default=str).encode("utf-8")
+                self._json(answers if isinstance(body, list) else answers[0])
+
+            def _json(self, said: Any) -> None:
+                data = json.dumps(said, ensure_ascii=False, default=str).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
@@ -136,9 +155,51 @@ class ToolBridge:
         with self._lock:
             return self._busy > 0
 
-    def _ours(self, path: str) -> bool:
+    def _ours(self, path: str, what: str = "mcp") -> bool:
         return secrets.compare_digest(path.split("?", 1)[0].rstrip("/"),
-                                      f"/{self.secret}/mcp")
+                                      f"/{self.secret}/{what}")
+
+    # -- the client's own web tools ------------------------------------------
+    @property
+    def hook_url(self) -> str:
+        port = self._server.server_address[1] if self._server else 0
+        return f"http://127.0.0.1:{port}/{self.secret}/hook"
+
+    def hook_command(self) -> str:
+        """The command the client's hook runs: this application as the hook
+        (runtime/web_hook.py) - its own executable when packaged, the hook's
+        file with this Python otherwise - with forward slashes, which every
+        shell the client may run it in reads as written."""
+        import sys
+        from pathlib import Path
+        if getattr(sys, "frozen", False):
+            parts = [sys.executable, "--web-hook", self.hook_url]
+        else:
+            hook = Path(__file__).resolve().parents[2] / "runtime" / "web_hook.py"
+            parts = [sys.executable, str(hook), self.hook_url]
+        return " ".join('"' + str(one).replace("\\", "/") + '"' for one in parts)
+
+    def hook_settings(self) -> Dict[str, Any]:
+        """The client's settings for this call: the hook before and after its
+        WebSearch and WebFetch."""
+        entry = [{"matcher": "WebFetch|WebSearch",
+                  "hooks": [{"type": "command", "command": self.hook_command(),
+                             "timeout": 30}]}]
+        return {"hooks": {"PreToolUse": entry, "PostToolUse": entry}}
+
+    def _hook(self, body: Any) -> Dict[str, Any]:
+        self.last_activity = time.monotonic()
+        if not isinstance(body, dict):
+            return {}
+        try:
+            return self.guard.hook(body)
+        except Exception as exc:              # pragma: no cover - refused then
+            log.warning("the web check failed: %s", exc)
+            if body.get("hook_event_name") == "PreToolUse":
+                return {"hookSpecificOutput": {
+                    "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                    "permissionDecisionReason": f"the web check failed: {exc}"}}
+            return {}
 
     # -- the protocol -------------------------------------------------------
     def _answer(self, message: Any) -> Optional[Dict[str, Any]]:

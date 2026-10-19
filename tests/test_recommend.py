@@ -194,6 +194,35 @@ class ThePagesTests(unittest.TestCase):
             self.assertEqual(len(kinds), 1, "alike kinds share a page first")
         self.assertEqual(sum(len(page["subjects"]) for page in pages), 11, "none dropped")
 
+    def test_every_project_has_a_page_of_its_own(self) -> None:
+        # The user's rule (2026-10-18): a page is about a project; ten
+        # projects are ten pages, however alike, and what was read goes
+        # together and then onto the nearest project's page.
+        found = [self._subject(f"project:p{n}", "work", [1.0, n / 100.0, 0.0])
+                 for n in range(10)] +             [self._subject(f"i{n}", "interest", [0.0, 1.0, n / 100.0]) for n in range(3)]
+        pages = recommend.plan_pages(found, None, most=8)
+        self.assertEqual(len(pages), 10)
+        for page in pages:
+            projects = [one for one in page["subjects"] if one["key"].startswith("project:")]
+            self.assertEqual(len(projects), 1, [one["key"] for one in page["subjects"]])
+        self.assertEqual(sum(len(page["subjects"]) for page in pages), 13, "none dropped")
+
+    def test_states_no_run_read_go_under_the_nearest_project(self) -> None:
+        grant = dict(self._subject("project:grant", "work", [1.0, 0.0, 0.0]),
+                     detail=["PROJECT: The coastal-erosion grant",
+                             "STATE [2026-10-18 07:00-07:30 UTC, 30 min]: They edit the budget."])
+        unsorted = {"key": "recent:states", "kind": "work", "title": "What you did lately",
+                    "text": "lately", "topic_id": "",
+                    "detail": ["STATE [2026-10-18 08:50-09:00 UTC, 10 min]: They draft the grant aims.",
+                               "STATE [2026-10-18 08:40-08:45 UTC, 5 min]: They watch a piano video."],
+                    "vector": [0.7, 0.7, 0.0], "anchors": [[0.95, 0.05, 0.0], [0.0, 1.0, 0.0]]}
+        pages = recommend.plan_pages([grant, unsorted], None)
+        self.assertEqual(len(pages), 1, "no page of their own")
+        self.assertEqual(pages[0]["detail"], [
+            "PROJECT: The coastal-erosion grant",
+            "STATE [2026-10-18 08:50-09:00 UTC, 10 min]: They draft the grant aims.",
+            "STATE [2026-10-18 07:00-07:30 UTC, 30 min]: They edit the budget."])
+
     def test_a_topic_of_a_tasks_work_goes_with_it(self) -> None:
         pages = recommend.plan_pages([self._subject("w", "work", [1.0, 0.0, 0.0]),
                                       self._subject("i", "interest", [0.9, 0.1, 0.0])], None)
@@ -237,7 +266,8 @@ class CheckedScoredLaidOutTests(unittest.TestCase):
             shown_vectors=[[0.0, 1.0, 0.0]], seen={"seen.example/x"})
         self.assertEqual(printed, [], "read, the same as read, the same as shown")
 
-    def test_mostly_close_a_few_broad_among_them(self) -> None:
+    def test_only_close_stories_are_printed(self) -> None:
+        # The user's decision (2026-10-18): no stories a step to the side.
         class _Lean(_Embed):
             @staticmethod
             def one(text):
@@ -247,10 +277,8 @@ class CheckedScoredLaidOutTests(unittest.TestCase):
             [self._story(f"b{n}", f"broad {n}", "piano") for n in range(3)]
         printed, paper = recommend.lay_out(stories, self.pages, _Lean(), [], [], set())
         order = paper["pages"][0]["stories"]
-        self.assertEqual(order, ["c0", "c1", "b0", "c2", "c3", "b1"])
-        relation = {one["id"]: one["relation"] for one in printed}
-        self.assertEqual(relation["b0"], "broad")
-        self.assertEqual(relation["c0"], "close")
+        self.assertEqual(order, ["c0", "c1", "c2", "c3"])
+        self.assertEqual({one["relation"] for one in printed}, {"close"})
 
     def test_a_story_found_for_one_page_put_where_it_belongs(self) -> None:
         printed, paper = recommend.lay_out(

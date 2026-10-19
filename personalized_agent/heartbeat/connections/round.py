@@ -45,6 +45,8 @@ RUNAWAY_CALLS = 200
 #: And this many web lookups of the app's own search: as high, and for the
 #: same reason - a round runs with every state heartbeat, unattended.
 RUNAWAY_WEB = 100
+#: The Newspaper's pages searched at once (each a model with web tools).
+PAGES_AT_ONCE = 4
 #: Looked up again on the web when the news of one the work needs is older.
 STALE_DAYS = 30
 #: An important person (closeness 4 or 5) unseen this long is looked up even
@@ -496,6 +498,12 @@ class ConnectionsRound:
         #: The round's count, kept by its two searches at once.
         self._count_lock = threading.RLock()
         self.progress: Dict[str, Any] = {"running": False}
+        #: THE CHECKS ON THE WEB (runtime/web_guard.py), new each round:
+        #: what it is told of the user and their contacts is theirs, what
+        #: it reads on the web is public - and a search or a page that could
+        #: carry the first out is refused, the model's own search's too.
+        from ...runtime.web_guard import WebGuard
+        self.guard = WebGuard()
 
     # -- starting --------------------------------------------------------------
     def running(self) -> bool:
@@ -537,6 +545,8 @@ class ConnectionsRound:
     def run(self, going: Callable[[], bool] = lambda: True,
             look_me_up: bool = False) -> Dict[str, Any]:
         used = {"calls": 0, "web": 0, "tokens_in": 0, "tokens_out": 0}
+        from ...runtime.web_guard import WebGuard
+        self.guard = WebGuard()
         self._stage(0, "summarising the oldest of your changes to contacts")
         self._fold_lessons(used)
         if not going():
@@ -684,9 +694,9 @@ class ConnectionsRound:
                      since: datetime) -> List[Dict[str, Any]]:
         """Each page searched on the public web FROM ITS DETAIL - what the
         user did, read and watched for it, not its heading - for what they
-        have not seen: mostly close, a few broad; each story with its gain,
+        have not seen: only close ones; each story with its gain,
         why it is there and what in it is new to them."""
-        from .recommend import (BROAD_PER_PAGE, LEISURE_PAGE, PAGE_PLAN, PER_TOPIC, TOPIC_SYSTEM,
+        from .recommend import (LEISURE_PAGE, PAGE_PLAN, PER_TOPIC, TOPIC_SYSTEM,
                                 known_points)
 
         def handle(name: str, args: Dict[str, Any]) -> Any:
@@ -694,13 +704,14 @@ class ConnectionsRound:
                 return {"error": f"no tool {name} here"}
             return self._tool(name, args, used)
 
-        out: List[Dict[str, Any]] = []
         when = since.astimezone().strftime("%A %d %B %Y")
         shown = "\n".join(f"- {title}" for title in self._recent_stories()) or "Nothing yet."
         examples = self._examples()
-        for page in pages:
+
+        def one_page(page: Dict[str, Any]) -> List[Dict[str, Any]]:
+            out: List[Dict[str, Any]] = []
             if not going() or not self._room(used):
-                break
+                return out
             known: List[str] = []
             for topic_id in page.get("topic_ids") or []:
                 known += [one for one in known_points(self.db, topic_id) if one not in known]
@@ -713,7 +724,7 @@ class ConnectionsRound:
                     detail="\n".join(f"- {line}" for line in page["detail"])
                     or "Nothing written down yet.",
                     known="\n".join(f"- {one}" for one in known[:10]) or "Nothing in particular.",
-                    shown=shown, since=when, today=today, broad=BROAD_PER_PAGE,
+                    shown=shown, since=when, today=today,
                     most=PER_TOPIC, english=self._english_field(),
                     liked=self._near(examples, page, "more"),
                     disliked=self._near(examples, page, "less"))}], used, going,
@@ -723,7 +734,7 @@ class ConnectionsRound:
                     + in_english('each story\'s "english"'))
             except Exception:
                 log.warning("the page %s could not be searched", page["title"], exc_info=True)
-                continue
+                return out
             said = _json_of(answer)
             heading = str(said.get("heading") or "").strip()
             if heading:
@@ -744,7 +755,17 @@ class ConnectionsRound:
                                 said_relation=str(one.get("relation") or "")[:10],
                                 new_to_you=str(one.get("new_to_you") or "")[:400],
                                 published=str(one.get("published") or "")[:10]))
-        return out
+            return out
+
+        # THE PAGES SEARCHED SIDE BY SIDE, PAGES_AT_ONCE at a time: one by
+        # one, a dozen pages of two to five minutes each made an issue take
+        # twenty minutes (measured on the user's record, 2026-10-18). Their
+        # stories in the pages' own order.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max(1, min(PAGES_AT_ONCE, len(pages))),
+                                thread_name_prefix="connections-page") as pool:
+            found = list(pool.map(one_page, pages))
+        return [story for stories in found for story in stories]
 
     def _english_field(self) -> str:
         """Each story's English, asked for only when the user does not read
@@ -772,14 +793,14 @@ class ConnectionsRound:
               most: int = 5) -> str:
         """The examples of one say that belong to a page: near what it is about."""
         from ..reading.topics import cosine
-        from .recommend import BROAD_AT
+        from .recommend import CLOSE_AT
         mine = []
         for one in examples:
             if one["action"] != action or not one.get("vector"):
                 continue
             near = max((cosine(one["vector"], anchor) for anchor in page.get("anchors") or []),
                        default=0.0)
-            if near >= BROAD_AT:
+            if near >= CLOSE_AT:
                 mine.append((near, one))
         mine.sort(key=lambda pair: -pair[0])
         return "\n".join(f"- {one['title']} ({one['english'][:200]})"
@@ -1026,7 +1047,8 @@ class ConnectionsRound:
              runner: Any = None, system: str = SYSTEM, language: Any = None) -> Any:
         response = self.models.invoke(ModelRequest(
             messages=messages, system=system, tools=tools or [], max_tokens=6000,
-            task=MODEL_TASK, tool_runner=runner, language=language), role="primary")
+            task=MODEL_TASK, tool_runner=runner, language=language,
+            web_guard=self.guard), role="primary")
         usage = getattr(response, "usage", None)
         with self._count_lock:
             used["calls"] += 1
@@ -1047,6 +1069,11 @@ class ConnectionsRound:
         tools = TOOLS if tools is None else tools
         handle = handle or (lambda name, arguments: self._tool(name, arguments, used))
         room = room or (lambda: self._room(used))
+        # What it is told is the user's: their work, their contacts, the
+        # pages they gave - the addresses in it exist, its words are theirs.
+        self.guard.know(json.dumps(messages, ensure_ascii=False, default=str), "user")
+        if system:
+            self.guard.know(system, "user")
 
         def run(name: str, arguments: Dict[str, Any]) -> Any:
             return handle(name, arguments or {})
@@ -1095,9 +1122,25 @@ class ConnectionsRound:
                     used["web"] += 1
                 self.progress.update(web=used["web"])
                 if name == "web_search":
-                    return self.search(str(args.get("query") or ""))
+                    query = str(args.get("query") or "")
+                    refused = self.guard.check_query(query)
+                    if refused:
+                        return {"error": refused}
+                    said = self.search(query)
+                    self.guard.know(json.dumps(said, ensure_ascii=False, default=str),
+                                    "web", "search")
+                    return said
                 url = str(args.get("url") or "")
+                refused = self.guard.check_address(url)
+                if refused:
+                    return {"error": refused}
                 said = self.fetch(url)
+                if isinstance(said, dict):
+                    import urllib.parse
+                    self.guard.know(" ".join([str(said.get("url") or url),
+                                              str(said.get("text") or "")]
+                                             + [str(one) for one in said.get("links") or []]),
+                                    "web", urllib.parse.urlsplit(url).netloc)
                 for source in store.sources():
                     if source["url"].rstrip("/") == url.rstrip("/"):
                         store.source_fetched(source["id"])
@@ -1156,8 +1199,11 @@ class ConnectionsRound:
                 if person and person.get("avatar"):
                     item["image"] = {"person": person["id"]}
             if not item.get("image") and self.store.folder is not None and going():
+                # Addresses the model gave, held to the round's checks: a
+                # picture asked for is a page asked for (runtime/web_guard.py).
                 tries = [str(one) for one in [item.get("image_url"),
-                                              *(item.get("sources") or [])] if one]
+                                              *(item.get("sources") or [])]
+                         if one and self.guard.check_address(str(one)) is None]
                 # The story's page, where the picture chosen may be named
                 # whole beside the cut-down copy shown.
                 around = next((str(one) for one in item.get("sources") or []

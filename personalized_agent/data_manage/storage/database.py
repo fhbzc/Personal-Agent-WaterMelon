@@ -267,6 +267,9 @@ ADDED_COLUMNS = (
     ("state_tasks", "profile", "TEXT NOT NULL DEFAULT '{}'"),
     ("state_tasks", "archived_at", "TEXT"),
     ("state_projects", "described", "TEXT NOT NULL DEFAULT '{}'"),
+    # Section 34.5: the projects of the scheme before tasks and projects
+    # were made per run - kept, as history.
+    ("state_projects", "archived_at", "TEXT"),
     ("nodes", "keywords", "TEXT"),
     # Section 52.3: a database made before tasks could repeat.
     ("scheduled_tasks", "recurrence", "TEXT NOT NULL DEFAULT '{}'"),
@@ -667,6 +670,47 @@ CREATE TABLE IF NOT EXISTS state_projects (
 );
 CREATE INDEX IF NOT EXISTS idx_state_projects_scope ON state_projects(scope);
 
+-- LESSON CARDS: one answered question each - the question, its specific
+-- answer, and the evidence it rests on, each piece typed (what the user
+-- said, their own code, a decision they made, the model's own knowledge).
+-- What rests on web content is never kept here: it is used in the run that
+-- found it and gone. A card is never edited: a new version SUPERSEDES it,
+-- with the same lineage (heartbeat/experience/lesson_cards.py).
+CREATE TABLE IF NOT EXISTS lesson_cards (
+    id          TEXT PRIMARY KEY,
+    scope       TEXT NOT NULL DEFAULT 'live',
+    lineage     TEXT NOT NULL,                 -- the first version's id
+    version     INTEGER NOT NULL DEFAULT 1,
+    supersedes  TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'candidate', -- candidate, kept, superseded, retired
+    question    TEXT NOT NULL,
+    answer      TEXT NOT NULL DEFAULT '',
+    context     TEXT NOT NULL DEFAULT '{}',    -- {project, run, card, card_title, why}
+    evidence    TEXT NOT NULL DEFAULT '[]',    -- [{type, ref, said}]
+    tier        TEXT NOT NULL DEFAULT 'assumption', -- user, assumption
+    principles  TEXT NOT NULL DEFAULT '[]',    -- the ids of the rules it satisfies
+    conditions  TEXT NOT NULL DEFAULT '',
+    facets      TEXT NOT NULL DEFAULT '{}',    -- computed: kinds of file, stack, project
+    topics      TEXT NOT NULL DEFAULT '[]',    -- free words, in English
+    written_by  TEXT NOT NULL DEFAULT '{}',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lesson_cards_scope ON lesson_cards(scope, status);
+
+-- Each time a lesson card was used: by which run, on which card of its
+-- work, to what decision, touching which files.
+CREATE TABLE IF NOT EXISTS lesson_card_uses (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id     TEXT NOT NULL,
+    run_id      TEXT NOT NULL DEFAULT '',
+    work_card   TEXT NOT NULL DEFAULT '',
+    decision    TEXT NOT NULL DEFAULT '',
+    files       TEXT NOT NULL DEFAULT '[]',
+    at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lesson_card_uses_card ON lesson_card_uses(card_id);
+
 -- EXPERIENCE: how the user's work went, stage by stage, and what it says
 -- about how they work.
 --
@@ -962,6 +1006,31 @@ CREATE TABLE IF NOT EXISTS state_task_loose (
     PRIMARY KEY (state_id, scope)
 );
 CREATE INDEX IF NOT EXISTS idx_state_task_loose_scope ON state_task_loose(scope);
+
+-- Section 34.5: the tasks each run of the state heartbeat wrote - what the
+-- user did in that stretch, one row a thing done. Written once; only the
+-- project it belongs to is filled in afterwards. The projects themselves
+-- are rows of state_tasks (heartbeat/states/task_projects.py).
+CREATE TABLE IF NOT EXISTS state_run_tasks (
+    id              TEXT PRIMARY KEY,
+    scope           TEXT NOT NULL DEFAULT 'live',
+    run_id          TEXT NOT NULL DEFAULT '',
+    written_at      TEXT NOT NULL,
+    title           TEXT NOT NULL DEFAULT '',   -- English
+    summary         TEXT NOT NULL DEFAULT '',   -- English
+    title_display   TEXT NOT NULL DEFAULT '',   -- the display language
+    summary_display TEXT NOT NULL DEFAULT '',
+    kind            TEXT NOT NULL DEFAULT 'work', -- work, leisure or routine
+    states          TEXT NOT NULL DEFAULT '[]',   -- JSON array of state ids
+    minutes         REAL NOT NULL DEFAULT 0,      -- actually worked
+    starts_at       TEXT,
+    ends_at         TEXT,
+    places          TEXT NOT NULL DEFAULT '{}',   -- folder or page -> times
+    continues       TEXT NOT NULL DEFAULT '',     -- the project its writer named
+    project_id      TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_state_run_tasks_when ON state_run_tasks(scope, ends_at);
+CREATE INDEX IF NOT EXISTS idx_state_run_tasks_project ON state_run_tasks(scope, project_id);
 
 -- Section 52.9: what each run of the state heartbeat did, so that the
 -- panel can say why the grouping did or did not change. One row a run.

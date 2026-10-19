@@ -118,6 +118,28 @@ def _port_problem(root: Path | None) -> str:
             f"to a free number between 1024 and 65535.")
 
 
+def _certificates_carried() -> None:
+    """A packaged build on macOS or Linux looks for the machine's
+    certificates where the BUILD machine's Python kept them, which this
+    machine does not have - so every https request failed ("unable to get
+    local issuer certificate"): updates, the web, the connections. Pointed
+    at the certificates the build carries instead. Windows reads its own
+    store; a certificate file the user set is theirs."""
+    import os
+    if not getattr(sys, "frozen", False) or sys.platform == "win32" \
+            or os.environ.get("SSL_CERT_FILE"):
+        return
+    try:
+        import certifi
+        carried = certifi.where()
+    except Exception:  # pragma: no cover - a build without certifi
+        return
+    if Path(carried).is_file():
+        # Read by OpenSSL when each connection is made, and inherited by
+        # the processes this one starts.
+        os.environ["SSL_CERT_FILE"] = carried
+
+
 def _follow_autostart(application, root: Path | None, headless: bool) -> None:
     from .platform_layer.autostart import Autostart, launch_command
     # And Explorer's "Delegate work", started the way the agent was.
@@ -264,10 +286,16 @@ def _set_display_language(root: Path | None, code: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args_in = list(sys.argv[1:] if argv is None else argv)
+    _certificates_carried()
 
     # Checked before anything else is imported or constructed.
     if args_in and args_in[0] == SCRIPT_RUNNER_FLAG:
         return _run_guarded_script(args_in[1:])
+    # The hook a client runs around its own web tools: started for every
+    # search and page, so before anything heavy (runtime/web_hook.py).
+    if args_in and args_in[0] == "--web-hook":
+        from .runtime.web_hook import hook_main
+        return hook_main(args_in[1:])
     # A run of the user's work, in a process of its own (agent/work/child.py).
     from .agent.work.child import CHILD_FLAG
     if args_in and args_in[0] == CHILD_FLAG:
@@ -284,6 +312,9 @@ def main(argv: list[str] | None = None) -> int:
     if args_in and args_in[0] == WATCH_FLAG:
         return watch_main(args_in[1:])
     # The embedding model, in a process of its own (see embedding.py).
+    if args_in and args_in[0] == "--index-worker":
+        from .index.worker import serve as build_index
+        return build_index(args_in[1])
     if args_in and args_in[0] == "--embedding-worker":
         from .heartbeat.states.embed_worker import serve
         return serve(args_in[1] if len(args_in) > 1 else

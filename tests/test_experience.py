@@ -554,10 +554,11 @@ class ACutOffAnswerIsNeverAppliedTests(_Base):
 
 
 class StagesAreWrittenInTheDisplayLanguageTests(_Base):
-    """One setting says what the user reads: stages, cards and natures are
-    written in it, and so is the agents' own work."""
+    """What learning writes is the agent's own - stages, cards and natures in
+    English, whatever the user reads in (2026-10-18); the agents' own work
+    for the user is in the display language."""
 
-    def test_the_stage_writer_is_told_the_display_language(self) -> None:
+    def test_the_stage_writer_writes_in_english_whatever_is_displayed(self) -> None:
         self.app.config.set("display_language", "zh")
         ids = self._states(["one"])
         task = self._task("task-a", ids, "A")
@@ -566,11 +567,12 @@ class StagesAreWrittenInTheDisplayLanguageTests(_Base):
         writer.extend(writer.units([task], [])[0])
         asked = writer.models.asked[0]
         self.assertNotIn("{language}", asked.system)
-        # Said once, at the top of what is sent: the stages in Chinese, the
-        # natures and keywords in English.
+        # Said once, at the top of what is sent: in English, the user's own
+        # words where they are quoted as they wrote them.
         sent = asked.language.compose(asked.system, self.app.config)
-        self.assertTrue(sent.startswith("WRITE IT IN THIS LANGUAGE: Chinese"))
-        self.assertIn("EXCEPTION", sent)
+        first = sent.splitlines()[0]
+        self.assertNotIn("Chinese", first)
+        self.assertIn("English", first)
 
     def test_and_so_are_the_agents_working_on_a_project(self) -> None:
         from personalized_agent.agent.work.runner import (AGENT_SYSTEM, REVIEWER_SYSTEM,
@@ -578,7 +580,17 @@ class StagesAreWrittenInTheDisplayLanguageTests(_Base):
         # Not inside the prompts: given with each call, and put at the top.
         self.assertNotIn("{language}", AGENT_SYSTEM)
         self.assertNotIn("{language}", REVIEWER_SYSTEM)
-        self.assertIn("display", [one["rule"] for one in WORK_LANGUAGE.rules()])
+        # The user's decision (2026-10-18): what is delivered in the display
+        # language unless the instruction names another; the run's own notes
+        # - its cards and stages - in English.
+        rules = {one["rule"]: one["what"] for one in WORK_LANGUAGE.rules()}
+        self.assertIn("DELIVER", rules["display"])
+        self.assertIn("unless the user's instruction asks for another language", rules["display"])
+        self.assertIn("the cards, stages", rules["internal"])
+        self.app.config.set("display_language", "zh")
+        said = WORK_LANGUAGE.instruction(self.app.config)
+        self.assertTrue(said.startswith("WRITE IT IN THIS LANGUAGE: Chinese"))
+        self.assertIn("EXCEPTION, for your own notes on the work", said)
         self.app.config.set("display_language", "en")
         self.assertEqual(self.experience.language(), "English")
 
@@ -2100,3 +2112,21 @@ class WhatIsFoundIsWhatIsAskedAboutTests(_Base):
         said = compact_experience(self.experience.retriever().find(
             {"kind": "evaluation", "text": "astronomy telescope"}))
         self.assertEqual([one["statement"] for one in said["rules"].get("principles", [])], [])
+
+
+class FoundByWordsAloneTests(_Base):
+    """The user's decision (2026-10-18): stages are found by their words,
+    never by an embedding model - measured on a real record, meaning found
+    nothing the words had not, for a second and a half a search."""
+
+    _answer = TheWorkIsATreeOfCardsTests._answer
+    _built = TheWorkIsATreeOfCardsTests._built
+
+    def test_a_step_sharing_no_word_finds_nothing(self) -> None:
+        self._built()
+        retriever = self.experience.retriever()
+        self.assertFalse(hasattr(retriever, "embedder"))
+        self.assertEqual(retriever.find({"text": "make the table grow when clicked"})["matches"],
+                         [], "no word in common")
+        found = retriever.find({"text": "built the expanding rows"})["matches"]
+        self.assertTrue(any(one.startswith("words:") for one in found[0]["why"]))

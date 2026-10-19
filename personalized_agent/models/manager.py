@@ -102,7 +102,10 @@ class ResolvedModel:
 #: try's) are open to it. Claude Code is told every place it may not read
 #: (`ModelRequest.native_read`); a model reached by its API reads nothing
 #: but what it is sent. Until Codex runs inside the run's own isolation, a
-#: call whose reading must stay sealed is not given to it.
+#: call whose reading must stay sealed is not given to it - unless the
+#: installed Codex is found confined to the agent's own tools, as the agent
+#: starts it: its own tools off, and none left that it can read with
+#: (`CodexProvider.confined`, asked once per program and version).
 READS_UNCONFINED = frozenset({"codex"})
 
 
@@ -320,6 +323,25 @@ class ModelManager:
                                  or "model") == "model":
             return replace(request, builtin_web=True)
         return request
+
+    def _reads_confined(self, provider_id: str, model_id: str, why: Dict[str, str]) -> bool:
+        """Whether a call whose reading must stay sealed may go to this
+        provider: any that reads nothing by itself; one that does
+        (READS_UNCONFINED) only when it says it is confined now - and why
+        not, into `why`, when it is not."""
+        if provider_id not in READS_UNCONFINED:
+            return True
+        check = getattr(self.provider(provider_id), "confined", None)
+        if not callable(check):
+            return False
+        try:
+            ok, said = check(model_id)
+        except Exception:                            # pragma: no cover - not confined
+            log.debug("could not ask %s whether it is confined", provider_id, exc_info=True)
+            return False
+        if not ok and said:
+            why[provider_id] = str(said)
+        return bool(ok)
 
     def effort_on_list(self, resolved: ResolvedModel) -> str:
         """The effort chosen for this model on the list, or ""."""
@@ -568,14 +590,17 @@ class ModelManager:
                 reason="there is no model on your list - add one in Settings > General > Models",
                 failure_class=FailureClass.USER_ACTION_REQUIRED))
         if getattr(request, "sealed_reading", False):
+            why: Dict[str, str] = {}
             confined = [one for one in candidates
-                        if one.provider_id not in READS_UNCONFINED]
+                        if self._reads_confined(one.provider_id, one.model_id, why)]
             if not confined:
+                said = why.get(candidates[0].provider_id)
                 raise ModelUnavailable(candidates[0], ModelAvailability(
                     False, AvailabilityState.PERMISSION_DENIED,
                     reason=("this run's folders are kept apart from one another, and "
                             f"{candidates[0].label} reads by itself where nothing keeps "
-                            "it out - put Claude Code or a model reached by its API on "
+                            "it out" + (f" ({said})" if said else "")
+                            + " - put Claude Code or a model reached by its API on "
                             "your list of models (Settings > General) for this run"),
                     failure_class=FailureClass.USER_ACTION_REQUIRED))
             if len(confined) != len(candidates):

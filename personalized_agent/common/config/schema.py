@@ -278,8 +278,9 @@ SETTINGS_SCHEMA: List[SettingField] = [
     # model has one (Claude Code), else the app's (Brave with a key, or
     # DuckDuckGo's page). Set on the Web search card.
     SettingField("web_search_with", "Web search with", "choice", "model", "Others",
-                 "The model's own web search where it has one, or the app's own "
-                 "(Brave Search with your key, else DuckDuckGo's page).",
+                 "The model's own web search where it has one - held to the same "
+                 "checks as the app's own - or the app's own (Brave Search with "
+                 "your key, else DuckDuckGo's page).",
                  choices=["model", "app"], hidden=True),
     SettingField("interface_language", "Interface language", "choice", "en", "General",
                  "The language of this application's own screens. Follows the "
@@ -529,6 +530,14 @@ SETTINGS_SCHEMA: List[SettingField] = [
                  "states, each true and each worded differently - this is what "
                  "notices they are one thing. With it off the states stay as they "
                  "are written and nothing ever says what they add up to."),
+    SettingField("state_projects_enabled", "Write tasks and group them into projects",
+                 "bool", True, "Heartbeat",
+                 "Each run writes the new states down as tasks - the distinct things "
+                 "you did in that stretch, how long each was worked on - and groups "
+                 "the last week's tasks into projects, the one thing several tasks "
+                 "serve. The first run reads the last week; the tasks of the scheme "
+                 "before it are kept as history. Off: the states are grouped the old "
+                 "way, into tasks directly."),
     SettingField("state_heartbeat_at_once", "Work on several at once, at most",
                  "int", 3, "Heartbeat",
                  "How many things the agent may have going at once, of every "

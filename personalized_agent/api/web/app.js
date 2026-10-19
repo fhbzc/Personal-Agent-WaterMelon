@@ -992,17 +992,12 @@ async function xpLoadGraph(unitId, chosen = false) {
   if (chosen) {
     const unit = experienceState.units.find((one) => one.id === unitId);
     if (unit) $("#xp-graph-title").textContent = xpName(unit.name);
-    $("#xp-graph").innerHTML = `<div class="xp-loading" role="status">
-      <span class="xp-loading-wheel" aria-hidden="true"></span>Loading</div>`;
   }
   let graph;
   try {
     graph = await api.get(
       xpScoped(`/api/experience/graph?unit=${encodeURIComponent(unitId)}`));
   } catch (err) {
-    if (asked === experienceState.graphAsked) {
-      $("#xp-graph").innerHTML = `<p class="muted">${escapeHtml(err.message)}</p>`;
-    }
     return;
   }
   if (asked !== experienceState.graphAsked || unitId !== experienceState.unit) return;
@@ -1010,15 +1005,10 @@ async function xpLoadGraph(unitId, chosen = false) {
   // A project or a task is headed by its name, nothing more.
   $("#xp-graph-title").textContent = xpName(graph.unit.name);
   xpDrawUnitAbout();
-  // A project made for the agents holds nothing of the user's to learn: no
-  // empty picture of it, and no word of learning it.
-  // Asked again with nothing new, it is left as it is - and the stage open
-  // under it too, with where it was scrolled to.
-  const drawn = xpPut($("#xp-graph"), graph.unit.kind === "new project"
-    && !(graph.stages || []).length ? "" : xpGraphSvg(graph));
-  if (!drawn && $("#xp-stage").childElementCount) return;
-  if (experienceState.stage) xpShowStage(experienceState.stage, "unit");
-  else if (experienceState.card) xpShowCard(experienceState.card, "unit");
+  // WHAT WAS LEARNED OF THE USER'S OWN WORK IS NOT DRAWN (2026-10-18): it
+  // is kept, and the agents use it; the panel shows the agent's own Work
+  // on the project (#xp-work). The project's record is still read, for its
+  // name, what it is about and its folders.
 }
 
 /* One row per card, a dot per stage - an attempt at that card - coloured by
@@ -1859,6 +1849,9 @@ const XP_CALLS_WHO = [
   { who: "builder", label: "builder", colour: "var(--xp-call-builder)" },
   { who: "reviewer", label: "reviewer", colour: "var(--xp-call-reviewer)" },
   { who: "single", label: "single model", colour: "var(--xp-call-single)" },
+  // The two final checks: each a kind of its own (runner.CALL_WHO).
+  { who: "quality check", label: "quality check", colour: "var(--xp-call-quality)" },
+  { who: "privacy check", label: "privacy check", colour: "var(--xp-call-privacy)" },
 ];
 // All of them together: a line of their own, in the page's ink - not a hue.
 const XP_CALLS_TOTAL = { who: "", label: "total", colour: "var(--ink)" };
@@ -3035,6 +3028,32 @@ function xpPromisesBlock(c) {
   return list + mine;
 }
 
+/* WHAT WAS ADDED, NOT YOUR WORDS - what the reviewer or the work agent found
+   you would expect, by whom and on what; each can be taken out (on a run
+   not working now). The added words are the agent's, never translated. */
+const XP_ADDED_KIND = { implied: "part of a core promise", needed: "needed",
+                        nice: "nice to have" };
+const XP_ADDED_BY = { "the reviewer": "added by the reviewer",
+                      "the work agent": "added by the work agent" };
+
+function xpAddedBlock(c) {
+  const added = c.added || [];
+  if (!added.length) return "";
+  return `<div class="xp-added"><p class="xp-contract-line"><strong>Added - not your
+    words</strong> <span class="muted">what the work found you would expect; take out
+    what you do not want</span></p>
+    <ul>${added.map((one) => `<li><span class="xp-added-kind">${escapeHtml(
+      XP_ADDED_KIND[one.kind] || one.kind || "")}</span>
+      <span class="xp-added-words">${escapeHtml(one.need || "")}</span>
+      <span class="muted">${escapeHtml(XP_ADDED_BY[one.by] || one.by || "")}</span>${one.promise
+        ? ` <span class="muted xp-added-words">(${escapeHtml(one.promise)})</span>` : ""}
+      ${(one.because || []).length ? `<div class="muted"><span>rests on:</span> <span
+        class="xp-added-words">${escapeHtml(one.because.join("; "))}</span></div>` : ""}
+      ${c.run ? `<button type="button" class="small" data-xp-take-out="${escapeHtml(
+        one.id || "")}" data-xp-take-out-run="${escapeHtml(c.run)}">Take it out</button>` : ""}
+    </li>`).join("")}</ul></div>`;
+}
+
 function xpContractBlock(c, heading, amended, key, notInForce) {
   const kept = xpVersionsState();
   const items = c.deliverables || [];
@@ -3054,6 +3073,7 @@ function xpContractBlock(c, heading, amended, key, notInForce) {
       ${amended && amended.diff ? `<details class="xp-contract-diff"><summary>what changed in
         the contract</summary>${xpContractDiff(amended.diff)}</details>` : ""}</div>` : ""}
     ${xpPromisesBlock(c)}
+    ${xpAddedBlock(c)}
     ${items.length ? `<p class="xp-contract-line"><strong>Deliverables</strong> <span
       class="muted">${anyStatus ? `${done}/${items.length} done · ` : ""}open one for what it
       must meet</span></p>
@@ -4333,6 +4353,18 @@ $("#experience")?.addEventListener("click", async (event) => {
      extra(runId)   what else Continue says.
    True when the click was one of these. */
 async function xpRunClick(event, host) {
+  const takeOutAt = event.target.closest("[data-xp-take-out]");
+  if (takeOutAt) {
+    try {
+      await api.post("/api/work/contract/take_out", { run: takeOutAt.dataset.xpTakeOutRun,
+        added: takeOutAt.dataset.xpTakeOut });
+      toast("Taken out");
+    } catch (err) {
+      toast(err.message);
+    }
+    await host.redraw(true);
+    return true;
+  }
   const stopAt = event.target.closest("[data-xp-stop]");
   const stopNowAt = event.target.closest("[data-xp-stop-now]");
   if (stopAt || stopNowAt) {
@@ -7031,7 +7063,47 @@ function lessonChanges(one) {
 }
 
 let lessonsTag = null;
+// THE LESSON CARDS (GET /api/lessons/cards): each answered question, its
+// answer, what it rests on, and how often it was used.
+const LESSON_EVIDENCE = {
+  user_said: "You said", user_code: "Your code", user_decision: "Your decision",
+  model: "The model's own knowledge",
+};
+async function loadLessonCards() {
+  const box = $("#lesson-cards");
+  if (!box) return;
+  let said;
+  try {
+    said = await api.get("/api/lessons/cards");
+  } catch (err) {
+    box.innerHTML = `<p class="muted">${escapeHtml(err.message)}</p>`;
+    return;
+  }
+  const open = new Set($$("#lesson-cards details[open]").map((d) => d.dataset.id));
+  if (!(said.cards || []).length) {
+    box.innerHTML = `<p class="muted">No lesson cards yet.</p>`;
+    return;
+  }
+  // The question, the answer and the evidence are the agent's and the
+  // user's words (.lesson-card-words): never translated.
+  box.innerHTML = said.cards.map((card) => `
+    <details class="lesson-card" data-id="${escapeHtml(card.id)}"${open.has(card.id) ? " open" : ""}>
+      <summary><strong class="lesson-card-words">${escapeHtml(card.question)}</strong>
+        <span class="badge">${card.tier === "user" ? "From you" : "An assumption"}</span>
+        <span class="muted"><span>Version</span> ${card.version}</span>
+        <span class="muted"><span>Used</span> ${card.uses}</span></summary>
+      <div class="lesson-card-answer lesson-card-words">${escapeHtml(card.answer)}</div>
+      <ul class="lesson-card-evidence">${(card.evidence || []).map((one) => `<li>
+        <span class="muted">${escapeHtml(LESSON_EVIDENCE[one.type] || one.type)}</span>
+        <span class="lesson-card-words">${escapeHtml(one.said || "")}</span>
+        ${one.ref ? `<code>${escapeHtml(one.ref)}</code>` : ""}</li>`).join("")}</ul>
+      ${(card.topics || []).length ? `<div class="muted"><span>Topics</span>
+        <span class="lesson-card-words">${escapeHtml(card.topics.join(", "))}</span></div>` : ""}
+    </details>`).join("");
+}
+
 async function loadLessons() {
+  loadLessonCards();
   let said;
   try {
     // Drawn again only when a lesson has changed: redrawing on every
@@ -7801,10 +7873,6 @@ document.addEventListener("click", async (event) => {
     at.disabled = false;
   }
 });
-window.addEventListener("focus", () => {
-  if (activeTab === "settings") refreshSysPermissions();
-});
-
 async function loadSettings() {
   // The panel needs to know which values are the user's own (section 12.1).
   const [data, models, defaults] = await Promise.all([
@@ -7815,6 +7883,7 @@ async function loadSettings() {
   renderModels(models, data.choices);
   renderSettings({ ...data, user_defaults: defaults.user_defaults || {} });
   loadWebSearch();
+  loadFileSearch();
   refreshSysPermissions();
 }
 
@@ -7845,6 +7914,80 @@ $("#web-search-with")?.addEventListener("change", async (event) => {
 async function loadWebSearch() {
   try { renderWebSearch(await api.get("/api/search")); } catch (err) { /* said later */ }
 }
+
+/* SEARCH YOUR FILES (index/service.py): the folders it reads - every Work
+   project's, and the user's own - each with how far it is; read again every
+   few seconds while a build is going. */
+const fileSearch = { timer: null };
+
+async function loadFileSearch() {
+  try { renderFileSearch(await api.get("/api/index")); } catch (err) { /* said later */ }
+}
+
+function renderFileSearch(said) {
+  const list = $("#file-search-folders");
+  if (!list || !said) return;
+  const on = $("#file-search-on");
+  if (on) on.checked = Boolean(said.enabled);
+  const WHY = { project: "a Work project", added: "added by you",
+                sessions: "your Claude Code and Codex conversations" };
+  list.innerHTML = (said.folders || []).map((one) => `<li>
+      <code>${escapeHtml(one.path)}</code>
+      <span class="muted">${escapeHtml(WHY[one.why] || one.why || "")}${one.project
+        ? `: ${escapeHtml(one.project)}` : ""} · ${one.state === "done"
+        ? `${Number(one.files || 0).toLocaleString()} files, ${
+          Number(one.texts || 0).toLocaleString()} read for their words`
+        : one.state === "building" ? "being read" : one.state === "missing"
+          ? "not found" : "not read yet"}</span>
+      ${one.why === "added" ? `<button type="button" class="small secondary"
+        data-file-search-remove="${escapeHtml(one.path)}">Remove</button>` : ""}
+    </li>`).join("") || `<li class="muted">No folder yet: your Work projects' folders
+      are read once there are some, and any you add here.</li>`;
+  const line = $("#file-search-status");
+  if (line) {
+    line.textContent = !said.available
+      ? "This copy of Python cannot search text (SQLite without FTS5)."
+      : !said.enabled ? "Off: nothing is read, and the agents search nothing."
+        : said.building ? "Reading your folders in the background…"
+          : `${Number(said.files || 0).toLocaleString()} files kept searchable.`;
+  }
+  const sessions = $("#file-search-sessions");
+  if (sessions) {
+    sessions.textContent = said.sessions ? "Leave out my Claude Code and Codex conversations"
+      : "Add my Claude Code and Codex conversations";
+    sessions.disabled = !said.sessions && !(said.session_folders || []).length;
+    sessions.dataset.on = said.sessions ? "1" : "";
+  }
+  clearTimeout(fileSearch.timer);
+  if (said.building && activeTab === "settings") {
+    fileSearch.timer = setTimeout(loadFileSearch, 5000);
+  }
+}
+
+async function fileSearchChange(body) {
+  try {
+    renderFileSearch(await api.post("/api/index", body));
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+document.addEventListener("click", async (event) => {
+  const target = event.target;
+  if (!target || !target.closest) return;
+  if (target.id === "file-search-add") {
+    const path = await xpChooseFolder("A folder for the agents to search");
+    if (path) await fileSearchChange({ action: "add", path });
+  } else if (target.id === "file-search-build") {
+    await fileSearchChange({ action: "build" });
+  } else if (target.id === "file-search-sessions") {
+    await fileSearchChange({ action: "sessions", on: !target.dataset.on });
+  } else if (target.dataset && target.dataset.fileSearchRemove) {
+    await fileSearchChange({ action: "remove", path: target.dataset.fileSearchRemove });
+  }
+});
+$("#file-search-on")?.addEventListener("change", (event) =>
+  fileSearchChange({ action: "enable", on: event.target.checked }));
 
 $("#web-search-form")?.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -9549,6 +9692,27 @@ function renderMacPermissions(data) {
           }
         });
         row.append(how, open);
+        if (item.key === "screen" && item.granted === false) {
+          // macOS answers a running program as it was when it started.
+          const after = document.createElement("div");
+          after.classList.add("mac-permission-how");
+          after.textContent = "Once it is switched on in System Settings, it applies only after the agent is quit and opened again.";
+          const again = document.createElement("button");
+          again.type = "button";
+          again.classList.add("small", "secondary");
+          again.textContent = "Quit and open again";
+          again.addEventListener("click", async () => {
+            again.disabled = true;
+            try {
+              await api.post("/api/permissions/macos/start_again", {});
+              toast("Opening the agent again…");
+            } catch (err) {
+              again.disabled = false;
+              toast(err.message, "error");
+            }
+          });
+          row.append(after, again);
+        }
       }
       list.appendChild(row);
     });
@@ -9570,7 +9734,26 @@ async function refreshMacPermissions() {
   }
 }
 
-$("#mac-permissions-check")?.addEventListener("click", refreshMacPermissions);
+// Looked at once as the page opens, and then only when asked: each look
+// asks System Events, which takes a moment. Grey while it looks, so it is
+// asked once.
+$("#mac-permissions-check")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  if (button.disabled) return;
+  button.disabled = true;
+  button.textContent = "Checking…";
+  try {
+    renderMacPermissions(await api.get("/api/permissions/macos"));
+    const at = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const said = $("#mac-permissions-checked");
+    if (said) said.textContent = `Checked at ${at}`;
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = "Check again";
+  }
+});
 // What is new after an update is shown wherever the page opens, not only on
 // Settings.
 refreshUpdates();
@@ -9578,16 +9761,11 @@ $("#macperm-go")?.addEventListener("click", () => {
   const tab = $('#tabs button[data-tab="settings"]');
   if (tab) tab.click();
   settingsView("privacy");
-  refreshMacPermissions();
 });
 $("#macperm-dismiss")?.addEventListener("click", () => {
   // Not now: for as long as this page is open. It is said again next time.
   macPermissions.dismissed = true;
   $("#macperm-banner").hidden = true;
-});
-// Back from System Settings: what was just switched on shows as allowed.
-window.addEventListener("focus", () => {
-  if (macPermissions.data && macPermissions.data.applies) refreshMacPermissions();
 });
 refreshMacPermissions();
 
@@ -10020,8 +10198,6 @@ function renderSettings(data) {
   // what it costs the computer.
   const PRIVACY_SETTINGS = PRIVACY_LISTENING;
   refreshBrowserCard();
-  // Looked at beside the settings, never in their way.
-  if (typeof refreshMacPermissions === "function") refreshMacPermissions();
   const container = $("#settings-form");
   // Display's own settings; where there is no Display, with the rest.
   const display = $("#settings-form-display") || container;
@@ -14739,11 +14915,6 @@ function stateBeatHolding(host) {
   // pointer capture kept the EVENTS coming; it could do nothing about
   // the picture underneath being rebuilt mid-gesture.
   if (stateBeat.holding) return true;
-  // A NEXT STEP HALF TYPED IS A HOLD TOO: a redraw would take the box out
-  // from under the cursor.
-  const typing = document.activeElement;
-  if (typing && typing.matches && typing.matches("[data-sb-next-input]")
-      && host.contains(typing)) return true;
   const held = window.getSelection && window.getSelection();
   if (!held || held.isCollapsed || !held.rangeCount) return false;
   const range = held.getRangeAt(0);
@@ -14770,7 +14941,6 @@ function stateBeatWatchTheSelection() {
 
 function renderStateBeat() {
   const out = renderStateBeatNow();
-  sbShowStepsEverywhere();
   sbMarkSelected();
   return out;
 }
@@ -14805,6 +14975,14 @@ function renderStateBeatNow() {
   }
   if (report.skipped) {
     draw(`<p class="muted">${escapeHtml(String(report.skipped))}</p>`);
+    return;
+  }
+  if (report.scheme === "projects") {
+    if (note) {
+      note.textContent = report.duration_ms
+        ? `last run took ${(report.duration_ms / 1000).toFixed(1)}s` : "";
+    }
+    draw(pjDebugPanel(report));
     return;
   }
   const groups = report.communities || [];
@@ -15508,53 +15686,6 @@ function sbIsDone(state) {
 
    Its own function, and filled by hand on a click rather than by a
    redraw, because the click must not redraw: see `sbUnfold`. */
-/* One to-do, read out in the panel.
-
-   The same fields the model was given, in the same order: what it said,
-   why the review wrote it, when it ran on the user's own clock, what it
-   rests on and what it recorded. An empty one is SAID to be empty, for
-   the reason it is said everywhere else - a missing line and a line
-   reading "none" are different claims, and only the second can be
-   checked. */
-function sbTodoCard(report, id) {
-  const state = (report.states || []).find((one) => one.id === id);
-  if (!state) {
-    return `<p class="muted sb-card-empty">That to-do is not in this
-      round's states.</p>`;
-  }
-  const said = state.local || {};
-  const ran = said.starts_at
-    ? `${escapeHtml(String(said.starts_at_day || ""))}, ${
-        escapeHtml(String(said.starts_at))}${said.ends_at
-        ? ` to ${escapeHtml(String(said.ends_at))}` : ""}${said.zone
-        ? ` [${escapeHtml(String(said.zone))}]` : ""}`
-    : `${escapeHtml(String(state.starts_at || "?"))} to ${
-        escapeHtml(String(state.ends_at || "?"))} (UTC - no local time)`;
-  const list = (items, empty) => (items || []).length
-    ? `<ul>${(items || []).map((one) =>
-        `<li>${escapeHtml(String(one))}</li>`).join("")}</ul>`
-    : `<p class="muted">${empty}</p>`;
-  const done = sbIsDone(state);
-  return `<div class="sb-card-body">
-    <div class="sb-card-said">
-      <p class="sb-card-title">${escapeHtml(String(state.title || id))}
-        <span class="badge${done ? " sb-todo-done" : ""}">${
-          done ? "done" : "still open"}</span></p>
-      <p class="sb-card-line">${escapeHtml(
-        String(state.detail || "(no detail)"))}</p>
-      <p class="muted sb-card-part"><span class="event-label">why the
-        review wrote it</span> ${escapeHtml(
-        String(state.reasoning || "(it did not say)"))}</p>
-      <p class="muted sb-card-part"><span class="event-label">ran</span>
-        ${ran}</p>
-      <div class="sb-card-part"><span class="event-label">rests on</span>
-        ${list(state.sources,
-               "this state names no file, page or window")}</div>
-      <div class="sb-card-part"><span class="event-label">evidence</span>
-        ${list(state.evidence, "this state records none")}</div>
-    </div>
-  </div>`;
-}
 
 /* When a set of states ran, and for how long.
 
@@ -15736,9 +15867,6 @@ function sbCardFor(report) {
   if (shows.kind === "piece" && shows.which) {
     return sbPieceCard(report, stateBeat.openTask, shows.which);
   }
-  if (shows.kind === "todo" && shows.which) {
-    return sbTodoCard(report, shows.which);
-  }
   if (shows.kind === "project" && shows.which) {
     return sbProjectCard(report, shows.which);
   }
@@ -15758,373 +15886,19 @@ function sbPhaseLine(task, said) {
     drawn, and picked up again if work in it comes back.</p>`;
 }
 
-/* NEXT STEPS: what is still to do on a project, or on a task that is in
-   no project - the top of what the user sees, and the only things that
-   carry a list. The model writes it each time it describes the work; the
-   user adds a step, finishes one or deletes one IN THE PICTURE, it shows
-   at once, and the next round is told what they changed and writes the
-   list again from it.
 
-   The card under the picture lists them too, to be read beside the rest of
-   what is known about the work - but read only: the picture is where the
-   work is, so it is where its steps are changed. */
-function sbNextSteps(id, held) {
-  if (!id) return "";
-  held = held || {};
-  const steps = (held.todo || []).filter((one) => one && one.text);
-  return `<div class="sb-next" data-sb-next="${escapeHtml(String(id))}"
-      data-sb-next-says="${escapeHtml(sbNextSays(held))}">
-    <p class="sb-card-part"><span class="event-label">Next steps</span>${
-      sbStepsWaiting(held) ? ` <span class="muted sb-next-waiting">your
-        changes go to the next round, which writes the list again with them
-        in mind</span>` : ""}</p>
-    ${steps.length ? `<ul class="sb-next-list">${steps.map((one) => `<li
-        class="sb-next-step${one.by === "user" ? " sb-next-mine" : ""}${
-        one.done ? " sb-next-done" : ""}">
-        <span class="sb-next-text">${escapeHtml(String(one.text))}</span>${
-        one.by === "user" ? ` <span class="sb-next-by"
-          title="You added this step">yours</span>` : ""}${
-        one.done && one.done_by === "agent" ? ` <span class="sb-next-by sb-next-agent"
-          title="${escapeHtml(String(one.done_why || ""))}">ticked by the agent: ${
-          escapeHtml(String(one.done_why || ""))}</span>` : ""}</li>`).join("")}</ul>`
-      : `<p class="muted sb-next-none">None yet. The next round that describes
-         it writes them.</p>`}
-    ${held.todo_note ? `<p class="muted sb-next-note">Where it went against
-      your changes: ${escapeHtml(String(held.todo_note))}</p>` : ""}
-    <p class="muted sb-next-none">Click it in the picture to open its steps
-      there - to add one, tick one off, or delete one.</p>
-  </div>`;
-}
 
-/* Whether the user has changed the list since the model last saw it. */
-function sbStepsWaiting(held) {
-  const changed = (held && held.todo_changes) || {};
-  return ["added", "removed", "finished"].some((kind) =>
-    (changed[kind] || []).length);
-}
 
-/* What a list says, as one string: drawn again only when this changes. */
-function sbNextSays(held) {
-  return JSON.stringify([(held.todo || []).map((one) => [one.id, one.text,
-    one.by, Boolean(one.done), one.done_by || ""]), held.todo_changes || {},
-    held.todo_note || ""]);
-}
 
-/* The next steps of one thing at the top, from a picture: a project's own,
-   or the description of a task in no project. `id` is the stored id - the
-   project's, or the task's - never the row's place in this drawing. */
-function sbStepsHeld(report, id) {
-  const project = ((report && report.projects) || []).find(
-    (one) => one.id === id);
-  if (project) return project;
-  const node = (((report || {}).plan || {}).nodes || []).find(
-    (one) => one.task_id === id || one.id === id) || {};
-  const layer = ((report || {}).layers || []).find(
-    (one) => (node.id && one.id === node.id) || one.task_id === id) || {};
-  return (layer.summary || {}).described || {};
-}
 
-/* The next steps a picture holds - a project's, or a top task's - after
-   the user changed them, written into every copy of the picture the page
-   keeps, so a redraw from any of them does not bring back the old list. */
-function sbKeepNextSteps(id, said) {
-  const fields = {todo: said.todo || [], todo_changes: said.todo_changes || {},
-                  todo_note: said.todo_note || ""};
-  const copies = [stateBeat.report, stateBeat.whole,
-                  ($("#ov-tasks") || {}).sbReport,
-                  ($("#dbg-statebeat-body") || {}).sbReport];
-  copies.forEach((report) => {
-    if (!report || typeof report !== "object") return;
-    (report.projects || []).forEach((project) => {
-      if (project && project.id === id) Object.assign(project, fields);
-    });
-    // A layer is named by its drawing's id, and the stored id is on its
-    // node - or on the layer itself, in a round's own report.
-    const drawnAs = new Set([id]);
-    ((report.plan || {}).nodes || []).forEach((node) => {
-      if (node && node.task_id === id) drawnAs.add(node.id);
-    });
-    (report.layers || []).forEach((layer) => {
-      if (!layer || !(drawnAs.has(layer.id) || layer.task_id === id)) return;
-      layer.summary = layer.summary || {};
-      layer.summary.described = Object.assign(
-        {}, layer.summary.described || {}, fields);
-    });
-  });
-}
 
-/* Every open card, drawn again from the picture it belongs to. Only the
-   card: the picture has not changed, and redrawing it would lose where the
-   reader had it scrolled. */
-function sbRedrawCards() {
-  document.querySelectorAll("[data-sb-card]").forEach((card) => {
-    const host = card.closest("#ov-tasks, #dbg-statebeat-body");
-    const report = (host && host.sbReport) || stateBeat.report;
-    if (report) card.innerHTML = sbCardFor(report);
-  });
-}
 
-/* Add a step, finish one or delete one, and show the list the server
-   kept - in the picture and on the card. */
-async function sbChangeNextSteps(id, body) {
-  if (!id) return;
-  try {
-    const said = await api.post("/api/state_heartbeat/todo",
-                                Object.assign({id: id}, body));
-    if (body.add && stateBeat.nextDrafts) delete stateBeat.nextDrafts[id];
-    stateBeat.stepFault = null;
-    sbKeepNextSteps(id, said);
-    // Back where they were typing, for the next one.
-    if (body.add) stateBeat.stepFocus = true;
-  } catch (err) {
-    stateBeat.stepFault = {id: id, said: `Could not change the list:
-      ${err.message}`};
-  }
-  sbShowStepsEverywhere();
-  sbRedrawCards();
-}
 
-/* The list on a card, brought up to date when the picture brings a new
-   one - a round wrote it, or another tab changed it - without touching
-   anything else on the card. */
-function sbRefreshNextSteps(host, picture) {
-  host.querySelectorAll("[data-sb-next]").forEach((box) => {
-    const id = box.dataset.sbNext;
-    const held = sbStepsHeld(picture, id);
-    if (!held || sbNextSays(held) === box.dataset.sbNextSays) return;
-    const fresh = document.createElement("div");
-    fresh.innerHTML = sbNextSteps(id, held);
-    if (fresh.firstElementChild) box.replaceWith(fresh.firstElementChild);
-  });
-}
 
-/* Whether a thing at the top has its steps open in the picture, and the
-   click that opens or shuts them. Kept in `stateBeat`, which every redraw
-   reads, so what is open stays open through the refresh every few
-   seconds. */
-function sbStepsOpen() {
-  if (!(stateBeat.openSteps instanceof Set)) stateBeat.openSteps = new Set();
-  return stateBeat.openSteps;
-}
 
-function sbToggleSteps(id) {
-  const open = sbStepsOpen();
-  if (open.has(id)) {
-    open.delete(id);
-    if (stateBeat.stepAdding === id) stateBeat.stepAdding = null;
-    if ((stateBeat.stepConfirm || {}).owner === id) stateBeat.stepConfirm = null;
-  } else {
-    open.add(id);
-  }
-}
 
-/* The stored id behind a row of the picture: a project's own id, or the
-   task's lasting id rather than its place in this drawing. */
-function sbOwnerOfRow(row, report) {
-  if (row.dataset.sbProject) return row.dataset.sbProject;
-  const key = row.dataset.sbTask;
-  const node = (((report || {}).plan || {}).nodes || []).find(
-    (one) => one.id === key) || {};
-  return String(node.task_id || key || "");
-}
 
-/* THE STEPS IN THE PICTURE, under the thing they belong to.
 
-   Laid on top of the drawing, as `sbUnfold` lays pieces on it, rather than
-   being part of its HTML: the drawing is rebuilt, or written into in
-   place, every few seconds, and either would take the steps - and a step
-   half typed - with it. Each open list is a group of its own, marked with
-   what it was drawn from; a group whose mark still matches is only moved,
-   so the box being typed into is the same box after a refresh.
-
-   Every row below an open list moves down to make room for it, and the
-   drawing grows rather than shrinking what is already there. */
-function sbShowSteps(svg, report) {
-  if (!svg) return;
-  const open = sbStepsOpen();
-  let layer = svg.querySelector(".sb-tt-steps");
-  if (!open.size && !layer) return;
-  if (!layer) {
-    layer = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    layer.setAttribute("class", "sb-tt-steps");
-    const foot = svg.querySelector(".sb-tt-foot");
-    svg.insertBefore(layer, foot || null);
-  }
-  const rows = [...svg.querySelectorAll(".sb-tt-row")];
-  const step = Number(svg.dataset.sbStep || 54);
-  const shut = Number(svg.dataset.sbShut || 0);
-  const ROW = 20;
-  const wanted = new Map();
-  let shift = 0;
-  let widest = 0;
-  rows.forEach((row) => {
-    const home = Number(row.dataset.sbAt || 0);
-    row.style.transform = `translateY(${home + shift}px)`;
-    const owner = sbOwnerOfRow(row, report);
-    if (!owner || !open.has(owner)) return;
-    const held = sbStepsHeld(report, owner);
-    const steps = (held.todo || []).filter((one) => one && one.text);
-    // Under the words of the row, which end lower when a name runs to two
-    // lines.
-    let bottom = 32;
-    try {
-      const box = row.querySelector(".sb-tt-label, .sb-tt-project-name")
-        ? row.getBBox() : null;
-      if (box && box.height) bottom = Math.max(bottom, box.y + box.height);
-    } catch (_err) { /* not laid out yet: the usual height will do */ }
-    const name = row.querySelector(".sb-tt-name");
-    const x = name ? Number(name.getAttribute("x")) || 0 : 0;
-    const adding = stateBeat.stepAdding === owner;
-    const asking = stateBeat.stepConfirm || {};
-    const fault = (stateBeat.stepFault || {}).id === owner
-      ? stateBeat.stepFault.said : "";
-    const lines = Math.max(1, steps.length);
-    const room = 6 + lines * ROW + 28 + (fault ? 16 : 0);
-    // Each step is placed by the line its words sit on, so the first one
-    // goes a line's height below the bottom of the row's own words.
-    const top = home + shift + bottom + 18;
-    wanted.set(owner, {top: top, x: x, steps: steps, adding: adding,
-                       asking: asking.owner === owner ? asking.step : "",
-                       fault: fault, held: held});
-    steps.forEach((one) => {
-      // Room past the words for "Delete this step? Yes No".
-      widest = Math.max(widest, x + 22 + sbTextWide(String(one.text), 6.1)
-        + 210);
-    });
-    widest = Math.max(widest, x + 330);
-    shift += Math.max(0, bottom + 18 + room - (step - 22));
-  });
-  // Lists no longer open, or drawn from something that has changed, go;
-  // the rest stay as they are and only move.
-  const markOf = (one) => JSON.stringify([one.steps.map((s) => [s.id, s.text,
-    s.by, Boolean(s.done)]), one.adding, one.asking, one.fault, one.x]);
-  [...layer.children].forEach((group) => {
-    const mine = wanted.get(group.dataset.sbStepsFor);
-    if (!mine || group.dataset.sbMark !== markOf(mine)) group.remove();
-  });
-  wanted.forEach((one, owner) => {
-    let group = [...layer.children].find(
-      (held) => held.dataset.sbStepsFor === owner);
-    if (!group) {
-      group = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      group.setAttribute("class", "sb-tt-step-group");
-      group.dataset.sbStepsFor = owner;
-      group.dataset.sbMark = markOf(one);
-      group.innerHTML = sbStepsDrawn(owner, one);
-      layer.appendChild(group);
-    }
-    group.style.transform = `translateY(${one.top.toFixed(1)}px)`;
-  });
-  // TALLER, AND WIDER WHERE A STEP NEEDS IT - never a thumbnail of what
-  // was there.
-  const tall = shut + shift;
-  const wide = Math.max(Number(svg.dataset.sbWide || SB_WIDTH) || SB_WIDTH,
-                        widest);
-  const size = sbTreeZoom();
-  svg.setAttribute("viewBox", `0 0 ${wide} ${tall}`);
-  svg.style.height = `${(tall * size).toFixed(0)}px`;
-  svg.style.width = `${(wide * size).toFixed(0)}px`;
-  const foot = svg.querySelector(".sb-tt-foot");
-  if (foot) {
-    foot.dataset.sbAt = String(tall - 20);
-    foot.dataset.sbFull = String(tall - 20);
-  }
-  sbPinTheAxis(svg);
-  if (stateBeat.stepFocus && stateBeat.stepAdding) {
-    const typed = layer.querySelector(
-      `[data-sb-next-input="${CSS.escape(stateBeat.stepAdding)}"]`);
-    if (typed) {
-      stateBeat.stepFocus = false;
-      try { typed.focus({preventScroll: true}); } catch (_err) { /* fine */ }
-    }
-  }
-}
-
-/* One open list, drawn: each step with a box to tick it off and a cross to
-   delete it - which asks first, in the picture, because a step deleted by
-   a slip of the hand is gone from the next round's list - and a "+" under
-   them that opens a box to type a new one into. The user's own steps say
-   so, quietly; a finished one is struck through until the next round
-   leaves it out. */
-function sbStepsDrawn(owner, one) {
-  const ROW = 20;
-  const x = one.x;
-  const id = escapeHtml(owner);
-  const rows = one.steps.map((step, at) => {
-    const y = at * ROW;
-    const text = String(step.text);
-    const sid = escapeHtml(String(step.id || ""));
-    // TICKED, AND UN-TICKABLE: a tick put on by mistake is taken back with
-    // the same click.
-    const box = step.done
-      ? `<g class="sb-tt-step-box sb-tt-step-ticked" data-sb-step-unfinish="${sid}"
-           data-sb-step-owner="${id}" role="button" tabindex="0"><rect x="${x}"
-           y="${y - 10}" width="12" height="12" rx="2"/><path
-           d="M${x + 2.5} ${y - 4} l2.6 3 l4.6 -6" class="sb-tt-step-tick"/>
-           <title>${step.done_by === "agent" ? `Ticked by the agent: ${escapeHtml(
-             String(step.done_why || "from what it saw you do"))}` : "Finished"} - the
-             next round leaves it out. Click to take the tick back</title></g>`
-      : `<g class="sb-tt-step-box" data-sb-step-finish="${sid}"
-           data-sb-step-owner="${id}" role="button" tabindex="0"><rect
-           x="${x}" y="${y - 10}" width="12" height="12" rx="2"/>
-           <title>Mark this step finished</title></g>`;
-    // RIGHT AFTER THE WORDS, as part of the same line: placed by a guess
-    // at how wide the words were, the cross landed far from short steps
-    // and was a small thing to hit at that.
-    const end = one.asking === step.id
-      ? `<tspan dx="10" class="sb-tt-step-ask">Delete this step?</tspan><tspan
-           dx="8" class="sb-tt-step-yes" data-sb-step-yes="${sid}"
-           data-sb-step-owner="${id}" role="button" tabindex="0">Yes</tspan><tspan
-           dx="10" class="sb-tt-step-no" data-sb-step-no="${sid}"
-           data-sb-step-owner="${id}" role="button" tabindex="0">No</tspan>`
-      : `<tspan dx="8" class="sb-tt-step-delete" data-sb-step-delete="${sid}"
-           data-sb-step-owner="${id}" role="button" tabindex="0">&times;<title>Delete
-           this step</title></tspan>`;
-    return `<g class="sb-tt-step${step.by === "user" ? " sb-tt-step-mine"
-        : ""}${step.done ? " sb-tt-step-done" : ""}" data-sb-step="${sid}">
-      ${box}
-      <text x="${x + 20}" y="${y}" class="sb-tt-step-text"><tspan
-        class="sb-tt-step-words">${escapeHtml(text)}</tspan>${
-        step.by === "user" ? `<tspan class="sb-tt-step-by"> &middot;
-          yours</tspan>` : ""}${step.done && step.done_by === "agent"
-        ? `<tspan class="sb-tt-step-by sb-tt-step-agent"> &middot; ticked by the agent<title>${
-          escapeHtml(String(step.done_why || ""))}</title></tspan>` : ""}${end}</text></g>`;
-  });
-  if (!rows.length) {
-    rows.push(`<text x="${x}" y="0" class="sb-tt-step-none">No next steps
-      yet - the next round that describes it writes them.</text>`);
-  }
-  const lines = Math.max(1, one.steps.length);
-  const addY = lines * ROW;
-  const draft = (stateBeat.nextDrafts || {})[owner] || "";
-  const adding = one.adding
-    ? `<foreignObject x="${x}" y="${addY - 14}" width="320" height="26">
-        <div xmlns="http://www.w3.org/1999/xhtml" class="sb-tt-step-form">
-          <input type="text" maxlength="300" data-sb-next-input="${id}"
-            aria-label="A next step to add" placeholder="A next step"
-            value="${escapeHtml(draft)}"/>
-          <button type="button" class="small" data-sb-step-add="${id}">Add</button>
-          <button type="button" class="small secondary"
-            data-sb-step-cancel="${id}">Cancel</button>
-        </div></foreignObject>`
-    : `<text x="${x}" y="${addY}" class="sb-tt-step-plus"
-         data-sb-step-plus="${id}" role="button" tabindex="0">+ add a
-         step</text>`;
-  const fault = one.fault
-    ? `<text x="${x}" y="${addY + 26}" class="sb-tt-step-fault">${
-        escapeHtml(one.fault)}</text>` : "";
-  return `<g class="sb-tt-step-rows">${rows.join("")}${adding}${fault}</g>`;
-}
-
-/* Both pictures - the overview's and the debugger's - with whatever is
-   open laid out again. Called after every redraw of either. */
-function sbShowStepsEverywhere() {
-  ["#ov-tasks", "#dbg-statebeat-body"].forEach((which) => {
-    const host = $(which);
-    const svg = host && host.querySelector(".sb-whole-graph");
-    if (svg) sbShowSteps(svg, host.sbReport || stateBeat.report || {});
-  });
-}
 
 /* A PROJECT: several tasks the model agreed are parts of one larger piece
    of work, found from where the work lives. Its name, why it is one, where
@@ -16161,7 +15935,6 @@ function sbProjectCard(report, which) {
             xpWriter(project.written_by))})</span>` : ""}</p>`
       : `<p class="muted">Where it stands is written after its tasks have
          theirs, in the next round.</p>`}
-    ${sbNextSteps(project.id, project)}
     ${project.why ? `<p class="sb-card-part"><span class="event-label">Why
       they are one</span> ${escapeHtml(project.why)}</p>` : ""}
     ${project.home ? `<p class="sb-card-part"><span class="event-label">Where
@@ -16358,15 +16131,6 @@ function sbRegionLine(task, said) {
       escapeHtml(short(place))}</code>`).join(", ")}</p>`;
 }
 
-/* A task's next steps, when it is at the top. A task inside a project has
-   none of its own: the project's list is the one for that work. */
-function sbTopTaskNextSteps(report, task, said, described) {
-  const id = task.task_id || said.task_id;
-  if (!id) return "";
-  const inside = (report.projects || []).some((one) =>
-    (one.tasks || []).includes(id));
-  return inside ? "" : sbNextSteps(id, described);
-}
 
 function sbTaskCard(report, key) {
   if (!key) {
@@ -16424,7 +16188,6 @@ function sbTaskCard(report, key) {
         .map(([name, heading]) => `<p class="sb-card-part">
           <span class="event-label">${escapeHtml(heading)}</span>
           ${escapeHtml(String(described[name]))}</p>`).join("")}
-      ${sbTopTaskNextSteps(report, task, said, described)}
       ${summary.concrete === false
         ? `<p class="sb-not-shown-why">Kept, not shown: this is a way of
              working rather than a thing with substance underneath it.</p>`
@@ -17249,9 +17012,6 @@ function sbWriteInPlace(host, picture) {
     sbUnfold(svg, picture, stateBeat.openTasks);
   }
   host.sbReport = picture;
-  // AND THE NEXT STEPS ON THE OPEN CARD, which a round rewrites: the rest
-  // of the card is left as it is, as it always has been here.
-  sbRefreshNextSteps(host, picture);
   // AND THE WORDS ABOVE THE DRAWING.
   //
   // This updated the picture and nothing else, so the strip kept
@@ -17312,14 +17072,301 @@ function sbOnlyShown(picture) {
   return out;
 }
 
+/* TASKS AND PROJECTS (section 34.5). The projects, each with how long it
+   was actually worked on: shown when worked on inside the chosen days and
+   for at least the chosen time. Click one for its tasks. */
+const PJ_LEAST_MINUTES = [15, 60, 360, 1440];
+
+function pjLeastMinutes() {
+  let said = 15;
+  try {
+    said = Number(localStorage.getItem("pa.projects.least") || 15);
+  } catch (err) { /* private window: the default */ }
+  return PJ_LEAST_MINUTES.includes(said) ? said : 15;
+}
+
+function pjHours(minutes) {
+  const m = Math.round(Number(minutes) || 0);
+  if (m < 60) return `${m} min`;
+  const hours = m / 60;
+  return `${hours < 10 ? hours.toFixed(1) : Math.round(hours)} h`;
+}
+
+function pjLeastBar() {
+  const which = pjLeastMinutes();
+  const named = { 15: "15 min", 60: "1 hour", 360: "6 hours", 1440: "1 day" };
+  return `<span class="sb-sort-bar pj-least-bar"><span class="muted">worked on
+    at least</span>
+    ${PJ_LEAST_MINUTES.map((minutes) => `<button type="button" class="small${
+      which === minutes ? "" : " secondary"} sb-sort" data-pj-least="${minutes}"
+      >${named[minutes]}</button>`).join("")}</span>`;
+}
+
+function pjWhen(iso) {
+  const at = Date.parse(iso || "");
+  if (Number.isNaN(at)) return "";
+  return new Date(at).toLocaleString([], { month: "short", day: "numeric",
+                                            hour: "2-digit", minute: "2-digit" });
+}
+
+/* One colour per project, from its id - the same wherever it is drawn and
+   whatever order the rows are in. */
+function pjColour(id) {
+  let sum = 0;
+  for (const ch of String(id || "")) sum = (sum * 31 + ch.charCodeAt(0)) % 9973;
+  return sbColour(sum, true);
+}
+
+function pjSpan(task) {
+  const end = Date.parse(task.ends_at || "");
+  const start = Date.parse(task.starts_at || "") || end;
+  return [start, Number.isNaN(end) ? start : end];
+}
+
+/* THE PICTURE, as the tasks' one was: a row per project, its tasks as bars
+   where they were worked on, the days along the top. Longest worked on
+   first; with full activity the leisure ones under the work, apart, on the
+   same days. */
+function pjChart(projects, since, open) {
+  const spans = projects.flatMap((one) => (one.tasks || []).map(pjSpan))
+    .filter(([start]) => Number.isFinite(start));
+  const DAY = 86400000;
+  const high = Math.max(Date.now(), ...spans.map(([, end]) => end));
+  const low = since || Math.min(high - DAY, ...spans.map(([start]) => start));
+  const at = (ms) => Math.max(0, Math.min(100, ((ms - low) / (high - low)) * 100));
+  const days = [];
+  const first = new Date(low);
+  first.setHours(24, 0, 0, 0);
+  for (let day = first.getTime(); day < high; day += DAY) days.push(day);
+  const every = Math.max(1, Math.ceil(days.length / 8));
+  const grid = days.map((day) => `<span class="pj-grid" style="left:${at(day).toFixed(2)}%"></span>`)
+    .join("");
+  const axis = days.map((day, n) => (n % every ? "" : `<span class="pj-tick"
+      style="left:${at(day).toFixed(2)}%">${escapeHtml(new Date(day).toLocaleDateString([],
+      { month: "short", day: "numeric" }))}</span>`)).join("");
+  const row = (one) => {
+    const colour = pjColour(one.id);
+    const bars = (one.tasks || []).map((task) => {
+      const [start, end] = pjSpan(task);
+      if (!Number.isFinite(start) || end < low) return "";
+      const left = at(start);
+      const wide = Math.max(0.8, at(end) - left);
+      const said = `${task.title_display || task.title || ""} - ${pjHours(task.minutes)}, ${
+        pjWhen(task.starts_at)} to ${pjWhen(task.ends_at)}`;
+      return `<span class="pj-bar" style="left:${left.toFixed(2)}%;width:${wide.toFixed(2)}%;
+        background:${colour}" title="${escapeHtml(said)}"></span>`;
+    }).join("");
+    return `<div class="pj-crow${one.id === open ? " open" : ""}${one.dormant ? " dormant" : ""}"
+        data-pj-open="${escapeHtml(one.id)}" role="button" tabindex="0"
+        aria-expanded="${one.id === open}">
+      <div class="pj-cname"><span class="pj-disc" style="background:${colour}"></span>
+        <span class="pj-cname-text"><strong>${escapeHtml(one.title || "")}</strong>
+        <span class="muted">${pjHours(one.minutes)}${one.dormant ? " · dormant" : ""}</span>
+        </span></div>
+      <div class="pj-ctrack">${grid}${bars}</div>
+    </div>`;
+  };
+  const longest = (a, b) => Number(b.minutes || 0) - Number(a.minutes || 0);
+  const work = projects.filter((one) => one.kind !== "leisure").sort(longest);
+  const leisure = projects.filter((one) => one.kind === "leisure").sort(longest);
+  // Both named when both are there, so which is which is never left to
+  // the reader.
+  const rows = (leisure.length && work.length
+    ? `<div class="pj-section pj-section-first" role="separator">Work</div>` : "")
+    + work.map(row).join("") + (leisure.length
+    ? `<div class="pj-section" role="separator">Leisure</div>${leisure.map(row).join("")}`
+    : "");
+  return `<div class="pj-chart">
+    <div class="pj-crow pj-axis-row"><div class="pj-cname"></div>
+      <div class="pj-ctrack pj-axis">${axis}</div></div>
+    ${rows}
+  </div>`;
+}
+
+/* The open project's card, under the picture, as a task's card was: what
+   it is, what is being worked on in it now, since when and how long, and
+   where. A project has no tasks under it to list - the bars in the picture
+   are when it was worked on. */
+function pjCard(one) {
+  if (!one) {
+    return `<p class="muted sb-card-empty sb-click-hint">Click a project above to read it
+      here.</p>`;
+  }
+  const dirs = (one.directories || []).slice(0, 6)
+    .map((dir) => `<code>${escapeHtml(dir)}</code>`).join(" ");
+  return `<div class="pj-card" style="border-left-color:${pjColour(one.id)}">
+    <p class="sb-card-title">${escapeHtml(one.title || "")}</p>
+    <p class="muted">Since ${escapeHtml(pjWhen(one.first_seen))} · last active
+      ${escapeHtml(pjWhen(one.last_seen))} · ${pjHours(one.minutes)} worked on${
+      one.kind === "leisure" ? " · leisure" : ""}${one.dormant ? " · dormant" : ""}</p>
+    ${one.what_it_is ? `<p class="sb-card-part"><span class="event-label">What it is</span>
+      ${escapeHtml(one.what_it_is)}</p>` : ""}
+    ${one.summary ? `<p class="sb-card-part"><span class="event-label">Being worked on</span>
+      ${escapeHtml(one.summary)}</p>` : ""}
+    ${dirs ? `<p class="sb-card-part pj-dirs"><span class="event-label">Where</span>
+      ${dirs}</p>` : ""}
+  </div>`;
+}
+
+function drawProjects(whole) {
+  const host = $("#ov-tasks");
+  if (!host) return;
+  stateBeat.whole = whole;
+  const days = sbRecentDays();
+  const since = days ? Date.now() - days * 86400000 : 0;
+  const least = pjLeastMinutes();
+  // WORK ACTIVITY, OR FULL: the leisure projects are shown only when asked,
+  // as the tasks of leisure were.
+  const full = sbShowingHidden();
+  const every = (whole.projects || []).filter((one) => !one.ended);
+  const leisure = every.filter((one) => one.kind === "leisure").length;
+  const toggle = leisure || full ? `<button type="button" class="small secondary"
+      data-sb-hidden="${full ? "off" : "on"}"
+      title="Work activity: the projects of your work only. Full activity: the
+             projects of leisure too.">${full ? "show work activity"
+      : "show full activity"}</button>` : "";
+  const bars = `<div class="pj-bars">${sbRecentBar()} ${pjLeastBar()} ${toggle}</div>`;
+  if (!every.length) {
+    const due = whole.due || {};
+    host.innerHTML = `${bars}<p class="muted">No project yet. ${
+      escapeHtml(due.why || "The first run writes the last week's tasks.")}</p>`;
+    return;
+  }
+  const shown = every.filter((one) => (full || one.kind !== "leisure")
+    && (Date.parse(one.last_seen || "") || 0) >= since
+    && Number(one.minutes || 0) >= least);
+  const open = stateBeat.openProject || "";
+  const hidden = every.length - shown.length;
+  host.innerHTML = `${bars}${shown.length ? pjChart(shown, since, open)
+      : `<p class="muted">No project in this range.</p>`}
+    ${hidden ? `<p class="muted pj-hidden">${hidden} more outside the range, worked on
+      for less${full ? "" : ", or of leisure"}.</p>` : ""}
+    ${pjCard(shown.find((one) => one.id === open))}`;
+}
+
+document.addEventListener("click", (event) => {
+  const least = event.target.closest && event.target.closest("[data-pj-least]");
+  if (least) {
+    event.preventDefault();
+    try {
+      localStorage.setItem("pa.projects.least", least.dataset.pjLeast);
+    } catch (err) { /* private window: for this page only */ }
+    if (stateBeat.whole && stateBeat.whole.scheme === "projects") drawProjects(stateBeat.whole);
+    return;
+  }
+  const row = event.target.closest && event.target.closest("[data-pj-open]");
+  if (row && !event.target.closest("a") && !event.target.closest("button")) {
+    stateBeat.openProject = stateBeat.openProject === row.dataset.pjOpen
+      ? "" : row.dataset.pjOpen;
+    if (stateBeat.whole && stateBeat.whole.scheme === "projects") drawProjects(stateBeat.whole);
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const row = event.target.closest && event.target.closest("[data-pj-open]");
+  if (!row || event.target !== row) return;
+  event.preventDefault();
+  row.click();
+});
+
+/* THE TASK PANEL (debugger): what a run of tasks and projects did - each
+   stretch it wrote, with what was sent and what came back - and every
+   project as one row over time: since when, how long worked on, where it
+   came from, and its tasks along the row; click a task to read it. */
+function pjDebugPanel(report) {
+  const stretches = (report.stretches || []).map((one, n) => {
+    const tasks = (one.tasks || []).map((task) => `<li>${escapeHtml(task.title || "")}
+      <span class="muted">${escapeHtml(task.kind || "")} · ${pjHours(task.minutes)}
+      · ${(task.states || []).length} state(s)${task.continues ? " · continues a project" : ""}</span></li>`)
+      .join("");
+    const lines = Object.keys(one.lines || {}).length
+      ? `<p class="muted">Lines written: ${Object.values(one.lines).map((line) =>
+        escapeHtml(line.line || "")).join(" | ")}</p>` : "";
+    return `<details class="pj-stretch"${n === (report.stretches || []).length - 1 ? " open" : ""}>
+      <summary>${escapeHtml(pjWhen(one.from))} - ${escapeHtml(pjWhen(one.to))}:
+        ${one.states} state(s), ${(one.tasks || []).length} task(s)
+        ${one.seconds ? `<span class="muted">${one.seconds}s</span>` : ""}</summary>
+      <ul>${tasks}</ul>${lines}
+      <details><summary class="muted">Sent</summary><pre class="pj-pre">${escapeHtml(one.sent || "")}</pre></details>
+      <details><summary class="muted">Reply</summary><pre class="pj-pre">${escapeHtml(one.reply || "")}</pre></details>
+    </details>`;
+  }).join("");
+  const whole = (stateBeat.whole && stateBeat.whole.scheme === "projects") ? stateBeat.whole : null;
+  const projects = whole ? whole.projects || [] : [];
+  const times = [];
+  projects.forEach((one) => (one.tasks || []).forEach((task) => {
+    const at = Date.parse(task.ends_at || "");
+    if (!Number.isNaN(at)) times.push(at);
+  }));
+  const low = Math.min(...times);
+  const high = Math.max(...times);
+  const span = Math.max(1, high - low);
+  const picked = stateBeat.pjTask || "";
+  const rows = projects.map((one) => {
+    const born = one.born_of || {};
+    const came = born.kind === "merged" ? `merged from ${(born.from || []).length}`
+      : born.kind === "split" ? "split from another" : "";
+    const went = born.joined_into ? " · ended" : "";
+    const dots = (one.tasks || []).map((task) => {
+      const at = Date.parse(task.ends_at || "");
+      if (Number.isNaN(at)) return "";
+      const left = ((at - low) / span) * 100;
+      const key = `${one.id}|${task.id}`;
+      return `<button type="button" class="pj-dot${picked === key ? " on" : ""}"
+        style="left:${left.toFixed(2)}%" data-pj-task="${escapeHtml(key)}"
+        title="${escapeHtml(task.title || "")}"></button>`;
+    }).join("");
+    const open = (one.tasks || []).find((task) => picked === `${one.id}|${task.id}`);
+    return `<div class="pj-line">
+      <div class="pj-line-head"><strong>${escapeHtml(one.title || "")}</strong>
+        <span class="muted">since ${escapeHtml(pjWhen(one.first_seen))} ·
+          ${pjHours(one.minutes)} worked${came ? ` · ${came}` : ""}${went}${one.dormant ? " · dormant" : ""}</span>
+        <div class="muted">${escapeHtml(one.what_it_is || "")}</div></div>
+      <div class="pj-track">${dots}</div>
+      ${open ? `<div class="pj-task-open"><strong>${escapeHtml(open.title || "")}</strong>
+        <span class="muted">${pjHours(open.minutes)} · ${escapeHtml(pjWhen(open.starts_at))}
+          - ${escapeHtml(pjWhen(open.ends_at))} · ${(open.states || []).length} state(s)</span>
+        <p>${escapeHtml(open.summary || "")}</p>
+        ${open.summary_display && open.summary_display !== open.summary
+          ? `<p class="muted">${escapeHtml(open.summary_display)}</p>` : ""}</div>` : ""}
+    </div>`;
+  }).join("");
+  const switched = report.switched
+    ? `<p class="muted">Switched to tasks and projects ${escapeHtml(pjWhen(report.switched.at))}:
+        ${(report.switched.kept_as_history || {}).tasks || 0} earlier task(s) and
+        ${(report.switched.kept_as_history || {}).projects || 0} project(s) kept as history.</p>` : "";
+  return `${stateBeatStage(report)}
+    <p>${report.states_read || 0} state(s) read, ${report.calls || 0} call(s),
+      ${report.tokens_in || 0} tokens in, ${report.tokens_out || 0} out.
+      ${report.note ? escapeHtml(report.note) : ""}
+      ${report.blocked ? `<span class="error">${escapeHtml(report.blocked)}</span>` : ""}
+      ${report.error ? `<span class="error">${escapeHtml(report.error)}</span>` : ""}</p>
+    ${switched}
+    <h4>Stretches written</h4>${stretches || `<p class="muted">None this run.</p>`}
+    <h4>Projects over time</h4>
+    ${rows || `<p class="muted">Open the Overview once to load the projects.</p>`}`;
+}
+
+document.addEventListener("click", (event) => {
+  const dot = event.target.closest && event.target.closest("[data-pj-task]");
+  if (!dot) return;
+  event.preventDefault();
+  stateBeat.pjTask = stateBeat.pjTask === dot.dataset.pjTask ? "" : dot.dataset.pjTask;
+  renderStateBeat();
+});
+
 function drawWhatIsRunning(whole) {
+  if (whole && whole.scheme === "projects") {
+    drawProjects(whole);
+    return undefined;
+  }
   // WHERE THE READER HAD SCROLLED TO, kept. A redraw makes the picture anew,
   // and a wide one scrolled to its right-hand end went back to the left
   // every time the data moved.
   const host = $("#ov-tasks");
   const held = host ? sbScrollsIn(host) : [];
   const out = drawWhatIsRunningNow(whole);
-  sbShowStepsEverywhere();
   sbMarkSelected();
   if (host) sbScrollsBack(host, held);
   ovPlaceTodos();
@@ -20033,7 +20080,7 @@ function wireStateBeat() {
     // the mouse keeps their place.
     $(which)?.addEventListener("mousedown", (event) => {
       const node = event.target.closest(
-        "[data-sb-task], [data-sb-piece], [data-sb-todo]");
+        "[data-sb-task], [data-sb-piece]");
       if (!node) return;
       event.preventDefault();
       try {
@@ -20043,79 +20090,8 @@ function wireStateBeat() {
            picture that jumps. */
       }
     });
-    // A NEXT STEP BEING TYPED: kept as it is typed, so a redraw that
-    // rebuilds the picture puts the words back; Enter adds it and Escape
-    // puts the box away.
-    $(which)?.addEventListener("input", (event) => {
-      const typed = event.target.closest && event.target.closest(
-        "[data-sb-next-input]");
-      if (!typed) return;
-      stateBeat.nextDrafts = stateBeat.nextDrafts || {};
-      stateBeat.nextDrafts[typed.dataset.sbNextInput] = typed.value;
-    });
-    $(which)?.addEventListener("keydown", (event) => {
-      const typed = event.target.closest && event.target.closest(
-        "[data-sb-next-input]");
-      if (!typed || (event.key !== "Enter" && event.key !== "Escape")) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const owner = typed.dataset.sbNextInput;
-      if (event.key === "Escape") {
-        stateBeat.stepAdding = null;
-        sbShowStepsEverywhere();
-        return;
-      }
-      const text = typed.value.trim();
-      if (text) sbChangeNextSteps(owner, {add: text});
-    });
   });
 
-  /* A click among a thing's next steps, in the picture. */
-  function sbStepClicked(event) {
-    const on = (name) => event.target.closest(`[${name}]`);
-    const finish = on("data-sb-step-finish");
-    const unfinish = on("data-sb-step-unfinish");
-    const remove = on("data-sb-step-delete");
-    const yes = on("data-sb-step-yes");
-    const no = on("data-sb-step-no");
-    const plus = on("data-sb-step-plus");
-    const add = on("data-sb-step-add");
-    const cancel = on("data-sb-step-cancel");
-    const hit = finish || unfinish || remove || yes || no || plus || add || cancel;
-    if (!hit) return;
-    event.preventDefault();
-    const owner = hit.dataset.sbStepOwner || hit.dataset.sbStepPlus
-      || hit.dataset.sbStepAdd || hit.dataset.sbStepCancel || "";
-    if (finish) {
-      sbChangeNextSteps(owner, {finish: finish.dataset.sbStepFinish});
-    } else if (unfinish) {
-      sbChangeNextSteps(owner, {unfinish: unfinish.dataset.sbStepUnfinish});
-    } else if (remove) {
-      // ASKED FIRST, in the picture: a deleted step is gone from what the
-      // next round is shown, and a cross is a small thing to hit by
-      // mistake.
-      stateBeat.stepConfirm = {owner: owner, step: remove.dataset.sbStepDelete};
-      sbShowStepsEverywhere();
-    } else if (yes) {
-      stateBeat.stepConfirm = null;
-      sbChangeNextSteps(owner, {remove: yes.dataset.sbStepYes});
-    } else if (no) {
-      stateBeat.stepConfirm = null;
-      sbShowStepsEverywhere();
-    } else if (plus) {
-      stateBeat.stepAdding = owner;
-      stateBeat.stepFocus = true;
-      sbShowStepsEverywhere();
-    } else if (add) {
-      const typed = add.parentNode.querySelector("[data-sb-next-input]");
-      const text = typed ? typed.value.trim() : "";
-      if (text) sbChangeNextSteps(owner, {add: text});
-      else if (typed) typed.focus({preventScroll: true});
-    } else if (cancel) {
-      stateBeat.stepAdding = null;
-      sbShowStepsEverywhere();
-    }
-  }
 
   function sbClicked(event) {
     // The copy button sits inside a `summary`, so a plain click would
@@ -20131,14 +20107,6 @@ function wireStateBeat() {
       event.preventDefault();
       event.stopPropagation();
       sbCopyThePrompt(copier);
-      return;
-    }
-    // A NEXT STEP, IN THE PICTURE: ticked off, deleted - after asking, in
-    // the picture - or added. Before anything below, which looks for rows
-    // of the picture and would read the click as one.
-    if (event.target.closest("[data-sb-steps-for]")) {
-      event.stopPropagation();
-      sbStepClicked(event);
       return;
     }
     if (event.target.closest("[data-sb-next]")) return;
@@ -20221,9 +20189,6 @@ function wireStateBeat() {
       }
       stateBeat.openProjects = new Set();
       stateBeat.cardShows = {kind: "project", which: which};
-      // ITS NEXT STEPS OPEN UNDER IT, in the picture; a second click shuts
-      // them.
-      sbToggleSteps(which);
       const owner = projectAt.closest("#ov-tasks, #dbg-statebeat-body");
       sbRedrawPictures();
       // ITS CARD, WRITTEN - AND THE VIEW LEFT WHERE IT IS. A redraw that
@@ -20237,20 +20202,6 @@ function wireStateBeat() {
         card.innerHTML = sbProjectCard(owner.sbReport || stateBeat.report
                                        || {}, which);
       }
-      return;
-    }
-    const todoAt = event.target.closest("[data-sb-todo]");
-    if (todoAt) {
-      event.stopPropagation();
-      stateBeat.cardShows = {kind: "todo", which: todoAt.dataset.sbTodo};
-      const card = sbCardNear(event.target);
-      if (card) {
-        card.innerHTML = sbTodoCard(stateBeat.report || {},
-                                    todoAt.dataset.sbTodo);
-      }
-      document.querySelectorAll(".sb-todo-open").forEach(
-        (one) => one.classList.remove("sb-todo-open"));
-      todoAt.classList.add("sb-todo-open");
       return;
     }
     const pieceAt = event.target.closest("[data-sb-piece]");
@@ -20321,14 +20272,6 @@ function wireStateBeat() {
       stateBeat.cardShows = {kind: "task"};
       const owner = taskAt.closest("#ov-tasks, #dbg-statebeat-body");
       const showing = (owner && owner.sbReport) || stateBeat.report || {};
-      // A TASK IN NO PROJECT OPENS ONTO ITS NEXT STEPS, as a project does;
-      // one inside a project has none of its own.
-      const stored = sbOwnerOfRow(taskAt, showing);
-      if (!(showing.projects || []).some((one) =>
-        (one.tasks || []).includes(stored))) {
-        sbToggleSteps(stored);
-        sbShowStepsEverywhere();
-      }
       const card = sbCardNear(taskAt);
       // The card reads out what was clicked, and the view stays exactly
       // where it is - as for a project.

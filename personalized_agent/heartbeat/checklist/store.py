@@ -103,15 +103,6 @@ STEPS: List[ChecklistItem] = [
                   "comes; one disabled stays on the calendar, closed with the "
                   "reason, and never interrupts. Nothing already there is "
                   "added again."),
-    ChecklistItem("step_todo", 4,
-                  "Determine which next steps of the user's projects and tasks "
-                  "are now done.",
-                  "Read from the same activity and the states just written: each "
-                  "open next step of a project, or of a task in no project, that "
-                  "the user can be seen to have finished is ticked - by the agent, "
-                  "with why. The user can take a tick back; the next state "
-                  "heartbeat writes the list again from the ticks and the user's "
-                  "own changes."),
 ]
 
 #: Kept for the code that reads step text.

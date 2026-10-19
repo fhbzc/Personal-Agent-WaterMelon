@@ -77,9 +77,14 @@ class NothingReadLeavesInAnAddressTests(unittest.TestCase):
         self.assertIn("error", self.tools.fetch_url({"url": "https://census-api.example.org/"}))
         self.tools.web_search({"query": "census api"})
         self.assertNotIn("error", self.tools.fetch_url({"url": "https://census-api.example.org/"}))
-        # A made-up path on it is not a front page.
+        # A made-up path on it is not a front page: refused when it carries
+        # the user's own words (a short one without them may be opened - the
+        # wider checks, section 119 as amended 2026-10-18).
+        notes = self.users / "draft.md"
+        notes.write_text("My unsent draft: the riverbank survey.", encoding="utf-8")
+        self.tools.read_file({"path": str(notes)})
         self.assertIn("error", self.tools.fetch_url(
-            {"url": "https://census-api.example.org/my-secret-draft"}))
+            {"url": "https://census-api.example.org/riverbank-survey"}))
 
     def test_the_users_files_and_instruction_have_real_addresses(self) -> None:
         notes = self.users / "notes.md"

@@ -112,8 +112,9 @@ class TheRoutesAndThePageTests(unittest.TestCase):
         script = (web / "app.js").read_text(encoding="utf-8")
         self.assertIn("allowed.dataset.sysPermissionFor = field.key", script)
         self.assertIn('api.get("/api/permissions")', script)
-        # Looked at again when the user comes back from the system's settings.
-        self.assertIn('window.addEventListener("focus"', script)
+        # Looked at as the settings open and when asked - never each time the
+        # window comes back to the front (on a Mac each look asks System Events).
+        self.assertNotIn('window.addEventListener("focus"', script)
 
 
 if __name__ == "__main__":

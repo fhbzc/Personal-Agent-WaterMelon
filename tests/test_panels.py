@@ -2322,7 +2322,7 @@ class DesktopConversationTests(unittest.TestCase):
 
     def test_each_project_is_learned_from_its_own_row(self) -> None:
         html = (WEB / "index.html").read_text(encoding="utf-8")
-        self.assertIn("Learned experience", html)
+        self.assertIn("what the agent does on each project", html)
         # One experience: no test, no switch between two.
         for gone in ('id="xp-build"', 'data-xp-scope', 'id="xp-update"', 'id="xp-test-bars"'):
             self.assertNotIn(gone, html)
@@ -7394,7 +7394,9 @@ class TheExperiencePanelTests(unittest.TestCase):
         if self.kind != "chrome":
             self.skipTest("no browser available to render the page")
 
-    def test_the_graph_the_stage_card_and_the_principles(self) -> None:
+    def test_the_projects_and_the_agents_work_and_no_learned_graph(self) -> None:
+        """What was learned of the user's own work is not drawn on the Work
+        tab (2026-10-18): the panel is the agent's own Work on the project."""
         web = ROOT / "personalized_agent" / "api" / "web"
         page = re.sub(r"<script[^>]*src=[^>]*></script>", "",
                       (web / "index.html").read_text(encoding="utf-8"))
@@ -7503,16 +7505,9 @@ class TheExperiencePanelTests(unittest.TestCase):
             "try{await loadExperience(true);"
             "out.units=document.querySelector('#xp-units').textContent.replace(/\s+/g,' ');"
             "window.__asked.length=0;"
-            "out.dots=document.querySelectorAll('#xp-graph [data-xp-stage]').length;"
-            "out.edges=document.querySelectorAll('#xp-graph .xp-edge').length;"
-            "document.querySelector('#xp-graph [data-xp-stage=\"stage_2\"]')"
-            "  .dispatchEvent(new MouseEvent('click',{bubbles:true}));"
-            "out.card=document.querySelector('#xp-stage').textContent.replace(/\s+/g,' ');"
-            "document.querySelector('#xp-stage [data-xp-nature=\\\"rec_9\\\"]')"
-            "  .dispatchEvent(new MouseEvent('click',{bubbles:true}));"
-            "await new Promise((r)=>setTimeout(r,50));"
-            "out.nature=document.querySelector('#xp-stage [data-xp-nature-detail=\\\"rec_9\\\"]')"
-            "  .textContent.replace(/\s+/g,' ');"
+            "out.graph=['xp-graph','xp-stage'].map((id)=>{const e=document.getElementById(id);"
+            "  return [e.hidden,e.innerHTML.trim()];});"
+            "out.title=document.querySelector('#xp-graph-title').textContent;"
             "out.gone=['xp-all','xp-patterns','xp-pattern-card','xp-prompts','xp-all-prompts']"
             "  .filter((id)=>document.getElementById(id)).length;"
             "document.querySelector('#xp-units [data-xp-unit=\\\"task-new\\\"]')"
@@ -7521,15 +7516,11 @@ class TheExperiencePanelTests(unittest.TestCase):
             "out.chosen=document.querySelector('#xp-units .xp-unit.selected').textContent.replace(/\s+/g,' ');"
             "out.asked=window.__asked.slice();"
             "out.work=document.querySelector('#xp-work').textContent.replace(/\s+/g,' ');"
-            "out.rows=[...document.querySelectorAll('#xp-graph [data-xp-card]')].map((r)=>r.textContent.trim());"
             "out.workRows=document.querySelectorAll('#xp-work-tree [data-xp-card]').length;"
             "out.limits=['minutes','tokens_in','tokens_out','calls'].map((n)=>(document.getElementById('xp-limit-'+n)||{}).value);"
             "document.querySelector('#xp-work-tree [data-xp-stage=\\\"ws_1\\\"]')"
             "  .dispatchEvent(new MouseEvent('click',{bubbles:true}));"
             "out.workStage=document.querySelector('#xp-work-stage').textContent.replace(/\s+/g,' ');"
-            "document.querySelector('#xp-graph [data-xp-card=\\\"card_rows\\\"]')"
-            "  .dispatchEvent(new MouseEvent('click',{bubbles:true}));"
-            "out.cardPanel=document.querySelector('#xp-stage').textContent.replace(/\s+/g,' ');"
             "}catch(e){err=String(e&&e.stack?e.stack:e);}"
             "document.title=JSON.stringify({error:err,out:out});});</script>")
         with tempfile.TemporaryDirectory() as work:
@@ -7556,10 +7547,10 @@ class TheExperiencePanelTests(unittest.TestCase):
         self.assertIn("Start learning Update by itself not learned yet · nothing spent "
                       "learning it yet", out["units"])
         self.assertEqual(out["units"].count("learning"), 4)
-        self.assertEqual(out["dots"], 2)
-        self.assertEqual(out["edges"], 1)
-        self.assertIn("还是没显示", out["card"])
-        self.assertIn("written by claude-x (anthropic)", out["card"])
+        # The learned stages are not drawn - neither the picture nor a stage
+        # of it - and the project is still headed by its name.
+        self.assertEqual(out["graph"], [[True, ""], [True, ""]])
+        self.assertTrue(out["title"].strip())
         # One piece of work at a time: no picture of all of them, no prompts,
         # no tree of principles (that is on the overview now).
         self.assertEqual(out["gone"], 0)
@@ -7578,29 +7569,6 @@ class TheExperiencePanelTests(unittest.TestCase):
                      # Tokens in and out, apart.
                      "Continue", "the call limit", "100 in · 20 out"):
             self.assertIn(said, out["work"])
-        # The rows are the cards, each under the one it is a piece of.
-        self.assertEqual(len(out["rows"]), 2)
-        self.assertIn("Project rows", out["rows"][1])
-        # An attempt says what it was an attempt at.
-        self.assertIn("An attempt at: Project rows", out["card"])
-        # What the attempt shows about the user, by what it is about.
-        self.assertIn("How you evaluate Judges rows by opening them", out["card"])
-        # A nature opens where it is listed: its example and where it can be
-        # opened, its pattern and principle with when they were last active,
-        # the lessons it is attached to.
-        for said in ("For example: the project rows, opened one by one",
-                     "C:/w/rows.png", "In the pattern: Tries it by hand",
-                     "Under the principle: Judges on the real thing",
-                     "last active 2026-10-04", "Lessons it is attached to (1)"):
-            self.assertIn(said, out["nature"])
-        self.assertIn("Found by: expand, rows · where: .js, web", out["card"])
-        self.assertIn("For example: the project rows, opened one by one C:/w/rows.png",
-                      out["card"])
-        # A card: what done means, how it is judged, its attempts in order.
-        self.assertIn("Done means: the panel groups tasks by project", out["cardPanel"])
-        self.assertIn("Checked by you: clicks a row", out["cardPanel"])
-        self.assertIn("一点就开", out["cardPanel"])
-        self.assertIn("Attempts (2)", out["cardPanel"])
         # The agents' own work: the folders they may change, said plainly;
         # the limits; their tree; and every review of a stage.
         self.assertIn("C:/w/paper", out["work"])
@@ -7612,7 +7580,6 @@ class TheExperiencePanelTests(unittest.TestCase):
                       out["workStage"])
         self.assertIn("accepted · on the result", out["workStage"])
         self.assertIn("Looked at: notes.md", out["workStage"])
-        self.assertIn("A piece of: The agent release", out["cardPanel"])
 
 
 class NatureExamplesPanelTests(unittest.TestCase):

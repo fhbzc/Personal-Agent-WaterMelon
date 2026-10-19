@@ -398,7 +398,7 @@ class StepTwoTests(_Base):
                                                                  PAUSED_STEPS, STEP_PROMPTS)
         # What runs: who the user is stays kept, and paused.
         self.assertEqual([one.id for one in STEPS if one.id not in PAUSED_STEPS],
-                         ["step_state", "step_people", "step_notify", "step_todo"])
+                         ["step_state", "step_people", "step_notify"])
         self.assertIn("step_people", GATHERS_FOR_ITSELF)
         self.assertIn("FIND THE PEOPLE IN THIS WINDOW", STEP_PROMPTS["step_people"]["instruction"])
         self.assertIn("add_back_because", STEP_PROMPTS["step_people"]["returns"])

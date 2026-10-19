@@ -129,24 +129,27 @@ class VersionsAreSavedAtEachKeyPointTests(_RunsBase):
         self.assertEqual(run["status"], "done", run["log"][-6:])
         tree = self._versions(run["id"])
         kinds = [one["kind"] for one in tree["versions"]]
-        self.assertEqual(kinds, ["contract", "round", "final review", "deck", "finished"])
+        # A VERSION IS A CHECKPOINT (the user's decision, 2026-10-18): the
+        # contract approved, the full review the reviewer asked for when the
+        # notes were done, and the run done - no round, review or deck of
+        # its own.
+        self.assertEqual(kinds, ["contract", "full review", "finished"])
         # One line, each after the one before it; the last is the head.
-        self.assertEqual([one["parent"] for one in tree["versions"]],
-                         ["", "v1", "v2", "v3", "v4"])
+        self.assertEqual([one["parent"] for one in tree["versions"]], ["", "v1", "v2"])
         self.assertEqual({one["branch"] for one in tree["versions"]}, {"main"})
-        self.assertEqual(tree["head"], "v5")
+        self.assertEqual(tree["head"], "v3")
         last = tree["versions"][-1]["summary"]
         self.assertEqual((last["rounds"], last["cards_done"], last["deck"]), (1, 1, True))
         # In the store inside the run's own folder, and nowhere else.
         store = folder / "runs" / run["id"] / ".versions"
         self.assertTrue((store / "index.json").is_file())
-        self.assertTrue((store / "versions" / "v5.json").is_file())
+        self.assertTrue((store / "versions" / "v3.json").is_file())
         # What each holds: the contract version has the contract and not
         # yet the notes; the finished one has everything.
         first = self._manifest(folder, run["id"], "v1")["files"]
         self.assertIn(f"runs/{run['id']}/contract.json", first)
         self.assertNotIn("notes.md", first)
-        whole = self._manifest(folder, run["id"], "v5")["files"]
+        whole = self._manifest(folder, run["id"], "v3")["files"]
         for name in ("notes.md", f"runs/{run['id']}/presentation.html",
                      f"runs/{run['id']}/report.md"):
             self.assertIn(name, whole)
@@ -154,29 +157,49 @@ class VersionsAreSavedAtEachKeyPointTests(_RunsBase):
         # The runs list carries them in brief - and, of a run going, how
         # many still have their slides being drawn.
         self.assertEqual(self.app.work.runs(self.unit["id"])[0]["versions"],
-                         {"count": 5, "head": "v5", "branch": "main", "drawing": 0})
+                         {"count": 3, "head": "v3", "branch": "main", "drawing": 0})
+        # The checkpoint the run went from last, in its plan.
+        self.assertEqual(run["plan"]["checkpoint"]["version"], "v2")
 
-    def test_a_full_review_and_a_limit_each_save_one(self) -> None:
-        run, _folder = self._run(_TwoAgents(rounds_to_complete=5))
+    def test_only_a_checkpoint_is_a_version(self) -> None:
+        from personalized_agent.agent.work.runner import NOT_FINISHED
+        # Rounds the reviewer asked no full review of keep none.
+        models = _TwoAgents(rounds_to_complete=3)
+        run, _folder = self._run(models)
         kinds = [one["kind"] for one in self._versions(run["id"])["versions"]]
-        self.assertEqual(kinds.count("round"), 4)
-        self.assertIn("full review", kinds)
+        self.assertEqual(kinds, ["contract", "full review", "finished"])
+        self.assertEqual(self._versions(run["id"])["versions"][1]["round"], 3)
+        self.assertEqual(models.full_reviews, 1)
+        # A full review that does not pass keeps none, and the work goes on
+        # - to the next one, which does.
         self.agent.cleanup()
         self.setUp()
-        from personalized_agent.agent.work.runner import NOT_FINISHED
-        run, _folder = self._run(_TwoAgents(), limits={"calls": 6, "minutes": 0, "tokens": 0})
+        run, _folder = self._run(_TwoAgents(full_fails=1))
+        self.assertEqual(run["status"], "done", run["log"][-6:])
+        versions = self._versions(run["id"])["versions"]
+        self.assertEqual([one["kind"] for one in versions], ["contract", "full review", "finished"])
+        self.assertEqual([one["passed"] for one in run["plan"]["full_reviews"]], [False, True])
+        self.assertEqual(versions[1]["round"], 2)
+        # Paused at a limit: no version - it goes on from where it stopped,
+        # its to-do list in its plan.
+        self.agent.cleanup()
+        self.setUp()
+        run, _folder = self._run(_TwoAgents(), limits={"calls": 7, "minutes": 0, "tokens": 0})
         self.assertEqual(run["status"], NOT_FINISHED)
         tree = self._versions(run["id"])
-        self.assertEqual(tree["versions"][-1]["kind"], "limit reached")
-        self.assertGreater(tree["versions"][-1]["summary"]["todo"], 0)
+        self.assertEqual([one["kind"] for one in tree["versions"]], ["contract"])
+        self.assertTrue(run["plan"]["todo"]["next"])
 
     def test_how_a_session_ended_names_its_version(self) -> None:
         from personalized_agent.agent.work.runner import (BLOCKED, DONE, NOT_FINISHED,
                                                           Run)
+        from personalized_agent.agent.work.runner import FULL, SINGLE
         run = Run.__new__(Run)
         saved = []
         run._version = lambda kind, label, message=None: saved.append(
             (kind, label, message["title"]))
+        # The single model keeps each end: it has no review, no checkpoint.
+        run.variant = SINGLE
         for status, reason in ((DONE, ""), (NOT_FINISHED, "stopped"),
                                (NOT_FINISHED, "the call limit"),
                                (NOT_FINISHED, "the time limit"), (NOT_FINISHED, ""),
@@ -189,6 +212,14 @@ class VersionsAreSavedAtEachKeyPointTests(_RunsBase):
         # Named for how it ended, as a commit's title.
         self.assertEqual([title for _kind, _label, title in saved][:3],
                          ["Finish: done", "Stop: stopped", "Pause: the call limit"])
+        # A builder and a reviewer keep only the end that is a checkpoint.
+        saved.clear()
+        run.variant = FULL
+        for status, reason in ((DONE, ""), (NOT_FINISHED, "stopped"),
+                               (NOT_FINISHED, "the call limit"), (BLOCKED, "")):
+            run.status, run.stop_reason = status, reason
+            run._end_version()
+        self.assertEqual([kind for kind, _label, _title in saved], ["finished"])
 
 
 class AFileIsKeptOnceTests(unittest.TestCase):
@@ -222,12 +253,12 @@ class AFileIsKeptOnceTests(unittest.TestCase):
                 time.sleep(0.1)
             from personalized_agent.agent.work.versions import VersionStore, sha_of_bytes
             store = VersionStore(Path(started["folder"]) / "runs" / started["run"])
-            held = [store.manifest(f"v{n}")["files"].get("notes.md") for n in range(2, 6)]
+            held = [store.manifest(f"v{n}")["files"].get("notes.md") for n in range(2, 4)]
             self.assertTrue(all(held))
             self.assertEqual({one["sha"] for one in held}, {sha_of_bytes(b"hello")})
             copies = [p for p in (store.root / "objects").rglob("*")
                       if p.is_file() and p.read_bytes() == b"hello"]
-            self.assertEqual(len(copies), 1, "notes.md is kept once, in four versions")
+            self.assertEqual(len(copies), 1, "notes.md is kept once, in two versions")
         finally:
             agent.cleanup()
 
@@ -276,26 +307,18 @@ class ContinuingFromAnOlderVersionTests(_RunsBase):
         self.assertEqual(len(plan["sessions"]), 2)
         self.assertTrue(any(one["what"] == "rolled back" for one in after["log"]))
 
-    def test_the_to_do_list_and_the_deck_come_back(self) -> None:
-        # Eight calls: each version's slides are a call of their own now.
+    def test_a_pause_goes_on_from_where_it_stopped(self) -> None:
+        # A pause is no checkpoint: no version of it - continued, the run
+        # goes on from where it stopped, its files as they are.
         run, folder = self._run(_TwoAgents(), limits={"calls": 8, "minutes": 0, "tokens": 0})
-        paused = self._versions(run["id"])["head"]
+        self.assertEqual(self._versions(run["id"])["head"], "v1")
         run_dir = folder / "runs" / run["id"]
-        todo_then = (run_dir / "todo.md").read_text(encoding="utf-8")
-        deck_then = (run_dir / "presentation.html").read_text(encoding="utf-8")
-        _said, done = self._continue(run["id"], _TwoAgents())
-        self.assertEqual(done["status"], "done")
+        self.assertTrue((run_dir / "todo.md").is_file())
+        said, done = self._continue(run["id"], _TwoAgents())
+        self.assertNotIn("rolled_back", said)
+        self.assertEqual(done["status"], "done", done["log"][-6:])
         self.assertTrue(done["plan"]["deck"]["finished"])
-        _said, back = self._continue(run["id"], _Fails(), from_version=paused)
-        self.assertFalse(back["plan"]["deck"]["finished"])
-        self.assertTrue(back["plan"]["todo"]["next"])
-        self.assertEqual((run_dir / "todo.md").read_text(encoding="utf-8"), todo_then)
-        self.assertEqual((run_dir / "presentation.html").read_text(encoding="utf-8"),
-                         deck_then)
-        # The deck as it was then is served too.
-        page = self.routes[("GET", "/api/work/presentation")](
-            _Request({"run": run["id"], "version": paused}))
-        self.assertIn("not finished", page.body.decode("utf-8").lower())
+        self.assertEqual(len(done["plan"]["sessions"]), 2)
 
     def test_a_branch_keeps_the_other_line(self) -> None:
         run, folder = self._run(_TwoAgents())
@@ -305,15 +328,15 @@ class ContinuingFromAnOlderVersionTests(_RunsBase):
         _said, again = self._continue(run["id"], _TwoAgents(), from_version="v1")
         self.assertEqual(again["status"], "done", again["log"][-6:])
         tree = self._versions(run["id"])
-        self.assertEqual(tree["versions"][:5], before, "the first line is kept as it was")
-        new = tree["versions"][5:]
+        self.assertEqual(tree["versions"][:3], before, "the first line is kept as it was")
+        new = tree["versions"][3:]
         self.assertTrue(new)
         self.assertEqual(new[0]["parent"], "v1")
         self.assertEqual({one["branch"] for one in new}, {"branch 2"})
         self.assertEqual(tree["head"], new[-1]["id"])
         self.assertEqual(tree["branches"], ["main", "branch 2"])
         # And the old line can be gone back to: its tip carries it on.
-        _said, back = self._continue(run["id"], _Fails(), from_version="v5")
+        _said, back = self._continue(run["id"], _Fails(), from_version="v3")
         self.assertEqual(back["plan"]["rolled_back"]["branch"], "main")
         self.assertTrue((folder / "notes.md").exists())
         self.assertTrue(back["plan"]["deck"]["finished"])
@@ -325,7 +348,7 @@ class ContinuingFromAnOlderVersionTests(_RunsBase):
             self.routes[("POST", "/api/work/continue")](_Request({"run": run["id"]}))
         with self.assertRaises(ApiError):
             self.routes[("POST", "/api/work/continue")](
-                _Request({"run": run["id"], "from_version": "v5"}))
+                _Request({"run": run["id"], "from_version": "v3"}))
         with self.assertRaises(ApiError):
             self.routes[("POST", "/api/work/continue")](
                 _Request({"run": run["id"], "from_version": "v99"}))
@@ -337,7 +360,7 @@ class ContinuingFromAnOlderVersionTests(_RunsBase):
         try:
             self.app.work.models = _Fails(gate)
             said = self.app.work.continue_run(run["id"], self.unit, {},
-                                              from_version="v4")
+                                              from_version="v2")
             self.assertNotIn("error", said, said)
             with self.assertRaises(ApiError) as caught:
                 self.routes[("POST", "/api/work/continue")](
@@ -364,11 +387,12 @@ class GrantedFoldersOnRollbackTests(_RunsBase):
         super().tearDown()
 
     def test_only_what_is_still_as_the_agent_left_it_is_put_back(self) -> None:
-        run, _folder = self._run(_WritesGranted(self.granted, rounds_to_complete=2))
+        run, _folder = self._run(_WritesGranted(self.granted, rounds_to_complete=2,
+                                                full_review="always"))
         self.assertEqual(run["status"], "done", run["log"][-6:])
         self.assertEqual((self.granted / "out.txt").read_text(), "round 2")
         versions = self._versions(run["id"])["versions"]
-        first_round = [one for one in versions if one["kind"] == "round"][0]["id"]
+        first_round = [one for one in versions if one["kind"] == "full review"][0]["id"]
         detail = self.app.work.version(run["id"], first_round)
         self.assertEqual(sorted(Path(one["path"]).name for one in detail["granted"]),
                          ["b.txt", "out.txt"])
@@ -418,7 +442,7 @@ class TheVersionsApiTests(_RunsBase):
         if one["summary"]["slides"] == "not made":
             self.assertTrue(one["summary"]["slides_why"])
         detail = self.routes[("GET", "/api/work/version")](
-            _Request({"run": run["id"], "id": "v5"}))
+            _Request({"run": run["id"], "id": "v3"}))
         self.assertTrue(detail["head"])
         self.assertTrue(detail["deck"])
         self.assertEqual(detail["goal"], "notes.md says hello")
@@ -434,10 +458,10 @@ class TheVersionsApiTests(_RunsBase):
         figure = folder / "plot.png"
         figure.write_bytes(b"\x89PNG\r\n")
         from personalized_agent.agent.work.versions import VersionStore
-        held = self.app.work.version_file(run["id"], "v5", str(figure))
+        held = self.app.work.version_file(run["id"], "v3", str(figure))
         self.assertIsNone(held, "made after the version: not in it")
         served = self.routes[("GET", "/api/work/presentation")](
-            _Request({"run": run["id"], "version": "v4"}))
+            _Request({"run": run["id"], "version": "v3"}))
         self.assertIn("Key deliverables", served.body.decode("utf-8"))
         self.assertTrue(VersionStore(folder / "runs" / run["id"]).index()["versions"])
 
@@ -466,7 +490,8 @@ class _Commits(_TwoAgents):
     answer with a commit saying what it changed (unless `commit` is off)."""
 
     def __init__(self, commit=True, **kwargs):
-        super().__init__(rounds_to_complete=2, **kwargs)
+        # A full review each round: each a checkpoint, a version.
+        super().__init__(rounds_to_complete=2, full_review="always", **kwargs)
         self.commit = commit
 
     def _summary(self, first):
@@ -511,7 +536,7 @@ class EachVersionSaysWhatItDidTests(_RunsBase):
         self.assertEqual(run["status"], "done", run["log"][-6:])
         versions = self._versions(run["id"])["versions"]
         kinds = [one["kind"] for one in versions]
-        self.assertEqual(kinds[:3], ["contract", "round", "round"])
+        self.assertEqual(kinds[:3], ["contract", "full review", "full review"])
         contract, first, second = versions[:3]
         self.assertEqual(contract["message"]["title"], "Contract: notes.md says hello")
         self.assertIn("deliverable: The notes", contract["message"]["body"])
@@ -534,9 +559,9 @@ class EachVersionSaysWhatItDidTests(_RunsBase):
         self.assertEqual(changed["counts"]["added"], len(changed["added"]))
         # The other kinds, named for what they are.
         titles = {one["kind"]: one["message"]["title"] for one in versions}
-        self.assertEqual(titles["final review"], "Final review: nothing to fix")
-        self.assertEqual(titles["deck"], "Results deck")
         self.assertEqual(titles["finished"], "Finish: done")
+        self.assertNotIn("final review", titles)
+        self.assertNotIn("deck", titles)
         # And from the API, the list and one version.
         listed = self.routes[("GET", "/api/work/versions")](_Request({"run": run["id"]}))
         self.assertEqual(listed["versions"][1]["message"]["title"], "Write the greeting, take 1")
@@ -549,7 +574,7 @@ class EachVersionSaysWhatItDidTests(_RunsBase):
         run, _folder = self._run(_Commits(commit=False))
         self.assertEqual(run["status"], "done", run["log"][-6:])
         first = self._versions(run["id"])["versions"][1]
-        self.assertEqual(first["kind"], "round")
+        self.assertEqual(first["kind"], "full review")
         self.assertEqual(first["message"]["title"], "Wrote notes.md")
         self.assertEqual(first["message"]["body"], ["notes.md says hello"])
 

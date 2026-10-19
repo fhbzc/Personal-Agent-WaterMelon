@@ -15,18 +15,18 @@ most from, as a newspaper: a page for each thing they are doing.
                states of its tasks, the titles, summaries and points of
                what was read for it - never from a heading alone: someone
                who watches restaurant reviews is not looking for food
-               prices. Mostly CLOSE (bears directly on what they do or the
-               very kind of thing they read), a few BROAD (a step to the
-               side, still tied to it).
+               prices. Only CLOSE: what bears directly on what they do, or
+               the very kind of thing they read (the user's decision: no
+               stories a step to the side).
   4. CHECK     in code, not by the model: each story's RELEVANCE - its
                closeness to the page's own detail (its states, what was
-               read for it). Below `BROAD_AT` it is not printed; from
-               `CLOSE_AT` it is close. What they read already, or were
+               read for it). Below `CLOSE_AT` it is not printed. What they
+               read already, or were
                shown, or that is the same story as either, is left out.
   5. SCORE     gain x relevance x freshness - not how long something was
                watched: a lot of one kind of video does not drown the rest.
-  6. LAY OUT   each page mostly close, its broad ones among them; the front
-               page the best of each page.
+  6. LAY OUT   each page its close ones, best first; the front page the best
+               of each page.
 
 Only the user's own say counts for what is recommended next: more like
 this, not interested, already knew, a story opened.
@@ -41,6 +41,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ..reading.topics import cosine, decayed
+from ...agent.states.store import SOURCE_AGENT, SOURCE_USER
 
 #: The pages of an issue, at most - one search each.
 MOST_PAGES = 8
@@ -49,23 +50,33 @@ ACTIVE_DAYS = 14
 #: What each subject brings to its page's search: its latest states, or the
 #: pieces read for it.
 MOST_DETAIL = 8
+#: What the pages are made from, with tasks and projects made per run (the
+#: user's rule, 2026-10-18): the states, newest first, until their events
+#: add up to this many hours - or there are no more.
+RECENT_EVENT_HOURS = 24.0
+#: A project is a page of its own only with this many hours of its events
+#: among them (the user's rule, 2026-10-18): one touched for minutes would
+#: be a page - a search - of its own. Its states go under the nearest
+#: project that is, as the states no run has read yet do.
+PAGE_PROJECT_HOURS = 1.0
+#: A state with no end, and no minutes said, counts this long.
+UNTIMED_MINUTES = 15.0
+#: At most this many states are read back looking for those hours.
+MOST_RECENT_STATES = 2000
 #: A page's detail, at most, as given to its search.
 PAGE_DETAIL = 18
 #: What the user knows of a page, given with its search.
 KNOWN_POINTS = 10
 #: Stories one page's search may bring.
 PER_TOPIC = 6
-#: Stories printed on a page; of them broad, at most - and never more than
-#: half its close ones (one at least, when there is a close one).
+#: Stories printed on a page.
 PER_PAGE = 6
-BROAD_PER_PAGE = 2
 #: The front page: the best story of each page, at most this many.
 FRONT = 6
 #: Relevance - a story's closeness to the nearest thing the page is about
 #: (measured on this machine's own model: stories the user found closely
 #: related came out 0.45-0.58, food prices for restaurant reviews 0.30).
 CLOSE_AT = 0.42
-BROAD_AT = 0.35
 #: A story this close to something already read is the same story.
 SEEN_CLOSENESS = 0.78
 #: And this close to one shown in a recent issue.
@@ -160,11 +171,10 @@ TODAY: {today}
 Search the web (web_search, fetch_page) - and again from what you find -
 with queries made from the detail above, for what is NEW since {since} that
 they have not seen:
-- CLOSE - most of the page: what bears directly on what they are doing, or
-  is the very kind of thing they read or watched (more of what they watch
-  about piano: piano; restaurant reviews: restaurant reviews).
-- BROAD - at most {broad}: a step to the side - the same field, a
-  neighbouring question - still unmistakably tied to the detail above.
+- ONLY what bears directly on what they are doing, or is the very kind of
+  thing they read or watched (more of what they watch about piano: piano;
+  restaurant reviews: restaurant reviews). Not a step to the side - not the
+  same field in general, not a neighbouring question.
 Nothing only loosely connected: food prices for someone who watches
 restaurant reviews is WRONG; so is general AI-industry news for someone
 whose work is one research question. Fewer stories, or none, rather than
@@ -179,7 +189,6 @@ nothing is worth it:
   "items": [{{"title": "short, what the user sees first",
              "opening": "what the story begins with - a sentence, or a short paragraph of two or three: a natural link from what they did, read or watched above - the very thing, by name - to this, so they want to read on. In passing, as a friend who knows them would put it; never a label like Why this matters, never flattery. Empty when there is no real link",
              "detail": "one to three plain sentences: what it says",{english}
-             "relation": "close or broad",
              "because": "which of the things above it follows from, in a few words",
              "new_to_you": "in one sentence, what in it is new to them",
              "gain": 3,
@@ -271,6 +280,142 @@ def _project_english(project: Dict[str, Any]) -> str:
             f"{str(english.get('status') or project.get('why') or '')[:300]}")
 
 
+def _event_minutes(row: Dict[str, Any]) -> float:
+    """How long a state's event lasted: its span; with no end, the minutes
+    it was said to take; with neither, UNTIMED_MINUTES."""
+    began, ended = _when(row.get("starts_at")), _when(row.get("ends_at"))
+    if began and ended and ended >= began:
+        return (ended - began).total_seconds() / 60
+    try:
+        said = float((_loads(row.get("metadata"), {}) or {}).get("minutes") or 0.0)
+    except (TypeError, ValueError, AttributeError):
+        said = 0.0
+    return said if said > 0 else UNTIMED_MINUTES
+
+
+def _event_line(row: Dict[str, Any], minutes: float) -> str:
+    """A state as a page is given it: when, how long, and what."""
+    began, ended = _when(row.get("starts_at")), _when(row.get("ends_at"))
+    when = began.strftime("%Y-%m-%d %H:%M") if began else "?"
+    if ended and began and ended.date() == began.date():
+        when += ended.strftime("-%H:%M")
+    elif ended:
+        when += ended.strftime(" - %Y-%m-%d %H:%M")
+    return (f"STATE [{when} UTC, {round(minutes)} min]: {str(row.get('title') or '')[:160]}"
+            + (f" - {str(row.get('detail') or '')[:300]}" if row.get("detail") else ""))
+
+
+def _from_recent(db: Any, back: str) -> Optional[List[Dict[str, Any]]]:
+    """What the user did lately, as the per-run scheme keeps it (section
+    34.5; the user's rule, 2026-10-18): their states, newest first, until
+    the events add up to RECENT_EVENT_HOURS - or there are no more - each
+    with its time. A state already written into a task comes under that
+    task's PROJECT, with the project's line; one no run has read yet comes
+    alone - not the latest run's tasks, which may hold two hours when a run
+    was started by hand. Routine counts toward the hours and is no page.
+    None when that scheme has written nothing yet."""
+    try:
+        if not db.query("SELECT 1 FROM state_run_tasks WHERE scope = 'live' LIMIT 1"):
+            return None
+    except Exception:
+        return None
+    rows = [dict(row) for row in db.query(
+        "SELECT id, title, detail, starts_at, ends_at, metadata FROM states "
+        "WHERE source IN (?, ?) AND COALESCE(starts_at, '') != '' "
+        "ORDER BY starts_at DESC LIMIT ?", (SOURCE_USER, SOURCE_AGENT, MOST_RECENT_STATES))]
+    taken: List[Tuple[Dict[str, Any], float]] = []
+    total = 0.0
+    for row in rows:
+        if total >= RECENT_EVENT_HOURS * 60:
+            break
+        minutes = _event_minutes(row)
+        taken.append((row, minutes))
+        total += minutes
+    if not taken:
+        return []
+    oldest = min(str(row.get("starts_at") or "") for row, _m in taken)
+    task_of: Dict[str, Dict[str, Any]] = {}
+    for task in db.query(
+            "SELECT id, title, title_display, kind, states, project_id FROM state_run_tasks "
+            "WHERE scope = 'live' AND COALESCE(ends_at, written_at) >= ?", (oldest,)):
+        task = dict(task)
+        for state_id in _loads(task.get("states"), []):
+            task_of[str(state_id)] = task
+    projects: Dict[str, Dict[str, Any]] = {}
+    ids = sorted({str(task.get("project_id") or "") for task in task_of.values()} - {""})
+    for at in range(0, len(ids), 400):
+        part = ids[at:at + 400]
+        for row in db.query(f"SELECT id, described FROM state_tasks WHERE id IN "
+                            f"({','.join('?' * len(part))})", tuple(part)):
+            projects[str(row["id"])] = _loads(row["described"], {})
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for row, minutes in taken:
+        task = task_of.get(str(row["id"]))
+        kind = str((task or {}).get("kind") or (_loads(row.get("metadata"), {}) or {}).get("kind")
+                   or "work")
+        if kind == "routine":
+            continue
+        pid = str((task or {}).get("project_id") or "")
+        key = f"project:{pid}" if pid else "recent:states"
+        mine = grouped.get(key)
+        if mine is None:
+            said = projects.get(pid) or {}
+            english = said.get("in_english") if isinstance(said.get("in_english"), dict) else {}
+            line = str(english.get("what_it_is") or said.get("line") or "")
+            summary = str(english.get("summary") or said.get("summary") or "")
+            title = str(said.get("title") or (task or {}).get("title_display")
+                        or (task or {}).get("title") or "") if pid else "What you did lately"
+            head = [f"PROJECT: {title}" + (f" - {line}" if line else "")] if pid else []
+            if pid and summary:
+                head.append(f"Being worked on: {summary[:400]}")
+            mine = grouped[key] = {
+                "key": key, "kind": "work", "weight": 0.0, "last_at": "", "detail": head,
+                "measured": [f"{line}. {summary[:400]}" if line else summary[:400]] if pid else [],
+                "leisure": True, "title": title, "text": "", "tasks": [], "project_id": pid}
+        line = _event_line(row, minutes)
+        mine["detail"].append(line)
+        mine["measured"].append(f"{str(row.get('title') or '')[:160]}: "
+                                f"{str(row.get('detail') or '')[:300]}")
+        mine["weight"] += minutes / 60
+        mine["last_at"] = max(mine["last_at"], str(row.get("starts_at") or ""))
+        mine["leisure"] = bool(mine["leisure"]) and kind == "leisure"
+        named = str((task or {}).get("title_display") or (task or {}).get("title") or "")
+        if named and named not in mine["tasks"]:
+            mine["tasks"].append(named)
+    # A project with less than PAGE_PROJECT_HOURS among them: its states are
+    # put with those no run has read (plan_pages puts them under the nearest
+    # project that is a page).
+    for key in [key for key, one in grouped.items()
+                if one["project_id"] and one["weight"] < PAGE_PROJECT_HOURS]:
+        small = grouped.pop(key)
+        loose = grouped.setdefault("recent:states", {
+            "key": "recent:states", "kind": "work", "weight": 0.0, "last_at": "",
+            "detail": [], "measured": [], "leisure": small["leisure"],
+            "title": "What you did lately", "text": "", "tasks": [], "project_id": ""})
+        events = [line for line in small["detail"] if line.startswith("STATE [")]
+        loose["detail"] += events
+        loose["measured"] += small["measured"][-len(events):] if events else []
+        loose["weight"] += small["weight"]
+        loose["last_at"] = max(loose["last_at"], small["last_at"])
+        loose["leisure"] = bool(loose["leisure"]) and bool(small["leisure"])
+    out = []
+    for one in grouped.values():
+        pid = one.pop("project_id")
+        one["text"] = next((text for text in one["measured"] if text.strip()), one["title"])
+        # A pastime is a subject only when it lasts (the same rule as before):
+        # judged by the days its project was worked on in the last month.
+        if one["leisure"] and pid:
+            days = [str(row["ends_at"] or "") for row in db.query(
+                "SELECT ends_at FROM state_run_tasks WHERE scope = 'live' AND project_id = ? "
+                "AND COALESCE(ends_at, '') >= ?", (pid, back))]
+            if not lasting_interest([{"last_at": day} for day in days]):
+                continue
+        one["weight"] = round(one["weight"], 3)
+        out.append(one)
+    out.sort(key=lambda one: one["last_at"], reverse=True)
+    return sorted(out, key=lambda one: -one["weight"])
+
+
 def subjects(db: Any, now: Optional[datetime] = None,
              active_days: int = ACTIVE_DAYS) -> List[Dict[str, Any]]:
     """What the user is doing now (module docstring, 1): the tasks and
@@ -279,13 +424,16 @@ def subjects(db: Any, now: Optional[datetime] = None,
     now = now or _now()
     since = (now - timedelta(days=active_days)).isoformat()
     out: List[Dict[str, Any]] = []
+    from_tasks = _from_recent(db, (now - timedelta(days=LEISURE_DAYS_BACK)).isoformat())
     try:
+        if from_tasks is not None:
+            raise LookupError("the per-run tasks are read instead")
         tasks = db.query("SELECT id, members, described FROM state_tasks WHERE scope = 'live' "
                          "AND COALESCE(retired_at, '') = '' AND COALESCE(archived_at, '') = '' "
                          "AND COALESCE(described, '') != ''")
         projects = db.query("SELECT id, name, why, tasks, described FROM state_projects "
                             "WHERE scope = 'live'")
-    except Exception:                      # no state heartbeat tables yet
+    except Exception:                      # no state heartbeat tables yet, or read below
         tasks, projects = [], []
     project_of: Dict[str, Dict[str, Any]] = {}
     for row in projects:
@@ -354,6 +502,8 @@ def subjects(db: Any, now: Optional[datetime] = None,
     # The weightiest first; of equal weight, the latest.
     work = sorted(grouped.values(), key=lambda one: one["last_at"], reverse=True)
     out += sorted(work, key=lambda one: -one["weight"])
+    if from_tasks is not None:
+        out += from_tasks
     # THE THINGS READ AND WATCHED LATELY: each topic, from what was read in it.
     try:
         topics = db.query("SELECT id, label, centre FROM reading_topics")
@@ -433,6 +583,35 @@ def _mean(vectors: Sequence[Sequence[float]]) -> List[float]:
             for i in range(size)]
 
 
+def _unsorted_under_projects(subjects_: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The states no run has read yet are no page of their own: each goes
+    under the project it is nearest in meaning, as detail - and is left out
+    when none is near (FOLD_AT). Only with no project at all are they a
+    page, so that something is still recommended."""
+    unsorted = [one for one in subjects_ if one.get("key") == "recent:states"]
+    projects = [one for one in subjects_ if str(one.get("key") or "").startswith("project:")
+                and one.get("vector")]
+    if not unsorted or not projects:
+        return subjects_
+    for one in unsorted:
+        # Its anchors are its states' vectors, in the order of its lines,
+        # then its own (plan_pages).
+        for line, anchor in zip(one.get("detail") or [], one.get("anchors") or []):
+            near = max(projects, key=lambda project: cosine(anchor, project["vector"]))
+            if cosine(anchor, near["vector"]) >= FOLD_AT:
+                near["detail"] = near["detail"] + [line]
+                near["anchors"] = near["anchors"] + [anchor]
+    # The project's own lines first, then its states newest first - each
+    # line begins with its time - then what was read for it.
+    for one in projects:
+        lines = one.get("detail") or []
+        head = [line for line in lines if line.startswith(("PROJECT:", "Being worked on:"))]
+        events = sorted((line for line in lines if line.startswith("STATE [")), reverse=True)
+        one["detail"] = head + events + [line for line in lines
+                                         if line not in head and line not in events]
+    return [one for one in subjects_ if one.get("key") != "recent:states"]
+
+
 def plan_pages(found: List[Dict[str, Any]], embed: Optional[Callable[[List[str]], List]],
                said: Optional[Dict[str, Dict[str, int]]] = None,
                most: int = MOST_PAGES) -> List[Dict[str, Any]]:
@@ -468,7 +647,8 @@ def plan_pages(found: List[Dict[str, Any]], embed: Optional[Callable[[List[str]]
         if one.get("vector"):
             one["anchors"].append(one["vector"])
     # A topic that is the work of a task goes with the task.
-    work = [one for one in subjects_ if one["kind"] == "work" and one.get("vector")]
+    work = [one for one in subjects_ if one["kind"] == "work" and one.get("vector")
+            and one.get("key") != "recent:states"]
     kept = []
     for one in subjects_:
         if one["kind"] == "interest" and one.get("vector") and work:
@@ -479,12 +659,23 @@ def plan_pages(found: List[Dict[str, Any]], embed: Optional[Callable[[List[str]]
                 near.setdefault("topics", []).append(one["topic_id"])
                 continue
         kept.append(one)
+    kept = _unsorted_under_projects(kept)
     pages = [{"subjects": [one], "vector": one.get("vector") or []} for one in kept]
-    # The two nearest together, until few enough - alike kinds first.
+    # EVERY PROJECT HAS A PAGE OF ITS OWN (the user's rule, 2026-10-18): a
+    # page is about a project, its states the detail under it; two projects
+    # are never put on one page. What else there is - the things read and
+    # watched - goes together, the two nearest first, until few enough, and
+    # then, if it must, onto the project page nearest it.
+    own = lambda page: str(page["subjects"][0].get("key") or "").startswith("project:")
     while len(pages) > most:
-        best, pair = -9.0, (0, 1)
+        best, pair = -9.0, None
         for i in range(len(pages)):
             for j in range(i + 1, len(pages)):
+                if own(pages[i]) and own(pages[j]):
+                    continue
+                if (own(pages[i]) or own(pages[j])) and sum(
+                        1 for page in pages if not own(page)) > 1:
+                    continue
                 closeness = cosine(pages[i]["vector"], pages[j]["vector"])
                 if pages[i]["subjects"][0]["kind"] == pages[j]["subjects"][0]["kind"]:
                     closeness += 0.1
@@ -495,7 +686,11 @@ def plan_pages(found: List[Dict[str, Any]], embed: Optional[Callable[[List[str]]
                     closeness -= 1.0
                 if closeness > best:
                     best, pair = closeness, (i, j)
+        if pair is None:
+            break
         i, j = pair
+        if own(pages[j]) and not own(pages[i]):
+            i, j = j, i
         pages[i]["subjects"] += pages[j]["subjects"]
         pages[i]["vector"] = _mean([one.get("vector") or [] for one in pages[i]["subjects"]])
         pages.pop(j)
@@ -595,9 +790,9 @@ def lay_out(stories: List[Dict[str, Any]], pages: List[Dict[str, Any]], embedder
     """Each story checked, scored and placed (module docstring, 4-6): what
     was read or shown, or is the same story as either, left out; each put on
     the page it is nearest - its own page when it is near enough to it - and
-    left out when it is near none; close or broad by how near. Then each
-    page: its close ones, its broad ones among them; the front page the
-    best of each. The stories printed, and the paper.
+    left out when it is not close to any. Then each page: its close ones,
+    best first; the front page the best of each. The stories printed, and
+    the paper.
 
     NEWS OF SOMEONE THEY KNOW is information they want whatever they are
     working on: near a page, on it; near none, on a page of its own -
@@ -633,19 +828,18 @@ def lay_out(stories: List[Dict[str, Any]], pages: List[Dict[str, Any]], embedder
 
         if vector and measurable:
             own = by_key.get(one.get("page") or "")
-            page = own if own is not None and near(own) >= BROAD_AT else \
+            page = own if own is not None and near(own) >= CLOSE_AT else \
                 max(pages, key=near)
             relevance = near(page)
         else:
             # Nothing to measure with, or against: kept where it was found
-            # for (the first page, else), as broad - never put before what
-            # could be measured.
+            # for (the first page, else) - its search was made from the
+            # page's own detail - and never put before what could be
+            # measured.
             page = by_key.get(one.get("page") or "") or pages[0]
-            relevance = BROAD_AT
-        # Not measured: not called broad either - it would be cut to the
-        # few broad ones a page takes for no reason it has.
+            relevance = CLOSE_AT * 0.99
         unmeasured = not (vector and measurable)
-        if relevance < BROAD_AT:
+        if relevance < CLOSE_AT and not unmeasured:
             if not (one.get("kind") == "person" or one.get("people")):
                 continue
             # News of someone they know, near none of their pages.
@@ -654,7 +848,7 @@ def lay_out(stories: List[Dict[str, Any]], pages: List[Dict[str, Any]], embedder
                 by_key["people"] = people
                 placed["people"] = []
             page, relevance = people, CLOSE_AT
-        relation = "close" if relevance >= CLOSE_AT or unmeasured else "broad"
+        relation = "close"
         try:
             gain = float(one.get("gain")) if one.get("gain") is not None \
                 else float(one.get("importance") or 3)
@@ -678,18 +872,7 @@ def lay_out(stories: List[Dict[str, Any]], pages: List[Dict[str, Any]], embedder
     laid: List[Dict[str, Any]] = []
     for page in pages:
         mine = sorted(placed[page["key"]], key=lambda one: -one["score"])
-        close = [one for one in mine if one["relation"] == "close"][:PER_PAGE]
-        broad_room = min(BROAD_PER_PAGE, max(1, len(close) // 2), PER_PAGE - len(close)) \
-            if close else min(BROAD_PER_PAGE, PER_PAGE)
-        broad = [one for one in mine if one["relation"] == "broad"][:max(0, broad_room)]
-        # The broad ones among the close: one after every two.
-        order: List[Dict[str, Any]] = []
-        left = list(broad)
-        for at, one in enumerate(close, 1):
-            order.append(one)
-            if at % 2 == 0 and left:
-                order.append(left.pop(0))
-        order += left
+        order = mine[:PER_PAGE]
         if not order:
             continue
         printed += order
@@ -821,4 +1004,4 @@ __all__ = ["record_feedback", "ACTIONS", "subjects", "plan_pages", "lay_out", "s
            "said_examples",
            "known_points", "since_of", "said_of_topics", "seen_addresses", "freshness",
            "PAGE_PLAN", "TOPIC_SYSTEM", "FOR", "AGAINST", "MOST_PAGES", "CLOSE_AT",
-           "BROAD_AT"]
+           ]

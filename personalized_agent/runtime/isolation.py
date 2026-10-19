@@ -394,7 +394,14 @@ class CodeSeal:
     before it starts, so no debugger run's code ever starts unsealed.
 
     Not the debugger's own three folders: those are sealed for good, from
-    each other (`seal_from_containers`), and never unsealed."""
+    each other (`seal_from_containers`), and never unsealed.
+
+    HELD ELSEWHERE: a debugger run in a process of its own (agent/work/
+    child.py) is held by the agent that started it, for as long as that
+    process lives - the agent counts every run, so it alone changes the
+    disk. The child is told (`held_elsewhere`): it takes the code as
+    sealed, waits for nothing, and its own holds and releases change
+    nothing - its count is not the whole of them."""
 
     _lock = threading.Lock()
     _changed = threading.Condition(_lock)
@@ -407,12 +414,29 @@ class CodeSeal:
     _worker: Optional[threading.Thread] = None
     #: key -> how the last change went, for the status page and the tests.
     _last: Dict[str, Dict[str, Any]] = {}
+    #: keys sealed and kept so by another process (`held_elsewhere`).
+    _frozen: set = set()
+
+    @classmethod
+    def held_elsewhere(cls, folder: Any) -> None:
+        """In a debugger run's own process: the agent that started it holds
+        the code sealed until it ends - taken as sealed here, and never
+        changed from here."""
+        key, root = _key(_real(folder)), _real(folder)
+        with cls._lock:
+            cls._roots[key] = root
+            cls._frozen.add(key)
+            cls._holds[key] = max(1, cls._holds.get(key, 0))
+            cls._applied[key] = True
+            cls._changed.notify_all()
 
     @classmethod
     def hold(cls, folder: Any) -> None:
         """A debugger run starts: sealed until it ends."""
         key, root = _key(_real(folder)), _real(folder)
         with cls._lock:
+            if key in cls._frozen:
+                return
             cls._roots[key] = root
             cls._holds[key] = cls._holds.get(key, 0) + 1
             cls._kick()
@@ -422,6 +446,8 @@ class CodeSeal:
         """A debugger run ended: open again if it was the last."""
         key, root = _key(_real(folder)), _real(folder)
         with cls._lock:
+            if key in cls._frozen:
+                return
             cls._roots[key] = root
             cls._holds[key] = max(0, cls._holds.get(key, 0) - 1)
             cls._kick()
@@ -433,6 +459,8 @@ class CodeSeal:
         with is taken off)."""
         key, root = _key(_real(folder)), _real(folder)
         with cls._lock:
+            if key in cls._frozen:
+                return
             cls._roots[key] = root
             cls._holds.setdefault(key, 0)
             cls._applied.pop(key, None)       # look at the disk again
@@ -481,6 +509,7 @@ class CodeSeal:
             cls._roots.clear()
             cls._applied.clear()
             cls._last.clear()
+            cls._frozen.clear()
 
     # -- the worker -------------------------------------------------------------
     @classmethod
@@ -496,7 +525,8 @@ class CodeSeal:
         while True:
             with cls._lock:
                 todo = [(key, cls._holds.get(key, 0) > 0) for key in cls._roots
-                        if cls._applied.get(key) != (cls._holds.get(key, 0) > 0)]
+                        if key not in cls._frozen
+                        and cls._applied.get(key) != (cls._holds.get(key, 0) > 0)]
                 if not todo:
                     cls._worker = None
                     cls._changed.notify_all()

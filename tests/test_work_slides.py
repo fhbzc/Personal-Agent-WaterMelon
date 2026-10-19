@@ -498,6 +498,8 @@ class SlidesLeftUndrawnTests(_Base):
         drawn = len(models.drawn)
         again = WorkRuns(self.app.db, self.app.policy, models,
                          self.app.state_heartbeat.experience, platform=self.app.platform)
+        # Not the final checks' test (test_final_checks), as support.py's.
+        again.final_checks = False
         self.app.work = again
         continued = again.continue_run(said["run"], self.unit,
                                        {"calls": 0, "minutes": 0, "tokens": 0})

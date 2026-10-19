@@ -714,36 +714,6 @@ in the activity shows it.
         "wants_activity": True,
         "language": in_display(),
     },
-    "step_todo": {
-        "instruction": """DECIDE WHICH OF THE USER'S NEXT STEPS ARE NOW DONE.
-
-You are given the same window of the user's activity that the states were
-read from, the states just written from it, and THE OPEN NEXT STEPS of the
-user's current projects and tasks - each with its id and the work it
-belongs to. Tick each one the activity shows the user has FINISHED.
-
-DONE MEANS THE ACTIVITY SHOWS IT FINISHED: the message was sent, the form
-submitted, the change deployed, the file written and saved, the call
-held, the reply received. Working on it is not finishing it; opening the
-page is not doing what it is for. When the lines alone do not settle it,
-read the whole of what they stand for with `open_by_id` - the sentence that
-shows it went ("Message sent", "Deployed", "Submitted") is usually there,
-not in the keywords.
-
-A step partly done is not ticked. A step not touched in this window is not
-ticked. Nothing is ticked on a guess: the user sees each tick, with your
-reason, and takes back one that is wrong - which is a mistake they had to
-correct.""",
-        "returns": """{
-  "todo_done": [
-    {"id": "a listed step's id, exactly (todo-...)",
-     "why": "one sentence for the user: what in the activity shows it is done",
-     "evidence": ["the ids of the events or states that show it"]}
-  ]
-}""",
-        "wants_activity": True,
-        "language": in_display(),
-    },
 }
 
 
@@ -777,7 +747,7 @@ Return ONLY this JSON object:
 #: check a particular instruction is still given at all.
 SYSTEM_PROMPT = PREAMBLE + "\n\n" + "\n\n".join(
     STEP_PROMPTS[name]["instruction"] + "\n\n" + STEP_PROMPTS[name]["returns"]
-    for name in ("step_state", "step_people", "step_nature", "step_notify", "step_todo"))
+    for name in ("step_state", "step_people", "step_nature", "step_notify"))
 
 
 #: The steps that decide for themselves what they need to see.
@@ -786,8 +756,7 @@ SYSTEM_PROMPT = PREAMBLE + "\n\n" + "\n\n".join(
 #: the user is doing now, and what doing it repeatedly says about them - and
 #: neither can have its query written in advance, because the words worth
 #: searching for are in the answer.
-GATHERS_FOR_ITSELF = ("step_state", "step_people", "step_nature", "step_notify",
-                      "step_todo")
+GATHERS_FOR_ITSELF = ("step_state", "step_people", "step_nature", "step_notify")
 
 #: Steps kept - their prompts and code - and not run. Step 2, who the user
 #: is, is paused: what the user is like is learned from their lessons now
@@ -1261,9 +1230,6 @@ class StateFloor:
         #: What is waiting for a time (pending.py), for the step that adds
         #: notifications. None for every other step.
         self.pending: Optional[List[str]] = None
-        #: The open next steps of the user's work, for the step that ticks
-        #: the finished ones: "[id] the step (of: the work)".
-        self.todos: Optional[List[str]] = None
         #: The people already known and the user's changes to their
         #: contacts, for step 2 (connections/people.py). None for the rest.
         self.people: Optional[str] = None
@@ -1381,14 +1347,6 @@ class StateFloor:
                 "their contacts, which are their decisions: follow them.",
                 "",
                 self.people or "None yet.",
-            ])
-        if self.todos is not None:
-            sections.append([
-                f"THE OPEN NEXT STEPS OF THE USER'S WORK, {len(self.todos)}",
-                "Each with its id and the project or task it belongs to. Tick "
-                "the ones this activity shows the user has finished.",
-                "",
-                "\n".join(self.todos) or "None.",
             ])
         if self.calendar_nature is not None:
             sections.append([
@@ -1914,7 +1872,7 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
 
 
 #: Each step's module (common/modules.py): one turned off, its step is not run.
-STEP_MODULES = {"step_people": "connections", "step_notify": "calendar", "step_todo": "tasks"}
+STEP_MODULES = {"step_people": "connections", "step_notify": "calendar"}
 
 
 def _step_on(config: Any, step: str) -> bool:
@@ -2271,10 +2229,6 @@ class AgentHeartbeat:
             # same work three times, and - ending at "now" - each a moment
             # later than the last, so the steps could see different events.
             window = None
-            # The next steps' check only when there are open steps: nothing
-            # to tick, nothing asked - and no row for it in the report.
-            if any(item.id == "step_todo" for item in snapshot) and not self._open_todos():
-                snapshot = [item for item in snapshot if item.id != "step_todo"]
             for item in snapshot:
                 # EVERY STEP HAS ITS OWN COPY OF THE WINDOW, and nothing
                 # beyond it: the last few minutes and the states running
@@ -2285,8 +2239,7 @@ class AgentHeartbeat:
                     window = self._state_floor(task_id)
                 found = copy.deepcopy(window)
                 if item.id in GATHERS_FOR_ITSELF:
-                    if item.id in ("step_people", "step_nature", "step_notify",
-                                   "step_todo"):
+                    if item.id in ("step_people", "step_nature", "step_notify"):
                         # Its states are not the ones already running: they
                         # are what this review is about to conclude, and
                         # they do not exist yet. Filled in below, once step
@@ -2342,9 +2295,6 @@ class AgentHeartbeat:
                 step_began = time.perf_counter()
                 try:
                     if item.id in GATHERS_FOR_ITSELF:
-                        if item.id == "step_todo":
-                            # The open next steps of the work at the top.
-                            found.todos = self._open_todos()
                         if item.id == "step_notify":
                             # Every active one from now on, the agent's own
                             # checks among them, each with its id and why -
@@ -2377,8 +2327,7 @@ class AgentHeartbeat:
                                 except Exception:
                                     log.warning("the known people could not be read",
                                                 exc_info=True)
-                        if item.id in ("step_people", "step_nature", "step_notify",
-                                       "step_todo"):
+                        if item.id in ("step_people", "step_nature", "step_notify"):
                             # What step one answered, not what was written
                             # from it: the writing happens after the whole
                             # loop, so at this point `states_written` is
@@ -2544,12 +2493,6 @@ class AgentHeartbeat:
             updated = self._update_notifications(task_id, payload.get("updated"))
             if updated:
                 report["notifications_updated"] = updated
-
-            # Step 4: the next steps the user finished, ticked - by the agent,
-            # with why; the next state heartbeat writes the list again.
-            ticked = self._tick_todos(payload.get("todo_done"))
-            if ticked:
-                report["todos_ticked"] = ticked
 
             # LAST: the pictures taken in the stretch step 1 read that no
             # state linked. Nothing can refer to them now - a stage takes
@@ -2822,77 +2765,6 @@ class AgentHeartbeat:
     # NO LIMIT ON HOW FAR AHEAD. "I'll follow up in January" is a promise
     # made in fifteen minutes of activity and kept months later, and a
     # reminder for it is the reason to have reminders at all.
-
-    def _open_todos(self) -> List[str]:
-        """THE OPEN NEXT STEPS of the work at the top - every project, and
-        every task in no project - each as "[id] text (of: the work)"; and
-        where each lives, for the ticks (`_todo_where`)."""
-        self._todo_where: Dict[str, Any] = {}
-        db = getattr(getattr(self, "raw_store", None), "db", None)
-        if db is None:
-            return []
-        from ..states import todo as _todos
-        lines: List[str] = []
-        try:
-            projects = db.query("SELECT id, scope, name, tasks, described FROM "
-                                     "state_projects WHERE scope = 'live'")
-            inside = set()
-            for row in projects:
-                try:
-                    inside.update(json.loads(row["tasks"] or "[]"))
-                except (TypeError, ValueError):
-                    pass
-            tasks = db.query(
-                "SELECT id, scope, described FROM state_tasks WHERE scope = 'live' AND "
-                "COALESCE(retired_at, '') = '' AND COALESCE(archived_at, '') = ''")
-        except Exception:                    # no state heartbeat tables yet
-            return []
-        rows = [("state_projects", row, row["name"]) for row in projects]
-        rows += [("state_tasks", row, None) for row in tasks if row["id"] not in inside]
-        for table, row, name in rows:
-            try:
-                described = json.loads(row["described"] or "{}")
-            except (TypeError, ValueError):
-                continue
-            title = name or str(described.get("title") or "")
-            for step in _todos.items(described):
-                if step.get("done") or not step.get("id"):
-                    continue
-                self._todo_where[str(step["id"])] = (table, row["scope"], row["id"])
-                lines.append(f"[{step['id']}] {step['text']} (of: {title[:120]})")
-        # NOT THE USER'S OWN TO-DO LIST (Overview, To do): those are theirs to
-        # remove, by hand - the agent never marks one done (the user, 2026-10-15).
-        return lines
-
-    def _tick_todos(self, entries: Any) -> List[Dict[str, Any]]:
-        """Each step the answer says is done, ticked by the agent with why -
-        only one that was shown to it, and never one already ticked."""
-        from ..states import todo as _todos
-        where = getattr(self, "_todo_where", None) or {}
-        db = getattr(getattr(self, "raw_store", None), "db", None)
-        if db is None:
-            return []
-        out: List[Dict[str, Any]] = []
-        for entry in entries if isinstance(entries, list) else []:
-            if not isinstance(entry, dict):
-                continue
-            step = str(entry.get("id") or "")
-            if step not in where or not str(entry.get("why") or "").strip():
-                continue
-            table, scope, row = where[step]
-            why = str(entry["why"]).strip()
-            evidence = [str(one) for one in entry.get("evidence") or []]
-            try:
-                _todos.change(db, table, scope, row,
-                              lambda described, step=step, why=why, evidence=evidence:
-                              _todos.ticked(described, step, why, evidence))
-            except LookupError:
-                continue                     # gone since it was shown
-            except Exception:                # pragma: no cover - one tick, not the round
-                log.warning("could not tick %s", step, exc_info=True)
-                continue
-            out.append({"id": step, "why": why, "evidence": evidence[:8]})
-        return out
 
     def _close_notifications(self, task_id: str, entries: Any
                              ) -> List[Dict[str, Any]]:
@@ -3468,8 +3340,6 @@ class AgentHeartbeat:
                         ("nature_recorded",)),
         "step_notify": ("what to notify the user of, and what is done",
                         ("notifications_scheduled", "notifications_closed")),
-        "step_todo": ("which of the user's next steps are done",
-                      ("todos_ticked",)),
     }
 
     #: Everything a step is able to do, whether or not it did any of it.
@@ -3522,13 +3392,6 @@ class AgentHeartbeat:
             "nothing": "No notification was added or disabled. Interrupting "
                        "has a cost, most windows give no reason to, and "
                        "most waiting ones are not yet done.",
-        },
-        "step_todo": {
-            "does": (("tick a next step the user finished", "todos_ticked", None),),
-            "cannot": "This step only ticks next steps. It does not add, delete "
-                      "or reword one - the state heartbeat writes the list.",
-            "nothing": "No next step was ticked: nothing in this window shows "
-                       "one finished - or there were none open.",
         },
     }
 
@@ -4345,10 +4208,6 @@ class AgentHeartbeat:
         if step_id == "step_nature":
             return "; ".join(str(n.get("title", ""))
                              for n in (answered.get("user_nature") or []))[:400]
-        if step_id == "step_todo":
-            done = [d for d in answered.get("todo_done") or [] if isinstance(d, dict)]
-            return ("; ".join(f"ticked {d.get('id', '?')}: {d.get('why', '')}"
-                              for d in done[:6]) or "no next step done")[:400]
         if step_id == "step_notify":
             asked = [n for n in answered.get("notifications") or []
                      if isinstance(n, dict)]

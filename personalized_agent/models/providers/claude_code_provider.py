@@ -257,7 +257,9 @@ NATIVE_TOOLS = (
 
 #: The agent's own tools for the web, by every name they go by. With the
 #: model's own search (`ModelRequest.builtin_web`) they are not offered:
-#: Claude Code's WebSearch and WebFetch are, in their place.
+#: Claude Code's WebSearch and WebFetch are, in their place - held to the
+#: same checks as the agent's (`ModelRequest.web_guard`) by hooks around
+#: them, and only so: with no guard to hold them to, they are not offered.
 WEB_TOOL_NAMES = ("web_search", "fetch_page", "fetch_url")
 BUILTIN_WEB = ("WebSearch", "WebFetch")
 
@@ -312,6 +314,21 @@ def _system_to_file(command: List[str]) -> "tuple[str, Optional[Path]]":
         written.write(system)
     command[at:at + 2] = ["--append-system-prompt-file", name]
     return system, Path(name)
+
+
+def _settings_to_file(command: List[str]) -> Optional[Path]:
+    """The command's settings (the web hooks) moved into a file of their own
+    - a path, not JSON, on a command line a shell may read; the file to
+    remove once the call is over, or None."""
+    import tempfile
+    if "--settings" not in command:
+        return None
+    at = command.index("--settings")
+    handle, name = tempfile.mkstemp(prefix="pa-settings-", suffix=".json")
+    with os.fdopen(handle, "w", encoding="utf-8") as written:
+        written.write(command[at + 1])
+    command[at + 1] = name
+    return Path(name)
 
 
 class ClaudeCodeProvider(ModelProvider):
@@ -698,16 +715,28 @@ class ClaudeCodeProvider(ModelProvider):
         # transcript found by a later process (section 18, as amended).
         if session_id:
             command += ["--session-id", session_id]
-        web = list(BUILTIN_WEB) if request.builtin_web else []
+        # ITS OWN WEB TOOLS ARE NEVER ALLOWED HERE: not denied either, each
+        # search and page is let through by the hook alone, when the agent's
+        # checks pass (`ToolBridge.hook_settings`) - so a hook that cannot
+        # run lets nothing through: under -p nothing else can approve it.
+        web: List[str] = []
         if request.native_read is not None:
             web += list(NATIVE_READ)
+        if request.builtin_web and getattr(bridge, "guard", None) is not None:
+            # ITS OWN WEB TOOLS, CHECKED: the hooks before and after each
+            # search and page, answered by this call's server - in a file
+            # of its own when the call runs (`_settings_to_file`).
+            command += ["--settings", json.dumps(bridge.hook_settings())]
+        # The tools allowed by name - never the flag with none after it: it
+        # takes the next word for its own, and an option after it is lost
+        # (measured: the settings above, so no hook ran).
+        allowed = [*(bridge.allowed() if bridge is not None else []), *web]
         if bridge is not None:
             # The agent's tools, natively: this call's server and nothing
             # else (--strict-mcp-config above), its tools allowed by name.
-            command += ["--mcp-config", bridge.config(), "--allowedTools",
-                        *bridge.allowed(), *web]
-        elif web:
-            command += ["--allowedTools", *web]
+            command += ["--mcp-config", bridge.config()]
+        if allowed:
+            command += ["--allowedTools", *allowed]
         system = self._system(request, native=bridge is not None)
         if system:
             command += ["--append-system-prompt", system]
@@ -725,8 +754,11 @@ class ClaudeCodeProvider(ModelProvider):
         if request.native_read is not None and sum(
                 len(read_rule(one)) + 1 for one in request.native_read) > READ_RULES_CHARS:
             request = replace(request, native_read=None)
+        # Its own search only where the agent's checks hold it (the hooks
+        # answered by the call's server): a request with no web guard, or
+        # whose tools are not served, keeps the agent's own web tools.
         web = bool(request.builtin_web) and any(
-            tool.name in WEB_TOOL_NAMES for tool in request.tools or [])
+            tool.name in WEB_TOOL_NAMES for tool in request.tools or [])             and request.web_guard is not None and callable(request.tool_runner)
         if web:
             # Its own search in place of the agent's web tools.
             request = replace(request, tools=[tool for tool in request.tools
@@ -739,9 +771,12 @@ class ClaudeCodeProvider(ModelProvider):
         if request.native_read is not None:
             request = replace(request, system="\n\n".join(
                 one for one in (request.system, NATIVE_READ_NOTE) if one))
-        if request.tools and callable(request.tool_runner):
+        # A server for the call when it has tools to serve - or its own web
+        # tools to check: without it, no hook could ask.
+        if (request.tools or web) and callable(request.tool_runner):
             from .mcp_bridge import ToolBridge
-            with ToolBridge(request.tools, request.tool_runner) as bridge:
+            with ToolBridge(request.tools, request.tool_runner,
+                            guard=request.web_guard if web else None) as bridge:
                 return self._invoke(request, model, cli, bridge)
         return self._invoke(request, model, cli, None)
 
@@ -754,6 +789,7 @@ class ClaudeCodeProvider(ModelProvider):
         # alone is past 26,000 - the call never ran ("The filename or
         # extension is too long"). Removed once the call is over.
         system, system_file = _system_to_file(command)
+        settings_file = _settings_to_file(command)
         prompt = self._prompt(request)
         cwd = str(self.workspace) if self.workspace else None
         # Exactly what the client is handed, for a debugger watching this
@@ -804,11 +840,12 @@ class ClaudeCodeProvider(ModelProvider):
                 available=False, state=AvailabilityState.PROVIDER_UNAVAILABLE,
                 reason=message, failure_class=FailureClass.USER_ACTION_REQUIRED)) from exc
         finally:
-            if system_file is not None:
-                try:
-                    system_file.unlink()
-                except OSError:
-                    pass
+            for made in (system_file, settings_file):
+                if made is not None:
+                    try:
+                        made.unlink()
+                    except OSError:
+                        pass
 
         if completed.returncode != 0:
             # The envelope is on stdout even when the exit code is not zero,

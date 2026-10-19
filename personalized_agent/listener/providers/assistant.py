@@ -44,7 +44,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ...common.agent_sessions import is_agent_session, is_the_agent_itself
 from ...common.events.models import ListenerEvent
-from ..core.provider import ListenerProvider, PluginManifest
+from ..core.provider import ListenerProvider, NotOnThisMachine, PluginManifest
 from ..core.manager import STOPPING_GRACE_SECONDS
 
 log = logging.getLogger(__name__)
@@ -161,7 +161,7 @@ class AssistantProvider(ListenerProvider):
     # -- lifecycle ----------------------------------------------------------
     def start(self) -> None:
         if not any(tool.available() for tool in self._tools):
-            raise RuntimeError("no assistant session store was found")
+            raise NotOnThisMachine("no assistant session store was found")
         # Every start begins at the end of the transcripts as they stand.
         #
         # This provider is stopped whenever collection is off - monitoring or

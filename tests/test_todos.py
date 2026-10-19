@@ -62,13 +62,12 @@ class AddToTodoTests(unittest.TestCase):
         self.assertEqual(self.app.todos.shown(), [])
 
     def test_only_the_user_removes_one_the_agent_never_ticks_it(self) -> None:
+        # Nothing of the agent's ticks anything any more: the step that ticked
+        # the tasks' next steps is gone (section 37, as amended 2026-10-18).
         one = self.app.todos.add("Book the room", "for Friday's review")
-        beat = self.app.heartbeat
-        lines = beat._open_todos()
-        self.assertFalse(any(one["id"] in line for line in lines), lines)
-        ticked = beat._tick_todos([{"id": one["id"], "why": "it looked booked",
-                                    "evidence": []}])
-        self.assertEqual(ticked, [])
+        from personalized_agent.heartbeat.checklist.store import STEPS
+        self.assertNotIn("step_todo", [step.id for step in STEPS])
+        self.assertFalse(hasattr(self.app.heartbeat, "_tick_todos"))
         self.assertEqual(self.app.todos.get(one["id"])["done_at"], "")
 
     def test_the_routes(self) -> None:

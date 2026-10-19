@@ -220,6 +220,10 @@ class ModelRequest:
     #: searches and reads pages with it, in place of the agent's web tools
     #: (`WEB_TOOL_NAMES`) - which a client without one is still given.
     builtin_web: bool = False
+    #: THE CHECKS ON THE WEB the agent's own web tools are held to
+    #: (runtime/web_guard.py): a client's own web tools are held to them too
+    #: - and, with none given, not offered (Claude Code's hooks).
+    web_guard: Any = field(default=None, repr=False, compare=False)
     #: THE CLIENT'S OWN READING TOOLS (Claude Code's Read - PDFs and images
     #: too - Glob and Grep), denied every place listed: all the agents may
     #: not read (`filesystem.unreadable_for`). None: not offered at all.

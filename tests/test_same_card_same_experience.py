@@ -30,11 +30,14 @@ class _Run:
     """What `Review` asks of a run - its record kept by the real methods."""
     experience_given = Run.experience_given
     keep_experience_given = Run.keep_experience_given
+    lessons_for = Run.lessons_for
+    lessons = None                      # no lesson cards: these are of the stages
 
     def __init__(self, app, run_id="run_one"):
         self.owner = app.work
         self.id = run_id
         self.retriever = _Retriever()
+        self.lessons_shown = {}
 
     def _in_english(self, profile):
         return dict(profile)

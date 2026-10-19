@@ -165,9 +165,12 @@ class TheCommandTests(unittest.TestCase):
 
     def test_its_own_web_search_in_place_of_the_agents(self) -> None:
         """With the model's own search, Claude Code searches and reads pages
-        with its WebSearch and WebFetch - the agent's web tools not offered;
-        without it, those stay shut and the agent's are offered."""
+        with its WebSearch and WebFetch - the agent's web tools not offered -
+        held to the agent's checks by hooks answered by the call's server;
+        without it, or with no checks to hold them to, those stay shut and
+        the agent's are offered."""
         from personalized_agent.common import children
+        from personalized_agent.runtime.web_guard import WebGuard
         web = ToolSpec("web_search", "Search the web",
                        {"type": "object", "properties": {"query": {"type": "string"}}})
         page = ToolSpec("fetch_url", "Read a page",
@@ -175,35 +178,69 @@ class TheCommandTests(unittest.TestCase):
         seen = []
 
         def capture(command, **_kw):
-            # The system prompt is read from its file while the call runs.
+            # The system prompt and the settings are read from their files
+            # while the call runs.
             at = command.index("--append-system-prompt-file")
-            seen.append([*command[:at], "--append-system-prompt",
-                         open(command[at + 1], encoding="utf-8").read(), *command[at + 2:]])
+            command = [*command[:at], "--append-system-prompt",
+                       open(command[at + 1], encoding="utf-8").read(), *command[at + 2:]]
+            if "--settings" in command:
+                at = command.index("--settings")
+                command[at + 1] = json.loads(open(command[at + 1], encoding="utf-8").read())
+            seen.append(command)
             raise children.Ended("stopped by the test")
 
-        for builtin in (True, False):
+        guard = WebGuard()
+        for builtin, checks in ((True, guard), (False, guard), (True, None)):
             request = ModelRequest(messages=[{"role": "user", "content": "hi"}],
-                                   tools=[web, page, SPEC], builtin_web=builtin)
+                                   tools=[web, page, SPEC], builtin_web=builtin,
+                                   web_guard=checks, tool_runner=lambda *_: {})
             with mock.patch.object(self.provider, "executable", return_value="claude"), \
                     mock.patch.object(children, "run", side_effect=capture):
                 with self.assertRaises(Exception):
                     self.provider.invoke(request, "opus")
-        own, theirs = seen
+        own, theirs, unchecked = seen
         denied = own[own.index("--disallowed-tools") + 1:own.index("--strict-mcp-config")]
         self.assertNotIn("WebSearch", denied)
         self.assertNotIn("WebFetch", denied)
-        allowed = own[own.index("--allowedTools") + 1:]
-        self.assertIn("WebSearch", allowed)
-        self.assertIn("WebFetch", allowed)
+        # Never allowed by the command: each search and page is let through
+        # by the hook alone, so one that cannot run lets nothing through.
+        def values(command, flag):
+            if flag not in command:
+                return []
+            after = command[command.index(flag) + 1:]
+            ends = [n for n, part in enumerate(after) if str(part).startswith("--")]
+            return after[:ends[0] if ends else len(after)]
+
+        # A flag that takes names is never left with none: it would take the
+        # next option for its own (measured - the hooks were lost so).
+        for command in seen:
+            for flag in ("--allowedTools", "--disallowed-tools"):
+                if flag in command:
+                    self.assertTrue(values(command, flag), flag)
+        allowed = values(own, "--allowedTools")
+        self.assertNotIn("WebSearch", allowed)
+        self.assertNotIn("WebFetch", allowed)
+        self.assertNotIn(tool_name("web_search"), allowed)
         system = own[own.index("--append-system-prompt") + 1]
         self.assertIn(cc.BUILTIN_WEB_NOTE, system)
-        self.assertNotIn('"web_search"', system)
-        self.assertIn("run_python", system)
-        # Without it: shut, and the agent's own web tools offered.
-        denied = theirs[theirs.index("--disallowed-tools") + 1:theirs.index("--strict-mcp-config")]
-        self.assertIn("WebSearch", denied)
-        self.assertNotIn("--allowedTools", theirs)
-        self.assertIn("web_search", theirs[theirs.index("--append-system-prompt") + 1])
+        # HELD TO THE CHECKS: a hook before and after each search and page,
+        # this application as the hook, asking the call's own server.
+        hooks = own[own.index("--settings") + 1]["hooks"]
+        for event in ("PreToolUse", "PostToolUse"):
+            entry = hooks[event][0]
+            self.assertEqual(entry["matcher"], "WebFetch|WebSearch")
+            command = entry["hooks"][0]["command"]
+            self.assertIn("web_hook.py", command)
+            self.assertRegex(command, r'"http://127\.0\.0\.1:\d+/[^/"]+/hook"')
+            self.assertNotIn("\\", command)
+        # Without it - or with no checks to hold its own to: shut, and the
+        # agent's own web tools offered.
+        for other in (theirs, unchecked):
+            denied = other[other.index("--disallowed-tools") + 1:other.index("--strict-mcp-config")]
+            self.assertIn("WebSearch", denied)
+            self.assertIn("WebFetch", denied)
+            self.assertNotIn("--settings", other)
+            self.assertIn(tool_name("web_search"), values(other, "--allowedTools"))
 
     def test_its_own_reading_tools_denied_where_the_agents_may_not_read(self) -> None:
         """Read, Glob and Grep offered - and denied, as Claude Code writes a

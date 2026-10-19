@@ -386,6 +386,51 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             raise ApiError("no such permission here", 404)
         return {"opened": permissions.open_place(key), **permissions.status(app.config)}
 
+    @route("GET", "/api/index")
+    def local_index_status(_request: Any) -> Any:
+        """THE LOCAL INDEX: the folders it reads - every Work project's and
+        the user's own - how far each is, and whether a build is going."""
+        return app.local_index.status()
+
+    @route("POST", "/api/index")
+    def local_index_change(request: Any) -> Any:
+        """A folder added or removed, the conversation records added or
+        not, the index on or off, or a build started now."""
+        import os
+        from pathlib import Path
+        action = str(request.require("action"))
+        index = app.local_index
+        if action in ("add", "remove"):
+            path = str(request.require("path")).strip()
+            folders = index.added()
+            if action == "add":
+                where = Path(path).expanduser()
+                if not where.is_dir():
+                    raise ApiError(f"not a folder: {path}")
+                data = os.path.normcase(os.path.abspath(str(app.paths.data_dir)))
+                if os.path.normcase(os.path.abspath(str(where))).startswith(data):
+                    raise ApiError("the application's own data is never read")
+                if str(where) not in folders:
+                    folders.append(str(where))
+            else:
+                folders = [one for one in folders if one != path]
+            app.config.set("index_folders", folders)
+            index.soon()
+        elif action == "sessions":
+            app.config.set("index_sessions", bool(request.get("on", True)))
+            index.soon()
+        elif action == "enable":
+            app.config.set("index_enabled", bool(request.get("on", True)))
+            if app.config.get("index_enabled", True):
+                index.soon()
+        elif action == "build":
+            said = index.build_now()
+            if said.get("error"):
+                raise ApiError(said["error"])
+        else:
+            raise ApiError("action is add, remove, sessions, enable or build")
+        return index.status()
+
     @route("GET", "/api/permissions/macos")
     def macos_permissions(_request: Any) -> Any:
         """What macOS allows the agent, of what its switches need - looked
@@ -403,6 +448,15 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             raise ApiError("there is no such permission")
         opened = macos_permissions.open_pane(str(key))
         return {"opened": opened, **macos_permissions.status(app.config)}
+
+    @route("POST", "/api/permissions/macos/start_again")
+    def macos_start_again(_request: Any) -> Any:
+        """The user's click: quit and open again, so Screen Recording
+        switched on meanwhile applies (platform_layer/updater.py)."""
+        updater = getattr(app, "updater", None)
+        if updater is None or not updater.start_again():
+            raise ApiError("the agent cannot open itself again here - quit it and open it again")
+        return {"starting_again": True}
 
     @route("GET", "/api/settings/defaults")
     def settings_defaults(_request: Any) -> Any:
@@ -1079,6 +1133,19 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         return {"kinds": [app.calendar_nature.describe(),
                           app.connections.describe_lessons()]}
 
+    @route("GET", "/api/lessons/cards")
+    def lesson_cards(_request: Any) -> Any:
+        """THE LESSON CARDS (heartbeat/experience/lesson_cards.py): each
+        answered question of the user's work, newest first - its evidence,
+        its versions, and how often it was used. None rests on the web."""
+        from ..heartbeat.experience.lesson_cards import LessonCards
+        cards = LessonCards(app.db)
+        shown = []
+        for card in cards.cards()[:200]:
+            shown.append(dict(card, uses=len(cards.uses(card["id"])),
+                              versions=len(cards.versions(card["id"]))))
+        return {"cards": shown, "count": len(shown)}
+
     def _edit_task(request: Any, task_id: str, said: str) -> Dict[str, Any]:
         """The user editing an event from its card (scheduler/core/editing.py).
 
@@ -1677,6 +1744,24 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             raise ApiError(said["error"], 409)
         return said
 
+    @route("POST", "/api/work/contract/take_out")
+    def work_contract_take_out(request: Any) -> Any:
+        """What was added to a run's contract and is not the user's words,
+        taken out by them - on a run not working now."""
+        run = app.work.run(str(request.require("run")))
+        if run is None:
+            raise ApiError("no such run", 404)
+        from ..agent.work.debug_projects import DebugProjects, is_debug_unit, parse_unit
+        unit = (DebugProjects(app.work).unit(*parse_unit(run["unit_id"]))
+                if is_debug_unit(run["unit_id"])
+                else app.state_heartbeat.experience.unit(run["unit_id"]))
+        if unit is None:
+            raise ApiError("its project is gone", 404)
+        said = app.work.take_out(run["id"], unit, str(request.require("added")))
+        if said.get("error"):
+            raise ApiError(said["error"], 409)
+        return said
+
     def _versions_of(call: Any) -> Any:
         """A version that is not there, or is damaged: not found."""
         from ..agent.work.versions import VersionError
@@ -2176,22 +2261,6 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         if said is None:
             raise ApiError("task not found", 404)
         return said
-
-    @route("POST", "/api/state_heartbeat/todo")
-    def state_heartbeat_todo(request: Any) -> Any:
-        """A step the user adds to a project's or a top task's next steps,
-        deletes from them, or marks finished. Shown at once, and told to the
-        next round, which writes the list again with the change in front
-        of it."""
-        try:
-            return app.state_heartbeat.change_todo(
-                str(request.require("id")), add=request.get("add"),
-                remove=request.get("remove"), finish=request.get("finish"),
-                unfinish=request.get("unfinish"))
-        except LookupError as exc:
-            raise ApiError(str(exc), 404)
-        except ValueError as exc:
-            raise ApiError(str(exc), 400)
 
     @route("GET", "/api/state_heartbeat/sandbox")
     def state_heartbeat_sandbox(_request: Any) -> Any:

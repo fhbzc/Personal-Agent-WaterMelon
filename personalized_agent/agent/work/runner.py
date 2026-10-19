@@ -107,12 +107,16 @@ from typing import Any, Dict, List, Optional, Tuple
 from ...common.sound import DONE as SOUND_DONE, FAILED as SOUND_FAILED
 from ...common.sound import STOPPED as SOUND_STOPPED, play_end_sound
 from ...heartbeat.experience.store import description_of, input_of
-from ...models.base import ModelRequest
+from ...models.base import ModelRequest, ToolSpec
 from ...common.languages import in_display, in_english
 
 #: WHICH LANGUAGE A WORK RUN WRITES IN, unless a call says otherwise (the
-#: search words do): what the user reads of it in their display language;
-#: what it makes for the work itself in whatever language that work needs.
+#: search words do). The user's decision (2026-10-18): what it DELIVERS -
+#: the files made for the work, the words inside its programs that people
+#: read - in the display language, unless the user's instruction names
+#: another; its own notes on the work - the cards, stages, questions,
+#: findings and reports the Work tab shows - in English, as everything the
+#: agent keeps for itself is.
 #: THE README THAT GOES WITH WHAT WAS DELIVERED: every run that made
 #: something ends with one, in the work's folder - how to check it and use it.
 README_PROMPT = """WRITE THE README THAT GOES WITH WHAT WAS DELIVERED. The user reads it
@@ -135,8 +139,13 @@ Return ONLY this JSON object: {{"readme": "the whole README, as Markdown"}}"""
 README_MARK = "<!-- written by the agent's run: how to check and use what it made -->"
 
 WORK_LANGUAGE = in_display(
-    "every card, summary, slide, note and report the user reads - what you MAKE for "
-    "the work itself (a document, a reply, code) is in whatever language that work needs")
+    "everything you DELIVER - the documents, pages, slides, messages and other files you "
+    "make for the work, and the words inside the programs you write that their users "
+    "read - unless the user's instruction asks for another language: then in that one. "
+    "Code itself (names, keywords) is written as code is") + in_english(
+    "your own notes on the work - the cards, stages, questions and their answers, "
+    "findings, summaries, version descriptions and reports in your JSON answers, which "
+    "the Work tab shows")
 from ...runtime.permissions import SecurityViolation, WorkspacePolicy
 from ...runtime.sandbox import SandboxRuntime
 from .packages import ASK, AUTO, Installer, PACKAGES_DIR, mode_of, validate
@@ -213,8 +222,15 @@ INSTRUCTION_CHARS = 4000
 #: Times a summary failing the checks goes back within one round.
 GATE_RETRIES = 2
 
-#: Every so many rounds the review is of every criterion, not one card.
-FULL_REVIEW_EVERY = 5
+#: THE FULL REVIEW, when the reviewer asks for one (no fixed interval - the
+#: user's decision, 2026-10-18): this many rounds of tools for it in one
+#: answer - and past this many cards touched since the last checkpoint, an
+#: answer a card and one that concludes instead.
+FULL_REVIEW_TOOL_ROUNDS = 36
+FULL_REVIEW_CARDS_AT_ONCE = 6
+#: What the reviewer is told of the rounds and files since the checkpoint.
+FULL_REVIEW_ROUNDS_LISTED = 40
+FULL_REVIEW_FILES_LISTED = 80
 
 #: Stalled or regressed rounds in a row: at the first number the agent is
 #: told to step back; at the second the run ends.
@@ -293,7 +309,11 @@ STOPPED_BY_REVIEW = "stopped by the reviewer"
 BLOCKED = "blocked"
 NO_CONTRACT = "no contract"
 INTERRUPTED = "interrupted"
-CONTINUABLE = (NOT_FINISHED, STALLED, STOPPED_BY_REVIEW, BLOCKED, INTERRUPTED)
+#: One of the two final checks - quality, privacy - still not passed after
+#: its rounds of fixes (`Run._final_checks`): the run ends saying which.
+CHECK_FAILED = "failed a final check"
+CONTINUABLE = (NOT_FINISHED, STALLED, STOPPED_BY_REVIEW, BLOCKED, INTERRUPTED,
+               CHECK_FAILED)
 
 #: A run waiting for the user to answer a request to install packages.
 WAITING = "waiting for you"
@@ -332,7 +352,16 @@ CALLS_BATCH = 600
 
 #: Who made a call, as the chart names them: the work agent is the builder;
 #: the Experience debugger's first way, the single model.
-CALL_WHO = {"worker": "builder", "reviewer": "reviewer"}
+CALL_WHO = {"worker": "builder", "reviewer": "reviewer",
+            "quality": "quality check", "privacy": "privacy check"}
+
+#: THE TWO FINAL CHECKS, each a kind of its own in the token charts: the
+#: run's chart by who made the call (CALL_WHO), and the application's by
+#: what it was for (the call's task).
+CHECK_TASKS = {"quality": "work_quality_check", "privacy": "work_privacy_check"}
+CHECK_LABELS = {"quality": "quality check", "privacy": "privacy check"}
+#: Rounds of fixes each check is given before the run ends failing it.
+CHECK_FIXES = 3
 
 #: What the page shows a run's state as, from what it is doing.
 LIVE_GOING = "going"
@@ -917,9 +946,16 @@ stop calling tools and return ONLY this JSON object:
  "amend": {"deliverables": [{"ref": "d9", "title": "...", "type": "...",
                              "statement": "...", "why": "..."}], "why": "..."},
  "blocked": {"card": "...", "missing": "what is missing - access, a tool, data - and why the card cannot move without it"},
+ "needs": [{"need": "what the user would need that the contract leaves out", "kind": "implied|needed|nice",
+            "promise": "for implied: the core promise it belongs to", "saw": ["what showed it: a file, a record, a result"]}],
  "complete": false}
 
   - Every claim needs evidence that can be opened or re-run.
+  - "needs": what the work showed the user would need and the contract does
+    not hold - with what showed it. "implied": their own words already call
+    for it; "needed": what they asked would not serve them without it;
+    "nice": it would serve them better. The reviewer decides; none is a
+    core promise of its own. None at all is the usual answer.
   - "commit": what THIS round changed, said as a good commit message is - the
     version saved after it is named by it. "title": one line, at most 72
     characters, in the imperative ("Add the pledge model with two kinds and a
@@ -1174,6 +1210,83 @@ content, style) - and the patterns and principles above. "backed_by": check
 past work says so; own judgement - neither. Approach notes say how the user
 would go about it, as plain instructions with no ids."""
 
+#: WHAT THE REVIEWER MUST KNOW - asked in an answer of its own BEFORE it
+#: writes criteria (the user's decision, 2026-10-18), with its tools but NO
+#: WEB (`NoWeb`): what it answers there may become a lesson card
+#: (heartbeat/experience/lesson_cards.py) when the work is the user's own
+#: (`Run._keep_lessons`); what it leaves open is answered as it writes the
+#: criteria, the web too, for this work only - never kept.
+QUESTIONS_SHAPE = """{"question": "one question about the user, in a sentence",
+                 "answer": "the specific answer - or empty, when only the web could tell",
+                 "evidence": [{"type": "user_said|user_code|user_decision|model",
+                               "ref": "a file path, or a stage id",
+                               "said": "the words it rests on, quoted as they are"}],
+                 "topics": ["a few words"],
+                 "replaces": "the id of a lesson card it corrects, or empty"}"""
+
+#: What is worth asking: what serves later work too - any work, not only code.
+QUESTIONS_SCOPE = """  - PREFERENCES: the tone and length of their emails, whether reports are short
+    or thorough, the citation style, how charts and slides look and how much
+    text a slide carries, tables or prose, the language they write in, the
+    tools and libraries they choose;
+  - CONVENTIONS: how files and folders are named, how drafts are versioned,
+    how an email is signed, how meeting notes and data are laid out;
+  - CONSTRAINTS: the formats a journal or institution requires, data that
+    must not leave their computer, who is copied on what, budgets and
+    quotas, deadlines and how they keep them;
+  - THEIR ENVIRONMENT: the system and software they use (Word or Google Docs,
+    LaTeX or Overleaf, a reference manager, their calendar, the services
+    they use) - what they are, never a password, key or account detail;
+  - DECISIONS THEY MAKE AGAIN AND AGAIN: which of two ways they usually take
+    (a draft first or the whole at once, figures in the text or at the end)."""
+
+WHAT_TO_KNOW = """BEFORE YOU WRITE THE CRITERIA OF {on} - WHAT YOU MUST KNOW ABOUT THE
+USER to judge it as they would. List each question about the user that
+the criteria will rest on, and answer the ones you can - from what you were
+shown and from what you can read of theirs with your tools (their files,
+their records, their past stages). YOU HAVE NO WEB HERE: a question only the
+web could answer is left open ("answer": ""), and you answer it later.
+
+ASK WHAT WILL SERVE LATER WORK TOO - about the user, not this work alone:
+{scope}
+
+NOT: facts of this work alone (where a fault is, which file holds what);
+what their instruction already says; guesses - an answer from your own
+knowledge alone says so ("model"). Each piece of evidence quotes what it
+rests on as it is: user_said - the user's own words; user_code - a file or
+document of theirs that you read; user_decision - a decision of theirs in a
+past stage you were shown or opened. A LESSON CARD shown above that answers
+a question already is not asked again - unless what you see now says
+otherwise: then answer it anew and name the card in "replaces". Nothing to
+ask: an empty list.
+
+Return ONLY this JSON object:
+{{"questions": [{questions}]}}"""
+
+#: The questions step 1 left open, put before the criteria are asked for.
+OPEN_QUESTIONS = """THE QUESTIONS YOU LEFT OPEN - answer what you need of them now, the web
+too if it helps; what you find is for this work only:
+{questions}
+
+"""
+
+#: At most this many expected needs from one answer.
+EXPECTED_MOST = 8
+
+#: The lesson cards found for what the reviewer is asked, after the
+#: experience - at most this many, each answer cut to its first characters.
+LESSONS_GIVEN = 6
+LESSON_ANSWER_CHARS = 600
+#: At most this many questions of one answer become cards.
+LESSONS_PER_ANSWER = 8
+LESSONS_SHOWN = """
+
+WHAT WAS ASKED AND ANSWERED BEFORE - LESSON CARDS, each a question about the
+user's work, its answer and what it rests on ("user": something of the
+user's says so; "assumption": the model's own knowledge). Cite one by its id
+where you rely on it:
+"""
+
 REVIEW_CONTRACT = """REVIEW THIS CONTRACT, drafted by the work agent before any work:
 {contract}
 
@@ -1190,11 +1303,35 @@ is polish, and says so. Return ONLY this JSON object:
   "change": "for revise: what to change",
   "deliverables": [{{"ref": "d1", "criteria": [{criteria}],
                      "approach": "..."}}],
-  "for_user": [{{"do": "what the user must check or do", "why": "why the work cannot do it itself, and what you tried instead", "promise": "P1, or empty"}}]}}
+  "for_user": [{{"do": "what the user must check or do", "why": "why the work cannot do it itself, and what you tried instead", "promise": "P1, or empty"}}],
+  "expected": [{expected}]}}
 
 {note}
 
+{expected_note}
+
 {for_user}{last}"""
+
+#: WHAT THE USER WOULD EXPECT AND DID NOT SAY (the user's decision,
+#: 2026-10-18): asked of the reviewer with the contract, and of the work
+#: agent as it finds it; never a core promise of its own.
+EXPECTED_SHAPE = """{"need": "what the user would expect, in a sentence",
+                 "kind": "implied|needed|nice",
+                 "promise": "for implied: the core promise it belongs to (P1...)",
+                 "because": ["what it rests on: ids of what you were shown, or the user's words"],
+                 "deliverable": {"title": "...", "type": "...", "statement": "what is true when it is done"}}"""
+
+EXPECTED_NOTE = """WHAT THE USER WOULD EXPECT AND DID NOT SAY: "expected" lists what this work
+should hold that the contract leaves out - from the user's past work shown
+above and from what they asked - each with what it rests on. Three kinds:
+"implied" - what their own words already call for (a payment that fails
+charges nothing): it joins that core promise as a failure it must survive;
+"needed" - without it what they asked would not serve them as they work: a
+supporting deliverable, done with the core; "nice" - it would serve them
+better: polish, done once every core promise holds. None is a core promise
+of its own - those are the user's words alone. Each is shown to the user as
+added, not theirs, and they can take it out. Only what bears on this work;
+none at all is a fine answer."""
 
 REVIEW_CARD = """A CARD HAS OPENED - WRITE ITS CRITERIA:
 {card}
@@ -1207,7 +1344,7 @@ Return ONLY this JSON object:
 REVIEW_ROUND = """REVIEW THIS ROUND. The work agent's summary - what it claims, with
 its evidence:
 {summary}
-{full}
+{hints}
 FIRST, THE CORE PROMISES in the contract: try each one the way the user
 would - under its real condition and its failure cases. Run it: start what
 was built and use it, with real data and the real services where the work
@@ -1228,8 +1365,10 @@ contract. Return ONLY this JSON object:
   "checked": ["what you opened or ran"],
   "decisions": [{{"n": 0, "support": "strong|some|none", "because": ["ids"]}}],
   "amendment": "approved|rejected|none",
+  "needs": [{{"n": 0, "verdict": "add|reject", "kind": "implied|needed|nice", "why": "..."}}],
   "blocked_confirmed": false,
-  "complete": false{stop}}}
+  "full_review": {{"now": false, "why": "for now: the milestone it is at"}},
+  "complete": false}}
 
   - "mainline": a gap in this card's own work. "blocking": a separate
     problem that stops the goal - say why. "queued": real, but not for now -
@@ -1237,6 +1376,11 @@ contract. Return ONLY this JSON object:
   - "decisions": for each decision the agent made for the user (by its
     place, n, in the list), how strongly the user's past work supports it.
   - "amendment": your verdict on the deliverables it asked to add, if any.
+  - "needs": for each need the agent found (by its place, n, in its list),
+    whether it is added and as which kind - "implied" only when the user's
+    own words call for it, "needed" when what they asked would not serve
+    them without it, "nice" otherwise. Added, it is shown to the user as
+    added, not theirs; none is a core promise of its own.
   - "blocked_confirmed": the card really cannot move without what is
     missing.
   - "promises": every core promise, each as you found it THIS review -
@@ -1244,14 +1388,88 @@ contract. Return ONLY this JSON object:
     that does not hold is a "mainline" or "blocking" finding too.
     {needs_user}
   - {for_user}
+  - "full_review": YOURS TO ASK FOR. "now": true at a MILESTONE - a
+    deliverable done, a core promise that now holds, the work's shape
+    changed (a large change, a part joined to the rest), a point worth
+    keeping to come back to - or when you doubt that work done before still
+    holds. It checks everything done since the last checkpoint, tries every
+    core promise again, and only a work that passes it is kept as a
+    version - the run cut off goes back to the last one. Not every round:
+    what the application sees is above; the call is yours.
   - "complete": the whole goal is met - every deliverable's criteria, and
     every core promise holds when you tried it."""
 
-FULL_REVIEW = """
-THIS IS A FULL REVIEW: audit EVERY criterion of every deliverable against
-the files, not only this card. You may also end the run: "stop": true, when
-it cannot reach the goal and more rounds would not change that.
+#: WHAT THE APPLICATION SEES of where the work stands, given the reviewer
+#: with each round: the milestones it can tell from the record. Hints - the
+#: full review is the reviewer's to ask for.
+FULL_REVIEW_HINTS = """
+WHERE THE WORK STANDS, AS THE APPLICATION SEES IT (for "full_review"):
+{lines}
 """
+
+#: THE FULL REVIEW, the reviewer's to ask for at a milestone: everything
+#: done since the last checkpoint, in one answer with room for it - or, when
+#: many cards were touched, one answer a card and one that concludes.
+FULL_REVIEW_ASK = """DO THE FULL REVIEW NOW ({why}). It covers EVERYTHING DONE SINCE THE LAST
+CHECKPOINT ({since}), not only this round:
+
+THE ROUNDS SINCE IT:
+{rounds}
+
+THE FILES CHANGED SINCE IT:
+{files}
+
+THE CARDS DONE BEFORE IT (check one again when the files its work rests on
+changed since):
+{earlier}
+
+{what}"""
+
+FULL_REVIEW_WHOLE = """Check every card those rounds touched against its criteria, opening the
+files and running what was built; try EVERY core promise again, under its
+real condition - later work can break what held before. A card done that
+no longer holds is opened again ("reopen"). You may also end the run:
+"stop": true, when it cannot reach the goal and more rounds would not
+change that. Return ONLY this JSON object:
+{{"promises": [{{"id": "P1", "holds": "yes|no|untried|needs_user",
+                 "tried": "what you ran", "failed": "what went wrong, when it did"}}],
+  "cards": [{{"card": "a card's id", "holds": "yes|no", "why": "what you checked"}}],
+  "reopen": [{{"card": "the id of a done card", "why": "what of it no longer holds"}}],
+  "findings": [{{"say": "...", "type": "mainline|blocking",
+                 "because": ["ids, or own judgement"],
+                 "card": {{"title": "...", "statement": "..."}}}}],
+  "passed": false,
+  "stop": false}}
+
+  - "passed": true only when every card checked holds, every core promise
+    holds or truly cannot be tried here, and nothing you found blocks the
+    goal. Passed, the work as it is now is kept as a checkpoint."""
+
+FULL_REVIEW_CARD = """Check this card, one of those the rounds touched, against its criteria -
+open the files, run what was built:
+{card}
+
+Return ONLY this JSON object:
+{{"card": "{card_id}", "holds": "yes|no", "why": "what you checked",
+  "reopen": false,
+  "findings": [{{"say": "...", "type": "mainline|blocking",
+                 "because": ["ids, or own judgement"]}}]}}"""
+
+FULL_REVIEW_CONCLUDE = """Every card the rounds touched is checked (your answers above). Now try
+EVERY core promise again, under its real condition, and conclude. You may
+also end the run: "stop": true, when it cannot reach the goal and more
+rounds would not change that. Return ONLY this JSON object:
+{{"promises": [{{"id": "P1", "holds": "yes|no|untried|needs_user",
+                 "tried": "what you ran", "failed": "what went wrong, when it did"}}],
+  "reopen": [{{"card": "the id of a done card", "why": "what of it no longer holds"}}],
+  "findings": [{{"say": "...", "type": "mainline|blocking",
+                 "because": ["ids, or own judgement"]}}],
+  "passed": false,
+  "stop": false}}
+
+  - "passed": true only when every card checked holds, every core promise
+    holds or truly cannot be tried here, and nothing you found blocks the
+    goal."""
 
 REVIEW_FINAL = """THE GOAL IS MET BY YOUR LAST REVIEW. Now review everything the
 work changed, as a whole:
@@ -1285,6 +1503,77 @@ what the user asked, the core promises it must keep, and where it is.
   - Report exactly what you saw: what you ran, and what it did.
 
 You can read files and run code (run_python)."""
+
+# -- the two final checks: every way, every run of the user's own work too -----------------
+QUALITY_SYSTEM = """You CHECK THE QUALITY of a finished piece of work, independently. You
+never saw how it was built, and you are not told what its builder claims of
+it: only what the user asked, what it was to do, and where it is.
+
+  - OPEN IT AND TRY IT: read the files, run what can be run, open what the
+    user would open. Reading a description of it is not checking it.
+  - Judge it as the user will receive it: does it do what they asked,
+    correctly and completely? Is it clear, well made, and free of the
+    mistakes a careful expert would catch?
+  - SAY WHAT THE RESULT SHOULD BE, NOT HOW TO WRITE IT: each problem says
+    what is wrong or missing in the result and what it should become -
+    never which code to write.
+  - Do not fix anything. The work's folder is read-only to you; the code
+    you run can write only in your checks folder, {checks}.
+  - "passed": true only when you could open and try the work and nothing
+    you found is high or medium. If you could not open or try it, it has
+    not passed: say what stopped you.
+
+You can read files and run code (run_python)."""
+
+PRIVACY_SYSTEM = """You CHECK A FINISHED PIECE OF WORK FOR PRIVACY, independently, before
+it is handed to the user - who may run it, share it or publish it. You never
+saw how it was built.
+
+Look through EVERYTHING it made - code, documents, slides, data files,
+notebooks, configuration - and, for a program, what it does when it runs:
+  - THE USER'S PRIVATE INFORMATION in what it made: personal names, contact
+    details, addresses, account numbers or ids, passwords, keys or tokens,
+    private messages or file contents, health or money details, paths or
+    settings that identify the user - anything of the user's, or of another
+    real person's, that the task did not ask to put there.
+  - SENT AWAY: whether a program sends anything from the user's computer to
+    any other place - a server, an API, analytics or telemetry, an upload,
+    an email - that the task did not ask for. A request the task asked for
+    is fine: say which it is.
+  - LEFT ON THE COMPUTER: whether it installs or changes anything outside
+    its own folder that the user did not ask for - a startup entry, a
+    service or scheduled task, a browser extension or setting, a web page or
+    server left reachable from the network, system or registry settings.
+  - Do not fix anything. The work's folder is read-only to you; the code
+    you run can write only in your checks folder, {checks}. Never send
+    anything anywhere yourself.
+  - "passed": true only when you looked through all of it and found none of
+    the above. If you could not look at something, it has not passed: say
+    what stopped you.
+
+You can read files and run code (run_python)."""
+
+CHECK_ASK = """THE USER ASKED (their words, verbatim):
+{words}
+
+WHAT IT WAS TO DO:
+{goal}
+
+THE WORK IS HERE:
+{files}
+
+Check it, then return ONLY this JSON object:
+{{"passed": true,
+  "checked": ["each thing you opened or ran"],
+  "problems": [{{"say": "what is wrong, and what it should become", "severity": "high|medium|low", "file": "..."}}]}}"""
+
+ALONE_CHECKS_FAILED = """TWO INDEPENDENT CHECKS LOOKED AT YOUR FINISHED WORK - its quality, and
+whether it keeps the user's private information private - AND IT HAS NOT
+PASSED YET:
+{findings}
+
+Fix what they found. When it is fixed, say "done": true again, with your
+final report."""
 
 TEST_AS_USER = """THE USER ASKED (their words, verbatim):
 {words}
@@ -1326,6 +1615,10 @@ reviewer would.
   - Be specific: what is wrong, and what it should become.
   - CHECK, DO NOT TRUST: open the files and the evidence. Judge what was
     made, not the reasons given for it.
+  - WHAT THEY ASKED COMES FIRST: the core promises. Judge whether the work
+    gives the user what they asked, the way they would want it - never add
+    work they did not ask for. What bears on no core promise is polish at
+    most.
   - WHAT THE WORK AGENT READS: criteria and approach notes are plain
     requirements and instructions.
   - You decide. The user is not asked.
@@ -1353,6 +1646,18 @@ NO_CONTEXT_WORDS = (
      "how strongly the task, the contract and the evidence support it"),
     ("Are the results shown the way the user likes\nresults shown?",
      "Are the results shown clearly?"),
+    # The same questions, asked and answered - with no lesson card to cite
+    # and no past work of the user's to rest on.
+    ('"user_said|user_code|user_decision|model"', '"user_said|user_code|model"'),
+    ('"a file path, or a stage id"', '"a file path"'),
+    ("(their files,\ntheir records, their past stages)", "(their files)"),
+    ("; user_decision - a decision of theirs in a\npast stage you were shown or opened", ""),
+    (' A LESSON CARD shown above that answers\na question already is not asked again - unless '
+     'what you see now says\notherwise: then answer it anew and name the card in "replaces".',
+     ""),
+    (',\n                 "replaces": "the id of a lesson card it corrects, or empty"', ""),
+    ("- from the user's past work shown\nabove and from what they asked -",
+     "- from what they asked and the work itself -"),
 )
 
 # -- one model on its own: the Experience debugger's first way ----------------------------
@@ -1623,6 +1928,10 @@ def contract_shown(contract: Dict[str, Any], cards: Dict[str, Dict[str, Any]],
             "out_of_scope": list(contract.get("out_of_scope") or []),
             "instructions": list(contract.get("instructions") or []),
             "deliverables": listed,
+            # WHAT WAS ADDED, NOT THE USER'S WORDS - by whom and on what; the
+            # user may take each out (WorkRuns.take_out).
+            "added": [one for one in contract.get("added") or []
+                      if isinstance(one, dict) and not one.get("taken_out")],
             "done": sum(1 for one in listed if one["status"] == "done"),
             "total": len(listed)}
 
@@ -1638,6 +1947,33 @@ def in_force_since(index: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             return here
         here = by_id.get(here.get("parent") or "")
     return None
+
+
+def _yes(value: Any) -> bool:
+    """A model's yes: true, or the word for it."""
+    return value is True or str(value).strip().lower() in ("true", "yes", "1")
+
+
+def _lessons_cited(said: Any, shown: set) -> List[Tuple[str, str]]:
+    """The lesson cards an answer cites in a "because" - each with what it
+    was cited for (the criterion, the comment) - once each."""
+    out: List[Tuple[str, str]] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            because = value.get("because")
+            for one in because if isinstance(because, list) else [because]:
+                if isinstance(one, str) and one in shown and \
+                        all(one != seen for seen, _ in out):
+                    out.append((one, str(value.get("text") or value.get("say") or "")[:600]))
+            for inner in value.values():
+                walk(inner)
+        elif isinstance(value, list):
+            for inner in value:
+                walk(inner)
+
+    walk(said)
+    return out
 
 
 def _criteria_of(said: Any) -> List[Dict[str, Any]]:
@@ -2059,9 +2395,21 @@ class WorkRuns:
         #: Where what the agents do is recorded, as the agent's.
         self.raw_store = raw_store
         self._running: Dict[str, "Run"] = {}
-        #: EACH RUN IN A PROCESS OF ITS OWN (child.py) - set by the application;
-        #: off, they go in this process (the tests, and the debugger's runs).
+        #: EACH RUN IN A PROCESS OF ITS OWN (child.py) - set by the application,
+        #: the Experience debugger's ways too; off, they go in this process
+        #: (the tests).
         self.in_subprocess = False
+        #: In a debugger way's own process: the agent that started it holds
+        #: the application's code sealed for it (child.launch) - this one
+        #: never changes the seal (`hold_code`).
+        self.code_held_elsewhere = False
+        #: THE TWO FINAL CHECKS (quality, privacy) at the end of every run -
+        #: off only where the tests drive runs with models of their own that
+        #: are not about them (tests/support.py).
+        self.final_checks = True
+        #: THE USER'S OWN FILES, searchable by their words (index/service.py)
+        #: - set by the application; None: no index to search.
+        self.local_index: Any = None
         self.paths: Any = None
         #: How much of the computer the runs may have (governor.py), and the
         #: runs asked for while there was no room, first asked first started
@@ -2320,8 +2668,20 @@ class WorkRuns:
         if root is None:
             return None
         from ...runtime.isolation import CodeSeal
+        if self.code_held_elsewhere:
+            CodeSeal.held_elsewhere(root)
+            return None
         CodeSeal.hold(root)
         return root
+
+    def code_to_hold(self, unit: Dict[str, Any]) -> Optional[Path]:
+        """The code a debugger way's own process is to find sealed - held
+        by this application from before that process starts until it ends
+        (child.launch) - or None: not a debugger way, or nothing to seal."""
+        if not unit.get("debug") or not self.sandbox_enabled or self.code_root is None:
+            return None
+        from ...common.paths import code_root_for_children
+        return code_root_for_children()
 
     @staticmethod
     def release_code(root: Optional[Path]) -> None:
@@ -2396,7 +2756,12 @@ class WorkRuns:
                     "packages": packages, "sound": sound})
                 if waits:
                     return waits
-            if self.in_subprocess and not unit.get("debug"):
+            if self.in_subprocess and unit.get("debug"):
+                # Its turn come (waited for above): in a process of its own.
+                return self._launch("start", unit, {
+                    "instruction": instruction, "limits": limits,
+                    "packages": packages, "sound": sound, "given_room": True})
+            if self.in_subprocess:
                 return self._apart("start", unit, instruction=instruction,
                                    limits=limits, packages=packages, sound=sound)
             folder = self.folder_of(unit)
@@ -2451,7 +2816,12 @@ class WorkRuns:
                     "sound": sound})
                 if waits:
                     return waits
-            if self.in_subprocess and not unit.get("debug"):
+            if self.in_subprocess and unit.get("debug"):
+                return self._launch("continue", unit, {
+                    "run_id": run_id, "limits": limits, "packages": packages,
+                    "from_version": from_version, "instruction": instruction,
+                    "sound": sound, "given_room": True})
+            if self.in_subprocess:
                 return self._apart("continue", unit, run_id=run_id, limits=limits,
                                    packages=packages, from_version=from_version,
                                    instruction=instruction, sound=sound)
@@ -2579,8 +2949,8 @@ class WorkRuns:
                 if not head.get("debug"):
                     started.append(self._launch(head["kind"], head["unit"], head["args"]))
                     continue
-            # A debugger way runs in this process: started as its button
-            # would, outside the lock its start takes.
+            # A debugger way: started as its button would - in a process of
+            # its own, or here - outside the lock its start takes.
             started.append(self._start_waited(head))
 
     def _start_waited(self, one: Dict[str, Any]) -> Dict[str, Any]:
@@ -2700,6 +3070,55 @@ class WorkRuns:
                              for one in index["versions"]],
                 "alive": alive, "status": row["status"]}
 
+    def take_out(self, run_id: str, unit: Dict[str, Any], added_id: str) -> Dict[str, Any]:
+        """WHAT WAS ADDED AND IS NOT THE USER'S WORDS, taken out by them (the
+        user's decision, 2026-10-18): its deliverable set aside, or the
+        failure it added to a core promise dropped - on a run not working
+        now; the contract keeps that it was added and taken out."""
+        from ...heartbeat.experience.store import ExperienceStore
+        with self._lock:
+            going = self._running.get(run_id)
+            if going is not None and going.alive():
+                return {"error": "pause or stop the run first - it is working on it"}
+            rows = self.db.query("SELECT * FROM work_runs WHERE id = ?", (run_id,))
+            if not rows:
+                return {"error": "no such run"}
+            row = self._row(rows[0])
+            if row["unit_id"] != unit.get("id"):
+                return {"error": "that run is of other work"}
+            plan = row.get("plan") or {}
+            contract = plan.get("contract") or {}
+            entry = next((one for one in contract.get("added") or []
+                          if isinstance(one, dict) and one.get("id") == added_id), None)
+            if entry is None or entry.get("taken_out"):
+                return {"error": "nothing added by that name to take out"}
+            if entry.get("card"):
+                ExperienceStore(self.db, work_scope(row["unit_id"])).update_card(
+                    entry["card"], {"status": "set_aside",
+                                    "status_why": "taken out by you: it was added, "
+                                                  "not your words"})
+                contract["deliverables"] = [one for one in contract.get("deliverables") or []
+                                            if not (isinstance(one, dict)
+                                                    and one.get("card") == entry["card"])]
+            if entry.get("promise"):
+                for promise in contract.get("promises") or []:
+                    if isinstance(promise, dict) and promise.get("id") == entry["promise"]:
+                        promise["fails_if"] = [one for one in promise.get("fails_if") or []
+                                               if not str(one).startswith(entry["need"])]
+            entry["taken_out"] = _now()
+            plan["contract"] = contract
+            self.db.execute("UPDATE work_runs SET plan = ?, updated_at = ? WHERE id = ?",
+                            (json.dumps(plan, ensure_ascii=False, default=str), _now(), run_id))
+            try:
+                runtime = self._runtime(unit, Path(row["folder"]))
+                relative = (self.run_dir_of(row) / "contract.json").relative_to(Path(row["folder"]))
+                runtime.write_text(str(relative), json.dumps(contract, ensure_ascii=False, indent=2))
+            except Exception:              # pragma: no cover - the plan holds it
+                log.debug("could not write the contract of %s", run_id, exc_info=True)
+            return {"ok": True, "taken_out": entry["id"],
+                    "added": [one for one in contract.get("added") or []
+                              if isinstance(one, dict) and not one.get("taken_out")]}
+
     def contract_in_force(self, row: Dict[str, Any], index: Dict[str, Any],
                           latest: bool = True) -> Optional[Dict[str, Any]]:
         """THE CONTRACT IN FORCE for a run: the one in its plan - the line it
@@ -2726,7 +3145,8 @@ class WorkRuns:
                 log.debug("could not read the cards of %s", row.get("id"), exc_info=True)
         said = contract_shown(contract, cards, root_id, row.get("plan") or {})
         since = in_force_since(index) or {}
-        said.update(branch=index.get("branch") or "", head=index.get("head") or "",
+        said.update(run=row.get("id", ""), branch=index.get("branch") or "",
+                    head=index.get("head") or "",
                     since=since.get("id", ""), since_kind=since.get("kind", ""),
                     amended=since.get("amended") or None)
         return said
@@ -3412,6 +3832,17 @@ class Run:
         # The user's experience, READ: by the reviewer of the full way only.
         self.retriever = Retriever(owner.db, getattr(experience, "library", None),
                                    scope=LIVE) if experience and self.variant == FULL else None
+        # THE LESSON CARDS - what was asked of the user's work and answered
+        # (heartbeat/experience/lesson_cards.py). The user's decision
+        # (2026-10-18): READ by the full way's reviewer, a debugger way's
+        # too; WRITTEN only by the user's own work - nor is a use recorded
+        # by any other; the way with no context is given none.
+        from ...heartbeat.experience.lesson_cards import LessonCards
+        self.lessons = LessonCards(owner.db, LIVE) \
+            if experience and self.variant == FULL else None
+        self.lessons_kept = own_work and self.lessons is not None
+        #: The cards shown to its reviewer this session, by id.
+        self.lessons_shown: Dict[str, Dict[str, Any]] = {}
         self.plan: Dict[str, Any] = dict(resumed["plan"]) if resumed else {
             "phase": "contract", "round": 0, "stalls": 0, "fix_rounds": 0,
             "rounds": [], "decisions": [], "blocked": [], "amendments": [],
@@ -3444,14 +3875,20 @@ class Run:
         alone = self.variant == SINGLE
         self.tools = WorkTools(runtime, log=self._tool_used,
                                cards=None if alone else self._open_cards,
-                               find=None if alone else self._find_in_project,
+                               find=None if alone or self.retriever is None
+                               else self._find_in_project,
                                changed=self._changed, install=self._install,
                                stages=None if alone or self.retriever is None
                                else self._open_stages)
         # A wait for one of its jobs ends when the run is stopped.
         self.tools.stopped = lambda: self.stop_now or self.stopping
-        # The user's own records, to search while it plans in detail and works.
-        self.tools.records_db = None if alone else getattr(owner, "db", None)
+        # The user's own records, to search while it plans in detail and works
+        # - and their own files (the local index). Neither for the single
+        # model, nor for the way with no context: what is compared there is
+        # what the user's own context brings.
+        local = not alone and self.variant != NO_CONTEXT
+        self.tools.records_db = getattr(owner, "db", None) if local else None
+        self.tools.files_index = getattr(owner, "local_index", None) if local else None
         #: Its versions, kept in its own folder - written through the work's
         #: policy, like everything else it writes.
         self.versions = VersionStore(self.run_dir, runtime.policy)
@@ -3496,6 +3933,9 @@ class Run:
                                       or self.retriever is None else self._open_stages)
         self.review_tools.locked = list(self.tools.locked)
         self.review_tools.runs_code = ("run_python",)
+        # The user's own files, searched by their words: the full way's
+        # reviewer, as its builder.
+        self.review_tools.files_index = self.tools.files_index
         self.review_tools.know_addresses(self.instruction)
         # The user's words for this line - said now, or when it was amended
         # before - are theirs too: the addresses in them exist.
@@ -4559,6 +4999,13 @@ class Run:
         except Exception:        # pragma: no cover - a record, not the work
             log.debug("could not carry the run's time", exc_info=True)
         reason = self.stop_reason or ""
+        # A VERSION IS A CHECKPOINT (the user's decision, 2026-10-18): the
+        # run DONE is one - its final review and both checks passed. One
+        # that stopped, paused or ran out is not: it goes on from where it
+        # is, as a pause does, or - cut off - from its last checkpoint.
+        # The single model has no review: each of its turns is its own.
+        if self.status != DONE and self.variant != SINGLE:
+            return
         if self.status == DONE:
             kind = "finished"
         elif reason == "stopped":
@@ -4657,6 +5104,147 @@ class Run:
                 (self.id, key, json.dumps(found, ensure_ascii=False, default=str), _now()))
         except Exception:                      # pragma: no cover - retrieved again then
             log.debug("could not keep what the reviewer was given", exc_info=True)
+
+    # -- the lesson cards ------------------------------------------------------------------
+    def lessons_for(self, asked: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """The lesson cards whose question is most like what the reviewer is
+        asked (its English words), as it is given them; none to a way that
+        reads none."""
+        if self.lessons is None:
+            return []
+        try:
+            found = self.lessons.find(str(asked.get("text") or ""),
+                                      project=str(self.unit.get("id") or ""),
+                                      limit=LESSONS_GIVEN)
+        except Exception:                      # pragma: no cover - none then
+            log.debug("could not find lesson cards", exc_info=True)
+            return []
+        return [{"id": one["id"], "question": one["question"],
+                 "answer": one["answer"][:LESSON_ANSWER_CHARS], "tier": one["tier"],
+                 "rests_on": [" ".join(filter(None, [e.get("type", ""), e.get("ref", "")]))
+                              for e in one.get("evidence") or []][:4],
+                 "version": one.get("version", 1), "why": one.get("why", [])}
+                for one in found]
+
+    def _what_to_know(self, review: "Review", on: str, shown: str,
+                      card: Optional[Dict[str, Any]]) -> str:
+        """STEP 1 OF WRITING CRITERIA (the user's decision, 2026-10-18): what
+        the reviewer must know of the user, asked in an answer of its own
+        with its tools but NO WEB (`NoWeb`) - what it answers there may be
+        kept as lesson cards (`_keep_lessons`, the user's own work only),
+        each piece of evidence checked against what it was given and read;
+        what it leaves open comes back, to be put before the criteria are
+        asked for (the web too, for this work only)."""
+        tools = NoWeb(self.review_tools)
+        said = review.ask(WHAT_TO_KNOW.format(on=on, scope=QUESTIONS_SCOPE,
+                                              questions=QUESTIONS_SHAPE)
+                          + "\n\n" + shown, tools=tools)
+        questions = [one for one in (said.get("questions") or [])
+                     if isinstance(one, dict) and str(one.get("question") or "").strip()]
+        answered = [one for one in questions if str(one.get("answer") or "").strip()]
+        left = [one for one in questions if not str(one.get("answer") or "").strip()]
+        self._keep_lessons(answered, card, tools, review.shown_stages)
+        if not left:
+            return ""
+        return OPEN_QUESTIONS.format(questions="\n".join(
+            f"  - {_clip(one.get('question'), 300)}" for one in left[:LESSONS_PER_ANSWER]))
+
+    def _checked_evidence(self, evidence: List[Dict[str, Any]], tools: "NoWeb",
+                          shown_stages: set) -> List[Dict[str, Any]]:
+        """Each piece of evidence as the application can stand behind it:
+        the user's words only when they are in the instruction; their file
+        only when it was read in step 1, the words quoted in it; a decision
+        of theirs only on a stage shown or opened there. Anything else is
+        the model's own - an assumption."""
+        words = " ".join(filter(None, [self.instruction, self.amend_words or "",
+                                       *self._branch_words()])).lower()
+
+        def flat(text: Any) -> str:
+            return " ".join(str(text or "").lower().split())
+
+        out = []
+        for one in evidence:
+            kind = str(one.get("type") or "")
+            ref, quoted = str(one.get("ref") or ""), flat(one.get("said"))
+            holds = False
+            if kind == "user_said":
+                holds = bool(quoted) and quoted in flat(words)
+            elif kind == "user_code":
+                text = tools.read_text(ref)
+                holds = text is not None and (not quoted or quoted in flat(text))
+            elif kind == "user_decision":
+                holds = ref in shown_stages or ref in tools.opened
+            elif kind == "web":
+                # Said to rest on the web, with none here: kept as said - and
+                # so never kept as a card (LessonCards.write).
+                holds = True
+            out.append(dict(one, type=kind if holds else "model"))
+        return out
+
+    def _keep_lessons(self, questions: List[Dict[str, Any]], card: Optional[Dict[str, Any]],
+                      tools: "NoWeb", shown_stages: set) -> None:
+        """WHAT THE REVIEWER KNEW WITH NO WEB, kept: each question answered in
+        step 1 a lesson card - a new one, or a new version of the card it
+        names in "replaces" - its evidence as checked. Only on the user's
+        own work (`lessons_kept`); one resting on the web is never kept
+        (LessonCards.write) - and nothing here could have."""
+        if not self.lessons_kept or not questions:
+            return
+        on = {"card": card.get("id", ""), "title": card.get("title", "")} if card else \
+            {"card": "", "title": "the contract"}
+        context = {"project": str(self.unit.get("id") or ""),
+                   "project_name": str(self.unit.get("name") or ""),
+                   "run": self.id, "card": on["card"],
+                   "why": f"asked before writing the criteria of {on['title']}"}
+        written_by = {"run": self.id, "role": "reviewer"}
+        known = {" ".join(one["question"].lower().split())
+                 for one in self.lessons_shown.values()}
+        kept, left = 0, []
+        for one in questions[:LESSONS_PER_ANSWER]:
+            question, answer = str(one.get("question") or ""), str(one.get("answer") or "")
+            evidence = self._checked_evidence(
+                [e for e in one.get("evidence") or [] if isinstance(e, dict)],
+                tools, shown_stages)
+            topics = one.get("topics") if isinstance(one.get("topics"), list) else []
+            replaces = str(one.get("replaces") or "").strip()
+            try:
+                if replaces in self.lessons_shown:
+                    changes = {"answer": answer, "evidence": evidence, "context": context,
+                               "topics": topics, "written_by": written_by}
+                    if question.strip():
+                        changes["question"] = question
+                    # Still one it was shown: cited, it is a use of what it said.
+                    done = self.lessons.supersede(replaces, **changes)
+                elif " ".join(question.lower().split()) in known:
+                    done = {"kept": False, "why": "asked before: a card answers it"}
+                else:
+                    done = self.lessons.write(question, answer, evidence, context=context,
+                                              topics=topics, written_by=written_by)
+            except Exception as exc:             # pragma: no cover - the run goes on
+                log.debug("could not keep a lesson card", exc_info=True)
+                done = {"kept": False, "why": str(exc)[:200]}
+            if done.get("kept"):
+                kept += 1
+            else:
+                left.append({"question": question[:200], "why": done.get("why", "")})
+        if kept or left:
+            self._note("lesson cards", on=on["title"], kept=kept, not_kept=left)
+
+    def _lessons_used(self, said: Any, card: Optional[Dict[str, Any]]) -> None:
+        """Each lesson card the criteria cite, a use - which run, which card,
+        to what decision. The user's own work only."""
+        if not self.lessons_kept or not isinstance(said, dict):
+            return
+        cited = _lessons_cited(said, set(self.lessons_shown))
+        for lesson_id, decision in cited:
+            try:
+                self.lessons.used(lesson_id, run_id=self.id,
+                                  work_card=(card or {}).get("id", ""), decision=decision)
+            except Exception:                  # pragma: no cover - the run goes on
+                log.debug("could not record a lesson card's use", exc_info=True)
+        if cited:
+            self._note("lesson cards used", on=(card or {}).get("title", "the contract"),
+                       used=[one for one, _ in cited])
 
     def _unreadable(self) -> Optional[List[str]]:
         """Every place this run may not read, worked out once a run - None
@@ -4846,6 +5434,8 @@ class Run:
                 language=language,
                 tool_runner=self._tool_runner(tools, specs, who, work, quiet,
                                               rounds - 1 - round_number) if specs else None,
+                # A client's own web tools held to these tools' checks.
+                web_guard=getattr(tools, "guard", None),
                 cancelled=lambda: self.stop_now, on_usage=self._usage_so_far))
             self._turn(who, response, spent)
             calls = getattr(response, "tool_calls", None) or []
@@ -4958,6 +5548,10 @@ class Run:
         # where nothing keeps it out (models/manager.READS_UNCONFINED).
         if isinstance(self.unit.get("debug"), dict) and not request.sealed_reading:
             request = replace(request, sealed_reading=True)
+        # A FINAL CHECK'S CALL is a kind of its own in the application's
+        # token chart (CHECK_TASKS); asked as any call of the run is.
+        if who in CHECK_TASKS and request.task == "work_run":
+            request = replace(request, task=CHECK_TASKS[who])
         attempt = 0
         # Since when this call has failed for the moment; and whether you
         # were already asked about it - then a failure waits for you again.
@@ -5633,7 +6227,24 @@ class Run:
             if interrupted:
                 return "paused"
             if done:
-                return "complete"
+                if not self._checks_on():
+                    return "complete"
+                # The same two final checks as every way's: not done until
+                # both pass - what they found goes back to it to fix.
+                checked, findings = self._final_checks()
+                if checked == "passed":
+                    return "complete"
+                if checked == "failed":
+                    return "check failed"
+                if not self._going():
+                    return "paused"
+                messages.append({"role": "user", "content": ALONE_CHECKS_FAILED.format(
+                    findings="\n".join(
+                        f"  - ({one.get('severity', '')}) {_plain(one.get('say', ''))}"
+                        f"{' - ' + one['file'] if one.get('file') else ''}"
+                        for one in findings))})
+                quiet = 0
+                continue
             quiet = 0 if used else quiet + 1
             if quiet >= STALLS_TO_STOP:
                 self.stop_reason = (f"{STALLS_TO_STOP} turns in a row without a tool "
@@ -5657,8 +6268,8 @@ class Run:
         """The single model's end: how it ended, what is next if it is not
         done, and its report - the run's final word, as it wrote it."""
         finished = ended == "complete"
-        self.status = {"complete": DONE, "paused": NOT_FINISHED,
-                       "stalled": STALLED}.get(ended, NOT_FINISHED)
+        self.status = {"complete": DONE, "paused": NOT_FINISHED, "stalled": STALLED,
+                       "check failed": CHECK_FAILED}.get(ended, NOT_FINISHED)
         if finished:
             self.plan["phase"] = "done"
         else:
@@ -5716,12 +6327,19 @@ class Run:
         review = Review(self, self._contract_profile(), self._reviewer_context(None))
         reviews: List[Dict[str, Any]] = []
         judged: Dict[str, Any] = {}
+        # STEP 1, NO WEB: what it must know of the user, asked of the draft
+        # once - what it answers may be kept; what it leaves open is asked
+        # with the first review, the web too, for this work only.
+        left_open = self._what_to_know(review, "THIS CONTRACT", json.dumps(
+            {k: v for k, v in draft.items() if k != "written_by"},
+            ensure_ascii=False)[:12000], None)
         for number in range(CONTRACT_REVIEWS):
             last = number == CONTRACT_REVIEWS - 1
-            judged = review.ask(REVIEW_CONTRACT.format(
+            judged = review.ask((left_open if number == 0 else "") + REVIEW_CONTRACT.format(
                 contract=json.dumps({k: v for k, v in draft.items() if k != "written_by"},
                                     ensure_ascii=False)[:12000],
                 criteria=CRITERIA_SHAPE, note=CRITERIA_NOTE, for_user=FOR_USER_NOTE,
+                expected=EXPECTED_SHAPE, expected_note=EXPECTED_NOTE,
                 last=("\nThis is the LAST review: approve it, or it is not "
                       "approved and no work is done." if last else "")))
             reviews.append(dict(judged, at=_now(), on="the contract", round=number + 1))
@@ -5740,15 +6358,20 @@ class Run:
             if not self._going():
                 return False
         self._apply_contract(draft, judged)
+        self._apply_expected(judged.get("expected"), "the reviewer", 0)
+        self._lessons_used(judged, None)
         self._for_user(judged, "the contract")
         self._record_contract(draft, reviews, approved=True)
         self.plan["phase"] = "rounds"
         self.owner.save(self)
         # KEY POINT: the contract approved.
-        self._version("contract", "The contract approved", message=commit_message(
+        # The first checkpoint: the contract approved.
+        self._set_checkpoint("the contract approved", None, 0)
+        made = self._version("contract", "The contract approved", message=commit_message(
             None, f"Contract: {draft.get('goal') or 'approved'}",
             [f"deliverable: {one.get('title')}" for one in draft.get("deliverables") or []
              if isinstance(one, dict) and one.get("title")]))
+        self._set_checkpoint("the contract approved", made, 0)
         return True
 
     def _apply_contract(self, draft: Dict[str, Any], judged: Dict[str, Any]) -> None:
@@ -5801,6 +6424,69 @@ class Run:
             serves = [str(one) for one in entry.get("promises") or [] if str(one) in known]
             if entry.get("tier") or serves or card["id"] not in tiers:
                 tiers[card["id"]] = {"tier": tier_of(entry.get("tier")), "promises": serves}
+
+    def _apply_expected(self, items: Any, by: str, number: int) -> List[Dict[str, Any]]:
+        """WHAT THE USER WOULD EXPECT AND DID NOT SAY, added (the user's
+        decision, 2026-10-18) - each recorded in the contract's "added", as
+        added and not theirs, by whom and on what, for them to see and take
+        out: "implied" joins its core promise as a failure it must survive;
+        "needed" is a supporting deliverable, "nice" a polish one - never a
+        core promise of its own. One "implied" with no promise of the
+        contract's to join is a supporting deliverable."""
+        items = [one for one in items or []
+                 if isinstance(one, dict) and str(one.get("need") or "").strip()]
+        contract = self.plan.get("contract") or {}
+        if self.variant == SINGLE or not items or not contract.get("goal"):
+            return []
+        root, cards = self._tree()
+        promises = {one["id"]: one for one in contract.get("promises") or []
+                    if isinstance(one, dict) and one.get("id")}
+        added = contract.setdefault("added", [])
+        out = []
+        for one in items[:EXPECTED_MOST]:
+            kind = str(one.get("kind") or "").strip().lower()
+            kind = kind if kind in ("implied", "needed", "nice") else "nice"
+            need = _clip(" ".join(str(one["need"]).split()), 400)
+            grounds = one.get("because") if one.get("because") is not None else one.get("saw")
+            grounds = grounds if isinstance(grounds, list) else [grounds] if grounds else []
+            promise = str(one.get("promise") or "").strip()
+            entry = {"id": f"a{len(added) + 1}", "need": need, "kind": kind, "by": by,
+                     "because": [_clip(str(g), 300) for g in grounds][:6],
+                     "round": number, "at": _now()}
+            if kind == "implied" and promise in promises:
+                promises[promise].setdefault("fails_if", []).append(
+                    f"{need} (added by {by}, not your words)")
+                entry["promise"] = promise
+            else:
+                if kind == "implied":
+                    entry["kind"] = kind = "needed"
+                shape = one.get("deliverable") if isinstance(one.get("deliverable"), dict) else {}
+                ref = f"x{len(added) + 1}"
+                refs = self.writer._apply_cards(self.work_unit, {"cards": [{
+                    "ref": ref, "parent": "root",
+                    "title": _clip(str(shape.get("title") or need), 300),
+                    "type": str(shape.get("type") or "other"),
+                    "statement": str(shape.get("statement") or need)[:1500],
+                    "why": {"why": f"added by {by} - not the user's words", "from": "inferred"}}]},
+                    root, cards, {"by": by})
+                made = refs.get(ref)
+                if made is None:
+                    continue
+                self._set_tiers({ref: made}, [{
+                    "ref": ref, "tier": "supporting" if kind == "needed" else "polish",
+                    "promises": [promise] if promise in promises else []}], [])
+                entry["card"] = made["id"]
+                contract.setdefault("deliverables", []).append(
+                    {"card": made["id"], "title": made["title"], "statement": made["statement"]})
+            added.append(entry)
+            out.append(entry)
+        if out:
+            self.plan["contract"] = contract
+            self.runtime.write_text(str(self.contract_path.relative_to(self.folder)),
+                                    json.dumps(contract, ensure_ascii=False, indent=2))
+            self._note("added - not your words", by=by,
+                       added=[f"{one['kind']}: {one['need']}" for one in out])
+        return out
 
     def _tier_of(self, card: Optional[Dict[str, Any]], cards: Dict[str, Any]) -> str:
         """A card's tier: its own, or the nearest one above it that has one."""
@@ -6006,10 +6692,14 @@ class Run:
         reviews: List[Dict[str, Any]] = []
         judged: Dict[str, Any] = {}
         approved = False
+        # STEP 1, NO WEB, of the amended contract - as of the first one.
+        left_open = self._what_to_know(review, "THIS AMENDED CONTRACT", json.dumps(
+            {k: v for k, v in draft.items() if k != "written_by"},
+            ensure_ascii=False)[:12000], None)
         for number in range(CONTRACT_REVIEWS):
             last = number == CONTRACT_REVIEWS - 1
             after = self._amended_contract(before, draft, words)
-            judged = review.ask(REVIEW_AMENDMENT.format(
+            judged = review.ask((left_open if number == 0 else "") + REVIEW_AMENDMENT.format(
                 words=words, done=done_text,
                 before="\n".join(contract_lines(before)),
                 after=json.dumps({k: v for k, v in draft.items() if k != "written_by"},
@@ -6042,6 +6732,7 @@ class Run:
             self._note("amendment not approved", words=words)
             return False
         after, reopened = self._apply_amendment(before, draft, judged, words, done)
+        self._lessons_used(judged, None)
         diff = contract_diff(before, after)
         self._record_amendment(words, draft, reviews, diff, reopened, approved=True)
         self._note("contract amended", words=words, diff=diff,
@@ -6065,10 +6756,13 @@ class Run:
         title = (f"Amend contract: add {', '.join(added)}" if added else
                  f"Amend contract: drop {', '.join(dropped)}" if dropped else
                  f"Amend contract: {words}")
-        self._version("amended", "The contract amended for this branch",
-                      message=commit_message(None, title, [
-                          one.strip() for one in str(diff or "").splitlines()
-                          if one.strip()][:6]))
+        # A checkpoint: the user's new words, the contract amended by them.
+        self._set_checkpoint("the contract amended by your words", None)
+        made = self._version("amended", "The contract amended for this branch",
+                             message=commit_message(None, title, [
+                                 one.strip() for one in str(diff or "").splitlines()
+                                 if one.strip()][:6]))
+        self._set_checkpoint("the contract amended by your words", made)
         return True
 
     def _apply_amendment(self, before: Dict[str, Any], draft: Dict[str, Any],
@@ -6209,6 +6903,9 @@ class Run:
             elif phase == "final":
                 final = self._final()
                 if final == "clean":
+                    if self._checks_on():
+                        self.plan["phase"] = "checks"
+                        continue
                     self.plan["phase"] = "presenting"
                     return "complete"
                 if final == "unmet":
@@ -6216,6 +6913,22 @@ class Run:
                 if not self._going():
                     return "paused"
                 outcome = self._round(fix=(self.plan.get("final_review") or {}).get("to_fix"))
+                if outcome not in ("next", "complete"):
+                    return outcome
+            elif phase == "checks":
+                # THE TWO FINAL CHECKS - quality and privacy - each on its own:
+                # both must pass. What they found is fixed in a round, and
+                # both look again; one still failing after its rounds of
+                # fixes ends the run saying which.
+                checked, findings = self._final_checks()
+                if checked == "passed":
+                    self.plan["phase"] = "presenting"
+                    return "complete"
+                if checked == "failed":
+                    return "check failed"
+                if not self._going():
+                    return "paused"
+                outcome = self._round(fix=findings)
                 if outcome not in ("next", "complete"):
                     return outcome
             else:
@@ -6232,11 +6945,16 @@ class Run:
                 return
             review = Review(self, self._card_profile(card, {}), self._reviewer_context(card),
                             same_as=f"criteria:{card.get('id', '')}")
-            said = review.ask(REVIEW_CARD.format(
-                card=json.dumps({"id": card["id"], "title": card["title"],
-                                 "statement": card["statement"],
-                                 "type": card.get("type", "")}, ensure_ascii=False),
-                criteria=CRITERIA_SHAPE, note=CRITERIA_NOTE))
+            shown = json.dumps({"id": card["id"], "title": card["title"],
+                                "statement": card["statement"],
+                                "type": card.get("type", "")}, ensure_ascii=False)
+            # STEP 1, NO WEB - then the criteria, the web too.
+            left_open = self._what_to_know(review, "THIS CARD", shown, card)
+            if not self._going():
+                return
+            said = review.ask(left_open + REVIEW_CARD.format(
+                card=shown, criteria=CRITERIA_SHAPE, note=CRITERIA_NOTE))
+            self._lessons_used(said, card)
             criteria = self._criteria(said.get("criteria"))
             if criteria:
                 self._set_criteria(card, criteria, str(said.get("approach") or ""))
@@ -6296,7 +7014,6 @@ class Run:
         self._event("run", "gate", f"Round {number}: the summary passed the checks - "
                     f"{claims} claim{'s' if claims != 1 else ''}, each with evidence that "
                     "exists; the contract untouched", ok=True)
-        full = number % FULL_REVIEW_EVERY == 0
         message = commit_message(
             summary, summary.get("result") or summary.get("objective") or card["title"],
             [one.get("claim") for one in summary.get("claims") or []
@@ -6304,51 +7021,224 @@ class Run:
         review = Review(self, self._card_profile(card, summary),
                         self._reviewer_context(card, recent=True),
                         same_as=f"round:{card.get('id', '')}")
+        holding_before = set(self._unmet())
         judged = review.ask(REVIEW_ROUND.format(
             summary=json.dumps({k: v for k, v in summary.items() if k != "written_by"},
                                ensure_ascii=False)[:14000],
-            full=FULL_REVIEW if full else "",
-            needs_user=NEEDS_USER, for_user=FOR_USER_NOTE,
-            stop=',\n  "stop": false' if full else ""))
+            hints=self._full_review_hints(card, summary, number),
+            needs_user=NEEDS_USER, for_user=FOR_USER_NOTE))
         self.plan["findings"] = judged
         self._judge_promises(judged, number)
         self._for_user(judged, f"round {number}")
+        self._apply_review(card, number, summary, judged, root)
+        asked = judged.get("full_review") if isinstance(judged.get("full_review"), dict) else {}
+        self._record_round(card, number, summary, [], judged, full=False)
+        self._note("round reviewed", round=number, card=card["title"],
+                   progress=judged.get("progress"),
+                   findings=[f.get("say") for f in judged.get("findings") or []][:6])
+        progress = str(judged.get("progress") or "").lower()
+        # THE FULL REVIEW, AT A MILESTONE THE REVIEWER SEES (no fixed
+        # interval): everything since the last checkpoint - and, passed,
+        # the next checkpoint, the only versions a run keeps of its rounds.
+        full: Optional[Dict[str, Any]] = None
+        if _yes(asked.get("now")) and self._going():
+            full = self._full_review(review, number, card, message,
+                                     str(asked.get("why") or ""),
+                                     newly_holding=holding_before - set(self._unmet()),
+                                     progress=progress)
         unmet = self._unmet()
         if judged.get("complete") and unmet:
             judged["complete"] = False
             self._note("not complete", round=number,
                        why=f"the core promises {', '.join(unmet)} do not hold yet")
-        self._apply_review(card, number, summary, judged, root)
-        self._record_round(card, number, summary, [], judged, full=full)
-        self._note("round reviewed", round=number, card=card["title"],
-                   progress=judged.get("progress"),
-                   findings=[f.get("say") for f in judged.get("findings") or []][:6])
-        progress = str(judged.get("progress") or "").lower()
-        # KEY POINT: a round the reviewer found advanced, and every full
-        # review whatever it found.
-        if full or progress == "advanced":
-            # NAMED FOR WHAT IT CHANGED: the commit the builder wrote with
-            # its round - or, when it wrote none, the round's own words:
-            # what came of it, and the claims now true. The round and what
-            # the reviewer found of it are fields of their own.
-            self._version("full review" if full else "round",
-                          f"Round {number}{' (full review)' if full else ''}: "
-                          f"{card['title']} - {progress or 'reviewed'}",
-                          message=message,
-                          round=number, progress=progress or "reviewed",
-                          full_review=full)
+        if full is not None and not full.get("passed"):
+            judged["complete"] = False
+        if full is not None and _yes(full.get("stop")):
+            self.stop_reason = "the reviewer ended it at a full review"
+            return "stop"
         if judged.get("complete") and not fix:
             self.plan["stalls"] = 0
             return "complete"
-        if full and judged.get("stop"):
-            self.stop_reason = "the reviewer ended it at a full review"
-            return "stop"
         if progress in ("stalled", "regressed"):
             return self._after_stall(number)
         self.plan["stalls"] = 0
         if self._all_blocked():
             return "blocked"
         return "next"
+
+    # -- the full review and the checkpoints -------------------------------------------
+    def _checkpoint(self) -> Dict[str, Any]:
+        """THE LAST CHECKPOINT: the contract approved or amended, or the last
+        full review passed - the round it came after, what it was, its
+        version. A version is a checkpoint, and only a checkpoint (the
+        user's decision, 2026-10-18): a run cut off goes back to the last."""
+        kept = self.plan.get("checkpoint")
+        return kept if isinstance(kept, dict) else {"round": 0, "label": "the start"}
+
+    def _set_checkpoint(self, label: str, made: Optional[Dict[str, Any]],
+                        after_round: Optional[int] = None) -> None:
+        self.plan["checkpoint"] = {
+            "round": int(self.plan.get("round") or 0) if after_round is None else after_round,
+            "label": label, "at": _now(),
+            **({"version": made.get("id", "")} if isinstance(made, dict) else {})}
+
+    def _files_since(self, version_id: str) -> Dict[str, Any]:
+        """The work's files changed since that version: added, modified,
+        deleted - by content - as a version lists its own."""
+        from .versions import work_files
+        try:
+            before = (self.versions.manifest(version_id).get("files") or {}) \
+                if version_id else {}
+        except VersionError:
+            before = {}
+        found, _skipped = work_files(self.folder, self.id)
+        now = {relative: {"sha": sha_of_file(whole)} for relative, whole in found.items()}
+        return file_changes(before, now, FULL_REVIEW_FILES_LISTED)
+
+    def _rounds_since(self) -> List[Dict[str, Any]]:
+        since = int(self._checkpoint().get("round") or 0)
+        return [one for one in self.plan.get("rounds") or []
+                if isinstance(one, dict) and int(one.get("n") or 0) > since]
+
+    def _full_review_hints(self, card: Dict[str, Any], summary: Dict[str, Any],
+                           number: int) -> str:
+        """What the application can tell of where the work stands, for the
+        reviewer to decide on a full review by - hints, not the decision."""
+        since = self._checkpoint()
+        rounds = self._rounds_since()
+        lines = [f"  - the last checkpoint: {since.get('label', 'the start')}; "
+                 f"{len(rounds) + 1} round{'s' if rounds else ''} since, this one included"]
+        if _yes(summary.get("complete")):
+            lines.append("  - the work agent says the whole goal is met")
+        elif not summary.get("open") and card.get("title"):
+            lines.append(f"  - the work agent says nothing is left on {card['title']}")
+        unmet = self._unmet()
+        lines.append("  - core promises that did not hold before this round: "
+                     + (", ".join(unmet) if unmet else "none"))
+        root, cards = self._tree()
+        touched = {str(one.get("card_id") or "") for one in rounds}
+        done = [one["title"] for one in cards.values()
+                if one["id"] in touched and one["status"] == "done"
+                and one.get("parent_id") == root["id"]]
+        if done:
+            lines.append("  - deliverables done since the checkpoint: " + "; ".join(done[:8]))
+        return FULL_REVIEW_HINTS.format(lines="\n".join(lines))
+
+    def _full_review(self, review: "Review", number: int, card: Dict[str, Any],
+                     message: Dict[str, Any], why: str,
+                     newly_holding: Optional[set] = None,
+                     progress: str = "") -> Dict[str, Any]:
+        """THE FULL REVIEW the reviewer asked for: every card touched since
+        the last checkpoint against its criteria, every core promise tried
+        again, done cards that no longer hold opened again - in one answer
+        with room for it, or, past FULL_REVIEW_CARDS_AT_ONCE cards, one a
+        card and one that concludes. Passed, it is the next checkpoint."""
+        since = self._checkpoint()
+        rounds = self._rounds_since()
+        root, cards = self._tree()
+        touched: List[str] = []
+        for one in rounds:
+            name = str(one.get("card_id") or "")
+            if name in cards and name != root["id"] and name not in touched:
+                touched.append(name)
+        if card.get("id") in cards and card["id"] != root["id"] and card["id"] not in touched:
+            touched.append(card["id"])
+        changed = self._files_since(str(since.get("version") or ""))
+        counts = changed.get("counts") or {}
+        files = "\n".join(
+            [f"  {kind}: " + ", ".join(changed.get(kind) or []) +
+             (f" (and {counts.get(kind, 0) - len(changed.get(kind) or [])} more)"
+              if counts.get(kind, 0) > len(changed.get(kind) or []) else "")
+             for kind in ("added", "modified", "deleted") if changed.get(kind)]) or "  none"
+        earlier = [one for one in cards.values() if one["status"] == "done"
+                   and one["id"] not in touched and one["id"] != root["id"]]
+        head = dict(
+            why=why or "a milestone", since=since.get("label", "the start"),
+            rounds="\n".join(f"  {one.get('n')}. {one.get('card', '')}: "
+                             f"{_clip(one.get('objective') or '', 160)} - "
+                             f"{_clip(one.get('result') or '', 160)} "
+                             f"({one.get('progress', '')})"
+                             for one in rounds[-FULL_REVIEW_ROUNDS_LISTED:]) or "  (this one)",
+            files=files,
+            earlier="\n".join(f"  [{one['id']}] {one['title']}" for one in earlier[:30])
+            or "  none")
+        self._event("reviewer", "full review",
+                    f"Full review after round {number}: {len(touched)} card"
+                    f"{'s' if len(touched) != 1 else ''} since {head['since']}"
+                    + (f" - {_clip(why, 120)}" if why else ""))
+
+        def shown(name: str) -> str:
+            one = cards[name]
+            checked = one.get("checked_by") or {}
+            return json.dumps({"id": one["id"], "title": one["title"],
+                               "statement": one["statement"], "status": one["status"],
+                               "criteria": [c.get("text") for c in checked.get("criteria") or []
+                                            if isinstance(c, dict)]}, ensure_ascii=False)
+
+        if len(touched) <= FULL_REVIEW_CARDS_AT_ONCE:
+            said = review.ask(FULL_REVIEW_ASK.format(**head, what=FULL_REVIEW_WHOLE.format()),
+                              rounds=FULL_REVIEW_TOOL_ROUNDS)
+        else:
+            checked, reopen, findings = [], [], []
+            for at, name in enumerate(touched):
+                if not self._going():
+                    break
+                ask = FULL_REVIEW_CARD.format(card=shown(name), card_id=name)
+                one = review.ask(FULL_REVIEW_ASK.format(**head, what=ask) if at == 0 else ask)
+                checked.append({"card": name, "holds": str(one.get("holds") or ""),
+                                "why": str(one.get("why") or "")})
+                if _yes(one.get("reopen")):
+                    reopen.append({"card": name, "why": str(one.get("why") or "")})
+                findings += [f for f in one.get("findings") or [] if isinstance(f, dict)]
+            said = review.ask(FULL_REVIEW_CONCLUDE.format()) if self._going() else {}
+            said = dict(said, cards=checked,
+                        reopen=reopen + [one for one in said.get("reopen") or []
+                                         if isinstance(one, dict)],
+                        findings=findings + [f for f in said.get("findings") or []
+                                             if isinstance(f, dict)])
+        self._judge_promises(said, number)
+        reopened = []
+        _root, cards = self._tree()
+        for one in said.get("reopen") or []:
+            if not isinstance(one, dict):
+                continue
+            target = cards.get(str(one.get("card") or ""))
+            if target is not None and target["status"] == "done" and target["id"] != root["id"]:
+                self.store.update_card(target["id"], {
+                    "status": "open", "status_why": _clip(
+                        f"opened again by the full review after round {number}: "
+                        f"{one.get('why') or ''}", 500)})
+                reopened.append(target["title"])
+        findings = [f for f in said.get("findings") or [] if isinstance(f, dict)]
+        if findings:
+            # What the builder is told next round, beside the round's own.
+            before = (self.plan.get("findings") or {}).get("findings") or []
+            self.plan["findings"] = dict(self.plan.get("findings") or {},
+                                         findings=[*before, *findings][:20])
+        promises = [one for one in said.get("promises") or [] if isinstance(one, dict)]
+        passed = (_yes(said.get("passed")) and not reopened
+                  and not any(str(one.get("holds") or "") == "no" for one in promises)
+                  and not any(str(one.get("holds") or "") == "no"
+                              for one in said.get("cards") or [] if isinstance(one, dict))
+                  and not any(str(f.get("type") or "") == "blocking" for f in findings))
+        self.plan.setdefault("full_reviews", []).append({
+            "round": number, "why": _clip(why, 300), "since": since.get("label", ""),
+            "cards": len(touched), "passed": passed, "reopened": reopened,
+            "newly_holding": sorted(newly_holding or []), "at": _now()})
+        self._note("full review", round=number, passed=passed, cards=len(touched),
+                   reopened=reopened, findings=[f.get("say") for f in findings][:6])
+        if passed:
+            # KEY POINT: a checkpoint - the only version a run keeps of its
+            # rounds: everything since the last one checked and holding.
+            self._set_checkpoint(f"the full review after round {number}", None, number)
+            made = self._version("full review",
+                                 f"Round {number} (full review): {card.get('title', '')}"
+                                 f" - {progress or 'checked'}",
+                                 message=message, round=number,
+                                 progress=progress or "checked", full_review=True)
+            self._set_checkpoint(f"the full review after round {number}", made, number)
+        self.owner.save(self)
+        return {"passed": passed, "stop": said.get("stop"), "reopened": reopened}
 
     def _after_stall(self, number: int) -> str:
         self.plan["stalls"] = int(self.plan.get("stalls") or 0) + 1
@@ -6498,13 +7388,40 @@ class Run:
                 continue
             said = finding.get("card") if isinstance(finding.get("card"), dict) else {}
             title = str(said.get("title") or finding.get("say") or "")[:300]
-            parent = cards.get(card.get("parent_id") or "") or root
+            statement = str(said.get("statement") or finding.get("say") or "")
+            # A PART, UNDER A DELIVERABLE - never a deliverable of its own:
+            # one under the root is the contract's, added only as the user
+            # sees it (`_apply_expected`). Queued on the goal itself, it is
+            # one such - a polish deliverable, added, not the user's words.
+            if card["id"] == root["id"]:
+                self._apply_expected([{"need": statement or title, "kind": "nice",
+                                       "because": list(finding.get("because") or []),
+                                       "deliverable": {"title": title,
+                                                       "statement": statement}}],
+                                     "the reviewer", number)
+                continue
+            parent = card if card.get("parent_id") == root["id"] else (
+                cards.get(card.get("parent_id") or "") or card)
             self.writer._apply_cards(self.work_unit, {"cards": [{
-                "parent": parent["id"], "title": title,
-                "statement": str(said.get("statement") or finding.get("say") or ""),
+                "parent": parent["id"], "title": title, "statement": statement,
                 "type": card.get("type") or "other",
                 "why": {"why": "queued by the reviewer", "from": "inferred"}}]},
                 root, cards, {"by": "reviewer"})
+        # WHAT THE WORK SHOWED THE USER WOULD NEED: the agent's, as the
+        # reviewer decided - added, not the user's words.
+        found = [one for one in summary.get("needs") or [] if isinstance(one, dict)]
+        verdicts = {int(one.get("n", -1)): one for one in judged.get("needs") or []
+                    if isinstance(one, dict) and str(one.get("n", "")).lstrip("-").isdigit()}
+        approved = []
+        for n, one in enumerate(found):
+            verdict = verdicts.get(n) or {}
+            if str(verdict.get("verdict") or "").lower().startswith("add"):
+                approved.append(dict(one, kind=verdict.get("kind") or one.get("kind"),
+                                     because=list(one.get("saw") or [])
+                                     if isinstance(one.get("saw"), list) else [one.get("saw")]
+                                     if one.get("saw") else []))
+        if approved:
+            self._apply_expected(approved, "the work agent", number)
         amend = summary.get("amend") or {}
         if amend.get("deliverables"):
             verdict = str(judged.get("amendment") or "rejected").lower()
@@ -6601,7 +7518,9 @@ class Run:
         self._link_round(card, number, made, files, judged, stamp)
         self.plan["round"] = number
         self.plan.setdefault("rounds", []).append({
-            "n": number, "card": card["title"], "objective": summary.get("objective", ""),
+            "n": number, "card": card["title"], "card_id": card.get("id", ""),
+            "result": _clip(summary.get("result") or "", 300),
+            "objective": summary.get("objective", ""),
             "progress": verdict, "full": full, "stage": made["id"], "at": stamp})
         self.owner.save(self)
 
@@ -6692,18 +7611,29 @@ class Run:
                   if isinstance(one, dict)]
         to_fix = [one for one in found
                   if str(one.get("severity") or "").lower() in ("high", "medium")]
+        # NOT DONE UNTIL EACH CORE PROMISE WAS TRIED AND HELD: one that did
+        # not hold, or that nobody could try - the tester unable to open the
+        # work - is a finding to fix, whatever the review found besides. It
+        # was not: a final review with nothing to fix ended the run done
+        # with the tester's "untried" standing. One only the user can check
+        # is theirs, on their list (`_unmet`).
+        status = self.plan.get("promise_status") or {}
+        for one in self._unmet():
+            state = status.get(one) or {}
+            holds = state.get("holds") or "untried"
+            to_fix.append({
+                "say": (f"core promise {one} does not hold: {state.get('failed') or 'it failed when tried'}"
+                        if holds == "no" else
+                        f"core promise {one} was never tried for real"
+                        + (f" ({state['tried']})" if state.get("tried") else "")
+                        + ": make it possible to try, and try it"),
+                "severity": "high", "by": "promise", "promise": one})
         self.plan["final_review"] = dict(judged, to_fix=to_fix, at=_now())
         self._for_user(judged, "the final review")
         self._note("final review", findings=len(judged.get("findings") or []),
                    to_fix=len(to_fix))
-        # KEY POINT: the final review done.
-        firsts = "; ".join(_clip(one.get("say"), 40) for one in to_fix[:2])
-        self._version("final review", f"Final review: {len(to_fix)} to fix",
-                      message=commit_message(
-                          None, f"Final review: {len(to_fix)} to fix"
-                          + (f" — {firsts}" if firsts else "") if to_fix
-                          else "Final review: nothing to fix",
-                          [one.get("say") for one in to_fix]))
+        # No version: the final review is a step toward the run's last
+        # checkpoint - the run done - not one of its own.
         if not to_fix:
             return "clean"
         if int(self.plan.get("fix_rounds") or 0) >= FIX_ROUNDS:
@@ -6712,12 +7642,102 @@ class Run:
             # hold - the run ends unfinished, saying which, with its to-do.
             unmet = self._unmet()
             if unmet:
+                status = self.plan.get("promise_status") or {}
+                untried = [one for one in unmet
+                           if (status.get(one) or {}).get("holds") != "no"]
                 self.stop_reason = (f"after {FIX_ROUNDS} rounds of fixes the core promises "
-                                    f"{', '.join(unmet)} still do not hold")
+                                    f"{', '.join(unmet)} still do not hold"
+                                    + (f" - {', '.join(untried)} never tried for real"
+                                       if untried else ""))
                 return "unmet"
             return "clean"
         self.plan["fix_rounds"] = int(self.plan.get("fix_rounds") or 0) + 1
         return "fix"
+
+    def _testing_tools(self) -> WorkTools:
+        """The tools of a context that tries the work and changes nothing -
+        the tester's and the two final checks': reading, and code run in
+        the checks folder alone."""
+        if getattr(self, "tester_tools", None) is None:
+            self.tester_tools = WorkTools(self._checking_runtime(),
+                                          log=lambda name, said: self._tool_used(
+                                              name, said, who="reviewer"))
+            self.tester_tools.locked = list(self.tools.locked)
+            self.tester_tools.runs_code = ("run_python",)
+        return self.tester_tools
+
+    def _checks_on(self) -> bool:
+        """Whether the two final checks are made: for every run - each way of
+        the Work debugger, and the user's own work alike. (Off only where the
+        application is driven by its tests with models of their own.)"""
+        return bool(getattr(self.owner, "final_checks", True))
+
+    def _final_checks(self) -> Tuple[str, List[Dict[str, Any]]]:
+        """THE TWO FINAL CHECKS, quality and privacy, each by a context of its
+        own that never saw how the work was built: "passed" when both pass;
+        "fix", with what they found, for a round of fixes; "failed" when one
+        still fails after CHECK_FIXES rounds of them - `stop_reason` says
+        which, and what it found. A check that could not open the work, or
+        said nothing that can be read, has not passed."""
+        self._stage("final checks", "The final checks: the quality, and the user's privacy "
+                    "- each by a reviewer who never saw how it was built")
+        files = [one for one in self.plan.get("changed_files") or [] if Path(one).exists()]
+        words = "\n".join([self.instruction or "",
+                           *[str(one) for one in self.plan.get("words") or []],
+                           *self._branch_words()]).strip()
+        contract = self.plan.get("contract") or {}
+        goal = "\n".join([str(contract.get("goal") or "").strip(), *[
+            f"  {one['id']}: {one['promise']}" for one in self._promises()]]).strip()
+        kept = self.plan.setdefault("final_checks", {})
+        fixes = self.plan.setdefault("check_fixes", {})
+        findings: List[Dict[str, Any]] = []
+        failing: List[str] = []
+        for kind, system in (("quality", QUALITY_SYSTEM), ("privacy", PRIVACY_SYSTEM)):
+            if not self._going(work=False):
+                return "fix", []
+            said = self._ask(
+                system.replace("{checks}", str(self.checks_folder)) + "\n\n" + zone_rule()
+                + native_rule(),
+                [{"role": "user", "content": CHECK_ASK.format(
+                    words=words or "(carry the work forward)",
+                    goal=goal or words or "(as the user asked)",
+                    files="\n".join(f"  {one}" for one in files[:200]) or "  (no files)")}],
+                self._testing_tools(), writing=False, work=False, who=kind)
+            problems = [one for one in said.get("problems") or [] if isinstance(one, dict)]
+            checked = [str(one) for one in said.get("checked") or [] if str(one).strip()]
+            serious = [one for one in problems
+                       if str(one.get("severity") or "").lower() in ("high", "medium")]
+            passed = said.get("passed") is True and bool(checked) and not serious
+            if not passed and not serious:
+                serious = [{"say": (f"the {CHECK_LABELS[kind]} could not be made: "
+                                    + ("nothing it could read came back" if not said
+                                       else "it could not open or try the work"
+                                       if not checked else "it did not pass the work")),
+                            "severity": "high"}]
+            kept[kind] = {"passed": passed, "checked": checked[:20], "problems": problems[:20],
+                          "round": int(self.plan.get("round") or 0), "at": _now()}
+            label = CHECK_LABELS[kind]
+            self._event("reviewer", "verdict", f"The {label}: " + (
+                "passed" if passed else f"not passed - {_clip(serious[0].get('say'), 160)}"),
+                verdict="passed" if passed else "not passed", problems=len(serious))
+            self._note("final check", check=kind, passed=passed,
+                       problems=[one.get("say") for one in serious][:6])
+            if not passed:
+                failing.append(kind)
+                findings += [dict(one, say=f"[{label}] {one.get('say', '')}", by=kind)
+                             for one in serious]
+        if not failing:
+            return "passed", []
+        spent = [kind for kind in failing if int(fixes.get(kind) or 0) >= CHECK_FIXES]
+        if spent:
+            self.stop_reason = "; ".join(
+                f"the {CHECK_LABELS[kind]} did not pass after {CHECK_FIXES} rounds of fixes"
+                f" - {_clip(next(one['say'] for one in findings if one['by'] == kind), 200)}"
+                for kind in spent)
+            return "failed", findings
+        for kind in failing:
+            fixes[kind] = int(fixes.get(kind) or 0) + 1
+        return "fix", findings
 
     def _black_box(self, files: List[str]) -> Dict[str, Any]:
         """The work used as its user would, by a context that never saw how
@@ -6727,12 +7747,7 @@ class Run:
         promises = self._promises()
         if not promises:
             return {}
-        if getattr(self, "tester_tools", None) is None:
-            self.tester_tools = WorkTools(self._checking_runtime(),
-                                          log=lambda name, said: self._tool_used(
-                                              name, said, who="reviewer"))
-            self.tester_tools.locked = list(self.tools.locked)
-            self.tester_tools.runs_code = ("run_python",)
+        self._testing_tools()
         self._event("reviewer", "stage", "The tester uses the work as the user would")
         words = "\n".join([self.instruction or "", *self._branch_words()]).strip()
         said = self._ask(
@@ -6763,7 +7778,8 @@ class Run:
         finished = ended == "complete"
         self.status = {"complete": DONE, "paused": NOT_FINISHED, "stalled": STALLED,
                        "stop": STOPPED_BY_REVIEW, "blocked": BLOCKED,
-                       "no contract": NO_CONTRACT}.get(ended, NOT_FINISHED)
+                       "no contract": NO_CONTRACT,
+                       "check failed": CHECK_FAILED}.get(ended, NOT_FINISHED)
         if not finished and self.status != NO_CONTRACT:
             self._write_todo()
         # An amendment not approved did no work: no new deck to make.
@@ -6933,12 +7949,8 @@ class Run:
         self.plan["deck"] = kept
         self._write(f"runs/{self.id}/presentation.html", render(kept))
         self._note("deck made", slides=2 + len(kept.get("results") or []))
-        # KEY POINT: the deck made.
-        self._version("deck", "The results deck" + ("" if finished else " - not finished"),
-                      message=commit_message(
-                          None, "Results deck" + ("" if finished else " (not finished)"),
-                          [one.get("title") for one in kept.get("results") or []
-                           if isinstance(one, dict)]))
+        # No version of its own: the deck is kept with the run's last
+        # checkpoint, the run done.
 
     def _gate_deck(self, deck: Dict[str, Any]) -> List[str]:
         problems: List[str] = []
@@ -7118,6 +8130,58 @@ class Run:
         return "\n".join(lines)
 
 
+class NoWeb:
+    """A REVIEWER'S TOOLS WITH NO WEB, for step 1 of writing criteria (the
+    user's decision, 2026-10-18): every tool of theirs but the web's - no
+    search, no page, and no web guard, so a client's own web tools are not
+    offered either - and what it read and opened, for the evidence of what
+    it answers to be checked against (`Run._checked_evidence`)."""
+
+    WEB = ("web_search", "fetch_url", "fetch_page")
+    #: No guard: no client's own web tools (claude_code_provider, codex).
+    guard = None
+
+    def __init__(self, tools: Any) -> None:
+        self._tools = tools
+        self.read: Dict[str, str] = {}
+        self.opened: set = set()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._tools, name)
+
+    def specs(self, writing: bool = True) -> List[ToolSpec]:
+        return [one for one in self._tools.specs(writing=writing) if one.name not in self.WEB]
+
+    def call(self, name: str, arguments: Dict[str, Any]) -> Any:
+        if name in self.WEB:
+            return {"error": "there is no web here - leave the question open, it is "
+                             "answered later"}
+        said = self._tools.call(name, arguments)
+        if isinstance(said, dict) and not said.get("error"):
+            if name == "read_file":
+                where = _path_key(str(said.get("path") or (arguments or {}).get("path") or ""))
+                self.read[where] = self.read.get(where, "") + "\n" + str(said.get("text") or "")
+            elif name == "open_stage":
+                self.opened.update(str(one) for one in (arguments or {}).get("ids") or [])
+        return said
+
+    def read_text(self, ref: str) -> Optional[str]:
+        """What was read of this file in step 1 - None when it was not."""
+        key = _path_key(ref)
+        if not key:
+            return None
+        if key in self.read:
+            return self.read[key]
+        for where, text in self.read.items():
+            if where.endswith("/" + key.lstrip("/")):
+                return text
+        return None
+
+
+def _path_key(path: str) -> str:
+    return str(path or "").replace("\\", "/").strip().lower()
+
+
 class Review:
     """One context of the reviewer's: the work in brief and how the user
     worked on things like it - retrieved once, for this question - then the
@@ -7136,6 +8200,9 @@ class Review:
         #: nothing of the user's experience is retrieved for it, nor said to
         #: it - its questions are asked without what they say of it.
         self.plain = getattr(run, "variant", FULL) == NO_CONTEXT
+        #: The past stages it was shown, by id: a decision of the user's it
+        #: cites is one of these, or one it opened (`Run._checked_evidence`).
+        self.shown_stages: set = set()
         self.messages: List[Dict[str, Any]]
         if self.plain:
             self.messages = [{"role": "user", "content": (
@@ -7150,18 +8217,29 @@ class Review:
         elif run.retriever is not None:
             asked = run._in_english(profile)
             found = compact_experience(run.retriever.find(asked))
+            # And the lesson cards found for it - the same ones every time too.
+            found["lessons"] = run.lessons_for(asked)
             run.keep_experience_given(same_as, found)
+        lessons = [one for one in found.pop("lessons", None) or [] if isinstance(one, dict)]
+        self.shown_stages = {str(one.get("id") or "") for one in found.get("stages") or []
+                             if isinstance(one, dict) and one.get("id")}
+        if lessons:
+            run.lessons_shown.update((one["id"], one) for one in lessons if one.get("id"))
         self.messages = [{"role": "user", "content": (
             context
             + "\n\nHOW THE USER WORKS, FROM THEIR OWN PAST WORK - first the RULES "
               "they have shown (principles, patterns and natures, each whole with "
               "the cases that show it), then the past STAGES they come from, a "
               "line each with why it was found; open_stage opens any of them:\n"
-            + experience_text(found, EXPERIENCE_CHARS))}]
+            + experience_text(found, EXPERIENCE_CHARS)
+            + (LESSONS_SHOWN + json.dumps(lessons, ensure_ascii=False) if lessons else ""))}]
 
-    def ask(self, content: str) -> Dict[str, Any]:
+    def ask(self, content: str, tools: Any = None, rounds: int = TOOL_ROUNDS
+            ) -> Dict[str, Any]:
         """Asked in the same context every time: the first question joins
-        what it was told; later ones follow its answers."""
+        what it was told; later ones follow its answers. `tools`: other
+        than the reviewer's own (its tools with no web, `NoWeb`); `rounds`:
+        how many rounds of them (a full review has more)."""
         if self.plain:
             for said, instead in NO_CONTEXT_WORDS:
                 content = content.replace(said, instead)
@@ -7174,5 +8252,6 @@ class Review:
         system = REVIEWER_SYSTEM_NO_CONTEXT if self.plain else REVIEWER_SYSTEM
         return self.run._ask(system.replace("{checks}", str(self.run.checks_folder))
                              + "\n\n" + zone_rule() + native_rule(),
-                             self.messages, self.run.review_tools, writing=False,
-                             work=self.work, who="reviewer")
+                             self.messages, tools if tools is not None
+                             else self.run.review_tools, writing=False,
+                             rounds=rounds, work=self.work, who="reviewer")

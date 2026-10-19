@@ -15,11 +15,11 @@ computer - how busy its processors are, how much memory is free - and:
 * while memory is short (under 8% free), PAUSES the newest run, saying why,
   and resumes it once a fifth is free again.
 
-THE EXPERIENCE DEBUGGER'S RUNS stay in the agent's own process, for
-whoever develops it, but are counted and kept like the rest: each of its
-ways waits in the same queue for room (runner.WorkRuns._room_for), and the
-newest run of any kind is the one paused for memory. Their processes - and
-every other the agent starts - go below normal priority by the agent's job
+THE EXPERIENCE DEBUGGER'S RUNS go each in a process of their own too
+(child.py), and are counted and kept like the rest: each of its ways waits
+in the same queue for room (runner.WorkRuns._room_for), and the newest run
+of any kind is the one paused for memory. Their processes - and every other
+the agent starts - go below normal priority by the agent's job
 (common/children.py), so whatever the user is doing comes first; with
 nothing else wanting the processors, they have all of them.
 """

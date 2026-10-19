@@ -93,15 +93,11 @@ def fetch(url: str, timeout: float = 20.0) -> Dict[str, Any]:
 
 #: How many of a page's links come back with it.
 MOST_LINKS = 150
-#: How long a search may be.
-MOST_QUERY = 300
-#: What looks like a secret or an encoded payload: a long run of key-like
-#: characters, or a known key's prefix. Text from the user's files carried
-#: out inside a search or an address looks like this once encoded.
-SECRET_LIKE = re.compile(
-    r"(?:[A-Za-z0-9+/_\-]{40,}={0,2})|(?:\b[0-9a-fA-F]{32,}\b)"
-    r"|(?:\b(?:sk-|ghp_|gho_|github_pat_|xox[abpr]-|AKIA|AIza|ya29\.)[\w\-]{8,})")
-URL_IN_TEXT = re.compile(r"""(?i)\bhttps?://[^\s<>"'()\[\]{}]+""")
+#: How long a search may be, what looks like a secret, an address in a
+#: text, an address as compared - the web guard's, where both checks on the
+#: web are (runtime/web_guard.py); named here as they always were.
+from ...runtime.web_guard import (  # noqa: E402
+    MOST_QUERY, SECRET_LIKE, URL_IN_TEXT, WebGuard, address_key)
 
 
 def _brave(query: str, key: str, limit: int, timeout: float) -> Dict[str, Any]:
@@ -139,15 +135,6 @@ def _brave(query: str, key: str, limit: int, timeout: float) -> Dict[str, Any]:
                         "url": str(one["url"]),
                         "snippet": _page_text(str(one.get("description") or ""))})
     return {"query": query, "results": results, "engine": "Brave Search"}
-
-
-def address_key(url: str) -> str:
-    """An address as it is compared: scheme and host in lower case, the
-    fragment dropped, a trailing full stop or comma from prose dropped."""
-    url = url.strip().rstrip(".,;:")
-    parts = urllib.parse.urlsplit(url)
-    return urllib.parse.urlunsplit((parts.scheme.lower(), parts.netloc.lower(),
-                                    parts.path or "/", parts.query, ""))
 
 
 #: THE WEB SEARCH: Brave's Search API, with the user's own key (Settings >
@@ -357,14 +344,14 @@ class WorkTools:
         #: THE JOBS this agent started (run_python background=true), by id.
         self.jobs: Dict[str, Dict[str, Any]] = {}
         self._jobs_lock = threading.Lock()
-        #: THE ADDRESSES THAT EXIST, which are the only ones fetch_url
-        #: opens: found in search results, on pages read, in the user's own
-        #: files and instruction, in their recorded work. Never one the
-        #: agent could have made up - not its own files, not its code's
-        #: output - because an address it composes can carry what it read
-        #: off to whoever owns the site (`check_address`).
-        self.known_addresses: set = set()
-        self.known_hosts: set = set()
+        #: THE WEB GUARD (runtime/web_guard.py): the addresses that exist -
+        #: found in search results, on pages read, in the user's own files
+        #: and instruction, in their recorded work; never one the agent
+        #: could have made up (not its own files, not its code's output) -
+        #: the sites the user named, and the words read of the user's and
+        #: of the web: what fetch_url opens (`check_address`). The same
+        #: guard holds a client's own web tools (`ModelRequest.web_guard`).
+        self.guard = WebGuard()
         self.handlers: Dict[str, Callable[[Dict[str, Any]], Any]] = {
             "list_dir": self.list_dir, "read_file": self.read_file,
             "read_video": self.read_video, "find_files": self.find_files, "write_file": self.write_file,
@@ -375,11 +362,16 @@ class WorkTools:
             "search_stages": self.search_stages, "open_stage": self.open_stage,
             "job_status": self.job_status, "stop_job": self.stop_job,
             "search_records": self.search_records,
+            "search_files": self.search_files,
         }
         #: The user's own records to search (context_search.py): set by the
         #: run that has them - the database they are in.
         self.records_db: Any = None
         self._records_index: Any = None
+        #: THE USER'S OWN FILES, searched by their words (index/service.py) -
+        #: set by the run that may: none for the single model, or for the
+        #: way with no context.
+        self.files_index: Any = None
 
     @property
     def folder(self) -> Path:
@@ -404,6 +396,7 @@ class WorkTools:
                 and (one.name != "open_card" or self.cards is not None)
                 and (one.name != "search_stages" or self.find is not None)
                 and (one.name != "search_records" or self.records_db is not None)
+                and (one.name != "search_files" or self.files_index is not None)
                 and (one.name != "open_stage" or self.stages is not None)]
 
     def _specs(self) -> List[ToolSpec]:
@@ -541,6 +534,15 @@ class WorkTools:
                      "each with when it was and how relevant it is.",
                      _schema({"keywords": {"type": "array", "items": {"type": "string"}}},
                              ["keywords"])),
+            ToolSpec("search_files", "Search the user's OWN FILES - every folder of "
+                     "their Work projects, and the folders they chose - by WORDS, in any "
+                     "language: the best pieces first, each with its file, the line it "
+                     "starts at and the lines there, and when the file was last changed; "
+                     "a file found by its name alone has no lines. Open one with "
+                     "read_file for the rest. Look here for how the user did something "
+                     "like this before.",
+                     _schema({"query": {"type": "string"},
+                              "limit": {"type": "integer"}}, ["query"])),
             ToolSpec("open_stage", "Open past stages by their ids (from the "
                      "experience you were shown, or search_stages): each one's "
                      "key information - what it was an attempt at, what was "
@@ -593,12 +595,19 @@ class WorkTools:
         return {"path": str(where), "entries": entries}
 
     # -- what may leave ----------------------------------------------------------
-    def know_addresses(self, text: str) -> None:
-        """Every address in `text` is one that exists, and may be opened."""
-        for found in URL_IN_TEXT.findall(text or ""):
-            key = address_key(found)
-            self.known_addresses.add(key)
-            self.known_hosts.add(urllib.parse.urlsplit(key).netloc)
+    def know_addresses(self, text: str, source: str = "user", where: str = "") -> None:
+        """Every address in `text` is one that exists, and may be opened -
+        and its words are the user's ("user": their instruction, files and
+        recorded work) or public ("web", read on the site `where`)."""
+        self.guard.know(text, source, where)
+
+    @property
+    def known_addresses(self) -> set:
+        return self.guard.known_addresses
+
+    @property
+    def known_hosts(self) -> set:
+        return self.guard.known_hosts
 
     def _the_agents_own(self, where: Path) -> bool:
         """Whether a file is somewhere the agent can write - and so may hold
@@ -623,31 +632,16 @@ class WorkTools:
         name with what it read from the user's files put after it - is a
         way to send those files to anyone, and a page it read may tell it
         to do exactly that. So only an address that already exists is
-        opened, or the front page of a site one came from."""
-        if not re.match(r"(?i)^https?://", url or ""):
-            return "only http and https addresses can be read"
-        key = address_key(url)
-        if key in self.known_addresses:
-            return None
-        parts = urllib.parse.urlsplit(key)
-        if parts.path in ("", "/") and not parts.query \
-                and parts.netloc in self.known_hosts:
-            return None
-        return ("this address did not come from a search, a page read, the "
-                "user's files or their instruction - only an address that "
-                "already exists can be opened (so nothing read can be sent "
-                "out inside one). Search for it, or open the page that links "
-                "to it.")
+        opened, or the front page of a site one came from - and, since the
+        user widened it (2026-10-18), any page of a site they named or of a
+        reference site, a known address made shorter, and a short address
+        on a known site with nothing of theirs in it (runtime/web_guard.py)."""
+        return self.guard.check_address(url)
 
     def check_query(self, query: str) -> Optional[str]:
         """Why this search may not be sent, or None: too long, or carrying
         something that looks like a key or an encoded payload."""
-        if len(query or "") > MOST_QUERY:
-            return f"a search is at most {MOST_QUERY} characters"
-        if SECRET_LIKE.search(query or ""):
-            return ("the search carries something that looks like a key, a "
-                    "token or encoded data - searches are words, not data")
-        return None
+        return self.guard.check_query(query)
 
     def read_video(self, args: Dict[str, Any]) -> Any:
         """A video, read on this computer into frames and what is said -
@@ -1028,7 +1022,8 @@ class WorkTools:
         said = search(query)
         self.changed("searched the web", [], {"query": query})
         for one in said.get("results") or []:
-            self.know_addresses(str(one.get("url") or ""))
+            self.know_addresses(" ".join(str(one.get(key) or "")
+                                         for key in ("url", "title", "snippet")), "web", "search")
         return said
 
     def fetch_url(self, args: Dict[str, Any]) -> Any:
@@ -1039,8 +1034,9 @@ class WorkTools:
             return {"error": refused}
         said = fetch(url)
         self.changed("read a page", [], {"url": url})
-        self.know_addresses(" ".join([str(said.get("url") or "")]
-                                     + list(said.get("links") or [])))
+        self.know_addresses(" ".join([str(said.get("url") or ""), str(said.get("text") or "")]
+                                     + list(said.get("links") or [])), "web",
+                            urllib.parse.urlsplit(str(said.get("url") or url)).netloc)
         return said
 
     # -- the record ------------------------------------------------------------
@@ -1070,6 +1066,39 @@ class WorkTools:
         return {"found": [{"kind": one["kind"], "title": one["title"],
                            "detail": one.get("detail", ""), "at": one.get("at"),
                            "relevance": one["relevance"]} for one in found[:20]]}
+
+    def search_files(self, args: Dict[str, Any]) -> Any:
+        """The user's own files, by their words (the local index): only
+        what this agent may read is ever given - the same rules as list_dir
+        and read_file."""
+        if self.files_index is None:
+            return {"error": "no files to search"}
+        query = str(args.get("query") or "").strip()
+        if not query:
+            return {"error": "say what to search for"}
+        try:
+            limit = max(1, min(20, int(args.get("limit") or 8)))
+        except (TypeError, ValueError):
+            limit = 8
+        found = self.files_index.search(query, allowed=self._may_read, limit=limit)
+        for one in found:
+            # The user's own files: where real addresses are.
+            self.know_addresses(one.get("text") or "")
+        return {"found": found} if found else {"found": [], "said": "nothing found for "
+                                                                    "these words"}
+
+    def _may_read(self, path: str) -> bool:
+        """Whether this agent may read a file - as read_file decides, and as
+        list_dir leaves out what it may not see."""
+        from ...runtime.filesystem import (is_app_code, is_closed, is_credential_store,
+                                           is_sealed)
+        try:
+            where = self._readable(path)
+        except Exception:
+            return False
+        policy = self.runtime.policy
+        return not (is_sealed(where, policy) or is_app_code(where, policy)
+                    or is_closed(where, policy) or is_credential_store(where, policy))
 
     def search_stages(self, args: Dict[str, Any]) -> Any:
         if self.find is None:

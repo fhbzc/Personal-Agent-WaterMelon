@@ -18,6 +18,12 @@ log = logging.getLogger(__name__)
 EmitFn = Callable[[ListenerEvent], None]
 
 
+class NotOnThisMachine(RuntimeError):
+    """A provider with nothing to observe here: the platform cannot do it
+    (window contents on a Mac) or the thing it reads is not installed. Not a
+    fault - the manager says so in one line rather than as an error."""
+
+
 @dataclass
 class PluginManifest:
     """Section 24 - what every listener plugin has to describe."""

@@ -983,7 +983,7 @@ class StatesAreWrittenInEnglishTests(unittest.TestCase):
                        if any("the states" in one["what"]
                               for one in shape["language"].rules())]
         self.assertEqual(with_states, ["step_state"])
-        for name in ("step_notify", "step_todo"):
+        for name in ("step_notify",):
             self.assertEqual([one["rule"] for one in STEP_PROMPTS[name]["language"].rules()],
                              ["display"], name)
 
@@ -1063,11 +1063,10 @@ class TheReviewHasThreeStepsTests(unittest.TestCase):
 
         # Step 2 is the people now (heartbeat/connections/people.py); who
         # the user is is kept, paused (PAUSED_STEPS).
-        # And step 4: the next steps the user finished, ticked - asked only
-        # when there are open ones (test_state_todo).
+        # The next-steps step is gone with the tasks' next steps (section
+        # 37, as amended 2026-10-18).
         self.assertEqual([step.id for step in STEPS],
-                         ["step_state", "step_people", "step_nature", "step_notify",
-                          "step_todo"])
+                         ["step_state", "step_people", "step_nature", "step_notify"])
         self.assertEqual(STEPS[0].text, "Analyze the user's current state.")
         self.assertEqual(STEPS[3].text,
                          "Determine which notifications need to be added and "

@@ -55,7 +55,7 @@
            other (app.js, ovPlaceTodos). -->
       <div class="ov-tasks-top">
         <div class="ov-tasks-intro">
-          <h3 class="ov-head">Summary task</h3>
+          <h3 class="ov-head">Projects</h3>
           <!-- RUN NOW: a round at once; the next regular one is counted
                from when this one finishes (app.js, refreshOvRound). A
                button of the card's own, as "Make an issue now" is - not a
@@ -64,8 +64,9 @@
             <button type="button" id="ov-round-run">Update tasks now</button>
             <span id="ov-round-next" class="muted"></span>
           </div>
-          <div class="muted">The tasks the agent has grouped out of what it
-            has seen, most urgent first. Click one to open it.</div>
+          <div class="muted">What you have been working on, grouped from what
+            the agent has seen, with how long each was worked on. Click one to
+            read it.</div>
           <div class="ov-strip-slot"></div>
         </div>
         <aside id="ov-todo" class="ov-todo"></aside>
@@ -403,6 +404,17 @@
         grouped into patterns or principles.</p>
     </div>
     <div id="lessons-kinds"></div>
+    <!-- THE LESSON CARDS: each question a Work run's reviewer answered of the
+         user's work, with what the answer rests on (lesson_cards.py). -->
+    <div class="card" id="lesson-cards-card">
+      <h3>Lesson cards</h3>
+      <p class="muted">Each question answered while your work was done: the
+        question, its answer, and what the answer rests on - your own words,
+        code or decisions, or the model's own knowledge. An answer that rests
+        on a web page is used in that run only and never kept. A card is never
+        changed: a new version replaces it.</p>
+      <div id="lesson-cards"></div>
+    </div>
   </section>
 
   <!-- ----------------------------------------------------------- Chat -->
@@ -511,10 +523,10 @@
 
   <section id="experience" class="tab">
     <div class="xp-head">
-      <strong>Learned experience</strong>
-      <span class="muted">each piece of your work as the stages of its loop,
-        and how you work, as principles and patterns. Each project is learned
-        when you start it below - and updated when you ask.</span>
+      <strong>Work</strong>
+      <span class="muted">what the agent does on each project, as the stages it
+        went through. Each project is learned when you start it below - what is
+        learned of how you work is used by the agent, not shown here.</span>
       <span id="xp-status" class="muted"></span>
     </div>
     <div class="xp-grid">
@@ -549,8 +561,10 @@
           <span id="xp-title-run" class="xp-title-run"></span>
         </div>
         <div id="xp-unit-about" class="xp-unit-about"></div>
-        <div id="xp-graph" class="xp-graph"></div>
-        <div id="xp-stage" class="xp-stage"></div>
+        <!-- What was learned of the user's own work is kept and used, not
+             drawn here (2026-10-18): the panel is the agent's own Work. -->
+        <div id="xp-graph" class="xp-graph" hidden></div>
+        <div id="xp-stage" class="xp-stage" hidden></div>
         <div id="xp-work" class="xp-work"></div>
       </div>
     </div>
@@ -821,6 +835,17 @@
           Brave's Search API and a key of your own (it has a free plan; the key
           is kept in the OS credential store and never shown again), or, with no
           key, DuckDuckGo's results page, which may refuse an application.</p>
+        <p><strong>What may be searched and opened.</strong> Whichever search is
+          used, a search may not carry anything that looks like a key or a
+          password, and a page is opened only when nothing of yours can travel in
+          its address: an address found in a search, on a page read, or in your
+          instruction, files or records; any page of a site you named, or of a
+          documentation, package or reference site; a known address made shorter;
+          or, on a site already seen, a short address with none of your own words
+          in it. Claude Code's own search is held to this by a check before and
+          after each search and page. Codex's own search reads only the copy of
+          the web OpenAI keeps, never a live page; live pages it reads with the
+          app's tools.</p>
       </div>
       <label class="wide">Search with<select id="web-search-with">
         <option value="model">the model's own search (default)</option>
@@ -836,6 +861,31 @@
           rel="noopener noreferrer" href="https://brave.com/search/api/">Get a Brave
           Search API key</a></div>
       </form>
+    </div>
+    <!-- THE LOCAL INDEX (index/service.py): the folders it reads, and how far. -->
+    <div class="card" id="file-search-card">
+      <h3>Search your files</h3>
+      <div class="panel-note">
+        <p>So the agents can find how you did something before, your files are kept
+          searchable by their words - on this computer, in a file of the agent's
+          own. No model is used for it. What an agent finds and opens goes to the
+          model it works with, as any file it reads does.</p>
+        <p>It reads every folder of your Work projects, and the folders you add
+          here, with everything in them. Pictures and other files are found by
+          their names. It never reads caches or environments, files named like
+          keys or passwords, files that are only in the cloud, or the agent's own
+          data. It works in the background at the lowest priority, and waits while
+          the computer runs on its battery.</p>
+      </div>
+      <label class="checkbox"><input type="checkbox" id="file-search-on">
+        Keep my files searchable</label>
+      <div id="file-search-status" class="muted"></div>
+      <ul id="file-search-folders" class="file-search-folders"></ul>
+      <div class="file-search-actions">
+        <button type="button" class="small secondary" id="file-search-add">Add a folder…</button>
+        <button type="button" class="small secondary" id="file-search-sessions"></button>
+        <button type="button" class="small secondary" id="file-search-build">Update now</button>
+      </div>
     </div>
     </div>
     <div class="settings-pane" data-settings-pane="display" hidden>
@@ -902,6 +952,7 @@
       <div id="mac-permissions-list"></div>
       <div class="ov-lp-buttons">
         <button type="button" id="mac-permissions-check" class="secondary">Check again</button>
+        <span id="mac-permissions-checked" class="muted"></span>
       </div>
     </div>
     <div class="card" id="privacy-card">

@@ -157,8 +157,14 @@ class _TwoAgents:
 
     def __init__(self, rounds_to_complete=1, gate_fail_first=False,
                  stall_always=False, blocked=False, queued_once=False,
-                 final_finding_once=False):
+                 final_finding_once=False, full_review="milestone", full_fails=0):
         self.asked = []
+        #: When the reviewer asks for a full review: "milestone" - when the
+        #: card it reviewed is done; "always"; "never". The first
+        #: `full_fails` of them do not pass.
+        self.full_review = full_review
+        self.full_fails = full_fails
+        self.full_reviews = 0
         self.rounds_to_complete = rounds_to_complete
         self.gate_fail_first = gate_fail_first
         self.stall_always = stall_always
@@ -235,10 +241,39 @@ class _TwoAgents:
                                                                   "type": "mainline"}],
                                                     "progress": "stalled"}))
                 done = self.reviewed_rounds >= self.rounds_to_complete
+                full = self.full_review == "always" or (self.full_review == "milestone" and done)
                 return self._reply(_json.dumps({
                     "findings": findings, "progress": "advanced", "card_done": done,
                     "checked": ["notes.md"], "complete": done,
+                    "full_review": {"now": full, "why": "the notes are done" if done
+                                    else "a point to keep"},
                     "decisions": [{"n": 0, "support": "some", "because": ["own judgement"]}]}))
+            if "Check this card, one of those the rounds touched" in said and \
+                    "DO THE FULL REVIEW NOW" not in said:
+                return self._reply(_json.dumps({"card": "", "holds": "yes",
+                                                "why": "opened notes.md", "findings": []}))
+            if "Every card the rounds touched is checked" in said:
+                self.full_reviews += 1
+                return self._reply(_json.dumps({
+                    "promises": [], "reopen": [], "findings": [],
+                    "passed": self.full_reviews > self.full_fails, "stop": False}))
+            if "DO THE FULL REVIEW NOW" in said and "Check this card" in said:
+                return self._reply(_json.dumps({"card": "", "holds": "yes",
+                                                "why": "opened notes.md", "findings": []}))
+            if "DO THE FULL REVIEW NOW" in said:
+                import re
+                self.full_reviews += 1
+                passed = self.full_reviews > self.full_fails
+                # One that does not pass opens the notes again, and says why.
+                found = re.search(r"\[(card_[0-9a-zA-Z]+)\] The notes",
+                                  _json.dumps(request.messages, default=str))
+                return self._reply(_json.dumps({
+                    "promises": [], "cards": [],
+                    "reopen": [] if passed or not found else [
+                        {"card": found.group(1), "why": "the greeting is gone"}],
+                    "findings": [] if passed else [
+                        {"say": "notes.md lost its greeting", "type": "mainline"}],
+                    "passed": passed, "stop": False}))
             if "THE GOAL IS MET BY YOUR LAST REVIEW" in said:
                 self.final_reviews += 1
                 if self.final_finding_once and self.final_reviews == 1:
@@ -383,6 +418,29 @@ class _NeverHolds(_Promised):
                               "file": "notes.md"}]}))
         return super().invoke(request, role)
 
+class _NeverTried(_NeverHolds):
+    """The tester cannot open the work, and the final review finds nothing:
+    the promise stands "untried" each time it looks."""
+
+    def __init__(self, tried_from=None):
+        super().__init__()
+        self.tried_from = tried_from
+
+    def invoke(self, request, role=""):
+        import json as _json
+        if "You TEST a piece of work" in request.system:
+            self.asked.append(request)
+            self.tests += 1
+            holds = ("yes" if self.tried_from and self.tests >= self.tried_from
+                     else "untried")
+            return self._reply(_json.dumps({
+                "promises": [{"id": "P1", "holds": holds,
+                              "tried": "could not open notes.md"
+                              if holds == "untried" else "read notes.md"}],
+                "findings": []}))
+        return super(_NeverHolds, self).invoke(request, role)
+
+
 class ARunIsTwoAgentsTests(unittest.TestCase):
     """A contract, approved with criteria written from the user's work; rounds
     checked by code and judged by the reviewer; a final review; the deck."""
@@ -509,6 +567,26 @@ class ARunIsTwoAgentsTests(unittest.TestCase):
         self.assertEqual(run["plan"]["fix_rounds"], FIX_ROUNDS)
         self.assertEqual(run["status"], STALLED, run["log"][-6:])
         self.assertIn("P1 still do not hold", run["final"]["reason"])
+
+    def test_a_promise_never_tried_is_not_done_however_clean_the_review(self) -> None:
+        """Seen with a client whose tester could not open the file: the final
+        review found nothing to fix, and the run ended done with P1 untried."""
+        from personalized_agent.agent.work.runner import FIX_ROUNDS, STALLED
+        models = _NeverTried()
+        run, _started = self._run(models)
+        self.assertEqual(models.tests, FIX_ROUNDS + 1)
+        self.assertEqual(run["status"], STALLED, run["log"][-6:])
+        self.assertIn("P1 never tried for real", run["final"]["reason"])
+        said = [one["say"] for one in run["plan"]["final_review"]["to_fix"]]
+        self.assertTrue(any("P1 was never tried for real" in one for one in said))
+
+    def test_a_promise_tried_after_a_fix_round_is_done(self) -> None:
+        models = _NeverTried(tried_from=2)
+        run, _started = self._run(models)
+        self.assertEqual(run["status"], "done", run["log"][-6:])
+        self.assertEqual(models.tests, 2)
+        self.assertEqual(run["plan"]["fix_rounds"], 1)
+        self.assertEqual(run["plan"]["promise_status"]["P1"]["holds"], "yes")
 
     def test_the_reviewer_and_the_tester_write_only_in_the_checks_folder(self) -> None:
         from personalized_agent.agent.work.runner import Run
@@ -642,11 +720,12 @@ class ARunIsTwoAgentsTests(unittest.TestCase):
     def test_a_limit_pauses_the_run_and_continue_carries_on(self) -> None:
         from personalized_agent.agent.work.runner import NOT_FINISHED
         models = _TwoAgents()
-        # Seven calls, some kept back for the wrap-up: the contract takes its
-        # calls (the version it is saved as has no slides now), the words its
-        # reviewer searches the user's record by one, the round's tool one -
-        # and the round is cut off there.
-        run, started = self._run(models, limits={"calls": 7, "minutes": 0, "tokens": 0})
+        # Nine calls, some kept back for the wrap-up: the contract takes its
+        # calls (the version it is saved as has no slides now) - its
+        # reviewer's what-it-must-know among them - the words its reviewer
+        # searches the user's record by one, the round's tool one - and the
+        # round is cut off there.
+        run, started = self._run(models, limits={"calls": 9, "minutes": 0, "tokens": 0})
         self.assertEqual(run["status"], NOT_FINISHED, run["log"][-6:])
         self.assertTrue(run["continuable"])
         prompts = self._work_prompts(models)

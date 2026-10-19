@@ -39,7 +39,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ...common.events.models import ListenerEvent
 from ...platform_layer import get_platform
 from ...version import APP_NAME, FORMER_NAMES
-from ..core.provider import ListenerProvider, PluginManifest
+from ..core.provider import ListenerProvider, NotOnThisMachine, PluginManifest
 from ..core.manager import STOPPING_GRACE_SECONDS
 
 log = logging.getLogger(__name__)
@@ -114,7 +114,7 @@ class ScreenProvider(ListenerProvider):
     # -- lifecycle ----------------------------------------------------------
     def start(self) -> None:
         if not self._can_read():
-            raise RuntimeError(
+            raise NotOnThisMachine(
                 "this platform cannot read the contents of a window: "
                 + (self._why_not() or "no accessibility interface"))
         if self._thread and self._thread.is_alive():

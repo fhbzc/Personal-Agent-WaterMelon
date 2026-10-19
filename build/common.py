@@ -76,6 +76,9 @@ BASE_HIDDEN_IMPORTS = [
     "personalized_agent.listener.providers.browser",
     "personalized_agent.listener.providers.filesystem",
     "personalized_agent.runtime.guard",
+    # The certificates a packaged build trusts on macOS and Linux
+    # (__main__._certificates_carried).
+    "certifi",
 ]
 
 

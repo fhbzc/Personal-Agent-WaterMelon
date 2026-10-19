@@ -44,6 +44,34 @@ class LookedAtWithoutAskingTests(unittest.TestCase):
         self.assertEqual(said["missing"], ["full_disk"])
         self.assertFalse(said["items"][3]["needed"])
 
+    def test_only_what_is_needed_is_looked_at(self) -> None:
+        looked = []
+        checks = {key: (lambda key=key: looked.append(key) or True) for key in mp.ORDER}
+        with mock.patch.object(mp.sys, "platform", "darwin"), \
+                mock.patch.dict(mp._CHECKS, checks):
+            said = mp.status(_Config(listener_screenshots_enabled=False))
+        self.assertNotIn("screen", looked)
+        self.assertIsNone(said["items"][3]["granted"])
+
+    def test_system_events_is_waited_for_a_few_seconds_only(self) -> None:
+        with mock.patch.object(mp.children, "run_short",
+                               side_effect=TimeoutError("waited")) as ran:
+            self.assertIsNone(mp._automation())
+        self.assertEqual(ran.call_args.kwargs["timeout"], mp.AUTOMATION_WAIT)
+        self.assertLessEqual(mp.AUTOMATION_WAIT, 3)
+
+    def test_check_again_is_asked_once_at_a_time(self) -> None:
+        from pathlib import Path
+        script = (Path(__file__).resolve().parents[1] / "personalized_agent" / "api" / "web"
+                  / "app.js").read_text(encoding="utf-8")
+        start = script.index('$("#mac-permissions-check")')
+        handler = script[start:start + 900]
+        self.assertIn("button.disabled = true", handler)
+        self.assertIn("Checking…", handler)
+        self.assertIn("Checked at ${at}", handler)
+        # Screen Recording applies after the agent is opened again.
+        self.assertIn("/api/permissions/macos/start_again", script)
+
     def test_the_button_opens_the_very_pane(self) -> None:
         done = mock.Mock(returncode=0)
         with mock.patch.object(mp.sys, "platform", "darwin"), \

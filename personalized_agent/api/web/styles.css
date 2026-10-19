@@ -20,6 +20,8 @@
   --xp-call-builder: #2a78d6;
   --xp-call-reviewer: #eb6834;
   --xp-call-single: #1baf7a;
+  --xp-call-quality: #eda100;
+  --xp-call-privacy: #e87ba4;
   /* A heading meant to stand out: the darkest ink here, white in the dark. */
   --heading-bright: #0f1420;
 }
@@ -36,6 +38,8 @@
     --xp-call-builder: #3987e5;
     --xp-call-reviewer: #d95926;
     --xp-call-single: #199e70;
+    --xp-call-quality: #c98500;
+    --xp-call-privacy: #d55181;
     --heading-bright: #ffffff;
   }
 }
@@ -3527,6 +3531,12 @@ body.chat-window .chat-only { height: 100vh; height: 100dvh; padding: 12px; box-
 .xp-tier-core { font-weight: 600; }
 .xp-tier-polish { color: var(--muted); }
 .xp-for-user ul { margin: 4px 0 8px; padding-left: 18px; }
+/* What was added, not the user's words: each with who added it, and a way out. */
+.xp-added ul { margin: 4px 0 8px; padding-left: 18px; }
+.xp-added li { margin: 2px 0; }
+.xp-added-kind { font-size: 11px; padding: 0 6px; border-radius: 8px;
+  border: 1px dashed var(--line); white-space: nowrap; }
+.xp-added button { margin-left: 6px; }
 
 /* How to use the drawing: said in the State heartbeat panel, not on the
    Overview, where it is read every day. */
@@ -3841,3 +3851,77 @@ button.danger-text:not(:disabled) { color: var(--danger-ink); }
 .sys-permission-state { font-weight: 600; color: var(--muted); }
 .sys-permission-state.ok { color: var(--ok); }
 .sys-permission-state.missing { color: var(--err); }
+
+/* Search your files: each folder read, and how far. */
+.file-search-folders { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 6px; }
+.file-search-folders li { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+.file-search-folders code { overflow-wrap: anywhere; }
+.file-search-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* THE LESSON CARDS, in the Lessons debugger: one answered question each. */
+#lesson-cards .lesson-card { border-top: 1px solid var(--line); padding: 6px 0; }
+#lesson-cards .lesson-card summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 8px;
+                                     align-items: baseline; }
+#lesson-cards .lesson-card-answer { margin: 6px 0 4px; white-space: pre-wrap; }
+#lesson-cards .lesson-card-evidence { margin: 0 0 4px; padding-left: 18px; }
+
+/* TASKS AND PROJECTS (section 34.5): the Overview's projects, and the
+   debugger's rows of them over time. */
+.pj-bars { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 4px 0 10px; }
+.pj-row { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+  margin: 0 0 8px; cursor: pointer; background: var(--panel); }
+.pj-row:hover, .pj-row:focus-visible { border-color: var(--accent); }
+.pj-row.open { border-color: var(--accent); }
+.pj-row.dormant { opacity: 0.7; }
+.pj-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.pj-title { min-width: 0; overflow-wrap: anywhere; }
+.pj-time { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--ink); }
+.pj-what { margin-top: 2px; }
+.pj-meta { margin-top: 4px; font-size: 0.92em; }
+.pj-dirs code { font-size: 0.9em; margin-right: 6px; overflow-wrap: anywhere; }
+.pj-tasks { margin: 8px 0 0; padding-left: 18px; }
+.pj-tasks li { margin: 6px 0; }
+.pj-hidden { margin-top: 6px; }
+.pj-stretch { border-top: 1px solid var(--line); padding: 6px 0; }
+.pj-stretch summary { cursor: pointer; }
+.pj-pre { white-space: pre-wrap; max-height: 320px; overflow: auto; font-size: 0.85em;
+  background: var(--bg); padding: 8px; border-radius: 6px; }
+.pj-line { border-top: 1px solid var(--line); padding: 8px 0; }
+.pj-track { position: relative; height: 18px; margin: 6px 10px 0;
+  border-bottom: 2px solid var(--line); }
+.pj-dot { position: absolute; top: 3px; width: 12px; height: 12px; padding: 0;
+  margin-left: -6px; border-radius: 50%; border: 2px solid var(--panel);
+  background: var(--accent); cursor: pointer; }
+.pj-dot.on { background: var(--warn); }
+.pj-task-open { margin: 8px 10px 0; padding: 8px; border-left: 3px solid var(--accent);
+  background: var(--bg); }
+/* The Overview's projects picture (app.js, pjChart): a row per project,
+   its name at the near end, bars where it was worked on. */
+.pj-chart { margin: 6px 0 10px; }
+.pj-crow { display: grid; grid-template-columns: minmax(120px, 32%) 1fr; gap: 10px;
+  align-items: center; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+.pj-crow:hover, .pj-crow:focus-visible { background: var(--soft, rgba(127,127,127,.08)); }
+.pj-crow.open { outline: 1px solid var(--accent); }
+.pj-crow.dormant { opacity: 0.65; }
+.pj-axis-row { cursor: default; }
+.pj-axis-row:hover { background: none; }
+.pj-cname { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
+.pj-cname-text { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere;
+  line-height: 1.25; }
+.pj-cname-text .muted { font-size: 0.88em; }
+.pj-disc { flex: none; width: 12px; height: 12px; border-radius: 50%; margin-top: 3px; }
+.pj-ctrack { position: relative; height: 18px; border-bottom: 1px solid var(--line); }
+.pj-axis { height: 22px; border-bottom: none; font-size: 0.95em; color: var(--muted); }
+.pj-tick { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.pj-grid { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--line); }
+.pj-bar { position: absolute; top: 4px; height: 10px; border-radius: 3px; min-width: 3px; }
+.pj-card { margin-top: 8px; padding: 8px 12px; border-left: 4px solid var(--accent);
+  background: var(--soft, rgba(127,127,127,.06)); border-radius: 0 6px 6px 0; }
+@media (max-width: 600px) {
+  .pj-crow { grid-template-columns: 1fr; gap: 4px; }
+  .pj-axis-row .pj-cname { display: none; }
+}
+/* Leisure, under the work and apart from it (full activity). */
+.pj-section { margin: 12px 0 4px; padding: 6px 6px 2px; border-top: 2px solid var(--line);
+  font-weight: 600; color: var(--muted); }
+.pj-section-first { margin-top: 4px; border-top: none; }
