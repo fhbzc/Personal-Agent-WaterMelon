@@ -534,6 +534,8 @@ function xpDrawUnits() {
       <div class="xp-unit-open" data-xp-unit="${escapeHtml(unit.id)}" role="button"
         tabindex="0">
         ${escapeHtml(xpName(unit.name))}
+        ${(unit.names_before || []).length ? `<span class="muted xp-unit-was">earlier called ${
+          escapeHtml(unit.names_before.join("; "))}</span>` : ""}
         <span class="xp-unit-run" data-xp-unit-run="${escapeHtml(unit.id)}">${xpUnitRunBadge(unit.id)}</span>
         ${unit.kind === "new project" ? "" : `<span class="muted">${unit.stages} stages${unit.pending
           ? ` · ${unit.pending} states not yet learned` : ""}</span>`}
@@ -17218,7 +17220,10 @@ function drawProjects(whole) {
   // WORK ACTIVITY, OR FULL: the leisure projects are shown only when asked,
   // as the tasks of leisure were.
   const full = sbShowingHidden();
-  const every = (whole.projects || []).filter((one) => !one.ended);
+  // ONE THAT ENDED is drawn while it has history of its own: one carried on
+  // gave its tasks to the project carrying it, one carried on by none kept
+  // the tasks before the window (section 34.5).
+  const every = (whole.projects || []).filter((one) => !one.ended || (one.tasks || []).length);
   const leisure = every.filter((one) => one.kind === "leisure").length;
   const toggle = leisure || full ? `<button type="button" class="small secondary"
       data-sb-hidden="${full ? "off" : "on"}"
@@ -17305,9 +17310,17 @@ function pjDebugPanel(report) {
   const picked = stateBeat.pjTask || "";
   const rows = projects.map((one) => {
     const born = one.born_of || {};
-    const came = born.kind === "merged" ? `merged from ${(born.from || []).length}`
-      : born.kind === "split" ? "split from another" : "";
-    const went = born.joined_into ? " · ended" : "";
+    // Carrying on (section 34.5): a project's earlier ones, by id or anew;
+    // the ones before it called merged and split.
+    const came = (born.from || []).length && born.kind !== "continued"
+      ? `carries on ${born.from.length}` : born.kind === "merged"
+        ? `merged from ${(born.from || []).length}` : born.kind === "split"
+          ? "split from another" : "";
+    const went = one.ended ? (born.joined_into ? " · carried on" : " · ended") : "";
+    // Found again among the stopped ones (section 34.5), with the model's why.
+    const back = [born.came_back, ...(born.carries_back || []), born.relinked].filter(Boolean);
+    const backed = back.length ? ` · <span title="${escapeHtml(back.map((one) => one.why || "")
+      .join(" / "))}">${born.came_back ? "came back" : `linked to ${back.length} earlier`}</span>` : "";
     const dots = (one.tasks || []).map((task) => {
       const at = Date.parse(task.ends_at || "");
       if (Number.isNaN(at)) return "";
@@ -17321,7 +17334,7 @@ function pjDebugPanel(report) {
     return `<div class="pj-line">
       <div class="pj-line-head"><strong>${escapeHtml(one.title || "")}</strong>
         <span class="muted">since ${escapeHtml(pjWhen(one.first_seen))} ·
-          ${pjHours(one.minutes)} worked${came ? ` · ${came}` : ""}${went}${one.dormant ? " · dormant" : ""}</span>
+          ${pjHours(one.minutes)} worked${came ? ` · ${came}` : ""}${went}${backed}${one.dormant ? " · dormant" : ""}</span>
         <div class="muted">${escapeHtml(one.what_it_is || "")}</div></div>
       <div class="pj-track">${dots}</div>
       ${open ? `<div class="pj-task-open"><strong>${escapeHtml(open.title || "")}</strong>

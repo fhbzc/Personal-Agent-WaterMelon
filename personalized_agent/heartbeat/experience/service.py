@@ -1187,6 +1187,17 @@ class Experience:
         progress = self.learning_progress.setdefault(unit_id, {})
         progress.update(running=True, queued=False, step="starting", calls=0,
                         stages=0, began=time.time())
+        # GONE WHILE IT WAITED: a run of the projects step may end it -
+        # merged, absorbed, split, scattered, gone quiet - between its being
+        # queued and its turn (it waits for room in the pool). Nothing is
+        # learned in its place: where its stages went is the projects step's
+        # (stages.follow_the_tasks), and the project that took its work is
+        # learned when a run finds that one changed, as it is switched on.
+        if self.full_unit(unit_id) is None:
+            log.info("%s ended before its learning began; nothing to learn", unit_id)
+            progress.update(running=False, step="done", gone=True,
+                            seconds=round(time.time() - progress["began"], 1))
+            return
         # ALWAYS UP TO NOW. Where the last learning stopped - finished or cut
         # short - is kept in what was read: the states marked seen and how far
         # the folder was read. So an update carries on from there, to the
@@ -1302,6 +1313,7 @@ class Experience:
             ids = unit_task_ids(unit)
             held = self.store.workspace(unit["id"]) or {}
             out.append({"id": unit["id"], "kind": unit["kind"],
+                        "names_before": list(unit.get("names_before") or []),
                         # At work now, found from what the user is doing.
                         "active": bool(unit.get("active")),
                         # Its learning: learned or not, and what it has cost.

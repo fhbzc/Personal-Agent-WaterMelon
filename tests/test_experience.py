@@ -609,6 +609,44 @@ class StagesFollowTheirTasksTests(_Base):
         self.experience.stages_writer().follow_the_tasks([survivor], [old], [])
         self.assertEqual(len(self.store.stages(["task-new"])), 1)
 
+    def test_a_project_carried_on_brings_the_states_it_had_read(self) -> None:
+        ids = self._states(["a", "b"])
+        old = self._task("task-old", ids, "Old")
+        self.store.set_mark("task-old", ids[:1], [])
+        heir = self._task("task-new", ids, "New")
+        old.retired_at = utcnow().isoformat()
+        old.born_of = {"joined_into": "task-new"}
+        Kept(self.app.db).save([old])
+        self.experience.stages_writer().follow_the_tasks([heir], [old], [])
+        self.assertEqual(self.store.mark("task-new")["states_seen"], ids[:1])
+        self.assertEqual(self.store.mark("task-old")["states_seen"], [])
+
+    def test_stages_follow_a_chain_of_carrying_on_to_its_end(self) -> None:
+        ids = self._states(["a", "b"])
+        first = self._task("task-a", ids, "A")
+        self.store.add_stage({"task_id": "task-a", "kind": "execution", "states": ids})
+        middle = self._task("task-n", ids, "N")
+        last = self._task("task-o", ids, "O")
+        for one, into in ((first, "task-n"), (middle, "task-o")):
+            one.retired_at = utcnow().isoformat()
+            one.born_of = {"joined_into": into}
+        Kept(self.app.db).save([first, middle])
+        self.experience.stages_writer().follow_the_tasks([last], [first, middle], [])
+        self.assertEqual(len(self.store.stages(["task-o"])), 1)
+
+    def test_a_project_carried_on_by_none_keeps_its_stages(self) -> None:
+        ids = self._states(["a", "b"])
+        old = self._task("task-old", ids, "Old")
+        self.store.add_stage({"task_id": "task-old", "kind": "execution",
+                              "states": ids})
+        other = self._task("task-other", ids[:1], "Other")
+        old.retired_at = utcnow().isoformat()
+        old.born_of = {"joined_into": ""}
+        Kept(self.app.db).save([old])
+        self.experience.stages_writer().follow_the_tasks([other], [old], [])
+        self.assertEqual(len(self.store.stages(["task-old"])), 1)
+        self.assertEqual(self.store.stages(["task-other"]), [])
+
     def test_joining_a_project_adds_edges_and_leaving_takes_only_those(self) -> None:
         a_ids, b_ids = self._states(["a1", "a2"]), self._states(["b1"])
         self._task("task-a", a_ids, "A")
@@ -631,6 +669,18 @@ class StagesFollowTheirTasksTests(_Base):
         project.tasks = ["task-a"]
         writer.joins([project])
         self.assertEqual(self.store.edges(), [])
+
+
+class LearningAProjectThatEndedTests(_Base):
+
+    def test_one_ended_while_it_waited_ends_quietly(self) -> None:
+        with self.assertNoLogs("personalized_agent.heartbeat.experience.service", "ERROR"):
+            self.experience._learn_one("p-gone")
+        said = self.experience.learning_progress["p-gone"]
+        self.assertTrue(said["gone"])
+        self.assertFalse(said["running"])
+        self.assertNotIn("error", said)
+        self.assertEqual(self.store.learning("p-gone")["until"], "")
 
 
 class PatternsAndPrinciplesTests(_Base):

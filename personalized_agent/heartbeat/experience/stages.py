@@ -1019,6 +1019,9 @@ class StageWriter:
                         "status": said.get("status", ""),
                         "english": f"{english.get('title') or task_name(task)} "
                                    f"{english.get('goal') or said.get('goal') or ''}",
+                        # A project's earlier names (section 34.5): renamed
+                        # as it grew, and the ones it carries on.
+                        "names_before": list(said.get("names_before") or []),
                         "tasks": [task]})
         return out
 
@@ -1028,9 +1031,16 @@ class StageWriter:
         """Stages follow their states; joins and leavings add or drop edges."""
         moved = 0
         live_ids = {task.id for task in tasks}
-        # A task joined into another: its stages and cards go with it.
+        # A task joined into another: its stages and cards go with it - to
+        # the end of the chain, when the one it went into went on into
+        # another (a project carried on by one that then came back as an
+        # earlier one, section 34.5).
+        went = {old.id: str((old.born_of or {}).get("joined_into") or "") for old in retired}
         for old in retired:
-            into = str((old.born_of or {}).get("joined_into") or "")
+            into, seen = went[old.id], {old.id}
+            while into and into not in live_ids and into in went and into not in seen:
+                seen.add(into)
+                into = went[into]
             if into not in live_ids:
                 continue
             stages = self.store.stages([old.id])
@@ -1040,6 +1050,14 @@ class StageWriter:
             # Its cards too - its root among them, which becomes a
             # deliverable of the task it went into.
             self.store.move_cards(old.id, into)
+            # And which of its states were already read: the one carrying it
+            # on does not read them again (a project carried on, section
+            # 34.5; one carried on by none keeps all of it, as history).
+            gone, kept = self.store.mark(old.id), self.store.mark(into)
+            if gone["states_seen"] or gone["open_tail"]:
+                self.store.set_mark(into, kept["states_seen"] + gone["states_seen"],
+                                    kept["open_tail"] + gone["open_tail"])
+                self.store.set_mark(old.id, [], [])
         # A task split out of another: a stage goes with the task that holds
         # most of its states.
         member_of: Dict[str, str] = {}

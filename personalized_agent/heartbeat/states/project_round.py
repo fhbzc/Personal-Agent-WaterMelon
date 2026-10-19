@@ -2,7 +2,7 @@
 
 The run reads the states written since the last one, has one model call
 write them down as TASKS (given the user's current projects), groups the
-last week's tasks into PROJECTS, and keeps both. See task_projects.py for
+latest 48 hours of work's tasks into PROJECTS, and keeps both. See task_projects.py for
 what each is and why.
 
 THE SWITCH. The first run of this scheme marks every task and project of
@@ -55,6 +55,10 @@ class ProjectRound:
         self.tasks = tp.RunTasks(self.db, self.scope)
         self.kept = Kept(self.db, self.scope)
         self.run_id = "r-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        #: The projects named or renamed in this run, and the ones it made:
+        #: the ones looked for among the earlier projects at its end.
+        self._named: set = set()
+        self._made: set = set()
         self.report.setdefault("scheme", tp.SCHEME)
         self.report.setdefault("calls", 0)
         self.report["stretches"] = []
@@ -76,6 +80,7 @@ class ProjectRound:
                 return self.report          # the model could not be reached
         self._name_what_is_new()
         self._dormant()
+        self._relink()
         if newest:
             self.hb._processed_to(self.where, newest)
         self.report["round_complete"] = True
@@ -192,8 +197,8 @@ class ProjectRound:
         recent = sorted(projects, key=lambda one: one.last_seen, reverse=True)
         short_of = tp.short_labels([one.id for one in recent], "P")
         of_label = {label: pid for pid, label in short_of.items()}
-        needing = {one.id: (one.described or {}).get("why_line") or "new"
-                   for one in recent if not (one.described or {}).get("line")}
+        needing = {one.id: (one.described or {}).get("name_due")
+                   for one in recent if (one.described or {}).get("name_due")}
         rows = [{"id": one.id, "line": (one.described or {}).get("line", ""),
                  "title": ((one.described or {}).get("in_english") or {}).get("title")
                  or (one.described or {}).get("title", ""),
@@ -206,9 +211,7 @@ class ProjectRound:
         minutes = tp.worked_minutes(states, window)
         short = tp.short_labels([str(state.id) for state in states], "s")
         prompt = "\n\n".join(part for part in (
-            tp.needing_text(needing, tasks_of,
-                            {pid: (p.described or {}).get("line", "") for p in recent
-                             for pid in [p.id]}, short_of),
+            tp.needing_text(needing, tasks_of, self._named_before(recent), short_of),
             tp.project_list_text(rows, needing, short_of),
             tp.stretch_text(states, minutes, short)) if part)
         self.hb._at(self.report, "writing the tasks",
@@ -290,12 +293,14 @@ class ProjectRound:
                 if vector}
 
     def _regroup(self, at: datetime, lines: Dict[str, Dict[str, str]]) -> None:
-        """The last week's tasks, grouped again into projects, each project
-        keeping its id while its main body goes on."""
+        """The window's tasks, grouped again into projects, each carrying on
+        the earlier ones it took most of (task_projects.inherit)."""
         self.hb._at(self.report, "grouping the projects", "")
-        # Every task written so far in the week (a stretch of the first run
-        # sees none of the stretches after it: they are not written yet).
-        window = self.tasks.since(at - timedelta(days=tp.WINDOW_DAYS))
+        # THE LATEST 48 HOURS OF WORK (a stretch of the first run sees none
+        # of the stretches after it: they are not written yet).
+        window = self.tasks.window(tp.WINDOW_HOURS)
+        self._window_from = min((str(task.get("ends_at") or task.get("written_at") or "")
+                                 for task in window), default="")
         vectors = self._vectors(window)
         previous: Dict[str, List[str]] = {}
         for task in window:
@@ -320,6 +325,11 @@ class ProjectRound:
         project_of.update({task["id"]: "" for task in window
                            if task.get("kind") == "routine"})
         self.tasks.set_projects(project_of)
+        # A PROJECT CARRIED ON brings all its history, the tasks before the
+        # window too: the Overview draws them as the one carrying it on.
+        for pid, heir in ended.items():
+            if heir:
+                self.tasks.move_project(pid, heir)
         by_id = {task["id"]: task for task in window}
         existing = {task.id: task for task in self.kept.live() if is_scheme_row(task)}
         written = []
@@ -331,13 +341,15 @@ class ProjectRound:
                 row = Task(id=pid, number=number, seat=number,
                            born_of={"kind": what["kind"], "from": list(what["from"])})
                 number += 1
+                self._made.add(pid)
             mine = [by_id[tid] for tid in tids if tid in by_id]
-            said = lines.get(pid)
-            self._fill(row, mine, vectors, said, what)
+            carried = [existing[one] for one in what["from"] if one != pid and one in existing]
+            self._fill(row, mine, vectors, lines.get(pid), what, carried)
             written.append(row)
         self.kept.save(written)
-        # The projects that ended in a split or a merge: kept, retired,
-        # pointing at where their work went.
+        # The projects that ended: kept, retired, pointing at the one that
+        # carries them on - or at none, their history and what was learned
+        # from them staying their own.
         for pid, heir in ended.items():
             old = existing.get(pid)
             if old is None:
@@ -349,35 +361,49 @@ class ProjectRound:
         self.report["projects"] = {
             "count": len(assigned),
             "new": sorted(pid for pid, one in happened.items() if one["kind"] == "new"),
-            "merged": {pid: one["from"] for pid, one in happened.items()
-                       if one["kind"] == "merged"},
-            "split": {pid: one["from"] for pid, one in happened.items()
-                      if one["kind"] == "split"},
-            "ended": ended}
+            "carried": {pid: one["from"] for pid, one in happened.items() if one["from"]},
+            "ended": ended, "window_from": self._window_from}
 
     def _fill(self, row: Task, tasks: List[Dict[str, Any]],
               vectors: Dict[str, List[float]], said: Optional[Dict[str, str]],
-              what: Dict[str, Any]) -> None:
-        """A project's row, from its tasks: its title and summary are those
-        of its most typical recent task; what it IS is its own line."""
+              what: Dict[str, Any], carried: Sequence[Task] = ()) -> None:
+        """A project's row, from its tasks: its NAME and what it IS are the
+        model's, written when it is new and again when it has grown; what is
+        being worked on in it is its most typical recent task."""
         described = dict(row.described or {})
         everything = self.tasks.of_project(row.id, limit=1000) or tasks
         known = {task["id"] for task in everything}
         everything = everything + [task for task in tasks if task["id"] not in known]
         best = tp.typical(tasks, vectors) or (tasks[-1] if tasks else {})
-        english = {"title": best.get("title", ""), "summary": best.get("summary", "")}
-        if said:
-            described["line"] = said["line"]
-            described["line_display"] = said.get("line_display") or said["line"]
-            described.pop("why_line", None)
-            row.version = int(row.version or 1) + (1 if row.summary_at else 0)
-            row.summary_at = task_now()
-        elif what["kind"] in ("merged", "split") and what.get("from"):
-            described["line"] = ""
-            described["why_line"] = f"{what['kind']} from {len(what['from'])} project(s)"
-        english["what_it_is"] = described.get("line", "")
-        described["title"] = best.get("title_display") or best.get("title", "")
+        minutes = round(sum(float(task.get("minutes") or 0.0) for task in everything), 1)
+        english = dict(described.get("in_english") or {})
+        english["summary"] = best.get("summary", "")
         described["summary"] = best.get("summary_display") or best.get("summary", "")
+        # The names of the projects it carries on, as earlier names of its own.
+        before = list(described.get("names_before") or [])
+        for one in carried:
+            name = str((one.described or {}).get("title") or "")
+            if name and name not in before and name != described.get("title"):
+                before.append(name)
+        described["names_before"] = before[-20:]
+        if said:
+            self._name(row, described, english, said, minutes)
+        if not described.get("title") or described.get("title_unnamed"):
+            # Not named yet: its most typical task's title, until it is.
+            described["title"] = best.get("title_display") or best.get("title", "")
+            english["title"] = best.get("title", "")
+            described["title_unnamed"] = True
+        named = described.get("named_minutes")
+        described.pop("name_due", None)
+        if described.get("title_unnamed"):
+            described["name_due"] = (f"carries on {len(what['from'])} earlier project(s)"
+                                     if what.get("from") else "new")
+        elif named is None:
+            described["name_due"] = "not named yet"
+        elif (minutes >= float(named) * (1 + tp.RENAME_GROWTH)
+              and minutes - float(named) >= tp.RENAME_LEAST_MINUTES):
+            described["name_due"] = "grown since it was named"
+        english["what_it_is"] = described.get("line", "")
         described["what_it_is"] = described.get("line_display") or described.get("line", "")
         # The writer wrote both languages: the English copy is marked as made
         # from the words beside it, so it is not translated again.
@@ -387,9 +413,23 @@ class ProjectRound:
         described["kind"] = next((task.get("kind") for task in tasks
                                   if task.get("kind") in ("work", "leisure")), "work")
         described["concrete"] = True
+        described["last_task"] = best.get("id", "")
+        total: List[float] = []
+        for task in tasks:
+            vector = vectors.get(task["id"])
+            if vector:
+                total = ([a + b for a, b in zip(total, vector)] if total else list(vector))
+        if total:
+            row.total = total
+        self._totals(row, described, everything)
+        row.archived_at = ""
+
+    def _totals(self, row: Task, described: Dict[str, Any],
+                everything: List[Dict[str, Any]]) -> None:
+        """What a project's row says of all its tasks: how long, how many,
+        where, its states, its first and last time."""
         described["minutes"] = round(sum(float(task.get("minutes") or 0.0)
                                          for task in everything), 1)
-        described["last_task"] = best.get("id", "")
         described["tasks"] = len(everything)
         places: Counter = Counter()
         for task in everything:
@@ -399,13 +439,6 @@ class ProjectRound:
         for task in sorted(everything, key=lambda one: str(one.get("ends_at") or "")):
             members.extend(str(one) for one in task.get("states") or [])
         row.members = list(dict.fromkeys(members))[-600:]
-        total: List[float] = []
-        for task in tasks:
-            vector = vectors.get(task["id"])
-            if vector:
-                total = ([a + b for a, b in zip(total, vector)] if total else list(vector))
-        if total:
-            row.total = total
         firsts = [str(task.get("starts_at") or "") for task in everything if task.get("starts_at")]
         lasts = [str(task.get("ends_at") or "") for task in everything if task.get("ends_at")]
         profile = dict(row.profile or {})
@@ -418,49 +451,252 @@ class ProjectRound:
         row.profile = profile
         row.described = described
         row.updated_at = task_now()
-        row.archived_at = ""
 
     # -- after the stretches -------------------------------------------------------------
+    def _name(self, row: Task, described: Dict[str, Any], english: Dict[str, Any],
+              said: Dict[str, str], minutes: float) -> None:
+        """The model's name and line, put on a project: the name it had kept
+        among its earlier names, and how long it had been worked on when it
+        was named, which says when it is named again."""
+        title = said.get("title_display") or said.get("title") or ""
+        old = str(described.get("title") or "")
+        if described.get("line") and not described.get("title_unnamed"):
+            # What it was called, in English, for finding it again later.
+            was = f"{english.get('title') or old}. {english.get('what_it_is') or described['line']}"
+            versions = [one for one in described.get("versions_before") or [] if one != was]
+            described["versions_before"] = (versions + [was])[-20:]
+        if title:
+            if old and old != title and not described.get("title_unnamed"):
+                before = [one for one in described.get("names_before") or [] if one != title]
+                if old not in before:
+                    before.append(old)
+                described["names_before"] = before[-20:]
+            described["title"] = title
+            english["title"] = said.get("title") or title
+        # Named, even when the answer had no title: the one it has stays.
+        described.pop("title_unnamed", None)
+        described["line"] = said["line"]
+        described["line_display"] = said.get("line_display") or said["line"]
+        described["named_minutes"] = minutes
+        for key in ("name_due", "why_line"):
+            described.pop(key, None)
+        self._named.add(row.id)
+        row.version = int(row.version or 1) + (1 if row.summary_at else 0)
+        row.summary_at = task_now()
+
+    @staticmethod
+    def _named_before(projects: Sequence[Task]) -> Dict[str, str]:
+        out = {}
+        for one in projects:
+            said = one.described or {}
+            if said.get("line") and not said.get("title_unnamed"):
+                out[one.id] = f"{said.get('title', '')} - {said['line']}"
+        return out
+
     def _name_what_is_new(self) -> None:
-        """A line for each project the last stretch made, so none is shown
-        without one until the next run."""
-        projects = [one for one in self._projects_now() if not (one.described or {}).get("line")]
-        if not projects:
+        """A name for each project still waiting for one - made by the last
+        stretch, carrying others on, or grown - all in one call
+        (NAMES_PER_CALL a call), so none is shown unnamed until the next run."""
+        projects = [one for one in self._projects_now() if (one.described or {}).get("name_due")]
+        self.report["naming"] = []
+        for at in range(0, len(projects), tp.NAMES_PER_CALL):
+            part = projects[at:at + tp.NAMES_PER_CALL]
+            short_of = tp.short_labels([one.id for one in part], "P")
+            of_label = {label: pid for pid, label in short_of.items()}
+            tasks_of = {one.id: self.tasks.of_project(one.id, limit=8) for one in part}
+            prompt = tp.needing_text({one.id: one.described["name_due"] for one in part},
+                                     tasks_of, self._named_before(part), short_of)
+            self.hb._at(self.report, "naming the projects", f"{len(part)} project(s)")
+            answer, reply, _usage = self._ask(tp.LINES_SYSTEM, prompt, {"projects": len(part)})
+            self.report["naming"].append({"sent": prompt, "reply": reply})
+            if not answer:
+                return
+            lines = tp.read_lines(answer, of_label)
+            changed = []
+            for one in part:
+                said = lines.get(one.id)
+                if not said:
+                    continue
+                described = dict(one.described or {})
+                english = dict(described.get("in_english") or {})
+                self._name(one, described, english, said,
+                           float(described.get("minutes") or 0.0))
+                described["what_it_is"] = described["line_display"]
+                english["what_it_is"] = said["line"]
+                from .english_copies import stamped
+                described["in_english"] = stamped(english, described,
+                                                  ("title", "summary", "what_it_is"))
+                one.described = described
+                changed.append(one)
+            self.kept.save(changed)
+
+    # -- coming back ------------------------------------------------------------------------
+    def _relink(self) -> None:
+        """THE PROJECTS NAMED IN THIS RUN, LOOKED FOR AMONG THE EARLIER ONES
+        (user, 2026-10-19). Work picked up again after days away is not in
+        the window, so nothing carried it on: a project named or renamed now
+        is compared with the dormant and ended ones of its kind by what it
+        is - every name they had - and the model, shown the RELINK_AT
+        look-alikes with their tasks, says which it IS (one; not for one
+        that already kept an earlier id) and which it CARRIES ON. An earlier
+        one goes to one new one: being the same before carrying on, then
+        the most alike. Being the same revives the earlier id, the new
+        one's tasks going to it; carrying on takes the earlier one's tasks,
+        and with them its stages and what of it was learned."""
+        embedder = getattr(self.hb, "embedder", None)
+        if embedder is None or not self.hb.config.get("state_embedding_enabled", True):
             return
-        short_of = tp.short_labels([one.id for one in projects], "P")
-        of_label = {label: pid for pid, label in short_of.items()}
-        tasks_of = {one.id: self.tasks.of_project(one.id, limit=8) for one in projects}
-        prompt = tp.needing_text({one.id: (one.described or {}).get("why_line") or "new"
-                                  for one in projects}, tasks_of, {}, short_of)
-        self.hb._at(self.report, "naming the new projects", f"{len(projects)} project(s)")
-        answer, reply, _usage = self._ask(tp.LINES_SYSTEM, prompt, {"projects": len(projects)})
-        self.report["naming"] = {"sent": prompt, "reply": reply}
+        live = {one.id: one for one in self._projects_now()}
+        new = [live[pid] for pid in sorted(self._named) if pid in live]
+        if not new:
+            return
+        earlier = [one for one in self.kept.all(limit=5000) if is_scheme_row(one)
+                   and one.id not in live
+                   and not (one.retired_at and (one.born_of or {}).get("joined_into"))]
+        earlier = [one for one in earlier if self.tasks.of_project(one.id, limit=1)]
+        if not earlier:
+            return
+
+        def text(one: Task) -> str:
+            said = one.described or {}
+            english = said.get("in_english") or {}
+            return f"{english.get('title') or said.get('title', '')}. " \
+                   f"{english.get('what_it_is') or said.get('line', '')}"
+
+        versions = [(one.id, text(one)) for one in earlier]
+        versions += [(one.id, was) for one in earlier
+                     for was in (one.described or {}).get("versions_before") or []]
+        try:
+            found = embedder.embed([text(one) for one in new] + [t for _i, t in versions])
+        except Exception:
+            log.warning("the projects could not be read by meaning", exc_info=True)
+            return
+        if len(found) < len(new) + len(versions):
+            return
+        import numpy as np
+
+        def unit(vector: Sequence[float]) -> Any:
+            v = np.asarray(vector, dtype=float)
+            return v / (np.linalg.norm(v) or 1.0)
+
+        mine = {one.id: unit(found[n]) for n, one in enumerate(new)}
+        theirs = [(pid, unit(vector)) for (pid, _t), vector in zip(versions, found[len(new):])]
+        by_id = {one.id: one for one in earlier}
+        kind = lambda one: (one.described or {}).get("kind") or "work"  # noqa: E731
+        alike: Dict[str, Dict[str, float]] = {}
+        for one in new:
+            best: Dict[str, float] = {}
+            for pid, vector in theirs:
+                if kind(by_id[pid]) != kind(one):
+                    continue
+                best[pid] = max(best.get(pid, -1.0), float(mine[one.id] @ vector))
+            close = sorted(((s, pid) for pid, s in best.items() if s >= tp.RELINK_AT),
+                           reverse=True)[:tp.RELINK_CANDIDATES]
+            if close:
+                alike[one.id] = {pid: s for s, pid in close}
+        self.report["relinked"] = {"looked_for": sorted(self._named),
+                                   "look_alikes": {k: {p: round(s, 2) for p, s in v.items()}
+                                                   for k, v in alike.items()}}
+        if not alike:
+            return
+        wanted = [one for one in new if one.id in alike]
+        shown = list(dict.fromkeys(pid for one in wanted for pid in alike[one.id]))
+        new_label = tp.short_labels([one.id for one in wanted], "N")
+        old_label = tp.short_labels(shown, "E")
+
+        def tasks(pid: str) -> List[Dict[str, Any]]:
+            return self.tasks.of_project(pid, limit=tp.RELINK_EXAMPLES)
+
+        def said_of(one: Task) -> Dict[str, Any]:
+            said = one.described or {}
+            english = said.get("in_english") or {}
+            return {"title": english.get("title") or said.get("title", ""),
+                    "line": english.get("what_it_is") or said.get("line", "")}
+
+        prompt = tp.relink_text(
+            [{"label": new_label[one.id], **said_of(one), "tasks": tasks(one.id),
+              "kept": one.id not in self._made,
+              "candidates": [old_label[pid] for pid in alike[one.id]]} for one in wanted],
+            [{"label": old_label[pid], **said_of(by_id[pid]), "tasks": tasks(pid),
+              "before": list((by_id[pid].described or {}).get("names_before") or []),
+              "last_active": by_id[pid].last_seen} for pid in shown])
+        self.hb._at(self.report, "looking for earlier projects", f"{len(wanted)} project(s)")
+        answer, reply, _usage = self._ask(tp.RELINK_SYSTEM, prompt, {"projects": len(wanted)})
+        self.report["relinked"].update({"sent": prompt, "reply": reply})
         if not answer:
             return
-        lines = tp.read_lines(answer, of_label)
-        changed = []
-        for one in projects:
-            said = lines.get(one.id)
-            if not said:
-                continue
-            described = dict(one.described or {})
-            described["line"] = said["line"]
-            described["line_display"] = said.get("line_display") or said["line"]
-            described["what_it_is"] = described["line_display"]
-            from .english_copies import stamped
-            english = dict(described.get("in_english") or {})
-            english["what_it_is"] = said["line"]
-            described["in_english"] = stamped(english, described, ("what_it_is",))
-            described.pop("why_line", None)
-            one.described = described
-            one.summary_at = task_now()
-            changed.append(one)
-        self.kept.save(changed)
+        links = tp.read_links(answer, {v: k for k, v in new_label.items()},
+                              {v: k for k, v in old_label.items()})
+        # Each earlier project to one new one: being the same first, then the
+        # most alike. One that kept an earlier id is the same as no other.
+        claims: Dict[str, Tuple[int, float, str, str]] = {}
+        for new_id, said in links.items():
+            same = said["same_as"] if new_id in self._made else ""
+            asked = ([(same, "same")] if same else []) + [
+                (pid, "continues") for pid in said["continues"] + (
+                    [said["same_as"]] if said["same_as"] and not same else [])]
+            for pid, how in asked:
+                if pid not in alike.get(new_id, {}):
+                    continue
+                rank = (1 if how == "same" else 0, alike[new_id][pid], new_id, how)
+                if pid not in claims or rank > claims[pid]:
+                    claims[pid] = rank
+        done = []
+        target = {one.id: one.id for one in wanted}
+        for pid, (_same, _s, new_id, how) in sorted(claims.items(), key=lambda kv: kv[1][0],
+                                                     reverse=True):
+            if how == "same" and target[new_id] == new_id:
+                self._revive(by_id[pid], live[new_id], links[new_id]["why"])
+                target[new_id] = pid
+                done.append({"new": new_id, "earlier": pid, "how": "same"})
+        for pid, (_same, _s, new_id, how) in claims.items():
+            if how == "continues" or (how == "same" and target[new_id] != pid):
+                into = target[new_id]
+                holder = by_id.get(into) or live[new_id]
+                self._carry_back(by_id[pid], holder, links[new_id]["why"])
+                done.append({"new": new_id, "earlier": pid, "how": "continues"})
+        self.report["relinked"]["done"] = done
+
+    def _revive(self, old: Task, new: Task, why: str) -> None:
+        """The new project IS the earlier one: the earlier id lives again
+        with the new one's tasks; the new row ends, pointing at it."""
+        self.tasks.move_project(new.id, old.id)
+        old.archived_at = ""
+        old.retired_at = ""
+        old.born_of = dict(old.born_of or {}, joined_into="")
+        old.born_of["came_back"] = {"from": new.id, "why": why, "at": task_now()}
+        described = dict(old.described or {})
+        self._totals(old, described, self.tasks.of_project(old.id, limit=1000))
+        new.born_of = dict(new.born_of or {}, joined_into=old.id,
+                           relinked={"to": old.id, "how": "same", "why": why})
+        new.retired_at = task_now()
+        self.kept.save([old, new])
+
+    def _carry_back(self, old: Task, holder: Task, why: str) -> None:
+        """The project carries the earlier one on: its tasks, its earlier
+        names, and - when learning next follows the tasks - its stages and
+        what of it was read."""
+        self.tasks.move_project(old.id, holder.id)
+        old.born_of = dict(old.born_of or {}, joined_into=holder.id,
+                           relinked={"to": holder.id, "how": "continues", "why": why})
+        old.retired_at = old.retired_at or task_now()
+        described = dict(holder.described or {})
+        name = str((old.described or {}).get("title") or "")
+        before = list(described.get("names_before") or [])
+        if name and name not in before and name != described.get("title"):
+            described["names_before"] = (before + [name])[-20:]
+        holder.born_of = dict(holder.born_of or {})
+        holder.born_of["carries_back"] = list(holder.born_of.get("carries_back") or []) + [
+            {"from": old.id, "why": why, "at": task_now()}]
+        self._totals(holder, described, self.tasks.of_project(holder.id, limit=1000))
+        self.kept.save([old, holder])
 
     def _dormant(self) -> None:
-        """A project with no task in the last week goes dormant: kept, not
-        drawn, not continued - new work on the same thing later is new."""
-        line = tp.iso(tp.now() - timedelta(days=tp.WINDOW_DAYS))
+        """A project with no task in the window goes dormant: kept, not
+        continued - new work on the same thing later is new."""
+        line = getattr(self, "_window_from", "")
+        if not line:
+            return
         quiet = [one for one in self._projects_now()
                  if one.last_seen and one.last_seen < line]
         for one in quiet:

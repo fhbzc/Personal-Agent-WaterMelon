@@ -1,9 +1,10 @@
 """Tasks and projects, made per run (section 37, as amended 2026-10-18).
 
 Each run writes the new states down as tasks, given the projects of the
-last week, and groups the week's tasks into projects - a project keeping
-its id while its main body goes on, measured in worked minutes. Everything
-here is made up.
+latest 48 hours of work, and groups those tasks into projects - a project
+carrying on an earlier one that gave it 70% of its time, and keeping its
+id when that one is also 70% of what it was made of (as amended
+2026-10-19). Everything here is made up.
 """
 
 import json
@@ -28,42 +29,199 @@ class _State:
         self.metadata = {"minutes": minutes, "kind": kind, "sources": list(sources)}
 
 
-class InheritingByWorkedMinutesTests(unittest.TestCase):
+class CarryingOnByWorkedMinutesTests(unittest.TestCase):
     def setUp(self) -> None:
         names = iter(f"N{n}" for n in range(9))
         self.make = lambda: next(names)
 
-    def test_the_main_body_goes_on_and_a_small_project_wholly_taken_ends_into_it(self) -> None:
+    def test_the_main_body_keeps_its_id_and_carries_a_small_one_wholly_taken(self) -> None:
         minutes = {"a1": 60, "a2": 60, "a3": 30, "b1": 10}
-        out, happened, heirs = tp.inherit([["a1", "a2", "a3", "b1"]],
+        out, happened, ended = tp.inherit([["a1", "a2", "a3", "b1"]],
                                           {"A": ["a1", "a2"], "B": ["b1"]}, minutes, self.make)
         self.assertEqual(list(out), ["A"])
-        self.assertEqual(happened["A"]["kind"], "continued")
-        self.assertEqual(heirs, {"B": "A"})
+        self.assertEqual(happened["A"], {"kind": "continued", "from": ["A", "B"]})
+        self.assertEqual(ended, {"B": "A"})
 
-    def test_two_substantial_parts_apart_is_a_split(self) -> None:
+    def test_two_carried_on_together_with_neither_most_of_it_is_new_and_carries_both(self) -> None:
+        minutes = {"a1": 50, "b1": 50}
+        out, happened, ended = tp.inherit([["a1", "b1"]], {"A": ["a1"], "B": ["b1"]},
+                                          minutes, self.make)
+        self.assertEqual(list(out), ["N0"])
+        self.assertEqual(happened["N0"], {"kind": "carried", "from": ["A", "B"]})
+        self.assertEqual(ended, {"A": "N0", "B": "N0"})
+
+    def test_one_that_came_apart_is_carried_on_by_none(self) -> None:
         minutes = {"c1": 40, "c2": 40}
-        out, happened, heirs = tp.inherit([["c1"], ["c2"]], {"C": ["c1", "c2"]},
+        out, happened, ended = tp.inherit([["c1"], ["c2"]], {"C": ["c1", "c2"]},
                                           minutes, self.make)
         self.assertNotIn("C", out)
-        self.assertEqual({one["kind"] for one in happened.values()}, {"split"})
-        self.assertIn("C", heirs)
+        self.assertEqual({one["kind"] for one in happened.values()}, {"new"})
+        self.assertEqual(ended, {"C": ""})
 
-    def test_two_substantial_parts_together_is_a_merge(self) -> None:
-        minutes = {"a1": 50, "b1": 50}
-        out, happened, heirs = tp.inherit([["a1", "b1"]], {"A": ["a1"], "B": ["b1"]},
+    def test_less_than_seventy_percent_to_one_is_no_carrying_on(self) -> None:
+        minutes = {"a1": 65, "a2": 35}
+        out, happened, ended = tp.inherit([["a1"], ["a2"]], {"A": ["a1", "a2"]},
                                           minutes, self.make)
-        (pid, what), = happened.items()
-        self.assertEqual(what["kind"], "merged")
-        self.assertEqual(sorted(what["from"]), ["A", "B"])
-        self.assertEqual(set(heirs), {"A", "B"})
+        self.assertNotIn("A", out)
+        self.assertEqual(ended, {"A": ""})
 
     def test_a_small_piece_leaving_changes_nothing(self) -> None:
         minutes = {"a1": 90, "a2": 5}
-        out, happened, _heirs = tp.inherit([["a1"], ["a2"]], {"A": ["a1", "a2"]},
+        out, happened, _ended = tp.inherit([["a1"], ["a2"]], {"A": ["a1", "a2"]},
                                            minutes, self.make)
         self.assertEqual(out["A"], ["a1"])
         self.assertEqual(happened["A"]["kind"], "continued")
+
+    def test_its_new_tasks_do_not_count_in_what_it_was_made_of(self) -> None:
+        minutes = {"a1": 20, "new1": 300, "new2": 200}
+        out, happened, ended = tp.inherit([["a1", "new1", "new2"]], {"A": ["a1"]},
+                                          minutes, self.make)
+        self.assertEqual(list(out), ["A"])
+        self.assertEqual(ended, {})
+
+
+class TheWindowTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.agent = TemporaryAgent()
+        self.tasks = tp.RunTasks(self.agent.app.db)
+
+    def tearDown(self) -> None:
+        self.agent.cleanup()
+
+    def _task(self, tid, hours_ago, minutes, kind="work", project=""):
+        at = datetime(2026, 1, 20, tzinfo=timezone.utc) - timedelta(hours=hours_ago)
+        self.tasks.add([{"id": tid, "kind": kind, "minutes": minutes, "project_id": project,
+                         "starts_at": tp.iso(at - timedelta(minutes=minutes)),
+                         "ends_at": tp.iso(at)}])
+
+    def test_it_is_the_latest_hours_of_work_however_many_days_they_took(self) -> None:
+        # Twenty hours a day, a computer off for a week in between.
+        self._task("old", 24 * 12, 20 * 60)
+        self._task("before", 24 * 9, 20 * 60)
+        self._task("chores", 24 * 9 - 1, 600, kind="routine")
+        self._task("yesterday", 24, 20 * 60)
+        self._task("today", 1, 10 * 60)
+        self.assertEqual([one["id"] for one in self.tasks.window(48)],
+                         ["before", "chores", "yesterday", "today"])
+
+    def test_a_project_carried_on_brings_its_tasks_before_the_window(self) -> None:
+        self._task("early", 24 * 9, 60, project="p-old")
+        self._task("late", 1, 60, project="p-old")
+        self._task("other", 2, 60, project="p-other")
+        self.tasks.move_project("p-old", "p-new")
+        self.assertEqual(sorted(one["id"] for one in self.tasks.of_project("p-new")),
+                         ["early", "late"])
+        self.assertEqual([one["id"] for one in self.tasks.of_project("p-other")], ["other"])
+
+
+class ComingBackTests(unittest.TestCase):
+    """A project named in a run, found among the dormant and ended ones."""
+
+    def setUp(self) -> None:
+        from types import SimpleNamespace
+        from personalized_agent.heartbeat.states.project_round import ProjectRound
+        from personalized_agent.heartbeat.states.tasks import Kept
+
+        self.agent = TemporaryAgent()
+        self.app = self.agent.app
+        self.beat = self.app.state_heartbeat
+        self.calls = []
+        test = self
+
+        class Embed:
+            def embed(self, texts, while_ok=None):
+                return [[1.0, 0.0] if "cookbook" in text.lower() else [0.0, 1.0]
+                        for text in texts]
+
+        class Reply:
+            usage = None
+
+            def __init__(self, text):
+                self.text = text
+
+        class Models:
+            def invoke(self, request, role=None):
+                test.calls.append(request.messages[0]["content"])
+                return Reply(json.dumps(test.answer))
+
+        self.beat.embedder = Embed()
+        self.beat.models = Models()
+        self.kept = Kept(self.app.db)
+        self.tasks = tp.RunTasks(self.app.db)
+        self.round = ProjectRound(self.beat, SimpleNamespace(scope="live"), {})
+        self._project("p-old", "Drafting the family cookbook", "A family cookbook",
+                      archived=True)
+        self._project("p-new", "Writing the cookbook again", "A family cookbook, picked up")
+        self._project("p-film", "Watching films", "Films for leisure", kind="leisure",
+                      archived=True)
+        self.tasks.add([
+            {"id": "t-old", "title": "Draft chapter 3", "kind": "work", "minutes": 60,
+             "project_id": "p-old", "ends_at": "2026-01-02T10:00:00+00:00"},
+            {"id": "t-new", "title": "Edit chapter 4", "kind": "work", "minutes": 90,
+             "project_id": "p-new", "ends_at": "2026-01-20T10:00:00+00:00"},
+            {"id": "t-film", "title": "Watch a film", "kind": "leisure", "minutes": 90,
+             "project_id": "p-film", "ends_at": "2026-01-03T10:00:00+00:00"}])
+        self.round._named = {"p-new"}
+
+    def tearDown(self) -> None:
+        self.agent.cleanup()
+
+    def _project(self, pid, title, line, kind="work", archived=False):
+        from personalized_agent.heartbeat.states.tasks import Task
+        self.kept.save([Task(id=pid, number=len(pid), profile={"scheme": tp.SCHEME},
+                             described={"title": title, "line": line, "kind": kind,
+                                        "in_english": {"title": title, "what_it_is": line}},
+                             archived_at="2026-01-10T00:00:00+00:00" if archived else "")])
+
+    def _row(self, pid):
+        row, = self.kept.by_ids([pid])
+        return row
+
+    def test_the_same_project_come_back_lives_again_under_its_id(self) -> None:
+        self.round._made = {"p-new"}
+        self.answer = {"links": {"N1": {"same_as": "E1", "continues": [], "why": "the cookbook"}}}
+        self.round._relink()
+        self.assertEqual(len(self.calls), 1)
+        self.assertNotIn("Watch a film", self.calls[0], "only look-alikes of its kind are shown")
+        old, new = self._row("p-old"), self._row("p-new")
+        self.assertFalse(old.archived_at)
+        self.assertFalse(old.retired_at)
+        self.assertEqual(sorted(t["id"] for t in self.tasks.of_project("p-old")), ["t-new", "t-old"])
+        self.assertTrue(new.retired_at)
+        self.assertEqual(new.born_of["joined_into"], "p-old")
+        self.assertEqual(old.described["minutes"], 150.0)
+
+    def test_one_that_kept_an_earlier_id_only_carries_the_other_on(self) -> None:
+        self.round._made = set()
+        self.answer = {"links": {"N1": {"same_as": "E1", "continues": [], "why": "the cookbook"}}}
+        self.round._relink()
+        self.assertIn("(already has an earlier self)", self.calls[0])
+        old, new = self._row("p-old"), self._row("p-new")
+        self.assertTrue(old.retired_at)
+        self.assertEqual(old.born_of["joined_into"], "p-new")
+        self.assertEqual(sorted(t["id"] for t in self.tasks.of_project("p-new")), ["t-new", "t-old"])
+        self.assertIn("Drafting the family cookbook", new.described["names_before"])
+        self.assertEqual(new.born_of["carries_back"][0]["why"], "the cookbook")
+
+    def test_nothing_alike_asks_nothing(self) -> None:
+        self._project("p-garden", "Planting the garden", "A vegetable garden")
+        self.round._named = {"p-garden"}
+        self.answer = {"links": {}}
+        self.round._relink()
+        self.assertEqual(self.calls, [])
+
+    def test_an_earlier_project_goes_to_one_new_one_the_same_first(self) -> None:
+        self._project("p-new2", "Cookbook photos", "Photos for the cookbook")
+        self.tasks.add([{"id": "t-new2", "title": "Shoot the dishes", "kind": "work",
+                         "minutes": 30, "project_id": "p-new2",
+                         "ends_at": "2026-01-20T11:00:00+00:00"}])
+        self.round._named = {"p-new", "p-new2"}
+        self.round._made = {"p-new", "p-new2"}
+        self.answer = {"links": {"N1": {"same_as": "", "continues": ["E1"], "why": "part"},
+                                 "N2": {"same_as": "E1", "continues": [], "why": "same"}}}
+        self.round._relink()
+        self.assertEqual(self._row("p-new2").born_of["joined_into"], "p-old")
+        self.assertFalse(self._row("p-new").retired_at)
 
 
 class WritingTasksTests(unittest.TestCase):
@@ -116,8 +274,10 @@ class GroupingTests(unittest.TestCase):
                          "leisure apart from work")
 
 
-def _writer(prompt_seen):
-    """A model that writes every stretch as two tasks by their words."""
+def _writer(prompt_seen, named=None):
+    """A model that writes every stretch as two tasks by their words, and
+    names projects by what their tasks are, numbering each naming."""
+    named = [] if named is None else named
 
     class Reply:
         def __init__(self, text):
@@ -129,9 +289,15 @@ def _writer(prompt_seen):
             prompt = request.messages[0]["content"]
             prompt_seen.append(prompt)
             if '"lines"' in request.system and "STEP 2" not in request.system:
-                labels = re.findall(r"^== (P\d+)", prompt, re.M)
-                return Reply(json.dumps({"lines": {one: {"line": "A made-up project"}
-                                                   for one in labels}}))
+                lines = {}
+                for part in re.split(r"^== ", prompt, flags=re.M)[1:]:
+                    label = part.split()[0]
+                    named.append(label)
+                    title = ("The coastal-erosion grant" if "grant" in part.lower()
+                             else "Cooking videos")
+                    lines[label] = {"title": f"{title} ({len(named)})",
+                                    "line": "A made-up project"}
+                return Reply(json.dumps({"lines": lines}))
             rows = re.findall(r"^(s\d+)\|[^|]*\|[^|]*\|[^|]*\|([^|]*)\|", prompt, re.M)
             grant = [sid for sid, title in rows if "grant" in title.lower()]
             other = [sid for sid, title in rows if "grant" not in title.lower()]
@@ -194,11 +360,13 @@ class ARunTests(unittest.TestCase):
         from personalized_agent.heartbeat.states.tasks import Kept
         projects = [one for one in Kept(self.app.db).live()
                     if one.profile.get("scheme") == "projects"]
-        titles = sorted(one.described["title"] for one in projects)
-        self.assertEqual(titles, ["Revise the coastal-erosion grant", "Watch cooking videos"])
+        titles = sorted(re.sub(r" \(\d+\)$", "", one.described["title"]) for one in projects)
+        self.assertEqual(titles, ["Cooking videos", "The coastal-erosion grant"],
+                         "named by the model, not by a task")
         grant = next(one for one in projects if "grant" in one.described["title"])
         self.assertAlmostEqual(grant.described["minutes"], 48.0)
         self.assertEqual(grant.described["line"], "A made-up project")
+        self.assertNotIn("name_due", grant.described)
 
     def test_the_earlier_tasks_are_kept_as_history_untouched(self) -> None:
         from personalized_agent.heartbeat.states.tasks import Kept, Task
@@ -223,6 +391,34 @@ class ARunTests(unittest.TestCase):
         self.assertEqual(picture["scheme"], "projects")
         grant = next(one for one in picture["projects"] if "grant" in one["title"])
         self.assertEqual(grant["tasks_count"], 2)
+
+    def _grant(self):
+        from personalized_agent.heartbeat.states.tasks import Kept
+        return next(one for one in Kept(self.app.db).live()
+                    if one.profile.get("scheme") == "projects"
+                    and "grant" in one.described["title"])
+
+    def test_it_is_named_again_only_when_it_has_grown_by_a_third_and_half_an_hour(self) -> None:
+        named = []
+        self.beat.models = _writer(self.seen, named)
+        self._state("They edit the grant budget.", 5)
+        self.beat.run_once(trigger="manual_debug")
+        first = self._grant().described["title"]
+        self.assertEqual(self._grant().described["named_minutes"], 12.0)
+        # 12 more minutes: double, but less than half an hour - no call.
+        self._state("They edit the grant text.", 4)
+        self.beat.run_once(trigger="manual_debug")
+        self.assertEqual(len(named), 1)
+        self.assertEqual(self._grant().described["title"], first)
+        # 36 more: named again, the name it had kept.
+        for hours in (3, 2, 1):
+            self._state("They edit the grant figures.", hours)
+        self.beat.run_once(trigger="manual_debug")
+        grant = self._grant()
+        self.assertEqual(len(named), 2)
+        self.assertNotEqual(grant.described["title"], first)
+        self.assertEqual(grant.described["names_before"], [first])
+        self.assertEqual(grant.described["named_minutes"], 60.0)
 
 
 class WhatReadsTheProjectsTests(unittest.TestCase):
@@ -254,7 +450,7 @@ class WhatReadsTheProjectsTests(unittest.TestCase):
     def test_learning_lists_the_project_and_work_can_start_on_it(self) -> None:
         experience = self.beat.experience
         names = {unit["id"]: unit["name"] for unit in experience.units()}
-        self.assertEqual(names.get(self.project.id), "Revise the coastal-erosion grant")
+        self.assertEqual(names.get(self.project.id), "The coastal-erosion grant (1)")
         self.assertIsNotNone(experience.unit(self.project.id))
         self.assertEqual(len((experience.full_unit(self.project.id) or {}).get("tasks") or []), 1)
 
@@ -263,7 +459,7 @@ class WhatReadsTheProjectsTests(unittest.TestCase):
         found = {one["key"]: one for one in recommend.subjects(self.app.db)}
         mine = found.get(f"project:{self.project.id}")
         self.assertIsNotNone(mine, list(found))
-        self.assertTrue(mine["detail"][0].startswith("PROJECT: Revise the coastal-erosion grant"))
+        self.assertTrue(mine["detail"][0].startswith("PROJECT: The coastal-erosion grant (1)"))
         events = [line for line in mine["detail"] if line.startswith("STATE [")]
         # Six events of fifteen minutes: far from a day, so all of them,
         # each with its time.

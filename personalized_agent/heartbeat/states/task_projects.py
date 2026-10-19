@@ -12,17 +12,19 @@ What the state heartbeat makes of the user's states, in two levels:
   PROJECT   the tasks that serve one thing, across runs: grouped by what
             the tasks mean (embeddings of their English text) and by the
             writer's own "this continues project X", with one partition
-            over both. A project keeps its id while its main body goes on;
-            two substantial parts coming together, or one coming apart,
-            make new projects and end the old ones. Kept as rows of
+            over both. A project CARRIES ON an earlier one that gave it 70%
+            of its recent time, and keeps that one's id only when the
+            earlier one is also 70% of what it was made of (`inherit`).
+            Kept as rows of
             `state_tasks`, marked with this scheme, so everything that
             reads the user's work - learning, Work, recommendations, the
             English copies - reads projects.
 
-The writer of a run is shown the projects with a task in the last seven
-days, each as one line saying what it IS - one level above any single
-occasion - and may say a task continues one. That line is written when a
-project is new, merged or split.
+The writer of a run is shown the projects with a task in the latest 48
+hours of work, each as one line saying what it IS - one level above any
+single occasion - and may say a task continues one. A project's name and
+that line are written by the model when it is new, and again when its
+time has grown by 30% (and half an hour) since it was last named.
 
 Measured on a labelled week (scratchpad seq5, 2026-10-19): 24 projects,
 the paper and its talks in one, the big subjects clean. A path layer
@@ -54,16 +56,39 @@ RESOLUTION = 0.5
 #: How much "the writer said it continues this project" counts, beside
 #: meaning.
 HINT_WEIGHT = 1.0
-#: A share of a project's worked minutes that counts as a substantial part
-#: of it: two such parts coming together is a merge, one going elsewhere
-#: a split.
-SUBSTANTIAL = 0.2
-#: The share of either side that makes a group the same project continued.
-INHERITS_AT = 0.5
-#: The projects the writer is shown, and that are grouped again: those
-#: with a task in the last week. Older ones are dormant; new work on the
-#: same thing later is a new project.
+#: CARRYING ON (user, 2026-10-19). A project carries on an earlier one that
+#: gave it this share of its time in the window: the earlier one's history
+#: is its own on the Overview, and what was learned from it goes with it.
+#: It also keeps the earlier one's id when the earlier one is this share
+#: of what it was made of (its tasks grouped before, not the new ones).
+CARRIES_AT = 0.7
+#: THE WINDOW: the latest tasks until this many hours of work (work and
+#: leisure), however many days that takes - days the computer was off do
+#: not count. Its tasks are grouped again each run; the writer is shown
+#: the projects in it; one with no task in it is dormant, and new work on
+#: the same thing later is a new project.
+WINDOW_HOURS = 48.0
+#: The first run reads the last this many days, in stretches.
 WINDOW_DAYS = 7
+#: A project is named again when its time has grown by this share since it
+#: was last named, and by at least this many minutes.
+RENAME_GROWTH = 0.3
+RENAME_LEAST_MINUTES = 30.0
+#: Projects named in one call; more are named in further calls.
+NAMES_PER_CALL = 20
+#: COMING BACK (user, 2026-10-19): a project named or renamed in a run is
+#: compared with the dormant and ended ones by what it is - its English
+#: name and line against each of theirs, every earlier name too - and the
+#: ones from this cosine up, the RELINK_CANDIDATES most alike, are shown
+#: to the model, which says which it carries on and which it is. Measured
+#: on the labelled record (scratchpad relink_*, 2026-10-19): from 0.55 the
+#: subject a project came back to was among its candidates 35 times in 40
+#: by day and 5 in 8 by project, with 0.2 others a project beside it;
+#: shared folders found nothing meaning did not, and are not used.
+RELINK_AT = 0.55
+RELINK_CANDIDATES = 10
+#: Tasks shown with each project in that call.
+RELINK_EXAMPLES = 5
 #: The first run reads the last week in stretches of this many hours, one
 #: after another, so each stretch sees the projects the earlier ones made.
 SLICE_HOURS = 12
@@ -95,12 +120,13 @@ WRITER_SYSTEM = """You are the task writer of a personal activity record. You re
 user did in one stretch of time - STATES, a few minutes of activity each - and you write \
 down the distinct things they did: their TASKS.
 
-STEP 1 - PROJECT LINES. When PROJECTS NEEDING A LINE are given (new, merged or split), \
-write for each ONE line saying WHAT THE PROJECT IS: the underlying thing its tasks serve, \
-one level above any single occasion - e.g. "A grant proposal on coastal erosion and the \
-meetings about it", "Restoring an old motorcycle", "Watching cooking videos for leisure". \
-Not a meeting, a person or a date unless the whole project is that one occasion. At most \
-20 words.
+STEP 1 - PROJECT NAMES. When PROJECTS NEEDING A NAME are given (new, carrying on others, \
+or grown since they were named), write for each a "title" - a short name for the whole \
+project, at most 10 words - and ONE "line" saying WHAT THE PROJECT IS: the underlying \
+thing its tasks serve, one level above any single occasion - e.g. "A grant proposal on \
+coastal erosion and the meetings about it", "Restoring an old motorcycle", "Watching \
+cooking videos for leisure". Not a meeting, a person or a date unless the whole project \
+is that one occasion. At most 20 words.
 
 STEP 2 - TASKS. Group the stretch's states into TASKS - the distinct things the user did. \
 A task is one piece of work or one activity: building one project, preparing one talk, one \
@@ -122,20 +148,47 @@ ids), and "title_display" and "summary_display": the same title and summary in t
 display language.
 
 Answer with JSON only:
-{"lines": {"<project id>": {"line": "...", "line_display": "..."}},
+{"lines": {"<project id>": {"title": "...", "title_display": "...", "line": "...",
+                            "line_display": "..."}},
  "tasks": [{"title": "...", "summary": "...", "title_display": "...",
             "summary_display": "...", "kind": "work", "continues": "",
             "states": ["s1", "s2"]}]}"""
 
-#: Only the lines, for the projects the last stretch of a run made.
+#: Only the names, for the projects still waiting for one when a run's
+#: stretches are written - all of them in one call (NAMES_PER_CALL a call).
 LINES_SYSTEM = """You name the projects of a personal activity record. For each project \
-given, with its tasks, write ONE line saying WHAT THE PROJECT IS: the underlying thing its \
-tasks serve, one level above any single occasion - e.g. "A grant proposal on coastal erosion \
-and the meetings about it", "Restoring an old motorcycle", "Watching cooking videos for \
-leisure". Not a meeting, a person or a date unless the whole project is that one occasion. \
-At most 20 words. Also the same line in the user's display language.
+given, with its tasks, write a "title" - a short name for the whole project, at most 10 \
+words - and ONE "line" saying WHAT THE PROJECT IS: the underlying thing its tasks serve, \
+one level above any single occasion - e.g. "A grant proposal on coastal erosion and the \
+meetings about it", "Restoring an old motorcycle", "Watching cooking videos for leisure". \
+Not a meeting, a person or a date unless the whole project is that one occasion. At most \
+20 words. Also both in the user's display language.
 
-Answer with JSON only: {"lines": {"<project id>": {"line": "...", "line_display": "..."}}}"""
+Answer with JSON only: {"lines": {"<project id>": {"title": "...", "title_display": "...", \
+"line": "...", "line_display": "..."}}}"""
+
+
+#: The made-up examples are on purpose (see WRITER_SYSTEM).
+RELINK_SYSTEM = """You keep the projects of a personal activity record together over time. \
+Each NEW project below was just found in the user's latest work; with it are EARLIER \
+projects that had stopped - dormant or ended - and look like it. Each comes with its name, \
+what it is, and some of its tasks.
+
+For each new project say:
+- "same_as": the ONE earlier project it IS - the same piece of work resumed: most of the new \
+project's content is that project's, and most of that project's is the new one's. At most \
+one; "" when none. A new project marked "(already has an earlier self)" cannot be the same \
+as another: give it "".
+- "continues": the earlier projects it CARRIES ON - most of that earlier project's work is \
+taken up in the new one, though the new one is more than it (e.g. "Draft chapter 3 of the \
+cookbook" carried on by "Writing and publishing a family cookbook"). Several or none.
+An earlier project goes to at most one new project. Sharing only a topic, a field, a tool \
+or a website is neither. When unsure, say neither.
+"why": one short sentence.
+
+Answer with JSON only:
+{"links": {"<new id>": {"same_as": "<earlier id or empty>", "continues": ["<earlier id>"], \
+"why": "..."}}}"""
 
 
 # -- time and places ---------------------------------------------------------------
@@ -293,6 +346,32 @@ class RunTasks:
                           "ORDER BY COALESCE(ends_at, written_at)",
                           (self.scope, iso(when)))
 
+    def window(self, hours: float = WINDOW_HOURS) -> List[Dict[str, Any]]:
+        """THE WINDOW, oldest first: the latest tasks until `hours` of work
+        and leisure, and the routine ones among them."""
+        latest = self._read("SELECT * FROM state_run_tasks WHERE scope = ? "
+                            "ORDER BY COALESCE(ends_at, written_at) DESC LIMIT 5000",
+                            (self.scope,))
+        total, start = 0.0, ""
+        for task in latest:
+            if total >= hours * 60:
+                break
+            start = str(task.get("ends_at") or task.get("written_at") or "")
+            if task.get("kind") != "routine":
+                total += task["minutes"]
+        return [task for task in reversed(latest)
+                if str(task.get("ends_at") or task.get("written_at") or "") >= start]
+
+    def move_project(self, project_from: str, project_to: str) -> None:
+        """Every task of a project carried on, the ones before the window
+        too, into the project that carries it on."""
+        try:
+            self.db.execute("UPDATE state_run_tasks SET project_id = ? "
+                            "WHERE project_id = ? AND scope = ?",
+                            (project_to, project_from, self.scope))
+        except Exception:  # pragma: no cover
+            log.debug("could not move the tasks of %s", project_from, exc_info=True)
+
     def of_project(self, project_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         return self._read("SELECT * FROM state_run_tasks WHERE scope = ? AND "
                           "project_id = ? ORDER BY COALESCE(ends_at, written_at) DESC "
@@ -351,7 +430,7 @@ def project_list_text(rows: Sequence[Dict[str, Any]], needing: Dict[str, str],
                       short_of: Dict[str, str]) -> str:
     if not rows:
         return "THE USER'S PROJECTS: none yet."
-    lines = ["THE USER'S PROJECTS (a task in the last 7 days), newest first - "
+    lines = ["THE USER'S PROJECTS (a task in the latest 48 hours of work), newest first - "
              "id | what it is | what was last done | last active"]
     for row in rows:
         label = short_of[row["id"]]
@@ -367,12 +446,12 @@ def needing_text(needing: Dict[str, str], tasks_of: Dict[str, List[Dict[str, Any
                  lines: Dict[str, str], short_of: Dict[str, str]) -> str:
     if not needing:
         return ""
-    out = ["PROJECTS NEEDING A LINE (with their tasks, newest first):"]
+    out = ["PROJECTS NEEDING A NAME (with their tasks, newest first):"]
     for project_id, why in needing.items():
         out.append(f"== {short_of.get(project_id, project_id)} ({why})")
         before = lines.get(project_id)
         if before:
-            out.append(f"   line before: {before}")
+            out.append(f"   named before: {before}")
         for task in sorted(tasks_of.get(project_id, []),
                            key=lambda one: str(one.get("ends_at") or ""),
                            reverse=True)[:8]:
@@ -426,6 +505,47 @@ def read_tasks(answer: Dict[str, Any], states: Sequence[Any],
     return out
 
 
+def relink_text(new: Sequence[Dict[str, Any]], earlier: Sequence[Dict[str, Any]]) -> str:
+    """The new projects and their earlier look-alikes, each with its tasks.
+    `new`: id, label, title, line, tasks, kept (it has an earlier self),
+    candidates (labels, most alike first); `earlier`: id, label, title,
+    line, before (earlier names), last_active, tasks."""
+    def tasks_of(one: Dict[str, Any]) -> List[str]:
+        return [f"   - {task.get('title', '')} - {str(task.get('summary', ''))[:160]}"
+                for task in one.get("tasks") or []]
+
+    out = ["NEW PROJECTS:"]
+    for one in new:
+        out.append(f"== {one['label']}{' (already has an earlier self)' if one.get('kept') else ''}"
+                   f" | {one.get('title', '')} | {one.get('line', '')}")
+        out.extend(tasks_of(one))
+        out.append(f"   look-alikes: {', '.join(one.get('candidates') or [])}")
+    out.append("\nEARLIER PROJECTS:")
+    for one in earlier:
+        before = f" | earlier called: {'; '.join(one['before'])}" if one.get("before") else ""
+        out.append(f"== {one['label']} | {one.get('title', '')} | {one.get('line', '')}{before}"
+                   f" | last active {str(one.get('last_active') or '')[:10]}")
+        out.extend(tasks_of(one))
+    return "\n".join(out)
+
+
+def read_links(answer: Dict[str, Any], new_of_label: Dict[str, str],
+               earlier_of_label: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
+    """The model's links, held to the earlier projects it was shown."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for label, said in (answer.get("links") or {}).items():
+        new_id = new_of_label.get(str(label).strip())
+        if not new_id or not isinstance(said, dict):
+            continue
+        same = earlier_of_label.get(str(said.get("same_as") or "").strip(), "")
+        continues = [earlier_of_label[str(one).strip()] for one in said.get("continues") or []
+                     if str(one).strip() in earlier_of_label]
+        out[new_id] = {"same_as": same,
+                       "continues": [one for one in dict.fromkeys(continues) if one != same],
+                       "why": str(said.get("why") or "").strip()[:300]}
+    return out
+
+
 def read_lines(answer: Dict[str, Any], project_of_label: Dict[str, str]
                ) -> Dict[str, Dict[str, str]]:
     out: Dict[str, Dict[str, str]] = {}
@@ -438,7 +558,9 @@ def read_lines(answer: Dict[str, Any], project_of_label: Dict[str, str]
         if not isinstance(said, dict) or not str(said.get("line") or "").strip():
             continue
         out[project_id] = {"line": str(said.get("line")).strip()[:300],
-                           "line_display": str(said.get("line_display") or "").strip()[:300]}
+                           "line_display": str(said.get("line_display") or "").strip()[:300],
+                           "title": str(said.get("title") or "").strip()[:200],
+                           "title_display": str(said.get("title_display") or "").strip()[:200]}
     return out
 
 
@@ -551,96 +673,59 @@ def group(tasks: Sequence[Dict[str, Any]], vectors: Dict[str, List[float]],
 def inherit(groups: Sequence[Sequence[str]], previous: Dict[str, Sequence[str]],
             minutes: Dict[str, float], make_id: Callable[[], str]
             ) -> Tuple[Dict[str, List[str]], Dict[str, Dict[str, Any]], Dict[str, str]]:
-    """Which project each group is, by the WORKED MINUTES it shares with
-    the projects of the last grouping (only over tasks in both).
+    """Which project each group is, by WORKED MINUTES, over the tasks of
+    the window only (user, 2026-10-19):
 
-    - a project that came apart into two or more substantial parts (each
-      at least SUBSTANTIAL of its minutes) is SPLIT: it ends, and each part
-      is a new project born of it;
-    - a group made of two or more substantial parts of different projects
-      is a MERGE: they end, and it is a new project born of them;
-    - otherwise a group that holds the main body of one project (half of
-      either side) IS that project, continued - small pieces going or
-      coming do not change what it is;
-    - anything else is new.
+    - an earlier project that gave CARRIES_AT of its minutes in the window
+      to one group is CARRIED ON by it - its history is the group's on the
+      Overview, and what was learned from it goes with it;
+    - the group keeps the id of the one it carries on that is CARRIES_AT
+      of its earlier-grouped minutes (its new tasks are not counted):
+      "continued". Otherwise it is new - "carried" when it carries others
+      on, "new" when it carries none;
+    - an earlier project carried on by none ends: its history stays its
+      own, and so does what was learned from it. A split is just that.
 
     Returns (project id -> its tasks, project id -> what happened, each
-    ended project -> the project that took most of it, "" if none).
+    ended project -> the project that carries it on, "" if none).
     """
     old_of = {task: pid for pid, tasks in previous.items() for task in tasks}
-    weight = lambda tasks: sum(minutes.get(t, 0.0) or 0.0 for t in tasks) or 0.0  # noqa: E731
-    old_minutes = {pid: weight([t for t in tasks if t in minutes])
-                   for pid, tasks in previous.items()}
-    # Each old project's minutes, by the group it went to.
+    share = lambda part, whole: part / whole if whole > 0 else 0.0  # noqa: E731
+    old_minutes: Dict[str, float] = defaultdict(float)
+    for task, pid in old_of.items():
+        old_minutes[pid] += minutes.get(task, 0.0) or 0.0
     went: Dict[str, Dict[int, float]] = defaultdict(lambda: defaultdict(float))
     came: Dict[int, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    known: Dict[int, float] = defaultdict(float)
     for g, tasks in enumerate(groups):
         for task in tasks:
             pid = old_of.get(task)
             if pid:
-                share = minutes.get(task, 0.0) or 0.0
-                went[pid][g] += share
-                came[g][pid] += share
-
-    def part(numerator: float, whole: float) -> float:
-        return numerator / whole if whole > 0 else 0.0
-
-    split = {pid for pid, heirs in went.items()
-             if sum(1 for m in heirs.values()
-                    if part(m, old_minutes.get(pid, 0.0)) >= SUBSTANTIAL) >= 2}
+                m = minutes.get(task, 0.0) or 0.0
+                went[pid][g] += m
+                came[g][pid] += m
+                known[g] += m
+    carried_by: Dict[str, int] = {}
+    for pid, where in went.items():
+        g, m = max(where.items(), key=lambda pair: (pair[1], -pair[0]))
+        if share(m, old_minutes[pid]) >= CARRIES_AT:
+            carried_by[pid] = g
     out: Dict[str, List[str]] = {}
     happened: Dict[str, Dict[str, Any]] = {}
-    taken: set = set()
-    ended: List[str] = sorted(split)
-    order = sorted(range(len(groups)), key=lambda g: -weight(groups[g]))
-    for g in order:
-        tasks = list(groups[g])
-        mine = weight(tasks)
-        known = weight([t for t in tasks if t in old_of])
-        # A part is substantial for THIS group: a small project wholly
-        # taken into a big one is the big one continued, not a merge.
-        parts = {pid: m for pid, m in came[g].items()
-                 if part(m, known or mine) >= SUBSTANTIAL}
-        whole_parts = [pid for pid in parts if pid not in split]
-        if len(parts) >= 2:
-            pid = make_id()
-            happened[pid] = {"kind": "merged", "from": sorted(parts)}
-            for one in whole_parts:
-                if one not in ended:
-                    ended.append(one)
-                taken.add(one)
-        else:
-            main = None
-            for pid, m in sorted(came[g].items(), key=lambda pair: -pair[1]):
-                if pid in split or pid in taken:
-                    continue
-                if (part(m, old_minutes.get(pid, 0.0)) >= INHERITS_AT
-                        or part(m, known or mine) >= INHERITS_AT):
-                    main = pid
-                    break
-            if main:
-                pid = main
-                taken.add(main)
-                happened[pid] = {"kind": "continued", "from": [main]}
-            else:
-                pid = make_id()
-                parents = sorted(one for one in parts if one in split)
-                happened[pid] = ({"kind": "split", "from": parents} if parents
-                                 else {"kind": "new", "from": []})
-        out[pid] = tasks
-    # Any old project nobody took, that still has tasks in the window, has
-    # gone into others in pieces too small to count as a part: it ends.
-    for pid in previous:
-        if pid not in taken and pid not in ended and went.get(pid):
-            ended.append(pid)
-    group_pid = {g: pid for pid, tasks in out.items()
-                 for g, one in enumerate(groups) if list(one) == tasks}
-    heirs: Dict[str, str] = {}
-    for pid in ended:
-        moved = went.get(pid) or {}
-        best = max(moved.items(), key=lambda pair: pair[1])[0] if moved else None
-        heirs[pid] = group_pid.get(best, "") if best is not None else ""
-    return out, happened, heirs
+    group_pid: Dict[int, str] = {}
+    for g, tasks in enumerate(groups):
+        carried = sorted((pid for pid, h in carried_by.items() if h == g),
+                         key=lambda pid: (-came[g][pid], pid))
+        same = next((pid for pid in carried
+                     if share(came[g][pid], known[g]) >= CARRIES_AT), None)
+        pid = same or make_id()
+        happened[pid] = {"kind": "continued" if same else ("carried" if carried else "new"),
+                         "from": carried}
+        out[pid] = list(tasks)
+        group_pid[g] = pid
+    ended = {pid: (group_pid[carried_by[pid]] if pid in carried_by else "")
+             for pid in previous if pid not in out}
+    return out, happened, ended
 
 
 def typical(tasks: Sequence[Dict[str, Any]], vectors: Dict[str, List[float]]
@@ -698,4 +783,5 @@ def _loads(text: Any, fallback: Any) -> Any:
 
 __all__ = ["SCHEME", "RunTasks", "WRITER_SYSTEM", "LINES_SYSTEM", "group", "inherit",
            "typical", "worked_minutes", "read_tasks", "read_lines", "louvain",
-           "state_places", "directories", "WINDOW_DAYS", "SLICE_HOURS"]
+           "state_places", "directories", "WINDOW_DAYS", "WINDOW_HOURS", "SLICE_HOURS",
+           "RELINK_SYSTEM", "relink_text", "read_links"]
