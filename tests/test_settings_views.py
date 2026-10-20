@@ -444,7 +444,8 @@ class SettingsViewsTests(unittest.TestCase):
         self.assertNotEqual(heat["Calendar management"][1], heat["Task organisation"][1])
         self.assertIn("deep red for the most", out["text"])
         for words in ("Calendar management",
-                      "If turned off:", "PASSIVE", "ACTIVELY", "turn it off too",
+                      "If turned off:", "on the web is Newspaper's", "contacts looked up on the web",
+                      "turn it off too",
                       "last 72 hours: about $0.05 · 12,000 tokens · 40% of the "
                       "functions · 30% of everything", "What you started yourself",
                       "The agent heartbeat, before its steps were counted apart",
