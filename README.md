@@ -59,9 +59,10 @@ and goes only to the model you choose.
 applications, documents and web pages you work with, only the sources you
 leave switched on. Every 15 minutes it writes down, in a sentence or two,
 what you were doing; every 12 hours it writes those notes up as the tasks
-you did, and groups the week's tasks into the projects they serve. What it learns is stored only on your computer, as
-plain files you can open, and sent only to the model you choose
-([Your privacy](#your-privacy)).
+you did, groups them into the projects they serve, and follows each project
+over time, under a name the model gives it. What it learns is stored only on
+your computer, as plain files you can open, and sent only to the model you
+choose ([Your privacy](#your-privacy)).
 
 **An Overview of your work.** Your projects as bars over time, with how
 long you worked on each, and a **To do** list you keep yourself, each with a
@@ -147,8 +148,8 @@ current projects and interests, chosen to tell you something you do not already
 know. *More like this* and *Not interested* tune it.
 
 <p align="center">
-  <img src="docs/images/recommendation.png" width="100%" alt="Newspaper: a newspaper front page with a lead story, In brief, and pages per topic"><br>
-  <sub>Today's issue: the front page, a page for each topic, why each story is there and what in it is new to you.</sub>
+  <img src="docs/images/recommendation.png" width="100%" alt="Newspaper: a newspaper front page with a lead story, In brief, and a page for each project"><br>
+  <sub>Today's issue: the front page, a page for each project, how each story ties to your work and what in it is new to you.</sub>
 </p>
 
 **Chat.** Ask it about your work, or ask it to do something. Files it makes
@@ -356,7 +357,7 @@ program then offers you the releases that come after it.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
-| [v0.2.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) | 2026-10-18 | pre-release | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) |
+| [v0.2.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) | 2026-10-19 | pre-release | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) |
 | [v0.1.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.1.0) | 2026-10-16 | release (the latest) | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.1.0/PersonalizedAgent-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.1.0/PersonalizedAgent-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.1.0/PersonalizedAgent-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.1.0) |
 
 Every release also has **`SHA256SUMS.txt`**, the checksum of each file; see
@@ -590,7 +591,7 @@ has it.
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
 
-### [v0.2.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) (2026-10-18, a [pre-release](#pre-releases))
+### [v0.2.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) (2026-10-19, a [pre-release](#pre-releases))
 
 - **Tasks and projects.** Each time the agent looks at what you have done
   (every 12 hours, or when you press Update tasks now), it writes down the

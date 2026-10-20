@@ -31,17 +31,18 @@ MODULES: List[Dict[str, str]] = [
      "off": "The agent puts nothing on your calendar and closes nothing; reminders you "
             "added still ring. What waits for a time is no longer looked after."},
     {"key": "connections", "setting": "module_connections_enabled", "name": "Connections",
-     "what": "PASSIVE: the agent heartbeat finds the people in what is on your screen and "
-             "adds or updates them in your contacts; the connection lessons learned. (Looking "
-             "your contacts up on the web is ACTIVE, and Newspaper's.)",
+     "what": "The agent heartbeat finds the people in what is on your screen and adds or "
+             "updates them in your contacts; the connection lessons learned. (Looking your "
+             "contacts up on the web is Newspaper's.)",
      "off": "Contacts are no longer added or updated from what is on your screen. Your "
             "contacts are still looked up on the web while Newspaper is on - "
             "turn it off too to stop that."},
     {"key": "recommend", "setting": "module_recommend_enabled",
      "name": "Newspaper",
-     "what": "What you read kept as a log, and an issue at the times you chose: your topics "
-             "searched on the web, and - ACTIVELY - your contacts looked up on the web, their "
-             "public profiles filled in and their news found.",
+     "what": "What you read kept as a log, and an issue at the times you chose: a page for "
+             "each project you are working on and for what you have been reading, each "
+             "searched on the web; and your contacts looked up on the web, their public "
+             "profiles filled in and their news found.",
      "off": "No issue is made and nothing read is kept; your contacts are no longer looked "
             "up on the web (from your screen they still are, while Connections is on). "
             "\"Make an issue now\" still works."},

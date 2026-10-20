@@ -66,8 +66,9 @@ class WhichModuleTests(unittest.TestCase):
         for one in modules.MODULES:
             self.assertTrue(one["what"] and one["off"], one["key"])
         # Passive and active looking after contacts, said apart.
-        self.assertIn("PASSIVE", modules.BY_KEY["connections"]["what"])
-        self.assertIn("ACTIVELY", modules.BY_KEY["recommend"]["what"])
+        self.assertIn("on your screen", modules.BY_KEY["connections"]["what"])
+        self.assertIn("on the web is Newspaper's", modules.BY_KEY["connections"]["what"])
+        self.assertIn("contacts looked up on the web", modules.BY_KEY["recommend"]["what"])
         self.assertIn("turn it off too", modules.BY_KEY["connections"]["off"])
 
 
