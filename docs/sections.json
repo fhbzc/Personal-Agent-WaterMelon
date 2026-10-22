@@ -10426,6 +10426,7 @@
     "amended": true
    }
   ],
+  "amendment_note": "2026-10-20: a time is kept on a clock by its zone's name and its moment worked out by code, daylight saving included; 2026-10-21: a zone the model writes must be a place's name, and the chat gives its times the same way.",
   "amended": true
  },
  {
@@ -15680,6 +15681,7 @@
     "amended": true
    }
   ],
+  "amendment_note": "2026-10-21: the people step is told that different names or organisations are another person, and may split an entry; the Connection debugger shows every change with what the model was asked and answered.",
   "amended": true
  },
  {

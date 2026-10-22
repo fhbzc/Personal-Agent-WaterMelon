@@ -56,7 +56,8 @@ class Asker:
             response = self.models.invoke(
                 ModelRequest(messages=[{"role": "user", "content": content}],
                              system=system, max_tokens=max_tokens,
-                             task=TASKS.get(kind, "learning_" + kind),
+                             # Said where it is read off the code: one of TASKS.
+                             task=f"learning_{kind}",
                              language=in_english(what or "everything you write"),
                              metadata={"kind": "learning " + kind}),
                 role="heartbeat")

@@ -200,7 +200,7 @@ def _scenario(app: Any, test_id: str, debug: Callable[[str, Any], None],
         checks = [
             _check("the system prompt names the agent, the time and the workspace",
                    "personal desktop agent" in request.system
-                   and "Current UTC time:" in request.system
+                   and "on the user's clock" in request.system
                    and str(app.paths.workspace_dir) in request.system, request.system[:800]),
             _check("a new conversation sends only the message itself",
                    request.messages == [{"role": "user", "content": "What can you do?"}],

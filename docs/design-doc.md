@@ -5808,6 +5808,7 @@ Tasks scheduled before `notify` existed do not carry it, and must not simply fal
 
 # 52.3 Repeating Tasks
 <!-- number: 52.3 | label: 52.3 | id: s52-3 | page: 101 -->
+<!-- note: 2026-10-20: a time is kept on a clock by its zone's name and its moment worked out by code, daylight saving included; 2026-10-21: a zone the model writes must be a place's name, and the chat gives its times the same way. -->
 
 A task repeats on an interval and stops on a limit. The rule lives in one field, `recurrence`, and is empty for a task that runs once - which is what every task was before this.
 
@@ -8823,6 +8824,7 @@ The lessons package (`heartbeat/lessons_package.py`) does not carry the engine's
 
 # 125. Connections
 <!-- number: 125 | label: 125. | id: s125 | page: 148 -->
+<!-- note: 2026-10-21: the people step is told that different names or organisations are another person, and may split an entry; the Connection debugger shows every change with what the model was asked and answered. -->
 
 `heartbeat/connections/` keeps the user's contacts: people, their accounts and public profiles, and their dated activity (`store.py`).
 

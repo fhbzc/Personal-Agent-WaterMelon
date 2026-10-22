@@ -20869,8 +20869,7 @@ async function applyDebuggerAvailability() {
   document.querySelector("#chatdebug")?.remove();
   // EVERY DEBUGGER: an installed build is for the user, not for whoever
   // develops the agent - run from Python, they are all there.
-  ["naturedebug", "connectiondebug", "readingdebug", "languagedebug", "resourcedebug",
-   "lessons"].forEach((name) => {
+  ["naturedebug", "connectiondebug", "readingdebug", "languagedebug", "resourcedebug", "lessons"].forEach((name) => {
     document.querySelector(`[data-tab="${name}"]`)?.remove();
     document.querySelector(`#${name}`)?.remove();
   });
