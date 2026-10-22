@@ -709,13 +709,6 @@ everything it changed is written down.
   before and after every search and page. Codex's own search reads only
   OpenAI's saved copy of the web. The Connections round is held to the same
   checks.
-- **Lesson cards.** Before the reviewer writes what each part of your work
-  must meet, it first asks itself what it needs to know about you: your
-  preferences, your naming habits, the tools you use, the formats you must
-  follow. It answers from your own files and past work, with no web at all.
-  Your own work keeps each answer, with what it rests on, and later work is
-  shown it. A question it can only answer from the web is answered for that
-  work and never kept. You can see the cards in the Lessons debugger.
 - **Full reviews when they are due, and versions only at checkpoints.** The
   reviewer decides when to check everything since the last checkpoint: when
   a part is finished, when a core promise first holds, after a large change.
@@ -769,21 +762,9 @@ everything it changed is written down.
   program: a title, a description, the folders and files - then Create shows
   the plan to approve. Change the keys, or turn the button
   beside selected text off, in Settings → Shortcuts.
-- **Work learning updates itself** each day at the times you choose (03:00
-  unless you change it): every project whose tasks or folders changed is
-  learned again. Untick a project to leave it to its button. While it runs,
-  Start and Update wait; if the app closes, it carries on at the next start.
-- **Remove a project** from Work (top right of its row, after you confirm):
-  what was learned from it is deleted and no longer used in work. What it
-  showed about how you work stays.
-- **Work gets less, and closer, of your experience** - only past steps that
-  really share the step's words, and those from projects like this one first:
-  about a third of what it was given before.
 - **One pool for everything that runs side by side** - runs of your work,
-  projects being learned, the grouping of your tasks, Newspaper - shared out
-  evenly first, then by what matters most, within what your computer has
-  free. Automatic learning runs several projects at once, and groups the new
-  natures it found when it is done.
+  the grouping of your tasks, Newspaper - shared out evenly first, then by
+  what matters most, within what your computer has free.
 - **Your own programs come first.** Everything the app starts runs a step
   below them: with nothing else wanting the processors it still has them all.
   Anything left running after the app was ended is ended at its next start.
