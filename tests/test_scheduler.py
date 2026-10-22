@@ -315,8 +315,10 @@ class RecurrenceRuleTests(unittest.TestCase):
     def test_an_interval_can_be_said_in_words(self) -> None:
         self.assertEqual(self._parse({"every": 45, "unit": "minutes"}),
                          {"every_seconds": 2700})
+        # One of whole days keeps a clock: this computer's, by name.
+        from personalized_agent.scheduler.core.zones import here
         self.assertEqual(self._parse({"every": 2, "unit": "weeks"}),
-                         {"every_seconds": 1209600})
+                         {"every_seconds": 1209600, "zone": here()})
 
     def test_a_count_limits_it(self) -> None:
         rule = self._parse({"every": 1, "unit": "days", "count": 8})

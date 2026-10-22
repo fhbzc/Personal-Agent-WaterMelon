@@ -139,6 +139,23 @@ CREATE TABLE IF NOT EXISTS connection_actions (
     updated_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_connection_actions_at ON connection_actions(by, at);
+-- WHAT A MODEL WAS ASKED AND ANSWERED when the agent changed the contacts -
+-- the agent heartbeat's people step, a Newspaper round's web look-up - for
+-- the Connection debugger: the start of each here, the whole of it kept in a
+-- file of its own (`archive`).
+CREATE TABLE IF NOT EXISTS connection_calls (
+    id          TEXT PRIMARY KEY,
+    at          TEXT NOT NULL,
+    source      TEXT NOT NULL DEFAULT '',
+    span        TEXT NOT NULL DEFAULT '',
+    prompt_head TEXT NOT NULL DEFAULT '',
+    answer_head TEXT NOT NULL DEFAULT '',
+    prompt_chars INTEGER NOT NULL DEFAULT 0,
+    answer_chars INTEGER NOT NULL DEFAULT 0,
+    result      TEXT NOT NULL DEFAULT '[]',
+    archive     TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_connection_calls_at ON connection_calls(at);
 CREATE TABLE IF NOT EXISTS connection_sources (
     id          TEXT PRIMARY KEY,
     url         TEXT NOT NULL,
@@ -240,6 +257,8 @@ class ConnectionsStore:
         #: protected state; None: no pictures (a store in a test, say).
         self.folder = Path(folder) if folder else None
         self._lock = threading.RLock()
+        #: The model call the changes made now come from, on this thread.
+        self._calling = threading.local()
         self.ensure()
 
     #: Columns added since the tables were first made, with their default.
@@ -247,7 +266,9 @@ class ConnectionsStore:
                                    "relationships", "affiliations", "professions",
                                    "locations"),
              "connection_accounts": ("found_at", "created_at"),
-             "connection_activity": ("found_at", "created_at")}
+             "connection_activity": ("found_at", "created_at"),
+             # Which model call a change came from (connection_calls).
+             "connection_actions": ("call_id",)}
     #: ... and those that are numbers.
     ADDED_NUMBERS = {"connection_people": ("is_self",)}
 
@@ -838,11 +859,12 @@ class ConnectionsStore:
         at = now()
         self.db.execute(
             "INSERT INTO connection_actions (id, at, by, action, person_id, person_name, "
-            "before, after, reason, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "before, after, reason, updated_at, call_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (ident, at, by, action, (person or {}).get("id", ""),
              (person or {}).get("name", "") or after.get("name", "") or before.get("name", ""),
              json.dumps(before, ensure_ascii=False, default=str),
-             json.dumps(after, ensure_ascii=False, default=str), _text(reason, 1000), at))
+             json.dumps(after, ensure_ascii=False, default=str), _text(reason, 1000), at,
+             str(getattr(self._calling, "id", "") or "")))
         if by == "user" and self.lessons is not None and not (person or {}).get("is_self"):
             try:
                 one = {"id": ident, "action": action, "at": at, "reason": _text(reason, 1000),
@@ -1124,6 +1146,136 @@ class ConnectionsStore:
             self._record(by, "add back", restored, {"deleted_at": person["deleted_at"]},
                          self._said(restored), reason)
             return restored
+
+    # -- what a model was asked, for the Connection debugger ----------------------
+    #: How much of a call's prompt and answer is kept beside it; the whole
+    #: is in its archive file.
+    HEAD_CHARS = 6000
+
+    def begin_call(self, source: str, prompt: str, answer: str, window: str = "") -> str:
+        """A model call whose answer is about to change the contacts: kept -
+        its start here, the whole of it in a file - and the changes made on
+        this thread from now until `end_call` marked as its."""
+        ident = new_id("ccall")
+        at = now()
+        archive = ""
+        if self.folder is not None:
+            try:
+                import gzip
+                where = self.folder / "debug" / at[:10]
+                where.mkdir(parents=True, exist_ok=True)
+                path = where / f"{ident}.json.gz"
+                with gzip.open(path, "wt", encoding="utf-8") as handle:
+                    json.dump({"id": ident, "at": at, "source": source, "span": window,
+                               "prompt": prompt, "answer": answer}, handle, ensure_ascii=False)
+                archive = str(path)
+            except OSError:                       # pragma: no cover - the head is kept
+                log.warning("could not keep a connection call whole", exc_info=True)
+        self.db.execute(
+            "INSERT INTO connection_calls (id, at, source, span, prompt_head, answer_head, "
+            "prompt_chars, answer_chars, archive) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (ident, at, source, _text(window, 200), str(prompt or "")[:self.HEAD_CHARS],
+             str(answer or "")[:self.HEAD_CHARS], len(prompt or ""), len(answer or ""), archive))
+        self._calling.id = ident
+        return ident
+
+    def end_call(self, ident: str, result: Any = None) -> None:
+        self._calling.id = ""
+        if ident:
+            self.db.execute("UPDATE connection_calls SET result = ? WHERE id = ?",
+                            (json.dumps(result or [], ensure_ascii=False, default=str)[:20000],
+                             ident))
+
+    def changes(self, most: int = 200, person_id: str = "") -> List[Dict[str, Any]]:
+        """EVERY CHANGE to the contacts, newest first - by the user and by
+        the agent - each with the model call it came from, when it did."""
+        where, args = ("WHERE person_id = ?", [person_id]) if person_id else ("", [])
+        rows = [self._action(row) for row in self.db.query(
+            f"SELECT * FROM connection_actions {where} ORDER BY at DESC, rowid DESC LIMIT ?",
+            (*args, int(most)))]
+        calls = {}
+        for one in rows:
+            ident = str(one.get("call_id") or "")
+            if ident and ident not in calls:
+                row = self.db.query_one("SELECT * FROM connection_calls WHERE id = ?", (ident,))
+                calls[ident] = dict(row) if row else None
+            one["call"] = calls.get(ident)
+        return rows
+
+    def call_whole(self, ident: str) -> Optional[Dict[str, Any]]:
+        """A call as it was kept: its whole prompt and answer."""
+        row = self.db.query_one("SELECT * FROM connection_calls WHERE id = ?", (ident,))
+        if row is None:
+            return None
+        out = dict(row)
+        out["result"] = _loads(out.get("result"), [])
+        if out.get("archive"):
+            try:
+                import gzip
+                with gzip.open(out["archive"], "rt", encoding="utf-8") as handle:
+                    whole = json.load(handle)
+                out["prompt"], out["answer"] = whole.get("prompt", ""), whole.get("answer", "")
+            except (OSError, ValueError):
+                out["prompt"], out["answer"] = out["prompt_head"], out["answer_head"]
+        else:
+            out["prompt"], out["answer"] = out["prompt_head"], out["answer_head"]
+        return out
+
+    # -- one entry that is more than one person ---------------------------------
+    def split(self, person_id: str, parts: List[Dict[str, Any]], by: str = "agent",
+              reason: str = "") -> List[Dict[str, Any]]:
+        """AN ENTRY THAT HOLDS MORE THAN ONE PERSON, split: each part a person
+        of their own - their name and other names, the accounts and the
+        activity of theirs - taken out of the entry, which keeps the rest.
+        Never the user themselves, nor an entry the user made one by merging."""
+        with self._lock:
+            person = self.get(person_id)
+            if person is None:
+                raise KeyError("no such person")
+            if person.get("is_self"):
+                raise ValueError("the user themselves")
+            merged = self.db.query_one(
+                "SELECT id FROM connection_actions WHERE person_id = ? AND by = 'user' "
+                "AND action = 'merge' LIMIT 1", (person_id,))
+            if merged is not None:
+                raise ValueError("the user made these one person: theirs to split")
+            accounts = self.accounts(person_id)
+            activity = {one["id"]: one for one in self.activity(person_id, 100000)}
+            made: List[Dict[str, Any]] = []
+            gone_names = set()
+            for part in parts or []:
+                name = _text(str(part.get("name") or ""), 120)
+                if not name or name_key(name) == name_key(person["name"]):
+                    continue
+                aliases = [str(one) for one in part.get("aliases") or [] if str(one).strip()]
+                new = self.add(name, by=by, reason=reason or "split from " + person["name"],
+                               aliases=aliases)
+                said = {str(one).strip().lower() for one in part.get("accounts") or []
+                        if str(one).strip()}
+                moved_accounts = [one for one in accounts if said and (
+                    str(one.get("handle") or "").strip().lower() in said
+                    or str(one.get("url") or "").strip().lower() in said
+                    or one["id"] in said)]
+                for one in moved_accounts:
+                    self.db.execute("UPDATE connection_accounts SET person_id = ? WHERE id = ?",
+                                    (new["id"], one["id"]))
+                moved_activity = [one for one in part.get("activity") or []
+                                  if str(one) in activity]
+                for one in moved_activity:
+                    self.db.execute("UPDATE connection_activity SET person_id = ? WHERE id = ?",
+                                    (new["id"], str(one)))
+                gone_names.update(name_key(one) for one in [name, *aliases])
+                made.append({"id": new["id"], "name": name, "aliases": aliases,
+                             "accounts": [one["id"] for one in moved_accounts],
+                             "activity": moved_activity})
+            if made:
+                kept = [one for one in person["aliases"] if name_key(one) not in gone_names]
+                self.db.execute("UPDATE connection_people SET aliases = ?, updated_at = ? "
+                                "WHERE id = ?", (json.dumps(kept, ensure_ascii=False), now(),
+                                                 person_id))
+                self._record(by, "split", person, {"aliases": person["aliases"]},
+                             {"aliases": kept, "split_into": made}, reason)
+            return made
 
     def merge(self, keep_id: str, other_id: str, by: str = "user",
               reason: str = "") -> Dict[str, Any]:
@@ -1511,11 +1663,18 @@ class ConnectionsStore:
         if self.folder is None or not (self.folder / "briefing").is_dir():
             return
         kept = {Path(str(one)).name for one in names}
-        for row in self.db.query("SELECT items FROM connection_briefings"):
-            for item in _loads(row["items"], []):
-                image = item.get("image") if isinstance(item, dict) else None
-                if isinstance(image, dict) and image.get("kept"):
-                    kept.add(Path(str(image["kept"])).name)
+        stories = [item for row in self.db.query("SELECT items FROM connection_briefings")
+                   for item in _loads(row["items"], [])]
+        # And those of the stories in the collection, kept beyond their issue.
+        try:
+            stories += [_loads(row["story"], {}) for row in self.db.query(
+                "SELECT story FROM rec_collection WHERE removed_at = ''")]
+        except Exception:                    # no collection yet
+            pass
+        for item in stories:
+            image = item.get("image") if isinstance(item, dict) else None
+            if isinstance(image, dict) and image.get("kept"):
+                kept.add(Path(str(image["kept"])).name)
         for path in (self.folder / "briefing").iterdir():
             if path.is_file() and path.name not in kept and not path.name.startswith("."):
                 path.unlink(missing_ok=True)

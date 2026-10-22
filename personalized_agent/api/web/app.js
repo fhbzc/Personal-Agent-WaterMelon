@@ -24,9 +24,17 @@ function signInNeeded(response) {
   (document.body || document.documentElement).appendChild(notice);
 }
 
+/* The zone this page is in, by name - sent with every request, so the
+   agent keeps a reminder in "your own time" on the zone you are in when it
+   is made (scheduler/core/zones.py). */
+const PAGE_ZONE = (() => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (err) { return ""; }
+})();
+
 const api = {
   async get(path) {
-    const response = await fetch(path, { headers: { Accept: "application/json" } });
+    const response = await fetch(path, { headers: { Accept: "application/json",
+                                                    "X-Time-Zone": PAGE_ZONE } });
     signInNeeded(response);
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || response.statusText);
@@ -36,7 +44,7 @@ const api = {
      for something asked again and again while it is followed, so an
      unchanged report is neither sent again nor drawn again. */
   async getIfChanged(path, tag) {
-    const headers = { Accept: "application/json" };
+    const headers = { Accept: "application/json", "X-Time-Zone": PAGE_ZONE };
     if (tag) headers["If-None-Match"] = tag;
     const response = await fetch(path, { headers });
     signInNeeded(response);
@@ -48,7 +56,7 @@ const api = {
   async post(path, body) {
     const response = await fetch(path, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Time-Zone": PAGE_ZONE },
       body: JSON.stringify(body || {}),
     });
     signInNeeded(response);
@@ -400,42 +408,10 @@ function xpWriter(written) {
 
 
 
-/* A UNIT'S LEARNING: Start learning the first time, Update learning after
-   - never a way to clear what was learned - and everything learning it has
-   cost so far. Several can be learned at once; the rest wait for room. A
-   project made for the agents holds nothing of the user's to learn. */
+/* A PROJECT IS NO LONGER LEARNED BY ITS OWN BUTTON (2026-10-21): the
+   learning runs for all of the user's work, from Work's Learning panel. */
 function xpLearning(unit) {
-  if (unit.kind === "new project") return "";
-  const l = unit.learning || {};
-  const id = escapeHtml(unit.id);
-  const spent = Number(l.tokens || 0);
-  const cost = spent ? `${spent.toLocaleString()} tokens spent learning it${
-    Number(l.calls || 0) ? ` (${l.calls} calls)` : ""}` : "nothing spent learning it yet";
-  const learned = l.learned_at ? `learned up to ${escapeHtml(localStamp(l.learned_at))}` : l.until
-    ? "the last learning stopped early - Update carries on from there to now"
-    : "not learned yet";
-  if (l.running) {
-    return `<div class="xp-learning"><span class="xp-learning-now">Learning: ${
-      escapeHtml(l.step || "")} · ${Number(l.calls || 0)} calls this time</span>
-      <button type="button" class="small secondary" data-xp-learn-stop="${id}">Stop</button>
-      <span class="muted">${escapeHtml(cost)}</span></div>`;
-  }
-  if (l.queued) {
-    return `<div class="xp-learning"><span class="muted">Waiting for room to learn</span>
-      <button type="button" class="small secondary" data-xp-learn-stop="${id}">Stop</button>
-      <span class="muted">${escapeHtml(cost)}</span></div>`;
-  }
-  // WHILE THE AUTOMATIC UPDATE RUNS, the buttons wait for it.
-  const held = (experienceState.auto || {}).running;
-  return `<div class="xp-learning">
-    <button type="button" class="small" data-xp-learn="${id}"${held
-      ? ` disabled title="Automatic learning is running - wait for it to finish"` : ""}>${l.until
-      ? "Update learning" : "Start learning"}</button>
-    <label class="xp-auto-one" title="Learned again by itself, at the times above, when it has changed">
-      <input type="checkbox" data-xp-auto-unit="${id}"${unit.auto === false ? "" : " checked"}>
-      Update by itself</label>
-    <span class="muted">${learned} · ${escapeHtml(cost)}</span>
-    ${l.error ? `<span class="xp-project-error">${escapeHtml(l.error)}</span>` : ""}</div>`;
+  return "";
 }
 
 async function loadExperience(full) {
@@ -446,25 +422,7 @@ async function loadExperience(full) {
     $("#xp-units").innerHTML = `<p class="muted">${escapeHtml(err.message)}</p>`;
     return;
   }
-  $("#xp-status").textContent = `${status.stages} stages · ${status.patterns}
-    patterns · ${status.principles} principles${status.learning
-      ? ` · learning ${status.learning} now` : ""}${status.waiting
-      ? `, ${status.waiting} waiting for room` : ""}`;
-  // While something is being learned, the rows say how it goes.
-  clearTimeout(experienceState.learnTimer);
-  experienceState.learnTimer = null;
-  if (status.learning || status.waiting) {
-    experienceState.learnTimer = setTimeout(() => loadExperience(false), 3000);
-  }
-  try {
-    experienceState.auto = await api.get("/api/experience/auto");
-  } catch (err) {
-    experienceState.auto = null;
-  }
-  xpDrawAuto();
-  if ((experienceState.auto || {}).running && !experienceState.learnTimer) {
-    experienceState.learnTimer = setTimeout(() => loadExperience(false), 3000);
-  }
+  loadLearning();
   experienceState.units = status.units || [];
   if (!experienceState.units.some((u) => u.id === experienceState.unit)) {
     experienceState.unit = (experienceState.units[0] || {}).id || null;
@@ -474,42 +432,220 @@ async function loadExperience(full) {
   await xpOpenUnit();
 }
 
-/* LEARNING UPDATED BY ITSELF: the times of day, changed where they stand
-   (as the Newspaper's), and the run going now. */
-function xpDrawAuto() {
-  const host = $("#xp-auto");
-  if (!host) return;
-  const auto = experienceState.auto;
-  if (!auto) { host.innerHTML = ""; return; }
-  if (host.contains(document.activeElement)) return;
-  const done = (auto.finished || []).length;
-  host.innerHTML = `<div class="xp-auto-times"><strong>Update by itself each day at</strong></div>
-    <p class="muted xp-auto-note">${auto.running
-      ? `Automatic learning is running: ${done} of ${(auto.units || []).length} projects done.
-         Start and Update wait until it finishes.`
-      : (auto.times || []).length
-        ? "Each project ticked below is learned again when its states or folders have changed."
-        : "No time chosen: projects are learned only when you press Start or Update."}</p>`;
-  const control = recommendTimesControl((auto.times || []).join(", "));
+/* WORK'S LEARNING (learning/service.py): the switch and the times, the
+   update open or the last one - Update now, Pause, Continue - the places it
+   reads (and the agents search), and what it spent. Read again every few
+   seconds while an update or a search build is going. */
+const learningState = { timer: null, data: null, chartOpen: false };
+
+async function loadLearning() {
+  try {
+    learningState.data = await api.get("/api/learning");
+  } catch (err) {
+    const host = $("#xp-learn");
+    if (host) host.innerHTML = `<p class="muted">${escapeHtml(err.message)}</p>`;
+    return;
+  }
+  drawLearning();
+}
+
+async function learningDo(body, said) {
+  try {
+    learningState.data = await api.post("/api/learning", body);
+    if (said) toast(said);
+    drawLearning();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+function learningUpdateHtml(s) {
+  const u = s.update;
+  const open = u && ["running", "paused", "waiting"].includes(u.state);
+  const limit = Number(s.daily_tokens || 0);
+  const spentToday = Number(s.tokens_today || 0).toLocaleString();
+  const today = limit ? `${spentToday} of ${limit.toLocaleString()} tokens today`
+    : `${spentToday} tokens today`;
+  let buttons = "";
+  if (open && u.state === "paused") {
+    buttons = `<button type="button" class="small" data-learn="continue">Continue</button>`;
+  } else if (open) {
+    buttons = `<button type="button" class="small secondary" data-learn="pause">Pause</button>`;
+  } else {
+    buttons = `<button type="button" class="small" data-learn="update"${s.over_limit
+      ? " disabled" : ""}>Update now</button>`;
+  }
+  const lines = [];
+  if (open) {
+    const share = Math.round(Number(u.share || 0) * 100);
+    const state = u.state === "paused" ? "Paused - the times set are skipped until you continue."
+      : u.state === "waiting" ? "Today's token limit is used up: it carries on tomorrow."
+        : u.now_reading ? `Reading: ${u.now_reading}` : "Starting…";
+    lines.push(`<div class="xp-learn-progress">
+        <progress max="100" value="${share}" aria-label="How far the update is"></progress>
+        <span>${share}%</span>
+        ${u.units ? `<span class="muted">${Number(u.units_done || 0)} of ${u.units} places read</span>` : ""}
+      </div>`);
+    lines.push(`<p class="muted">Reading what you did up to ${escapeHtml(localStamp(u.cutoff))}
+      (${u.by === "you" ? "you started it" : "at a time set"}). ${escapeHtml(state)}</p>`);
+  } else if (u) {
+    lines.push(`<p class="muted">${u.state === "done"
+      ? `Last update: what you did up to ${escapeHtml(localStamp(u.cutoff))}, finished ${
+        escapeHtml(localStamp(u.finished_at))}.`
+      : `The last update stopped: ${escapeHtml(u.note || u.state)}`}</p>`);
+  } else {
+    lines.push(`<p class="muted">Nothing learned yet.</p>`);
+  }
+  if (s.over_limit && !open) lines.push(`<p class="muted">Today's token limit is used up.</p>`);
+  for (const at of (u && u.skipped) || []) {
+    lines.push(`<p class="muted">Skipped at ${escapeHtml(localStamp(at))}: the update before was
+      still going.</p>`);
+  }
+  if (u && u.note && u.state === "done") lines.push(`<p class="muted">${escapeHtml(u.note)}</p>`);
+  return `<div class="xp-learn-row">${buttons}<span class="muted">${escapeHtml(today)}</span></div>
+    ${lines.join("")}`;
+}
+
+function learningPlacesHtml(s) {
+  const listed = (s.places || []).map((one) => {
+    const what = one.kind === "claude" ? "Your Claude Code conversations"
+      : one.kind === "codex" ? "Your Codex conversations" : "";
+    return `<li><code>${escapeHtml(one.path)}</code>${what
+      ? ` <span class="muted">${escapeHtml(what)}</span>` : ""}
+      <button type="button" class="small secondary" data-learn-remove="${escapeHtml(one.path)}">Remove</button></li>`;
+  }).join("") || `<li class="muted">No place listed: your Work projects are read, and the
+    folders you add here.</li>`;
+  const found = (s.found || []).map((one) => `<li${one.excluded ? ` class="muted"` : ""}>
+      <code>${escapeHtml(one.path)}</code>
+      <span class="muted">${one.excluded ? "left out"
+        : `found through your ${escapeHtml((one.via || []).map((v) => v === "claude"
+          ? "Claude Code" : "Codex").join(" and "))} conversations`}</span>
+      <button type="button" class="small secondary" data-learn-exclude="${escapeHtml(one.path)}"
+        data-out="${one.excluded ? "" : "1"}">${one.excluded ? "Let in" : "Leave out"}</button></li>`).join("");
+  const has = (kind) => (s.places || []).some((one) => one.kind === kind);
+  const records = s.records || {};
+  return `<h3>Where it reads</h3>
+    <p class="muted">Your Work projects, the folders listed here with everything in them, and
+      your coding agents' conversations - also what the agents search. Never the agent's own data,
+      and never a key or password: they are taken out before anything is read.</p>
+    <ul class="xp-learn-places">${listed}</ul>
+    <div class="xp-learn-row">
+      <button type="button" class="small secondary" data-learn-add="folder">Add a folder…</button>
+      <button type="button" class="small secondary" data-learn-add="claude"${!records.claude
+        || has("claude") ? " disabled" : ""}>Add Claude Code records</button>
+      <button type="button" class="small secondary" data-learn-add="codex"${!records.codex
+        || has("codex") ? " disabled" : ""}>Add Codex records</button>
+    </div>
+    ${found ? `<h4>Folders your conversations worked in</h4><ul class="xp-learn-places">${found}</ul>` : ""}`;
+}
+
+/* WHAT LEARNING SPENT: a bar a day, the last thirty - its calls' tokens. */
+function learningChartHtml(s) {
+  const byDay = {};
+  for (const row of s.spending || []) {
+    const day = byDay[row.day] || (byDay[row.day] = { tokens: 0, calls: 0, parts: [] });
+    day.tokens += Number(row.tokens || 0);
+    day.calls += Number(row.calls || 0);
+    day.parts.push(`${String(row.task || "").replace("learning_", "")}: ${
+      Number(row.tokens || 0).toLocaleString()}`);
+  }
+  const days = Object.keys(byDay).sort();
+  if (!days.length) return `<h3>What it spent</h3><p class="muted">No tokens spent on learning yet.</p>`;
+  const most = Math.max(...days.map((d) => byDay[d].tokens), 1);
+  const bars = days.map((d) => {
+    const one = byDay[d];
+    const height = Math.max(2, Math.round(one.tokens / most * 100));
+    const said = `${d}: ${one.tokens.toLocaleString()} tokens, ${one.calls} calls (${one.parts.join(", ")})`;
+    return `<span class="xp-learn-bar" style="height:${height}%" title="${escapeHtml(said)}"
+      aria-label="${escapeHtml(said)}"></span>`;
+  }).join("");
+  const total = days.reduce((sum, d) => sum + byDay[d].tokens, 0);
+  return `<h3>What it spent</h3>
+    <p class="muted">${total.toLocaleString()} tokens in the last 30 days - a bar a day.</p>
+    <div class="xp-learn-chart" role="img" aria-label="Tokens spent on learning, a bar a day">${bars}</div>`;
+}
+
+function drawLearning() {
+  const host = $("#xp-learn");
+  const s = learningState.data;
+  if (!host || !s) return;
+  clearTimeout(learningState.timer);
+  const going = (s.update && ["running", "waiting"].includes(s.update.state))
+    || (s.index && s.index.building);
+  if (going && activeTab === "experience") {
+    learningState.timer = setTimeout(loadLearning, 3000);
+  }
+  const counts = s.counts || {};
+  const status = $("#xp-status");
+  if (status) {
+    status.textContent = `Learned: ${Number(counts.cases || 0)} cases, ${
+      Number(counts.reasons || 0)} reasons${counts.forming ? ` (${counts.forming} forming)` : ""}`;
+  }
+  // Not while a time or the limit is being typed.
+  if (host.contains(document.activeElement) && document.activeElement.matches("input")) return;
+  host.innerHTML = `<h2>Learning</h2>
+    <p class="muted">Your own work, read into cases and the reasons behind how you judge it -
+      what a Work run's reviewer asks of when it checks the agent's work.</p>
+    <div class="xp-learn-row">
+      <label class="checkbox"><input type="checkbox" id="xp-learn-on"${s.on ? " checked" : ""}>
+        Learn by itself</label>
+      <span class="xp-learn-times"><strong>each day at</strong></span>
+    </div>
+    <p class="muted">${s.on && (s.times || []).length
+      ? `Next: ${escapeHtml(localStamp(s.next))}.`
+      : s.on ? "Add a time for it to learn by itself."
+        : "Off: it learns only when you press Update now."}</p>
+    ${learningUpdateHtml(s)}
+    <div class="xp-learn-row"><label>Tokens a day, at most
+      <input type="number" id="xp-learn-limit" min="0" step="100000"
+        value="${Number(s.daily_tokens || 0)}"></label>
+      <span class="muted">0: no limit</span></div>
+    ${learningPlacesHtml(s)}
+    ${learningChartHtml(s)}`;
+  const control = recommendTimesControl((s.times || []).join(", "),
+    "No time set: it learns only when you press Update now.");
   let waiting = null;
   control.addEventListener("change", () => {
     clearTimeout(waiting);
-    waiting = setTimeout(async () => {
-      try {
-        experienceState.auto = await api.post("/api/experience/auto", { times: control.value });
-        toast(control.value ? "Saved: learning is updated each day at " + control.value
-          : "Saved: learning is updated only when you ask");
-      } catch (err) {
-        toast(err.message, "error");
-      }
-    }, 600);
+    waiting = setTimeout(() => learningDo({ action: "auto", times: control.value },
+      control.value ? "Saved: learning each day at " + control.value
+        : "Saved: no time - it learns only when you ask"), 600);
   });
-  const line = host.querySelector(".xp-auto-times");
+  const line = host.querySelector(".xp-learn-times");
   line.appendChild(control);
-  if (auto.time_zone) {
-    line.insertAdjacentHTML("beforeend", `<span class="muted">(${escapeHtml(auto.time_zone)})</span>`);
+  if (s.time_zone) {
+    line.insertAdjacentHTML("beforeend", `<span class="muted">(${escapeHtml(s.time_zone)})</span>`);
   }
+  host.querySelector("#xp-learn-on").addEventListener("change", (event) =>
+    learningDo({ action: "auto", on: event.target.checked },
+      event.target.checked ? "Learning by itself at the times set" : "Learning only when you ask"));
+  host.querySelector("#xp-learn-limit").addEventListener("change", (event) =>
+    learningDo({ action: "auto", daily_tokens: Math.max(0, Number(event.target.value || 0)) },
+      "Saved: the day's limit"));
 }
+
+document.addEventListener("click", async (event) => {
+  const target = event.target;
+  if (!target || !target.closest || !target.closest("#xp-learn")) return;
+  const act = target.dataset.learn;
+  if (act === "update") {
+    await learningDo({ action: "update" }, "Learning: updating now");
+  } else if (act === "pause") {
+    await learningDo({ action: "pause" }, "Paused");
+  } else if (act === "continue") {
+    await learningDo({ action: "continue" }, "Carrying on");
+  } else if (target.dataset.learnAdd) {
+    const kind = target.dataset.learnAdd;
+    const path = kind === "folder" ? await xpChooseFolder("A folder of your work to learn from") : "";
+    if (kind === "folder" && !path) return;
+    await learningDo({ action: "add", kind, path }, "Added");
+  } else if (target.dataset.learnRemove) {
+    await learningDo({ action: "remove", path: target.dataset.learnRemove }, "Removed");
+  } else if (target.dataset.learnExclude) {
+    await learningDo({ action: "exclude", path: target.dataset.learnExclude,
+                       out: Boolean(target.dataset.out) });
+  }
+});
 
 /* The list of projects and tasks - not while a description in it is being
    written: then once that is left. */
@@ -4157,13 +4293,6 @@ document.addEventListener("change", (event) => {
       .forEach((other) => { other.checked = at.checked; });
   } else if (at.matches("#xp-sound")) {
     experienceState.startSound = at.checked;
-  } else if (at.matches("[data-xp-auto-unit]")) {
-    const unit = at.dataset.xpAutoUnit;
-    api.post("/api/experience/auto", { unit, on: at.checked }).then((said) => {
-      experienceState.auto = said;
-      const row = experienceState.units.find((one) => one.id === unit);
-      if (row) row.auto = at.checked;
-    }).catch((err) => toast(err.message, "error"));
   }
 });
 
@@ -4207,21 +4336,6 @@ $("#experience")?.addEventListener("click", async (event) => {
       return;
     }
     xpDrawUnits();
-    return;
-  }
-  const learnAt = event.target.closest("[data-xp-learn]");
-  const learnStopAt = event.target.closest("[data-xp-learn-stop]");
-  if (learnAt || learnStopAt) {
-    event.stopPropagation();
-    try {
-      const said = await api.post("/api/experience/learn", learnAt
-        ? { units: [learnAt.dataset.xpLearn] }
-        : { units: [learnStopAt.dataset.xpLearnStop], stop: true });
-      if (said && said.error) toast(said.error);
-    } catch (err) {
-      toast(err.message);
-    }
-    await loadExperience(false);
     return;
   }
   const openAt = event.target.closest("[data-xp-open-unit]");
@@ -6631,6 +6745,10 @@ function describeRecurrence(task) {
       break;
     }
   }
+  // A repeat of days kept on another place's clock says whose.
+  if (rule.zone && every % 86400 === 0 && !sameClockAsHere(rule.zone)) {
+    interval = `${interval}, on ${rule.zone} time`;
+  }
   const done = Number(task.runs || 0);
   if (rule.count) return `${interval}, ${done} of ${rule.count} runs`;
   if (rule.until) {
@@ -6754,6 +6872,60 @@ function rationaleBlock(task) {
     </details>`;
 }
 
+/* WHAT ITS TIME WAS TAKEN FROM, when there is something to check: a time
+   the source wrote ("Thu 3pm"), another place's clock, or a night the clocks
+   change. The agent heartbeat gives a time as a clock shows it and whose
+   clock; the moment is worked out from that (scheduler/core/zones.py) - so
+   a wrong guess of the zone is seen here, and moved with Edit. */
+function timeTakenFrom(task) {
+  const time = ((task && task.metadata) || {}).time || {};
+  if (!time.wall) return "";
+  // A zone the agent wrote that is no place's name, and was not named when
+  // asked again: taken as the user's own time - said, so it can be checked.
+  if (time.zone_unread) {
+    return `the time's zone could not be read ("${time.zone_unread}"); taken as your own time`;
+  }
+  const zone = time.zone_said || time.zone;
+  // On the clock the user is on now: the time the calendar shows is the one
+  // meant, and there is nothing to say of the zone.
+  if (!time.zone || time.zone === "local" || sameClockAsHere(time.zone)) {
+    return time.as_written ? `written as "${time.as_written}", taken as your own time` : "";
+  }
+  // Their own time where they were when it was made - shown here converted.
+  if (time.own) return `made on your own time then: ${zone} time, ${time.wall} there`;
+  return time.as_written
+    ? `written as "${time.as_written}", taken as ${zone} time, ${time.wall} there`
+    : `taken as ${zone} time, ${time.wall} there`;
+}
+
+/* Whether a zone keeps the same clock as the one this page is on: the same
+   offsets now and half a year on, daylight saving included. */
+function sameClockAsHere(zone) {
+  if (!zone || zone === "local") return true;
+  if (zone === PAGE_ZONE) return true;
+  try {
+    const offset = (name, when) => new Intl.DateTimeFormat("en-US", {
+      timeZone: name, timeZoneName: "longOffset" }).formatToParts(when)
+      .find((part) => part.type === "timeZoneName").value;
+    const now = new Date();
+    const later = new Date(now.getTime() + 182 * 86400000);
+    return [now, later].every((when) => offset(zone, when) === offset(PAGE_ZONE, when));
+  } catch (err) {
+    return false;
+  }
+}
+
+function clockChangeNote(task) {
+  const clock = (((task && task.metadata) || {}).time || {}).clock;
+  if (clock === "skipped") {
+    return "The clocks go forward that night and that time does not exist - it is taken as the same time after the jump.";
+  }
+  if (clock === "twice") {
+    return "The clocks go back that night and that time comes twice - it is taken as the first.";
+  }
+  return "";
+}
+
 function openTask(taskId, anchor) {
   const task = (calendarState.tasks || []).find((candidate) => candidate.id === taskId);
   if (!task) return;
@@ -6774,6 +6946,8 @@ function openTask(taskId, anchor) {
       </div>
       ${row("When", when.toLocaleString(undefined, { weekday: "long", year: "numeric",
         month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" }))}
+      ${row("Its time", timeTakenFrom(task))}
+      ${row("Clock change", clockChangeNote(task))}
       ${row("Postponed", postponedChain(task))}
       ${row("Kind", task.execution_type)}
       ${notifyRow(task)}
@@ -7352,6 +7526,92 @@ async function loadLanguages() {
       : '<p class="muted">No calls yet.</p>'}`;
 }
 
+/* THE CONNECTION DEBUGGER (heartbeat/connections/store.py `changes`): every
+   change to the contacts, newest first - and, for the agent's, the start of
+   what its model was asked and answered; the whole call opens from its file.
+   Drawn again only when there is something new, and never over a change
+   opened to read. */
+const connectionsDebug = { data: null, seen: "" };
+
+async function loadConnectionsDebugger() {
+  let said;
+  try {
+    said = await api.get("/api/debugger/connections?most=300");
+  } catch (err) {
+    $("#cdbg-list").innerHTML = `<p class="muted">${escapeHtml(err.message)}</p>`;
+    return;
+  }
+  const changes = said.changes || [];
+  const seen = changes.length ? `${changes[0].id}|${changes.length}` : "none";
+  if (seen === connectionsDebug.seen) return;
+  connectionsDebug.data = said;
+  connectionsDebug.seen = seen;
+  drawConnectionsDebugger();
+}
+
+function cdbgShort(value, most) {
+  const text = typeof value === "string" ? value : JSON.stringify(value, null, 1);
+  return text.length > most ? `${text.slice(0, most)}…` : text;
+}
+
+function drawConnectionsDebugger() {
+  const host = $("#cdbg-list");
+  const said = connectionsDebug.data;
+  if (!host || !said) return;
+  const open = new Set([...host.querySelectorAll("details[open]")].map((one) => one.dataset.id));
+  const filter = ($("#cdbg-filter")?.value || "").trim().toLowerCase();
+  const rows = (said.changes || []).filter((one) => !filter
+    || String(one.person_name || "").toLowerCase().includes(filter));
+  if (!rows.length) {
+    host.innerHTML = `<p class="muted">No change yet.</p>`;
+    return;
+  }
+  host.innerHTML = rows.map((one) => {
+    const call = one.call;
+    const changed = Object.keys(one.after || {}).join(", ");
+    return `<details class="cdbg-row" data-id="${escapeHtml(one.id)}"${open.has(one.id) ? " open" : ""}>
+      <summary><span class="cdbg-when">${escapeHtml(localStamp(one.at))}</span>
+        <span class="cdbg-who">${escapeHtml(one.by === "user" ? "you" : "the agent")}</span>
+        <strong>${escapeHtml(one.action)}</strong> ${escapeHtml(one.person_name || "")}
+        <span class="muted">${escapeHtml(changed)}</span></summary>
+      ${one.reason ? `<p class="muted">Why: ${escapeHtml(one.reason)}</p>` : ""}
+      <div class="cdbg-grid">
+        <div><h4>Before</h4><pre>${escapeHtml(cdbgShort(one.before || {}, 2000))}</pre></div>
+        <div><h4>After</h4><pre>${escapeHtml(cdbgShort(one.after || {}, 2000))}</pre></div>
+      </div>
+      ${call ? `<div class="cdbg-call">
+        <p class="muted">From ${escapeHtml(call.source || "a model call")}, ${
+          escapeHtml(localStamp(call.at))}${call.span ? ` - ${escapeHtml(call.span)}` : ""}</p>
+        <h4>What it was asked (${Number(call.prompt_chars || 0).toLocaleString()} characters)</h4>
+        <pre class="cdbg-prompt">${escapeHtml(call.prompt_start || "")}</pre>
+        <h4>What it answered (${Number(call.answer_chars || 0).toLocaleString()} characters)</h4>
+        <pre class="cdbg-answer">${escapeHtml(call.answer_start || "")}</pre>
+        <button type="button" class="small secondary" data-cdbg-call="${escapeHtml(call.id)}">Show the whole call</button>
+        ${call.archive ? `<p class="muted">Kept whole in <code>${escapeHtml(call.archive)}</code></p>` : ""}
+      </div>` : ""}
+    </details>`;
+  }).join("");
+}
+
+$("#cdbg-filter")?.addEventListener("input", drawConnectionsDebugger);
+
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest && event.target.closest("[data-cdbg-call]");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const call = await api.get(`/api/debugger/connections/call?id=${
+      encodeURIComponent(button.dataset.cdbgCall)}`);
+    const box = button.closest(".cdbg-call");
+    box.querySelector(".cdbg-prompt").textContent = call.prompt || "";
+    box.querySelector(".cdbg-answer").textContent = call.answer || "";
+    button.remove();
+  } catch (err) {
+    toast(err.message, "error");
+    button.disabled = false;
+  }
+});
+
 async function loadReading() {
   let said;
   try {
@@ -7885,7 +8145,6 @@ async function loadSettings() {
   renderModels(models, data.choices);
   renderSettings({ ...data, user_defaults: defaults.user_defaults || {} });
   loadWebSearch();
-  loadFileSearch();
   refreshSysPermissions();
 }
 
@@ -7916,80 +8175,6 @@ $("#web-search-with")?.addEventListener("change", async (event) => {
 async function loadWebSearch() {
   try { renderWebSearch(await api.get("/api/search")); } catch (err) { /* said later */ }
 }
-
-/* SEARCH YOUR FILES (index/service.py): the folders it reads - every Work
-   project's, and the user's own - each with how far it is; read again every
-   few seconds while a build is going. */
-const fileSearch = { timer: null };
-
-async function loadFileSearch() {
-  try { renderFileSearch(await api.get("/api/index")); } catch (err) { /* said later */ }
-}
-
-function renderFileSearch(said) {
-  const list = $("#file-search-folders");
-  if (!list || !said) return;
-  const on = $("#file-search-on");
-  if (on) on.checked = Boolean(said.enabled);
-  const WHY = { project: "a Work project", added: "added by you",
-                sessions: "your Claude Code and Codex conversations" };
-  list.innerHTML = (said.folders || []).map((one) => `<li>
-      <code>${escapeHtml(one.path)}</code>
-      <span class="muted">${escapeHtml(WHY[one.why] || one.why || "")}${one.project
-        ? `: ${escapeHtml(one.project)}` : ""} · ${one.state === "done"
-        ? `${Number(one.files || 0).toLocaleString()} files, ${
-          Number(one.texts || 0).toLocaleString()} read for their words`
-        : one.state === "building" ? "being read" : one.state === "missing"
-          ? "not found" : "not read yet"}</span>
-      ${one.why === "added" ? `<button type="button" class="small secondary"
-        data-file-search-remove="${escapeHtml(one.path)}">Remove</button>` : ""}
-    </li>`).join("") || `<li class="muted">No folder yet: your Work projects' folders
-      are read once there are some, and any you add here.</li>`;
-  const line = $("#file-search-status");
-  if (line) {
-    line.textContent = !said.available
-      ? "This copy of Python cannot search text (SQLite without FTS5)."
-      : !said.enabled ? "Off: nothing is read, and the agents search nothing."
-        : said.building ? "Reading your folders in the background…"
-          : `${Number(said.files || 0).toLocaleString()} files kept searchable.`;
-  }
-  const sessions = $("#file-search-sessions");
-  if (sessions) {
-    sessions.textContent = said.sessions ? "Leave out my Claude Code and Codex conversations"
-      : "Add my Claude Code and Codex conversations";
-    sessions.disabled = !said.sessions && !(said.session_folders || []).length;
-    sessions.dataset.on = said.sessions ? "1" : "";
-  }
-  clearTimeout(fileSearch.timer);
-  if (said.building && activeTab === "settings") {
-    fileSearch.timer = setTimeout(loadFileSearch, 5000);
-  }
-}
-
-async function fileSearchChange(body) {
-  try {
-    renderFileSearch(await api.post("/api/index", body));
-  } catch (err) {
-    toast(err.message, "error");
-  }
-}
-
-document.addEventListener("click", async (event) => {
-  const target = event.target;
-  if (!target || !target.closest) return;
-  if (target.id === "file-search-add") {
-    const path = await xpChooseFolder("A folder for the agents to search");
-    if (path) await fileSearchChange({ action: "add", path });
-  } else if (target.id === "file-search-build") {
-    await fileSearchChange({ action: "build" });
-  } else if (target.id === "file-search-sessions") {
-    await fileSearchChange({ action: "sessions", on: !target.dataset.on });
-  } else if (target.dataset && target.dataset.fileSearchRemove) {
-    await fileSearchChange({ action: "remove", path: target.dataset.fileSearchRemove });
-  }
-});
-$("#file-search-on")?.addEventListener("change", (event) =>
-  fileSearchChange({ action: "enable", on: event.target.checked }));
 
 $("#web-search-form")?.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -10013,7 +10198,7 @@ document.addEventListener("click", async (event) => {
 
 /* The times of day an issue is made: a time box each, added and taken off.
    Its value is them all, "08:00, 18:30"; a change is said as one. */
-function recommendTimesControl(value) {
+function recommendTimesControl(value, noneSaid) {
   const box = document.createElement("div");
   box.className = "times-control";
   const times = String(value || "").split(/[,\s]+/).filter((one) => /^\d{1,2}:\d{2}$/.test(one));
@@ -10039,7 +10224,8 @@ function recommendTimesControl(value) {
   // "Make an issue now" - and it says so.
   const none = document.createElement("span");
   none.className = "muted times-none";
-  none.textContent = "No daily time: an issue is made only when you press Make an issue now.";
+  none.textContent = noneSaid
+    || "No daily time: an issue is made only when you press Make an issue now.";
   const saysNone = () => {
     none.hidden = Boolean(box.querySelector(".times-one"));
   };
@@ -12047,7 +12233,21 @@ function renderRecTimes() {
   if (!host) return;
   const schedule = knowCard.schedule || {};
   const times = (schedule.times || []).join(", ");
-  host.innerHTML = `<strong>Each day at</strong>`;
+  host.innerHTML = `<label class="checkbox"><input type="checkbox" id="rec-auto-on"${
+    schedule.on ? " checked" : ""}> Make an issue by itself</label> <strong>each day at</strong>`;
+  host.querySelector("#rec-auto-on").addEventListener("change", async (event) => {
+    const on = event.target.checked;
+    try {
+      await api.post("/api/settings", { values: { recommend_auto_on: on } });
+      knowCard.schedule = Object.assign({}, knowCard.schedule, { on });
+      toast(on ? ((knowCard.schedule.times || []).length
+        ? "An issue by itself at the times set" : "On: add a time for an issue by itself")
+        : "No issue by itself - one is made when you press Make an issue now");
+    } catch (err) {
+      event.target.checked = !on;
+      toast(err.message, "error");
+    }
+  });
   const control = recommendTimesControl(times);
   let waiting = null;
   control.addEventListener("change", () => {
@@ -12089,7 +12289,14 @@ function knowSide(briefing, issues) {
     { key: "", title: "Front page", count: (paper.front || []).length + (paper.brief || []).length },
     ...pages.map((one) => ({ key: one.key, title: one.title, count: (one.stories || []).length })),
   ] : [];
-  return `${picker}${list.length ? `<h3 class="rec-side-head">Pages</h3>${list.map((one, n) =>
+  const kept = ((knowCard.data || {}).collection || []).length;
+  // THE COLLECTION FIRST: what the user kept, above any one issue - it is
+  // theirs across issues, and below a long list of pages it went unseen.
+  const collection = `<h3 class="rec-side-head">Collection</h3>
+    <button type="button" class="rec-page rec-collection${current === "collection"
+      ? " selected" : ""}" data-know-page="collection">Stories you kept<span class="muted">${
+      kept === 1 ? "1 story" : `${kept} stories`}</span></button>`;
+  return `${collection}${picker}${list.length ? `<h3 class="rec-side-head">Pages</h3>${list.map((one, n) =>
     `<button type="button" class="rec-page${current === one.key ? " selected" : ""}"
       data-know-page="${escapeHtml(one.key)}"><span class="paper-page-no">${
       String.fromCharCode(65 + n)}1</span> ${escapeHtml(one.title)}<span class="muted">${
@@ -12097,7 +12304,41 @@ function knowSide(briefing, issues) {
     .join("")}` : ""}`;
 }
 
+/* Whether a story is in the collection - of this issue, or kept from any. */
+function knowKept(storyId) {
+  const data = knowCard.data || {};
+  return (data.collected || []).includes(storyId)
+    || (data.collection || []).some((one) => one.story_id === storyId);
+}
+
+/* THE COLLECTION: the stories the user kept, the newest first, each as it
+   was printed and with where it came from - kept until taken out, as a
+   to-do is. Each can still be said "more like this", "not interested" or
+   "already knew", as in its issue. */
+function knowCollection(data) {
+  const items = data.collection || [];
+  const mast = `<header class="paper-mast">
+      <h2 class="paper-title">Collection</h2>
+      <div class="paper-dateline"><span>Stories you kept, the newest first</span></div>
+    </header>`;
+  if (!items.length) {
+    return `<article class="paper">${mast}<p class="paper-empty">Nothing kept yet. "Add to
+      collection" under a story keeps it here.</p></article>`;
+  }
+  return `<article class="paper">${mast}<div class="paper-stories paper-collection">${
+    items.map((one) => {
+      const story = one.story || {};
+      const from = story.issue_no
+        ? `From No. ${story.issue_no}, ${knowIssueTime(story.issue_at)}`
+        : story.issue_at ? `From the issue of ${knowIssueTime(story.issue_at)}` : "";
+      return `<div class="paper-kept">${from
+        ? `<p class="paper-kept-from muted">${escapeHtml(from)}</p>` : ""}${
+        knowStory(story, "story", one.issue_id)}</div>`;
+    }).join("")}</div></article>`;
+}
+
 function knowFrontPage(briefing, issues = []) {
+  if (knowCard.page === "collection") return knowCollection(knowCard.data || {});
   const items = (briefing && briefing.items) || [];
   const paper = ((briefing && briefing.stats) || {}).paper;
   // AN ISSUE OF CUSTOMIZED RECOMMENDATION: pages, one per topic.
@@ -12202,6 +12443,22 @@ document.addEventListener("click", async (event) => {
     if (knowCard.data) renderKnowPaper();
     return;
   }
+  const keep = event.target.closest?.("[data-know-keep]");
+  if (keep) {
+    const story = keep.dataset.knowKeep;
+    const wanted = !knowKept(story);
+    keep.disabled = true;
+    try {
+      await api.post("/api/recommend/collection",
+        { issue: keep.dataset.issue, story, keep: wanted });
+      renderKnowCard(await knowAsk());
+      toast(wanted ? "Kept in your collection" : "Taken out of your collection");
+    } catch (err) {
+      keep.disabled = false;
+      toast(err.message, "error");
+    }
+    return;
+  }
   const say = event.target.closest?.("[data-know-say]");
   if (say) {
     const was = ((knowCard.data || {}).says || {})[say.dataset.story];
@@ -12276,8 +12533,14 @@ function knowStory(item, place, issue = "") {
       // button it came from marked - another may still be chosen.
       const said = ((knowCard.data || {}).says || {})[item.id] || "";
       const words = { more: "More like this", less: "Not interested", knew: "Already knew" };
+      // KEPT IN THE COLLECTION, or not: apart from what was said of it -
+      // keeping a story is not "more like this", and those stay to choose.
+      const kept = knowKept(item.id);
       return `${said ? `<span class="paper-said paper-said-${said}">${words[said]}</span>` : ""}
-        <div class="paper-say">${Object.entries(words).map(([action, label]) =>
+        <div class="paper-say"><button type="button" class="small secondary paper-keep${
+          kept ? " chosen" : ""}" data-know-keep="${escapeHtml(item.id)}"
+          data-issue="${escapeHtml(issue)}" aria-pressed="${kept ? "true" : "false"}">${
+          kept ? "In your collection" : "Add to collection"}</button>${Object.entries(words).map(([action, label]) =>
         `<button type="button" class="small secondary${said === action ? " chosen" : ""}"
           data-know-say="${action}" data-story="${escapeHtml(item.id)}"
           data-issue="${escapeHtml(issue)}"${said === action ? ' aria-pressed="true"' : ""}>${
@@ -12399,6 +12662,7 @@ async function refresh() {
     }
     if (activeTab === "naturedebug") await loadOverview(NATURE_PARTS);
     if (activeTab === "readingdebug") await loadReading();
+    if (activeTab === "connectiondebug") await loadConnectionsDebugger();
     if (activeTab === "languagedebug") await loadLanguages();
     if (activeTab === "recommend") await followKnowCard();
     if (activeTab === "calendar") {
@@ -20605,7 +20869,8 @@ async function applyDebuggerAvailability() {
   document.querySelector("#chatdebug")?.remove();
   // EVERY DEBUGGER: an installed build is for the user, not for whoever
   // develops the agent - run from Python, they are all there.
-  ["naturedebug", "readingdebug", "languagedebug", "resourcedebug", "lessons"].forEach((name) => {
+  ["naturedebug", "connectiondebug", "readingdebug", "languagedebug", "resourcedebug",
+   "lessons"].forEach((name) => {
     document.querySelector(`[data-tab="${name}"]`)?.remove();
     document.querySelector(`#${name}`)?.remove();
   });

@@ -1830,7 +1830,7 @@ class PatternsKnowWhenTheyWereLastActiveTests(_Base):
         self.assertEqual([s["summary"] for s in said["lessons"]], ["checks it in dark mode"])
         self.assertIsNone(self.experience.nature("rec_nowhere"))
 
-    def test_the_reviewer_is_shown_when_each_was_last_active(self) -> None:
+    def test_each_rule_says_when_it_was_last_active(self) -> None:
         nature = self._nature("checks it in dark mode", "2026-09-30T10:00:00+00:00")
         stage = self.store.natures_of_stages
         self.store.save_pattern({"layer": "pattern", "statement": "Tries it",
@@ -1844,8 +1844,12 @@ class PatternsKnowWhenTheyWereLastActiveTests(_Base):
             "checks it in dark mode", kinds=["evaluation"]))
         rules = {r["statement"]: r for kind in said["rules"].values() for r in kind}
         self.assertEqual(rules["Tries it"]["last_active"], "2026-09-30T10:00:00+00:00")
+        # A Work run's reviewer is no longer shown these rules (learning/ in
+        # their place): it weighs what was learned - its reasons - by when
+        # each was last seen.
         from personalized_agent.agent.work.runner import REVIEWER_SYSTEM
-        self.assertIn("WEIGH A RULE BY WHEN IT WAS LAST ACTIVE", REVIEWER_SYSTEM)
+        self.assertNotIn("WEIGH A RULE BY WHEN IT WAS LAST ACTIVE", REVIEWER_SYSTEM)
+        self.assertIn("WEIGH A REASON BY WHEN IT WAS LAST SEEN", REVIEWER_SYSTEM)
 
     def test_learning_leaves_the_grouping_to_the_state_heartbeat(self) -> None:
         import time

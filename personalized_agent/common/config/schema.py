@@ -781,11 +781,24 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
                  "Each run of your work goes in a process of its own, within what the "
                  "computer has free; off, in the agent's own process.", hidden=True),
     SettingField("recommend_times", "Newspaper, each day at", "string",
-                 "08:00", "Heartbeat",
+                 "", "Heartbeat",
                  "When a new issue of Newspaper is made: one or more "
-                 "times of day, in this computer's time zone. Times missed while the "
-                 "computer was off make one issue when it is back. None at all: no "
-                 "issue by itself, only when asked for.", hidden=True),
+                 "times of day, in this computer's time zone, while its switch is on. "
+                 "Times missed while the computer was off make one issue when it is "
+                 "back. None at all: no issue by itself, only when asked for.", hidden=True),
+    SettingField("recommend_auto_on", "Make issues by themselves", "bool", False, "Heartbeat",
+                 "Newspaper makes an issue by itself at the times set - only with this on "
+                 "and at least one time set.", hidden=True),
+    SettingField("learning_auto_on", "Learn by itself", "bool", False, "Work",
+                 "Work's learning updates by itself at the times set - only with this on "
+                 "and at least one time set.", hidden=True),
+    SettingField("learning_times", "Learning, each day at", "string", "", "Work",
+                 "When Work's learning updates by itself: one or more times of day, in this "
+                 "computer's time zone.", hidden=True),
+    SettingField("learning_daily_tokens", "Learning's tokens a day, at most", "int",
+                 3000000, "Work",
+                 "What one day's learning may spend; an update that reaches it waits for "
+                 "the next day. 0: no limit.", minimum=0, maximum=1000000000, hidden=True),
     SettingField("state_heartbeat_every_hours", "How often states are grouped",
                  "float", 12.0, "Heartbeat",
                  "How often that grouping runs - THE ONLY NUMBER FOR IT. "

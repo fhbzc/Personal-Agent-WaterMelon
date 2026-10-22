@@ -3834,10 +3834,15 @@ class EveryTimeIsTheUsersTests(unittest.TestCase):
     def test_what_the_model_writes_carries_an_offset(self) -> None:
         from personalized_agent.heartbeat.core.heartbeat import STEP_PROMPTS
 
-        for name in ("step_state", "step_notify"):
-            prompt = STEP_PROMPTS[name]["instruction"] + STEP_PROMPTS[name]["returns"]
-            self.assertIn("UTC offset", prompt, name)
-            self.assertNotIn("ISO-8601 UTC", prompt, name)
+        prompt = STEP_PROMPTS["step_state"]["instruction"] + STEP_PROMPTS["step_state"]["returns"]
+        self.assertIn("UTC offset", prompt)
+        self.assertNotIn("ISO-8601 UTC", prompt)
+        # A notification's time is a clock's and whose clock: the offset for
+        # its date is worked out by code (scheduler/core/zones.py).
+        prompt = STEP_PROMPTS["step_notify"]["instruction"] + STEP_PROMPTS["step_notify"]["returns"]
+        self.assertIn('"at_local"', prompt)
+        self.assertIn("never work out an offset or UTC yourself", " ".join(prompt.split()))
+        self.assertNotIn("ISO-8601 UTC", prompt)
 
 
 class AnythingCanBeReadByItsIdTests(unittest.TestCase):

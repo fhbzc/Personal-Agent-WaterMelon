@@ -1,6 +1,9 @@
-"""Work learning updated by itself: at the times chosen, the projects that
-changed and are ticked; Start and Update held while it runs; a run the
-application's closing cut short carried on when it starts again."""
+"""THE OLD Work learning clock (heartbeat/experience/auto.py): at the times
+chosen, the projects that changed and are ticked; Start and Update held
+while it runs; a run the application's closing cut short carried on when it
+starts again. Kept, but no longer started by the application nor shown on
+the page - the learning started again (learning/, 2026-10-21): these test
+the class itself."""
 
 from __future__ import annotations
 
@@ -152,12 +155,15 @@ class OneRunAtATimeTests(_ClockBase):
             self.clock.follow()
         grouped.assert_not_called()
 
-    def test_the_page_shows_it(self) -> None:
+    def test_the_page_no_longer_shows_it(self) -> None:
+        """Its per-project ticks and its readout are gone from Work: the
+        learning's own panel (learning/) is in their place."""
         from pathlib import Path
         script = (Path(__file__).resolve().parents[1] / "personalized_agent" / "api"
                   / "web" / "app.js").read_text(encoding="utf-8")
-        self.assertIn("data-xp-auto-unit", script)
-        self.assertIn("Automatic learning is running", script)
+        self.assertNotIn("data-xp-auto-unit", script)
+        self.assertNotIn("Automatic learning is running", script)
+        self.assertNotIn("/api/experience/auto", script)
 
 
 if __name__ == "__main__":

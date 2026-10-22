@@ -363,7 +363,12 @@ class WorkTools:
             "job_status": self.job_status, "stop_job": self.stop_job,
             "search_records": self.search_records,
             "search_files": self.search_files,
+            "open_case": self.open_case, "open_reason": self.open_reason,
         }
+        #: WHAT WAS LEARNED OF THE USER'S WORK (learning/find.py), opened by
+        #: id: set for the reviewer that has it - none for the work agent,
+        #: nor for the way with no context.
+        self.learned: Any = None
         #: The user's own records to search (context_search.py): set by the
         #: run that has them - the database they are in.
         self.records_db: Any = None
@@ -397,7 +402,8 @@ class WorkTools:
                 and (one.name != "search_stages" or self.find is not None)
                 and (one.name != "search_records" or self.records_db is not None)
                 and (one.name != "search_files" or self.files_index is not None)
-                and (one.name != "open_stage" or self.stages is not None)]
+                and (one.name != "open_stage" or self.stages is not None)
+                and (one.name not in ("open_case", "open_reason") or self.learned is not None)]
 
     def _specs(self) -> List[ToolSpec]:
         where = ", ".join(str(one) for one in self.writable)
@@ -543,6 +549,16 @@ class WorkTools:
                      "like this before.",
                      _schema({"query": {"type": "string"},
                               "limit": {"type": "integer"}}, ["query"])),
+            ToolSpec("open_case", "Open a CASE of the user's past work by its id "
+                     "(C-...): what the deliverable was, where its files are, what it "
+                     "looks like, its versions, every judgment the user made in it and "
+                     "how it was made.",
+                     _schema({"id": {"type": "string"}}, ["id"])),
+            ToolSpec("open_reason", "Open a REASON of the user's by its id (R-...): "
+                     "when it holds and what it is excepted from, what it predicts, its "
+                     "history, and the cases it rests on - the ones most like this job "
+                     "first, a page at a time.",
+                     _schema({"id": {"type": "string"}, "page": {"type": "integer"}}, ["id"])),
             ToolSpec("open_stage", "Open past stages by their ids (from the "
                      "experience you were shown, or search_stages): each one's "
                      "key information - what it was an attempt at, what was "
@@ -1054,6 +1070,24 @@ class WorkTools:
         said = self.stages([str(one) for one in args.get("ids") or []][:6])
         self.know_addresses(json.dumps(said, ensure_ascii=False, default=str))
         return said
+
+    def open_case(self, args: Dict[str, Any]) -> Any:
+        if self.learned is None:
+            return {"error": "nothing learned to open"}
+        said = self.learned.open_case(str(args.get("id") or ""))
+        self.know_addresses(said)
+        return {"case": said}
+
+    def open_reason(self, args: Dict[str, Any]) -> Any:
+        if self.learned is None:
+            return {"error": "nothing learned to open"}
+        try:
+            page = max(1, int(args.get("page") or 1))
+        except (TypeError, ValueError):
+            page = 1
+        said = self.learned.open_reason(str(args.get("id") or ""), page)
+        self.know_addresses(said)
+        return {"reason": said}
 
     def search_records(self, args: Dict[str, Any]) -> Any:
         """The user's records, by their English words (context_search.py)."""

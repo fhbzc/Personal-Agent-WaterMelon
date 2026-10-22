@@ -307,6 +307,12 @@ class ApiServer:
                 if handler is None:
                     self._json(404, {"error": f"no route for {method} {path}"})
                     return
+                # The zone the page is in, by the name the browser knows it
+                # by: the surest name for this computer's (scheduler/core/
+                # zones.py), which a reminder in the user's own time keeps.
+                if authorized and self.headers.get("X-Time-Zone"):
+                    from ..scheduler.core.zones import seen
+                    seen(self.headers.get("X-Time-Zone"))
                 try:
                     body = self._read_body() if method in ("POST", "PUT", "PATCH", "DELETE") else {}
                     request = Request(method, path, query, body, self.headers,

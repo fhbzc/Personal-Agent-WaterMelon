@@ -1,10 +1,10 @@
 """THE LOCAL INDEX, as the application runs it.
 
-WHICH FOLDERS: every Work project's folders, by default - what the user
-works in - and the folders the user adds in Settings, each with everything
-under it; and, on one click, the records of their Claude Code and Codex
-conversations. No other folder of theirs is read. The agent's own data is
-never gone into.
+WHICH FOLDERS: WHERE THE LEARNING READS (learning/places.py) - one list,
+kept in Work's Learning panel: the folders the user listed and those their
+agents' records bring, the records themselves when listed, their Work
+projects' folders. No other folder of theirs is read. The agent's own data
+is never gone into.
 
 WHEN: a few minutes after the application starts, then every few hours,
 and soon after the folders change - each time reading again only what
@@ -92,9 +92,10 @@ class LocalIndex:
             log.debug("could not read the projects' folders", exc_info=True)
         return out
 
-    def roots(self) -> List[Dict[str, Any]]:
-        """Every folder indexed, once each: the projects', the user's own,
-        and - when added - the conversation records."""
+    def roots(self, wait: bool = True) -> List[Dict[str, Any]]:
+        """Every folder indexed, once each: where the learning reads - the
+        user's Work projects' folders, the places they listed and what those
+        bring, and their agents' records when listed."""
         seen, out = set(), []
 
         def add(path: str, **said: Any) -> None:
@@ -103,14 +104,16 @@ class LocalIndex:
                 return
             seen.add(key)
             out.append({"path": str(Path(path)), **said})
-        for one in self.project_folders():
-            add(one["path"], why="project", project=one["project"], sessions=False)
-        for one in self.added():
-            add(one, why="added", sessions=False)
-        if self.app.config.get("index_sessions", False):
-            for one in session_folders():
-                if one.is_dir():
-                    add(str(one), why="sessions", sessions=True)
+        learning = getattr(self.app, "learning", None)
+        if learning is not None:
+            try:
+                for one in learning.places.index_roots(getattr(self.app, "db", None), wait):
+                    add(one["path"], **{k: v for k, v in one.items() if k != "path"})
+            except Exception:                       # pragma: no cover - none then
+                log.debug("could not read the learning's places", exc_info=True)
+        else:
+            for one in self.project_folders():
+                add(one["path"], why="project", project=one["project"], sessions=False)
         return out
 
     def never(self) -> List[str]:
@@ -232,7 +235,7 @@ class LocalIndex:
             finally:
                 store.close()
         folders = []
-        for one in self.roots():
+        for one in self.roots(wait=False):
             row = kept.get(os.path.normcase(os.path.abspath(one["path"]))) or {}
             folders.append({**one, "files": int(row.get("files") or 0),
                             "texts": int(row.get("texts") or 0),

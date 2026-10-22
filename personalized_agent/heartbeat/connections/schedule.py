@@ -1,6 +1,9 @@
 """WHEN AN ISSUE OF CUSTOMIZED RECOMMENDATION IS MADE: at the times of day the
-user chose (`recommend_times`, "08:00" by default - several may be given), in
-this computer's time zone. Its own clock, apart from the heartbeats.
+user chose (`recommend_times` - several may be given), in this computer's
+time zone, WHEN ITS SWITCH IS ON (`recommend_auto_on`): by itself only with
+the switch on and at least one time set - off and none at first, as Work's
+learning (the user's decision, 2026-10-21). Its own clock, apart from the
+heartbeats.
 
 Looked at once a minute. An issue is due when the latest of those times has
 passed and no issue was made since. Times missed while the computer was off
@@ -20,7 +23,8 @@ from typing import Any, List, Optional
 log = logging.getLogger(__name__)
 
 TIMES = "recommend_times"
-DEFAULT_TIMES = "08:00"
+DEFAULT_TIMES = ""
+AUTO_ON = "recommend_auto_on"
 #: How often the clock looks.
 LOOKS_EVERY = 60
 
@@ -83,7 +87,8 @@ class IssueClock:
     def due(self, now: Optional[datetime] = None) -> bool:
         from ...common.modules import enabled as module_on
         if not self.config.get("connections_enabled", True) or \
-                not module_on(self.config, "recommend"):
+                not module_on(self.config, "recommend") or \
+                not self.config.get(AUTO_ON, False):
             return False
         now = now or datetime.now().astimezone()
         latest = latest_time(self.times(), now)
@@ -106,8 +111,9 @@ class IssueClock:
 
     def status(self) -> dict:
         now = datetime.now().astimezone()
-        upcoming = next_time(self.times(), now)
-        return {"times": self.times(), "time_zone": now.strftime("%Z (UTC%z)"),
+        on = bool(self.config.get(AUTO_ON, False))
+        upcoming = next_time(self.times(), now) if on else None
+        return {"times": self.times(), "on": on, "time_zone": now.strftime("%Z (UTC%z)"),
                 "next": upcoming.isoformat() if upcoming else ""}
 
     # -- the loop ------------------------------------------------------------------------------
@@ -133,4 +139,20 @@ class IssueClock:
                 log.warning("the issue clock could not look", exc_info=True)
 
 
-__all__ = ["IssueClock", "parse_times", "latest_time", "next_time", "TIMES", "DEFAULT_TIMES"]
+def carry_over(config: Any, made_before: bool) -> None:
+    """ONCE, when the switch came (2026-10-21): an install that made issues
+    by itself keeps doing so - its switch on, its times as they were (the
+    old default, 08:00, when it never set any)."""
+    if config.get("recommend_switch_carried"):
+        return
+    if made_before:
+        # What it was set to - or, never set, the old default.
+        held = config.all().get(TIMES)
+        held = "08:00" if held is None else str(held)
+        config.set(TIMES, held, internal=True)
+        config.set(AUTO_ON, bool(parse_times(held)), internal=True)
+    config.set("recommend_switch_carried", True, internal=True)
+
+
+__all__ = ["IssueClock", "parse_times", "latest_time", "next_time", "carry_over", "TIMES",
+           "DEFAULT_TIMES", "AUTO_ON"]

@@ -150,6 +150,8 @@ from ...runtime.permissions import SecurityViolation, WorkspacePolicy
 from ...runtime.sandbox import SandboxRuntime
 from .packages import ASK, AUTO, Installer, PACKAGES_DIR, mode_of, validate
 from .tools import WorkTools, compact_experience, experience_text, stage_key_info
+from ...learning.find import QUESTION_KINDS, Finder
+from ...learning.vocab import DIMENSIONS, Vocabulary
 from .transcript import Transcript, answer_text, ensure_readme, transcript_files
 from ...version import APP_NAME
 from .versions import (LOGS_DIR, SLIDES_DIR, VERSIONS_DIR, VersionError, VersionStore,
@@ -596,7 +598,8 @@ class ModelShut(Exception):
 LIVE_FRESH_SECONDS = 30.0
 
 #: Ids of the user's experience - never passed to the work agent.
-EXPERIENCE_ID = re.compile(r"\b(?:stage|rec|pattern|principle|nature)_[0-9a-zA-Z]{6,}\b")
+EXPERIENCE_ID = re.compile(r"\b(?:stage|rec|pattern|principle|nature)_[0-9a-zA-Z]{6,}\b"
+                           r"|\b[RCJ]-[0-9a-f]{8}\b")
 
 #: THE WAYS A RUN CAN BE MADE - for the Experience debugger, which does the
 #: same work three ways side by side (see `debug_projects.py`):
@@ -948,6 +951,7 @@ stop calling tools and return ONLY this JSON object:
  "blocked": {"card": "...", "missing": "what is missing - access, a tool, data - and why the card cannot move without it"},
  "needs": [{"need": "what the user would need that the contract leaves out", "kind": "implied|needed|nice",
             "promise": "for implied: the core promise it belongs to", "saw": ["what showed it: a file, a record, a result"]}],
+ "questions": ["what you need to know of how the user wants this, that the criteria and notes do not say"],
  "complete": false}
 
   - Every claim needs evidence that can be opened or re-run.
@@ -956,6 +960,10 @@ stop calling tools and return ONLY this JSON object:
     for it; "needed": what they asked would not serve them without it;
     "nice": it would serve them better. The reviewer decides; none is a
     core promise of its own. None at all is the usual answer.
+  - "questions": what you need to know of how the USER wants this work -
+    how they would have it look, what they would expect of it - that the
+    criteria and approach notes leave open. The reviewer answers from what
+    it knows of the user. None at all is the usual answer.
   - "commit": what THIS round changed, said as a good commit message is - the
     version saved after it is named by it. "title": one line, at most 72
     characters, in the imperative ("Add the pledge model with two kinds and a
@@ -1161,37 +1169,39 @@ REVISE_DECK = """THE REVIEWER SENT THE DECK BACK:
 Return the whole deck JSON again, revised."""
 
 REVIEWER_SYSTEM = """You review a work agent's work ON THE USER'S BEHALF. You
-know how the user works: you are shown the past stages of THEIR OWN work most
-like what is in hand - what they decided, what they required, what they
-accepted and rejected - each with why it was found, and the rules those
-stages show: their natures (how they judge, what they want the output to
-be), and the patterns and principles above them. Judge as the user would.
+know how the user works from what was learned of THEIR OWN work: REASONS -
+why they judge their work as they do, each with when it holds, said by them
+or inferred from what they did - and CASES - pieces of their past work most
+like what is in hand: where the deliverables are, what they look like, and
+every judgment the user made in them. You ask your questions first, and are
+given what bears on them. Judge as the user would.
 
-  - EVERYTHING YOU SAY CITES WHAT IT RESTS ON: the id of a past stage,
-    nature, pattern or principle you were shown ("because": ["stage_...",
-    "rec_..."]), or "own judgement" when it rests on none of them.
+  - EVERYTHING YOU SAY CITES WHAT IT RESTS ON: the id of a reason, case or
+    judgment you were shown ("because": ["R-...", "C-..."]), the user's own
+    words, a file, a web address - or "own judgement" when it rests on none.
   - Be specific: what is wrong, and what it should become.
-  - WEIGH A RULE BY WHEN IT WAS LAST ACTIVE: each pattern and principle
-    says when it was last seen in the user's work ("last_active"). One not
-    seen for a long time may be a way they no longer work - lean on what is
-    recent, and say so when an old rule is all there is.
-  - AND BY HOW SURE IT IS: a nature says "how_sure" - "follow" (borne out by
-    several stages of their work) or "lean on it" (still forming, or
-    contradicted at times). Cite the natures a criterion rests on by their
-    ids.
+  - WEIGH A REASON BY WHEN IT WAS LAST SEEN and by whether the user said it:
+    one said by the user comes first; an inferred one is the record's
+    reading; one not seen for a long time may be a way they no longer work -
+    lean on what is recent, and say so when an old one is all there is.
+  - APPLY IT TO THIS JOB: a reason holds where its condition does - say how
+    it bears here. A case shows what the user's work looked like: follow
+    what it shows where no reason says more.
   - CHECK, DO NOT TRUST: open the files and the evidence. Judge what was
     made, not the reasons given for it.
-  - THE RULES ARE HOW THE USER JUDGES, NOT MORE TO BUILD: use a principle,
-    pattern or nature to judge whether the work gives the user what they
-    asked, the way they would want it - never to add work they did not ask
-    for. What they asked comes first: the core promises. A rule that bears on
-    none of them is polish at most.
+  - THE REASONS ARE HOW THE USER JUDGES, NOT MORE TO BUILD: use them to
+    judge whether the work gives the user what they asked, the way they
+    would want it - never to add work they did not ask for. What they asked
+    comes first: the core promises. A reason that bears on none of them is
+    polish at most.
+  - WHAT YOU WRITE IS YOURS, NOT THE USER'S: a criterion or a need resting
+    on no word or decision of theirs says so.
   - WHAT THE WORK AGENT READS CARRIES NO IDS: criteria and approach notes
     are plain requirements and instructions. The user's past work is yours
     to judge by; the work agent never sees it.
   - You decide. The user is not asked.
 
-You can open cards, find more past stages, read files - and run code
+You can open cards, cases and reasons, search the user's files, read files - and run code
 (run_python) to try what was built, as the user would. Trying it cannot change the work: the work's folder and
 every folder it was granted are read-only to you, and the code you run can
 write only in your checks folder, {checks}. When the work must write as it
@@ -1202,89 +1212,90 @@ CRITERIA_SHAPE = """{"text": "a plain requirement the work agent can meet and yo
                  "backed_by": "check|experience|own judgement",
                  "serves": "the core promise it serves (P1...), or polish"}"""
 
-CRITERIA_NOTE = """Criteria come from the user's work shown above: the stages most like
-this (what they decided, required, accepted, rejected), the natures reached
-through them - how they judge, and what they want the output to be (format,
-content, style) - and the patterns and principles above. "backed_by": check
-- something that can be run or opened settles it; experience - the user's
-past work says so; own judgement - neither. Approach notes say how the user
-would go about it, as plain instructions with no ids."""
+CRITERIA_NOTE = """Criteria come from the user's work shown above: the reasons that hold
+for this job - how they judge, what they want the output to be (format,
+content, style), how they go about such work - the cases most like it, and
+the answers to your questions. "backed_by": check - something that can be
+run or opened settles it; experience - the user's past work says so; own
+judgement - neither. Approach notes say how the user would go about it, as
+plain instructions with no ids."""
 
-#: WHAT THE REVIEWER MUST KNOW - asked in an answer of its own BEFORE it
-#: writes criteria (the user's decision, 2026-10-18), with its tools but NO
-#: WEB (`NoWeb`): what it answers there may become a lesson card
-#: (heartbeat/experience/lesson_cards.py) when the work is the user's own
-#: (`Run._keep_lessons`); what it leaves open is answered as it writes the
-#: criteria, the web too, for this work only - never kept.
-QUESTIONS_SHAPE = """{"question": "one question about the user, in a sentence",
-                 "answer": "the specific answer - or empty, when only the web could tell",
-                 "evidence": [{"type": "user_said|user_code|user_decision|model",
-                               "ref": "a file path, or a stage id",
-                               "said": "the words it rests on, quoted as they are"}],
-                 "topics": ["a few words"],
-                 "replaces": "the id of a lesson card it corrects, or empty"}"""
+#: WHAT THE REVIEWER MUST KNOW - asked BEFORE it writes criteria, in an
+#: answer of its own with no tools: the job's terms and its QUESTIONS, each
+#: of a kind (learning/find.QUESTION_KINDS). The full way is then given
+#: what was learned of the user's work for them (learning/find.Finder); the
+#: way with no context, nothing - it answers them itself. Answered as the
+#: criteria are written (ANSWER_RULES), the web too; logged
+#: (work_run_questions), never learned.
+QUESTIONS_STEP = """BEFORE YOU WRITE THE CRITERIA OF {on} - WHAT YOU NEED TO KNOW of the
+user to judge it as they would. Write this job's TERMS and your QUESTIONS;
+they are answered before you write anything else.
 
-#: What is worth asking: what serves later work too - any work, not only code.
-QUESTIONS_SCOPE = """  - PREFERENCES: the tone and length of their emails, whether reports are short
-    or thorough, the citation style, how charts and slides look and how much
-    text a slide carries, tables or prose, the language they write in, the
-    tools and libraries they choose;
-  - CONVENTIONS: how files and folders are named, how drafts are versioned,
-    how an email is signed, how meeting notes and data are laid out;
-  - CONSTRAINTS: the formats a journal or institution requires, data that
-    must not leave their computer, who is copied on what, budgets and
-    quotas, deadlines and how they keep them;
-  - THEIR ENVIRONMENT: the system and software they use (Word or Google Docs,
-    LaTeX or Overleaf, a reference manager, their calendar, the services
-    they use) - what they are, never a password, key or account detail;
-  - DECISIONS THEY MAKE AGAIN AND AGAIN: which of two ways they usually take
-    (a draft first or the whole at once, figures in the text or at the end)."""
+THE JOB'S TERMS: from the word list below, the terms this job is in each
+dimension - deliverable, audience (who it is for), presentation (how it
+reaches them), purpose, environment (tools) - as term ids, as specific as
+the list allows. Leave out a dimension the job does not show.
 
-WHAT_TO_KNOW = """BEFORE YOU WRITE THE CRITERIA OF {on} - WHAT YOU MUST KNOW ABOUT THE
-USER to judge it as they would. List each question about the user that
-the criteria will rest on, and answer the ones you can - from what you were
-shown and from what you can read of theirs with your tools (their files,
-their records, their past stages). YOU HAVE NO WEB HERE: a question only the
-web could answer is left open ("answer": ""), and you answer it later.
+YOUR QUESTIONS, one sentence each, each of a kind:
+{kinds}
+ALWAYS ASK, of the deliverable in hand: how its form and style should be
+(structure, length, look, how much text, tables or prose, charts); how the
+user would check a result like it; what they would also expect of it. Then
+what this job itself leaves open. Not what their instruction already says.
 
-ASK WHAT WILL SERVE LATER WORK TOO - about the user, not this work alone:
-{scope}
+THE WORD LIST:
+{words}
 
-NOT: facts of this work alone (where a fault is, which file holds what);
-what their instruction already says; guesses - an answer from your own
-knowledge alone says so ("model"). Each piece of evidence quotes what it
-rests on as it is: user_said - the user's own words; user_code - a file or
-document of theirs that you read; user_decision - a decision of theirs in a
-past stage you were shown or opened. A LESSON CARD shown above that answers
-a question already is not asked again - unless what you see now says
-otherwise: then answer it anew and name the card in "replaces". Nothing to
-ask: an empty list.
+{shown}
 
 Return ONLY this JSON object:
-{{"questions": [{questions}]}}"""
+{{"terms": {{"deliverable": ["deliverable:..."], "audience": [], "presentation": [],
+            "purpose": [], "environment": []}},
+  "questions": [{{"q": "one question", "kind": "requirement|output|evaluation|habit|fact"}}]}}"""
 
-#: The questions step 1 left open, put before the criteria are asked for.
-OPEN_QUESTIONS = """THE QUESTIONS YOU LEFT OPEN - answer what you need of them now, the web
-too if it helps; what you find is for this work only:
-{questions}
+#: How the reviewer answers its questions, as it writes the criteria.
+ANSWER_RULES = """ANSWER YOUR QUESTIONS AS YOU WRITE: add to your answer
+"answers": [{{"n": 1, "answer": "the answer, specific",
+             "tier": "user_stated|user_inferred|practice_by_preference|practice|assumption",
+             "grounds": ["reason, case or judgment ids, the user's words, a file, a web address"],
+             "searched": [{{"query": "...", "framed_by": "what of the user's shown context shaped it"}}]}}]
+- one for each question, by its number. WHERE AN ANSWER COMES FROM, strongest first:
+  "user_stated" - a reason the user stated, that holds here;
+  "user_inferred" - an inferred reason that holds here;
+  "practice_by_preference" - common practice, found on the web, chosen among by
+    the user's RELATED preferences: their reasons about things next to it, the
+    same kind of deliverable or audience, how cases like it ended up, their
+    field and tools - say which;
+  "practice" - common practice alone: nothing of theirs bears on it;
+  "assumption" - your own.
+WHAT THE RECORD CANNOT ANSWER, SEARCH THE WEB FOR - and frame the search
+with the user's situation and their related preferences shown above, in
+general public words: never a name, a path, an unpublished result or
+anything only the user knows. A rule a funder, journal or institution sets
+wins over a preference - say so; general practice gives way to the user's
+reasons - say where they differ. Give the addresses you used.
+
+"""
+
+#: The same answers, from a reviewer given no record of the user's work.
+SELF_ANSWER = """NO RECORD OF THE USER'S WORK is given for your questions: answer them yourself
+as you write - add to your answer
+"answers": [{{"n": 1, "answer": "the answer, specific", "tier": "practice|assumption",
+             "grounds": ["the task, the contract, a file, or a web address"],
+             "searched": [{{"query": "..."}}]}}]
+- one for each question, by its number. Search the web for what common
+practice would tell. Each answer is your own, and says so.
 
 """
 
 #: At most this many expected needs from one answer.
 EXPECTED_MOST = 8
 
-#: The lesson cards found for what the reviewer is asked, after the
-#: experience - at most this many, each answer cut to its first characters.
-LESSONS_GIVEN = 6
-LESSON_ANSWER_CHARS = 600
-#: At most this many questions of one answer become cards.
-LESSONS_PER_ANSWER = 8
-LESSONS_SHOWN = """
+#: The work agent's questions, asked of the reviewer with its round.
+BUILDER_ASKS = """THE WORK AGENT ASKS - answer each, by its number, in "answers" as above (plain
+words for it: no ids in "answer"):
+{questions}
 
-WHAT WAS ASKED AND ANSWERED BEFORE - LESSON CARDS, each a question about the
-user's work, its answer and what it rests on ("user": something of the
-user's says so; "assumption": the model's own knowledge). Cite one by its id
-where you rely on it:
 """
 
 REVIEW_CONTRACT = """REVIEW THIS CONTRACT, drafted by the work agent before any work:
@@ -1646,16 +1657,6 @@ NO_CONTEXT_WORDS = (
      "how strongly the task, the contract and the evidence support it"),
     ("Are the results shown the way the user likes\nresults shown?",
      "Are the results shown clearly?"),
-    # The same questions, asked and answered - with no lesson card to cite
-    # and no past work of the user's to rest on.
-    ('"user_said|user_code|user_decision|model"', '"user_said|user_code|model"'),
-    ('"a file path, or a stage id"', '"a file path"'),
-    ("(their files,\ntheir records, their past stages)", "(their files)"),
-    ("; user_decision - a decision of theirs in a\npast stage you were shown or opened", ""),
-    (' A LESSON CARD shown above that answers\na question already is not asked again - unless '
-     'what you see now says\notherwise: then answer it anew and name the card in "replaces".',
-     ""),
-    (',\n                 "replaces": "the id of a lesson card it corrects, or empty"', ""),
     ("- from the user's past work shown\nabove and from what they asked -",
      "- from what they asked and the work itself -"),
 )
@@ -1952,28 +1953,6 @@ def in_force_since(index: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 def _yes(value: Any) -> bool:
     """A model's yes: true, or the word for it."""
     return value is True or str(value).strip().lower() in ("true", "yes", "1")
-
-
-def _lessons_cited(said: Any, shown: set) -> List[Tuple[str, str]]:
-    """The lesson cards an answer cites in a "because" - each with what it
-    was cited for (the criterion, the comment) - once each."""
-    out: List[Tuple[str, str]] = []
-
-    def walk(value: Any) -> None:
-        if isinstance(value, dict):
-            because = value.get("because")
-            for one in because if isinstance(because, list) else [because]:
-                if isinstance(one, str) and one in shown and \
-                        all(one != seen for seen, _ in out):
-                    out.append((one, str(value.get("text") or value.get("say") or "")[:600]))
-            for inner in value.values():
-                walk(inner)
-        elif isinstance(value, list):
-            for inner in value:
-                walk(inner)
-
-    walk(said)
-    return out
 
 
 def _criteria_of(said: Any) -> List[Dict[str, Any]]:
@@ -3714,7 +3693,6 @@ class Run:
                  resumed: Optional[Dict[str, Any]] = None,
                  packages: Optional[str] = None, amend: str = "",
                  sound: bool = False) -> None:
-        from ...heartbeat.experience.retrieve import Retriever
         from ...heartbeat.experience.stages import StageWriter
         from ...heartbeat.experience.store import ExperienceStore, LIVE
         self.owner = owner
@@ -3820,29 +3798,26 @@ class Run:
         self.store = ExperienceStore(owner.db, self.scope)
         self.writer = StageWriter(owner.db, None, None, scope=self.scope)
         self.work_unit = _work_unit(unit, self.instruction)
-        experience = owner.experience
-        # The debugger's units are not the user's: no record of theirs is
-        # looked up for one, and none is ever written through one (the
-        # project's record, and its card-opening, are what could make one).
-        own_work = experience is not None and not self.debug
-        #: THE PROJECT AS THE RECORD HAS IT (`live`), and when it was read.
-        self._live_unit = experience.full_unit(unit["id"]) if own_work else None
+        # THE LEARNING STARTED AGAIN (2026-10-21): the record of stages the
+        # project was learned into is no longer read - nor are its stages
+        # searched, nor lesson cards (learning/ in their place).
+        self._live_unit = None
         self._live_at = time.time()
-        self.live_writer = experience.stages_writer() if own_work else None
-        # The user's experience, READ: by the reviewer of the full way only.
-        self.retriever = Retriever(owner.db, getattr(experience, "library", None),
-                                   scope=LIVE) if experience and self.variant == FULL else None
-        # THE LESSON CARDS - what was asked of the user's work and answered
-        # (heartbeat/experience/lesson_cards.py). The user's decision
-        # (2026-10-18): READ by the full way's reviewer, a debugger way's
-        # too; WRITTEN only by the user's own work - nor is a use recorded
-        # by any other; the way with no context is given none.
-        from ...heartbeat.experience.lesson_cards import LessonCards
-        self.lessons = LessonCards(owner.db, LIVE) \
-            if experience and self.variant == FULL else None
-        self.lessons_kept = own_work and self.lessons is not None
-        #: The cards shown to its reviewer this session, by id.
+        self.live_writer = None
+        self.retriever = None
+        self.lessons = None
+        self.lessons_kept = False
         self.lessons_shown: Dict[str, Dict[str, Any]] = {}
+        #: WHAT WAS LEARNED OF THE USER'S WORK (learning/find.py): asked by
+        #: the full way's reviewer - a debugger way's too; nothing for the
+        #: way with no context. Nothing a run does is learned.
+        self.finder = Finder(owner.db) if self.variant == FULL and \
+            getattr(owner, "db", None) is not None else None
+        #: The questions asked last and not answered yet: their number in
+        #: the asking answer -> their row in work_run_questions.
+        self._asked: Dict[int, int] = {}
+        #: The job's terms, as the reviewer last wrote them.
+        self._facets: Dict[str, List[str]] = {}
         self.plan: Dict[str, Any] = dict(resumed["plan"]) if resumed else {
             "phase": "contract", "round": 0, "stalls": 0, "fix_rounds": 0,
             "rounds": [], "decisions": [], "blocked": [], "amendments": [],
@@ -3921,18 +3896,16 @@ class Run:
         self.tools.packages_dir = self.packages_dir
         # The user's own instruction: the addresses in it exist.
         self.tools.know_addresses(self.instruction)
-        # A reviewer with no context searches no past stages: the tool is not
-        # offered it at all.
+        # No reviewer searches past stages any more (the learning started
+        # again): what was learned is opened by case and reason (`learned`).
         self.review_tools = WorkTools(self._checking_runtime(),
                                       log=lambda name, said: self._tool_used(
                                           name, said, who="reviewer"),
-                                      cards=self._open_cards,
-                                      find=None if self.variant == NO_CONTEXT
-                                      else self._find_anywhere,
-                                      stages=None if self.variant == NO_CONTEXT
-                                      or self.retriever is None else self._open_stages)
+                                      cards=self._open_cards, find=None, stages=None)
         self.review_tools.locked = list(self.tools.locked)
         self.review_tools.runs_code = ("run_python",)
+        if self.finder is not None:
+            self.review_tools.learned = _Learned(self.finder, lambda: self._facets)
         # The user's own files, searched by their words: the full way's
         # reviewer, as its builder.
         self.review_tools.files_index = self.tools.files_index
@@ -5105,146 +5078,147 @@ class Run:
         except Exception:                      # pragma: no cover - retrieved again then
             log.debug("could not keep what the reviewer was given", exc_info=True)
 
-    # -- the lesson cards ------------------------------------------------------------------
-    def lessons_for(self, asked: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """The lesson cards whose question is most like what the reviewer is
-        asked (its English words), as it is given them; none to a way that
-        reads none."""
-        if self.lessons is None:
-            return []
+    # -- the reviewer's questions --------------------------------------------------------
+    def learned_given(self, key: str) -> str:
+        """What the reviewer was given for its questions about this card, or
+        the contract - the same text every time (reopened, reviewed again,
+        carried on after the application closed); "" when nothing yet."""
+        keys = [key] if key else []
+        if key.startswith("round:"):
+            keys.append("criteria:" + key.split(":", 1)[1])
+        keys.append("contract")
+        for one in keys:
+            said = self.experience_given(one)
+            if said and said.get("text"):
+                if said.get("facets"):
+                    self._facets = dict(said["facets"])
+                return str(said["text"])
+        return ""
+
+    def _learned_ask(self, system: str, content: str, most: int) -> Dict[str, Any]:
+        """A short call of the reviewer's, with no tools: whether reasons hold."""
         try:
-            found = self.lessons.find(str(asked.get("text") or ""),
-                                      project=str(self.unit.get("id") or ""),
-                                      limit=LESSONS_GIVEN)
-        except Exception:                      # pragma: no cover - none then
-            log.debug("could not find lesson cards", exc_info=True)
-            return []
-        return [{"id": one["id"], "question": one["question"],
-                 "answer": one["answer"][:LESSON_ANSWER_CHARS], "tier": one["tier"],
-                 "rests_on": [" ".join(filter(None, [e.get("type", ""), e.get("ref", "")]))
-                              for e in one.get("evidence") or []][:4],
-                 "version": one.get("version", 1), "why": one.get("why", [])}
-                for one in found]
+            return self._ask(system + "\n\n" + zone_rule(), [{"role": "user", "content": content}],
+                             NoTools(self.review_tools), writing=False, rounds=1, work=False,
+                             quiet=True, who="reviewer", language=in_english("the answer"))
+        except Exception:                      # pragma: no cover - the code's verdicts then
+            log.debug("could not ask whether the reasons hold", exc_info=True)
+            return {}
+
+    def _log_questions(self, step: str, asked_by: str, questions: List[Dict[str, Any]],
+                       found: Dict[str, Any]) -> None:
+        from ...learning.store import LearningStore
+        store = LearningStore(self.owner.db)
+        self._asked = {}
+        for number, one in enumerate(questions, 1):
+            try:
+                self._asked[number] = store.save_question(
+                    self.id, step, asked_by, str(one.get("q") or ""), str(one.get("kind") or ""),
+                    found, {})
+            except Exception:                  # pragma: no cover - a log
+                log.debug("could not log a question", exc_info=True)
 
     def _what_to_know(self, review: "Review", on: str, shown: str,
                       card: Optional[Dict[str, Any]]) -> str:
-        """STEP 1 OF WRITING CRITERIA (the user's decision, 2026-10-18): what
-        the reviewer must know of the user, asked in an answer of its own
-        with its tools but NO WEB (`NoWeb`) - what it answers there may be
-        kept as lesson cards (`_keep_lessons`, the user's own work only),
-        each piece of evidence checked against what it was given and read;
-        what it leaves open comes back, to be put before the criteria are
-        asked for (the web too, for this work only)."""
-        tools = NoWeb(self.review_tools)
-        said = review.ask(WHAT_TO_KNOW.format(on=on, scope=QUESTIONS_SCOPE,
-                                              questions=QUESTIONS_SHAPE)
-                          + "\n\n" + shown, tools=tools)
-        questions = [one for one in (said.get("questions") or [])
-                     if isinstance(one, dict) and str(one.get("question") or "").strip()]
-        answered = [one for one in questions if str(one.get("answer") or "").strip()]
-        left = [one for one in questions if not str(one.get("answer") or "").strip()]
-        self._keep_lessons(answered, card, tools, review.shown_stages)
-        if not left:
+        """STEP 1 OF WRITING CRITERIA: the reviewer's QUESTIONS of the user,
+        and the job's terms, asked in an answer of their own with no tools;
+        then what was learned of the user's work for them (the full way), or
+        nothing (the way with no context) - the text put before the criteria
+        are asked for, with how they are to be answered (ANSWER_RULES)."""
+        key = f"criteria:{card.get('id', '')}" if card else (
+            "contract" if "AMENDED" not in on else f"amendment:{int(time.time())}")
+        kept = self.experience_given(key) if not review.plain else None
+        if kept and kept.get("text"):
+            self._facets = dict(kept.get("facets") or {})
+            # The same as the first time - and already in its context when
+            # it was made for this card.
+            return "" if review.attached else str(kept["text"])
+        kinds = "\n".join(f'  "{name}" - {words}' for name, words in QUESTION_KINDS.items())
+        # The way with no context is shown the fixed words alone: what was
+        # added to them came from the user's work.
+        words = self.finder.word_list() if self.finder is not None and not review.plain \
+            else Vocabulary.fixed_listing(DIMENSIONS)
+        said = review.ask(QUESTIONS_STEP.format(on=on, kinds=kinds, words=words, shown=shown),
+                          tools=NoTools(self.review_tools), rounds=1)
+        questions = [{"q": _clip(one.get("q") or one.get("question"), 400),
+                      "kind": str(one.get("kind") or "requirement")}
+                     for one in (said.get("questions") or []) if isinstance(one, dict)
+                     and str(one.get("q") or one.get("question") or "").strip()][:12]
+        numbered = "YOUR QUESTIONS:\n" + "\n".join(
+            f"  {n}. ({one['kind']}) {one['q']}" for n, one in enumerate(questions, 1))
+        if review.plain or self.finder is None:
+            self._log_questions(on, "reviewer", questions, {"given": "nothing"})
+            return numbered + "\n\n" + SELF_ANSWER
+        facets = self.finder.job_facets(said.get("terms"))
+        self._facets = facets
+        job = " ".join(filter(None, [self.instruction, self._description()]))[:3000]
+        try:
+            package = self.finder.answer(job, facets, questions, ask=self._learned_ask)
+        except Exception:                      # pragma: no cover - none given then
+            log.warning("what was learned could not be found", exc_info=True)
+            package = {"text": "NOTHING LEARNED OF THE USER'S WORK COULD BE READ NOW.",
+                       "found": {}}
+        text = numbered + "\n\n" + package["text"] + "\n\n" + ANSWER_RULES
+        self.keep_experience_given(key, {"text": text, "found": package.get("found") or {},
+                                         "facets": facets})
+        self._log_questions(on, "reviewer", questions, package.get("found") or {})
+        self._note("questions asked", on=on, questions=len(questions),
+                   reasons=len((package.get("found") or {}).get("reasons") or []),
+                   cases=len((package.get("found") or {}).get("cases") or []))
+        return text
+
+    def _builder_questions(self, summary: Dict[str, Any]) -> str:
+        """The work agent's questions of the round, for the reviewer to
+        answer: with what was learned for them (the full way)."""
+        questions = [{"q": _clip(one, 400), "kind": "output"}
+                     for one in summary.get("questions") or [] if str(one or "").strip()][:6]
+        if not questions:
+            self._asked = {}
             return ""
-        return OPEN_QUESTIONS.format(questions="\n".join(
-            f"  - {_clip(one.get('question'), 300)}" for one in left[:LESSONS_PER_ANSWER]))
-
-    def _checked_evidence(self, evidence: List[Dict[str, Any]], tools: "NoWeb",
-                          shown_stages: set) -> List[Dict[str, Any]]:
-        """Each piece of evidence as the application can stand behind it:
-        the user's words only when they are in the instruction; their file
-        only when it was read in step 1, the words quoted in it; a decision
-        of theirs only on a stage shown or opened there. Anything else is
-        the model's own - an assumption."""
-        words = " ".join(filter(None, [self.instruction, self.amend_words or "",
-                                       *self._branch_words()])).lower()
-
-        def flat(text: Any) -> str:
-            return " ".join(str(text or "").lower().split())
-
-        out = []
-        for one in evidence:
-            kind = str(one.get("type") or "")
-            ref, quoted = str(one.get("ref") or ""), flat(one.get("said"))
-            holds = False
-            if kind == "user_said":
-                holds = bool(quoted) and quoted in flat(words)
-            elif kind == "user_code":
-                text = tools.read_text(ref)
-                holds = text is not None and (not quoted or quoted in flat(text))
-            elif kind == "user_decision":
-                holds = ref in shown_stages or ref in tools.opened
-            elif kind == "web":
-                # Said to rest on the web, with none here: kept as said - and
-                # so never kept as a card (LessonCards.write).
-                holds = True
-            out.append(dict(one, type=kind if holds else "model"))
-        return out
-
-    def _keep_lessons(self, questions: List[Dict[str, Any]], card: Optional[Dict[str, Any]],
-                      tools: "NoWeb", shown_stages: set) -> None:
-        """WHAT THE REVIEWER KNEW WITH NO WEB, kept: each question answered in
-        step 1 a lesson card - a new one, or a new version of the card it
-        names in "replaces" - its evidence as checked. Only on the user's
-        own work (`lessons_kept`); one resting on the web is never kept
-        (LessonCards.write) - and nothing here could have."""
-        if not self.lessons_kept or not questions:
-            return
-        on = {"card": card.get("id", ""), "title": card.get("title", "")} if card else \
-            {"card": "", "title": "the contract"}
-        context = {"project": str(self.unit.get("id") or ""),
-                   "project_name": str(self.unit.get("name") or ""),
-                   "run": self.id, "card": on["card"],
-                   "why": f"asked before writing the criteria of {on['title']}"}
-        written_by = {"run": self.id, "role": "reviewer"}
-        known = {" ".join(one["question"].lower().split())
-                 for one in self.lessons_shown.values()}
-        kept, left = 0, []
-        for one in questions[:LESSONS_PER_ANSWER]:
-            question, answer = str(one.get("question") or ""), str(one.get("answer") or "")
-            evidence = self._checked_evidence(
-                [e for e in one.get("evidence") or [] if isinstance(e, dict)],
-                tools, shown_stages)
-            topics = one.get("topics") if isinstance(one.get("topics"), list) else []
-            replaces = str(one.get("replaces") or "").strip()
+        numbered = "\n".join(f"  {n}. {one['q']}" for n, one in enumerate(questions, 1))
+        found: Dict[str, Any] = {"given": "nothing"}
+        extra = SELF_ANSWER
+        if self.finder is not None:
             try:
-                if replaces in self.lessons_shown:
-                    changes = {"answer": answer, "evidence": evidence, "context": context,
-                               "topics": topics, "written_by": written_by}
-                    if question.strip():
-                        changes["question"] = question
-                    # Still one it was shown: cited, it is a use of what it said.
-                    done = self.lessons.supersede(replaces, **changes)
-                elif " ".join(question.lower().split()) in known:
-                    done = {"kept": False, "why": "asked before: a card answers it"}
-                else:
-                    done = self.lessons.write(question, answer, evidence, context=context,
-                                              topics=topics, written_by=written_by)
-            except Exception as exc:             # pragma: no cover - the run goes on
-                log.debug("could not keep a lesson card", exc_info=True)
-                done = {"kept": False, "why": str(exc)[:200]}
-            if done.get("kept"):
-                kept += 1
-            else:
-                left.append({"question": question[:200], "why": done.get("why", "")})
-        if kept or left:
-            self._note("lesson cards", on=on["title"], kept=kept, not_kept=left)
+                package = self.finder.answer(self.instruction[:3000], self._facets, questions,
+                                             ask=self._learned_ask)
+                found = package.get("found") or {}
+                extra = package["text"] + "\n\n" + ANSWER_RULES
+            except Exception:                  # pragma: no cover - answered without
+                log.debug("could not find what bears on the work agent's questions",
+                          exc_info=True)
+        self._log_questions(f"round {int(self.plan.get('round') or 0) + 1}", "work agent",
+                            questions, found)
+        return BUILDER_ASKS.format(questions=numbered) + extra
 
-    def _lessons_used(self, said: Any, card: Optional[Dict[str, Any]]) -> None:
-        """Each lesson card the criteria cite, a use - which run, which card,
-        to what decision. The user's own work only."""
-        if not self.lessons_kept or not isinstance(said, dict):
+    def _answers_kept(self, said: Any, card: Optional[Dict[str, Any]]) -> None:
+        """The answers to the questions just asked, logged beside them
+        (work_run_questions) - for reading back; never learned."""
+        if not isinstance(said, dict) or not self._asked:
             return
-        cited = _lessons_cited(said, set(self.lessons_shown))
-        for lesson_id, decision in cited:
+        from ...learning.store import LearningStore
+        store = LearningStore(self.owner.db)
+        given = []
+        for one in said.get("answers") or []:
+            if not isinstance(one, dict):
+                continue
             try:
-                self.lessons.used(lesson_id, run_id=self.id,
-                                  work_card=(card or {}).get("id", ""), decision=decision)
-            except Exception:                  # pragma: no cover - the run goes on
-                log.debug("could not record a lesson card's use", exc_info=True)
-        if cited:
-            self._note("lesson cards used", on=(card or {}).get("title", "the contract"),
-                       used=[one for one, _ in cited])
+                number = int(one.get("n") or 0)
+            except (TypeError, ValueError):
+                continue
+            row = self._asked.get(number)
+            if row is None:
+                continue
+            answer = {key: one.get(key) for key in ("answer", "tier", "grounds", "searched")}
+            answer["criterion_of"] = (card or {}).get("title", "the contract")
+            try:
+                store.answer_question(self.id, row, answer)
+            except Exception:                  # pragma: no cover - a log
+                log.debug("could not log an answer", exc_info=True)
+            given.append({"q": number, "answer": _plain(str(one.get("answer") or ""))[:600]})
+        self._asked = {}
+        if given:
+            self.plan["answers"] = given
 
     def _unreadable(self) -> Optional[List[str]]:
         """Every place this run may not read, worked out once a run - None
@@ -5990,7 +5964,8 @@ class Run:
             "\nYOU MAY WRITE IN: " + "; ".join(
                 [str(self.folder), *[str(one) for one in
                                      self.runtime.policy.extra_writable]]),
-            f"\nTHE PROJECT'S RECORD SO FAR (the user's own work on it):\n{record}",
+            f"\nTHE PROJECT'S RECORD SO FAR (the user's own work on it):\n{record}"
+            if self.live else "",
             "\n" + self._contract_text() if self.plan.get("contract") else "",
             # No contract yet: the words go into the one drafted.
             "\n" + self._words_text() if not self.plan.get("contract")
@@ -6023,10 +5998,14 @@ class Run:
         """What the reviewer said of the last round - its words, without
         what they rest on."""
         findings = (self.plan.get("findings") or {}).get("findings") or []
-        if not findings:
-            return ""
-        return "\n".join(f"  - ({one.get('type', '')}) {_plain(one.get('say', ''))}"
-                         for one in findings[:12])
+        lines = [f"  - ({one.get('type', '')}) {_plain(one.get('say', ''))}"
+                 for one in findings[:12]]
+        answers = self.plan.get("answers") or []
+        if answers:
+            lines.append("  ANSWERS TO YOUR QUESTIONS:")
+            lines += [f"  - {one.get('q')}. {_plain(str(one.get('answer') or ''))}"
+                      for one in answers[:6]]
+        return "\n".join(lines)
 
     # -- the loop ------------------------------------------------------------------------------
     def _run(self) -> None:
@@ -6359,7 +6338,7 @@ class Run:
                 return False
         self._apply_contract(draft, judged)
         self._apply_expected(judged.get("expected"), "the reviewer", 0)
-        self._lessons_used(judged, None)
+        self._answers_kept(judged, None)
         self._for_user(judged, "the contract")
         self._record_contract(draft, reviews, approved=True)
         self.plan["phase"] = "rounds"
@@ -6732,7 +6711,7 @@ class Run:
             self._note("amendment not approved", words=words)
             return False
         after, reopened = self._apply_amendment(before, draft, judged, words, done)
-        self._lessons_used(judged, None)
+        self._answers_kept(judged, None)
         diff = contract_diff(before, after)
         self._record_amendment(words, draft, reviews, diff, reopened, approved=True)
         self._note("contract amended", words=words, diff=diff,
@@ -6954,7 +6933,7 @@ class Run:
                 return
             said = review.ask(left_open + REVIEW_CARD.format(
                 card=shown, criteria=CRITERIA_SHAPE, note=CRITERIA_NOTE))
-            self._lessons_used(said, card)
+            self._answers_kept(said, card)
             criteria = self._criteria(said.get("criteria"))
             if criteria:
                 self._set_criteria(card, criteria, str(said.get("approach") or ""))
@@ -7022,12 +7001,15 @@ class Run:
                         self._reviewer_context(card, recent=True),
                         same_as=f"round:{card.get('id', '')}")
         holding_before = set(self._unmet())
-        judged = review.ask(REVIEW_ROUND.format(
+        asks = self._builder_questions(summary)
+        judged = review.ask(asks + REVIEW_ROUND.format(
             summary=json.dumps({k: v for k, v in summary.items() if k != "written_by"},
                                ensure_ascii=False)[:14000],
             hints=self._full_review_hints(card, summary, number),
             needs_user=NEEDS_USER, for_user=FOR_USER_NOTE))
         self.plan["findings"] = judged
+        self.plan.pop("answers", None)
+        self._answers_kept(judged, card)
         self._judge_promises(judged, number)
         self._for_user(judged, f"round {number}")
         self._apply_review(card, number, summary, judged, root)
@@ -8135,7 +8117,7 @@ class NoWeb:
     user's decision, 2026-10-18): every tool of theirs but the web's - no
     search, no page, and no web guard, so a client's own web tools are not
     offered either - and what it read and opened, for the evidence of what
-    it answers to be checked against (`Run._checked_evidence`)."""
+    it answers to be checked against."""
 
     WEB = ("web_search", "fetch_url", "fetch_page")
     #: No guard: no client's own web tools (claude_code_provider, codex).
@@ -8178,6 +8160,31 @@ class NoWeb:
         return None
 
 
+class NoTools(NoWeb):
+    """No tools at all: an answer from what it was told alone."""
+
+    def specs(self, writing: bool = True) -> List[ToolSpec]:
+        return []
+
+    def call(self, name: str, arguments: Dict[str, Any]) -> Any:
+        return {"error": "no tools here - answer from what you were told"}
+
+
+class _Learned:
+    """open_case and open_reason, for the reviewer: the cases closest to
+    the job's terms first."""
+
+    def __init__(self, finder: Finder, facets: Any) -> None:
+        self.finder = finder
+        self.facets = facets
+
+    def open_case(self, case_id: str) -> str:
+        return self.finder.open_case(case_id)
+
+    def open_reason(self, reason_id: str, page: int = 1) -> str:
+        return self.finder.open_reason(reason_id, page, self.facets())
+
+
 def _path_key(path: str) -> str:
     return str(path or "").replace("\\", "/").strip().lower()
 
@@ -8200,9 +8207,9 @@ class Review:
         #: nothing of the user's experience is retrieved for it, nor said to
         #: it - its questions are asked without what they say of it.
         self.plain = getattr(run, "variant", FULL) == NO_CONTEXT
-        #: The past stages it was shown, by id: a decision of the user's it
-        #: cites is one of these, or one it opened (`Run._checked_evidence`).
         self.shown_stages: set = set()
+        #: What was learned for its questions is in its context already.
+        self.attached = False
         self.messages: List[Dict[str, Any]]
         if self.plain:
             self.messages = [{"role": "user", "content": (
@@ -8210,29 +8217,12 @@ class Review:
                 "you: judge by what they asked, their own words, the contract and "
                 "the evidence.")}]
             return
-        found: Dict[str, Any] = {}
-        kept = run.experience_given(same_as) if same_as else None
-        if kept is not None:
-            found = kept
-        elif run.retriever is not None:
-            asked = run._in_english(profile)
-            found = compact_experience(run.retriever.find(asked))
-            # And the lesson cards found for it - the same ones every time too.
-            found["lessons"] = run.lessons_for(asked)
-            run.keep_experience_given(same_as, found)
-        lessons = [one for one in found.pop("lessons", None) or [] if isinstance(one, dict)]
-        self.shown_stages = {str(one.get("id") or "") for one in found.get("stages") or []
-                             if isinstance(one, dict) and one.get("id")}
-        if lessons:
-            run.lessons_shown.update((one["id"], one) for one in lessons if one.get("id"))
-        self.messages = [{"role": "user", "content": (
-            context
-            + "\n\nHOW THE USER WORKS, FROM THEIR OWN PAST WORK - first the RULES "
-              "they have shown (principles, patterns and natures, each whole with "
-              "the cases that show it), then the past STAGES they come from, a "
-              "line each with why it was found; open_stage opens any of them:\n"
-            + experience_text(found, EXPERIENCE_CHARS)
-            + (LESSONS_SHOWN + json.dumps(lessons, ensure_ascii=False) if lessons else ""))}]
+        # WHAT WAS LEARNED FOR ITS QUESTIONS, when they were asked before -
+        # of this card, or of the contract: the same text every time. Asked
+        # now, it is given with the criteria (`Run._what_to_know`).
+        kept = run.learned_given(same_as) if hasattr(run, "learned_given") else ""
+        self.attached = bool(kept)
+        self.messages = [{"role": "user", "content": context + ("\n\n" + kept if kept else "")}]
 
     def ask(self, content: str, tools: Any = None, rounds: int = TOOL_ROUNDS
             ) -> Dict[str, Any]:

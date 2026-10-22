@@ -1068,6 +1068,34 @@ class ConnectionsRound:
         without tools."""
         tools = TOOLS if tools is None else tools
         handle = handle or (lambda name, arguments: self._tool(name, arguments, used))
+        given = handle
+
+        def handle(name: str, arguments: Dict[str, Any]) -> Any:
+            # A CONTACT CHANGED FROM THE WEB: what the model was told and
+            # asked so far, and what it found, kept with the change (the
+            # Connection debugger).
+            if name != "record_findings":
+                return given(name, arguments)
+            call = ""
+            try:
+                call = self.store.begin_call(
+                    "Newspaper: a contact looked up on the web",
+                    json.dumps(messages, ensure_ascii=False, default=str),
+                    json.dumps(arguments, ensure_ascii=False, default=str),
+                    window=str((arguments or {}).get("id") or ""))
+            except Exception:              # pragma: no cover - a debugger's record
+                log.warning("could not keep the look-up's call", exc_info=True)
+            said: Any = None
+            try:
+                said = given(name, arguments)
+                return said
+            finally:
+                if call:
+                    try:
+                        self.store.end_call(call, said)
+                    except Exception:      # pragma: no cover - a debugger's record
+                        log.warning("could not finish the look-up's call", exc_info=True)
+
         room = room or (lambda: self._room(used))
         # What it is told is the user's: their work, their contacts, the
         # pages they gave - the addresses in it exist, its words are theirs.

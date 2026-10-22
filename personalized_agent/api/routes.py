@@ -394,32 +394,11 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
 
     @route("POST", "/api/index")
     def local_index_change(request: Any) -> Any:
-        """A folder added or removed, the conversation records added or
-        not, the index on or off, or a build started now."""
-        import os
-        from pathlib import Path
+        """The index on or off, or a build started now. Its folders are the
+        learning's places, listed in Work's Learning panel (/api/learning)."""
         action = str(request.require("action"))
         index = app.local_index
-        if action in ("add", "remove"):
-            path = str(request.require("path")).strip()
-            folders = index.added()
-            if action == "add":
-                where = Path(path).expanduser()
-                if not where.is_dir():
-                    raise ApiError(f"not a folder: {path}")
-                data = os.path.normcase(os.path.abspath(str(app.paths.data_dir)))
-                if os.path.normcase(os.path.abspath(str(where))).startswith(data):
-                    raise ApiError("the application's own data is never read")
-                if str(where) not in folders:
-                    folders.append(str(where))
-            else:
-                folders = [one for one in folders if one != path]
-            app.config.set("index_folders", folders)
-            index.soon()
-        elif action == "sessions":
-            app.config.set("index_sessions", bool(request.get("on", True)))
-            index.soon()
-        elif action == "enable":
+        if action == "enable":
             app.config.set("index_enabled", bool(request.get("on", True)))
             if app.config.get("index_enabled", True):
                 index.soon()
@@ -428,8 +407,53 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             if said.get("error"):
                 raise ApiError(said["error"])
         else:
-            raise ApiError("action is add, remove, sessions, enable or build")
+            raise ApiError("action is enable or build - the folders are listed in Work's "
+                           "Learning panel")
         return index.status()
+
+    @route("GET", "/api/learning")
+    def learning_status(_request: Any) -> Any:
+        """WORK'S LEARNING PANEL: the switch and the times, the update open
+        or the last one, the places and what they bring, the spending."""
+        said = app.learning.status()
+        said["index"] = {key: value for key, value in app.local_index.status().items()
+                         if key in ("enabled", "available", "building", "files", "texts")}
+        return said
+
+    @route("POST", "/api/learning")
+    def learning_change(request: Any) -> Any:
+        """Update now, pause or continue; the switch, the times and the day's
+        limit; a place added or removed; a folder found left out or let in."""
+        action = str(request.require("action"))
+        learning = app.learning
+        try:
+            if action == "update":
+                learning.update_now()
+            elif action == "pause":
+                learning.pause()
+            elif action == "continue":
+                learning.resume()
+            elif action == "auto":
+                tokens = request.get("daily_tokens")
+                learning.set_auto(on=request.get("on"), times=request.get("times"),
+                                  daily_tokens=int(tokens) if tokens not in (None, "") else None)
+            elif action == "add":
+                learning.places.add(str(request.get("path") or ""),
+                                    str(request.get("kind") or "folder"))
+                app.local_index.soon()
+            elif action == "remove":
+                learning.places.remove(str(request.require("path")))
+                app.local_index.soon()
+            elif action == "exclude":
+                learning.places.set_excluded(str(request.require("path")),
+                                             bool(request.get("out", True)))
+                app.local_index.soon()
+            else:
+                raise ApiError("action is update, pause, continue, auto, add, remove or "
+                               "exclude")
+        except ValueError as exc:
+            raise ApiError(str(exc))
+        return learning_status(request)
 
     @route("GET", "/api/permissions/macos")
     def macos_permissions(_request: Any) -> Any:
@@ -840,6 +864,33 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                 "steps": progress.get("steps", [])}
 
     # ------------------------------------------------------------- states
+    @route("GET", "/api/debugger/connections")
+    def connections_debugger(request: Any) -> Any:
+        """THE CONNECTION DEBUGGER: every change to the contacts, newest
+        first - who made it, when, what it changed - and, for the agent's,
+        the start of what its model was asked and answered (the whole is
+        kept in a file: /api/debugger/connections/call)."""
+        store = app.connections
+        most = max(1, min(1000, request.int_param("most", 200)))
+        changes = store.changes(most, str(request.get("person") or ""))
+        shown = 1500
+        for one in changes:
+            call = one.get("call")
+            if call:
+                one["call"] = {key: call.get(key) for key in (
+                    "id", "at", "source", "span", "prompt_chars", "answer_chars", "archive")}
+                one["call"]["prompt_start"] = str(call.get("prompt_head") or "")[:shown]
+                one["call"]["answer_start"] = str(call.get("answer_head") or "")[:shown]
+        return {"changes": changes, "shown_chars": shown}
+
+    @route("GET", "/api/debugger/connections/call")
+    def connections_debugger_call(request: Any) -> Any:
+        """One model call that changed the contacts, whole."""
+        said = app.connections.call_whole(str(request.require("id")))
+        if said is None:
+            raise ApiError("no such call", 404)
+        return said
+
     @route("GET", "/api/debugger/states")
     def states(request: Any) -> Any:
         """Section 34.1, as amended: states are internal, and shown here only.
@@ -2425,11 +2476,17 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         """What the Overview card needs, and polls: the last "what you need
         to know" - or the issue asked for by its id - every issue kept, and
         how the working-out of the next is going."""
-        from ..heartbeat.connections.recommend import says_of
+        from ..heartbeat.connections.recommend import collected_of, collection, says_of
         briefing = app.connections.briefing(str(request.get("id") or ""))
+        kept = collection(app.db)
         return {"briefing": briefing, "issues": app.connections.briefings(),
-                # The user's preference on each story, as last said.
-                "says": says_of(app.db, (briefing or {}).get("id") or ""),
+                # The user's preference on each story, as last said - of the
+                # issue's, and of the ones in the collection.
+                "says": {**kept["says"],
+                         **says_of(app.db, (briefing or {}).get("id") or "")},
+                # The stories kept, from any issue, and which of this one's.
+                "collection": kept["items"],
+                "collected": collected_of(app.db, (briefing or {}).get("id") or ""),
                 "progress": dict(app.connections_round.progress),
                 # When the next issue is made, and in which time zone.
                 "schedule": app.issue_clock.status()}
@@ -2447,6 +2504,19 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                                    embedder=app.connections_round.embedder)
         except (KeyError, ValueError) as exc:
             raise ApiError(str(exc), 400)
+
+    @route("POST", "/api/recommend/collection")
+    def recommend_collection(request: Any) -> Any:
+        """Keep a story in the collection, or take it out ("keep": false).
+        Keeping it is not a say on it: that is /api/recommend/feedback."""
+        from ..heartbeat.connections.recommend import collect, uncollect
+        story = str(request.require("story"))
+        if request.get("keep", True) is False:
+            return uncollect(app.db, story)
+        try:
+            return collect(app.db, app.connections, str(request.require("issue")), story)
+        except KeyError as exc:
+            raise ApiError(str(exc).strip("'"), 404)
 
     @route("GET", "/api/connections/person")
     def connections_person(request: Any) -> Any:

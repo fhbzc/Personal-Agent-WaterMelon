@@ -614,6 +614,56 @@ everything it changed is written down.
 - **Projects are named by the model.** A project gets a short name and a line
   saying what it is when it starts, and a new name only when its time has
   grown by about a third. Work shows the names a project had before.
+- **Times in another place's time, and daylight saving.** A notification's
+  time is now kept on a clock and by whose clock: a meeting at 15:00 Paris
+  time, or at 3pm from a colleague who writes from Berlin, is kept on that
+  place's clock, and the offset for its date - daylight saving included - is
+  worked out by the app, not guessed. Your own reminders keep the zone you
+  were in when they were made; the calendar always shows them in the zone
+  you are in now. A weekly or daily repeat stays at the same time on its
+  clock when the clocks change. The reminder's card says what its time was
+  taken from - "written as 'Thursday at 3pm', taken as Europe/Berlin time" -
+  and when the clocks change that night. A zone the agent writes must be a
+  place's name such as Europe/Paris: "PST", or "EST" (which never changes
+  for summer), is sent back once with the reason; if it still cannot be
+  read, the time is taken as your own and the card says so - the reminder is
+  never dropped. Things you schedule in the chat take their times the same
+  way: the chat no longer works out UTC itself.
+- **Overview and Newspaper display.** A long to-do list scrolls in its own
+  box instead of making the card taller, and a very long word in the
+  Newspaper breaks inside its column instead of pushing the next one aside.
+- **Learning starts again, as cases and reasons.** What Work learned before is
+  backed up and no longer used; nothing is carried over. Learning now reads
+  your Work projects and the places you list in Work's new Learning panel -
+  folders, and with one click your Claude Code and Codex conversations - into
+  cases (a deliverable, where it is, what it looks like, what you decided or
+  changed in it) and the reasons behind how you judge your work. Only what you
+  did counts: an agent's edits are told apart from yours. Keys and passwords
+  are taken out before anything is read. It updates at the times you set
+  while its switch is on (off, with no time, at first), or with Update now;
+  Pause and Continue, a daily token limit, and a bar a day of what it spent.
+  Projects no longer have a Start or Update learning button.
+- **A Work run's reviewer asks first.** Before it writes what the work must
+  meet, it asks its questions - what you would also expect, how the result
+  should look, how you would check it - and is given your reasons and your
+  most similar past work for them; what that cannot answer it searches on the
+  web, framed by your situation. What it adds is marked as its own, and
+  nothing a run does is learned. Lesson cards are no longer written.
+- **One list for learning and file search.** The agents search the same
+  places learning reads; the Settings card "Search your files" is gone.
+- **Newspaper: a switch beside its times.** An issue is made by itself only
+  while "Make an issue by itself" is on and a time is set. If it made issues
+  for you before, the switch starts on and your times are kept.
+- **Contacts no longer melt together.** The agent is told that names which
+  cannot be one person's, or a different organisation, mean someone else -
+  people seen in one email or one topic are still separate people - and it
+  can split a contact that holds more than one person. A new Connection
+  debugger shows every change to your contacts with what the model was asked
+  and answered.
+- **Newspaper: a Collection.** "Add to collection" under a story keeps it, as
+  it was printed, until you take it out - at the top of the Newspaper's left
+  column. Keeping a story is not "More like this": those buttons stay yours
+  to choose, on kept stories too, even after their issue is gone.
 - **Tasks no longer have next steps**, and the agent no longer ticks them.
   Your own To do list on the Overview stays as it is.
 - **Newspaper: only stories close to what you are doing.** The stories a step

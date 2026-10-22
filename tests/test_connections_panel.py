@@ -545,8 +545,10 @@ class TheConnectionsPanelTests(unittest.TestCase):
         self.assertIn("Next issue", out["when"])
         self.assertTrue(out["leftOfMain"], "the pages down the left, the paper on the right")
         self.assertTrue(out["issuePicker"])
-        self.assertTrue(out["tabs"][0].startswith("A1 Front page"), out["tabs"])
-        self.assertTrue(out["tabs"][1].startswith("B1 Quantum computing"), out["tabs"])
+        # The collection first, kept across issues; then the issue's pages.
+        self.assertTrue(out["tabs"][0].startswith("Stories you kept"), out["tabs"])
+        self.assertTrue(out["tabs"][1].startswith("A1 Front page"), out["tabs"])
+        self.assertTrue(out["tabs"][2].startswith("B1 Quantum computing"), out["tabs"])
         # What the user said before, kept and shown.
         self.assertEqual(out["saidBefore"], ["Not interested"])
         self.assertEqual(out["frontLead"], "A new qubit record")
@@ -613,17 +615,19 @@ class TheConnectionsPanelTests(unittest.TestCase):
         """When an issue is made: on Newspaper's tab, not in
         Settings - changed where it stands, no Edit: a time added, set and
         kept at once; one taken off with its × - the last one too: then no
-        issue is made by itself, only with the button, and it says so."""
+        issue is made by itself, only with the button, and it says so. And
+        its switch beside them: an issue by itself only while it is on."""
         stub = self._stub()
         stub["/api/connections/briefing"] = {
             "briefing": None, "issues": [], "progress": {"running": False},
-            "schedule": {"times": ["08:00"], "time_zone": "WEST (UTC+0100)",
+            "schedule": {"times": ["08:00"], "on": True, "time_zone": "WEST (UTC+0100)",
                          "next": "2026-10-15T08:00:00+01:00"}}
         steps = (
             "click(document.querySelector('#tabs button[data-tab=\"recommend\"]'));"
             "await followKnowCard();await wait(200);"
             "const box=document.querySelector('#rec-times');"
             "out.shown=text(box);"
+            "out.switchOn=box.querySelector('#rec-auto-on').checked;"
             "out.inSettings=!!document.querySelector('#settings .times-control');"
             "out.edit=!!box.querySelector('[data-rec-times-edit]');"
             "out.lastCanGo=!box.querySelector('.times-one button').disabled;"
@@ -639,11 +643,16 @@ class TheConnectionsPanelTests(unittest.TestCase):
             "click(box.querySelector('.times-one button'));await wait(900);"
             "out.none=window.__posts.filter(x=>x.p==='/api/settings').map(x=>x.body).slice(-1);"
             "out.noneLeft=box.querySelectorAll('.times-one').length;"
-            "out.noneSaid=box.querySelector('.times-none').hidden?'':text(box.querySelector('.times-none'));")
+            "out.noneSaid=box.querySelector('.times-none').hidden?'':text(box.querySelector('.times-none'));"
+            "const on=box.querySelector('#rec-auto-on');on.checked=false;"
+            "on.dispatchEvent(new Event('change',{bubbles:true}));await wait(300);"
+            "out.switched=window.__posts.filter(x=>x.p==='/api/settings').map(x=>x.body).slice(-1);")
         result = _render(self.engine, stub, steps)
         self.assertEqual(result["err"], "")
         out = result["out"]
-        self.assertIn("Each day at", out["shown"])
+        self.assertIn("Make an issue by itself", out["shown"])
+        self.assertIn("each day at", out["shown"])
+        self.assertTrue(out["switchOn"])
         self.assertIn("WEST", out["shown"])
         self.assertFalse(out["inSettings"])
         self.assertFalse(out["edit"], "no Edit")
@@ -656,6 +665,8 @@ class TheConnectionsPanelTests(unittest.TestCase):
         self.assertEqual(out["none"], [{"values": {"recommend_times": ""}}])
         self.assertEqual(out["noneLeft"], 0)
         self.assertIn("only when you press Make an issue now", out["noneSaid"])
+        # The switch turned off: sent at once.
+        self.assertEqual(out["switched"], [{"values": {"recommend_auto_on": False}}])
 
     def test_your_changes_are_a_section_of_the_lessons_tab(self) -> None:
         stub = self._stub()

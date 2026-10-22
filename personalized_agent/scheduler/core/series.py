@@ -35,6 +35,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from ...common.events.models import iso, parse_iso
+from .recurrence import step
 
 log = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ def anchor_of(task: Any) -> Optional[datetime]:
     interval = interval_of(task)
     if interval is None or task.scheduled_at is None:
         return task.scheduled_at
-    return task.scheduled_at - interval * int(task.runs or 0)
+    return step(task.recurrence, task.scheduled_at, -int(task.runs or 0))
 
 
 def grid_moment(task: Any, index: int) -> Optional[datetime]:
@@ -103,7 +104,8 @@ def grid_moment(task: Any, index: int) -> Optional[datetime]:
         return None
     if interval is None:
         return anchor if index == 0 else None
-    return anchor + interval * index
+    # On the clock of the repeat's zone for whole days (recurrence.step).
+    return step(task.recurrence, anchor, index)
 
 
 def overrides_of(task: Any) -> Dict[str, Dict[str, Any]]:

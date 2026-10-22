@@ -32,6 +32,7 @@ from ..character.manager import avatar_name
 from ...models.manager import ModelUnavailable
 from ..dialog.files import ConversationFolder, chat_root, place
 from .tools import ToolRegistry, build_registry, result_to_text
+from ...scheduler.core.given import now_line
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ memory to search.
 3. Never reveal credentials, API keys or tokens; you do not have access to them.
 4. Be concise and concrete.
 
-Current UTC time: {now}
+{now}
 Workspace: {workspace}
 """
 
@@ -131,7 +132,10 @@ class AgentCore:
     def _system_prompt(self, summary: str = "") -> str:
         prompt = SYSTEM_PROMPT.format(
             agent_name=avatar_name(self.config, getattr(self, "characters", None)),
-            now=datetime.now(timezone.utc).isoformat(),
+            # The user's clock by name, not UTC: a time to schedule is given
+            # as a clock shows it, and the offset worked out by code
+            # (scheduler/core/given.py).
+            now=now_line(),
             workspace=str(self.runtime.policy.workspace_root),
             chat_folder=str(chat_root(self.runtime.policy.workspace_root)
                             / "<this conversation's title>"),

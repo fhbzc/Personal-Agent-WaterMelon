@@ -1345,6 +1345,16 @@ CREATE TABLE IF NOT EXISTS rec_feedback (
     title       TEXT NOT NULL DEFAULT '',
     url         TEXT NOT NULL DEFAULT ''
 );
+-- NEWSPAPER'S COLLECTION: stories the user keeps, each as it was printed,
+-- until they take it out. Keeping one is not "more like this".
+CREATE TABLE IF NOT EXISTS rec_collection (
+    id            TEXT PRIMARY KEY,
+    collected_at  TEXT NOT NULL,
+    issue_id      TEXT NOT NULL DEFAULT '',
+    story_id      TEXT NOT NULL DEFAULT '',
+    story         TEXT NOT NULL DEFAULT '{}',
+    removed_at    TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS reading_topics (
     id          TEXT PRIMARY KEY,
     label       TEXT NOT NULL DEFAULT '',
@@ -1434,5 +1444,155 @@ CREATE INDEX IF NOT EXISTS idx_pending_folds_order
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+
+-- LEARNING (learning/): what the user's work shows about how they judge it.
+-- A UNIT is what is read together - a Work project of the user's, or a group
+-- of folders found in the places they listed - with how far each of its
+-- sources has been read.
+CREATE TABLE IF NOT EXISTS learn_units (
+    id          TEXT PRIMARY KEY,
+    kind        TEXT NOT NULL,                 -- work | place
+    key         TEXT NOT NULL DEFAULT '',      -- the project id, or the folder
+    title       TEXT NOT NULL DEFAULT '',
+    summary     TEXT NOT NULL DEFAULT '',
+    folders     TEXT NOT NULL DEFAULT '[]',
+    sessions    TEXT NOT NULL DEFAULT '[]',
+    facets      TEXT NOT NULL DEFAULT '{}',
+    marks       TEXT NOT NULL DEFAULT '{}',
+    state       TEXT NOT NULL DEFAULT 'new',   -- new | read | gone
+    first_read  TEXT NOT NULL DEFAULT '',
+    updated_at  TEXT NOT NULL
+);
+-- Each folder of a listed place as last summarised, and what was decided of
+-- it: one piece of work with its children, or not.
+CREATE TABLE IF NOT EXISTS learn_folders (
+    path        TEXT PRIMARY KEY,
+    place       TEXT NOT NULL DEFAULT '',
+    fingerprint TEXT NOT NULL DEFAULT '',
+    summary     TEXT NOT NULL DEFAULT '',
+    verdict     TEXT NOT NULL DEFAULT '{}',
+    at          TEXT NOT NULL
+);
+-- A CASE: one deliverable, in its items, with where it is and what it
+-- became; and its JUDGMENTS - what the user decided, changed or turned down.
+CREATE TABLE IF NOT EXISTS learn_cases (
+    id          TEXT PRIMARY KEY,              -- C-xxxx
+    unit_id     TEXT NOT NULL DEFAULT '',
+    title       TEXT NOT NULL DEFAULT '',
+    facets      TEXT NOT NULL DEFAULT '{}',
+    looks_like  TEXT NOT NULL DEFAULT '',
+    how_made    TEXT NOT NULL DEFAULT '',
+    locations   TEXT NOT NULL DEFAULT '[]',
+    versions    TEXT NOT NULL DEFAULT '[]',
+    items       TEXT NOT NULL DEFAULT '[]',
+    began       TEXT NOT NULL DEFAULT '',
+    ended       TEXT NOT NULL DEFAULT '',
+    alias_of    TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_learn_cases_unit ON learn_cases(unit_id);
+CREATE TABLE IF NOT EXISTS learn_judgments (
+    id          TEXT PRIMARY KEY,              -- J-xxxx
+    case_id     TEXT NOT NULL,
+    item        TEXT NOT NULL DEFAULT '',
+    aspect      TEXT NOT NULL DEFAULT '',      -- requirement | output | evaluation | habit
+    object      TEXT NOT NULL DEFAULT '',
+    direction   TEXT NOT NULL DEFAULT '',
+    said        TEXT NOT NULL DEFAULT '',
+    why         TEXT NOT NULL DEFAULT '',
+    strength    TEXT NOT NULL DEFAULT 'accepted',
+    at          TEXT NOT NULL DEFAULT '',      -- when it happened
+    refs        TEXT NOT NULL DEFAULT '[]',
+    state       TEXT NOT NULL DEFAULT 'new',   -- new | pool | linked
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_learn_judgments_case ON learn_judgments(case_id);
+CREATE INDEX IF NOT EXISTS idx_learn_judgments_object ON learn_judgments(object, state);
+-- A REASON: why the user judges as they do - stated by them or inferred -
+-- with where it holds and what it predicts; and how each judgment bears on
+-- it.
+CREATE TABLE IF NOT EXISTS learn_reasons (
+    id          TEXT PRIMARY KEY,              -- R-xxx
+    statement   TEXT NOT NULL DEFAULT '',
+    source      TEXT NOT NULL DEFAULT 'inferred',  -- stated | inferred
+    aspect      TEXT NOT NULL DEFAULT '',
+    condition   TEXT NOT NULL DEFAULT '{}',
+    objects     TEXT NOT NULL DEFAULT '[]',
+    predictions TEXT NOT NULL DEFAULT '[]',
+    state       TEXT NOT NULL DEFAULT 'candidate', -- candidate | active | competing | retired
+    rival       TEXT NOT NULL DEFAULT '',
+    rival_since TEXT NOT NULL DEFAULT '',
+    since       TEXT NOT NULL DEFAULT '',      -- a change over time: holds from then
+    history     TEXT NOT NULL DEFAULT '[]',
+    first_seen  TEXT NOT NULL DEFAULT '',
+    last_seen   TEXT NOT NULL DEFAULT '',
+    support     REAL NOT NULL DEFAULT 0,
+    contra      REAL NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS learn_links (
+    reason_id   TEXT NOT NULL,
+    judgment_id TEXT NOT NULL,
+    role        TEXT NOT NULL,                 -- supports | boundary | contradicts | before
+    predicted   INTEGER NOT NULL DEFAULT 0,
+    why         TEXT NOT NULL DEFAULT '',
+    at          TEXT NOT NULL,
+    PRIMARY KEY (reason_id, judgment_id)
+);
+CREATE INDEX IF NOT EXISTS idx_learn_links_judgment ON learn_links(judgment_id);
+CREATE TABLE IF NOT EXISTS learn_overrides (
+    winner      TEXT NOT NULL,
+    loser       TEXT NOT NULL,
+    when_text   TEXT NOT NULL DEFAULT '',
+    judgment_id TEXT NOT NULL DEFAULT '',
+    at          TEXT NOT NULL,
+    PRIMARY KEY (winner, loser)
+);
+-- THE SHARED WORDS cases, judgments, reasons and jobs are tagged with: the
+-- top of each dimension fixed, what is under it added as it is needed.
+CREATE TABLE IF NOT EXISTS learn_terms (
+    id          TEXT PRIMARY KEY,              -- dim:term
+    dim         TEXT NOT NULL,
+    term        TEXT NOT NULL,
+    parent      TEXT NOT NULL DEFAULT '',
+    definition  TEXT NOT NULL DEFAULT '',
+    example     TEXT NOT NULL DEFAULT '',
+    state       TEXT NOT NULL DEFAULT 'trial', -- fixed | trial | kept | alias
+    alias_of    TEXT NOT NULL DEFAULT '',
+    cases       TEXT NOT NULL DEFAULT '[]',
+    branch_at   INTEGER NOT NULL DEFAULT 0,    -- judgments in its branch when added
+    created_at  TEXT NOT NULL
+);
+-- EACH UPDATE of the learning: what it reads up to, how far it got.
+CREATE TABLE IF NOT EXISTS learn_updates (
+    id          TEXT PRIMARY KEY,
+    cutoff      TEXT NOT NULL,
+    by          TEXT NOT NULL DEFAULT 'schedule',  -- schedule | you
+    state       TEXT NOT NULL DEFAULT 'running',   -- running | paused | waiting | done | failed
+    plan        TEXT NOT NULL DEFAULT '{}',
+    done        INTEGER NOT NULL DEFAULT 0,
+    total       INTEGER NOT NULL DEFAULT 0,
+    now_reading TEXT NOT NULL DEFAULT '',
+    skipped     TEXT NOT NULL DEFAULT '[]',
+    note        TEXT NOT NULL DEFAULT '',
+    started_at  TEXT NOT NULL,
+    finished_at TEXT NOT NULL DEFAULT ''
+);
+-- WHAT A WORK RUN'S REVIEWER ASKED, AND HOW IT WAS ANSWERED - a log for
+-- reading back; nothing in it is learned.
+CREATE TABLE IF NOT EXISTS work_run_questions (
+    run_id      TEXT NOT NULL,
+    n           INTEGER NOT NULL,
+    step        TEXT NOT NULL DEFAULT '',
+    asked_by    TEXT NOT NULL DEFAULT 'reviewer',
+    question    TEXT NOT NULL DEFAULT '',
+    kind        TEXT NOT NULL DEFAULT '',
+    found       TEXT NOT NULL DEFAULT '{}',
+    answer      TEXT NOT NULL DEFAULT '{}',
+    at          TEXT NOT NULL,
+    PRIMARY KEY (run_id, n)
 );
 """

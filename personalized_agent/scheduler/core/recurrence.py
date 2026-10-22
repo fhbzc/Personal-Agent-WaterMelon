@@ -11,7 +11,18 @@ second kind, and the reason it is one field rather than four columns.
     {"every_seconds": 2700}                      every 45 minutes, forever
     {"every_seconds": 2700, "count": 8}          eight times, then done
     {"every_seconds": 86400, "until": "..."}     daily until a date
+    {"every_seconds": 604800, "zone": "Europe/Paris"}
+                                                 weekly at the same time on a
+                                                 Paris clock
     {}                                           runs once (the default)
+
+TWO KINDS OF REPEAT, stepped differently. One of whole days or weeks is ON
+A CLOCK: "every Monday at 10" is 10:00 every Monday, before and after the
+clocks change - so it steps by days on the clock of its zone (zones.py),
+this computer's own unless it says another ("zone"). Stepped by 7 x 24
+hours it would come at 9:00 or 11:00 for half the year. One of minutes or
+hours is ELAPSED TIME - a dose every eight hours is due eight hours later
+on the night the clocks change too - and steps by seconds, as it always did.
 """
 
 from __future__ import annotations
@@ -20,6 +31,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from ...common.events.models import parse_iso, utcnow
+from . import zones
 
 #: Below this an interval is a mistake rather than a schedule - a task that
 #: repeats every few seconds is a loop, and the scheduler would spend its tick
@@ -39,11 +51,34 @@ class RecurrenceError(ValueError):
     """The recurrence rule cannot be honoured as written."""
 
 
-def parse_recurrence(raw: Any) -> Dict[str, Any]:
+def on_a_clock(rule: Dict[str, Any]) -> bool:
+    """A repeat of whole days: stepped on its zone's clock, not by seconds."""
+    every = int((rule or {}).get("every_seconds") or 0)
+    return every > 0 and every % UNITS["days"] == 0
+
+
+def zone_of_rule(rule: Dict[str, Any]) -> str:
+    """The zone whose clock a repeat keeps: what it says, else this
+    computer's own (a rule from before zones were kept is the user's)."""
+    return str((rule or {}).get("zone") or zones.LOCAL)
+
+
+def step(rule: Dict[str, Any], moment: datetime, times: int) -> datetime:
+    """`moment`, `times` intervals later (or earlier, for a negative number):
+    on the clock of the rule's zone for whole days, by elapsed time else."""
+    every = int(rule["every_seconds"])
+    if on_a_clock(rule):
+        return zones.step_days(moment, every // UNITS["days"] * times, zone_of_rule(rule))
+    return moment + timedelta(seconds=every * times)
+
+
+def parse_recurrence(raw: Any, zone: Any = None) -> Dict[str, Any]:
     """Validate a rule, or raise saying exactly what is wrong with it.
 
     Returns ``{}`` for a task that does not repeat, which is the default and
-    the shape every existing task already has.
+    the shape every existing task already has. `zone` is the zone whose
+    clock a repeat of whole days keeps (the rule's own "zone" first; else
+    this computer's); an "until" with no offset is a time on that clock.
     """
     if not raw:
         return {}
@@ -70,6 +105,13 @@ def parse_recurrence(raw: Any) -> Dict[str, Any]:
             f"to work; the minimum is {MINIMUM_INTERVAL_SECONDS}s")
 
     rule: Dict[str, Any] = {"every_seconds": every}
+    named = raw.get("zone") or zone
+    try:
+        kept_zone = zones.zone_name(named)
+    except ValueError as exc:
+        raise RecurrenceError(str(exc)) from None
+    if on_a_clock(rule):
+        rule["zone"] = kept_zone
 
     count = raw.get("count")
     if count is not None:
@@ -83,9 +125,17 @@ def parse_recurrence(raw: Any) -> Dict[str, Any]:
 
     until = raw.get("until")
     if until:
-        moment = parse_iso(until) if isinstance(until, str) else until
+        moment = until
+        if isinstance(until, str):
+            try:
+                moment = datetime.fromisoformat(until.strip().replace("Z", "+00:00"))
+            except ValueError:
+                moment = parse_iso(until)
         if not isinstance(moment, datetime):
             raise RecurrenceError("until must be an ISO-8601 timestamp")
+        if moment.tzinfo is None:
+            # A wall time, on the clock the repeat keeps.
+            moment = zones.moment_of(moment, kept_zone)[0]
         rule["until"] = moment
 
     return rule
@@ -105,6 +155,8 @@ def describe(rule: Dict[str, Any]) -> str:
             break
     else:
         interval = f"every {every} seconds"
+    if on_a_clock(rule) and zone_of_rule(rule) not in (zones.LOCAL, zones.here()):
+        interval = f"{interval}, on {zone_of_rule(rule)} time"
     if rule.get("count"):
         return f"{interval}, {rule['count']} times"
     if rule.get("until"):
@@ -135,10 +187,14 @@ def next_occurrence(
     if count is not None and runs >= count:
         return None, f"finished its {count} runs"
 
-    upcoming = previous + timedelta(seconds=every)
+    upcoming = step(rule, previous, 1)
     if upcoming <= now:
-        missed = int((now - upcoming).total_seconds() // every) + 1
-        upcoming = upcoming + timedelta(seconds=every * missed)
+        # Whole intervals at once, near enough - a clock's day is 23 to 25
+        # hours - then one at a time to the first still ahead.
+        missed = max(0, int((now - upcoming).total_seconds() // every) - 1)
+        upcoming = step(rule, upcoming, missed)
+        while upcoming <= now:
+            upcoming = step(rule, upcoming, 1)
 
     until = rule.get("until")
     if until is not None and upcoming > until:
@@ -189,11 +245,12 @@ def occurrences(
 
     moment, index = first, runs
     # A window far in the future is reached in one step rather than by walking
-    # every intervening occurrence.
+    # every intervening occurrence - one short, as a clock's day is not always
+    # 24 hours, and the walk below takes the last.
     if window_start is not None and moment < window_start:
-        skipped = int((window_start - moment).total_seconds() // every.total_seconds())
+        skipped = int((window_start - moment).total_seconds() // every.total_seconds()) - 1
         if skipped > 0:
-            moment += every * skipped
+            moment = step(rule, first, skipped)
             index += skipped
 
     found: List[Tuple[int, datetime]] = []
@@ -206,8 +263,8 @@ def occurrences(
             break
         if window_start is None or moment >= window_start:
             found.append((index, moment))
-        moment += every
         index += 1
+        moment = step(rule, first, index - runs)
     return found
 
 

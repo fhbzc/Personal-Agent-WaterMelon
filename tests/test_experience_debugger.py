@@ -360,10 +360,18 @@ class BuilderAndReviewerTests(_DebuggerBase):
 
     def setUp(self) -> None:
         super().setUp()
+        # WHAT WAS LEARNED of the user's work (learning/): a reason they said,
+        # holding for any job - given to the full way's reviewer.
+        from personalized_agent.learning.store import LearningStore
+        self.reason = LearningStore(self.app.db).save_reason({
+            "statement": "Notes are written ZEBRAQUOKKA style", "source": "stated",
+            "aspect": "output", "state": "active", "condition": {},
+            "first_seen": "2026-09-01", "last_seen": "2026-10-01"})
+        # The old record of stages: read by no way now.
         from personalized_agent.heartbeat.experience.store import ExperienceStore
         self.past = ExperienceStore(self.app.db).add_stage({
             "task_id": "task-past", "kind": "plan",
-            "summary": "planned how to write the notes, ZEBRAQUOKKA style", "states": [],
+            "summary": "planned how to write the notes, OKAPIWOMBAT style", "states": [],
             "began": "2026-01-01T00:00:00", "ended": "2026-01-01T00:00:00"})
         # The index of the user's stages is made once, by whoever searches
         # first: made now, so what follows is compared with it in place.
@@ -372,6 +380,12 @@ class BuilderAndReviewerTests(_DebuggerBase):
 
     def _reviewer(self, models):
         return [r for r in models.asked if "You review a work agent" in r.system]
+
+    @staticmethod
+    def _holds_check(request):
+        """The reviewer's own short call: whether the reasons hold for the job."""
+        from personalized_agent.learning.find import HOLDS_PROMPT
+        return HOLDS_PROMPT[:40] in (request.system or "")
 
     def test_no_context_the_reviewer_gets_none_of_the_users_experience(self) -> None:
         models = _Models()
@@ -386,18 +400,22 @@ class BuilderAndReviewerTests(_DebuggerBase):
         self.assertTrue(reviewer)
         for request in reviewer:
             said = request.system + json.dumps(request.messages, default=str)
-            for words in ("ZEBRAQUOKKA", self.past["id"], "HOW THE USER HAS WORKED",
+            for words in ("ZEBRAQUOKKA", self.reason, "OKAPIWOMBAT", self.past["id"],
+                          "HOW THE USER HAS WORKED", "WHAT WAS LEARNED OF THE USER'S OWN WORK",
                           "past stages", "natures", "patterns and principles",
                           "past work supports", "the way the user likes",
                           "check|experience|own judgement"):
                 self.assertNotIn(words, said)
             names = [s.name for s in request.tools or []]
-            # No search of the user's own record; the web, as the full way's
-            # - but for what it must know before it writes criteria, asked
-            # with no web, as the full way's is.
-            for local in ("search_stages", "search_records", "open_stage"):
+            # No search of the user's own record, nothing learned to open;
+            # the web, as the full way's - but its questions, before it
+            # writes criteria, asked with no tools at all, as the full way's
+            # are - and answered by itself.
+            for local in ("search_stages", "search_records", "open_stage",
+                          "search_files", "open_case", "open_reason"):
                 self.assertNotIn(local, names)
             if "web_search" not in names:
+                self.assertEqual(names, [])
                 self.assertIn("BEFORE YOU WRITE THE CRITERIA OF",
                               json.dumps(request.messages, default=str))
             # THE SAME WORK AS THE FULL WAY'S, only without the context
@@ -408,6 +426,9 @@ class BuilderAndReviewerTests(_DebuggerBase):
         self.assertTrue(any("web_search" in [s.name for s in r.tools or []] for r in reviewer))
         self.assertTrue(any("NO RECORD OF THE USER'S PAST WORK" in json.dumps(r.messages)
                             for r in reviewer))
+        # Nothing learned is looked at for it: no check of whether a reason
+        # holds.
+        self.assertFalse(any(self._holds_check(r) for r in models.asked))
         # Nothing written to the user's experience.
         self.assertEqual(self._live_rows(), before)
         self.assertGreater(self.app.db.query(
@@ -438,11 +459,24 @@ class BuilderAndReviewerTests(_DebuggerBase):
         self._start(project, "full")
         run = self._finished(project, "full")
         self.assertEqual(run["status"], "done", run["log"][-6:])
+        # What was learned of the user's work: its reviewer's - the reason,
+        # by its id, and the tools to open more - never the work agent's.
+        reviewer = self._reviewer(models)
         self.assertTrue(any("ZEBRAQUOKKA" in json.dumps(r.messages, default=str)
-                            for r in self._reviewer(models)))
+                            and self.reason in json.dumps(r.messages, default=str)
+                            for r in reviewer))
+        self.assertTrue(any({"open_case", "open_reason"} <= {s.name for s in r.tools or []}
+                            for r in reviewer))
         for request in models.asked:
-            if "You review a work agent" not in request.system:
-                self.assertNotIn("ZEBRAQUOKKA", json.dumps(request.messages, default=str))
+            said = json.dumps(request.messages, default=str)
+            # The old record of stages: read by no one.
+            self.assertNotIn("OKAPIWOMBAT", said)
+            if "You review a work agent" not in request.system \
+                    and not self._holds_check(request):
+                self.assertNotIn("ZEBRAQUOKKA", said)
+                self.assertNotIn(self.reason, said)
+                self.assertFalse({"open_case", "open_reason", "search_stages", "open_stage"}
+                                 & {s.name for s in request.tools or []})
         self.assertEqual(self._live_rows(), before)
         # Nor recorded as the agent's activity, which the heartbeats read.
         events = [e for e in self.app.raw_store.recent_events(limit=200)

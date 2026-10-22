@@ -1,98 +1,116 @@
-"""The same card is given the same past work: what a run's reviewer was given
-for a card the first time is kept, and given again when the card is opened
-again, reviewed again, or carried on after the application closed - even
-when the record has changed meanwhile. Kept in the application's database,
-never in the run's plan, which goes with its versions into the work's own
-folder. And a stage handed over for one card is not held against another."""
+"""The same card is given the same learned package: what a run's reviewer was
+given for its questions about a card the first time (`Run._what_to_know`,
+kept under "criteria:<card>") is given again when the card is reviewed
+again, opened again, or carried on after the application closed - even when
+what was learned has changed meanwhile. A round of a card is given its
+criteria's package; a card with none yet, the contract's. Kept in the
+application's database, never in the run's plan, which goes with its
+versions into the work's own folder."""
 
 from __future__ import annotations
 
 import unittest
-from unittest import mock
 
 from support import TemporaryAgent
 
-from personalized_agent.agent.work import runner
 from personalized_agent.agent.work.runner import Review, Run
 
 
-class _Retriever:
-    def __init__(self):
-        self.asked = []
-        self.answer = {"matches": [{"id": "stage_first"}]}
-
-    def find(self, profile):
-        self.asked.append(profile)
-        return self.answer
-
-
 class _Run:
-    """What `Review` asks of a run - its record kept by the real methods."""
+    """What `Review` and `_what_to_know` ask of a run - its record kept by
+    the real methods."""
     experience_given = Run.experience_given
     keep_experience_given = Run.keep_experience_given
-    lessons_for = Run.lessons_for
-    lessons = None                      # no lesson cards: these are of the stages
+    learned_given = Run.learned_given
+    _what_to_know = Run._what_to_know
 
     def __init__(self, app, run_id="run_one"):
         self.owner = app.work
         self.id = run_id
-        self.retriever = _Retriever()
-        self.lessons_shown = {}
+        self._facets = {}
 
-    def _in_english(self, profile):
-        return dict(profile)
+    def _keep(self, key, text, facets=None):
+        self.keep_experience_given(key, {"text": text, "found": {},
+                                         "facets": facets or {}})
 
 
-class TheSameCardTheSamePastWorkTests(unittest.TestCase):
+class _NeverAsked:
+    """A reviewer whose questions must not be asked again."""
+
+    def __init__(self, attached=False, plain=False):
+        self.attached = attached
+        self.plain = plain
+
+    def ask(self, *args, **kwargs):
+        raise AssertionError("asked again for a card it was given a package for")
+
+
+class TheSameCardTheSamePackageTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.agent = TemporaryAgent()
         self.app = self.agent.app
-        patcher = mock.patch.object(runner, "compact_experience", lambda said: dict(said))
-        patcher.start()
-        self.addCleanup(patcher.stop)
 
     def tearDown(self) -> None:
         self.agent.cleanup()
 
-    def test_asked_once_and_given_again(self) -> None:
+    def test_given_again_the_same_never_the_newer(self) -> None:
         run = _Run(self.app)
-        Review(run, {"text": "the pledge form"}, "the work", same_as="criteria:card_1")
-        # The record changes meanwhile - learning goes on beside the run.
-        run.retriever.answer = {"matches": [{"id": "stage_new"}]}
-        again = Review(run, {"text": "the pledge form"}, "the work", same_as="criteria:card_1")
-        self.assertEqual(len(run.retriever.asked), 1)
-        self.assertIn("stage_first", again.messages[0]["content"])
-        self.assertNotIn("stage_new", again.messages[0]["content"])
+        run._keep("criteria:card_1", "PACKAGE ONE", {"deliverable": ["deliverable:report"]})
+        # Learning goes on beside the run: kept again, the first one stands.
+        run._keep("criteria:card_1", "PACKAGE NEWER")
+        review = Review(run, {"text": "the pledge form"}, "the work",
+                        same_as="criteria:card_1")
+        self.assertTrue(review.attached)
+        self.assertIn("PACKAGE ONE", review.messages[0]["content"])
+        self.assertNotIn("PACKAGE NEWER", review.messages[0]["content"])
+        # The job's terms it was asked with come back with it.
+        self.assertEqual(run._facets, {"deliverable": ["deliverable:report"]})
+
+    def test_a_round_is_given_its_cards_package_else_the_contracts(self) -> None:
+        run = _Run(self.app)
+        run._keep("contract", "THE CONTRACT'S")
+        run._keep("criteria:card_1", "CARD ONE'S")
+        self.assertEqual(run.learned_given("round:card_1"), "CARD ONE'S")
+        self.assertEqual(run.learned_given("criteria:card_1"), "CARD ONE'S")
+        # Another card - asked nothing of its own yet - the contract's.
+        self.assertEqual(run.learned_given("round:card_2"), "THE CONTRACT'S")
+        self.assertEqual(run.learned_given("criteria:card_2"), "THE CONTRACT'S")
+        self.assertEqual(run.learned_given(""), "THE CONTRACT'S")
+        # Nothing asked at all: nothing given.
+        self.assertEqual(_Run(self.app, "run_two").learned_given("round:card_1"), "")
+        bare = Review(_Run(self.app, "run_two"), {"text": "a"}, "the work",
+                      same_as="round:card_1")
+        self.assertFalse(bare.attached)
+        self.assertEqual(bare.messages[0]["content"], "the work")
 
     def test_and_after_the_application_closed(self) -> None:
-        Review(_Run(self.app), {"text": "ledger rows"}, "the work", same_as="round:card_2")
+        _Run(self.app)._keep("criteria:card_2", "LEDGER ROWS' PACKAGE")
         # The same run carried on in a new process: nothing in memory.
         later = _Run(self.app)
-        later.retriever.answer = {"matches": [{"id": "stage_new"}]}
-        Review(later, {"text": "ledger rows"}, "the work", same_as="round:card_2")
-        self.assertEqual(later.retriever.asked, [])
+        review = Review(later, {"text": "ledger rows"}, "the work", same_as="round:card_2")
+        self.assertIn("LEDGER ROWS' PACKAGE", review.messages[0]["content"])
 
-    def test_another_card_another_question(self) -> None:
+    def test_the_questions_are_not_asked_again_for_the_same_card(self) -> None:
         run = _Run(self.app)
-        Review(run, {"text": "a"}, "the work", same_as="criteria:card_1")
-        Review(run, {"text": "b"}, "the work", same_as="criteria:card_2")
-        Review(run, {"text": "c"}, "the work")          # no card: asked each time
-        Review(run, {"text": "c"}, "the work")
-        self.assertEqual(len(run.retriever.asked), 4)
-        # Nothing handed over before is held against the next question.
-        self.assertTrue(all("seen" not in one for one in run.retriever.asked))
+        run._keep("criteria:card_1", "CARD ONE'S", {"purpose": ["purpose:teach"]})
+        card = {"id": "card_1", "title": "The pledge form"}
+        # Already in its context (attached when its review began): nothing
+        # more to put before the criteria.
+        self.assertEqual(run._what_to_know(_NeverAsked(attached=True), "THIS CARD", "{}",
+                                           card), "")
+        # Not attached - a review begun for something else: the same text.
+        self.assertEqual(run._what_to_know(_NeverAsked(), "THIS CARD", "{}", card),
+                         "CARD ONE'S")
+        self.assertEqual(run._facets, {"purpose": ["purpose:teach"]})
 
     def test_kept_in_the_database_not_in_the_plan(self) -> None:
         run = _Run(self.app)
-        Review(run, {"text": "a"}, "the work", same_as="criteria:card_1")
+        run._keep("criteria:card_1", "a")
         rows = self.app.db.query("SELECT key FROM work_run_experience WHERE run_id = ?",
                                  ("run_one",))
         self.assertEqual([row["key"] for row in rows], ["criteria:card_1"])
-
-    def test_no_down_weighting_left(self) -> None:
-        from personalized_agent.heartbeat.experience import retrieve
-        self.assertFalse(hasattr(retrieve, "SEEN_ALREADY"))
+        self.assertFalse(hasattr(run, "plan"))
 
 
 if __name__ == "__main__":

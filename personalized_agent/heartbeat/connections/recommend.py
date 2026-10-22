@@ -965,6 +965,11 @@ def record_feedback(db: Any, store: Any, issue_id: str, story_id: str,
     story = next((one for one in (issue or {}).get("items") or []
                   if one.get("id") == story_id), None)
     if story is None:
+        # KEPT IN THE COLLECTION, its issue gone (only the newest hundred
+        # are): the collection's own copy is the story - what is said of it
+        # is kept as of any other, and stays with it.
+        story = kept_story(db, story_id)
+    if story is None:
         raise KeyError("no such story")
     at = _now().isoformat()
     if action == "opened" and db.query_one("SELECT 1 FROM rec_feedback WHERE story_id = ? "
@@ -1009,7 +1014,101 @@ def record_feedback(db: Any, store: Any, issue_id: str, story_id: str,
     return {"ok": True, "say": action if action in PREFERENCES else ""}
 
 
-__all__ = ["record_feedback", "ACTIONS", "subjects", "plan_pages", "lay_out", "story_text",
+# THE COLLECTION: a story the user found worth keeping stays, as it was
+# printed, until they take it out - as a to-do does. It is not a say on the
+# story: "more like this", "not interested" and "already knew" are still
+# theirs to choose, on it as on any other, and keeping it counts for none.
+
+def collect(db: Any, store: Any, issue_id: str, story_id: str) -> Dict[str, Any]:
+    """Keep a story in the collection - once; a second time is the first."""
+    from ...common.events.models import new_id
+    kept = db.query_one("SELECT id FROM rec_collection WHERE story_id = ? AND "
+                        "removed_at = ''", (story_id,))
+    if kept is not None:
+        return {"ok": True, "id": kept["id"], "again": True}
+    issue = store.briefing(issue_id)
+    story = next((one for one in (issue or {}).get("items") or []
+                  if one.get("id") == story_id), None)
+    if story is None:
+        raise KeyError("no such story")
+    # Its page's name, for where it came from once the issue is long gone.
+    pages = (((issue or {}).get("stats") or {}).get("paper") or {}).get("pages") or []
+    page = next((one.get("title") for one in pages
+                 if story_id in (one.get("stories") or [])), "")
+    kept_story = dict(story, page_title=str(page or story.get("for") or ""),
+                      issue_at=str((issue or {}).get("at") or ""),
+                      issue_no=(issue or {}).get("issue"))
+    entry_id = new_id("reccol")
+    db.execute("INSERT INTO rec_collection (id, collected_at, issue_id, story_id, story) "
+               "VALUES (?, ?, ?, ?, ?)",
+               (entry_id, _now().isoformat(), issue_id, story_id,
+                json.dumps(kept_story, ensure_ascii=False)))
+    return {"ok": True, "id": entry_id}
+
+
+def kept_story(db: Any, story_id: str) -> Optional[Dict[str, Any]]:
+    """The collection's own copy of a story, or None - kept as it was
+    printed, so it outlives its issue."""
+    try:
+        row = db.query_one("SELECT story FROM rec_collection WHERE story_id = ? "
+                           "ORDER BY collected_at DESC LIMIT 1", (story_id,))
+    except Exception:                        # no table yet
+        return None
+    if row is None:
+        return None
+    try:
+        story = json.loads(row["story"] or "{}")
+    except ValueError:
+        return None
+    return dict(story, id=story_id) if isinstance(story, dict) else None
+
+
+def uncollect(db: Any, story_id: str) -> Dict[str, Any]:
+    """Take a story out of the collection. Kept as taken out, not erased."""
+    db.execute("UPDATE rec_collection SET removed_at = ? WHERE story_id = ? AND "
+               "removed_at = ''", (_now().isoformat(), story_id))
+    return {"ok": True}
+
+
+def collection(db: Any) -> Dict[str, Any]:
+    """The collection, the newest kept first - each story as it was printed,
+    and what the user last said of each."""
+    try:
+        rows = db.query("SELECT id, collected_at, issue_id, story_id, story FROM "
+                        "rec_collection WHERE removed_at = '' ORDER BY collected_at DESC")
+    except Exception:                       # no table yet: nothing kept
+        return {"items": [], "says": {}}
+    items = []
+    for row in rows:
+        try:
+            story = json.loads(row["story"] or "{}")
+        except ValueError:
+            story = {}
+        items.append({"id": row["id"], "collected_at": row["collected_at"],
+                      "issue_id": row["issue_id"], "story_id": row["story_id"],
+                      "story": dict(story, id=row["story_id"])})
+    says: Dict[str, str] = {}
+    ids = [one["story_id"] for one in items]
+    if ids:
+        marks = ",".join("?" * len(ids))
+        for row in db.query(f"SELECT story_id, action FROM rec_feedback WHERE story_id IN "
+                            f"({marks}) AND action IN ('more', 'less', 'knew')", ids):
+            says[row["story_id"]] = row["action"]
+    return {"items": items, "says": says}
+
+
+def collected_of(db: Any, issue_id: str) -> List[str]:
+    """Which of an issue's stories are in the collection."""
+    try:
+        return [row["story_id"] for row in db.query(
+            "SELECT story_id FROM rec_collection WHERE issue_id = ? AND removed_at = ''",
+            (str(issue_id),))]
+    except Exception:
+        return []
+
+
+__all__ = ["record_feedback", "ACTIONS", "collect", "uncollect", "collection",
+           "collected_of", "kept_story", "subjects", "plan_pages", "lay_out", "story_text",
            "said_examples",
            "known_points", "since_of", "said_of_topics", "seen_addresses", "freshness",
            "PAGE_PLAN", "TOPIC_SYSTEM", "FOR", "AGAINST", "MOST_PAGES", "CLOSE_AT",

@@ -53,7 +53,7 @@ class TheToolListTests(unittest.TestCase):
                     self.assertEqual(offered[spec.name], spec.input_schema)
                 schedule = offered["schedule_task"]
                 self.assertEqual(schedule["required"],
-                                 ["title", "description", "notify", "scheduled_at"])
+                                 ["title", "description", "notify", "at_local", "zone"])
                 self.assertEqual(schedule["properties"]["notify"]["enum"],
                                  ["silent", "notify"])
 

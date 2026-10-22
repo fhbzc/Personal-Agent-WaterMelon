@@ -23,6 +23,7 @@ from ...scheduler.core.recurrence import (
     describe as describe_recurrence,
     parse_recurrence,
 )
+from ...scheduler.core.given import HOW_TO_GIVE, ZONE_REFUSED, now_line, time_given
 from ...models.base import ToolSpec
 from ...runtime.permissions import SecurityViolation
 from ...scheduler.execution.executors import (DEFAULT_CHECK_AFTER_SECONDS,
@@ -211,10 +212,11 @@ def build_registry(
     # confined to the work's own folder (runtime/isolation.py).
 
     # -- scheduler ----------------------------------------------------------
+    #: The titles whose zone was refused once: asked again, a zone refused
+    #: is the user's own time, said on the card (given.py).
+    zone_asked: set = set()
+
     def schedule_task(args: Dict[str, Any]) -> Any:
-        when = parse_iso(args.get("scheduled_at"))
-        if when is None:
-            return {"error": "scheduled_at must be an ISO-8601 timestamp"}
         # Section 52.1: a task says what it is, or it is not created.
         #
         # Substituting "Scheduled task" for a missing title does not rescue
@@ -254,8 +256,29 @@ def build_registry(
                              "the user would want to be interrupted at that moment"}
         # Section 52.3: a repeat is stated as a rule, and checked here rather
         # than discovered when it fires every four seconds.
+        # A TIME AS A CLOCK SHOWS IT, AND WHOSE CLOCK, read as the heartbeat's
+        # notifications are - one reader, one rule for a zone (given.py). The
+        # model never works out UTC: an offset taken today and stamped on a
+        # date after the clocks change is an hour wrong. A zone refused is
+        # the tool's error, saying why and what is accepted - asked once;
+        # refused again, the time is the user's own and the card says so.
+        raw = args.get("recurrence")
+        given = dict(args)
+        if not str(given.get("zone") or "").strip() and isinstance(raw, dict):
+            given["zone"] = raw.get("zone")      # a repeat's zone is the time's
+        asked_key = title.lower()
+        when, said_time, refused = time_given(
+            given, (lambda said, reason: "") if asked_key in zone_asked else None)
+        if when is None:
+            if refused.startswith(ZONE_REFUSED):
+                zone_asked.add(asked_key)
+            return {"error": refused}
+        zone_asked.discard(asked_key)
         try:
-            recurrence = parse_recurrence(args.get("recurrence"))
+            # On the clock of the zone its time is on.
+            recurrence = parse_recurrence(
+                {key: value for key, value in raw.items() if key != "zone"}
+                if isinstance(raw, dict) else raw, zone=said_time["zone"])
         except RecurrenceError as exc:
             return {"error": str(exc)}
         # Only notifications: nothing on the calendar executes anything.
@@ -274,7 +297,9 @@ def build_registry(
                 "recheck_after_seconds": _interval(
                     verification.get("recheck_after_seconds"), DEFAULT_RECHECK_AFTER_SECONDS),
             }
-        metadata = {"created_by": "agent"}
+        # The time as a clock showed it, whose clock, and what the source
+        # wrote: shown on the calendar card, as the heartbeat's are.
+        metadata = {"created_by": "agent", "time": said_time}
         rationale = str(args.get("rationale") or "").strip()
         if rationale:
             metadata["rationale"] = rationale
@@ -286,13 +311,20 @@ def build_registry(
             task_payload=payload,
             metadata=metadata,
             recurrence=recurrence,
+            timezone_name=said_time["zone"],
             created_by=BY_AGENT,
             reason=rationale,
         )
         created = scheduler.create_task(task)
-        return {"task_id": created.id, "scheduled_at": created.scheduled_at.isoformat(),
-                "execution_type": created.execution_type, "notify": notify,
-                "repeats": describe_recurrence(created.recurrence)}
+        answer = {"task_id": created.id, "scheduled_at": created.scheduled_at.isoformat(),
+                  "on_its_clock": f'{said_time["wall"]} {said_time["zone_said"]}',
+                  "execution_type": created.execution_type, "notify": notify,
+                  "repeats": describe_recurrence(created.recurrence)}
+        if said_time.get("zone_unread"):
+            answer["zone_unread"] = (
+                f'the zone "{said_time["zone_unread"]}" could not be read and the '
+                "time was taken as the user's own - tell the user")
+        return answer
 
     registry.add(
         ToolSpec(
@@ -310,7 +342,7 @@ def build_registry(
             "notification. A check you are running to satisfy your own curiosity is "
             "silent. Choose 'notify' only when the answer is something the user would "
             "want put in front of them at that moment. A task missing any of these "
-            "will be refused.",
+            "will be refused.\n\n" + HOW_TO_GIVE,
             _schema(
                 {
                     "title": {"type": "string"},
@@ -325,8 +357,12 @@ def build_registry(
                         "description": "omit for a task that runs once. To repeat: "
                                        "every plus unit (minutes|hours|days|weeks), "
                                        "or every_seconds. Stop it with count (how "
-                                       "many runs) or until (an ISO-8601 moment); "
-                                       "with neither it repeats indefinitely",
+                                       "many runs) or until (YYYY-MM-DD HH:MM on "
+                                       "the same clock as at_local); "
+                                       "with neither it repeats indefinitely. A "
+                                       "repeat of days or weeks keeps the same time "
+                                       "on the clock of 'zone' across "
+                                       "daylight-saving changes",
                     },
                     "verification": {
                         "type": "object",
@@ -338,10 +374,21 @@ def build_registry(
                                        "'recheck_after_seconds' is how long a "
                                        "'later' answer waits before it comes back",
                     },
-                    "scheduled_at": {"type": "string", "description": "ISO-8601, UTC"},
+                    "at_local": {"type": "string",
+                                 "description": "YYYY-MM-DD HH:MM, as the clock "
+                                                "of 'zone' shows it - never UTC "
+                                                "worked out by you"},
+                    "zone": {"type": "string",
+                             "description": "whose clock at_local is on: \"user\" "
+                                            "for the user's own, or the place's "
+                                            "Region/City name (Europe/Paris) or "
+                                            "UTC - see the tool's description"},
+                    "as_written": {"type": "string",
+                                   "description": "the time exactly as the user or "
+                                                  "the source wrote it"},
                     "payload": {"type": "object"},
                 },
-                ["title", "description", "notify", "scheduled_at"],
+                ["title", "description", "notify", "at_local", "zone"],
             ),
         ),
         schedule_task,
@@ -423,7 +470,9 @@ def build_registry(
 
     def current_time(args: Dict[str, Any]) -> Any:
         now = utcnow()
-        return {"utc": now.isoformat(), "local": datetime.now().isoformat()}
+        # The user's clock by name, as a time for schedule_task is given.
+        return {"utc": now.isoformat(), "local": datetime.now().isoformat(),
+                "user_clock": now_line()}
 
     registry.add(
         ToolSpec("current_time", "Get the current UTC and local time.", _schema({}, [])),

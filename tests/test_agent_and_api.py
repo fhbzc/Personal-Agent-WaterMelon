@@ -7,7 +7,7 @@ import socket
 import unittest
 import urllib.error
 import urllib.request
-from datetime import timedelta
+from datetime import timezone, timedelta
 
 from support import ROOT, TemporaryAgent, keyed
 
@@ -88,6 +88,42 @@ class AgentCoreTests(unittest.TestCase):
         self.assertIn("task_id", outcome)
         self.assertIsNotNone(self.app.scheduler_store.get(outcome["task_id"]))
 
+    def test_the_chat_gives_a_time_as_the_notifications_do(self) -> None:
+        """One reader, one rule for a zone (scheduler/core/given.py): a time
+        as a clock shows it and whose clock - the moment worked out by code."""
+        meeting = {"title": "Weekly call with the Lyon office",
+                   "description": "The Monday call.", "notify": "notify"}
+        next_year = utcnow().year + 1
+        made = self.app.agent.tools.call("schedule_task", {
+            **meeting, "at_local": f"{next_year}-07-06 15:00", "zone": "Europe/Paris",
+            "as_written": "Mondays 3pm Paris time",
+            "recurrence": {"every": 1, "unit": "weeks"}})
+        task = self.app.scheduler_store.get(made["task_id"])
+        # Summer in Paris is UTC+02:00: 13:00 UTC, worked out, not written.
+        self.assertEqual(task.scheduled_at.astimezone(timezone.utc).isoformat()[:16],
+                         f"{next_year}-07-06T13:00")
+        self.assertEqual(task.recurrence["zone"], "Europe/Paris")
+        self.assertEqual(task.timezone_name, "Europe/Paris")
+        self.assertEqual(task.metadata["time"]["as_written"], "Mondays 3pm Paris time")
+
+    def test_a_zone_refused_in_the_chat_is_asked_once_then_the_users_own(self) -> None:
+        from personalized_agent.scheduler.core import zones
+
+        call = {"title": "Call with the Denver office", "description": "The call.",
+                "notify": "notify", "at_local": f"{utcnow().year + 1}-07-06 15:00",
+                "zone": "EST"}
+        # "EST" is UTC-05:00 all year: refused, saying why and what is
+        # accepted, and nothing made.
+        refused = self.app.agent.tools.call("schedule_task", call)
+        self.assertIn("old short name", refused["error"])
+        self.assertIn(zones.PLACE_RULE, refused["error"])
+        self.assertNotIn("task_id", refused)
+        # Refused again: the user's own time, and said - never dropped.
+        made = self.app.agent.tools.call("schedule_task", call)
+        task = self.app.scheduler_store.get(made["task_id"])
+        self.assertEqual(task.metadata["time"]["zone_unread"], "EST")
+        self.assertEqual(task.metadata["time"]["zone"], zones.here())
+        self.assertIn("tell the user", made["zone_unread"])
 
     def test_model_unavailable_produces_a_visible_message(self) -> None:
         from personalized_agent.models.base import (

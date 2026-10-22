@@ -32,6 +32,7 @@
          develops it, not shown in an installed build. -->
     <button data-tab="lessons">Lessons debugger</button>
     <button data-tab="naturedebug">Nature debugger</button>
+    <button data-tab="connectiondebug">Connection debugger</button>
     <button data-tab="readingdebug">Reading debugger</button>
     <button data-tab="languagedebug">Language debugger</button>
     <button data-tab="chatdebug">Chat debugger</button>
@@ -248,6 +249,22 @@
       <div id="lang-debug"><p class="muted">Reading&hellip;</p></div>
     </div>
   </section>
+  <!-- THE CONNECTION DEBUGGER: every change to the contacts, and what the
+       model was asked and answered when the agent made one. -->
+  <section id="connectiondebug" class="tab">
+    <div class="card">
+      <div class="card-head-row">
+        <h3>Changes to your contacts</h3>
+        <input type="search" id="cdbg-filter" placeholder="Filter by a name"
+          aria-label="Filter by a name">
+      </div>
+      <p class="muted">Every change, newest first: who made it and when, what it changed,
+        and - for the agent's - the start of what its model was asked and answered. The
+        whole of each call is kept in a file and opens here.</p>
+      <div id="cdbg-list"><p class="muted">Reading&hellip;</p></div>
+    </div>
+  </section>
+
   <section id="readingdebug" class="tab">
     <div class="card">
       <div class="card-head-row">
@@ -525,8 +542,8 @@
     <div class="xp-head">
       <strong>Work</strong>
       <span class="muted">what the agent does on each project, as the stages it
-        went through. Each project is learned when you start it below - what is
-        learned of how you work is used by the agent, not shown here.</span>
+        went through. What is learned of how you work - in Learning, below - is
+        used by the agent, not shown here.</span>
       <span id="xp-status" class="muted"></span>
     </div>
     <div class="xp-grid">
@@ -538,7 +555,6 @@
             title="A new project: its title, what it is for, and its folders"
             aria-label="New project">+</button>
         </div>
-        <div id="xp-auto" class="xp-auto"></div>
         <div id="xp-new" class="xp-new" hidden>
           <input id="xp-new-title" type="text" placeholder="Title">
           <textarea id="xp-new-description" rows="3"
@@ -568,6 +584,9 @@
         <div id="xp-work" class="xp-work"></div>
       </div>
     </div>
+    <!-- LEARNING (learning/): how the user's own work is read - when, how far,
+         from where - and what it spent. The same places are searched. -->
+    <div class="card xp-learn" id="xp-learn"></div>
   </section>
 
   <section id="statebeat" class="tab">
@@ -861,31 +880,6 @@
           rel="noopener noreferrer" href="https://brave.com/search/api/">Get a Brave
           Search API key</a></div>
       </form>
-    </div>
-    <!-- THE LOCAL INDEX (index/service.py): the folders it reads, and how far. -->
-    <div class="card" id="file-search-card">
-      <h3>Search your files</h3>
-      <div class="panel-note">
-        <p>So the agents can find how you did something before, your files are kept
-          searchable by their words - on this computer, in a file of the agent's
-          own. No model is used for it. What an agent finds and opens goes to the
-          model it works with, as any file it reads does.</p>
-        <p>It reads every folder of your Work projects, and the folders you add
-          here, with everything in them. Pictures and other files are found by
-          their names. It never reads caches or environments, files named like
-          keys or passwords, files that are only in the cloud, or the agent's own
-          data. It works in the background at the lowest priority, and waits while
-          the computer runs on its battery.</p>
-      </div>
-      <label class="checkbox"><input type="checkbox" id="file-search-on">
-        Keep my files searchable</label>
-      <div id="file-search-status" class="muted"></div>
-      <ul id="file-search-folders" class="file-search-folders"></ul>
-      <div class="file-search-actions">
-        <button type="button" class="small secondary" id="file-search-add">Add a folder…</button>
-        <button type="button" class="small secondary" id="file-search-sessions"></button>
-        <button type="button" class="small secondary" id="file-search-build">Update now</button>
-      </div>
     </div>
     </div>
     <div class="settings-pane" data-settings-pane="display" hidden>

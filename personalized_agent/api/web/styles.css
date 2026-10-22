@@ -2425,9 +2425,11 @@ main:has(> #xdebug.active) { max-width: none; }
 #ov-tasks-card .ov-head { color: var(--heading-bright); font-size: 1rem; font-weight: 700;
   letter-spacing: .04em; margin: 0 0 6px; }
 #ov-tasks-card .ov-head-count { color: var(--heading-bright); font-weight: 400; }
-.ov-todo-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+/* A long list scrolls in its own box rather than making the card taller. */
+.ov-todo-list { list-style: none; margin: 0; padding: 0 4px 0 0; display: grid; gap: 3px;
+  max-height: 320px; overflow-y: auto; overscroll-behavior: contain; }
 .ov-todo-item { display: grid; grid-template-columns: 1fr auto; column-gap: 6px;
-  font-size: .86rem; }
+  font-size: .86rem; overflow-wrap: anywhere; }
 .ov-todo-item label { display: flex; flex-direction: row; flex-wrap: nowrap; gap: 6px;
   align-items: baseline; justify-content: flex-start; cursor: pointer; margin: 0;
   font-size: inherit; color: var(--ink); }
@@ -3557,8 +3559,10 @@ body.chat-window .chat-only { height: 100vh; height: 100dvh; padding: 12px; box-
    rules, so it reads the same in the dark. The masthead and the lead
    headline carry it; everything else stays quiet. */
 .ov-know-tools { justify-content: flex-end; }
+/* A word longer than its column (CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_...)
+   breaks where it must, rather than pushing the column beside it aside. */
 .paper { --paper-serif: "Times New Roman", Times, Georgia, serif;
-  font-family: var(--paper-serif); color: var(--ink); }
+  font-family: var(--paper-serif); color: var(--ink); overflow-wrap: anywhere; }
 .paper-mast { text-align: center; border-top: 4px double var(--ink);
   border-bottom: 1px solid var(--ink); padding: 10px 0 0; margin-bottom: 14px;
   /* A <header>, but the paper's own: not the page's header, which stays at
@@ -3725,8 +3729,9 @@ body.chat-window .chat-only { height: 100vh; height: 100dvh; padding: 12px; box-
 
 /* Customized Recommendation, a tab of its own: the pages and issues down the
    left, the page chosen on the right - as the Experience tab. */
-.rec-grid { display: grid; grid-template-columns: minmax(200px, 1fr) 4fr; gap: 12px;
+.rec-grid { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(0, 4fr); gap: 12px;
   align-items: start; }
+.rec-grid > * { min-width: 0; overflow-wrap: anywhere; }
 @media (max-width: 900px) { .rec-grid { grid-template-columns: 1fr; } }
 /* Not held at the top while the paper scrolls: the page's own header is
    there, and it went under it. */
@@ -3745,6 +3750,11 @@ body.chat-window .chat-only { height: 100vh; height: 100dvh; padding: 12px; box-
 .paper-said-less { color: var(--err, #c62828); }
 .paper-said-knew { color: var(--accent); }
 .paper-say button.chosen { border-color: currentColor; font-weight: 700; }
+/* Kept in the collection: apart from what was said of it. */
+.paper-say button.paper-keep { margin-right: 6px; }
+.paper-say button.paper-keep.chosen { color: var(--accent); }
+.paper-collection .paper-kept { min-width: 0; }
+.paper-kept-from { margin: 0 0 4px; font-size: 12px; }
 
 /* Modules: each with what it does, what turning it off means, what it spent. */
 .modules-list { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 12px; }
@@ -3776,12 +3786,25 @@ body.chat-window .chat-only { height: 100vh; height: 100dvh; padding: 12px; box-
 .privacy-says { font-size: 0.9em; margin-top: 3px; display: grid; gap: 2px; }
 .privacy-cost { color: var(--warn-ink, var(--muted)); }
 
-/* Learning updated by itself: its times, and each project's tick. */
-.xp-auto { margin: 0 0 8px; }
-.xp-auto-times { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
-.xp-auto-note { font-size: 12px; margin: 4px 0 0; }
-.xp-auto-one { display: inline-flex; gap: 4px; align-items: center; font-size: 12px;
-  color: var(--muted); cursor: pointer; }
+/* WORK'S LEARNING, under the projects and runs: when it reads, how far,
+   from where, and what it spent. */
+.xp-learn { margin-top: 12px; }
+.xp-learn h3 { margin: 16px 0 4px; font-size: 14px; }
+.xp-learn h4 { margin: 10px 0 4px; font-size: 13px; }
+.xp-learn p { margin: 4px 0; font-size: 13px; }
+.xp-learn-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 6px 0; }
+.xp-learn-times { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
+.xp-learn-row input[type=number] { width: 12ch; margin-left: 6px; }
+.xp-learn-progress { display: flex; gap: 10px; align-items: center; margin: 6px 0; font-size: 13px; }
+.xp-learn-progress progress { flex: 1 1 auto; max-width: 420px; height: 10px; }
+.xp-learn-places { list-style: none; padding: 0; margin: 6px 0; display: grid; gap: 6px; }
+.xp-learn-places li { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; min-width: 0; }
+.xp-learn-places code { overflow-wrap: anywhere; min-width: 0; }
+.xp-learn-chart { display: flex; align-items: flex-end; gap: 2px; height: 80px; max-width: 640px;
+  border-bottom: 1px solid var(--line); padding-top: 4px; }
+.xp-learn-bar { flex: 1 1 0; max-width: 18px; min-width: 3px; background: var(--accent);
+  border-radius: 4px 4px 0 0; }
+.xp-learn-bar:hover { opacity: 0.75; }
 
 /* Remove a try: asked first, in the row of tries. */
 .xd-try-ask { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center;
@@ -3858,12 +3881,6 @@ button.danger-text:not(:disabled) { color: var(--danger-ink); }
 .sys-permission-state.ok { color: var(--ok); }
 .sys-permission-state.missing { color: var(--err); }
 
-/* Search your files: each folder read, and how far. */
-.file-search-folders { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 6px; }
-.file-search-folders li { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
-.file-search-folders code { overflow-wrap: anywhere; }
-.file-search-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-
 /* THE LESSON CARDS, in the Lessons debugger: one answered question each. */
 #lesson-cards .lesson-card { border-top: 1px solid var(--line); padding: 6px 0; }
 #lesson-cards .lesson-card summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 8px;
@@ -3931,3 +3948,15 @@ button.danger-text:not(:disabled) { color: var(--danger-ink); }
 .pj-section { margin: 12px 0 4px; padding: 6px 6px 2px; border-top: 2px solid var(--line);
   font-weight: 600; color: var(--muted); }
 .pj-section-first { margin-top: 4px; border-top: none; }
+
+/* THE CONNECTION DEBUGGER: a change a row, opened to what it changed and
+   what the model was asked and answered. */
+.cdbg-row { border-top: 1px solid var(--line); padding: 6px 0; }
+.cdbg-row summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 4px 10px;
+  align-items: baseline; }
+.cdbg-when { font-variant-numeric: tabular-nums; color: var(--muted); }
+.cdbg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px; }
+.cdbg-row pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px;
+  overflow: auto; font-size: 12px; margin: 4px 0; }
+.cdbg-call { margin-top: 6px; }

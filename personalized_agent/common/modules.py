@@ -47,12 +47,12 @@ MODULES: List[Dict[str, str]] = [
             "up on the web (from your screen they still are, while Connections is on). "
             "\"Make an issue now\" still works."},
     {"key": "experience", "setting": "module_experience_enabled", "name": "Work learning",
-     "what": "Beside each state round, your work natures grouped into patterns and "
-             "principles; how sure each work nature is, learned from what you do with it. "
-             "(A project learned into stages is yours to start, in Work - not a function "
-             "here.)",
-     "off": "What was learned is still used; the natures are no longer grouped by "
-            "themselves. Learning a project into stages in Work still works."},
+     "what": "Your work - your Work projects and the places you list in Work's Learning "
+             "panel, with your coding agents' conversations - read into cases and the "
+             "reasons behind how you judge your work, at the times you set there (when "
+             "its switch is on).",
+     "off": "No update by itself; what was learned is still used, and Update now in Work "
+            "still works."},
 ]
 
 #: WHAT THE USER STARTS, counted apart from the functions and from one
@@ -96,6 +96,12 @@ TASK_MODULE = {
     "connections": "recommend",
     "reading": "recommend",
     "experience": "experience",
+    # THE LEARNING (learning/): its folders mapped, its units read, its
+    # reasons found, its words kept.
+    "learning_folders": "experience",
+    "learning_read": "experience",
+    "learning_reasons": "experience",
+    "learning_terms": "experience",
     "heartbeat": "heartbeat (before modules)",
     "work_run": "manual_work",
     # The two final checks of a run: kinds of their own, in Work runs.

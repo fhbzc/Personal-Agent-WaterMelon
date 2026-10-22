@@ -2320,17 +2320,21 @@ class DesktopConversationTests(unittest.TestCase):
         self.assertNotIn("/api/experience/order", js)
         self.assertIn("last active", js)
 
-    def test_each_project_is_learned_from_its_own_row(self) -> None:
+    def test_the_learning_is_one_panel_not_a_button_a_project(self) -> None:
+        """No project is learned by its own button any more (2026-10-21):
+        Work's Learning panel learns all of the user's work."""
         html = (WEB / "index.html").read_text(encoding="utf-8")
         self.assertIn("what the agent does on each project", html)
         # One experience: no test, no switch between two.
         for gone in ('id="xp-build"', 'data-xp-scope', 'id="xp-update"', 'id="xp-test-bars"'):
             self.assertNotIn(gone, html)
+        self.assertIn('id="xp-learn"', html)
         js = (WEB / "app.js").read_text(encoding="utf-8")
-        self.assertIn("/api/experience/learn", js)
-        self.assertIn('"Update learning" : "Start learning"', js)
-        self.assertIn("tokens spent learning it", js)
+        self.assertNotIn("/api/experience/learn", js)
+        self.assertNotIn('"Update learning" : "Start learning"', js)
+        self.assertNotIn("tokens spent learning it", js)
         self.assertNotIn("Clear and run again", js)
+        self.assertIn('api.get("/api/learning")', js)
 
     def test_there_is_no_memory_tab_and_no_checklist_on_the_overview(self) -> None:
         html = (WEB / "index.html").read_text(encoding="utf-8")
@@ -7539,14 +7543,11 @@ class TheExperiencePanelTests(unittest.TestCase):
         out = result["out"]
         # One list: no PROJECT / FOLDER labels to tell them apart.
         self.assertNotIn("PROJECT", out["units"])
-        # Each row learned from itself: Update once learned, Start before,
-        # what it has cost - and none for a project made for the agents.
-        # And beside the button, whether it is updated by itself.
-        self.assertIn("Update learning Update by itself learned up to 2026-10-05 10:00 · "
-                      "12,345 tokens spent learning it (7 calls)", out["units"])
-        self.assertIn("Start learning Update by itself not learned yet · nothing spent "
-                      "learning it yet", out["units"])
-        self.assertEqual(out["units"].count("learning"), 4)
+        # No row is learned by its own button any more (2026-10-21): Work's
+        # Learning panel learns all of the user's work.
+        for gone in ("Update learning", "Start learning", "Update by itself",
+                     "tokens spent learning it"):
+            self.assertNotIn(gone, out["units"])
         # The learned stages are not drawn - neither the picture nor a stage
         # of it - and the project is still headed by its name.
         self.assertEqual(out["graph"], [[True, ""], [True, ""]])

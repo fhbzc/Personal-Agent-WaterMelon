@@ -471,8 +471,11 @@ class ARunIsTwoAgentsTests(unittest.TestCase):
     @staticmethod
     def _work_prompts(models):
         import json as _json
+        # The work agent's: not the reviewer's, nor the reviewer's check of
+        # whether the user's reasons hold (learning/find.py, HOLDS_PROMPT).
         return [_json.dumps(r.messages, default=str) for r in models.asked
-                if "You review a work agent" not in r.system]
+                if "You review a work agent" not in r.system
+                and "DOES EACH OF THESE REASONS OF THE USER'S HOLD" not in r.system]
 
     def test_every_call_is_told_the_users_timezone_and_the_date(self) -> None:
         """Not told, the models wrote the times on the slides in UTC."""
@@ -701,31 +704,40 @@ class ARunIsTwoAgentsTests(unittest.TestCase):
                             for p in prompts))
 
     def test_the_work_agent_never_sees_the_users_experience(self) -> None:
-        from personalized_agent.heartbeat.experience.store import ExperienceStore
-        past = ExperienceStore(self.app.db).add_stage({
-            "task_id": "task-past", "kind": "plan",
-            "summary": "planned how to write the notes, ZEBRAQUOKKA style", "states": [],
-            "began": "2026-01-01T00:00:00", "ended": "2026-01-01T00:00:00"})
+        # What was learned of the user's work (learning/): a reason the user
+        # stated, that holds for any work - the reviewer is given it, the
+        # work agent never.
+        from personalized_agent.learning.store import LearningStore
+        store = LearningStore(self.app.db)
+        case = store.save_case({"unit_id": "u-past", "title": "Notes written before"})
+        said = store.save_judgment({"case_id": case, "aspect": "output",
+                                    "object": "object:wording and tone",
+                                    "direction": "ZEBRAQUOKKA style", "said": "always so",
+                                    "strength": "written", "at": "2026-01-01", "state": "linked"})
+        reason = store.save_reason({"statement": "Notes are written ZEBRAQUOKKA style.",
+                                    "source": "stated", "aspect": "output", "state": "active",
+                                    "condition": {"dims": {}, "text": "any notes"},
+                                    "objects": ["object:wording and tone"], "predictions": []})
+        store.link(reason, said, "supports")
         models = _TwoAgents()
         self._run(models)
         import json as _json
         reviewer = [_json.dumps(r.messages, default=str) for r in models.asked
                     if "You review a work agent" in r.system]
         self.assertTrue(any("ZEBRAQUOKKA" in one for one in reviewer),
-                        "the reviewer should have been shown the past stage")
+                        "the reviewer should have been given the user's reason")
         for prompt in self._work_prompts(models):
             self.assertNotIn("ZEBRAQUOKKA", prompt)
-            self.assertNotIn(past["id"], prompt)
+            self.assertNotIn(reason, prompt)
 
     def test_a_limit_pauses_the_run_and_continue_carries_on(self) -> None:
         from personalized_agent.agent.work.runner import NOT_FINISHED
         models = _TwoAgents()
-        # Nine calls, some kept back for the wrap-up: the contract takes its
+        # Eight calls, some kept back for the wrap-up: the contract takes its
         # calls (the version it is saved as has no slides now) - its
-        # reviewer's what-it-must-know among them - the words its reviewer
-        # searches the user's record by one, the round's tool one - and the
+        # reviewer's questions among them - the round's tool one - and the
         # round is cut off there.
-        run, started = self._run(models, limits={"calls": 9, "minutes": 0, "tokens": 0})
+        run, started = self._run(models, limits={"calls": 8, "minutes": 0, "tokens": 0})
         self.assertEqual(run["status"], NOT_FINISHED, run["log"][-6:])
         self.assertTrue(run["continuable"])
         prompts = self._work_prompts(models)
@@ -942,8 +954,11 @@ class ANewProjectForTheAgentsTests(unittest.TestCase):
 
 
 class WhatEachAgentCanSearchTests(unittest.TestCase):
-    """The reviewer searches the stages of all the user's projects; the work
-    agent only its own project's."""
+    """The record's search helpers, given a record to search: all of the
+    user's projects for the reviewer, only its own project's for the work
+    agent. A run is given no record of stages now (learning/ in its place:
+    test_work_live.NoRecordOfStagesIsReadTests) - these are the helpers
+    alone."""
 
     def setUp(self) -> None:
         self.agent = TemporaryAgent()

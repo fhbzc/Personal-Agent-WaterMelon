@@ -378,12 +378,14 @@ class TheApplicationClosedTests(_LiveBase):
         self.assertGreater(seqs[-1], live["last"])
 
 
-class WhatIsLearnedMeanwhileTests(_LiveBase):
-    """Learning a project while a run works on it: a task, and its stages,
-    learned after the run began are found by the run's searches of its
-    project as soon as they are written."""
+class NoRecordOfStagesIsReadTests(_LiveBase):
+    """THE LEARNING STARTED AGAIN (2026-10-21, learning/): a run no longer
+    reads the record of stages its project was learned into - not at its
+    start, nor as learning goes on beside it - and neither agent searches
+    or opens past stages. The reviewer has what was learned in their place
+    (open_case, open_reason); the work agent has none of it."""
 
-    def test_a_task_learned_after_the_start_is_searched(self) -> None:
+    def test_none_read_none_searched_and_no_stage_tools(self) -> None:
         from unittest import mock
         from types import SimpleNamespace
         from personalized_agent.agent.work import runner as runner_module
@@ -391,23 +393,35 @@ class WhatIsLearnedMeanwhileTests(_LiveBase):
         said, run = self._start(models)
         self.assertTrue(models.reached.wait(30), "the round never began")
         try:
-            before = list(run.project_tasks)
+            self.assertIsNone(run._live_unit)
+            self.assertIsNone(run.live_writer)
+            self.assertIsNone(run.retriever)
+            self.assertIsNone(run.lessons)
+            self.assertFalse(run.lessons_kept)
+            self.assertIsNotNone(run.finder, "the full way's reviewer asks what was learned")
+            # Learned meanwhile: still not read.
             experience = self.app.state_heartbeat.experience
-            unit = dict(experience.full_unit(self.unit["id"]))
+            unit = dict(experience.full_unit(self.unit["id"]) or {"id": self.unit["id"]})
             unit["tasks"] = [*(unit.get("tasks") or []),
                              SimpleNamespace(id="task_learned_later", members=[], described={})]
             with mock.patch.object(experience, "full_unit", return_value=unit), \
                     mock.patch.object(runner_module, "LIVE_FRESH_SECONDS", 0.0):
-                self.assertIn("task_learned_later", run.project_tasks)
-                seen = {}
-
-                def find(profile):
-                    seen.update(profile)
-                    return {}
-                run.retriever = SimpleNamespace(find=find)
-                run._find_in_project("anything", "")
-                self.assertIn("task_learned_later", seen["only_tasks"])
-            self.assertNotIn("task_learned_later", before)
+                self.assertEqual(run.project_tasks, [])
+                self.assertEqual(run._find_in_project("anything", ""),
+                                 {"error": "no record to search"})
+            builder = {one.name for one in run.tools.specs()}
+            reviewer = {one.name for one in run.review_tools.specs()}
+            for name in ("search_stages", "open_stage"):
+                self.assertNotIn(name, builder)
+                self.assertNotIn(name, reviewer)
+            # The user's records, the work agent's to search; their files,
+            # both agents'.
+            self.assertIn("search_records", builder)
+            self.assertIn("search_files", builder)
+            self.assertIn("search_files", reviewer)
+            # What was learned: the reviewer's alone.
+            self.assertTrue({"open_case", "open_reason"} <= reviewer)
+            self.assertFalse({"open_case", "open_reason"} & builder)
         finally:
             models.go.set()
 

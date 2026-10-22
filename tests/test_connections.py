@@ -675,6 +675,10 @@ class TheRoundTests(_Base):
             from datetime import datetime, timedelta
             self.app.config.set("recommend_times", "08:00", internal=True)
             now = datetime.now().astimezone().replace(hour=9, minute=0)
+            # Its switch off (as it is at first): nothing by itself.
+            self.assertFalse(self.app.issue_clock.look(now))
+            self.assertEqual(start.call_count, 0)
+            self.app.config.set("recommend_auto_on", True, internal=True)
             self.assertTrue(self.app.issue_clock.look(now))
             self.assertEqual(start.call_count, 1)
         # Its bar is still shown on the State heartbeat's panel.
@@ -726,7 +730,9 @@ class TheRoutesTests(_Base):
         self._post("/api/connections/person", {"action": "restore", "id": made["id"]})
         self.assertEqual(len(self._get("/api/connections")["people"]), 1)
         light = self._get("/api/connections/briefing")
-        self.assertEqual(set(light), {"briefing", "progress", "issues", "schedule", "says"})
+        self.assertEqual(set(light), {"briefing", "progress", "issues", "schedule", "says",
+                                      # the stories kept, across issues
+                                      "collection", "collected"})
         # A profile of the user's own: on the one profile that is theirs, never
         # among the contacts.
         self._post("/api/connections/source", {"url": "https://github.com/me-myself"})

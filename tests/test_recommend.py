@@ -382,7 +382,11 @@ class TheClockTests(unittest.TestCase):
                 return {"at": self.at} if self.at else None
 
         store = _Store()
-        clock = IssueClock(_Config(recommend_times="08:00"), _Round(), store)
+        # By itself only with its switch on.
+        off = IssueClock(_Config(recommend_times="08:00"), _Round(), store)
+        self.assertFalse(off.due(datetime(2026, 10, 14, 9, 15, tzinfo=tz)))
+        clock = IssueClock(_Config(recommend_times="08:00", recommend_auto_on=True),
+                           _Round(), store)
         # Away three days, back at 9:15: one issue - not three.
         store.at = datetime(2026, 10, 11, 8, 5, tzinfo=tz).isoformat()
         now = datetime(2026, 10, 14, 9, 15, tzinfo=tz)
@@ -492,6 +496,43 @@ class TheIssueTests(unittest.TestCase):
         from personalized_agent.api.errors import ApiError
         with self.assertRaises(ApiError):
             say(_Req({"issue": ident, "story": "know_1", "action": "love"}))
+
+    def test_a_kept_story_stays_and_keeping_it_is_no_say_on_it(self) -> None:
+        self._a_topic()
+        ident = self.app.connections.save_briefing([], [
+            {"id": "know_1", "title": "A new qubit record", "detail": "Coherence doubled.",
+             "topic_id": "topic_q", "sources": ["https://news.example.org/qubit-record"]}],
+            {"paper": {"front": ["know_1"], "brief": [], "pages": [
+                {"key": "topic:topic_q", "title": "Quantum computing",
+                 "stories": ["know_1"]}]}})
+        kept = recommend.collect(self.app.db, self.app.connections, ident, "know_1")
+        self.assertTrue(kept["ok"])
+        # Once: a second time is the first.
+        self.assertEqual(recommend.collect(self.app.db, self.app.connections, ident,
+                                           "know_1")["id"], kept["id"])
+        shelf = recommend.collection(self.app.db)
+        self.assertEqual([one["story"]["title"] for one in shelf["items"]],
+                         ["A new qubit record"])
+        self.assertEqual(shelf["items"][0]["story"]["page_title"], "Quantum computing")
+        self.assertEqual(recommend.collected_of(self.app.db, ident), ["know_1"])
+        # Not "more like this": nothing counted for its topic.
+        self.assertEqual(recommend.said_of_topics(self.app.db).get("topic_q"), None)
+        # And the say is still theirs, on the kept story too.
+        recommend.record_feedback(self.app.db, self.app.connections, ident, "know_1", "less")
+        self.assertEqual(recommend.collection(self.app.db)["says"], {"know_1": "less"})
+        # ITS ISSUE GONE (only the newest hundred are kept): the collection's
+        # own copy takes the say, and keeps it.
+        self.app.db.execute("DELETE FROM connection_briefings WHERE id = ?", (ident,))
+        recommend.record_feedback(self.app.db, self.app.connections, ident, "know_1", "more")
+        self.assertEqual(recommend.collection(self.app.db)["says"], {"know_1": "more"})
+        self.assertEqual(recommend.collection(self.app.db)["items"][0]["story"]["title"],
+                         "A new qubit record")
+        # Taken out: gone from the collection, the say left as it was.
+        recommend.uncollect(self.app.db, "know_1")
+        self.assertEqual(recommend.collection(self.app.db)["items"], [])
+        self.assertEqual(recommend.says_of(self.app.db, ident), {"know_1": "more"})
+        with self.assertRaises(KeyError):
+            recommend.collect(self.app.db, self.app.connections, ident, "know_9")
 
     def test_what_they_knew_makes_a_story_like_it_less_new(self) -> None:
         # What the user already knew is kept with its vector: a story like it

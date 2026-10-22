@@ -29,6 +29,9 @@ class WhichModuleTests(unittest.TestCase):
         self.assertEqual(modules.module_of("experience"), "experience")
         self.assertEqual(modules.module_of("experience_stages"), "experience_manual")
         self.assertEqual(modules.module_of("experience_merge"), "experience_manual")
+        # The learning's own steps (learning/): Work learning's.
+        for task in ("learning_folders", "learning_read", "learning_reasons", "learning_terms"):
+            self.assertEqual(modules.module_of(task), "experience", task)
         self.assertEqual(modules.module_of("lessons_connections"), "connections")
         self.assertEqual(modules.module_of("heartbeat"), "heartbeat (before modules)")
 
@@ -132,6 +135,9 @@ class TurnedOffTests(unittest.TestCase):
     def test_recommendation_off_no_issue_and_no_reading(self) -> None:
         tz = datetime.now().astimezone().tzinfo
         at_nine = datetime.now(tz).replace(hour=9, minute=0)
+        # Its switch on and a time set: an issue by itself.
+        self.app.config.set("recommend_times", "08:00", internal=True)
+        self.app.config.set("recommend_auto_on", True, internal=True)
         self.assertTrue(self.app.issue_clock.due(at_nine))
         self._off("recommend")
         self.assertFalse(self.app.issue_clock.due(at_nine))

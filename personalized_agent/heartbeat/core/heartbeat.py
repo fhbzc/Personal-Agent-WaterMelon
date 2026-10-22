@@ -19,11 +19,13 @@ import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from ...scheduler.core.recurrence import RecurrenceError, parse_recurrence
 from ...scheduler.core.recurrence import describe as describe_recurrence
+from ...scheduler.core.zones import PLACE_RULE as _PLACE_RULE
+from ...scheduler.core.given import HOW_TO_GIVE as _HOW_TO_GIVE
 from ...scheduler.execution.executors import (DEFAULT_CHECK_AFTER_SECONDS,
                                               DEFAULT_RECHECK_AFTER_SECONDS,
                                               VERIFICATION, _interval)
@@ -546,17 +548,20 @@ it is worded.
 
 WHEN is part of the answer. Give the moment it is useful - before the
 deadline, after the build should have finished, when the meeting is about
-to start - in the user's timezone with its offset, and not a moment that
-has already passed.
+to start - and not a moment that has already passed.
+
+""" + _HOW_TO_GIVE + """
 
 A NOTIFICATION CAN REPEAT - when the activity shows something that itself
 comes back on a schedule: a meeting every Monday at 10, a stand-up each
 weekday morning, a form due on the first of every month, a dose to take
 every eight hours. Then give "repeat": {"every": 1, "unit": "weeks"} (unit
 one of minutes, hours, days, weeks), and end it where the activity says it
-ends - "until" (ISO-8601 with the user's offset) or "count" (how many
+ends - "until" (YYYY-MM-DD HH:MM on the same clock) or "count" (how many
 times); with neither it repeats until the user stops it, so leave both out
-only when nothing says it ever ends. "at" is the first time. Never repeat a
+only when nothing says it ever ends. "at_local" is the first time; a repeat
+of days or weeks keeps that time on the clock of its "zone" - a weekly
+meeting in Paris stays at 10:00 Paris time when either side's clocks change. Never repeat a
 reminder about one thing that happens once - the reply still to send, the
 deadline still to meet: that is one notification, not a series. Leave
 "repeat" out for every notification that happens once.
@@ -580,7 +585,7 @@ EXAMPLES. Worth adding:
       {"type": "reminder", "title": "Find a time with Prof. Okafor",
        "message": "You told him you would write again next month to
                    set up a chat about the research.",
-       "at": "Monday 2 November 09:00, with the user's offset",
+       "at_local": "Monday 2 November 09:00 as YYYY-MM-DD HH:MM", "zone": "user",
        "why": "Their sent reply promises to find a time next month; the first
                full week of November starts on the 2nd, and nothing on the
                calendar is about it."}
@@ -588,20 +593,29 @@ EXAMPLES. Worth adding:
     nothing on the calendar is about it:
       {"type": "reminder", "title": "Send the revised draft",
        "message": "You told the editor you would send it by Friday.",
-       "at": "Friday 09:00, with the user's offset",
+       "at_local": "Friday 09:00 as YYYY-MM-DD HH:MM", "zone": "user",
        "why": "The promise in this morning's reply; no reminder exists."}
   - The user started a training run whose log says it needs about forty
     minutes:
       {"type": "notice", "title": "The training run should be done",
        "message": "It started at 14:05 and estimated forty minutes.",
-       "at": "about 14:50, with the user's offset",
+       "at_local": "today about 14:50", "zone": "user",
        "why": "The estimate in the run's own output."}
   - A page the user read gives a submission deadline of tomorrow at 23:59,
     and the calendar has nothing about it:
       {"type": "notice", "title": "Submission deadline tomorrow",
        "message": "The workshop deadline is tomorrow at 23:59 AoE.",
-       "at": "this evening, with the user's offset",
+       "at_local": "this evening", "zone": "user",
        "why": "The call for papers read at 16:10."}
+  - An invitation from a colleague in Berlin, read by a user in New York:
+    "Can we talk Thursday at 3pm?" - signed with the Berlin office, no zone
+    named:
+      {"type": "notice", "title": "Call with Jonas in ten minutes",
+       "message": "The call he proposed for Thursday 15:00 his time.",
+       "at_local": "Thursday 14:50 as YYYY-MM-DD HH:MM", "zone": "Europe/Berlin",
+       "as_written": "Thursday at 3pm",
+       "why": "His email proposes Thursday 3pm; he writes from the Berlin
+               office, so the time is Berlin's."}
 
 Not worth adding - and why:
 
@@ -677,8 +691,10 @@ in the activity shows it.
     {"type": "reminder|notice",
      "title": "short, what the user sees first",
      "message": "one or two plain sentences for the user",
-     "at": "ISO-8601 with the user's UTC offset - when it pops up (the first time, if it repeats)",
-     "repeat": "OPTIONAL, only for something that itself comes back on a schedule: {\"every\": 1, \"unit\": \"minutes|hours|days|weeks\", \"until\": \"ISO-8601 with the user's offset\" or \"count\": N}",
+     "at_local": "YYYY-MM-DD HH:MM on the clock of zone - when it pops up (the first time, if it repeats)",
+     "zone": "user, or the Region/City name of the place whose clock at_local is on (Europe/Paris), or UTC",
+     "as_written": "OPTIONAL: the time exactly as the source wrote it, when it came from one",
+     "repeat": "OPTIONAL, only for something that itself comes back on a schedule: {\"every\": 1, \"unit\": \"minutes|hours|days|weeks\", \"until\": \"YYYY-MM-DD HH:MM on the same clock\" or \"count\": N}",
      "why": "REQUIRED: the activity or state that calls for it, and why it is worth interrupting for then; not shown unless asked",
      "lessons": ["the ids of the lessons about the user's notifications this one follows, if any (les_...)"]}
   ],
@@ -691,7 +707,9 @@ in the activity shows it.
     {"id": "a listed notification's id, exactly (task_...)",
      "message": "OPTIONAL: the whole message as it should now read - what it said that still holds, and the new detail",
      "title": "OPTIONAL: a corrected title",
-     "at": "OPTIONAL: its new time, ISO-8601 with the user's UTC offset, when it moved",
+     "at_local": "OPTIONAL: its new time, YYYY-MM-DD HH:MM on the clock of zone, when it moved",
+     "zone": "with at_local: user, or the Region/City name of the place whose clock it is on, or UTC",
+     "as_written": "OPTIONAL: the new time exactly as the source wrote it",
      "details": {"OPTIONAL - each new detail by name, e.g. link, place, agenda, phone, bring": "its value, exactly as the activity gave it"},
      "why": "one or two sentences for the user: what is new, and where it came from",
      "evidence": ["the ids of the events or states that show it"]}
@@ -737,6 +755,25 @@ Return ONLY this JSON object:
 {"same_as": "the id of the one it repeats, or null",
  "create_anyway": false,
  "why": "one sentence"}"""
+
+
+ZONE_AGAIN_PROMPT = """WHOSE CLOCK IS THIS TIME ON?
+
+You gave a notification's time on a clock whose "zone" was refused - why is
+said below - so the moment it is for cannot be worked out. Name the place
+whose clock it is, from what the notification and the activity it came from
+say. An abbreviation (PST, EST, CET) is the place it is used for - EST in a
+New York email is America/New_York, daylight saving and all; one used in
+more than one place (CST, IST) is the one the sender or the event is in.
+
+WHAT IS ACCEPTED: """ + _PLACE_RULE + """
+
+Your answer is held to the same rule. When nothing says which place it is,
+give an empty zone - the time is then taken as the user's own, and the user
+is told so.
+
+Return ONLY this JSON object:
+{"zone": "the Region/City name, or empty", "why": "one sentence"}"""
 
 
 #: Every instruction the heartbeat gives, as one text.
@@ -1678,6 +1715,16 @@ def _now_said() -> str:
             f"for example {here.replace(microsecond=0).isoformat()}.")
 
 
+def _when_said(entry: Dict[str, Any],
+               again: Any = None) -> Tuple[Optional[datetime], Dict[str, Any], str]:
+    """When a notification step 3 proposes is for: the moment, what it was
+    taken from, or why it could not be read - read as the chat's are, by
+    one reader with one rule for a zone (scheduler/core/given.py)."""
+    from ...scheduler.core.given import time_given
+    return time_given(entry, again)
+
+
+
 def _how_many(produced: Any, kind: Any) -> int:
     """How many of one kind of thing a step ended up doing.
 
@@ -2458,6 +2505,19 @@ class AgentHeartbeat:
             # Step 2: the people, into the user's contacts.
             keeper = getattr(self, "connections", None)
             if keeper is not None and "people" in payload:
+                # WHAT THE MODEL WAS ASKED AND ANSWERED, kept with the changes
+                # it makes (the Connection debugger) - when it makes any.
+                asked = next((row for row in report.get("steps") or []
+                              if row.get("id") == "step_people"), {})
+                call = ""
+                if payload.get("people"):
+                    try:
+                        call = keeper.begin_call(
+                            "agent heartbeat: the people step",
+                            str(asked.get("prompt") or ""), str(asked.get("answer") or ""),
+                            window=f"the activity up to {read_to}" if read_to else "")
+                    except Exception:      # pragma: no cover - a debugger's record
+                        log.warning("could not keep the people step's call", exc_info=True)
                 try:
                     # Found when the window they were seen in ends.
                     written_people = _people.apply(keeper, payload.get("people"),
@@ -2465,6 +2525,13 @@ class AgentHeartbeat:
                 except Exception:          # pragma: no cover - the step's own
                     log.warning("could not write the people", exc_info=True)
                     written_people = []
+                finally:
+                    if call:
+                        try:
+                            keeper.end_call(call, written_people)
+                        except Exception:  # pragma: no cover - a debugger's record
+                            log.warning("could not finish the people step's call",
+                                        exc_info=True)
                 if written_people:
                     report["people_written"] = written_people
 
@@ -2490,7 +2557,8 @@ class AgentHeartbeat:
                 report["notifications_closed"] = closed
 
             # And what step 3 found new details for, filled in.
-            updated = self._update_notifications(task_id, payload.get("updated"))
+            updated = self._update_notifications(task_id, payload.get("updated"),
+                                                 report)
             if updated:
                 report["notifications_updated"] = updated
 
@@ -2824,7 +2892,8 @@ class AgentHeartbeat:
     MOST_DETAILS = 12
     MOST_DETAIL = 500
 
-    def _update_notifications(self, task_id: str, entries: Any
+    def _update_notifications(self, task_id: str, entries: Any,
+                              report: Optional[Dict[str, Any]] = None
                               ) -> List[Dict[str, Any]]:
         """Step 3, its third part: a notification filled in with what has
         come since it was made - the meeting's link, its new time - rather
@@ -2836,6 +2905,8 @@ class AgentHeartbeat:
         message the user sees carries them."""
         if not isinstance(entries, list) or self.scheduler is None:
             return []
+        step_row = next((step for step in (report or {}).get("steps") or []
+                         if step.get("id") == "step_notify"), None)
         shown = set(getattr(self, "_open_notifications", set()) or ())
         store = getattr(self.scheduler, "store", None)
         now = utcnow()
@@ -2881,13 +2952,21 @@ class AgentHeartbeat:
             if message and message != before["message"]:
                 fields["description"] = message
                 payload["message"] = message
-            when = parse_iso(entry.get("at")) if entry.get("at") else None
+            when, said_time = None, {}
+            if entry.get("at_local") or entry.get("at"):
+                when, said_time, refused = _when_said(
+                    entry, self._zone_again(entry, step_row, report))
+                if when is None:
+                    row["error"] = refused
+                    out.append(row)
+                    continue
             if when is not None:
-                if when.tzinfo is None:
-                    when = when.replace(tzinfo=timezone.utc)
                 when = max(when, now + timedelta(minutes=1))
                 if task.scheduled_at is None or abs(when - task.scheduled_at) >= timedelta(minutes=1):
                     fields["scheduled_at"] = when
+                    # What the new time was taken from, as for a new one.
+                    metadata["time"] = said_time
+                    fields["timezone_name"] = said_time["zone"]
             if not fields and not new_details:
                 row["error"] = "nothing new in it"
                 out.append(row)
@@ -2910,7 +2989,8 @@ class AgentHeartbeat:
                 self.scheduler.update_task(which, task_payload=payload,
                                            metadata=metadata, **fields)
                 row.update(ok=True, title=after["title"], at=after["at"],
-                           changed=sorted([*fields, *(["details"] if new_details else [])]))
+                           changed=sorted([*(key for key in fields if key != "timezone_name"),
+                                           *(["details"] if new_details else [])]))
                 self.recorder.heartbeat_action(
                     task_id, "filled in a notification with new details",
                     f"{after['title']}: {why}"[:300])
@@ -2994,6 +3074,76 @@ class AgentHeartbeat:
             log.debug("could not list the scheduled notifications",
                       exc_info=True)
             return []
+
+    #: How much of what step 3 was shown goes with the zone asked again.
+    ZONE_CONTEXT = 12000
+
+    def _zone_again(self, entry: Dict[str, Any], step_row: Optional[Dict[str, Any]],
+                    report: Optional[Dict[str, Any]] = None) -> Any:
+        """How step 3 is asked ONCE MORE for a zone refused (given.py: one
+        rule for a zone, the chat's and this step's): a question to the
+        model, said why it was refused and what is accepted, with what step
+        3 was shown, to name the place. What it names is held to the same
+        rule by the reader; still refused, or no answer, and the time is the
+        user's own - and the card says so. Each asking is kept on the step's
+        row and in the report ("zone_checks")."""
+        from ...scheduler.core import zones
+        from ...scheduler.core.given import refusal
+
+        def ask(said: str, reason: str) -> str:
+            asked = "\n".join([
+                _now_said(), "",
+                f"THE ZONE YOU GAVE: \"{said}\"",
+                f"WHY IT WAS REFUSED: {refusal(said, reason)}", "",
+                "THE NOTIFICATION:",
+                json.dumps({key: entry.get(key) for key in (
+                    "title", "message", "at_local", "as_written", "why")
+                    if entry.get(key)}, ensure_ascii=False, default=str), "",
+                "WHAT IT CAME FROM:",
+                str((step_row or {}).get("context") or "")[:self.ZONE_CONTEXT]])
+            check: Dict[str, Any] = {"title": str(entry.get("title") or "")[:200],
+                                     "zone": said, "prompt": asked}
+            if step_row is not None:
+                step_row.setdefault("zone_checks", []).append(check)
+            if report is not None:
+                report.setdefault("zone_checks", []).append(check)
+            check["taken"] = "user"
+            try:
+                response = self.models.invoke(
+                    ModelRequest(
+                        messages=[{"role": "user", "content": asked}],
+                        system=ZONE_AGAIN_PROMPT,
+                        max_tokens=300,
+                        task="heartbeat:zone_again",
+                        language=in_english("the zone and why"),
+                        metadata={"context_summary":
+                                  f"the IANA zone for \"{said}\": "
+                                  f"{check['title']}"[:2000]},
+                    ),
+                    role="heartbeat",
+                )
+            except Exception as exc:          # no answer: the user's own
+                check["error"] = str(exc)[:300]
+                return ""
+            if step_row is not None:
+                self._charge(step_row, response)
+            check["answer"] = response.text or ""
+            answered = _extract_json(response.text or "")
+            zone = ""
+            if isinstance(answered, dict):
+                zone = str(answered.get("zone") or "").strip()
+                check["why"] = str(answered.get("why") or "").strip()[:500]
+            # Said here as the reader will hold it, so the record is right.
+            try:
+                if zone and not zones.is_own(zone):
+                    check["taken"] = zones.place_zone(zone)
+            except ValueError as exc:
+                check["error"] = str(exc)[:300]
+            log.info("a notification's zone %r was refused; taken as %s",
+                     said, check["taken"])
+            return zone
+
+        return ask
 
     def _is_it_the_same(self, proposed: Dict[str, Any], when: datetime,
                         alike: List[Any], step_row: Optional[Dict[str, Any]]
@@ -3097,13 +3247,11 @@ class AgentHeartbeat:
                               "error": "a notification needs a title and a "
                                        "message"})
                 continue
-            when = parse_iso(entry.get("at") or entry.get("scheduled_at"))
+            when, said_time, refused = _when_said(
+                entry, self._zone_again(entry, step_row, report))
             if when is None:
-                added.append({**row, "ok": False,
-                              "error": "a notification needs a time"})
+                added.append({**row, "ok": False, "error": refused})
                 continue
-            if when.tzinfo is None:
-                when = when.replace(tzinfo=timezone.utc)
             # A moment that has just passed is read as "now": the call takes
             # a while, and the point of it has not.
             when = max(when, now + timedelta(minutes=1))
@@ -3115,7 +3263,8 @@ class AgentHeartbeat:
             recurrence: Dict[str, Any] = {}
             if repeat:
                 try:
-                    recurrence = parse_recurrence(repeat)
+                    # On the clock of the zone its time is on.
+                    recurrence = parse_recurrence(repeat, zone=said_time["zone"])
                 except RecurrenceError as exc:
                     added.append({**row, "ok": False,
                                   "error": f"its repeat could not be read: {exc}"})
@@ -3179,7 +3328,11 @@ class AgentHeartbeat:
                               "created_by_step": "agent heartbeat, step 3 - "
                                                  "what notifications need to "
                                                  "be added",
-                              "notification_type": row["type"]},
+                              "notification_type": row["type"],
+                              # The time as a clock showed it, whose clock,
+                              # and what the source wrote: shown on the card.
+                              "time": said_time},
+                    timezone_name=said_time["zone"],
                     created_by=BY_HEARTBEAT,
                     reason=reason,
                     recurrence=recurrence,

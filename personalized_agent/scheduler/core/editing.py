@@ -80,7 +80,16 @@ def _same_rule(one: Dict[str, Any], other: Dict[str, Any]) -> bool:
         return False
     return (int(one.get("every_seconds") or 0) == int(other.get("every_seconds") or 0)
             and one.get("count") == other.get("count")
+            and _clock_of(one) == _clock_of(other)
             and _moment(one.get("until")) == _moment(other.get("until")))
+
+
+def _clock_of(rule: Dict[str, Any]) -> str:
+    """The zone a rule keeps - one kept before zones were named is this
+    computer's, the same clock as one named for it now."""
+    from .zones import here
+    zone = rule.get("zone") or "local"
+    return here() if zone == "local" else zone
 
 
 def _moment(value: Any) -> Optional[datetime]:
@@ -154,7 +163,9 @@ def plan(task: Any, *, title: Any = _UNSET, message: Any = _UNSET,
     rule = rule_from_now(task)
     if repeat is not _UNSET:
         try:
-            wanted_rule = parse_recurrence(repeat)
+            # The clock it keeps stays the one it had: an edit of how often
+            # does not move a Paris meeting onto this computer's clock.
+            wanted_rule = parse_recurrence(repeat, zone=(task.recurrence or {}).get("zone"))
         except RecurrenceError as exc:
             raise EditRefused(f"the repeat cannot be read: {exc}") from exc
         until = wanted_rule.get("until")

@@ -255,9 +255,11 @@ class TheWorkIsModelledOnTheUsersOwnTests(unittest.TestCase):
 
     def test_the_prompts_say_so(self) -> None:
         from personalized_agent.agent.work import runner
-        # The reviewer judges by the user's own past work; the work agent
-        # may open every reference to work from.
-        self.assertIn("past stages of THEIR OWN work", runner.REVIEWER_SYSTEM)
+        # The reviewer judges by what was learned of the user's own work -
+        # its reasons and cases; the work agent may open every reference to
+        # work from.
+        self.assertIn("what was learned of THEIR OWN work", runner.REVIEWER_SYSTEM)
+        self.assertNotIn("past stages of THEIR OWN work", runner.REVIEWER_SYSTEM)
         self.assertIn("EVERYTHING YOU SAY CITES WHAT IT RESTS ON", runner.REVIEWER_SYSTEM)
         self.assertIn("YOU MAY OPEN THE REFERENCES", runner.AGENT_SYSTEM)
 

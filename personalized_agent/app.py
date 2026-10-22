@@ -372,10 +372,19 @@ class AgentApplication:
         self.issue_clock = IssueClock(self.config, self.connections_round, self.connections)
         self.state_heartbeat.pool.counts("newspaper", lambda: (
             ["an issue"] if self.connections_round.running() else []))
-        # WORK LEARNING, UPDATED BY ITSELF at the times chosen: every
-        # project that changed - its own clock (experience/auto.py).
+        # The old learning's clock: kept, never started (the learning
+        # started again, 2026-10-21 - learning/).
         from .heartbeat.experience.auto import LearningClock
         self.learning_clock = LearningClock(self.config, self.state_heartbeat.experience)
+        # LEARNING (learning/): the user's work - their Work projects and the
+        # places they list in Work's Learning panel, with their coding agents'
+        # records - read into cases and reasons, by updates at the times they
+        # chose (when they switched it on) or when they ask. The local index
+        # reads the same places.
+        from .learning.service import Learning
+        self.learning = Learning(self.db, self.config, self.models, self.paths.data_dir,
+                                 never=[self.paths.data_dir, self.paths.workspace_dir])
+        self.learning.places.work_tab_folders = self._work_tab_folders
         # THE LOCAL INDEX: the user's own files searchable by their words -
         # every Work project's folders and the folders the user adds - built
         # in a process of its own at the lowest priority (index/service.py).
@@ -833,6 +842,26 @@ class AgentApplication:
             log.warning("could not look for processes left from before", exc_info=True)
             return 0
 
+    def _work_tab_folders(self) -> list:
+        """The folders of the projects the user made in Work for their own
+        folders - not the agents' own projects, nor the debugger's."""
+        experience = getattr(self.state_heartbeat, "experience", None)
+        store = getattr(experience, "store", None)
+        if store is None:
+            return []
+        removed = set(self.config.get("experience_removed_units") or [])
+        out = []
+        try:
+            for row in store.workspaces():
+                unit = str(row.get("unit_id") or "")
+                if unit in removed or unit.startswith("dbg_") or row.get("origin") == "work":
+                    continue
+                for one in row.get("paths") or []:
+                    out.append({"path": str(one), "project": row.get("name") or ""})
+        except Exception:                           # pragma: no cover - no projects
+            log.debug("could not read the Work projects' folders", exc_info=True)
+        return out
+
     def start(self, with_api: bool = True) -> None:
         with self._lock:
             if self._started:
@@ -852,6 +881,19 @@ class AgentApplication:
             except Exception:    # pragma: no cover - the old state stands
                 log.warning("could not make the test's experience the user's",
                             exc_info=True)
+            # ONCE: the old learning backed up, and learning started again.
+            try:
+                from .learning.fresh import start_afresh
+                start_afresh(self.db, self.config, Path(self.library.root),
+                             Path(self.paths.data_dir))
+            except Exception:    # pragma: no cover - tried again next start
+                log.warning("could not back up the old learning", exc_info=True)
+            # ONCE: Newspaper's switch - on where it made issues by itself.
+            try:
+                from .heartbeat.connections.schedule import carry_over
+                carry_over(self.config, bool(self.connections.briefing()))
+            except Exception:    # pragma: no cover - tried again next start
+                log.warning("could not carry the Newspaper's times over", exc_info=True)
             # TIMED, for the same reason the way out is: a phase that does
             # not say what it cost is a phase somebody will guess about,
             # and the guess will be wrong. Startup is the half of this
@@ -870,7 +912,7 @@ class AgentApplication:
                                 ("RawHousekeeping", self.housekeeping.start),
                                 ("StateHeartbeat", self.state_heartbeat.start),
                                 ("IssueClock", self.issue_clock.start),
-                                ("LearningClock", self.learning_clock.start),
+                                ("Learning", self.learning.begin),
                                 ("Triggers", self.triggers.start),
                                 ("WorkGovernor", self.work.governor.start),
                                 ("LocalIndex", self.local_index.begin)):
@@ -1150,11 +1192,11 @@ class AgentApplication:
             # the closing stops as finished - that run is carried on at the
             # next start. Then the state heartbeat, first to be waited for:
             # a round in flight holds the way out.
-            self.learning_clock.halt()
+            self.learning.halt()
             # A build going is ended: what it read is kept, and the next one
             # does not read it again.
             self.local_index.halt()
-            for component in (self.state_heartbeat, self.learning_clock,
+            for component in (self.state_heartbeat,
                               self.issue_clock, self.triggers,
                               self.housekeeping,
                               self.heartbeat, self.scheduler, self.listener):

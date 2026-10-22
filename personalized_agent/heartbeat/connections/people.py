@@ -79,8 +79,24 @@ WITHOUT DUPLICATES. For each person you write, an "action":
     every name, other name and account first. Activity already listed under
     them is not written again - not in other words either.
   - "add" - someone NOT in the list at all.
+
+  A DIFFERENT PERSON IS NOT AN UPDATE. Names that cannot be one person's - a
+  different family name, a name in another script that is not the same
+  name - or a different organisation, field or place with nothing tying
+  them together, are SOMEONE ELSE: "add" them. Two people seen together -
+  in one window, one email (its sender and those copied), one organisation,
+  one paper or one topic - are still two people, each with their own entry;
+  never give one person's id to another. When you cannot tell, "add": a
+  duplicate is merged later, but two people made one mixes their lives up.
   - "merge" - two listed entries are ONE person: "person_id" the one kept,
     "same_as" the other, "why". Everything of the other comes over.
+  - "split" - a listed entry is MORE THAN ONE PERSON: its names, other
+    names, accounts or activity cannot all be one person's (look at every
+    contact listed, not only those in this window). "person_id" the entry,
+    "why", and "parts": each OTHER person in it - their "name", "aliases",
+    the "accounts" of theirs (each handle or address as listed) and the
+    "activity" of theirs (the ids in brackets, as listed). The entry keeps
+    what is left, as the person it was first.
   - "delete" - a listed person who is NOT a contact by the rules above (a
     name from the news, the author of something the user only read), with
     "why" - ONLY one marked "added by the agent, untouched": never one the
@@ -105,10 +121,13 @@ relationship, a job, a fact you did not see is left out."""
 
 RETURNS = """{
   "people": [
-    {"action": "update | add | merge | delete",
+    {"action": "update | add | merge | split | delete",
      "person_id": "the listed person's id - for update, merge (the one kept) and delete; null for add",
      "same_as": "merge only: the id of the other entry, which becomes this one",
-     "why": "merge and delete: why",
+     "why": "merge, split and delete: why",
+     "parts": [{"name": "split only: one other person in the entry", "aliases": [],
+                "accounts": ["their handles or addresses, as listed"],
+                "activity": ["their activity's ids, as listed"]}],
      "name": "their name as written",
      "aliases": ["other names, handles"],
      "accounts": [{"platform": "linkedin|github|email|wechat|x|...", "handle": "...", "url": "..."}],
@@ -153,7 +172,9 @@ def _person_text(store: ConnectionsStore, person: Dict[str, Any], whole: bool) -
     `whole` False, a line."""
     said = [f"[{person['id']}] {person['name']}"]
     if person["aliases"]:
-        said.append("also " + ", ".join(person["aliases"][:8]))
+        # Every other name: a name that is not theirs is how two people made
+        # one are seen.
+        said.append("also " + ", ".join(person["aliases"][:30]))
     if person["deleted"]:
         said.append(f"DELETED by the {person['deleted_by'] or 'user'} on "
                     f"{person['deleted_at'][:10]}"
@@ -184,7 +205,8 @@ def _person_text(store: ConnectionsStore, person: Dict[str, Any], whole: bool) -
     said.append(_who_added(person))
     lines = [" · ".join(said)]
     for one in store.activity(person["id"], RECENT_ACTIVITY):
-        lines.append(f"    {str(one.get('at') or '')[:10] or 'undated'}: {one['what']}")
+        lines.append(f"    [{one['id']}] {str(one.get('at') or '')[:10] or 'undated'}: "
+                     f"{one['what']}")
     return "\n".join(lines)
 
 
@@ -247,6 +269,10 @@ def apply(store: ConnectionsStore, people: Any, evidence_known: Optional[set] = 
             "update" if entry.get("person_id") else "add")
         row: Dict[str, Any] = {"name": name, "ok": False, "action": action}
         try:
+            if action == "split":
+                row.update(_split(store, entry, by))
+                out.append(row)
+                continue
             if action in ("delete", "merge"):
                 row.update(_remove(store, action, entry, by))
                 out.append(row)
@@ -332,6 +358,27 @@ def apply(store: ConnectionsStore, people: Any, evidence_known: Optional[set] = 
             row["error"] = f"{type(exc).__name__}: {exc}"[:300]
         out.append(row)
     return out
+
+
+def _split(store: ConnectionsStore, entry: Dict[str, Any], by: str) -> Dict[str, Any]:
+    """A SPLIT the step asked for: an entry that is more than one person,
+    each other person in it made an entry of their own (store.split)."""
+    why = str(entry.get("why") or "").strip()
+    person = store.get(str(entry.get("person_id") or ""))
+    if person is None:
+        return {"error": "no such person"}
+    if not why:
+        return {"person_id": person["id"], "error": "a split needs its why"}
+    parts = [one for one in entry.get("parts") or [] if isinstance(one, dict)
+             and str(one.get("name") or "").strip()]
+    if not parts:
+        return {"person_id": person["id"], "error": "a split needs the other people in it"}
+    try:
+        made = store.split(person["id"], parts, by=by, reason=why)
+    except (KeyError, ValueError) as exc:
+        return {"person_id": person["id"], "error": str(exc)}
+    return {"ok": bool(made), "person_id": person["id"], "name": person["name"],
+            "split_into": [one["name"] for one in made]}
 
 
 def _remove(store: ConnectionsStore, action: str, entry: Dict[str, Any],

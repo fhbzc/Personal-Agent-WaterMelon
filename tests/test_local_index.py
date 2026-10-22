@@ -172,6 +172,9 @@ class TheApplicationsIndexTests(unittest.TestCase):
         self.agent.cleanup()
 
     def test_the_folders_a_build_in_its_own_process_and_a_search(self) -> None:
+        """Its folders are WHERE THE LEARNING READS (learning/places.py),
+        listed in Work's Learning panel - the index's own route no longer
+        takes a folder."""
         from personalized_agent.api.errors import ApiError
         from personalized_agent.api.routes import build_routes
         routes = build_routes(self.app)
@@ -184,15 +187,23 @@ class TheApplicationsIndexTests(unittest.TestCase):
                 return self.body.get(key, default)
 
             def require(self, key):
+                if self.body.get(key) in (None, ""):
+                    raise ApiError(f"missing parameter: {key}")
                 return self.body[key]
-        said = routes[("POST", "/api/index")](Req({"action": "add", "path": str(self.folder)}))
-        self.assertEqual([one["path"] for one in said["folders"]], [str(self.folder)])
-        self.assertEqual(said["folders"][0]["why"], "added")
+        for action in ("add", "remove", "sessions"):
+            with self.assertRaises(ApiError, msg=action):
+                routes[("POST", "/api/index")](Req({"action": action,
+                                                    "path": str(self.folder)}))
+        said = routes[("POST", "/api/learning")](Req({"action": "add",
+                                                      "path": str(self.folder)}))
+        self.assertEqual([one["path"] for one in said["places"]], [str(self.folder)])
+        index = self.app.local_index
+        self.assertEqual([(one["path"], one["why"]) for one in index.roots()],
+                         [(str(self.folder), "added")])
         # The application's own data is never read.
         with self.assertRaises(ApiError):
-            routes[("POST", "/api/index")](Req({"action": "add",
-                                                "path": str(self.app.paths.data_dir)}))
-        index = self.app.local_index
+            routes[("POST", "/api/learning")](Req({"action": "add",
+                                                   "path": str(self.app.paths.data_dir)}))
         self.assertEqual(index.never(), [str(self.app.paths.data_dir)])
         index.build_now(wait=True)
         status = routes[("GET", "/api/index")](Req({}))
@@ -207,19 +218,23 @@ class TheApplicationsIndexTests(unittest.TestCase):
         self.assertIn("Bake the sourdough", found[0]["text"])
         # Only what the asker may read.
         self.assertEqual(index.search("sourdough", allowed=lambda path: False), [])
-        # Removed: forgotten at the next build.
-        routes[("POST", "/api/index")](Req({"action": "remove", "path": str(self.folder)}))
+        # Removed from the learning's places: forgotten at the next build.
+        routes[("POST", "/api/learning")](Req({"action": "remove", "path": str(self.folder)}))
         index.build_now(wait=True)
         self.assertEqual(index.search("sourdough"), [])
 
-    def test_the_conversation_records_on_one_click(self) -> None:
+    def test_the_conversation_records_when_listed_for_learning(self) -> None:
+        """The records of the user's coding agents are indexed when they are
+        one of the learning's places - the old switch of the index's own
+        (index_sessions) no longer counts."""
         from unittest import mock
-        from personalized_agent.index import service
+        from personalized_agent.learning import records as learning_records
         records = Path(self.agent.dir) / "claude_projects"
         records.mkdir()
-        with mock.patch.object(service, "session_folders", lambda: [records]):
-            self.assertEqual(self.app.local_index.roots(), [])
+        with mock.patch.object(learning_records, "claude_sessions_root", lambda: records):
             self.app.config.set("index_sessions", True)
+            self.assertEqual(self.app.local_index.roots(), [])
+            self.app.learning.places.add("", "claude")
             self.assertEqual([(one["path"], one["sessions"]) for one in
                               self.app.local_index.roots()], [(str(records), True)])
 
@@ -242,23 +257,21 @@ class TheApplicationsIndexTests(unittest.TestCase):
 
 
 class TheSettingsCardTests(unittest.TestCase):
+    """The Settings card "Search your files" is gone: the folders searched
+    are the learning's places, listed in Work's Learning panel."""
 
-    def test_the_card_its_folders_and_its_buttons(self) -> None:
+    def test_no_card_in_settings_the_places_in_work(self) -> None:
         web = Path(__file__).resolve().parents[1] / "personalized_agent" / "api" / "web"
         html = " ".join((web / "index.html").read_text(encoding="utf-8").split())
         script = (web / "app.js").read_text(encoding="utf-8")
         for one in ('id="file-search-card"', 'id="file-search-on"', 'id="file-search-add"',
                     'id="file-search-sessions"', 'id="file-search-build"'):
-            self.assertIn(one, html)
-        # What it never reads, and where what is found goes, said plainly.
-        self.assertIn("files that are only in the cloud", html)
-        self.assertIn("goes to the model it works with", html)
-        self.assertIn('api.get("/api/index")', script)
-        self.assertIn('api.post("/api/index", body)', script)
-        # Loaded with the settings; and the toggle read off its state, not
-        # off its words - which are shown translated.
-        self.assertIn("loadFileSearch();", script)
-        self.assertIn("on: !target.dataset.on", script)
+            self.assertNotIn(one, html)
+        self.assertNotIn("loadFileSearch", script)
+        self.assertNotIn("renderFileSearch", script)
+        self.assertNotIn('"/api/index"', script)
+        self.assertIn('id="xp-learn"', html)
+        self.assertIn('api.get("/api/learning")', script)
 
 
 if __name__ == "__main__":

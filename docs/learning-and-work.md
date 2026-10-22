@@ -1,0 +1,382 @@
+# Learning and Work: the agreed design
+
+Version 1, 2026-10-21. This is the design agreed with the user in the 2026-10-21 discussion. It is kept so the build can be checked against it step by step.
+
+To change it, add a dated note under the part it changes. The "Build status" section at the end says what is in the code.
+
+---
+
+## 0. What it is for
+
+A Work run's builder makes something and its reviewer checks it. The reviewer stands in for the user, using what the user's own past work shows, in order to:
+
+1. add or refine requirements the user would expect but did not say;
+2. bring the work's form, style and way of working close to the user's.
+
+LEARNING reads the user's work into CASES and REASONS. The reviewer asks its QUESTIONS of them, and applies what holds to the job in hand.
+
+**Nothing the agents do is learned**, only what the user did. This includes:
+
+- the reviewer's criteria;
+- the "Added – not your words" items;
+- anything on the Work tab.
+
+## 1. What is kept
+
+| Thing | What it holds |
+|---|---|
+| **Place list** | ONE list, for both learning and the local index, in the Learning panel under Work. The Settings "Search your files" card is gone. |
+| **Unit** | What is read together. There are two kinds. (a) A Work project of the user's (a state-heartbeat project of the work kind): its states and tasks, its folders, and its agent records. (b) A group of folders found in a listed place (§2.2): read from disk only, never states or tasks. Each keeps how far each of its sources has been read. |
+| **Case** `C-` | One deliverable, split into items. It has tags in the shared words, plus a date, where the deliverables are, its versions or attempts, what it looks like now, and how it was made. |
+| **Judgment** `J-` | Something the user decided, changed, turned down, approved or let stand, in a case. It records an aspect, an object, a direction, the user's own words, why, the date and where it can be opened. The aspect is one of: an extra requirement, the form or style of the output, how a result is judged, or how the work is done. |
+| **Reason** `R-` | Why the user judges so. It is either stated (the user said it) or inferred. It has a condition in the shared words (where it holds, plus exceptions, plus a text), the objects it bears on, predictions, and what would show it wrong. It records how each judgment bears on it (supports, boundary, contradicts, before a change), first and last seen, "since" for a change over time, a rival, overrides, and its history. |
+| **Shared words** | Explained in §1.1. |
+| **Local index** | Full text of the same places. It also provides the list of changed files. |
+
+### 1.1 The shared words
+
+- **Fixed top levels**, written by us:
+  - deliverable;
+  - audience;
+  - presentation (in person, read alone, used interactively, …);
+  - purpose;
+  - environment (tools);
+  - object (what in the output a judgment is about).
+- **New terms under the top**:
+  - The model adds them under a parent, with a definition, down to a depth limit.
+  - A new term is on trial. It is kept once a second case uses it.
+  - It is folded back into its parent only after 90 days AND 100 new judgments in its branch without a second case. Nothing is folded while a place is being learned for the first time.
+- **Keeping the list tidy**:
+  - Duplicates are merged, and the old term stays as an alias.
+  - A term that grows too wide is split.
+- **What models see and use**:
+  - A model sees only the part of the list it needs.
+  - Matching is by these words only. Keywords and embeddings are not used.
+
+### 1.2 Evidence strength, strongest first
+
+1. A rule the user wrote down for the agents (`CLAUDE.md` or `AGENTS.md` they wrote).
+2. A rule an agent noted from the user's words: Claude Code's memory, which can be traced back to the conversation.
+3. Something the user changed or turned down.
+4. Something the user approved.
+5. Something the user let stand.
+
+An agent-generated `CLAUDE.md` counts as ordinary evidence.
+
+*Note 2026-10-21 (built):* whether a line is the user's is decided by code, not by the model (`learning/authorship.py`):
+
+- a line an agent's edit put in the file (including `/init`) is the agent's;
+- in a repository, a line from a commit signed as made with an agent is the agent's, and other lines are the user's;
+- where nothing is known of who wrote a file, no line counts as the user's;
+- a README is never a rules file.
+
+A rules file therefore only reaches level 1 for a quoted line that is the user's; otherwise it counts as level 5 at most.
+
+A memory entry reaches level 2 only when the user's words it came from are found: the last thing the user said before the agent wrote that memory. Otherwise it counts as level 4.
+
+## 2. Learning
+
+### 2.1 Places and agent records
+
+- **Adding places**
+  - One-click "Add Claude Code records" and "Add Codex records".
+  - Claude Code records are in `~/.claude/projects`. Codex records are in `$CODEX_HOME/sessions` (`~/.codex/sessions` by default).
+- **A record folder brings its project folders**
+  - It comes from each session's working directory.
+  - Sometimes that directory holds everything, such as home or the desktop. Then it comes from the project roots of the files the session read or edited.
+  - These are listed as "found via …", and each can be left out.
+- **A listed folder brings its sessions**
+  - These are every session started in it, or reading or editing its files.
+- **Never read**
+  - The application's own data or workspace. The app's own agent runs are not the user's work.
+
+### 2.2 The folder map (listed places only)
+
+- **Bottom up, by a model**
+  1. Leaf folders are summarised.
+  2. Each folder above is judged from its own files and its children's summaries:
+     - **groups**: which children are one thing, whether attempts at it or small tasks of one larger piece of work;
+     - **covers**: whether the folder as a whole is one piece of work that most of its content belongs to. This is judged by the amount of work, not the number of folders. The children it does not cover are exceptions.
+  3. A folder that covers its children is compared again with its siblings and its parent. One that does not stops the climb, and its groups become units.
+- **Fixed units**
+  - Work projects' folders are fixed units. They are never regrouped, and they are left out of a covering folder.
+- **Keeping it current and cheap**
+  - Fingerprints mean only changed folders, and the chain above them, are redone.
+  - Folders that are many runs of one thing are sampled.
+
+### 2.3 An update
+
+- **When it runs**
+  - At the set times (several a day are allowed), or by **Update now**.
+- **The cutoff**
+  - Each update has a fixed **cutoff**.
+  - A time missed while the computer was off starts one update when it is back, with that time as its cutoff.
+- **One update at a time**
+  - A set time that passes while an update is open is **cancelled**, and this is said on the update. The next update waits for the next set time.
+- **Stopping and carrying on**
+  - **Daily token limit**: when it is reached, the update waits until the next day.
+  - **Pause / Continue.**
+  - **Restart**: after the application restarts, the update carries on with the same cutoff.
+- **Automatic updates**
+  - These run only when the switch is ON and at least one time is set. The defaults are OFF and no times.
+- **Steps**
+  1. **Units and order**
+     - Units with agent conversations or rules come first, then by most recent change.
+     - A first reading covers the last 6 months first, and what is older at the end.
+  2. **Reading each unit, in time order**
+     - **Conversations**: the user's words in full, the agent's replies cut short, and the agent's edits.
+     - **Rules**: `CLAUDE.md`, `AGENTS.md` and the agent's memory, in full when new and as a diff when changed.
+     - **Files**:
+       - the first time, the list of files and the start of the latest deliverables;
+       - after that, a diff against the copy kept from the last reading.
+     - **Who made a file change**:
+       - lines that match an agent's edit are the AGENT'S;
+       - everything else is the USER'S;
+       - a file no agent touched was changed by the user.
+     - **Git commits**, as context.
+     - **Tasks**, for a Work project.
+     - **Secrets**:
+       - Secrets (keys, tokens, passwords, `.env` values) are removed before anything is sent or kept.
+     - **Files are only read**:
+       - Files are never written.
+       - Files being written are read again later.
+       - Append-only records are read exactly up to the cutoff.
+     - **What the model writes**:
+       - The model writes cases and the user's judgments.
+       - Code checks them:
+         - judgments by the agent are dropped;
+         - a quote is kept only if it is really in the text;
+         - "written" or "noted" is allowed only if the judgment rests on a rule or memory file.
+  3. **Reasons**, once everything is read (§2.4).
+- **Spending**
+  - Learning calls are counted as Work learning, split into folders / read / reasons / terms.
+
+### 2.4 Reasons
+
+**EXPLAIN.** Each new judgment is matched against shortlisted reasons, chosen by code:
+
+- the same or a neighbouring object;
+- a prediction about it;
+- a condition its case falls in.
+
+The model says which reasons explain it (and whether it was predicted) and which conflict. The reasons' wording is never changed here. Judgments that nothing explains go to the pool.
+
+**REVISE.** This happens only when a conflict arises. The model chooses one of these:
+
+- **a** the reason's condition does not hold here, so this is a boundary;
+- **b** another reason wins here;
+- **c** narrow the reason or replace it;
+- **d** a one-off;
+- **e** the user CHANGED from a date T onwards.
+
+A rewrite (c or e) is checked against ALL of the reason's evidence. It must meet every one of these:
+
+1. It handles the conflicting judgment.
+2. None of the user's own words is lost. Under (e), words from before T may be set aside only if there is later strong evidence from the user against them.
+3. At least 80% of the rest is kept. A confirmed prediction counts twice.
+4. Under (e), these also apply:
+   - T is named;
+   - everything set aside is dated before T (code checks this);
+   - after T, at least 2 cases support the new version in the same direction, or 1 of the user's own words does.
+
+If the rewrite is refused, the model is asked again and told why. If it is refused twice, the rewrite becomes a **rival**:
+
+- A reason has at most one rival at a time.
+- The rivalry is settled in one of three ways:
+  - one side leads by 3 weighted points;
+  - after 90 days with no clear winner, the original stays;
+  - if both are contradicted, they are revised jointly.
+
+**ABDUCE.** From the pool, the model finds reasons that explain at least 2 judgments, or 1 where the user said why. Such a reason:
+
+- is falsifiable;
+- is as deep as can still be shown wrong;
+- may cover different objects.
+
+The model may also link a judgment to an existing reason.
+
+**After a first learning**, duplicate reasons (sharing more than half their support) are merged.
+
+**Time.** There is no fixed decay. Every judgment and reason carries its dates, and the model judges age; option (e) is how it says the user changed.
+
+**Active** means the reviewer is given the reason as a rule. It needs any one of:
+
+- 1 written or noted rule;
+- changes or approvals in 2 cases;
+- 3 cases the user let stand.
+
+**Kept history.** Old versions, set-aside evidence and retired reasons are kept in history and never deleted.
+
+## 3. A Work run
+
+### 3.1 Questions
+
+1. The reviewer first sees only the instruction. It writes the job's terms from the shared words, and its QUESTIONS. Each question is of one kind:
+   - an extra requirement;
+   - form or style;
+   - how a result is judged;
+   - how the work is done;
+   - a fact or limit of this project.
+   Some questions are fixed for each deliverable type; the reviewer adds the job's own.
+2. The builder can ask questions while it works. They go to the reviewer, which answers them.
+
+### 3.2 Finding
+
+- **Reasons**
+  1. Code first checks whether the job falls inside each reason's condition, by the shared words:
+     - **covered**;
+     - **near**: one dimension misses only by a sibling term;
+     - **unknown**: the job says nothing about a dimension the reason needs;
+     - **outside**: dropped.
+  2. A model then reads each remaining condition and says whether it holds for this job: yes, no, or unknown. An unknown becomes a question for the reviewer.
+  3. Which reasons are given, and how:
+     - stated reasons always come first;
+     - inferred reasons are given only with 2 or more observations, labelled as inferred;
+     - each comes with its last-seen date, a one-line rival if it has one, and one or two example cases.
+- **Cases**, whatever reason they bear on:
+  - The cases closest to the job are chosen by its terms, how recent they are and how many judgments they hold.
+  - Three are given in full:
+    - where the deliverables are, versions, what they look like, every judgment, how they were made;
+    - they are diverse (at most two from one unit);
+    - they include the same deliverable and the same purpose where such cases exist.
+  - The next ones are given as a short index.
+- **Also given**:
+  - judgments in those cases that no reason explains yet;
+  - for facts of the project: its files (search).
+- **Size**
+  - There is one budget for the run. A case is expanded only once; after that it is referred to by its id.
+- **Tools**: `open_case`, `open_reason` (paged, closest first), `search_files`, `read_file`.
+
+### 3.3 Answering
+
+- **Which source wins**, strongest first:
+  1. a reason the user stated that holds here;
+  2. an inferred reason that holds here;
+  3. **common practice found on the web and chosen by the user's related preferences**: neighbouring objects, the same deliverable or audience, how similar cases ended up, the user's field and tools;
+  4. common practice alone, or the reviewer's own assumption.
+- **Searching the web for what the record cannot answer**
+  - The queries are framed by the user's relevant context: the situation and related reasons.
+  - The queries use general public words. Names, paths, unpublished data or anything only the user knows are never included.
+  - Queries are checked by the web guard.
+  - A hard external rule (a funder's or journal's) wins over a preference. General practice gives way to the user's reasons, and any conflict is said.
+  - Answers come with their source URLs.
+- **What the reviewer writes**
+  - The reviewer writes criteria or "Added – not your words" (core / needed / nice).
+  - **Each is marked as the reviewer's**, with its grounds.
+  - Nothing from a run is kept as learning.
+- **The trace (`work_run_questions`)**
+  - It logs, for analysis only:
+    - the question;
+    - its kind and who asked it;
+    - the source tier;
+    - the reason, case and judgment ids;
+    - coverage and hold verdicts;
+    - the queries and which context shaped them;
+    - the URLs and the reasoning;
+    - which criterion it became, and its outcome.
+  - It never changes learning.
+- **Lesson cards**: no longer written. The existing ones are kept read-only and are not given to the reviewer.
+
+### 3.4 The debugger's ways
+
+| Way | What it gets |
+|---|---|
+| Full | Everything above. |
+| B | The same steps: questions, terms, builder questions. NO context and NO tools: no reasons, cases or index. The reviewer answers its own questions, each marked as its own assumption. It may search the web, but without the user's context. Nothing is kept. |
+| Single | Unchanged. |
+| Builder (all ways) | Never sees the learning (it asks the reviewer). |
+
+## 4. The panel (Work, at the bottom)
+
+- **Updates**
+  - The auto-learning switch and update times.
+  - **While an update runs**: Update now is grey and Pause is shown.
+  - **When none runs**: Update now; a manual update can also be paused.
+  - **When paused**: Continue. Set times are skipped until then.
+  - **When the daily limit is used up**: Update now is grey, with "Today's token limit is used up".
+- **Progress**
+  - The cutoff, the share read (by amount of text), the unit being read, tokens today against the limit, and cancelled times.
+- **Places**
+  - Folders.
+  - The one-click agent records.
+  - Found folders, with "leave out".
+- **Spending**
+  - The learning token chart.
+- **Removed**
+  - Each project's Start / Update learning button.
+
+**Newspaper** follows the same logic: a switch beside its times. It makes issues by itself only when the switch is ON and at least one time is set.
+
+## 5. Fresh start
+
+- The old lessons are BACKED UP once:
+  - the database copy;
+  - the `user_nature` folder.
+- No cases are extracted from the old stages; learning starts from nothing.
+- What is no longer used:
+  - live stages as a source;
+  - work natures;
+  - patterns and principles of the work kind;
+  - the old auto-learning clock;
+  - lesson cards in runs;
+  - `retrieve.py` in runs.
+- What stays as it was:
+  - a Work run's own card and stage tree (`work:` scope);
+  - notification and connection lessons, and their pattern grouping;
+  - personal natures.
+
+## 6. Before switching (to do)
+
+Test whether the case package or the stage package gives the reviewer more, on:
+
+1. requirements added or refined;
+2. style and visual preferences.
+
+The test:
+
+- Use 10–15 past projects, each starting from its first instruction.
+- The ground truth is what the user later added. The user checks the uncertain items.
+- Only data from before each project is used.
+- Three ways are compared: A (stages), B (case + reasons), C (nothing).
+- Scoring is blind. It counts:
+  - recall per kind;
+  - harmful items;
+  - irrelevant items;
+  - tokens.
+
+---
+
+## Build status
+
+- **2026-10-21: built, untested.**
+  - **The learning package** (`personalized_agent/learning/`), with its tables in `database.py`:
+    - `vocab`, `scrub`, `records`, `store`, `places`, `ask`, `folders`, `reading`, `match`, `reasons`, `service`, `find`, `fresh`.
+  - **App wiring** (`app.py`):
+    - `app.learning` is started in place of the old learning clock;
+    - the one-time backup (`learning_fresh_start`);
+    - the Newspaper carry-over.
+  - **Work runner** (`agent/work/runner.py`):
+    - the questions step replaces the "what to know" step and lesson cards;
+    - the reviewer has `open_case` / `open_reason`;
+    - the builder can ask questions;
+    - `work_run_questions` logs the questions and answers;
+    - the way with no context answers its own questions;
+    - the builder no longer has the stage tools (it keeps `search_records` and `search_files`).
+  - **Local index**: its folders are the learning's places. `POST /api/index` takes only "enable" and "build".
+  - **Routes**: `GET` and `POST /api/learning`.
+  - **Interface**:
+    - the Learning panel at the bottom of Work;
+    - the per-project learning buttons and `#xp-auto` are removed;
+    - the Settings card "Search your files" is removed;
+    - Newspaper has its "Make an issue by itself" switch.
+  - **Words**: 66 texts merged into the 8 language tables.
+  - **Docs**:
+    - the design doc is amended in §119.2 and §126 (the check says IDENTICAL);
+    - the v0.2.0 notes and the public README log are updated.
+  - **Tests**:
+    - `tests/test_learning.py` is new;
+    - the older tests that pinned the replaced behaviour were updated;
+    - nothing has been run.
+- **Not done yet**:
+  - §6, the test of the case package against the stage package;
+  - the panel has not been seen in a browser.
