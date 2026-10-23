@@ -357,6 +357,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.2.2](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.2) | 2026-10-23 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.2) |
 | [v0.2.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.1) | 2026-10-22 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.1) |
 | [v0.2.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) | 2026-10-21 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.0/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.0/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.0/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) |
 | [v0.1.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.1.0) | 2026-10-16 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.1.0/PersonalizedAgent-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.1.0/PersonalizedAgent-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.1.0/PersonalizedAgent-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.1.0) |
@@ -592,31 +593,34 @@ has it.
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
 
-### [v0.2.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.1) (2026-10-22)
+### [v0.2.2](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.2) (2026-10-23, a pre-release)
 
-- **Learning reads only conversations you had.** A conversation that a
-  program started is no longer read as your work: Claude Code run headless
-  or from the SDK, `codex exec`, a sub-agent, this application's own model
-  calls. Nor is anything in the system's folder for passing files, where
-  tests and tools leave copies of other folders. Folders you list yourself
-  are still read wherever they are.
-- **Learning starts again, once.** If you ran learning on v0.2.0, the first
-  start of this version backs up what it learned, whole, in
-  `internal/backups/before-learning-again-<time>`, and empties it, because
-  it was partly learned from such conversations. The places you listed or
-  left out stay; the next update learns from them afresh. This happens once:
-  later starts leave learning alone.
-- **Removing deletes nothing.** Remove on a Work project takes it off the
-  list and stops its folders being read for learning; what was learned from
-  it stays. Removing a place from Learning's "Where it reads" now asks
-  first, and says the same.
-- **Check now looks at once.** Settings → General → Updates: Check now looks
-  for newer versions straight away, also in the first minutes after a start,
-  and says it is looking. The newer versions are in a box to choose from,
-  with what each says is new, and the page says when there is none.
+- **A piece of work starts and resumes wherever the program was started.**
+  A program started with a double click on `run.py`, or by itself at sign-in,
+  could not start any piece of work, nor resume one after an interruption:
+  each failed on "No module named". It now finds itself wherever it was
+  started from.
+- **A piece of work that is slow to start is waited for.** Before it begins,
+  a piece of work may first roll back a large folder, which can take minutes;
+  the program gave up after 90 seconds and left it running where the page
+  could neither follow nor stop it. It now waits while the work is getting
+  ready, and ends one that never starts.
+- **On a Mac the watermelon can be seen and clicked.** It sits on a plain
+  dark tile instead of a see-through window, which showed it faint and let
+  clicks fall through to what lay behind. The program has an icon in the
+  Dock: click it, or open the program again, for the Overview. It stays above
+  other windows, and right-click or Control-click opens its menu.
+- **A Mac with the Claude desktop app no longer waits on it.** The program
+  took the desktop app for the Claude Code command line, and each sign-in
+  check waited twenty seconds for an answer that never came.
+- **Learning shows what it has learned in numbers:** the places it reads,
+  cases, judgments by strength, reasons in use and forming, terms.
 
 ### Earlier versions
 
+- [v0.2.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.1) - learning reads only conversations you
+  had and starts again once; removing deletes nothing; Check now looks
+  at once.
 - [v0.2.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) - learning from your work as cases and the
   reasons behind your judgments, a reviewer that asks before it judges,
   tasks and projects over time, contacts that can be split, times kept

@@ -118,6 +118,17 @@ CLIENTS: Dict[str, Dict[str, Any]] = {
 
 #: Tried in this order when the user has not chosen one.
 CLIENT_ORDER = ("cli", "desktop")
+
+
+def _named_exactly(path: Path) -> bool:
+    """Whether the file at `path` bears that name, letter for letter. A Mac's
+    disk ignores case: `Claude.app/Contents/MacOS/claude` is found, and is
+    the desktop application `Claude` itself - asked whether it is signed
+    in, it never answered, and every probe waited twenty seconds for it."""
+    try:
+        return path.name in os.listdir(path.parent)
+    except OSError:
+        return False
 #: How long a call may be SILENT - nothing from the client, no tool of the
 #: agent's running for it - before it is taken to have stopped working and
 #: ended. Not a limit on how long it works: the client reports as it goes
@@ -402,7 +413,7 @@ class ClaudeCodeProvider(ModelProvider):
                 return found
         for candidate in spec["candidates"]:
             path = Path(candidate).expanduser()
-            if path.is_file():
+            if path.is_file() and _named_exactly(path):
                 return str(path)
         return None
 

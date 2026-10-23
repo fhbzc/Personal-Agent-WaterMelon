@@ -72,35 +72,6 @@ def _on_a_screen(window: Any, x: int, y: int) -> bool:
         return True
 
 
-def _enable_macos_pixel_transparency(window: Any, _size: int) -> bool:
-    """Make a Tk toplevel transparent on macOS without hiding its contents.
-
-    Tk's ``-transparent`` attribute makes the whole content view transparent
-    in some Aqua builds, including the avatar itself.  Configure the native
-    NSWindow instead: it keeps the Tk canvas and image drawable while its
-    clear pixels are composited by macOS.
-    """
-    if sys.platform != "darwin":
-        return False
-    try:
-        from AppKit import NSApp, NSColor
-
-        window.update_idletasks()
-        # Tk maps the hidden root and its borderless avatar as separate Aqua
-        # windows, but does not expose a stable one-to-one native handle. At
-        # this point those are the only Tk windows, and making the hidden root
-        # clear too is harmless; configuring both is more reliable than trying
-        # to infer one from transient pixel bounds while it is being mapped.
-        native_windows = list(NSApp.windows())
-        for native_window in native_windows:
-            native_window.setOpaque_(False)
-            native_window.setBackgroundColor_(NSColor.clearColor())
-            native_window.setHasShadow_(False)
-        return bool(native_windows)
-    except Exception:
-        log.debug("could not enable native macOS avatar transparency", exc_info=True)
-    return False
-
 #: An ordinary bubble: something happened, and the user may read it or not.
 #:
 #: ``accent`` is the surface a primary button sits on, and ``on_accent`` the
@@ -245,6 +216,8 @@ class DesktopAgent:
         self.root = tk.Tk()
         self.root.title(self.app.avatar_name())
         self.root.withdraw()
+        if sys.platform == "darwin":
+            self._be_in_the_dock()
 
         self.agent_window = tk.Toplevel(self.root)
         self.agent_window.title(self.app.avatar_name())
@@ -256,23 +229,20 @@ class DesktopAgent:
             self.agent_window.attributes("-transparentcolor", TRANSPARENT)
             background = TRANSPARENT
         except tk.TclError:  # macOS / Linux
-            # ``-transparent`` on some Tk/Aqua combinations hides *all*
-            # widgets. Native per-pixel compositing keeps the image visible.
-            if _enable_macos_pixel_transparency(self.agent_window, self.size):
-                self.agent_window.configure(bg="systemTransparent")
-                background = "systemTransparent"
-            else:
-                self.agent_window.attributes("-alpha", 0.96)
-                background = "#101216"
+            # A plain tile, no colour made clear. On a Mac a window made
+            # clear - its NSWindow, or Tk's ``-transparent`` - showed the
+            # character faint or not at all, and let every click through to
+            # what lay behind: nothing to see and nothing to press, on a Mac
+            # whose menu-bar icon the notch hid - no way in (2026-10-23).
+            self.agent_window.attributes("-alpha", 0.96)
+            background = "#101216"
         self.canvas = tk.Canvas(self.agent_window, width=self.size, height=self.size,
                                 highlightthickness=0, bg=background)
         self.canvas.pack()
-        self._macos_transparency_attempts = 0
-        if sys.platform == "darwin" and background != "systemTransparent":
-            # The native NSWindow only becomes visible after Tk's event loop
-            # maps this toplevel. Retry briefly instead of accepting the dark
-            # fallback just because construction happened a fraction early.
-            self.root.after(100, self._finish_macos_transparency)
+        if sys.platform == "darwin":
+            # Above the other windows: on a Mac, asked before the window was
+            # mapped, it was not (it sat among the ordinary windows).
+            self.root.after(500, lambda: self.agent_window.attributes("-topmost", True))
         self.agent_window.protocol("WM_DELETE_WINDOW", self.quit)
 
         self._load_character()
@@ -294,14 +264,22 @@ class DesktopAgent:
         self.tray.start()
 
     # -- window placement ---------------------------------------------------
-    def _finish_macos_transparency(self) -> None:
-        if _enable_macos_pixel_transparency(self.agent_window, self.size):
-            self.agent_window.configure(bg="systemTransparent")
-            self.canvas.configure(bg="systemTransparent")
-            return
-        self._macos_transparency_attempts += 1
-        if self._macos_transparency_attempts < 10:
-            self.root.after(100, self._finish_macos_transparency)
+    def _be_in_the_dock(self) -> None:
+        """On a Mac: an icon in the Dock, and a click on it - or opening the
+        application again - opens the Overview. Not left to the menu-bar
+        icon alone: with many icons there, a Mac with a notch hides the ones
+        that do not fit, and the agent had no way in that could be seen."""
+        try:
+            self.root.createcommand("::tk::mac::ReopenApplication",
+                                    lambda *_args: self.open_url("/#overview"))
+        except Exception:      # pragma: no cover - asked of a Mac's Tk
+            log.info("no Dock reopen on this Tk", exc_info=True)
+        try:
+            from AppKit import NSApplication, NSApplicationActivationPolicyRegular
+            NSApplication.sharedApplication().setActivationPolicy_(
+                NSApplicationActivationPolicyRegular)
+        except Exception:      # pragma: no cover - asked of a Mac
+            log.info("no Dock icon on this Mac", exc_info=True)
 
     def _place_bottom_right(self) -> None:
         screen_width = self.agent_window.winfo_screenwidth()
@@ -497,6 +475,11 @@ class DesktopAgent:
         self.canvas.bind("<Button-1>", self._on_click)
         self.canvas.bind("<Double-Button-1>", self._on_double_click)
         self.canvas.bind("<Button-3>", self._on_right_click)
+        if sys.platform == "darwin":
+            # A Mac's Tk calls the right button 2; and a Mac without one
+            # clicks with Control held.
+            self.canvas.bind("<Button-2>", self._on_right_click)
+            self.canvas.bind("<Control-Button-1>", self._on_right_click)
         self.canvas.bind("<B1-Motion>", self._on_drag)
         self.canvas.bind("<ButtonPress-1>", self._start_drag, add="+")
         self.canvas.bind("<ButtonRelease-1>", self._end_drag, add="+")

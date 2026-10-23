@@ -233,6 +233,9 @@ ADDED_COLUMNS = (
     ("conversations", "pinned_at", "TEXT"),
     # Which try of a Work debugger project is shown and started from.
     ("debug_projects", "current_try", "INTEGER"),
+    # The folders the user named for it whose learned experience its full
+    # way is not given, beside its own (JSON list).
+    ("debug_projects", "leave_out", "TEXT"),
     # Why a thing was read or watched: work, or leisure (heartbeat/reading).
     ("reading_pieces", "purpose", "TEXT NOT NULL DEFAULT ''"),
     # The lesson a notification action taught, beside why it was taken.

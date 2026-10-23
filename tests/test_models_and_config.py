@@ -548,6 +548,21 @@ class ChoosingTheLocalClientTests(unittest.TestCase):
         # Never by the desktop application's.
         self.assertNotEqual(Path(self._provider_of("desktop").executable() or "."), stand_in)
 
+    def test_a_program_named_otherwise_in_case_is_not_the_client(self) -> None:
+        # A Mac's disk ignores case: Claude.app/Contents/MacOS/claude was the
+        # desktop application `Claude`, asked again and again whether it was
+        # signed in and never answering.
+        from personalized_agent.models.providers import claude_code_provider as module
+        bundle = Path(self.agent.dir) / "Claude.app" / "Contents" / "MacOS"
+        bundle.mkdir(parents=True)
+        (bundle / "Claude").write_text("", encoding="utf-8")
+        spec = dict(module.CLIENTS["desktop"], candidates=[str(bundle / "claude")])
+        with unittest.mock.patch.dict(module.CLIENTS, {"desktop": spec}):
+            self.assertIsNone(module.ClaudeCodeProvider._locate("desktop"))
+            spec["candidates"] = [str(bundle / "Claude")]
+            self.assertEqual(module.ClaudeCodeProvider._locate("desktop"),
+                             str(bundle / "Claude"))
+
     def test_the_settings_offer_the_choice(self) -> None:
         keys = {field["key"] for field in self.app.config.schema()}
         self.assertIn("local_client_path", keys)

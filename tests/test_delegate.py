@@ -306,6 +306,37 @@ class AChildProcessTests(unittest.TestCase):
         self.assertEqual(said[-2], child.CHILD_FLAG)
         self.assertIn("personalized_agent", " ".join(said))
 
+    def test_the_child_finds_the_program_from_any_folder(self) -> None:
+        """An agent started by a double click on run.py, or at sign-in, is
+        in System32: the child is started there and still finds the package
+        (with `-m` it did not, and every run failed on "No module named")."""
+        import subprocess
+        import sys
+        said = child.command(self.dir / "spec.json")
+        self.assertEqual(said[1], "-c")
+        boot = said[2].replace("from personalized_agent.__main__ import main; sys.exit(main())",
+                               "import personalized_agent; print(personalized_agent.__file__)")
+        self.assertNotEqual(boot, said[2], "the child starts the program's main")
+        elsewhere = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, elsewhere, True)
+        ran = subprocess.run([sys.executable, "-c", boot, said[3]], cwd=elsewhere,
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(ran.returncode, 0, ran.stderr)
+        self.assertEqual(Path(ran.stdout.strip()).resolve(),
+                         Path(child.__file__).resolve().parents[2] / "__init__.py")
+
+    def test_a_child_that_never_says_it_started_is_not_left_going(self) -> None:
+        """Waited for while it lives; at the end of the wait, ended - never
+        a run going that the agent does not hold."""
+        import sys
+        asleep = [sys.executable, "-c", "import time; time.sleep(120)"]
+        spawned = []
+        with mock.patch.object(child, "command", lambda _spec: asleep), \
+                mock.patch.object(child, "STARTING_SECONDS", 1.5):
+            said = child._start_child(SimpleNamespace(), self.dir, {"id": "u"}, None, spawned)
+        self.assertEqual(said, {"error": "the run's process did not start in time"})
+        self.assertIsNotNone(spawned[0].wait(timeout=30), "ended, not left going")
+
 
 class TheGovernorTests(unittest.TestCase):
 

@@ -295,3 +295,35 @@ class LearningStore:
             row = self.db.query_one(sql)
             out[name] = int(row["n"]) if row else 0
         return out
+
+    def breakdown(self) -> Dict[str, Dict[str, int]]:
+        """What the counts are made of, for the Learning panel: the places by
+        kind, the judgments by how strong and what about and whether a reason
+        explains them, the reasons by whose words and how far along, the
+        terms fixed or on trial."""
+        groups = {
+            "places": "SELECT kind AS k, COUNT(*) AS n FROM learn_units "
+                      "WHERE state != 'gone' GROUP BY kind",
+            "places_with_cases": "SELECT 'all' AS k, COUNT(DISTINCT unit_id) AS n FROM learn_cases "
+                                 "WHERE alias_of = ''",
+            "judgments_strength": "SELECT strength AS k, COUNT(*) AS n FROM learn_judgments "
+                                  "GROUP BY strength",
+            "judgments_aspect": "SELECT aspect AS k, COUNT(*) AS n FROM learn_judgments "
+                                "GROUP BY aspect",
+            "judgments_state": "SELECT state AS k, COUNT(*) AS n FROM learn_judgments "
+                               "GROUP BY state",
+            "reasons_in_use": "SELECT source AS k, COUNT(*) AS n FROM learn_reasons "
+                              "WHERE state IN ('active', 'competing') GROUP BY source",
+            "reasons_forming": "SELECT source AS k, COUNT(*) AS n FROM learn_reasons "
+                               "WHERE state = 'candidate' GROUP BY source",
+            "reasons_aspect": "SELECT aspect AS k, COUNT(*) AS n FROM learn_reasons "
+                              "WHERE state IN ('active', 'competing') GROUP BY aspect",
+            "reasons_competing": "SELECT 'all' AS k, COUNT(*) AS n FROM learn_reasons "
+                                 "WHERE state = 'competing'",
+            "terms": "SELECT state AS k, COUNT(*) AS n FROM learn_terms "
+                     "WHERE alias_of = '' GROUP BY state",
+        }
+        out: Dict[str, Dict[str, int]] = {}
+        for name, sql in groups.items():
+            out[name] = {str(row["k"] or ""): int(row["n"]) for row in self.db.query(sql)}
+        return out

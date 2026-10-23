@@ -46,8 +46,12 @@ log = logging.getLogger(__name__)
 
 #: The first argument that makes the program a run's child (see __main__).
 CHILD_FLAG = "--work-child"
-#: How long the agent waits for a child to say it started, or why not.
-STARTING_SECONDS = 90
+#: How long the agent waits for a child to say it started, or why not -
+#: while it lives (one that ends says why at once). Before it says, a child
+#: does what its run does first: a rollback of a folder of thirteen thousand
+#: files took two minutes, and at 90 seconds the agent gave up on a child
+#: that went on - a run going that the page could neither follow nor stop.
+STARTING_SECONDS = 30 * 60
 #: How often the child writes where it stands, and reads what it is told.
 BEAT_SECONDS = 0.5
 
@@ -62,10 +66,16 @@ def children_dir(paths: Any) -> Path:
 
 def command(spec_path: Path) -> List[str]:
     """How the program is started as a run's child: the packaged program
-    itself, or this Python with the package."""
+    itself, or this Python with the package - found where this one was, not
+    in the folder the agent happened to start in (`-m` looked there: an
+    agent started by a double click on run.py, or at sign-in, is in
+    System32, and every run's child failed on "No module named")."""
     if getattr(sys, "frozen", False):
         return [sys.executable, CHILD_FLAG, str(spec_path)]
-    return [sys.executable, "-m", "personalized_agent", CHILD_FLAG, str(spec_path)]
+    home = str(Path(__file__).resolve().parents[3])
+    boot = ("import sys; sys.path.insert(0, sys.argv.pop(1)); "
+            "from personalized_agent.__main__ import main; sys.exit(main())")
+    return [sys.executable, "-c", boot, home, CHILD_FLAG, str(spec_path)]
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -304,6 +314,9 @@ def _start_child(owner: Any, folder: Path, unit: Dict[str, Any],
             said = (folder / LOG).read_text(encoding="utf-8", errors="replace")[-600:]
             return {"error": f"the run's process ended before it started: {said.strip()}"}
         time.sleep(0.2)
+    # Not left going unheld: ended, with what it started.
+    from ...common.children import end_tree
+    end_tree(process)
     return {"error": "the run's process did not start in time"}
 
 

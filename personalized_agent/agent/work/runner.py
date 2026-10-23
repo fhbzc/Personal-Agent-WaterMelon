@@ -3810,8 +3810,9 @@ class Run:
         self.lessons_shown: Dict[str, Dict[str, Any]] = {}
         #: WHAT WAS LEARNED OF THE USER'S WORK (learning/find.py): asked by
         #: the full way's reviewer - a debugger way's too; nothing for the
-        #: way with no context. Nothing a run does is learned.
-        self.finder = Finder(owner.db) if self.variant == FULL and \
+        #: way with no context. Nothing a run does is learned. A debugger
+        #: way is given nothing of its project's folders (debug "leave_out").
+        self.finder = Finder(owner.db, _left_out(unit)) if self.variant == FULL and \
             getattr(owner, "db", None) is not None else None
         #: The questions asked last and not answered yet: their number in
         #: the asking answer -> their row in work_run_questions.
@@ -8168,6 +8169,19 @@ class NoTools(NoWeb):
 
     def call(self, name: str, arguments: Dict[str, Any]) -> Any:
         return {"error": "no tools here - answer from what you were told"}
+
+
+def _left_out(unit: Dict[str, Any]) -> Optional[Any]:
+    """What a debugger way's reviewer is given nothing of: its project's
+    folders (its own and those the user named for it), and what Claude Code
+    and Codex kept of work in them. None for any other run."""
+    debug = unit.get("debug") if isinstance(unit.get("debug"), dict) else None
+    folders = list((debug or {}).get("leave_out") or [])
+    if not folders:
+        return None
+    from ...learning.leave_out import LeaveOut
+    from .debug_projects import sessions_under
+    return LeaveOut(folders, sessions_under([Path(one) for one in folders]))
 
 
 class _Learned:

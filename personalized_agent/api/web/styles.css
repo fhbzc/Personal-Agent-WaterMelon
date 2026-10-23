@@ -3798,6 +3798,12 @@ body.chat-window .chat-only { height: 100vh; height: 100dvh; padding: 12px; box-
 .xp-learn-row input[type=number] { width: 12ch; margin-left: 6px; }
 .xp-learn-progress { display: flex; gap: 10px; align-items: center; margin: 6px 0; font-size: 13px; }
 .xp-learn-progress progress { flex: 1 1 auto; max-width: 420px; height: 10px; }
+.xp-learn-counts { width: auto; max-width: 900px; margin: 6px 0; }
+.xp-learn-counts th, .xp-learn-counts td { text-align: left; vertical-align: top; padding: 4px 12px 4px 0;
+  border-bottom: 1px solid var(--line); }
+.xp-learn-counts th { font-weight: 600; white-space: nowrap; }
+.xp-learn-counts .xp-learn-count { font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.xp-learn-counts td div + div { color: var(--muted); }
 .xp-learn-places { list-style: none; padding: 0; margin: 6px 0; display: grid; gap: 6px; }
 .xp-learn-places li { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; min-width: 0; }
 .xp-learn-places code { overflow-wrap: anywhere; min-width: 0; }
@@ -3961,3 +3967,10 @@ button.danger-text:not(:disabled) { color: var(--danger-ink); }
 .cdbg-row pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px;
   overflow: auto; font-size: 12px; margin: 4px 0; }
 .cdbg-call { margin-top: 6px; }
+
+/* Work debugger: the folders whose experience a project's full way is not given. */
+.xd-leave-out { margin: 8px 0; font-size: 13px; }
+.xd-leave-out p { margin: 4px 0; }
+.xd-leave-out-list { list-style: none; padding: 0; margin: 4px 0; display: grid; gap: 6px; }
+.xd-leave-out-list li { min-width: 0; }
+.xd-leave-out-list code { overflow-wrap: anywhere; }

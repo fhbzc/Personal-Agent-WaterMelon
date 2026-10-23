@@ -456,6 +456,7 @@ class Learning:
             "records": {"claude": records_root_exists("claude"),
                         "codex": records_root_exists("codex")},
             "counts": self.store.counts(),
+            "breakdown": self.store.breakdown(),
             "spending": self.spending(),
         }
         if update:

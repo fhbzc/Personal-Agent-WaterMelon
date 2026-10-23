@@ -270,6 +270,15 @@ def sessions_under(roots: List[Path], home: Optional[Path] = None) -> List[str]:
     return out
 
 
+def _extra(row: Dict[str, Any]) -> List[str]:
+    """The folders the user named for a project to leave out, beside its own."""
+    try:
+        said = json.loads(row.get("leave_out") or "[]")
+    except (TypeError, ValueError):
+        return []
+    return [str(one) for one in said if str(one or "").strip()] if isinstance(said, list) else []
+
+
 def unit_id_of(project_id: str, variant: str) -> str:
     return f"{project_id}:{variant}"
 
@@ -548,6 +557,12 @@ class DebugProjects:
             sealed += _around(here, own)
         agent = self._the_agents_own()
         sealed += [one for place in agent for one in _around(place, own)]
+        # THE FOLDERS THE USER LEFT OUT of this project - the project it
+        # redoes, say: no way reads them, nor what was kept of work in them.
+        extra = [Path(one) for one in _extra(row)]
+        sealed += [one for place in extra for one in _around(place, own)]
+        own_kept = set(sessions_under([own]))
+        sealed += [one for one in sessions_under(extra) if one not in own_kept]
         # And every session an assistant kept of work in any try - an
         # evaluation run at the top of one - but the way's own.
         mine = set(sessions_under([own]))
@@ -655,7 +670,8 @@ class DebugProjects:
                 "debug": {"project": ref, "variant": variant, "try": try_n,
                           "label": VARIANT_LABELS[variant],
                           "folder": str(own),
-                          "sealed": self.sealed_for(row, try_n, variant)}}
+                          "sealed": self.sealed_for(row, try_n, variant),
+                          "leave_out": self.leave_out_folders(row)}}
 
     def _shown(self, row: Dict[str, Any], try_n: Optional[int] = None) -> Dict[str, Any]:
         """A project as the page shows it: ONE TRY of it - the current one
@@ -685,8 +701,56 @@ class DebugProjects:
                 "try_folder": str(try_folder(folder, try_n)),
                 "name": row["name"], "description": row["description"],
                 "instruction": row["instruction"], "folder": row["folder"],
+                "leave_out": self.leave_out_folders(row),
                 "created_at": row["created_at"], "updated_at": row["updated_at"],
                 "variants": variants}
+
+    # -- what its experience leaves out ------------------------------------------
+    def leave_out_folders(self, row: Dict[str, Any]) -> List[str]:
+        """THE FOLDERS NOTHING LEARNED IS TAKEN FROM for this project's full
+        way (learning/leave_out.py): its own folder - what its tries made and
+        what the user wrote of them there - and those the user named."""
+        return list(dict.fromkeys([str(row["folder"])] + _extra(row)))
+
+    def leave_out_view(self, project_id: str) -> Dict[str, Any]:
+        """Each folder left out, with the sessions Claude Code and Codex kept
+        of work in it, and how many of the cases learned that leaves out."""
+        row = self._row(project_id)
+        if row is None:
+            return {"error": "no such project"}
+        from ...learning.leave_out import LeaveOut
+        from ...learning.store import LearningStore
+        folders = []
+        records: List[str] = []
+        for one in self.leave_out_folders(row):
+            kept = sessions_under([Path(one)])
+            records += kept
+            folders.append({"path": one, "own": one == str(row["folder"]),
+                            "claude": [k for k in kept if not k.endswith(".jsonl")],
+                            "codex": len([k for k in kept if k.endswith(".jsonl")])})
+        cases, judgments = LeaveOut(self.leave_out_folders(row), records).parts_out(
+            LearningStore(self.db))
+        return {"folders": folders, "cases": len(cases), "judgments": len(judgments)}
+
+    def set_leave_out(self, project_id: str, add: Any = None, remove: Any = None) -> Dict[str, Any]:
+        """A folder named for the project to leave out - or no longer; never
+        its own folder."""
+        row = self._row(project_id)
+        if row is None:
+            return {"error": "no such project"}
+        extra = _extra(row)
+        if add:
+            folder = Path(str(add)).expanduser()
+            if not folder.is_dir():
+                return {"error": f"no such folder: {add}"}
+            if _inside(folder, row["folder"]):
+                return {"error": "the project's own folder is left out already"}
+            extra.append(str(folder.resolve()))
+        if remove:
+            extra = [one for one in extra if one != str(remove)]
+        self.db.execute("UPDATE debug_projects SET leave_out = ?, updated_at = ? WHERE id = ?",
+                        (json.dumps(list(dict.fromkeys(extra))), _now(), row["id"]))
+        return self.leave_out_view(project_id)
 
     def projects(self) -> List[Dict[str, Any]]:
         return [self._shown(dict(row)) for row in self.db.query(

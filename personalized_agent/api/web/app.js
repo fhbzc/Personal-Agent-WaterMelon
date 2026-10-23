@@ -547,6 +547,67 @@ function learningPlacesHtml(s) {
     ${found ? `<h4>Folders your conversations worked in</h4><ul class="xp-learn-places">${found}</ul>` : ""}`;
 }
 
+/* WHAT IT HAS LEARNED, counted: the places, cases, judgments, reasons and
+   terms, each with what it is made of (store.breakdown). */
+function learningLearnedHtml(s) {
+  const b = s.breakdown || {};
+  const counts = s.counts || {};
+  const n = (value) => Number(value || 0).toLocaleString();
+  const sum = (group) => Object.values(group || {}).reduce((a, v) => a + Number(v || 0), 0);
+  // Each part its own phrase - a text of the tables - in the order given;
+  // the parts of a line are put side by side, with commas.
+  const parts = (group, words) => words.filter(([key]) => Number((group || {})[key] || 0))
+    .map(([key, said]) => said(n(group[key])));
+  const ASPECT = [["output", (v) => `${v} on what output you want`],
+                  ["habit", (v) => `${v} on how you work`],
+                  ["requirement", (v) => `${v} on what is asked for`],
+                  ["evaluation", (v) => `${v} on how you evaluate`]];
+  const SOURCE = [["stated", (v) => `${v} in your own words`], ["inferred", (v) => `${v} inferred from what you did`]];
+  const rows = [];
+  const places = b.places || {};
+  if (sum(places)) {
+    rows.push(["Places read", n(sum(places)), [
+      parts(places, [["work", (v) => `${v} Work projects`], ["place", (v) => `${v} folders you listed or worked in`],
+                     ["rules", (v) => `${v} of your rules for every agent`]]),
+      [`cases found in ${n((b.places_with_cases || {}).all)} of them`]]]);
+  }
+  rows.push(["Cases", n(counts.cases),
+    [["pieces of work you made, each with how it was made and how you judged it"]]]);
+  if (Number(counts.judgments || 0)) {
+    const state = b.judgments_state || {};
+    rows.push(["Judgments", n(counts.judgments), [
+      parts(b.judgments_strength, [["written", (v) => `${v} you wrote down as rules`],
+        ["changed", (v) => `${v} you changed or turned down`],
+        ["approved", (v) => `${v} you said yes to`], ["accepted", (v) => `${v} you let stand`],
+        ["noted", (v) => `${v} from an agent's memory of your words`]]),
+      parts(b.judgments_aspect, ASPECT),
+      parts(state, [["linked", (v) => `${v} explained by a reason`],
+                    ["pool", (v) => `${v} not explained by a reason yet`]])]]);
+  }
+  if (Number(counts.reasons || 0) || Number(counts.forming || 0)) {
+    const competing = Number((b.reasons_competing || {}).all || 0);
+    rows.push(["Reasons", `${n(counts.reasons)} in use`, [
+      parts(b.reasons_in_use, SOURCE).concat(competing
+        ? [`${n(competing)} competing with another`] : []),
+      parts(b.reasons_aspect, ASPECT)]]);
+  }
+  if (Number(counts.forming || 0)) {
+    rows.push(["Reasons forming", n(counts.forming), [parts(b.reasons_forming, SOURCE),
+      ["used only once they hold"]]]);
+  }
+  const terms = b.terms || {};
+  if (sum(terms)) {
+    rows.push(["Terms", n(sum(terms)), [parts(terms, [["fixed", (v) => `${v} set from the start`],
+                                                      ["trial", (v) => `${v} on trial`]])]]);
+  }
+  return `<h3>What it has learned</h3>
+    <table class="xp-learn-counts"><tbody>${rows.map(([name, count, lines]) => `<tr>
+      <th scope="row">${escapeHtml(name)}</th><td class="xp-learn-count">${escapeHtml(count)}</td>
+      <td>${lines.filter((line) => line.length).map((line) => `<div>${line.map((part) =>
+        `<span>${escapeHtml(part)}</span>`).join(", ")}</div>`).join("")}</td>
+    </tr>`).join("")}</tbody></table>`;
+}
+
 /* WHAT LEARNING SPENT: a bar a day, the last thirty - its calls' tokens. */
 function learningChartHtml(s) {
   const byDay = {};
@@ -608,6 +669,7 @@ function drawLearning() {
       <input type="number" id="xp-learn-limit" min="0" step="100000"
         value="${Number(s.daily_tokens || 0)}"></label>
       <span class="muted">0: no limit</span></div>
+    ${learningLearnedHtml(s)}
     ${learningPlacesHtml(s)}
     ${learningChartHtml(s)}`;
   const control = recommendTimesControl((s.times || []).join(", "),
@@ -21929,7 +21991,7 @@ const XD_VARIANTS = [
 const xdState = { open: true, projects: [], project: null, newOpen: false, newFolder: "",
                   drafts: {}, editing: null, removeAsk: false, clearAsk: "", clearAllAsk: false, runs: {},
                   runVariant: {}, timer: null, loading: false, way: "", waySnaps: {},
-                  waiting: {} };
+                  waiting: {}, leaveOut: null, leaveOutAsk: "" };
 
 /* EACH WAY'S OWN TREE of cards and stages - how its work evolved - drawn and
    opened as the Experience tab draws the agents' work on a piece of work
@@ -22394,6 +22456,57 @@ function xdTries(project) {
     </div>`;
 }
 
+/* WHAT THE FULL WAY IS NOT GIVEN of what was learned of your work: the
+   project's own folder - its tries, and what you wrote of them - and the
+   folders you name for it, such as the project it redoes; with what Claude
+   Code and Codex kept of work in each. The folders you name are closed to
+   all three ways besides. (debug_projects.leave_out_view) */
+function xdLeaveOut(project) {
+  const base = String(project.id || "").split("~")[0];
+  const view = xdState.leaveOut && xdState.leaveOut.id === base
+    && Array.isArray(xdState.leaveOut.folders) ? xdState.leaveOut : null;
+  const folders = view ? view.folders : (project.leave_out || [project.folder]).map((path) => ({
+    path, own: path === project.folder }));
+  const rows = folders.map((one) => {
+    const path = escapeHtml(one.path);
+    const asking = xdState.leaveOutAsk === one.path;
+    const claude = (one.claude || []).map((dir) => `<code>${escapeHtml(dir)}</code>`).join(", ");
+    return `<li><code>${path}</code> ${one.own
+      ? `<span class="muted">this project's folder</span>`
+      : asking ? `<span class="xd-try-ask" role="alert">Give C what was learned from this folder
+          again, and let the three ways read it?
+          <button type="button" class="small danger" data-xd-leave-remove-yes="${path}">Use it again</button>
+          <button type="button" class="small secondary" data-xd-leave-remove-no="1">Keep it left out</button></span>`
+        : `<button type="button" class="small secondary" data-xd-leave-remove="${path}">Remove</button>`}
+      ${view ? `<div class="muted">${claude ? `<span>Claude Code conversations in ${claude}</span>`
+        : `<span>No Claude Code conversations in it</span>`}${one.codex
+        ? `, <span>${Number(one.codex)} Codex conversations</span>` : ""}</div>` : ""}</li>`;
+  }).join("");
+  return `<div class="xd-leave-out">
+      <p><strong>Experience left out</strong> <span class="muted">C's reviewer is given nothing
+        learned from these folders and all their subfolders, nor from the Claude Code and Codex
+        conversations held of work in any of them. A folder you add - the project this one
+        redoes, say - is closed to all three ways as well, with all its subfolders.</span></p>
+      <ul class="xd-leave-out-list">${rows}</ul>
+      <p>${view ? `<span class="muted">Left out of what was learned: ${Number(view.cases)} cases whole, ${
+        Number(view.judgments)} judgments in all.</span> `
+        : ""}<button type="button" class="small secondary" data-xd-leave-add="1">Add a folder…</button></p>
+    </div>`;
+}
+
+/* The folders left out of the project shown, read again when another is
+   shown or they changed. */
+async function xdLoadLeaveOut(project, again = false) {
+  const base = String((project || {}).id || "").split("~")[0];
+  if (!base || (!again && xdState.leaveOut && xdState.leaveOut.id === base)) return;
+  try {
+    const said = await api.get(`/api/debugger/experience/leave_out?project=${encodeURIComponent(base)}`);
+    xdState.leaveOut = Object.assign({ id: base }, said);
+  } catch (err) {
+    xdState.leaveOut = null;
+  }
+}
+
 function xdDraw() {
   const project = xdState.project;
   const list = xdState.projects.length ? `<ul class="xd-list">${xdState.projects.map((p) =>
@@ -22412,6 +22525,7 @@ function xdDraw() {
     ${project ? `<div class="xd-project-view" data-xd-project="${escapeHtml(project.id)}">
       ${xdWords(project, "name", "Name")}
       ${xdWords(project, "description", "Your description")}
+      ${xdLeaveOut(project)}
       <p class="muted">Folder: <code>${escapeHtml(project.folder)}</code> ·
         ${xdState.removeAsk ? `Remove this project? Its records go; nothing in its folder
           is deleted. <button type="button" class="small danger" data-xd-remove-yes="1">Remove</button>
@@ -22450,7 +22564,8 @@ function xdSig() {
     xdState.projects.map((p) => [p.id, p.name, (p.variants || []).map((v) => Boolean(v.alive))]),
     project ? [project.id, project.name, project.description, project.instruction,
                project.folder, (project.variants || []).map((v) => v.folder || ""),
-               project.try, (project.tries || []).join(",")] : null,
+               project.try, (project.tries || []).join(","), (project.leave_out || []).join("|")] : null,
+    xdState.leaveOut, xdState.leaveOutAsk,
     xdState.newOpen, xdState.newFolder, xdState.editing, xdState.removeAsk, xdState.clearAsk,
     XD_VARIANTS.map((v) => (xdState.runs[v.variant] || []).map(xpRunSig)),
     XD_VARIANTS.map((v) => Boolean(xdWaits(v.variant))),
@@ -22486,6 +22601,7 @@ async function loadDebuggerExperience(force = false) {
     || (!xdState.project && !xdState.closed ? xdState.projects[0] : null);
   xdState.project = chosen || null;
   if (xdState.project) xdRemember(xdState.project);
+  if (xdState.project) await xdLoadLeaveOut(xdState.project);
   const runsNow = {};
   const treesNow = {};
   const waitsNow = {};
@@ -22778,6 +22894,43 @@ async function xdClick(event) {
     }
     xdState.clearAsk = "";
     xdState.clearing = false;
+    await loadDebuggerExperience(true);
+    return;
+  }
+  if (at("[data-xd-leave-add]") && xdState.project) {
+    const path = await xpChooseFolder("A folder whose experience C is not given");
+    if (!path) return;
+    try {
+      const said = await api.post("/api/debugger/experience/projects", { action: "leave_out",
+        id: xdState.project.id, add: path });
+      xdState.leaveOut = Object.assign({ id: String(xdState.project.id).split("~")[0] }, said);
+    } catch (err) {
+      toast(err.message);
+    }
+    await loadDebuggerExperience(true);
+    return;
+  }
+  const leaveAt = at("[data-xd-leave-remove]");
+  if (leaveAt) {
+    xdState.leaveOutAsk = leaveAt.dataset.xdLeaveRemove;
+    await loadDebuggerExperience(true);
+    return;
+  }
+  if (at("[data-xd-leave-remove-no]")) {
+    xdState.leaveOutAsk = "";
+    await loadDebuggerExperience(true);
+    return;
+  }
+  const leaveYes = at("[data-xd-leave-remove-yes]");
+  if (leaveYes && xdState.project) {
+    try {
+      const said = await api.post("/api/debugger/experience/projects", { action: "leave_out",
+        id: xdState.project.id, remove: leaveYes.dataset.xdLeaveRemoveYes });
+      xdState.leaveOut = Object.assign({ id: String(xdState.project.id).split("~")[0] }, said);
+    } catch (err) {
+      toast(err.message);
+    }
+    xdState.leaveOutAsk = "";
     await loadDebuggerExperience(true);
     return;
   }

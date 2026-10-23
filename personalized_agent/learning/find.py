@@ -25,6 +25,12 @@ this project. Then:
 The reviewer may open more (`open_case`, `open_reason`) and search the
 files themselves. A case is expanded once in a run; after, its id is
 enough. Nothing here is learned.
+
+LEFT OUT (leave_out.py): a run may be given nothing of some folders - a
+Work debugger project's own, and those the user names for it. A case of
+one is never shown nor opened; of any other, the judgments and places that
+lie in one are not shown; and a reason is given on what is left of its
+support.
 """
 
 from __future__ import annotations
@@ -32,6 +38,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from .leave_out import LeaveOut
 from .match import closeness, coverage
 from .store import LearningStore, dumps
 from .vocab import ASPECTS, DIMENSIONS, Vocabulary
@@ -74,12 +81,34 @@ def _line(text: Any, most: int = 300) -> str:
 
 
 class Finder:
-    def __init__(self, db: Any) -> None:
+    def __init__(self, db: Any, leave_out: Optional[LeaveOut] = None) -> None:
         self.db = db
         self.store = LearningStore(db)
         self.vocab = Vocabulary(db)
         #: Cases expanded already in this run.
         self.expanded: set = set()
+        self.leave_out = leave_out or LeaveOut()
+        self._out: Optional[Tuple[set, set]] = None
+
+    def _parts_out(self) -> Tuple[set, set]:
+        """(cases, judgments) left out of this run - found once, at its first ask."""
+        if self._out is None:
+            self._out = self.leave_out.parts_out(self.store)
+        return self._out
+
+    def out(self) -> set:
+        """The cases left out of this run whole."""
+        return self._parts_out()[0]
+
+    def judgments_out(self) -> set:
+        return self._parts_out()[1]
+
+    def _kept(self, judgments: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        out = self.judgments_out()
+        return [one for one in judgments if one["id"] not in out]
+
+    def _supports(self, reason_id: str) -> List[Dict[str, Any]]:
+        return [one for one in self._kept(self.store.evidence(reason_id)) if one["role"] == "supports"]
 
     # -- what the reviewer tags a job with -------------------------------------
     def word_list(self) -> str:
@@ -112,9 +141,11 @@ class Finder:
     def _giveable(self, reason: Dict[str, Any]) -> bool:
         if reason["state"] == "retired":
             return False
+        supports = self._supports(reason["id"])
         if reason["source"] == "stated":
-            return True
-        supports = [one for one in self.store.evidence(reason["id"]) if one["role"] == "supports"]
+            # Said by the user - but not when all it rests on is left out.
+            return bool(supports) or not self.judgments_out() or not any(
+                one["role"] == "supports" for one in self.store.evidence(reason["id"]))
         return len(supports) >= 2
 
     def candidates(self, facets: Dict[str, List[str]]) -> List[Tuple[Dict[str, Any], str, List[str]]]:
@@ -158,7 +189,10 @@ class Finder:
         scored = []
         counts = {row["case_id"]: row["n"] for row in self.db.query(
             "SELECT case_id, COUNT(*) AS n FROM learn_judgments GROUP BY case_id")}
+        out = self.out()
         for case in self.store.cases():
+            if case["id"] in out:
+                continue
             score = closeness(facets, case.get("facets") or {}, self.vocab, terms)
             if score <= 0:
                 continue
@@ -202,9 +236,11 @@ class Finder:
             return f"{case['id']} {case.get('title', '')} [{terms}] - {_line(case.get('looks_like'), 200)}"
         self.expanded.add(case["id"])
         lines = [f"CASE {case['id']}: {case.get('title', '')}", f"  terms: {terms}"]
-        if case.get("locations"):
+        places = [one for one in case.get("locations") or []
+                  if not self.leave_out.location_out(one)]
+        if places:
             lines.append("  where the deliverables are:")
-            for one in case["locations"][-12:]:
+            for one in places[-12:]:
                 lines.append(f"    {one.get('what') or 'file'}: {one.get('path')} "
                              f"({one.get('at') or '?'})")
         if case.get("looks_like"):
@@ -214,7 +250,7 @@ class Finder:
                 f"{one.get('at', '?')}: {_line(one.get('what'), 160)}" for one in case["versions"][-6:]))
         if case.get("how_made"):
             lines.append("  how it was made: " + _line(case["how_made"], 600))
-        judgments = self.store.judgments_of(case["id"])
+        judgments = self._kept(self.store.judgments_of(case["id"]))
         if judgments:
             lines.append("  the user's judgments in it:")
             for one in sorted(judgments, key=lambda j: str(j.get("at") or "")):
@@ -274,7 +310,7 @@ class Finder:
                 if rival:
                     lines.append(f"    another explanation, not settled yet: {rival['id']} "
                                  f"{_line(rival['statement'], 200)}")
-            supports = [one for one in self.store.evidence(reason["id"]) if one["role"] == "supports"]
+            supports = self._supports(reason["id"])
             examples = sorted(supports, key=lambda j: -closeness(
                 facets, (self.store.case(j["case_id"]) or {}).get("facets") or {}, self.vocab, terms))[:2]
             for one in examples:
@@ -334,7 +370,7 @@ class Finder:
     # -- the reviewer's tools ---------------------------------------------------
     def open_case(self, case_id: str) -> str:
         case = self.store.case(str(case_id or ""))
-        if not case:
+        if not case or case["id"] in self.out():
             return f"no case {case_id}"
         self.expanded.discard(case["id"])
         return self.case_text(case)
@@ -342,7 +378,7 @@ class Finder:
     def open_reason(self, reason_id: str, page: int = 1,
                     facets: Optional[Dict[str, List[str]]] = None) -> str:
         reason = self.store.reason(str(reason_id or ""))
-        if not reason:
+        if not reason or (self.judgments_out() and not self._giveable(reason)):
             return f"no reason {reason_id}"
         terms = self.vocab.by_id()
         cond = reason.get("condition") or {}
@@ -362,7 +398,7 @@ class Finder:
                 lines.append(f"  {row['winner']} wins over it when: {row['when_text']}")
             if row["winner"] == reason["id"]:
                 lines.append(f"  it wins over {row['loser']} when: {row['when_text']}")
-        evidence = self.store.evidence(reason["id"])
+        evidence = self._kept(self.store.evidence(reason["id"]))
         if facets:
             evidence.sort(key=lambda j: -closeness(facets, (self.store.case(j["case_id"]) or {})
                                                    .get("facets") or {}, self.vocab, terms))

@@ -1971,7 +1971,9 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         or none (not while any goes); new_try {id} - the next try, its own
         folder and three ways, blind to every other try; use_try {id, try} -
         which try is shown and started from; remove_try {id} - that try's
-        folder, everything in it, its runs and its sessions, deleted."""
+        folder, everything in it, its runs and its sessions, deleted;
+        leave_out {id, add?, remove?} - a folder whose learned experience the
+        full way is not given (nor any way reads), or no longer."""
         projects = _debug_projects()
         action = str(request.get("action") or "create")
         if action == "create":
@@ -1999,11 +2001,24 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             # The try shown, its folder and all in it, deleted (confirmed on
             # the page first).
             said = projects.remove_try(str(request.require("id")))
+        elif action == "leave_out":
+            said = projects.set_leave_out(str(request.require("id")), add=request.get("add"),
+                                          remove=request.get("remove"))
         else:
             raise ApiError("action is create, update, remove, clear, clear_all, new_try, "
-                           "use_try or remove_try", 400)
+                           "use_try, remove_try or leave_out", 400)
         if said.get("error"):
             raise ApiError(said["error"], 404 if said["error"] == "no such project" else 400)
+        return said
+
+    @route("GET", "/api/debugger/experience/leave_out")
+    def debugger_experience_leave_out(request: Any) -> Any:
+        """The folders whose learned experience a project's full way is not
+        given - its own and those named for it - with what Claude Code and
+        Codex kept of work in each, and how many cases that leaves out."""
+        said = _debug_projects().leave_out_view(str(request.require("project")))
+        if said.get("error"):
+            raise ApiError(said["error"], 404)
         return said
 
     @route("POST", "/api/debugger/experience/start")
