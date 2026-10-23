@@ -123,15 +123,18 @@ judge your own work. You see the run live, can pause or stop it, can go back
 to any saved version, and get a `README.md` with the result saying what was
 made and how to check it.
 
-**Work.** Your projects, each with a button to *learn* it: the agent writes
-down how the work was broken into pieces and how each piece was judged, and
-the reviewer uses that when it works on that project for you. Projects can
-be learned again by themselves at the times you choose, and one can be
-handed to the agents from here.
+**Work.** Your projects, and what the agent learns from your own work. It
+reads your Work projects, the folders you list, and your Claude Code and
+Codex conversations - only the ones you had, never one a program started -
+into cases: what you made, how, and how you judged it, with the reasons
+behind those judgments. When the agents work for you, their reviewer asks
+of these before it checks the work. Learning runs when you press **Update
+now**, or by itself at the times you set; you can pause it and cap the
+tokens it spends a day. A project can be handed to the agents from here.
 
 <p align="center">
-  <img src="docs/images/work.png" width="100%" alt="The Work tab: projects with their learning and earlier names, one opened with what the agents may change"><br>
-  <sub>The Work tab: each project, how far it is learned and what that cost, and one opened to let the agents work on it.</sub>
+  <img src="docs/images/work.png" width="100%" alt="The Work tab: the projects, one opened to hand it to the agents, and below them Learning with an update going, the places it reads and what it spent"><br>
+  <sub>The Work tab: your projects, one opened to let the agents work on it, and below them Learning - an update going, where it reads, and what it spent.</sub>
 </p>
 
 **Connections.** The people in your work and what they are doing, from what
@@ -294,7 +297,7 @@ and **what it cost over the last 72 hours**:
 - **Calendar management**: notifications and reminders.
 - **Connections**: the people in your work.
 - **Newspaper**: the daily reading.
-- **Work learning**: what the projects you learn show about how you work.
+- **Work learning**: your own work read into cases and the reasons behind how you judge it.
 
 Turn one off and it stops, along with its model calls. Only the core
 (noting what you are doing) is always on, because everything else is built
