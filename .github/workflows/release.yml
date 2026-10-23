@@ -57,6 +57,10 @@ jobs:
             target: windows
           - os: macos-latest
             target: macos
+            # The Python whose macOS installer carries Tk 8.6.15: on 8.6.16
+            # (3.12.10's) the character's clear window shows no picture
+            # (ui/desktop.py CLEAR_ON_TK).
+            python: "3.12.9"
           - os: ubuntu-latest
             target: linux
     runs-on: ${{ matrix.os }}
@@ -64,7 +68,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python || '3.12' }}
+
+      - name: The Tk the application carries
+        run: python -c "import sys, tkinter; print('Python', sys.version.split()[0], 'Tk', tkinter.Tcl().call('info', 'patchlevel'))"
 
       # torch's Linux wheels on PyPI bring CUDA with them - three gigabytes in
       # every Linux download, over GitHub's limit for a release file - though

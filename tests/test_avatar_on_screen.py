@@ -120,6 +120,12 @@ class PutBackOnAScreenTests(unittest.TestCase):
         self.assertEqual((window.alpha, window.at), (1.0, "120x120+300+300"))
         self.assertFalse(agent.character_hidden)
 
+    def test_on_a_mac_clear_only_on_the_tk_it_was_seen_on(self) -> None:
+        # On 8.6.16 a clear window showed the character's text, not its picture.
+        self.assertTrue(desktop_module._clear_window_shows_pictures("8.6.15"))
+        self.assertFalse(desktop_module._clear_window_shows_pictures("8.6.16"))
+        self.assertFalse(desktop_module._clear_window_shows_pictures("9.0.1"))
+
     @unittest.skipUnless(desktop_module.sys.platform.startswith("win"), "asked of Windows")
     def test_windows_says_which_points_are_on_a_screen(self) -> None:
         self.assertTrue(desktop_module._on_a_screen(None, 10, 10))

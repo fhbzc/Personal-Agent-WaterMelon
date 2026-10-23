@@ -43,6 +43,18 @@ except Exception:  # pragma: no cover - optional dependency
     PIL_AVAILABLE = False
 
 TRANSPARENT = "#ff00ff"
+
+#: The Tk versions on which a Mac's clear window shows the character. On
+#: 8.6.15 it was seen whole and pressed; on 8.6.16 (the Python 3.12.10
+#: installer's) a clear window drew its text and not its pictures - the
+#: character was not there at all, on every way of making it clear that
+#: was tried (2026-10-23). Any other Tk: the plain tile, which is seen.
+CLEAR_ON_TK = ("8.6.15",)
+
+
+def _clear_window_shows_pictures(patchlevel: str) -> bool:
+    """Whether, on a Mac, a clear window on this Tk shows the character."""
+    return str(patchlevel) in CLEAR_ON_TK
 STATE_COLORS = {
     "idle": "#5c8ce6",
     "talking": "#5ebe96",
@@ -230,7 +242,11 @@ class DesktopAgent:
             background = TRANSPARENT
         except tk.TclError:  # macOS / Linux
             background = "#101216"
-            if sys.platform == "darwin":
+            patchlevel = str(self.root.tk.call("info", "patchlevel"))
+            if sys.platform == "darwin" and not _clear_window_shows_pictures(patchlevel):
+                log.info("Tk %s: the character on a plain tile, not a clear window",
+                         patchlevel)
+            elif sys.platform == "darwin":
                 # Tk's own: ``-transparent`` with the system's clear colour on
                 # the window and the canvas. Tried on a Mac (Tk 8.6.15, Aqua)
                 # beside a plain tile and an NSWindow made clear by hand: seen
