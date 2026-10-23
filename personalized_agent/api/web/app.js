@@ -436,7 +436,7 @@ async function loadExperience(full) {
    update open or the last one - Update now, Pause, Continue - the places it
    reads (and the agents search), and what it spent. Read again every few
    seconds while an update or a search build is going. */
-const learningState = { timer: null, data: null, chartOpen: false };
+const learningState = { timer: null, data: null, chartOpen: false, removing: null };
 
 async function loadLearning() {
   try {
@@ -510,9 +510,17 @@ function learningPlacesHtml(s) {
   const listed = (s.places || []).map((one) => {
     const what = one.kind === "claude" ? "Your Claude Code conversations"
       : one.kind === "codex" ? "Your Codex conversations" : "";
+    // REMOVE ASKS FIRST, in the row itself.
+    const asking = learningState.removing === one.path;
     return `<li><code>${escapeHtml(one.path)}</code>${what
       ? ` <span class="muted">${escapeHtml(what)}</span>` : ""}
-      <button type="button" class="small secondary" data-learn-remove="${escapeHtml(one.path)}">Remove</button></li>`;
+      ${asking ? `<div class="xp-unit-ask" role="alert">
+        Remove this place? It is no longer read for learning or searched by the agents.
+        What was already learned from it stays, and nothing on your computer is deleted.
+        <button type="button" class="small danger" data-learn-remove-yes="${escapeHtml(one.path)}">Remove</button>
+        <button type="button" class="small secondary" data-learn-remove-no="1">Keep it</button>
+      </div>` : `<button type="button" class="small secondary" data-learn-remove="${
+        escapeHtml(one.path)}">Remove</button>`}</li>`;
   }).join("") || `<li class="muted">No place listed: your Work projects are read, and the
     folders you add here.</li>`;
   const found = (s.found || []).map((one) => `<li${one.excluded ? ` class="muted"` : ""}>
@@ -640,7 +648,14 @@ document.addEventListener("click", async (event) => {
     if (kind === "folder" && !path) return;
     await learningDo({ action: "add", kind, path }, "Added");
   } else if (target.dataset.learnRemove) {
-    await learningDo({ action: "remove", path: target.dataset.learnRemove }, "Removed");
+    learningState.removing = target.dataset.learnRemove;
+    drawLearning();
+  } else if (target.dataset.learnRemoveNo) {
+    learningState.removing = null;
+    drawLearning();
+  } else if (target.dataset.learnRemoveYes) {
+    learningState.removing = null;
+    await learningDo({ action: "remove", path: target.dataset.learnRemoveYes }, "Removed");
   } else if (target.dataset.learnExclude) {
     await learningDo({ action: "exclude", path: target.dataset.learnExclude,
                        out: Boolean(target.dataset.out) });
@@ -661,12 +676,12 @@ function xpDrawUnits() {
       title="${unit.active ? "At work now - found from what you are doing"
         : "Learned from; not at work now"}">
       ${experienceState.removing === unit.id ? `<div class="xp-unit-ask" role="alert">
-        Remove this project? What was learned from it is deleted and no longer
-        used in work. What it showed about how you work stays.
+        Remove this project? It leaves this list, and its folders are no longer
+        read for learning. What was already learned from it stays.
         <button type="button" class="small danger" data-xp-remove-yes="${escapeHtml(unit.id)}">Remove</button>
         <button type="button" class="small secondary" data-xp-remove-no="${escapeHtml(unit.id)}">Keep it</button>
       </div>` : `<button type="button" class="xp-unit-remove link" data-xp-remove="${
-        escapeHtml(unit.id)}" title="Remove this project and what was learned from it">Remove</button>`}
+        escapeHtml(unit.id)}" title="Remove this project from Work">Remove</button>`}
       <div class="xp-unit-open" data-xp-unit="${escapeHtml(unit.id)}" role="button"
         tabindex="0">
         ${escapeHtml(xpName(unit.name))}
@@ -9688,6 +9703,8 @@ function renderUpdates(said) {
   const parts = [`This is version ${said.current}.`];
   if (said.mode === "off") {
     parts.push("Updates are not looked for.");
+  } else if (said.doing === "checking") {
+    parts.push("Looking for newer versions…");
   } else if (said.doing) {
     parts.push(`Now: ${said.doing}.`);
   } else if (said.newer) {
@@ -9704,28 +9721,62 @@ function renderUpdates(said) {
   showWhatIsNew(said.just_updated);
 }
 
-/* EVERY VERSION NEWER THAN THIS ONE, newest first, each with what it says
-   of itself and its own button: the user installs the one they choose.
-   Never an older one - it may not read what a newer one wrote. */
+/* THE VERSION TO UPDATE TO: a box of every version newer than this one,
+   newest first - empty, it says there is none, or that none was looked for
+   yet - with what the chosen one says of itself and its own button: the
+   user installs the one they choose. Never an older one - it may not read
+   what a newer one wrote. */
 function renderUpdateVersions(said) {
   const host = $("#updates-versions");
   if (!host) return;
   host.innerHTML = "";
   if (said.mode === "off") return;
-  (said.versions || []).forEach((one) => {
-    const row = document.createElement("div");
-    row.classList.add("update-version");
-    const head = document.createElement("div");
-    head.classList.add("update-version-head");
-    const name = document.createElement("strong");
-    name.textContent = `Version ${one.tag}`;
-    head.appendChild(name);
-    if (one.published) {
-      const when = document.createElement("span");
-      when.classList.add("muted");
-      when.textContent = clock(one.published);
-      head.appendChild(when);
-    }
+  const versions = said.versions || [];
+  const row = document.createElement("div");
+  row.classList.add("update-version");
+  const head = document.createElement("div");
+  head.classList.add("update-version-head");
+  const label = document.createElement("label");
+  label.htmlFor = "updates-version";
+  label.textContent = "Version to update to";
+  const box = document.createElement("select");
+  box.id = "updates-version";
+  if (!versions.length) {
+    const none = document.createElement("option");
+    none.textContent = said.checked_at ? "No newer version" : "Not looked for yet - press Check now";
+    box.appendChild(none);
+    box.disabled = true;
+  }
+  versions.forEach((one) => {
+    const option = document.createElement("option");
+    option.value = one.tag;
+    option.textContent = one.published ? `Version ${one.tag} (${clock(one.published)})`
+      : `Version ${one.tag}`;
+    box.appendChild(option);
+  });
+  // The one chosen stays chosen when the box is drawn again.
+  if (versions.some((one) => one.tag === renderUpdateVersions.chosen)) {
+    box.value = renderUpdateVersions.chosen;
+  }
+  head.append(label, box);
+  row.appendChild(head);
+  const chosen = () => versions.find((one) => one.tag === box.value);
+  const action = document.createElement("span");
+  action.classList.add("update-version-action");
+  head.appendChild(action);
+  const notes = document.createElement("details");
+  const summary = document.createElement("summary");
+  summary.textContent = "What is new";
+  const text = document.createElement("div");
+  text.classList.add("update-notes-text");
+  notes.append(summary, text);
+  const show = () => {
+    const one = chosen();
+    action.innerHTML = "";
+    notes.hidden = !one;
+    if (!one) return;
+    renderUpdateVersions.chosen = one.tag;
+    text.textContent = one.notes || "This release says nothing more about itself.";
     if (one.can_install && !said.doing) {
       const install = document.createElement("button");
       install.type = "button";
@@ -9739,26 +9790,20 @@ function renderUpdateVersions(said) {
           toast(err.message, "error");
         }
       });
-      head.appendChild(install);
+      action.appendChild(install);
     } else if (one.page) {
       const link = document.createElement("a");
       link.href = one.page;
       link.target = "_blank";
       link.rel = "noopener";
       link.textContent = "The release on GitHub";
-      head.appendChild(link);
+      action.appendChild(link);
     }
-    row.appendChild(head);
-    const notes = document.createElement("details");
-    const summary = document.createElement("summary");
-    summary.textContent = "What is new";
-    const text = document.createElement("div");
-    text.classList.add("update-notes-text");
-    text.textContent = one.notes || "This release says nothing more about itself.";
-    notes.append(summary, text);
-    row.appendChild(notes);
-    host.appendChild(row);
-  });
+  };
+  box.addEventListener("change", show);
+  show();
+  row.appendChild(notes);
+  host.appendChild(row);
 }
 
 /* WHAT IS NEW, once, after an update: the release's own description - as
@@ -9787,13 +9832,26 @@ async function refreshUpdates() {
   catch (err) { console.warn("updates", err); }
 }
 
-$("#updates-check")?.addEventListener("click", async () => {
+/* CHECK NOW: the button says it is looking until the look has answered -
+   it runs on its own thread, so it is asked again until it is done. */
+$("#updates-check")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  if (button.disabled) return;
+  button.disabled = true;
+  button.textContent = "Checking…";
   try {
-    renderUpdates(await api.post("/api/updates/check", {}));
-    // The look runs on its own thread: shown when it has answered.
-    setTimeout(refreshUpdates, 4000);
+    let said = await api.post("/api/updates/check", {});
+    renderUpdates(said);
+    for (let tries = 0; said.doing === "checking" && tries < 40; tries += 1) {
+      await new Promise((done) => setTimeout(done, 1000));
+      said = await api.get("/api/updates");
+      renderUpdates(said);
+    }
   } catch (err) {
     toast(err.message, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = "Check now";
   }
 });
 

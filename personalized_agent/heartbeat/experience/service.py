@@ -1093,11 +1093,11 @@ class Experience:
 
     def remove_unit(self, unit_id: str) -> Dict[str, Any]:
         """REMOVE A PROJECT, as the user asked (after confirming on the
-        page): what was learned from it - its stages and cards - is deleted
-        and found by no search again, and the project is not listed, learned
-        or updated again. The natures, patterns and principles stay: they
-        may rest on other projects too (ExperienceStore.forget_unit). Not
-        while it is being learned: stopped first."""
+        page): it is not listed, and its folders are not read for learning
+        again. NOTHING IS DELETED (the user, 2026-10-22): its stages and
+        cards are the old learning, kept as a backup though no longer used,
+        and what the new learning took from it stays. Not while it is being
+        learned: stopped first."""
         mine = self.learning_progress.get(unit_id) or {}
         if mine.get("running") or mine.get("queued"):
             return {"error": "it is being learned now - stop its learning first"}
@@ -1106,13 +1106,11 @@ class Experience:
                      if u["id"] == unit_id), None)
         if unit is None:
             return {"error": "no such project"}
-        from .stages import unit_task_ids
-        gone = self.store.forget_unit(unit_id, unit_task_ids(unit))
         removed = self.removed()
         removed[unit_id] = {"name": unit.get("name", ""), "kind": unit.get("kind", ""),
                             "at": datetime.now(timezone.utc).isoformat()}
         self.config.set(self.REMOVED_KEY, removed, internal=True)
-        return {"removed": unit_id, "gone": gone}
+        return {"removed": unit_id}
 
     def stop_learning(self, unit_id: str) -> bool:
         mine = self.learning_progress.get(unit_id)

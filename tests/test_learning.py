@@ -27,6 +27,19 @@ from personalized_agent.learning.service import LAST_SLOT, Learning
 from personalized_agent.learning.store import LearningStore
 from personalized_agent.learning.vocab import Vocabulary
 
+#: These tests make their made-up projects in the system's folder for passing
+#: files, which learning never reads: here it is a folder of its own instead.
+_PASSING = Path(tempfile.gettempdir()) / "made-up-passing-files"
+_temp_roots = mock.patch.object(records, "_temp_roots", lambda: [str(_PASSING)])
+
+
+def setUpModule() -> None:
+    _temp_roots.start()
+
+
+def tearDownModule() -> None:
+    _temp_roots.stop()
+
 
 class _Config:
     """Settings in memory: what a test sets, else the default asked for."""
@@ -200,6 +213,26 @@ class TheAgentsRecordsTests(unittest.TestCase):
         self.assertEqual(len(session.edits), 1)
         self.assertTrue(session.edits[0].file.endswith("parts.md"))
         self.assertEqual(session.edits[0].added, "carburettor rebuilt")
+        self.assertFalse(session.by_program)
+
+    def test_what_a_program_started_is_told_apart(self) -> None:
+        work = str(self.dir / "motorcycle")
+        person = self._write("claude/p/a.jsonl", [
+            {"type": "user", "timestamp": "2026-05-01T10:00:00Z", "cwd": work,
+             "entrypoint": "cli", "message": {"role": "user", "content": "Tidy the parts list."}}])
+        program = self._write("claude/p/b.jsonl", [
+            {"type": "user", "timestamp": "2026-05-01T10:00:00Z", "cwd": work,
+             "entrypoint": "sdk-cli", "message": {"role": "user", "content": "Group these states."}}])
+        exec_run = self._write("codex/2026/05/01/rollout-e.jsonl", [
+            {"timestamp": "2026-05-01T09:00:00Z", "type": "session_meta",
+             "payload": {"id": "e", "cwd": work, "originator": "codex_exec", "source": "exec"}}])
+        tui = self._write("codex/2026/05/01/rollout-t.jsonl", [
+            {"timestamp": "2026-05-01T09:00:00Z", "type": "session_meta",
+             "payload": {"id": "t", "cwd": work, "originator": "codex-tui", "source": "vscode"}}])
+        self.assertFalse(records.read_session(person).by_program)
+        self.assertTrue(records.read_session(program).by_program)
+        self.assertTrue(records.read_session(exec_run).by_program)
+        self.assertFalse(records.read_session(tui).by_program)
 
 
 class ThePlacesTests(unittest.TestCase):
@@ -242,6 +275,17 @@ class ThePlacesTests(unittest.TestCase):
         self.places.set_excluded(self.project, True)
         with mock.patch.object(records, "all_sessions", lambda tools=(): [session]):
             self.assertEqual(self.places.found_folders(), [], "left out")
+
+    def test_never_a_conversation_a_program_started_nor_one_in_passing_files(self) -> None:
+        mine = records.Session(path="s1.jsonl", tool="claude", id="s1",
+                               cwd=str(self.project))
+        by_program = records.Session(path="s2.jsonl", tool="claude", id="s2",
+                                     cwd=str(self.project), by_program=True)
+        passing = records.Session(path="s3.jsonl", tool="claude", id="s3",
+                                  cwd=str(_PASSING / "pa-copy" / "root" / "workspace"))
+        with mock.patch.object(records, "all_sessions",
+                               lambda tools=(): [mine, by_program, passing]):
+            self.assertEqual([one.id for one in self.places.sessions()], ["s1"])
 
     def test_a_folder_brings_the_conversations_that_worked_in_it(self) -> None:
         inside = records.Session(path="a", tool="codex", id="a", cwd=str(self.dir),
@@ -633,6 +677,53 @@ class WhatTheReviewerIsGivenTests(_Base):
         first, second = finder.open_reason(rid, 1), finder.open_reason(rid, 2)
         self.assertIn("(more: page 2)", first)
         self.assertNotIn("(more:", second)
+
+
+class LearningAgainTests(_Base):
+    """Once: what was learned is backed up whole and emptied - the places
+    listed and left out stay - and the next update learns from nothing."""
+
+    def test_backed_up_emptied_and_only_once(self) -> None:
+        from personalized_agent.learning.fresh import AGAIN, learn_again
+        case = self.case("Grant defence slides", deliverable=["deliverable:slides"])
+        self.judgment(case)
+        self.store.save_unit({"id": "place:1", "kind": "place", "key": str(self.dir / "grant"),
+                              "title": "Coastal grant", "folders": [], "marks": {}})
+        self.store.save_update({"cutoff": "2026-05-01T00:00:00+00:00", "by": "you",
+                                "state": "paused", "plan": {"units": []}})
+        copies = self.dir / "learning" / "copies"
+        copies.mkdir(parents=True)
+        (copies / "a.txt").write_text("a copy of a document", encoding="utf-8")
+        config = _Config(learning_places=[{"path": "D:/grant", "kind": "folder"}])
+
+        said = learn_again(self.db, config, self.dir)
+        backup = Path(said["backup"])
+        self.assertTrue((backup / "agent.db").is_file())
+        self.assertTrue((backup / "copies" / "a.txt").is_file(), "the copies go with it")
+        self.assertFalse(copies.exists())
+        for table in ("learn_cases", "learn_judgments", "learn_units", "learn_updates"):
+            self.assertEqual(self.db.query_one(f"SELECT COUNT(*) AS n FROM {table}")["n"], 0, table)
+        import sqlite3
+        kept = sqlite3.connect(str(backup / "agent.db"))
+        self.assertEqual(kept.execute("SELECT COUNT(*) FROM learn_cases").fetchone()[0], 1)
+        kept.close()
+        # The fixed words are there again; the places stay.
+        self.assertTrue(Vocabulary(self.db).fixed_listing(("deliverable",)))
+        self.assertTrue(self.db.query_one("SELECT COUNT(*) AS n FROM learn_terms")["n"])
+        self.assertEqual(config.get("learning_places"), [{"path": "D:/grant", "kind": "folder"}])
+        self.assertTrue(config.get(AGAIN))
+        # Once only.
+        self.store.save_update({"cutoff": "2026-05-02T00:00:00+00:00", "by": "you",
+                                "state": "done", "plan": {}})
+        self.assertEqual(learn_again(self.db, config, self.dir), {})
+        self.assertEqual(self.db.query_one("SELECT COUNT(*) AS n FROM learn_updates")["n"], 1)
+
+    def test_nothing_learned_nothing_backed_up(self) -> None:
+        from personalized_agent.learning.fresh import AGAIN, learn_again
+        config = _Config()
+        self.assertEqual(learn_again(self.db, config, self.dir), {})
+        self.assertFalse((self.dir / "backups").exists())
+        self.assertTrue(config.get(AGAIN))
 
 
 class TheNewspapersSwitchTests(unittest.TestCase):

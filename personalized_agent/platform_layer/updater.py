@@ -175,6 +175,7 @@ class Updater:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._wake = threading.Event()
+        self._looking = threading.Lock()
         self._thread: Optional[threading.Thread] = None
         self.state: Dict[str, Any] = {"current": __version__, "checked_at": "", "just_updated": None,
                                       "versions": [],
@@ -207,8 +208,14 @@ class Updater:
         self._wake.set()
 
     def check_now(self) -> Dict[str, Any]:
-        """The user's "Check now": looked at at once, on the loop's thread."""
-        self._wake.set()
+        """The user's "Check now": looked at at once - on the loop's thread,
+        or, run from source where no loop looks by itself, on one of its own
+        (it only looks: such a copy cannot replace itself)."""
+        self._set(doing="checking", error="")
+        if self._thread is not None and self._thread.is_alive():
+            self._wake.set()
+        else:
+            threading.Thread(target=self._look, name="updates-now", daemon=True).start()
         return self.status()
 
     def install_now(self, version: str = "") -> Dict[str, Any]:
@@ -218,17 +225,27 @@ class Updater:
         return self.status()
 
     def _loop(self) -> None:
-        if self._stop.wait(FIRST_CHECK_AFTER):
-            return
+        # The first look waits a little after the start - unless the user
+        # asks sooner (Check now, Install this version wake it).
+        self._wake.wait(FIRST_CHECK_AFTER)
+        self._wake.clear()
         while not self._stop.is_set():
-            try:
-                self.once()
-            except Exception as exc:  # never the agent's
-                log.info("could not look for an update: %s", exc)
-                self._set(error=str(exc)[:300], doing="")
+            self._look()
             self._wake.wait(WAIT_FOR_WORK if self.state.get("waiting_for_work")
                             else CHECK_EVERY_SECONDS)
             self._wake.clear()
+
+    def _look(self) -> None:
+        """One look at a time: one asked for while another runs is that one."""
+        if not self._looking.acquire(blocking=False):
+            return
+        try:
+            self.once()
+        except Exception as exc:  # never the agent's
+            log.info("could not look for an update: %s", exc)
+            self._set(error=str(exc)[:300], doing="")
+        finally:
+            self._looking.release()
 
     def once(self) -> Dict[str, Any]:
         """One look, and - where it is chosen and possible - one install."""

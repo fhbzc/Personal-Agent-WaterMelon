@@ -82,6 +82,11 @@ class Session:
     touched: List[str] = field(default_factory=list)   # files read or edited
     #: The commands the user gave the agent ("/init"), each with when.
     commands: List[Tuple[str, str]] = field(default_factory=list)
+    #: STARTED BY A PROGRAM, not by a person: Claude Code run headless or
+    #: through its SDK (entrypoint "sdk-..."), `codex exec`, a Codex sub-agent.
+    #: Its "user" turns are a program's prompts - this application's own
+    #: calls, its Work runs, tests, scripts - never the user's words.
+    by_program: bool = False
 
     def folders(self) -> List[str]:
         """The directories the session worked in: where it was started,
@@ -223,6 +228,8 @@ def _read_claude(path: Path) -> Session:
             continue
         if row.get("cwd") and not session.cwd:
             session.cwd = str(row["cwd"])
+        if str(row.get("entrypoint") or "").startswith("sdk"):
+            session.by_program = True
         session.started = session.started or stamp
         session.ended = stamp
         message = row.get("message") or {}
@@ -276,6 +283,11 @@ def _read_codex(path: Path) -> Session:
                 session.cwd = str(payload["cwd"])
             if kind == "session_meta" and payload.get("id"):
                 session.id = str(payload["id"])
+            if kind == "session_meta":
+                source = payload.get("source")
+                if isinstance(source, dict) or str(source or "") in ("exec", "mcp") \
+                        or str(payload.get("originator") or "").startswith("codex_exec"):
+                    session.by_program = True
             continue
         if not stamp:
             continue
@@ -353,6 +365,34 @@ def all_sessions(tools: Sequence[str] = ("claude", "codex")) -> List[Session]:
     if "codex" in tools:
         out += [s for s in map(read_session, session_files(codex_sessions_root(), "codex")) if s]
     return out
+
+
+def _temp_roots() -> List[str]:
+    import tempfile
+    roots = [tempfile.gettempdir(), os.environ.get("TEMP") or "", os.environ.get("TMP") or ""]
+    out: List[str] = []
+    for one in roots:
+        if not one:
+            continue
+        for form in (one, os.path.realpath(one)):   # a short name, and its long one
+            if form not in out:
+                out.append(form)
+    return out
+
+
+def in_temp(path: Any) -> bool:
+    """Within the system's folder for passing files: what is there is a
+    program's, made to be thrown away - never a piece of the user's work."""
+    path = str(path or "")
+    if not path:
+        return False
+    forms = [path]
+    try:
+        if os.path.exists(path):
+            forms.append(os.path.realpath(path))
+    except (OSError, ValueError):
+        pass
+    return any(is_within(form, root) for form in forms for root in _temp_roots())
 
 
 def is_within(path: str, folder: str) -> bool:

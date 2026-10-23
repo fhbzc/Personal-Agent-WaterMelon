@@ -354,6 +354,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.2.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.1) | 2026-10-22 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.1) |
 | [v0.2.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) | 2026-10-21 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) |
 | [v0.1.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.1.0) | 2026-10-16 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.1.0/PersonalizedAgent-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.1.0/PersonalizedAgent-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.1.0/PersonalizedAgent-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.1.0) |
 
@@ -588,217 +589,35 @@ has it.
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
 
-### [v0.2.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) (2026-10-21)
+### [v0.2.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.1) (2026-10-22, a pre-release)
 
-- **Tasks and projects.** Each time the agent looks at what you have done
-  (every 12 hours, or when you press Update tasks now), it writes down the
-  separate things you did in that stretch as tasks, with how long you
-  actually worked on each. Tasks that serve the same thing, such as the same
-  paper, the same product or the same application, are grouped into
-  projects. The Overview shows your projects over time, ordered by how long
-  you worked on them. Filter them by the last days and by time worked (at
-  least 15 minutes, an hour, six hours or a day). Click one to see what it is,
-  what is being worked on, since when, and where. Leisure projects appear
-  under your work, apart from it, when you show full activity. The first run
-  writes the last week at once. The tasks of the earlier grouping are kept
-  as they were.
-- **Projects that carry on.** A project is followed over your latest 48
-  hours of work, however many days that takes. When most of a project's
-  recent time goes into a new one, the new one carries it on: its history on
-  the Overview and what was learned from it in Work go with it. A project you
-  come back to after days away is found again by what it is about, and the
-  model decides whether the new work is the same project or carries it on.
-- **Projects are named by the model.** A project gets a short name and a line
-  saying what it is when it starts, and a new name only when its time has
-  grown by about a third. Work shows the names a project had before.
-- **Times in another place's time, and daylight saving.** A notification's
-  time is now kept on a clock and by whose clock: a meeting at 15:00 Paris
-  time, or at 3pm from a colleague who writes from Berlin, is kept on that
-  place's clock, and the offset for its date - daylight saving included - is
-  worked out by the app, not guessed. Your own reminders keep the zone you
-  were in when they were made; the calendar always shows them in the zone
-  you are in now. A weekly or daily repeat stays at the same time on its
-  clock when the clocks change. The reminder's card says what its time was
-  taken from - "written as 'Thursday at 3pm', taken as Europe/Berlin time" -
-  and when the clocks change that night. A zone the agent writes must be a
-  place's name such as Europe/Paris: "PST", or "EST" (which never changes
-  for summer), is sent back once with the reason; if it still cannot be
-  read, the time is taken as your own and the card says so - the reminder is
-  never dropped. Things you schedule in the chat take their times the same
-  way: the chat no longer works out UTC itself.
-- **Overview and Newspaper display.** A long to-do list scrolls in its own
-  box instead of making the card taller, and a very long word in the
-  Newspaper breaks inside its column instead of pushing the next one aside.
-- **Learning starts again, as cases and reasons.** What Work learned before is
-  backed up and no longer used; nothing is carried over. Learning now reads
-  your Work projects and the places you list in Work's new Learning panel -
-  folders, and with one click your Claude Code and Codex conversations - into
-  cases (a deliverable, where it is, what it looks like, what you decided or
-  changed in it) and the reasons behind how you judge your work. Only what you
-  did counts: an agent's edits are told apart from yours. Keys and passwords
-  are taken out before anything is read. It updates at the times you set
-  while its switch is on (off, with no time, at first), or with Update now;
-  Pause and Continue, a daily token limit, and a bar a day of what it spent.
-  Projects no longer have a Start or Update learning button.
-- **A Work run's reviewer asks first.** Before it writes what the work must
-  meet, it asks its questions - what you would also expect, how the result
-  should look, how you would check it - and is given your reasons and your
-  most similar past work for them; what that cannot answer it searches on the
-  web, framed by your situation. What it adds is marked as its own, and
-  nothing a run does is learned. Lesson cards are no longer written.
-- **One list for learning and file search.** The agents search the same
-  places learning reads; the Settings card "Search your files" is gone.
-- **Newspaper: a switch beside its times.** An issue is made by itself only
-  while "Make an issue by itself" is on and a time is set. If it made issues
-  for you before, the switch starts on and your times are kept.
-- **Contacts no longer melt together.** The agent is told that names which
-  cannot be one person's, or a different organisation, mean someone else -
-  people seen in one email or one topic are still separate people - and it
-  can split a contact that holds more than one person. A new Connection
-  debugger shows every change to your contacts with what the model was asked
-  and answered.
-- **Newspaper: a Collection.** "Add to collection" under a story keeps it, as
-  it was printed, until you take it out - at the top of the Newspaper's left
-  column. Keeping a story is not "More like this": those buttons stay yours
-  to choose, on kept stories too, even after their issue is gone.
-- **Tasks no longer have next steps**, and the agent no longer ticks them.
-  Your own To do list on the Overview stays as it is.
-- **Newspaper: only stories close to what you are doing.** The stories a step
-  to the side are gone. Stories are still ranked by what is new to you, how
-  close they are, and how fresh. The pages are made from your latest 24
-  hours of activity, counted back state by state, each with its time. Every
-  project you worked on for an hour or more in them gets a page of its own,
-  and the pages are searched four at a time, so an issue is ready sooner.
-- **macOS:** the app reaches the web over a secure connection again, which
-  update checks and downloads need. Settings → Privacy looks again only when
-  you press Check again, and shows when it last looked. If Screen Recording
-  still says not allowed, a button quits the app and opens it again.
-- **Every piece of work is checked twice before it is called done.** A
-  quality check and a privacy check read the finished work, documents and
-  slides included. The privacy check looks for anything private that is
-  shown, sent away, or left on your computer. Each check may send the work
-  back up to three times; if it still fails, the run ends saying which check
-  it failed.
-- **Work is not "done" while something you asked for is unchecked.** A core
-  promise the tester could not try for real goes back to be fixed, and the
-  run never reports success without it.
-- **Search your files.** The agents can search the folders you work in by
-  their words: every Work project's folders, the folders you add in
-  Settings → Search your files, and, with one click, your Claude Code and
-  Codex conversation records. It is built at the lowest priority your system
-  has and waits while the computer is on battery. Caches, keys and files
-  only in the cloud are never read.
-- **A simpler Work tab.** It no longer shows the graph of what was learned
-  from a project. The panel on the right shows the steps of the agent's own
-  work.
-- **Codex runs with none of your own Codex setup** (your plugins, rules and
-  servers are left out), uses the agent's tools for reading and writing, and
-  is checked to offer no other tool before it is trusted with work that must
-  stay sealed.
-- **What the agent learns of your work is written in English**, whatever
-  language you read in, so it is searched in one language. Your own words
-  are kept as you wrote them. The same goes for a run's own notes on the
-  Work tab (its cards, steps and findings). What it delivers to you is in
-  your language, unless your instruction asks for another.
-- **The web, checked whichever search is used.** A search may not carry
-  anything that looks like a key or a password, and a page is opened only
-  when nothing of yours can travel in its address. Allowed: addresses
-  found in a search, on a page read, or in your own files; any page of a
-  site you named; documentation and reference sites; and short addresses
-  with none of your own words in them. Claude Code's own search is checked
-  before and after every search and page. Codex's own search reads only
-  OpenAI's saved copy of the web. The Connections round is held to the same
-  checks.
-- **Full reviews when they are due, and versions only at checkpoints.** The
-  reviewer decides when to check everything since the last checkpoint: when
-  a part is finished, when a core promise first holds, after a large change.
-  A version is kept only when such a review passes, when the contract is
-  approved or changed by your words, and when the work is done. If the app
-  closes in the middle of a run, the run goes back to the last checkpoint. A
-  pause still goes on from where it stopped.
-- **What you did not say, shown as added.** The reviewer lists what you
-  would expect but did not ask for, and the builder can propose what the
-  work shows you need. Each one is marked "Added - not your words" on the
-  Work tab, with who added it and why, and you can take it out. None of them
-  ever becomes a core promise.
-- **A new name: Personal Agent WaterMelon**, on screen and in the files you
-  download. An existing installation is updated in place; your data and
-  settings stay where they are. On a Mac, if you drag the new app in by hand,
-  delete the old *Personalized Agent* app from Applications.
-- **Updates from inside the app.** Settings → General → Updates lists every
-  newer release with what it changes; install the one you choose, or let the
-  newest install by itself (off by default). Each download is checked against
-  the release's checksums, nothing is installed while a piece of work runs,
-  and after an update the app shows what is new.
-- **macOS: the app no longer closes as soon as it starts.** Keys are kept in
-  the encrypted file in your data folder, and Settings → Privacy lists the
-  permissions macOS needs, each with a button to its pane - Full Disk Access
-  first. The `.dmg` is now the main Mac download.
-- **Windows installer.** The data folder defaults to a `data` folder inside
-  the program's folder, and a folder that needs administrator rights is
-  refused. Only one copy can start at sign-in. The Start menu no longer has
-  an entry without a window.
-- **Chat:** each conversation has a ⋯ menu to pin, rename or delete it, and a
-  follow-up note folds from its whole top row.
-- **Newspaper** (formerly Customized Recommendation): each story opens with how it ties to what
-  you are doing. Work and study topics count after a short time; pastimes
-  only once they last, and a page about a pastime recommends more of what you
-  enjoy, not lessons in it.
-- **Settings → Privacy shows what your system must allow** beside each switch -
-  allowed or not, with a link that opens the exact place to switch it on (on a
-  Mac: Full Disk Access, Accessibility, Automation, Screen Recording,
-  Notifications; on Windows: notifications).
-- **Lessons are no longer a tab of their own**; the Lessons package stays on the
-  Overview.
-- **Record log**, a new tab: the latest 100 things the agent recorded, each
-  with the Privacy switch that recorded it - open one to see all of it -
-  where a password or code was hidden (marked in place), and what the
-  Privacy rules kept out, by rule.
-- **Work runs can watch videos**: frames and what is said, read on your
-  computer and kept in the run's own folder.
-- **Update tasks now** writes your tasks at once. The last model on the
-  list can now be removed.
-- **Ctrl+Alt+D (Windows)** pops up a Delegate work box at once, from any
-  program: a title, a description, the folders and files - then Create shows
-  the plan to approve. Change the keys, or turn the button
-  beside selected text off, in Settings → Shortcuts.
-- **One pool for everything that runs side by side** - runs of your work,
-  the grouping of your tasks, Newspaper - shared out evenly first, then by
-  what matters most, within what your computer has free.
-- **Your own programs come first.** Everything the app starts runs a step
-  below them: with nothing else wanting the processors it still has them all.
-  Anything left running after the app was ended is ended at its next start.
-- **Work debugger:** a try can be removed (its folder, runs and sessions), and
-  each way keeps its own package cache. Its ways wait their turn in the same
-  pool, and start by themselves. A new **Resource debugger** (in builds from
-  source) shows what the app and everything it started cost in processors,
-  memory, graphics and disk. No more console windows flashing on
-  the taskbar while the app reads your git history.
-- **Work:** opening a project is quick even while projects are being learned
-  (a turning wheel shows while it loads), and the two columns keep the same
-  width whichever project is open.
-- **Work (formerly Experience) and the Work debugger.** The debugger tries
-  the same instruction again in tries - `try_1`, `try_2`, ... of the project's
-  folder - and each try cannot read any other try, nor Claude Code or Codex
-  sessions started in one. "Try the retrieval" moved into the Work debugger.
-  A run's token chart can be read across clock time or across the time the
-  run actually spent running, pauses left out.
-- **Codex does Work with the agent's tools.** The agent's tools are handed
-  to Codex as real tools, as they are to Claude Code, so a builder or reviewer
-  on Codex reads and writes the work. The agent's calls no longer load your own
-  Codex setup - its plugins, MCP servers, browser and computer use; Codex's own
-  web search is used when Settings > Web search says the model's own. Your
-  sign-in, model and effort are still yours.
-- **Fixes:** a refresh keeps the panel you were on; a run's token chart
-  shows from the start; Hide/Show avatar now says the right thing, and the avatar comes
-  back on screen after an external monitor is unplugged; a notification is
-  shown once, not twice; Claude Code or Codex installed after the agent
-  started is found; a port already in use is reported by name; the local
-  embedding model stays loaded between pieces of work; a run no longer fails when
-  a busy computer slows the start of a model call.
+- **Learning reads only conversations you had.** A conversation that a
+  program started is no longer read as your work: Claude Code run headless
+  or from the SDK, `codex exec`, a sub-agent, this application's own model
+  calls. Nor is anything in the system's folder for passing files, where
+  tests and tools leave copies of other folders. Folders you list yourself
+  are still read wherever they are.
+- **Learning starts again, once.** If you ran learning on v0.2.0, the first
+  start of this version backs up what it learned, whole, in
+  `internal/backups/before-learning-again-<time>`, and empties it, because
+  it was partly learned from such conversations. The places you listed or
+  left out stay; the next update learns from them afresh. This happens once:
+  later starts leave learning alone.
+- **Removing deletes nothing.** Remove on a Work project takes it off the
+  list and stops its folders being read for learning; what was learned from
+  it stays. Removing a place from Learning's "Where it reads" now asks
+  first, and says the same.
+- **Check now looks at once.** Settings → General → Updates: Check now looks
+  for newer versions straight away, also in the first minutes after a start,
+  and says it is looking. The newer versions are in a box to choose from,
+  with what each says is new, and the page says when there is none.
 
 ### Earlier versions
 
+- [v0.2.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) - learning from your work as cases and the
+  reasons behind your judgments, a reviewer that asks before it judges,
+  tasks and projects over time, contacts that can be split, times kept
+  in their own time zone.
 - [v0.1.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.1.0) -
   the first public release.
 

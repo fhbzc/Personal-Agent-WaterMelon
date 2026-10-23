@@ -330,9 +330,8 @@ if __name__ == "__main__":
 
 
 class ARemovedProjectTests(_ProjectBase):
-    """Remove on a project: what was learned from it is deleted and found by
-    no search again, and it is not listed or learned again; the natures it
-    showed stay - another project may rest on them too."""
+    """Remove on a project: it is not listed or learned again, and nothing
+    is deleted - its stages and cards are the old learning's backup."""
 
     def _learned(self, unit, summary):
         store = self.experience.store
@@ -343,7 +342,7 @@ class ARemovedProjectTests(_ProjectBase):
                                  "began": "2026-09-01", "ended": "2026-09-01"})
         return card, stage
 
-    def test_its_stages_go_and_the_natures_stay(self) -> None:
+    def test_it_leaves_the_list_and_nothing_is_deleted(self) -> None:
         gone = self._post({"action": "create", "name": "Garden planner",
                            "paths": [str(self.one)]})["project"]["unit_id"]
         kept = self._post({"action": "create", "name": "Pond survey",
@@ -358,23 +357,17 @@ class ARemovedProjectTests(_ProjectBase):
         _card, other = self._learned(kept, "watering schedule for the pond plants")
         store.link_stage_nature(stage["id"], "rec_shared_nature")
         store.link_stage_nature(other["id"], "rec_shared_nature")
-        self.assertIn(stage["id"], [one["id"] for one in self.experience.retriever().find(
-            {"text": "tomato watering schedule"})["matches"]])
 
         said = self.routes[("POST", "/api/experience/remove")](_Request({"unit": gone}))
         self.assertEqual(said.get("removed"), gone)
-        self.assertEqual(store.stages([gone]), [])
-        self.assertEqual([c for c in store.cards() if c["unit_id"] == gone], [])
-        self.assertEqual(store.edges([stage["id"], later["id"]]), [])
-        self.assertIsNone(store.workspace(gone))
-        # Found by no search again; the other project's stage still is.
-        found = [one["id"] for one in self.experience.retriever().find(
-            {"text": "watering schedule"})["matches"]]
-        self.assertNotIn(stage["id"], found)
-        self.assertIn(other["id"], found)
-        # The nature stays, still shown by the other project's stage.
+        # Nothing deleted: its stages, card, edges and natures are all kept.
+        self.assertEqual({one["id"] for one in store.stages([gone])},
+                         {stage["id"], later["id"]})
+        self.assertIn(card["id"], [c["id"] for c in store.cards() if c["unit_id"] == gone])
+        self.assertTrue(store.edges([stage["id"], later["id"]]))
         self.assertEqual(store.natures_of_stages([other["id"], stage["id"]]),
-                         {other["id"]: ["rec_shared_nature"]})
+                         {other["id"]: ["rec_shared_nature"],
+                          stage["id"]: ["rec_shared_nature"]})
         # Not listed, and not learned again.
         self.assertNotIn(gone, [one["id"] for one in self.experience.units()])
         self.assertIn(kept, [one["id"] for one in self.experience.units()])

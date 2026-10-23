@@ -324,6 +324,90 @@ document.title=JSON.stringify({err,out});});</script></body></html>""" % script[
         self.assertEqual(out["posts"], ["/api/updates/seen"])
 
 
+class CheckNowTests(unittest.TestCase):
+    """Check now looks at once - also run from source, where no loop looks
+    by itself - and the page shows the newer versions in a box to choose
+    from, or says there is none."""
+
+    def test_it_looks_with_no_loop_running(self) -> None:
+        import time
+        with tempfile.TemporaryDirectory() as work:
+            updater = up.Updater(_Config(), Path(work), notify=lambda *a, **k: None)
+            listed = [_release("v9.1.0"), _release(up.__version__)]
+            with mock.patch.object(up, "published_releases", return_value=listed):
+                updater.check_now()       # answers at once; the look may be done already
+                for _ in range(100):
+                    if updater.status()["doing"] != "checking":
+                        break
+                    time.sleep(0.05)
+            said = updater.status()
+            self.assertEqual(said["doing"], "")
+            self.assertTrue(said["checked_at"])
+            self.assertEqual([one["tag"] for one in said["versions"]], ["v9.1.0"])
+            self.assertIsNone(updater._thread, "only the one look, no loop")
+
+    def test_the_page_offers_a_box_of_versions(self) -> None:
+        import json
+        import re
+        import subprocess
+        from test_panels import _javascript_engine
+        kind, engine = _javascript_engine()
+        if kind != "chrome":
+            self.skipTest("no browser available to render the page")
+        script = (ROOT / "personalized_agent" / "api" / "web" / "app.js").read_text(encoding="utf-8")
+        start = script.index("/* UPDATES (Settings > General)")
+        end = script.index("/* MACOS PERMISSIONS (Settings > Privacy)")
+        page = """<!doctype html><html><body>
+<p id="updates-status"></p><div id="updates-versions"></div>
+<script>const $=(s)=>document.querySelector(s);const clock=(t)=>t.slice(0,10);
+const toast=()=>{};const api={post:async()=>({}),get:async()=>({})};</script>
+<script>%s</script>
+<script>window.addEventListener('load',()=>{let err='';const out={};
+const v=(tag,notes)=>({tag,notes,published:'2026-11-01T00:00:00Z',page:'https://example.org/'+tag,can_install:false});
+const box=()=>$('#updates-version');
+const options=()=>[...box().options].map(o=>o.textContent);
+try{
+renderUpdates({current:'0.2.0',mode:'ask',versions:[]});
+out.before=options();out.beforeOff=box().disabled;
+renderUpdates({current:'0.2.0',mode:'ask',checked_at:'x',versions:[]});
+out.none=options();
+renderUpdates({current:'0.2.0',mode:'ask',checked_at:'x',newer:true,latest:'v9.1.0',
+  versions:[v('v9.1.0','The newest.'),v('v9.0.0','The one before.')]});
+out.two=options();out.notes=$('.update-notes-text').textContent;
+box().value='v9.0.0';box().dispatchEvent(new Event('change'));
+out.chosen=$('.update-notes-text').textContent;
+out.link=$('.update-version-action a').href;
+renderUpdates({current:'0.2.0',mode:'ask',checked_at:'y',newer:true,latest:'v9.1.0',
+  versions:[v('v9.1.0','The newest.'),v('v9.0.0','The one before.')]});
+out.kept=box().value;
+renderUpdates({current:'0.2.0',mode:'ask',doing:'checking',versions:[]});
+out.looking=$('#updates-status').textContent;
+}catch(e){err=String(e&&e.stack?e.stack:e);}
+document.title=JSON.stringify({err,out});});</script></body></html>""" % script[start:end]
+        with tempfile.TemporaryDirectory() as work:
+            path = Path(work) / "versions.html"
+            path.write_text(page, encoding="utf-8")
+            done = subprocess.run(
+                [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                 f"--user-data-dir={work}/profile", "--virtual-time-budget=5000",
+                 "--dump-dom", path.as_uri()],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        said = json.loads(re.search(r"<title>(.*?)</title>", done.stdout, re.S).group(1)
+                          .replace("&quot;", '"').replace("&amp;", "&")
+                          .replace("&lt;", "<").replace("&gt;", ">"))
+        self.assertEqual(said["err"], "")
+        out = said["out"]
+        self.assertEqual(out["before"], ["Not looked for yet - press Check now"])
+        self.assertTrue(out["beforeOff"])
+        self.assertEqual(out["none"], ["No newer version"])
+        self.assertEqual(out["two"], ["Version v9.1.0 (2026-11-01)", "Version v9.0.0 (2026-11-01)"])
+        self.assertEqual(out["notes"], "The newest.")
+        self.assertEqual(out["chosen"], "The one before.")
+        self.assertEqual(out["link"], "https://example.org/v9.0.0")
+        self.assertEqual(out["kept"], "v9.0.0", "the one chosen stays chosen")
+        self.assertIn("Looking for newer versions", out["looking"])
+
+
 class ChosenInSettingsTests(unittest.TestCase):
 
     def test_asked_by_default_on_general(self) -> None:

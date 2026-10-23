@@ -135,10 +135,13 @@ class Places:
         return [one["kind"] for one in self.listed() if one["kind"] in ("claude", "codex")]
 
     def sessions(self, tools: Sequence[str] = ("claude", "codex")) -> List[records.Session]:
-        """Every conversation of the user's with these agents - never one
-        the application's own agent had (its workspace)."""
+        """Every conversation of the user's with these agents - never one a
+        program started (this application, any copy of it, a test, a
+        script: `by_program`), one the application's own agent had (its
+        workspace), or one started in the system's folder for passing files."""
         return [one for one in records.all_sessions(tools)
-                if not (one.cwd and self.is_never(one.cwd))]
+                if not one.by_program
+                and not (one.cwd and (self.is_never(one.cwd) or records.in_temp(one.cwd)))]
 
     def session_folders(self, session: records.Session) -> List[str]:
         """The project folders a session worked in."""
@@ -153,7 +156,7 @@ class Places:
                     root = str(project_root(folder))
                     if root not in out:
                         out.append(root)
-        return [one for one in out if not self._left_out(one)]
+        return [one for one in out if not self._left_out(one) and not records.in_temp(one)]
 
     def found_folders(self, wait: bool = True) -> List[Dict[str, Any]]:
         """The folders the listed record folders bring: each with the

@@ -888,6 +888,13 @@ class AgentApplication:
                              Path(self.paths.data_dir))
             except Exception:    # pragma: no cover - tried again next start
                 log.warning("could not back up the old learning", exc_info=True)
+            # ONCE MORE: what the first learning read in passing files and in
+            # programs' conversations - backed up, emptied, learned again.
+            try:
+                from .learning.fresh import learn_again
+                learn_again(self.db, self.config, Path(self.paths.data_dir))
+            except Exception:    # pragma: no cover - tried again next start
+                log.warning("could not empty the learning to learn again", exc_info=True)
             # ONCE: Newspaper's switch - on where it made issues by itself.
             try:
                 from .heartbeat.connections.schedule import carry_over

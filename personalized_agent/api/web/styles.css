@@ -494,7 +494,8 @@ h3 .muted { font-weight: 400; font-size: 12px; margin-left: 8px; }
 /* The newer versions, each to be chosen (Settings > General > Updates) */
 .update-version { padding: 8px 0; border-top: 1px solid var(--line); }
 .update-version-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.update-version-head button, .update-version-head a { margin-left: auto; }
+.update-version-head select { min-width: 220px; max-width: 100%; }
+.update-version-action { margin-left: auto; }
 /* What is new, after an update */
 dialog.update-notes { max-width: 640px; width: calc(100% - 32px); border: 1px solid var(--line);
   border-radius: 10px; background: var(--panel); color: var(--ink); padding: 18px 20px; }
