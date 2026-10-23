@@ -133,6 +133,19 @@ def sign_and_notarize(app: Path) -> None:
         run(["codesign", "--force", "--deep", "--sign", "-", str(app)])
         run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)])
         return
+    profile = os.environ.get("MACOS_NOTARY_PROFILE")
+    if not profile:
+        # THE PROJECT'S OWN CERTIFICATE, not Apple's: nothing to notarize,
+        # and Apple's time-stamp service stamps only Apple's. What it gives
+        # is one identity from version to version. macOS keeps what was
+        # allowed (Accessibility, Screen Recording) against the signature;
+        # signed ad hoc, each version was another program, and an update
+        # left the switches on in System Settings and the agent not allowed.
+        print("note: MACOS_NOTARY_PROFILE is not set - signed, not notarized.")
+        run(["codesign", "--force", "--deep", "--timestamp=none",
+             "--sign", identity, str(app)])
+        run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)])
+        return
     entitlements = HERE / "entitlements.plist"
     run([
         "codesign", "--force", "--deep", "--timestamp",
@@ -140,10 +153,6 @@ def sign_and_notarize(app: Path) -> None:
         "--entitlements", str(entitlements),
         "--sign", identity, str(app),
     ])
-    profile = os.environ.get("MACOS_NOTARY_PROFILE")
-    if not profile:
-        print("note: MACOS_NOTARY_PROFILE is not set - skipping notarization.")
-        return
     archive = dist_dir(TARGET) / "notarize.zip"
     run(["ditto", "-c", "-k", "--keepParent", str(app), str(archive)])
     run(["xcrun", "notarytool", "submit", str(archive), "--keychain-profile", profile, "--wait"])

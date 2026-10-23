@@ -357,7 +357,8 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
-| [v0.2.2](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.2) | 2026-10-23 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.2) |
+| [v0.2.3](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.3) | 2026-10-23 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.3) |
+| [v0.2.2](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.2) | 2026-10-23 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.2) |
 | [v0.2.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.1) | 2026-10-22 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.1) |
 | [v0.2.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) | 2026-10-21 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.0/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.0/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.0/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.0) |
 | [v0.1.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.1.0) | 2026-10-16 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.1.0/PersonalizedAgent-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.1.0/PersonalizedAgent-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.1.0/PersonalizedAgent-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.1.0) |
@@ -436,9 +437,11 @@ this is a free, open-source project, so your system will warn once:
   in **System Settings → Privacy & Security**. Then **Settings → Privacy →
   macOS permissions** lists what macOS needs you to allow, with a button to
   each; allow **Full Disk Access** first, and macOS will not ask about your
-  Desktop, Documents and Downloads folders one by one. Because the app is not
-  signed by an Apple developer, macOS forgets these permissions after each
-  update, and the same page shows which to allow again.
+  Desktop, Documents and Downloads folders one by one. Up to v0.2.2 macOS
+  forgot these permissions after each update, and the same page shows which
+  to allow again. From v0.2.3 the app is signed with the project's own
+  certificate, the same for every version, so they stay on after an update;
+  coming to v0.2.3 from an earlier version, allow them once more.
 - **Linux.** No warning. For the AppImage, `chmod +x` it first.
 
 Nothing about the program depends on being signed. To know the file is the
@@ -592,6 +595,29 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.2.3](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.3) (2026-10-23, a pre-release)
+
+- **The Claude desktop app is found on a Mac.** The desktop app keeps its
+  own Claude Code in a folder for each version under Application Support;
+  the program now looks there, and takes the newest version. In v0.2.2 the
+  choice "Claude desktop app" said not available on a Mac.
+- **The Record log can show one kind.** Show: files, text on the screen,
+  conversations with Claude Code and Codex, web pages, switching between
+  windows, or the agent's own work - the latest hundred of that kind. Most
+  of the latest hundred of everything are switches between windows, which
+  hold no more than a title.
+- **On a Mac the permissions stay on across updates.** The Mac app is now
+  signed with the project's own certificate, the same for every version, so
+  Accessibility and Screen Recording, once switched on, stay on after an
+  update. Coming from v0.2.2 or earlier, switch them on once more: in System
+  Settings select Personal Agent WaterMelon, remove it with -, then switch it
+  on again from Settings > Privacy, and open the program again. Settings now
+  says this when a switch is on but the Mac still refuses. The app is not yet
+  signed by Apple, so the first opening still asks to be allowed.
+- **On a Mac the watermelon has no dark tile round it.** It is shown on a
+  clear window, and can still be clicked.
+- **On a Mac Hide and Show work.** After Hide, Show brought nothing back.
 
 ### [v0.2.2](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.2) (2026-10-23, a pre-release)
 

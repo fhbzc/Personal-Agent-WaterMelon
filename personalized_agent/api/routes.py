@@ -271,7 +271,12 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             limit = max(1, min(200, int(request.get("limit") or 100)))
         except (TypeError, ValueError):
             limit = 100
-        events = app.raw_store.recent_events(limit=limit)
+        # Of one kind, when asked: the latest hundred of it, not what of it
+        # is among the latest hundred of all - most of those are switches
+        # between windows, which hold no more than a title.
+        kind = str(request.get("kind") or "")
+        events = app.raw_store.recent_events(
+            limit=limit, event_type=kind if kind in RECORD_KINDS else None)
         # WHERE SOMETHING WAS HIDDEN: the record as it was kept, with the
         # fields that hold "[hidden]" - never what was there before, which
         # was never stored.
@@ -284,6 +289,10 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         return {"events": [_recorded(one) for one in events], "changed": changed,
                 "dropped": filtered.recent(100), "dropped_counts": filtered.counts(),
                 "rules": filtered.WHY, "since": filtered.STARTED}
+
+    #: The kinds the Record log can be narrowed to, by how their types begin.
+    RECORD_KINDS = ("filesystem.", "screen.", "assistant.", "browser.",
+                    "application.", "agent.")
 
     #: Which Privacy switch records each kind of source.
     RECORDED_BY = {"application": "listener_application_enabled",

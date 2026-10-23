@@ -229,13 +229,22 @@ class DesktopAgent:
             self.agent_window.attributes("-transparentcolor", TRANSPARENT)
             background = TRANSPARENT
         except tk.TclError:  # macOS / Linux
-            # A plain tile, no colour made clear. On a Mac a window made
-            # clear - its NSWindow, or Tk's ``-transparent`` - showed the
-            # character faint or not at all, and let every click through to
-            # what lay behind: nothing to see and nothing to press, on a Mac
-            # whose menu-bar icon the notch hid - no way in (2026-10-23).
-            self.agent_window.attributes("-alpha", 0.96)
             background = "#101216"
+            if sys.platform == "darwin":
+                # Tk's own: ``-transparent`` with the system's clear colour on
+                # the window and the canvas. Tried on a Mac (Tk 8.6.15, Aqua)
+                # beside a plain tile and an NSWindow made clear by hand: seen
+                # whole, and pressed, with nothing round it. The NSWindow made
+                # clear for every window of the application had shown the
+                # character faint and let clicks through (2026-10-23).
+                try:
+                    self.agent_window.configure(bg="systemTransparent")
+                    self.agent_window.attributes("-transparent", True)
+                    background = "systemTransparent"
+                except tk.TclError:
+                    log.info("no clear window on this Tk: a plain tile", exc_info=True)
+            if background != "systemTransparent":
+                self.agent_window.attributes("-alpha", 0.96)
         self.canvas = tk.Canvas(self.agent_window, width=self.size, height=self.size,
                                 highlightthickness=0, bg=background)
         self.canvas.pack()
@@ -695,7 +704,9 @@ class DesktopAgent:
         said "Hide" while the avatar was hidden and "Show" while it was
         there. The menu is built again after every change."""
         try:
-            if self.character_hidden:
+            if sys.platform == "darwin":
+                self._toggle_on_a_mac()
+            elif self.character_hidden:
                 self.agent_window.deiconify()
                 self.agent_window.attributes("-topmost", True)
                 self.character_hidden = False
@@ -711,6 +722,26 @@ class DesktopAgent:
         tray = getattr(self, "tray", None)
         if tray is not None:
             tray.refresh_menu()
+
+    def _toggle_on_a_mac(self) -> None:
+        """Hidden and shown on a Mac without withdrawing it: a borderless
+        window withdrawn there did not come back when shown again - Show
+        showed nothing. It is made clear and moved off every screen, and
+        shown again where it was."""
+        window = self.agent_window
+        if self.character_hidden:
+            window.geometry(getattr(self, "_shown_at", "") or window.geometry())
+            window.attributes("-alpha", getattr(self, "_shown_alpha", 1.0))
+            window.attributes("-topmost", True)
+            self.character_hidden = False
+            self._keep_on_screen()
+            window.lift()
+        else:
+            self._shown_at = window.geometry()
+            self._shown_alpha = float(window.attributes("-alpha"))
+            window.attributes("-alpha", 0.0)
+            window.geometry(f"+{-20 * self.size}+{-20 * self.size}")
+            self.character_hidden = True
 
     #: How often the avatar is looked at to see that it is on a screen.
     ON_SCREEN_EVERY_MS = 3000

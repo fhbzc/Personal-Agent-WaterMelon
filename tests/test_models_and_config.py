@@ -563,6 +563,24 @@ class ChoosingTheLocalClientTests(unittest.TestCase):
             self.assertEqual(module.ClaudeCodeProvider._locate("desktop"),
                              str(bundle / "Claude"))
 
+    def test_the_desktop_applications_own_client_newest_version_first(self) -> None:
+        # Where a Mac's desktop application keeps it: a folder per version,
+        # one per build in it - and 2.1.308 is newer than 2.1.99.
+        from personalized_agent.models.providers import claude_code_provider as module
+        kept = Path(self.agent.dir) / "Application Support" / "Claude" / "claude-code"
+        for version, build in (("2.1.99", "aa11"), ("2.1.308", "bb22"), ("2.1.40", "cc33")):
+            folder = kept / version / build / "claude.app" / "Contents" / "MacOS"
+            folder.mkdir(parents=True)
+            (folder / "claude").write_text("", encoding="utf-8")
+        candidate = str(kept / "*" / "*" / "claude.app" / "Contents" / "MacOS" / "claude")
+        spec = dict(module.CLIENTS["desktop"], candidates=[candidate])
+        with unittest.mock.patch.dict(module.CLIENTS, {"desktop": spec}):
+            found = Path(module.ClaudeCodeProvider._locate("desktop") or ".")
+        self.assertEqual(found.relative_to(kept).parts[:2], ("2.1.308", "bb22"))
+        # And on a Mac the place is among those looked in.
+        self.assertTrue(any("Application Support/Claude/claude-code/" in one
+                            for one in module.CLIENTS["desktop"]["candidates"]))
+
     def test_the_settings_offer_the_choice(self) -> None:
         keys = {field["key"] for field in self.app.config.schema()}
         self.assertIn("local_client_path", keys)

@@ -109,6 +109,13 @@ CLIENTS: Dict[str, Dict[str, Any]] = {
             "~/AppData/Local/AnthropicClaude/app/claude.exe",
             "~/AppData/Local/Programs/Claude/claude.exe",
             "C:/Program Files/Claude/claude.exe",
+            # A Mac's: the application downloads its Claude Code into a folder
+            # per version - claude-code/2.1.308/<build>/claude.app - and not
+            # into Claude.app, whose MacOS/Claude is the application itself.
+            "~/Library/Application Support/Claude/claude-code/*/*/claude.app/Contents/MacOS/claude",
+            "~/Library/Application Support/Claude/claude-code/*/claude",
+            "~/AppData/Roaming/Claude/claude-code/*/*/claude.exe",
+            "~/AppData/Roaming/Claude/claude-code/*/claude.exe",
             "/Applications/Claude.app/Contents/MacOS/claude",
             "/Applications/Claude.app/Contents/Resources/claude",
         ],
@@ -118,6 +125,36 @@ CLIENTS: Dict[str, Dict[str, Any]] = {
 
 #: Tried in this order when the user has not chosen one.
 CLIENT_ORDER = ("cli", "desktop")
+
+
+def _version_key(path: Path) -> tuple:
+    """The newest first: by the version the path names (2.1.308 after
+    2.1.99), the folder of the latest build of it after that."""
+    numbers = []
+    for part in path.parts:
+        if re.fullmatch(r"\d+(\.\d+)+", part):
+            numbers = [int(n) for n in part.split(".")]
+    try:
+        made = path.stat().st_mtime
+    except OSError:
+        made = 0.0
+    return (numbers, made)
+
+
+def _found_at(candidate: str) -> List[Path]:
+    """The files a candidate names: itself, or - with a * in it, for a
+    folder per version - each match, the newest first."""
+    path = Path(candidate).expanduser()
+    if "*" not in candidate:
+        return [path]
+    parts = path.parts
+    first = next(at for at, part in enumerate(parts) if "*" in part)
+    base = Path(*parts[:first])
+    try:
+        found = list(base.glob(str(Path(*parts[first:])).replace("\\", "/")))
+    except (OSError, ValueError):
+        return []
+    return sorted(found, key=_version_key, reverse=True)
 
 
 def _named_exactly(path: Path) -> bool:
@@ -412,9 +449,9 @@ class ClaudeCodeProvider(ModelProvider):
             if found:
                 return found
         for candidate in spec["candidates"]:
-            path = Path(candidate).expanduser()
-            if path.is_file() and _named_exactly(path):
-                return str(path)
+            for path in _found_at(candidate):
+                if path.is_file() and _named_exactly(path):
+                    return str(path)
         return None
 
     def _choice(self) -> str:

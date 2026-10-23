@@ -1034,8 +1034,20 @@
     <div class="card">
       <h3>Record log</h3>
       <p class="panel-note">The latest 100 things the agent recorded, from every
-        source. Each says which switch in Settings › Privacy recorded it: turn that
-        switch off and nothing like it is recorded again. Open one to see all of it.</p>
+        source or of one kind. Each says which switch in Settings › Privacy recorded it:
+        turn that switch off and nothing like it is recorded again. Open one to see all
+        of it.</p>
+      <label>Show
+        <select id="recordlog-kind">
+          <option value="" selected>everything</option>
+          <option value="filesystem.">files</option>
+          <option value="screen.">text on the screen</option>
+          <option value="assistant.">conversations with Claude Code and Codex</option>
+          <option value="browser.">web pages</option>
+          <option value="application.">switching between windows</option>
+          <option value="agent.">the agent's own work</option>
+        </select>
+      </label>
       <div id="recordlog-list"><p class="muted">Reading&hellip;</p></div>
     </div>
     <div class="card">

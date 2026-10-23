@@ -8178,7 +8178,9 @@ function sysPermissionsDraw() {
         : one.granted === false
           ? `<span class="sys-permission-state missing">not allowed</span>`
           : `<span class="sys-permission-state">cannot be told from here</span>`;
-      const how = (SYS_PERMISSION_HOW[data.platform] || {})[one.key];
+      const how = (SYS_PERMISSION_HOW[data.platform] || {})[one.key]
+        || (data.platform === "macos" && ["accessibility", "screen"].includes(one.key)
+          ? MAC_ON_BUT_NOT_ALLOWED : "");
       const open = one.granted !== true && one.can_open
         ? ` <button type="button" class="small secondary" data-sys-permission-open="${
           escapeHtml(one.key)}">${data.platform === "windows" ? "Open Windows Settings"
@@ -9608,7 +9610,8 @@ async function loadNotThisWork() {
    hidden in it; opened, all of it. Then what the filters kept out, by rule.
    Drawn again only when something new was recorded, and what is open stays
    open. */
-const recordLog = { sig: "", open: new Set() };
+/* Of one kind, when one is chosen in Show (its types' beginning). */
+const recordLog = { sig: "", open: new Set(), kind: "" };
 const RECORD_RULES = {
   switch_off: "Its switch in Settings › Privacy is off",
   application_list: "The application allowlist or denylist",
@@ -9687,13 +9690,25 @@ async function loadRecordLog(force = false) {
   const list = $("#recordlog-list");
   const dropped = $("#recordlog-dropped");
   if (!list || !dropped) return;
+  const kind = $("#recordlog-kind");
+  if (kind && !kind.dataset.bound) {
+    kind.dataset.bound = "1";
+    kind.addEventListener("change", () => {
+      recordLog.kind = kind.value;
+      list.innerHTML = `<p class="muted">Reading&hellip;</p>`;
+      loadRecordLog(true);
+    });
+  }
+  const asked = recordLog.kind;
   let said;
   try {
-    said = await api.get("/api/record_log");
+    said = await api.get(`/api/record_log?kind=${encodeURIComponent(asked)}`);
   } catch (err) {
     list.textContent = `Could not read the record log: ${err.message}`;
     return;
   }
+  // Another kind was chosen while this one was read: that one is drawn.
+  if (asked !== recordLog.kind) return;
   const sig = JSON.stringify([(said.events || []).map((one) => one.id),
     (said.changed || []).map((one) => one.id), said.dropped_counts || {}]);
   if (!force && sig === recordLog.sig) return;
@@ -9701,7 +9716,8 @@ async function loadRecordLog(force = false) {
   renderRecordHidden(said.changed || []);
   list.innerHTML = "";
   if (!(said.events || []).length) {
-    list.innerHTML = `<p class="muted">Nothing recorded yet.</p>`;
+    list.innerHTML = recordLog.kind ? `<p class="muted">Nothing of this kind recorded yet.</p>`
+      : `<p class="muted">Nothing recorded yet.</p>`;
   }
   (said.events || []).forEach((one) => {
     const item = document.createElement("details");
@@ -9940,6 +9956,11 @@ const MAC_PERMISSIONS = {
       + "names this permission with audio too; the agent never records any sound.",
     how: "Switch on Personal Agent WaterMelon. macOS may ask to quit and reopen it." },
 };
+/* On a Mac a version signed ad hoc was, to macOS, another program: the
+   switch an earlier version was given stayed on, and this one was refused. */
+const MAC_ON_BUT_NOT_ALLOWED = "Already on in System Settings? It may be an earlier version's switch: select "
+    + "Personal Agent WaterMelon there, remove it with -, press Open System Settings here, "
+    + "switch it on again, then quit the agent and open it again.";
 const macPermissions = { data: null, dismissed: false };
 
 function renderMacPermissions(data) {
@@ -9999,6 +10020,12 @@ function renderMacPermissions(data) {
           }
         });
         row.append(how, open);
+        if (["accessibility", "screen"].includes(item.key) && item.granted === false) {
+          const earlier = document.createElement("div");
+          earlier.classList.add("mac-permission-how");
+          earlier.textContent = MAC_ON_BUT_NOT_ALLOWED;
+          row.append(earlier);
+        }
         if (item.key === "screen" && item.granted === false) {
           // macOS answers a running program as it was when it started.
           const after = document.createElement("div");

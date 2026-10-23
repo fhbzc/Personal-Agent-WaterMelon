@@ -79,6 +79,23 @@ class RecordLogTests(unittest.TestCase):
         said = self._routes()[("GET", "/api/record_log")](_Req())
         self.assertEqual(len(said["events"]), 100)
 
+    def test_of_one_kind_the_latest_hundred_of_it(self) -> None:
+        from personalized_agent.common.events.models import ListenerEvent
+        self.app.raw_store.add_events([ListenerEvent(
+            event_type="filesystem.opened", source="filesystem",
+            data={"path": f"C:/garden/bed {n}.txt", "content": "beans"}) for n in range(3)])
+        # Newer, and more than a hundred: windows switched between.
+        self.app.raw_store.add_events([ListenerEvent(
+            event_type="application.focused", source="application",
+            application="Notepad", data={"window_title": f"note {n}"}) for n in range(120)])
+        route = self._routes()[("GET", "/api/record_log")]
+        files = route(_Req({"kind": "filesystem."}))["events"]
+        self.assertEqual([one["type"] for one in files], ["filesystem.opened"] * 3)
+        everything = route(_Req())["events"]
+        self.assertEqual({one["type"] for one in everything}, {"application.focused"})
+        # A kind it does not know is no kind: everything.
+        self.assertEqual(len(route(_Req({"kind": "file"}))["events"]), 100)
+
     def test_what_was_kept_out_is_told_by_rule_not_by_content(self) -> None:
         from personalized_agent.common.events.models import ListenerEvent
         from personalized_agent.listener.core.privacy import PrivacyFilter
@@ -118,6 +135,18 @@ class RecordLogPageTests(unittest.TestCase):
         # Not one of the tabs a build without the Debugger takes away.
         self.assertNotIn('[data-tab="recordlog"]\')?.remove()', js)
         self.assertIn('if (activeTab === "recordlog") await loadRecordLog();', js)
+
+    def test_shown_of_one_kind_when_chosen(self) -> None:
+        html = (WEB / "index.html").read_text(encoding="utf-8")
+        start = html.index('<section id="recordlog" class="tab">')
+        self.assertIn('<select id="recordlog-kind">', html[start:html.index("</section>", start)])
+        from personalized_agent.api import routes
+        source = Path(routes.__file__).read_text(encoding="utf-8")
+        for kind in ("filesystem.", "screen.", "assistant.", "browser.", "application.", "agent."):
+            self.assertIn(f'<option value="{kind}">', html)
+            self.assertIn(f'"{kind}"', source)
+        js = (WEB / "app.js").read_text(encoding="utf-8")
+        self.assertIn("/api/record_log?kind=${encodeURIComponent(asked)}", js)
 
     def test_try_the_retrieval_is_in_the_work_debugger(self) -> None:
         html = (WEB / "index.html").read_text(encoding="utf-8")

@@ -88,6 +88,38 @@ class PutBackOnAScreenTests(unittest.TestCase):
         self.assertEqual(window.placed, ["home"])
         self.assertEqual(agent.tray.rebuilt, 2, "the menu's words built again each time")
 
+    def test_on_a_mac_hidden_without_being_withdrawn(self) -> None:
+        # A borderless window withdrawn on a Mac did not come back on Show.
+        class _MacWindow(_Window):
+            def __init__(self):
+                super().__init__(300, 300)
+                self.alpha, self.at, self.withdrawn = 1.0, "120x120+300+300", 0
+
+            def withdraw(self):
+                self.withdrawn += 1
+
+            def attributes(self, *a):
+                if a == ("-alpha",):
+                    return self.alpha
+                if a[0] == "-alpha":
+                    self.alpha = a[1]
+
+            def geometry(self, *a):
+                if a:
+                    self.at = a[0]
+                return self.at
+
+        window = _MacWindow()
+        agent = _desktop(window)
+        with mock.patch.object(desktop_module.sys, "platform", "darwin"), \
+                mock.patch.object(desktop_module, "_on_a_screen", return_value=True):
+            agent.toggle_character()            # hide
+            self.assertEqual((window.alpha, window.withdrawn), (0.0, 0))
+            self.assertTrue(window.at.startswith("+-"), "off every screen")
+            agent.toggle_character()            # show
+        self.assertEqual((window.alpha, window.at), (1.0, "120x120+300+300"))
+        self.assertFalse(agent.character_hidden)
+
     @unittest.skipUnless(desktop_module.sys.platform.startswith("win"), "asked of Windows")
     def test_windows_says_which_points_are_on_a_screen(self) -> None:
         self.assertTrue(desktop_module._on_a_screen(None, 10, 10))
