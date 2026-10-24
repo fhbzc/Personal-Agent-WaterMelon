@@ -459,6 +459,33 @@ async function learningDo(body, said) {
   }
 }
 
+/* THE LOCAL INDEX'S OWN BAR, beside the learning's (the user, 2026-10-24):
+   an update brings the local index up to date before it reads anything, and
+   that is shown as itself - not as the learning standing at 0%. The share is
+   of the files the last build walked; with none known (a folder never
+   built) and while the file is made small again, the bar only says it is
+   going. */
+function learningIndexHtml(s) {
+  const ix = s.index || {};
+  if (!ix.building) {
+    return ix.done_at ? `<p class="muted">Local index: ${Number(ix.files || 0).toLocaleString()} files,
+      brought up to date ${escapeHtml(localStamp(ix.done_at))}.</p>` : "";
+  }
+  const state = ix.waiting ? "Waiting: the computer is on its battery."
+    : ix.tidying ? "Making the index file smaller…"
+      : ix.root ? `Reading: ${ix.root}` : "Starting…";
+  const walked = Number(ix.walked || 0).toLocaleString();
+  const known = ix.share !== null && ix.share !== undefined && !ix.tidying;
+  const share = known ? Math.round(Number(ix.share) * 100) : 0;
+  return `<div class="xp-learn-progress"><span class="xp-learn-what">Local index</span>
+      ${known ? `<progress max="100" value="${share}" aria-label="How far the local index is"></progress>
+      <span>${share}%</span>
+      <span class="muted">${walked} of ${Number(ix.expected || 0).toLocaleString()} files</span>`
+    : `<progress aria-label="How far the local index is"></progress>
+      <span class="muted">${walked} files looked at</span>`}</div>
+    <p class="muted">${escapeHtml(state)}</p>`;
+}
+
 function learningUpdateHtml(s) {
   const u = s.update;
   const open = u && ["running", "paused", "waiting"].includes(u.state);
@@ -480,8 +507,9 @@ function learningUpdateHtml(s) {
     const share = Math.round(Number(u.share || 0) * 100);
     const state = u.state === "paused" ? "Paused - the times set are skipped until you continue."
       : u.state === "waiting" ? "Today's token limit is used up: it carries on tomorrow."
-        : u.now_reading ? `Reading: ${u.now_reading}` : "Starting…";
-    lines.push(`<div class="xp-learn-progress">
+        : u.now_reading === "the local index" ? "It reads once the local index is up to date."
+          : u.now_reading ? `Reading: ${u.now_reading}` : "Starting…";
+    lines.push(`<div class="xp-learn-progress"><span class="xp-learn-what">Learning</span>
         <progress max="100" value="${share}" aria-label="How far the update is"></progress>
         <span>${share}%</span>
         ${u.units ? `<span class="muted">${Number(u.units_done || 0)} of ${u.units} places read</span>` : ""}
@@ -503,7 +531,7 @@ function learningUpdateHtml(s) {
   }
   if (u && u.note && u.state === "done") lines.push(`<p class="muted">${escapeHtml(u.note)}</p>`);
   return `<div class="xp-learn-row">${buttons}<span class="muted">${escapeHtml(today)}</span></div>
-    ${lines.join("")}`;
+    ${learningIndexHtml(s)}${lines.join("")}`;
 }
 
 function learningPlacesHtml(s) {
@@ -22208,7 +22236,8 @@ function xdWayLive(v) {
   const folder = shown.folder || xdUnder(project.folder || "", v.folder);
   const way = xdWayState(v);
   const parts = [];
-  const refused = ((xdState.waiting || {})[v.variant] || {}).could_not_start;
+  const said = (xdState.waiting || {})[v.variant] || {};
+  const refused = said.could_not_start;
   if (way.state === "starting") {
     return `<span class="xp-live-state xp-live-state-going" data-xd-way-state="starting">${
       escapeHtml(way.words)}</span> <span class="xp-live-spin xd-way-spin" aria-hidden="true"></span>
@@ -22225,8 +22254,11 @@ function xdWayLive(v) {
     return parts.join(" ");
   }
   if (refused && !way.going) {
-    parts.push(`<span class="danger-text">Its turn came, but it could not start: ${
-      escapeHtml(refused)}</span>`);
+    // Asked for and not started - its process could not get going - is said
+    // so, not left reading "not started" (2026-10-24).
+    parts.push(said.waited
+      ? `<span class="danger-text">Its turn came, but it could not start: ${escapeHtml(refused)}</span>`
+      : `<span class="danger-text">It could not start: ${escapeHtml(refused)}</span>`);
   }
   if (way.latest) {
     parts.push(`<span class="xp-live-state xp-live-state-${escapeHtml(way.state)}"
@@ -22259,9 +22291,11 @@ function xdWayLive(v) {
    a spinner while it goes. */
 function xdWayBadge(v) {
   const way = xdWayState(v);
-  const kind = way.failed ? "failed" : way.state;
-  const said = way.failed ? "failed" : way.state === "ended" ? "ended"
-    : way.state === "none" ? "not started" : way.words;
+  const refused = way.state === "none"
+    && ((xdState.waiting || {})[v.variant] || {}).could_not_start;
+  const kind = way.failed || refused ? "failed" : way.state;
+  const said = way.failed ? "failed" : refused ? "could not start"
+    : way.state === "ended" ? "ended" : way.state === "none" ? "not started" : way.words;
   return `${way.state === "going" ? `<span class="xp-live-spin" aria-hidden="true"></span>` : ""}<span
     class="xd-badge xd-badge-${escapeHtml(kind)}">${escapeHtml(said)}</span>`;
 }

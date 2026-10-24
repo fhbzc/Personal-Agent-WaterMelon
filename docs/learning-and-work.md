@@ -31,7 +31,7 @@ LEARNING reads the user's work into CASES and REASONS. The reviewer asks its QUE
 | **Judgment** `J-` | Something the user decided, changed, turned down, approved or let stand, in a case. It records an aspect, an object, a direction, the user's own words, why, the date and where it can be opened. The aspect is one of: an extra requirement, the form or style of the output, how a result is judged, or how the work is done. |
 | **Reason** `R-` | Why the user judges so. It is either stated (the user said it) or inferred. It has a condition in the shared words (where it holds, plus exceptions, plus a text), the objects it bears on, predictions, and what would show it wrong. It records how each judgment bears on it (supports, boundary, contradicts, before a change), first and last seen, "since" for a change over time, a rival, overrides, and its history. |
 | **Shared words** | Explained in §1.1. |
-| **Local index** | Full text of the same places. It also provides the list of changed files. |
+| **Local index** | Full text of the same places. It also provides the list of changed files. It is brought up to date at the start of every learning update - one switch and one clock for both - and never when the application starts. Every folder is walked once and only once (a folder inside another is walked with it). A JSON file is read up to 200 KB; a conversation record is kept as what was said and done (the user's words, the agent's text replies, one line per tool call: the tool and the file or pattern, never the code or a command, never what came back), bounded by what is kept of it (30 MB), not by the file's size. When the rules change, the next build keeps each file the new way, reading again only what is now kept differently, and the file is made small again (VACUUM) when more than a quarter of it is free room. |
 
 ### 1.1 The shared words
 
@@ -228,18 +228,20 @@ The model may also link a judgment to an existing reason.
      - **near**: one dimension misses only by a sibling term;
      - **unknown**: the job says nothing about a dimension the reason needs;
      - **outside**: dropped.
-  2. A model then reads each remaining condition and says whether it holds for this job: yes, no, or unknown. An unknown becomes a question for the reviewer.
-  3. Which reasons are given, and how:
+  2. A model then reads each remaining condition and says whether it holds for this job: yes (with one sentence on what it asks of this job), no, or unknown. An unknown becomes a question for the reviewer. Why a reason does not hold is written in a debugger run only: such a reason reaches no reviewer.
+  3. The same call says which of the reviewer's questions each reason answers (3 answers it, 2 bears on it, 1 touches it), and whether one that answers none is still expected of this job.
+  4. Which reasons are given, and how:
+     - for each question, at most 5 that answer it or bear on it; up to 5 expected ones in a section of their own;
      - stated reasons always come first;
      - inferred reasons are given only with 2 or more observations, labelled as inferred;
-     - each comes with its last-seen date, a one-line rival if it has one, and one or two example cases.
-- **Cases**, whatever reason they bear on:
-  - The cases closest to the job are chosen by its terms, how recent they are and how many judgments they hold.
-  - Three are given in full:
-    - where the deliverables are, versions, what they look like, every judgment, how they were made;
-    - they are diverse (at most two from one unit);
-    - they include the same deliverable and the same purpose where such cases exist.
-  - The next ones are given as a short index.
+     - each comes with its last-seen date, a one-line rival if it has one, and one short example.
+- **Cases**, chosen as the reasons are:
+  1. Code takes the 10 with most of the job's terms: in each dimension, the share of the job's terms the case has (a case of all three of the job's deliverables comes before one of one). How many judgments a case holds decides only between equals.
+  2. The same model call is shown each one's terms, what it looks like, how it was made, how many judgments it holds and when it was last worked on. It says how alike each is to the job (0–3), which questions it helps answer, and which cases are the same project.
+  3. The 3 most alike are given in full, one place a project (its other cases with it); none said not to be alike. Each in full: where the deliverables are, versions, what it looks like, every judgment, how it was made.
+  4. When those in full are long, a second call picks, of each, the judgments that bear on the questions (at most 10; a project's cases together).
+  5. The rest are given as a short index. A fact or a way of working no reason answers points to the cases said to answer it.
+  6. With no model: by their terms, as before.
 - **Also given**:
   - judgments in those cases that no reason explains yet;
   - for facts of the project: its files (search).
@@ -260,6 +262,8 @@ The model may also link a judgment to an existing reason.
   - Queries are checked by the web guard.
   - A hard external rule (a funder's or journal's) wins over a preference. General practice gives way to the user's reasons, and any conflict is said.
   - Answers come with their source URLs.
+- **The user's past work is evidence, not a standard**: the reviewer follows the user's ways and uses its own judgement too. What they did before shows what they knew and wanted then; where it falls short for this work, the reviewer says so and does not carry it over. What counts is a result the user is satisfied with.
+- **References**: after the contract, a call of its own proposes, for each deliverable, up to 3 files or folders from the user's past work (what each is, why it fits, what might be taken). The reviewer, in its own context, keeps at most 2 a deliverable, or none, with what to take from each and what not to. Only those reach the card the builder reads, each checked to exist, be readable by the builder and lie in no folder left out.
 - **What the reviewer writes**
   - The reviewer writes criteria or "Added – not your words" (core / needed / nice).
   - **Each is marked as the reviewer's**, with its grounds.
@@ -284,7 +288,7 @@ The model may also link a judgment to an existing reason.
 | Full | Everything above. |
 | B | The same steps: questions, terms, builder questions. NO context and NO tools: no reasons, cases or index. The reviewer answers its own questions, each marked as its own assumption. It may search the web, but without the user's context. Nothing is kept. |
 | Single | Unchanged. |
-| Builder (all ways) | Never sees the learning (it asks the reviewer). |
+| Builder (all ways) | Never sees the learning (it asks the reviewer); in the full way, only the references the reviewer chose, on its cards. |
 
 ## 4. The panel (Work, at the bottom)
 
@@ -362,7 +366,7 @@ The test:
     - `work_run_questions` logs the questions and answers;
     - the way with no context answers its own questions;
     - the builder no longer has the stage tools (it keeps `search_records` and `search_files`).
-  - **Local index**: its folders are the learning's places. `POST /api/index` takes only "enable" and "build".
+  - **Local index**: its folders, its switch and its times are the learning's. `POST /api/index` takes only "build".
   - **Routes**: `GET` and `POST /api/learning`.
   - **Interface**:
     - the Learning panel at the bottom of Work;

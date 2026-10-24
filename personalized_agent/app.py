@@ -387,9 +387,11 @@ class AgentApplication:
         self.learning.places.work_tab_folders = self._work_tab_folders
         # THE LOCAL INDEX: the user's own files searchable by their words -
         # every Work project's folders and the folders the user adds - built
-        # in a process of its own at the lowest priority (index/service.py).
+        # in a process of its own at the lowest priority (index/service.py),
+        # at the start of every learning update: one switch and one clock.
         from .index.service import LocalIndex
         self.local_index = LocalIndex(self)
+        self.learning.before_update = lambda: self.local_index.build_now(wait=True)
         # PACKAGE ALL LESSONS and LOAD LESSONS (Overview): every lesson -
         # the experience, each work project's tree, the notification lessons,
         # the natures - packed into one folder in the workspace and a zip of

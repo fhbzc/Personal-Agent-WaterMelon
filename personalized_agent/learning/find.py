@@ -19,15 +19,19 @@ this project. Then:
   one is given only on two observations or more, said to be inferred; each
   with one short example. A rival is one line beside it.
 
-  CASES, by how alike they are to the job, whatever reason they bear on:
-  the closest `DETAILED` in full - where the deliverables are, what they
-  look like, every judgment in them, how they were made - diverse (one or
-  two of a unit) and covering the same deliverable and the same purpose
-  where there are such; the next ones as a short index. When those in full
-  come to more than `CASES_CHARS`, the same model call picks, of each long
-  one, the judgments that bear on the questions; the rest are opened with
-  `open_case`. What a case was made with and how stays whole: the answer
-  to "which stack, which tools" is there, not in a reason.
+  CASES, chosen as the reasons are (the user, 2026-10-24): the `CASE_POOL`
+  with most of the job's terms (`match.share`) go to the same model call,
+  each with what it looks like and how it was made, which says how alike
+  each is to the job, which questions it helps answer, and which are the
+  same project. The most alike `DETAILED` are given in full - where the
+  deliverables are, what they look like, every judgment in them, how they
+  were made - one place a project, its other cases with it; the rest as a
+  short index; a fact or a way of working no reason answers points to the
+  cases said to answer it. When those in full come to more than
+  `CASES_CHARS`, a second call picks, of each long one, the judgments that
+  bear on the questions; the rest are opened with `open_case`. What a case
+  was made with and how stays whole: the answer to "which stack, which
+  tools" is there, not in a reason. With no model, by their terms.
 
   PACKED BY PRIORITY within `PACKAGE_CHARS`: each question's first reason,
   then the cases and the pointer to the facts, then the unasked reasons,
@@ -53,20 +57,21 @@ from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from .leave_out import LeaveOut
-from .match import closeness, coverage
+from .match import closeness, coverage, share
 from .store import LearningStore, dumps
 from .vocab import ASPECTS, DIMENSIONS, Vocabulary
 
-#: Cases given in full; in the short index.
+#: Cases given in full; in the short index; judged by the model, at most.
 DETAILED = 3
 INDEXED = 10
+CASE_POOL = 10
 #: Cases of one unit among the detailed, at most.
 PER_UNIT = 2
 #: What a package may take, at most.
 PACKAGE_CHARS = 40_000
 #: Reasons for one question; reasons asked about by none that the user
 #: would expect all the same.
-PER_QUESTION = 3
+PER_QUESTION = 5
 EXPECTED = 5
 #: How well a reason must answer a question to be given for it: 2, bears on
 #: it. One that only touches it (1) took the places of better answers - the
@@ -88,12 +93,14 @@ QUESTION_KINDS = {
 }
 
 HOLDS_PROMPT = """DOES EACH OF THESE REASONS OF THE USER'S HOLD FOR THIS JOB - AND
-WHICH OF THE REVIEWER'S QUESTIONS DOES IT ANSWER?
+WHICH OF THE REVIEWER'S QUESTIONS DOES IT ANSWER? HOW ALIKE TO THIS JOB IS
+EACH OF THESE CASES OF THEIR PAST WORK?
 
 Each reason says why the user judges their work so, and WHEN it holds (and
 what it is excepted from). For the job described, say for each:
-  "holds": "yes" - its condition holds here;
-           "no" - it does not (say why in a few words);
+  "holds": "yes" - its condition holds here: "here" says in one sentence
+           what it asks of this job;
+           "no" - it does not<NO>;
            "unknown" - it depends on something the job does not say: write
            the question that would settle it.
   "answers": the reviewer's questions it bears on, by number, each with 3
@@ -102,21 +109,64 @@ what it is excepted from). For the job described, say for each:
            heading: a habit of committing does not answer "which stack".
   "expected": true only when it answers none of the questions and is still
            a requirement this user would expect of this job.
-A reason last seen long ago may be one the user has left: say "no" with why
+A reason last seen long ago may be one the user has left: say "no"<NO_SHORT>
 when the record shows they have moved on.
 
-When CASES' JUDGMENTS are listed: for each case, the ids of the judgments
-most worth the reviewer's reading for its questions and this job, most
-first - at most the number said.
+Each CASE is a piece of the user's past work. Say for each:
+  "alike": 3 - work of the same kind, made much as this job would be;
+           2 - alike in good part; 1 - a little; 0 - not alike.
+  "answers": the reviewer's questions it helps answer - what was made, with
+           what and how - by number, 3, 2 or 1 as above; {} for none.
+  "same_as": the id of another case listed that is the same project, or
+           "".
 
 Return ONLY this JSON object:
-{"reasons": {"R-...": {"holds": "yes|no|unknown", "why": "", "ask": "",
+{"reasons": {"R-...": {"holds": "yes|no|unknown", "here": "",<WHY> "ask": "",
                        "answers": {"1": 3}, "expected": false}, ...},
- "cases": {"C-...": ["J-...", ...]}}"""
+ "cases": {"C-...": {"alike": 2, "answers": {"1": 2}, "same_as": ""}, ...}}"""
+
+#: Why a reason does not hold: written in a debugger run only - one that does
+#: not hold is given to no reviewer, so its why is read by the user alone, as
+#: they look into a run (the user, 2026-10-24).
+_WHY_NOT = (" (say why in a few words)", " with why", ' "why": "",')
+
+#: THE SECOND CALL, when the cases chosen are long: of each, the judgments
+#: worth the reviewer's reading - knowing which cases were chosen, and of a
+#: project of several cases, of all of them together.
+PICK_PROMPT = """WHICH OF THE USER'S JUDGMENTS IN THESE CASES OF THEIR PAST WORK ARE MOST
+WORTH THE REVIEWER'S READING, FOR ITS QUESTIONS AND THIS JOB?
+
+For each case, the ids of the judgments most worth reading, most first - at
+most the number said.
+
+Return ONLY this JSON object:
+{"cases": {"C-...": ["J-...", ...]}}"""
 
 
 def _line(text: Any, most: int = 300) -> str:
     return " ".join(str(text or "").split())[:most]
+
+
+def _scores(said: Any, asked: Any) -> Dict[int, int]:
+    """Question number -> 1..3, of the questions asked."""
+    out: Dict[int, int] = {}
+    for number, score in (said.items() if isinstance(said, dict) else []):
+        try:
+            number, score = int(number), int(score)
+        except (TypeError, ValueError):
+            continue
+        if number in asked and score > 0:
+            out[number] = min(score, 3)
+    return out
+
+
+def _judgment_line(one: Dict[str, Any]) -> str:
+    said = f' - "{_line(one["said"], 300)}"' if one.get("said") else ""
+    why = f" (why: {_line(one['why'], 200)})" if one.get("why") else ""
+    explained = "" if one["state"] == "linked" else " [no reason explains it yet]"
+    return (f"    {one['id']} {one.get('at') or '?'} [{one['strength']}] "
+            f"{one.get('item') or ''} {one['object'].split(':', 1)[-1]}: "
+            f"{_line(one['direction'], 200)}{said}{why}{explained}")
 
 
 class Finder:
@@ -202,13 +252,17 @@ class Finder:
               candidates: Sequence[Tuple[Dict[str, Any], str, List[str]]],
               ask: Optional[Callable[[str, str, int], Dict[str, Any]]],
               questions: Sequence[Dict[str, Any]] = (),
-              long_cases: Sequence[Dict[str, Any]] = ()) -> Dict[str, Dict[str, Any]]:
-        """Each candidate's verdict - whether it holds, why, what would
-        settle it, which questions it answers (number -> 1..3) and whether
-        it is expected unasked. The judgments picked of each long case are
-        kept in `self.picked` (case id -> judgment ids)."""
+              cases: Sequence[Dict[str, Any]] = (), explain: bool = True
+              ) -> Dict[str, Dict[str, Any]]:
+        """Each candidate's verdict - whether it holds, how it bears here,
+        why not (`explain`: a debugger run), what would settle it, which
+        questions it answers (number -> 1..3) and whether it is expected
+        unasked. Of each of `cases`, how alike it is, which questions it
+        helps answer and which case above it is the same project - kept in
+        `self.case_verdicts`."""
         self.picked = {}
-        if not candidates and not long_cases:
+        self.case_verdicts = {}
+        if not candidates and not cases:
             return {}
         if ask is None:
             return {reason["id"]: {"holds": "yes" if how == "covered" else "unknown", "why": "",
@@ -229,40 +283,50 @@ class Finder:
                 f"(by the word list: {how}{'; ' + '; '.join(why) if why else ''}; "
                 f"last seen {str(reason.get('last_seen') or '')[:10]}"
                 f"{'; changed since ' + reason['since'][:10] if reason.get('since') else ''})")
-        if long_cases:
-            lines += ["", f"CASES' JUDGMENTS (pick at most {JUDGMENTS_PICKED} of each):"]
-            for case in long_cases:
-                lines.append(f"CASE {case['id']}: {case.get('title', '')}")
-                for one in self._kept(self.store.judgments_of(case["id"])):
-                    said = f' "{_line(one["said"], 120)}"' if one.get("said") else ""
-                    lines.append(f"  {one['id']} [{one.get('aspect') or ''}, {one['strength']}] "
-                                 f"{one['object'].split(':', 1)[-1]}: "
-                                 f"{_line(one['direction'], 160)}{said}")
-        said = ask(HOLDS_PROMPT, "\n".join(lines), 3000) or {}
+        if cases:
+            lines += ["", "THE CASES (the user's past work, most of the job's terms first):"]
+            for case in cases:
+                tags = "; ".join(f"{dim}: {', '.join(tag.split(':', 1)[-1] for tag in values)}"
+                                 for dim, values in (case.get("facets") or {}).items() if values)
+                mine = self._kept(self.store.judgments_of(case["id"]))
+                last = max([str(one.get("at") or "")[:10] for one in mine] + [
+                    str(one.get("at") or "")[:10] for one in case.get("locations") or []
+                    if isinstance(one, dict)] + [""])
+                lines.append(f"{case['id']}: {case.get('title', '')} [{tags}] - {len(mine)} "
+                             f"judgments of the user's" + (f", last {last}" if last else ""))
+                if case.get("looks_like"):
+                    lines.append("  looks like: " + _line(case["looks_like"], 200))
+                if case.get("how_made"):
+                    lines.append("  made: " + _line(case["how_made"], 150))
+        no, no_short, why = _WHY_NOT if explain else ("", "", "")
+        prompt = HOLDS_PROMPT.replace("<NO>", no).replace("<NO_SHORT>", no_short) \
+            .replace("<WHY>", why)
+        said = ask(prompt, "\n".join(lines), 3000) or {}
         verdicts = said.get("reasons") if isinstance(said.get("reasons"), dict) else said
         asked = range(1, len(questions) + 1)
         out = {}
         for reason, how, _why in candidates:
             one = verdicts.get(reason["id"]) if isinstance(verdicts.get(reason["id"]), dict) else {}
             holds = str(one.get("holds") or ("yes" if how == "covered" else "unknown")).lower()
-            answers = {}
-            for number, score in (one.get("answers") if isinstance(one.get("answers"), dict)
-                                  else {}).items():
-                try:
-                    number, score = int(number), int(score)
-                except (TypeError, ValueError):
-                    continue
-                if number in asked and score > 0:
-                    answers[number] = min(score, 3)
+            answers = _scores(one.get("answers"), asked)
             out[reason["id"]] = {"holds": holds, "why": _line(one.get("why"), 200),
+                                 "here": _line(one.get("here"), 300) if holds == "yes" else "",
                                  "ask": _line(one.get("ask"), 300), "coverage": how,
                                  "answers": answers, "expected": bool(one.get("expected"))}
-        picks = said.get("cases") if isinstance(said.get("cases"), dict) else {}
-        for case in long_cases:
-            mine = {one["id"] for one in self.store.judgments_of(case["id"])}
-            chosen = [str(one) for one in picks.get(case["id"]) or [] if str(one) in mine]
-            if chosen:
-                self.picked[case["id"]] = list(dict.fromkeys(chosen))[:JUDGMENTS_PICKED]
+        judged = said.get("cases") if isinstance(said.get("cases"), dict) else {}
+        listed = [case["id"] for case in cases]
+        for cid in listed:
+            one = judged.get(cid)
+            if not isinstance(one, dict):
+                continue
+            try:
+                alike = max(0, min(3, int(one.get("alike") or 0)))
+            except (TypeError, ValueError):
+                alike = 0
+            same = str(one.get("same_as") or "")
+            self.case_verdicts[cid] = {
+                "alike": alike, "answers": _scores(one.get("answers"), asked),
+                "same_as": same if same in listed and same != cid else ""}
         return out
 
     # -- cases ----------------------------------------------------------------
@@ -275,14 +339,14 @@ class Finder:
         for case in self.store.cases():
             if case["id"] in out:
                 continue
-            score = closeness(facets, case.get("facets") or {}, self.vocab, terms)
+            score = share(facets, case.get("facets") or {}, self.vocab, terms)
             if score <= 0:
                 continue
-            richness = min(3, counts.get(case["id"], 0)) * 0.3
+            richness = min(3, counts.get(case["id"], 0))
             recency = str(case.get("updated_at") or "")
-            scored.append((score + richness, recency, case))
-        scored.sort(key=lambda one: (one[0], one[1]), reverse=True)
-        return [case for _s, _r, case in scored]
+            scored.append((round(score, 6), richness, recency, case))
+        scored.sort(key=lambda one: one[:3], reverse=True)
+        return [one[-1] for one in scored]
 
     def pick(self, facets: Dict[str, List[str]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         ranked = self.similar_cases(facets)
@@ -310,6 +374,83 @@ class Finder:
                 per_unit[case["unit_id"]] += 1
         index = [case for case in ranked if case not in detailed][:INDEXED]
         return detailed[:DETAILED], index
+
+    def chosen(self, facets: Dict[str, List[str]], ranked: Sequence[Dict[str, Any]]
+               ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
+        """(in full, in the index, each in full -> its project's cases, it
+        first): by how alike the model said each is, one place a project,
+        none it said is not alike in full; by their terms when it said
+        nothing."""
+        said = getattr(self, "case_verdicts", {}) or {}
+        if not said:
+            detailed, index = self.pick(facets)
+            return detailed, index, {case["id"]: [case] for case in detailed}
+        order = {case["id"]: n for n, case in enumerate(ranked)}
+        by_id = {case["id"]: case for case in ranked}
+        # The same project, joined whichever way the model said it.
+        parent = {cid: cid for cid in said if cid in by_id}
+
+        def top(cid: str) -> str:
+            while parent[cid] != cid:
+                cid = parent[cid]
+            return cid
+
+        for cid in parent:
+            other = said[cid].get("same_as") or ""
+            if other in parent and top(other) != top(cid):
+                parent[top(cid)] = top(other)
+        projects: Dict[str, List[str]] = {}
+        for cid in parent:
+            projects.setdefault(top(cid), []).append(cid)
+
+        def alike(cid: str) -> int:
+            return int((said.get(cid) or {}).get("alike") or 0)
+
+        groups_by_head = []
+        for ids in projects.values():
+            ids.sort(key=lambda cid: (-alike(cid), order[cid]))
+            groups_by_head.append(ids)
+        groups_by_head.sort(key=lambda ids: (-alike(ids[0]), order[ids[0]]))
+        detailed: List[Dict[str, Any]] = []
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for ids in groups_by_head:
+            if len(detailed) < DETAILED and alike(ids[0]) > 0:
+                detailed.append(by_id[ids[0]])
+                groups[ids[0]] = [by_id[cid] for cid in ids]
+        index = [by_id[ids[0]] for ids in groups_by_head
+                 if ids[0] not in groups and alike(ids[0]) > 0]
+        index += [case for case in ranked if case["id"] not in said]
+        return detailed, index[:INDEXED], groups
+
+    def _judgments_of(self, group: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return [one for case in group for one in self._kept(self.store.judgments_of(case["id"]))]
+
+    def pick_judgments(self, job: str, questions: Sequence[Dict[str, Any]],
+                       long_cases: Sequence[Dict[str, Any]],
+                       groups: Dict[str, List[Dict[str, Any]]],
+                       ask: Optional[Callable[[str, str, int], Dict[str, Any]]]) -> None:
+        """THE SECOND CALL: of each long case chosen - with its project's
+        other cases - the judgments worth reading, in `self.picked`."""
+        if ask is None or not long_cases:
+            return
+        lines = [f"THE JOB: {job}", "", "THE REVIEWER'S QUESTIONS:"]
+        lines += [f"  {n}. ({one.get('kind') or 'requirement'}) {_line(one.get('q'), 300)}"
+                  for n, one in enumerate(questions, 1)]
+        lines += ["", f"CASES' JUDGMENTS (pick at most {JUDGMENTS_PICKED} of each):"]
+        for case in long_cases:
+            lines.append(f"CASE {case['id']}: {case.get('title', '')}")
+            for one in self._judgments_of(groups[case["id"]]):
+                said = f' "{_line(one["said"], 120)}"' if one.get("said") else ""
+                lines.append(f"  {one['id']} [{one.get('aspect') or ''}, {one['strength']}] "
+                             f"{one['object'].split(':', 1)[-1]}: "
+                             f"{_line(one['direction'], 160)}{said}")
+        said = ask(PICK_PROMPT, "\n".join(lines), 1500) or {}
+        picks = said.get("cases") if isinstance(said.get("cases"), dict) else {}
+        for case in long_cases:
+            mine = {one["id"] for one in self._judgments_of(groups[case["id"]])}
+            chosen = [str(one) for one in picks.get(case["id"]) or [] if str(one) in mine]
+            if chosen:
+                self.picked[case["id"]] = list(dict.fromkeys(chosen))[:JUDGMENTS_PICKED]
 
     def case_text(self, case: Dict[str, Any], full: bool = True,
                   only: Optional[Sequence[str]] = None, mark: bool = True) -> str:
@@ -346,32 +487,60 @@ class Finder:
                                                             if only is not None else ":"))
             for one in (judgments if only is not None
                         else sorted(judgments, key=lambda j: str(j.get("at") or ""))):
-                said = f' - "{_line(one["said"], 300)}"' if one.get("said") else ""
-                why = f" (why: {_line(one['why'], 200)})" if one.get("why") else ""
-                explained = "" if one["state"] == "linked" else " [no reason explains it yet]"
-                lines.append(f"    {one['id']} {one.get('at') or '?'} [{one['strength']}] "
-                             f"{one.get('item') or ''} {one['object'].split(':', 1)[-1]}: "
-                             f"{_line(one['direction'], 200)}{said}{why}{explained}")
+                lines.append(_judgment_line(one))
         if more:
             lines.append(f"  ({more} more of the user's judgments in it: open_case {case['id']})")
         return "\n".join(lines)
 
+    def group_text(self, group: Sequence[Dict[str, Any]],
+                   only: Optional[Sequence[str]] = None) -> str:
+        """A project of several cases as one: the first in full, the others
+        by what they look like - with their judgments, or those of `only`."""
+        first, *others = group
+        text = [self.case_text(first, only=only)]
+        for case in others:
+            self.expanded.add(case["id"])
+            judgments = self._kept(self.store.judgments_of(case["id"]))
+            text.append(f"  THE SAME PROJECT, ALSO {case['id']}: {case.get('title', '')} - "
+                        f"{_line(case.get('looks_like'), 200)}")
+            if only is not None:
+                by_id = {one["id"]: one for one in judgments}
+                picked = [by_id[one] for one in only if one in by_id]
+                more, judgments = len(judgments) - len(picked), picked
+            else:
+                more = 0
+                judgments = sorted(judgments, key=lambda j: str(j.get("at") or ""))
+            text += [_judgment_line(one) for one in judgments]
+            if more:
+                text.append(f"  ({more} more of the user's judgments in it: open_case {case['id']})")
+        return "\n".join(text)
+
     # -- the package ----------------------------------------------------------
     def answer(self, job: str, facets: Dict[str, List[str]],
                questions: Sequence[Dict[str, Any]],
-               ask: Optional[Callable[[str, str, int], Dict[str, Any]]] = None
-               ) -> Dict[str, Any]:
+               ask: Optional[Callable[[str, str, int], Dict[str, Any]]] = None,
+               had: Optional[Dict[str, Any]] = None, explain: bool = True) -> Dict[str, Any]:
         """The text the reviewer is given for its questions, and what it
-        rests on (for the run's log)."""
+        rests on (for the run's log). `had`: the reasons and cases its
+        context holds already ({"reasons": ids, "cases": ids, "index": ids})
+        - in "text" each is named, not given again; "whole" gives them all,
+        for the package kept to be given alone later. `explain`: why a reason
+        does not hold, written (a debugger run)."""
         questions = [one for one in questions if isinstance(one, dict)]
         candidates = self.candidates(facets)
-        detailed, index = self.pick(facets)
-        whole = {case["id"]: self.case_text(case, mark=False) for case in detailed}
+        ranked = self.similar_cases(facets)
+        verdicts = self.holds(job, facets, candidates, ask, questions,
+                              cases=ranked[:CASE_POOL], explain=explain)
+        detailed, index, groups = self.chosen(facets, ranked)
+        whole = {case["id"]: self.group_text(groups[case["id"]]) for case in detailed}
+        for case in detailed:
+            for one in groups[case["id"]]:
+                self.expanded.discard(one["id"])
         long_cases = []
         if sum(len(one) for one in whole.values()) > CASES_CHARS:
             long_cases = [case for case in detailed
-                          if len(self._kept(self.store.judgments_of(case["id"]))) > JUDGMENTS_PICKED]
-        verdicts = self.holds(job, facets, candidates, ask, questions, long_cases)
+                          if len(self._judgments_of(groups[case["id"]])) > JUDGMENTS_PICKED]
+            self.pick_judgments(job, questions, long_cases, groups, ask)
         given: Dict[str, Tuple[Dict[str, Any], Dict[str, Any]]] = {}
         new_questions = []
         for reason, _how, _why in candidates:
@@ -407,33 +576,33 @@ class Finder:
         # The cases: the long ones by their judgments picked (or, picked by
         # none, by kind, words and strength); always with what they were
         # made with.
-        cases_text = []
+        cases_text = {}
         for case in detailed:
             only = None
             if case in long_cases:
-                only = self.picked.get(case["id"]) or self._by_tags(case, questions)
-            cases_text.append(self.case_text(case, only=only))
+                only = self.picked.get(case["id"]) or self._by_tags(
+                    case, questions, self._judgments_of(groups[case["id"]]))
+            cases_text[case["id"]] = self.group_text(groups[case["id"]], only=only)
         # A fact or a way of working no reason answers outright: where the
-        # user's past work says it, and where this project's files do.
+        # user's past work says it, and where this project's files do - said
+        # in full once, then pointed back to.
         facts_asked = [n for n, q in enumerate(questions, 1) if q.get("kind") in ("fact", "habit")
                        and not any((given[rid][1].get("answers") or {}).get(n) == 3
                                    for rid in by_question.get(n, []))]
         made = [case["id"] for case in detailed] + [case["id"] for case in index[:4]]
+        said_of = getattr(self, "case_verdicts", {}) or {}
+
+        def made_for(n: int) -> List[str]:
+            """The cases said to help answer question n - else the closest."""
+            mine = [cid for cid in [case["id"] for case in detailed + index]
+                    if (said_of.get(cid) or {}).get("answers", {}).get(n, 0) >= ANSWERS_AT_LEAST]
+            return mine or made
+
         pointer = ("  No reason learned answers this outright. What the user used and did before is in "
-                   f"the cases below - what each looks like and how it was made ({', '.join(made)}); "
+                   "the cases below - what each looks like and how it was made ({}); "
                    "what this machine and project have, find out (search_files, read_file, run_python).")
-        tail = []
-        if any(q.get("kind") == "fact" for q in questions) or facts_asked:
-            tail.append("\n== FOR THE FACTS OF THIS PROJECT: what the cases below say they were "
-                        "made with and how; and search its files (search_files, read_file). ==")
-        if detailed:
-            tail.append("\n== THE CASES MOST LIKE THIS JOB (in full) ==")
-            tail += cases_text
-        if index:
-            tail.append("\n== OTHER CASES LIKE IT (open_case for more) ==")
-            tail += ["  " + self.case_text(case, full=False) for case in index]
-        for q in new_questions:
-            tail.append(f"\nA QUESTION FOR YOU, from {q['from']}: {q['q']}")
+        pointed = ("  No reason learned answers this outright - see under QUESTION "
+                   f"{facts_asked[0]}; the cases for it: {{}}." if facts_asked else "")
 
         # Packed by priority: each question's first; the unasked; the rest.
         order = [mine[0] for mine in by_question.values() if mine] + expected + \
@@ -442,8 +611,12 @@ class Finder:
                 "Reasons are why the user judges their work so - with when each holds, as read "
                 "from what they did. A reason SAID BY THE USER comes first; an INFERRED one is "
                 "the record's reading, weigh it as such."]
-        room = PACKAGE_CHARS - len("\n".join(head + tail)) - sum(
-            len(_line(q.get("q"), 300)) + 120 for q in questions) - len(pointer) * len(facts_asked)
+        tail_most = 300 + sum(len(one) + 1 for one in cases_text.values()) + sum(
+            len(self.case_text(case, full=False)) + 3 for case in index) + sum(
+            len(q["q"]) + 40 for q in new_questions)
+        room = PACKAGE_CHARS - len("\n".join(head)) - tail_most - sum(
+            len(_line(q.get("q"), 300)) + 120 for q in questions) - (len(pointer) + 200) - (
+            len(pointed) + 200) * len(facts_asked)
         texts: Dict[str, str] = {}
         for rid in dict.fromkeys(order):
             text = self._reason_text(*given[rid], facets)
@@ -451,34 +624,65 @@ class Finder:
                 texts[rid] = text
                 room -= len(text) + 1
 
-        out = list(head)
-        shown: List[str] = []
-        for n, q in enumerate(questions, 1):
-            out.append(f"\n== QUESTION {n} ({q.get('kind') or 'requirement'}): {_line(q.get('q'), 300)}")
-            mine = [rid for rid in by_question.get(n, []) if rid in texts]
-            for rid in mine:
-                out.append(f"{rid} - given above" if rid in shown else texts[rid])
-                shown.append(rid)
-            if n in facts_asked:
-                out.append(pointer)
-            elif not mine:
-                out.append("  (nothing learned bears on this)")
-        unasked = [rid for rid in expected if rid in texts]
-        if unasked:
-            out.append("\n== NOT ASKED, BUT THIS USER WOULD EXPECT IT OF THIS JOB ==")
-            out += [texts[rid] for rid in unasked]
-            shown += unasked
-        if not shown and not detailed:
-            out = ["NOTHING LEARNED OF THE USER'S WORK BEARS ON THIS JOB YET. Answer your "
-                   "questions from the user's words, their files, and - for what they leave "
-                   "open - the web (as told), and say so."]
-        else:
-            out += tail
-        text = "\n".join(out)
-        if len(text) > PACKAGE_CHARS:
-            text = text[:PACKAGE_CHARS] + "\n... (cut: open_case / open_reason for more)"
-        shown = list(dict.fromkeys(shown))
-        return {"text": text,
+        def shown_as(had: Dict[str, Any]) -> Tuple[str, List[str], List[str]]:
+            """The package, with what `had` holds named and not given again."""
+            had_reasons = {str(one) for one in had.get("reasons") or []}
+            had_cases = {str(one) for one in had.get("cases") or []}
+            had_index = had_cases | {str(one) for one in had.get("index") or []}
+            tail = []
+            if any(q.get("kind") == "fact" for q in questions) or facts_asked:
+                tail.append("\n== FOR THE FACTS OF THIS PROJECT: what the cases below say they "
+                            "were made with and how; and search its files (search_files, "
+                            "read_file). ==")
+            if detailed:
+                tail.append("\n== THE CASES MOST LIKE THIS JOB (in full) ==")
+                tail += [f"CASE {case['id']}: {case.get('title', '')} - given above, in full"
+                         if case["id"] in had_cases else cases_text[case["id"]]
+                         for case in detailed]
+            if index:
+                tail.append("\n== OTHER CASES LIKE IT (open_case for more) ==")
+                tail += [f"  {case['id']} {case.get('title', '')} - given above"
+                         if case["id"] in had_index else "  " + self.case_text(case, full=False)
+                         for case in index]
+            for q in new_questions:
+                tail.append(f"\nA QUESTION FOR YOU, from {q['from']}: {q['q']}")
+            out = list(head) if not had_reasons else [head[0]]
+            shown: List[str] = []
+            first_pointer = True
+            for n, q in enumerate(questions, 1):
+                out.append(f"\n== QUESTION {n} ({q.get('kind') or 'requirement'}): "
+                           f"{_line(q.get('q'), 300)}")
+                mine = [rid for rid in by_question.get(n, []) if rid in texts]
+                for rid in mine:
+                    out.append(f"{rid} - given above" if rid in shown or rid in had_reasons
+                               else texts[rid])
+                    shown.append(rid)
+                if n in facts_asked:
+                    out.append((pointer if first_pointer else pointed).format(
+                        ", ".join(made_for(n))))
+                    first_pointer = False
+                elif not mine:
+                    out.append("  (nothing learned bears on this)")
+            unasked = [rid for rid in expected if rid in texts]
+            if unasked:
+                out.append("\n== NOT ASKED, BUT THIS USER WOULD EXPECT IT OF THIS JOB ==")
+                out += [f"{rid} - given above" if rid in had_reasons else texts[rid]
+                        for rid in unasked]
+                shown += unasked
+            if not shown and not detailed:
+                out = ["NOTHING LEARNED OF THE USER'S WORK BEARS ON THIS JOB YET. Answer your "
+                       "questions from the user's words, their files, and - for what they leave "
+                       "open - the web (as told), and say so."]
+            else:
+                out += tail
+            text = "\n".join(out)
+            if len(text) > PACKAGE_CHARS:
+                text = text[:PACKAGE_CHARS] + "\n... (cut: open_case / open_reason for more)"
+            return text, list(dict.fromkeys(shown)), unasked
+
+        whole, shown, unasked = shown_as({})
+        text = shown_as(had)[0] if had and any(had.values()) else whole
+        return {"text": text, "whole": whole,
                 "found": {"reasons": shown,
                           "holds": {rid: given[rid][1] for rid in shown},
                           "by_question": {str(n): [rid for rid in mine if rid in texts]
@@ -488,6 +692,9 @@ class Finder:
                           "judgments_picked": {case["id"]: self.picked.get(case["id"]) or "by kind"
                                                for case in long_cases},
                           "index": [case["id"] for case in index],
+                          "same_project": {cid: [one["id"] for one in group[1:]]
+                                           for cid, group in groups.items() if len(group) > 1},
+                          "cases_judged": said_of,
                           "questions_raised": new_questions,
                           "facets": facets}}
 
@@ -502,7 +709,8 @@ class Finder:
         lines = [f"{reason['id']} [{tag}] {reason['statement']}",
                  f"    when: {cond.get('text', '')}"
                  + (f" - except {dumps(cond.get('excluded'))}" if cond.get("excluded") else "")]
-        state = {"yes": "its condition holds here", "unknown": "it may hold - see the question"}
+        state = {"yes": verdict.get("here") or "its condition holds here",
+                 "unknown": "it may hold - see the question"}
         lines.append(f"    here: {state.get(verdict.get('holds'), 'it may hold')}"
                      + (f" ({verdict.get('coverage')}: not seen in a job like this yet)"
                         if verdict.get("coverage") == "near" else "")
@@ -521,7 +729,8 @@ class Finder:
             lines.append(f"    e.g. {case.get('id', '')} {title}: {_line(one['direction'], 120)}")
         return "\n".join(lines)
 
-    def _by_tags(self, case: Dict[str, Any], questions: Sequence[Dict[str, Any]]) -> List[str]:
+    def _by_tags(self, case: Dict[str, Any], questions: Sequence[Dict[str, Any]],
+                 judgments: Optional[Sequence[Dict[str, Any]]] = None) -> List[str]:
         """A long case's judgments picked with no model: of the kinds asked
         about most, the tools it was made with when a stack or a tool is asked
         about, the user's own words and what they changed first."""
@@ -537,7 +746,8 @@ class Finder:
                     not one.get("said"), strength.get(one.get("strength"), 3),
                     str(one.get("at") or ""))
 
-        mine = sorted(self._kept(self.store.judgments_of(case["id"])), key=score)
+        mine = sorted(judgments if judgments is not None
+                      else self._kept(self.store.judgments_of(case["id"])), key=score)
         return [one["id"] for one in mine[:JUDGMENTS_PICKED]]
 
     # -- the reviewer's tools ---------------------------------------------------

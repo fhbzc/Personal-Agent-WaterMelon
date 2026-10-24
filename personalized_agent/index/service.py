@@ -6,9 +6,13 @@ agents' records bring, the records themselves when listed, their Work
 projects' folders. No other folder of theirs is read. The agent's own data
 is never gone into.
 
-WHEN: a few minutes after the application starts, then every few hours,
-and soon after the folders change - each time reading again only what
-changed (build.py). In a process of its own, at the lowest priority
+WHEN: AT THE LEARNING'S TIMES, at the start of each of its updates - one
+switch and one clock for both (learning/service.py): an update the user
+starts brings it up to date too, and a time missed while the computer was
+off brings one update when it is back. Not when the application starts.
+A folder just added is read soon after, alone, while the switch is on; a
+folder taken out is forgotten then. Each time only what changed is read
+again (build.py). In a process of its own, at the lowest priority
 (worker.py); one at a time.
 
 SEARCH: by words, through `search` - each finding with its file, where in
@@ -25,20 +29,18 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from .rules import LINES_PER_PIECE
 from .store import IndexStore, fts5_available
+from .talk import lines_of, talk_text
 
 log = logging.getLogger(__name__)
 
 INDEX_FLAG = "--index-worker"
-#: After the application starts, before the first build.
-FIRST_AFTER_SECONDS = 180
-#: Between builds.
-EVERY_SECONDS = 6 * 3600
-#: After the folders change.
+#: After the folders change: the folders added read, those taken out forgotten.
 AFTER_CHANGE_SECONDS = 20
 #: The most of a finding's text given.
 MOST_SHOWN = 1200
@@ -67,7 +69,9 @@ class LocalIndex:
 
     # -- which folders ------------------------------------------------------------------
     def enabled(self) -> bool:
-        return bool(self.app.config.get("index_enabled", True))
+        """The learning's switch: one for both."""
+        learning = getattr(self.app, "learning", None)
+        return bool(learning is not None and learning.auto_on())
 
     def added(self) -> List[str]:
         return [str(one) for one in self.app.config.get("index_folders") or [] if str(one).strip()]
@@ -121,38 +125,44 @@ class LocalIndex:
 
     # -- building -----------------------------------------------------------------------
     def begin(self) -> None:
-        """Builds at their times, until the application stops."""
+        """The folders added read, and those taken out forgotten, soon after
+        they change - until the application stops. The builds at their
+        times are the learning's (`build_now` from its update)."""
         if self._thread is not None:
             return
         self._thread = threading.Thread(target=self._loop, name="local-index", daemon=True)
         self._thread.start()
 
     def _loop(self) -> None:
-        wait = FIRST_AFTER_SECONDS
         while not self._halt.is_set():
-            self._wake.wait(wait)
+            self._wake.wait()
             if self._halt.is_set():
                 return
-            if self._wake.is_set():
-                self._wake.clear()
+            self._wake.clear()
+            remaining = self._soon_at - time.time()
+            while remaining > 0 and not self._halt.wait(remaining):
                 remaining = self._soon_at - time.time()
-                if remaining > 0:
-                    wait = remaining
-                    continue
-            if self.enabled():
-                self.build_now(wait=True)
-            wait = EVERY_SECONDS
+            if self._halt.is_set():
+                return
+            self.build_now(wait=True, only_new=True)
 
     def soon(self) -> None:
         """The folders changed: built again in a moment."""
         self._soon_at = time.time() + AFTER_CHANGE_SECONDS
         self._wake.set()
 
-    def build_now(self, wait: bool = False) -> Dict[str, Any]:
+    def build_now(self, wait: bool = False, only_new: bool = False) -> Dict[str, Any]:
         """A build started - unless one is going - and, with `wait`, its end
-        waited for."""
+        waited for (one going waited for first, then this one). `only_new`:
+        the folders taken out forgotten, and those never read yet read - and
+        those only while the switch is on."""
         if not fts5_available():
             return {"error": "this Python's SQLite has no full-text search (FTS5)"}
+        going = self._child
+        if going is not None and going.poll() is None:
+            if not wait:
+                return {"building": True}
+            going.wait()
         with self._lock:
             if self._child is not None and self._child.poll() is None:
                 return {"building": True}
@@ -160,8 +170,15 @@ class LocalIndex:
             job.parent.mkdir(parents=True, exist_ok=True)
             # Folders no longer indexed are forgotten first.
             self._forget_dropped()
-            job.write_text(json.dumps({"db": str(self.path), "roots": self.roots(),
-                                       "never": self.never()}, ensure_ascii=False),
+            roots = self.roots()
+            only = None
+            if only_new:
+                only = self._not_read_yet(roots) if self.enabled() else []
+                if not only:
+                    return {"building": False}
+            job.write_text(json.dumps({"db": str(self.path), "roots": roots,
+                                       "never": self.never(), "only": only},
+                                      ensure_ascii=False),
                            encoding="utf-8")
             from ..common import children
             command = ([sys.executable, INDEX_FLAG, str(job)] if getattr(sys, "frozen", False)
@@ -197,6 +214,21 @@ class LocalIndex:
             if isinstance(said, dict):
                 self._progress.update(said)
 
+    def _not_read_yet(self, roots: List[Dict[str, Any]]) -> List[str]:
+        """The folders walked that no build has gone through yet."""
+        from .build import outermost
+        walked, _within = outermost(roots)
+        done = set()
+        if self.path.exists():
+            store = IndexStore(self.path, read_only=True)
+            try:
+                done = {os.path.normcase(os.path.abspath(one["path"])) for one in store.roots()
+                        if one.get("state") == "done"}
+            finally:
+                store.close()
+        return [one["path"] for one in walked
+                if os.path.normcase(os.path.abspath(one["path"])) not in done]
+
     def _forget_dropped(self) -> None:
         if not self.path.exists():
             return
@@ -220,6 +252,39 @@ class LocalIndex:
             end_tree(child)
 
     # -- what is shown ------------------------------------------------------------------
+    def shown(self) -> Dict[str, Any]:
+        """HOW FAR A BUILD IS, for the Learning panel's own bar beside the
+        learning's (the user, 2026-10-24): the folder being read, the files
+        walked of those the last build had (`share`, None when that is not
+        known - a folder never built), or the file being made small again;
+        when none is going, when the last ended and what it keeps."""
+        building = self._child is not None and self._child.poll() is None
+        said = dict(self._progress)
+        out: Dict[str, Any] = {"building": building}
+        if building:
+            expected = int(said.get("expected") or 0)
+            walked = int(said.get("walked") or 0)
+            known = bool(said.get("expected_all")) and expected > 0
+            out.update({"root": str(said.get("root") or ""), "walked": walked,
+                        "expected": expected if known else 0,
+                        "share": min(0.99, walked / expected) if known else None,
+                        "tidying": bool(said.get("tidying")),
+                        "waiting": str(said.get("waiting") or "")})
+            return out
+        if self.path.exists():
+            store = IndexStore(self.path, read_only=True)
+            try:
+                ended = [one.get("done_at") for one in store.roots()
+                         if one.get("state") == "done" and one.get("done_at")]
+                out["done_at"] = (datetime.fromtimestamp(max(ended), timezone.utc).isoformat()
+                                  if ended else None)
+                out.update(store.counts())
+            except Exception:                       # pragma: no cover - being made
+                pass
+            finally:
+                store.close()
+        return out
+
     def status(self) -> Dict[str, Any]:
         building = self._child is not None and self._child.poll() is None
         kept: Dict[str, Dict[str, Any]] = {}
@@ -262,6 +327,7 @@ class LocalIndex:
             store.close()
         out: List[Dict[str, Any]] = []
         now = time.time()
+        records: Dict[str, str] = {}
         for one in found:
             path = one["path"]
             try:
@@ -273,7 +339,7 @@ class LocalIndex:
             age_days = max(0.0, (now - float(one.get("mtime") or now)) / 86400)
             one["rank"] = one["score"] * (1.0 + 0.3 / (1.0 + age_days / 30))
             if one["found_in"] == "text":
-                one["text"] = self._lines(path, int(one["line"] or 1))
+                one["text"] = self._lines(path, int(one["line"] or 1), one.get("kind"), records)
             out.append(one)
         out.sort(key=lambda one: one["rank"])
         return [{"path": one["path"], "line": one.get("line"), "found_in": one["found_in"],
@@ -282,7 +348,15 @@ class LocalIndex:
                 for one in out[:limit]]
 
     @staticmethod
-    def _lines(path: str, line: int) -> str:
+    def _lines(path: str, line: int, kind: Optional[str] = None,
+               records: Optional[Dict[str, str]] = None) -> str:
+        """The piece found, from the file as it is now - a conversation
+        record's from what is kept of it (talk.py), read once a search."""
+        if kind == "talk":
+            records = {} if records is None else records
+            if path not in records:
+                records[path] = talk_text(Path(path)) or ""
+            return lines_of(records[path], line, LINES_PER_PIECE)[:MOST_SHOWN]
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as handle:
                 lines = handle.read().splitlines()

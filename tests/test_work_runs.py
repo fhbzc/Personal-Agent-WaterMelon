@@ -704,9 +704,10 @@ class ARunIsTwoAgentsTests(unittest.TestCase):
                             for p in prompts))
 
     def test_the_work_agent_is_pointed_to_the_users_past_work(self) -> None:
-        # A past deliverable like this one, where a case says it is: chosen
-        # for the notes by a call of the reviewer's own, checked, and on the
-        # card the work agent reads - with what to take from it.
+        # A past deliverable like this one, where a case says it is: proposed
+        # for the notes by a call of its own, chosen by the reviewer in its
+        # own context, checked, and on the card the work agent reads - with
+        # what to take from it and what not.
         import json as _json
         import re
         from personalized_agent.learning.store import LearningStore
@@ -736,15 +737,25 @@ class ARunIsTwoAgentsTests(unittest.TestCase):
                     self.chose_from = said
                     card = re.search(r"(card_[0-9a-zA-Z]+): The notes", said).group(1)
                     return self._reply(_json.dumps({"cards": {card: [
-                        {"path": str(past / "README.md"), "take": "Its sections."},
+                        {"path": str(past / "README.md"), "summary": "Notes from before.",
+                         "why": "notes too", "take": "Its sections."},
                         {"path": str(past / "gone.md"), "take": "Not there."}]}}))
+                if "THE USER'S PAST WORK PROPOSED AS REFERENCES" in last:
+                    self.asked.append(request)
+                    self.shown_to_reviewer = last
+                    card = re.search(r"(card_[0-9a-zA-Z]+): The notes", last).group(1)
+                    return self._reply(_json.dumps({"cards": {card: [
+                        {"path": str(past / "README.md"), "take": "Its sections.",
+                         "not": "Its old greeting."}]}}))
                 return super().invoke(request, role)
         models = _Pointing()
         run, _started = self._run(models)
         self.assertEqual(run["status"], "done", run["log"][-6:])
         self.assertIn("## Greeting", models.chose_from, "shown by its first lines")
         self.assertNotIn("gone.md", models.chose_from, "a candidate not on disk is not shown")
-        line = f"look at: {past / 'README.md'} - Its sections."
+        self.assertIn("what it is: Notes from before.", models.shown_to_reviewer)
+        self.assertNotIn("gone.md", models.shown_to_reviewer)
+        line = f"look at: {past / 'README.md'} - Its sections. Not: Its old greeting."
         builder = [_json.dumps(r.messages, default=str) for r in models.asked
                    if "You review a work agent" not in r.system
                    and "THE USER'S PAST WORK AS REFERENCES" not in (r.system or "")

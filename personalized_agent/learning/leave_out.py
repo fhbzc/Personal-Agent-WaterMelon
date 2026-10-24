@@ -37,7 +37,9 @@ _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 
 def _norm(path: Any) -> str:
-    text = str(path or "").strip().replace("\\", "/").rstrip("/").lower()
+    # The punctuation a summary writes after a path is not of it: a folder
+    # was missed as "personalized-agent-release)" (try 4, 2026-10-24).
+    text = str(path or "").strip().rstrip(").,;:'\"]>").replace("\\", "/").rstrip("/").lower()
     if text.startswith("~/"):
         text = str(Path.home()).replace("\\", "/").lower() + text[1:]
     return text
@@ -116,11 +118,15 @@ class LeaveOut:
 
     def record_out(self, places: Iterable[Any], text: Any = "") -> bool:
         """Whether one of the user's records is of a folder left out - and
-        so not given at all: half or more of the places it rests on lie
-        there, or, resting on none, its words name one."""
+        so not given at all: half or more of the files, folders and sessions
+        it rests on lie there, or, resting on none, its words name one. The
+        pages and window titles beside them do not count: one test of an
+        earlier try rested on a file of it and fourteen pages and windows,
+        and was given (try 4, 2026-10-24)."""
         if not self:
             return False
-        places = [one for one in places if str(one or "").strip()]
+        places = [one for one in places if _SESSION.match(str(one or "").strip())
+                  or _ABSOLUTE.match(_norm(one))]
         if places:
             return 2 * sum(1 for one in places if self.touches(one)) >= len(places)
         return self.named_in(text)
@@ -130,7 +136,10 @@ class LeaveOut:
         text = str(ref or "").strip()
         said = _SESSION.match(text)
         if said:
-            return said.group(1).lower() in self.sessions
+            # A session named by the start of its id, as a summary names it.
+            named = said.group(1).lower().rstrip(").,;:")
+            return named in self.sessions or (len(named) >= 8 and any(
+                one.startswith(named) for one in self.sessions))
         path = _norm(text)
         if not path:
             return False

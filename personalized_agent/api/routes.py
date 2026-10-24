@@ -403,21 +403,18 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
 
     @route("POST", "/api/index")
     def local_index_change(request: Any) -> Any:
-        """The index on or off, or a build started now. Its folders are the
-        learning's places, listed in Work's Learning panel (/api/learning)."""
+        """A build started now. Its folders are the learning's places, and
+        its switch and times the learning's - one for both, in Work's
+        Learning panel (/api/learning)."""
         action = str(request.require("action"))
         index = app.local_index
-        if action == "enable":
-            app.config.set("index_enabled", bool(request.get("on", True)))
-            if app.config.get("index_enabled", True):
-                index.soon()
-        elif action == "build":
+        if action == "build":
             said = index.build_now()
             if said.get("error"):
                 raise ApiError(said["error"])
         else:
-            raise ApiError("action is enable or build - the folders are listed in Work's "
-                           "Learning panel")
+            raise ApiError("action is build - the folders, the switch and the times are "
+                           "the learning's, in Work's Learning panel")
         return index.status()
 
     @route("GET", "/api/learning")
@@ -425,8 +422,9 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         """WORK'S LEARNING PANEL: the switch and the times, the update open
         or the last one, the places and what they bring, the spending."""
         said = app.learning.status()
-        said["index"] = {key: value for key, value in app.local_index.status().items()
-                         if key in ("enabled", "available", "building", "files", "texts")}
+        from ..index.store import fts5_available
+        said["index"] = {"enabled": app.local_index.enabled(), "available": fts5_available(),
+                         **app.local_index.shown()}
         return said
 
     @route("POST", "/api/learning")

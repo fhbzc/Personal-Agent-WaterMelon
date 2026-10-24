@@ -9,9 +9,12 @@ place in a folder left out; the newest of a deliverable, a final one before
 a draft; a few of each case, each with its first lines (a folder: its first
 two levels). A call of their own - not the reviewer's own context, which
 every one of its calls carries again - is shown the deliverables and the
-candidates, may read any candidate whole, and gives each deliverable at most
-`PER_CARD` - or none: a reference that does not fit is worse than none.
-What to take from it, the form alone or some of the content, it says.
+candidates, may read any candidate whole, and PROPOSES for each deliverable
+at most `PROPOSED`, each with what it is, why it fits and what might be
+taken. The reviewer CHOOSES of those, in its own context (the user,
+2026-10-24) - at most `PER_CARD` a deliverable, or none: a reference that
+does not fit is worse than none - with what to take, the form alone or some
+of the content, and what not to.
 
 What it gives is checked before the work agent sees it: there, readable by
 that agent, not in a folder left out. One that is not is dropped, never
@@ -22,13 +25,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 #: Candidates shown, at most; of one case; the first characters of each.
 CANDIDATES = 20
 PER_CASE = 3
 EXCERPT = 1000
-#: References given one deliverable, at most; the tool rounds of the call.
+#: References proposed for one deliverable, given it, at most; the tool
+#: rounds of a call.
+PROPOSED = 3
 PER_CARD = 2
 READS = 8
 #: What a file's first lines can be read of; folders not walked into.
@@ -43,20 +48,22 @@ TREE_LINES = 40
 PROMPT = """THE USER'S PAST WORK AS REFERENCES FOR THIS WORK'S DELIVERABLES.
 
 Below are the deliverables of a piece of work, and files and folders of the
-user's from past work like it. For each deliverable, choose AT MOST {per_card}
-that the work agent should look at while making it - one whose form,
-structure or content is worth following for that deliverable - and say in
-one sentence what to take from it: its form alone (the sections of a README,
-the layout of a report, how a project's folders are laid out), or parts of
-its content too. You decide which, by what fits.
+user's from past work like it. For each deliverable, propose AT MOST
+{per_card} that the work agent might look at while making it - one whose
+form, structure or content may be worth following for that deliverable. For
+each: what it is, in a sentence or two; why it fits the deliverable; and
+what might be taken from it - its form alone (the sections of a README, the
+layout of a report, how a project's folders are laid out), or parts of its
+content too. The reviewer decides which are given.
 
-Choose none for a deliverable when none fits it: a reference that does not
+Propose none for a deliverable when none fits it: a reference that does not
 fit misleads, and is worse than none. A candidate's first lines are shown;
 read one whole with read_file, or look into a folder with list_dir, before
-you choose it if its first lines do not settle it.
+you propose it if its first lines do not settle it.
 
 Return ONLY this JSON object:
-{{"cards": {{"<card id>": [{{"path": "...", "take": "one sentence"}}], ...}}}}"""
+{{"cards": {{"<card id>": [{{"path": "...", "summary": "what it is",
+                            "why": "why it fits", "take": "what might be taken"}}], ...}}}}"""
 
 
 def _newest_first(places: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -143,37 +150,69 @@ def content(cards: Sequence[Dict[str, Any]], found: Sequence[Dict[str, Any]]) ->
     return "\n".join(lines)
 
 
+def _plain(text: Any, most: int = 300) -> str:
+    return " ".join(str(text or "").split())[:most]
+
+
 def checked(said: Any, cards: Sequence[Dict[str, Any]], readable: Callable[[str], bool],
-            leave_out: Any) -> Dict[str, List[Dict[str, str]]]:
-    """What the call gave, as the work agent is to see it: for each
-    deliverable at most `PER_CARD`, each there, readable by that agent and
-    in no folder left out."""
+            leave_out: Any, most: int = PER_CARD,
+            among: Optional[Dict[str, List[Dict[str, str]]]] = None
+            ) -> Dict[str, List[Dict[str, str]]]:
+    """What a call gave: for each deliverable at most `most`, each there,
+    readable by the work agent and in no folder left out - and, chosen by
+    the reviewer, one of those proposed for that deliverable (`among`)."""
     given = said.get("cards") if isinstance(said, dict) and isinstance(said.get("cards"), dict) else {}
     out: Dict[str, List[Dict[str, str]]] = {}
     for card in cards:
         kept: List[Dict[str, str]] = []
+        allowed = None if among is None else {one["path"] for one in among.get(card["id"]) or []}
         for one in given.get(card["id"]) or []:
             if not isinstance(one, dict):
                 continue
             path = str(one.get("path") or "").strip()
-            take = " ".join(str(one.get("take") or "").split())[:300]
+            take = _plain(one.get("take"))
             if not path or not take or any(path == k["path"] for k in kept):
+                continue
+            if allowed is not None and path not in allowed:
                 continue
             try:
                 there = Path(path).expanduser().exists()
             except OSError:
                 there = False
             if there and readable(path) and not leave_out.touches(path):
-                kept.append({"path": path, "take": take})
-            if len(kept) >= PER_CARD:
+                kept.append({"path": path, "take": take, **{
+                    key: _plain(one.get(key)) for key in ("summary", "why", "not")
+                    if _plain(one.get(key))}})
+            if len(kept) >= most:
                 break
         out[card["id"]] = kept
     return out
 
 
+def proposed_text(cards: Sequence[Dict[str, Any]],
+                  proposed: Dict[str, List[Dict[str, str]]]) -> str:
+    """The references proposed, as the reviewer is shown them: whole, by
+    deliverable - each with its path, what it is, why it fits and what might
+    be taken; the files themselves it opens if it needs."""
+    lines: List[str] = []
+    for card in cards:
+        mine = proposed.get(card["id"]) or []
+        if not mine:
+            continue
+        lines.append(f"\n{card['id']}: {card.get('title', '')}")
+        for one in mine:
+            lines.append(f"  - {one['path']}")
+            for key, said in (("what it is", "summary"), ("why it fits", "why"),
+                              ("might take", "take")):
+                if one.get(said):
+                    lines.append(f"      {key}: {one[said]}")
+    return "\n".join(lines).strip()
+
+
 def shown(references: Any) -> List[str]:
-    """A card's references as its lines read."""
+    """A card's references as its lines read: what to take, and what not."""
     return [f"    look at: {one.get('path')} - {one.get('take')}"
+            + (f" Not: {one['not']}" if one.get("not") else "")
             for one in references or [] if isinstance(one, dict) and one.get("path")]
 
 

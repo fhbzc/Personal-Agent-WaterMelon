@@ -168,8 +168,8 @@ def records(db: Any, leave_out: Any = None) -> List[Dict[str, Any]]:
     except Exception:
         pass
     try:
-        for row in db.query("SELECT id, task_id, summary, work, states, ended, began FROM "
-                            "experience_stages WHERE scope = 'live'"):
+        for row in db.query("SELECT id, task_id, summary, work, deliverable, states, ended, "
+                            "began FROM experience_stages WHERE scope = 'live'"):
             work = _loads(row["work"])
             words = " ".join(str(one) for one in work.get("keywords") or [])
             if not words:
@@ -177,7 +177,8 @@ def records(db: Any, leave_out: Any = None) -> List[Dict[str, Any]]:
             out.append({"kind": "stage", "id": row["id"], "title": str(row["summary"] or "")[:200],
                         "text": words, "detail": str(row["summary"] or "")[:400],
                         "at": row["ended"] or row["began"],
-                        "places": _of_states(places, row["states"])})
+                        "places": _of_states(places, row["states"]) + (
+                            _stage_places(work, _loads(row["deliverable"])) if leave_out else [])})
     except Exception:
         pass
     if not leave_out:
@@ -201,6 +202,37 @@ def _places_of_states(db: Any) -> Dict[str, List[str]]:
             out[row["id"]] = state_places(SimpleNamespace(metadata=_loads(row["metadata"])))
     except Exception:
         pass
+    return out
+
+
+def _stage_places(work: Dict[str, Any], deliverable: Dict[str, Any]) -> List[str]:
+    """Where a stage's own record says it was: its deliverable's references
+    and its work's locations - a stage of the agent's own work was made of no
+    state, and its record names the repository and the conversation it was
+    in (try 4, 2026-10-24). A commit after a path, a session by "session"."""
+    found: List[str] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            for key, inner in value.items():
+                if key == "location" and isinstance(inner, str):
+                    found.append(inner)
+                else:
+                    walk(inner)
+        elif isinstance(value, list):
+            for inner in value:
+                walk(inner)
+
+    walk(deliverable.get("references") or [])
+    walk(work)
+    out = []
+    for one in found:
+        one = one.strip()
+        said = re.search(r"\bsession\s+([0-9a-f][0-9a-f-]{7,})", one, re.IGNORECASE)
+        if said:
+            out.append(f"session {said.group(1)}")
+        elif one:
+            out.append(re.split(r"\s+@\s+|\s+\(", one)[0])
     return out
 
 

@@ -20,7 +20,9 @@ is open.
 
 THE CLOCK (`learning_auto_on`, `learning_times`): updates by themselves only
 when the switch is on AND at least one time is set (both off and empty at
-first), and the Work learning module is on. A time that passes while the
+first), and the Work learning module is on. THE LOCAL INDEX goes by the
+same switch and clock: it is brought up to date at the start of every
+update, before anything is read (`before_update`; index/service.py). A time that passes while the
 computer was off starts one update when it is back, its cutoff THAT time.
 A time that passes while an update is still open is CANCELLED - said on the
 update - and the next update waits for the next time.
@@ -33,7 +35,7 @@ import logging
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from .ask import Asker
 from .places import Places
@@ -77,6 +79,9 @@ class Learning:
         self._stop = threading.Event()
         self._clock: Optional[threading.Thread] = None
         self._sessions_cache: Optional[List[Any]] = None
+        #: Run at the start of an update, before anything is read: the
+        #: local index brought up to date (set by the application).
+        self.before_update: Optional[Callable[[], Any]] = None
 
     # -- settings -------------------------------------------------------------
     def times(self) -> List[str]:
@@ -234,6 +239,18 @@ class Learning:
         sessions = self.places.sessions()
         plan = update.get("plan") or {}
         if not plan.get("units"):
+            if self.before_update is not None and not plan.get("indexed"):
+                update["now_reading"] = "the local index"
+                self.store.save_update(update)
+                try:
+                    self.before_update()
+                except Exception:
+                    log.warning("the local index could not be brought up to date",
+                                exc_info=True)
+                self._check(update_id)
+                update = self.store.update(update_id)
+                update["plan"] = {"indexed": True}
+                self.store.save_update(update)
             plan = self._plan(update_id, ask, reader, sessions, cutoff)
             update = self.store.update(update_id)
             update["plan"] = plan

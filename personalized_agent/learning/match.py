@@ -74,25 +74,40 @@ def coverage(condition: Dict[str, Any], facets: Dict[str, Sequence[str]], vocab:
     return "covered", why
 
 
+#: How much each dimension counts: the deliverable most, then purpose and
+#: presentation, then audience, then the tools; and how near two terms are.
+WEIGHTS = {"deliverable": 4.0, "purpose": 2.0, "presentation": 2.0,
+           "audience": 1.5, "environment": 0.5}
+NEAR = {"same": 1.0, "under": 0.75, "over": 0.75, "sibling": 0.5}
+
+
 def closeness(one: Dict[str, Sequence[str]], other: Dict[str, Sequence[str]],
               vocab: Vocabulary, terms: Dict[str, Dict[str, Any]]) -> float:
-    """How alike two cases (or a job and a case) are, by their terms: the
-    deliverable counts most, then purpose and presentation, then audience,
-    then the tools."""
-    weights = {"deliverable": 4.0, "purpose": 2.0, "presentation": 2.0,
-               "audience": 1.5, "environment": 0.5}
+    """How alike two cases (or a job and a case) are, by their terms: in
+    each dimension the nearest pair of terms."""
     score = 0.0
-    for dim, weight in weights.items():
+    for dim, weight in WEIGHTS.items():
         a, b = list(one.get(dim) or []), list(other.get(dim) or [])
         if not a or not b:
             continue
-        best = 0.0
-        for x in a:
-            for y in b:
-                how = vocab.relation(x, y, terms)
-                value = {"same": 1.0, "under": 0.75, "over": 0.75, "sibling": 0.5}.get(how, 0.0)
-                best = max(best, value)
-        score += weight * best
+        score += weight * max(NEAR.get(vocab.relation(x, y, terms), 0.0) for x in a for y in b)
+    return score
+
+
+def share(job: Dict[str, Sequence[str]], case: Dict[str, Sequence[str]],
+          vocab: Vocabulary, terms: Dict[str, Dict[str, Any]]) -> float:
+    """How much of a job a case has, by their terms: in each dimension the
+    share of the job's terms the case has one near - so a case of all three
+    deliverables of a job comes before one of a single one (try 4, 2026-10-24:
+    by the nearest pair, six cases tied and the most like the job came
+    sixth)."""
+    score = 0.0
+    for dim, weight in WEIGHTS.items():
+        a, b = list(job.get(dim) or []), list(case.get(dim) or [])
+        if not a or not b:
+            continue
+        score += weight * sum(max(NEAR.get(vocab.relation(x, y, terms), 0.0) for y in b)
+                              for x in a) / len(a)
     return score
 
 

@@ -1162,13 +1162,16 @@ class DebugProjects:
 
     def waiting(self, project_id: str, variant: str) -> Dict[str, Any]:
         """A way waiting for room (runner.WorkRuns._room_for): why, since
-        when, how far along - and, one that waited and then could not
-        start, why not."""
+        when, how far along - and, one that could not start, why not:
+        after it waited (`waited`), or when it was asked to."""
         unit = self.unit(project_id, variant)
         if unit is None:
             return {}
         said = self.work.waiting_of(unit["id"]) or {}
         out = self.work.waited_out.get(unit["id"])
+        if out:
+            return dict(said, could_not_start=out, waited=True)
+        out = getattr(self.work, "started_out", {}).get(unit["id"])
         return dict(said, **({"could_not_start": out} if out else {}))
 
     def unwait(self, project_id: str, variant: str) -> Dict[str, Any]:
@@ -1177,6 +1180,7 @@ class DebugProjects:
         if unit is None:
             return {"error": "no such project or way"}
         self.work.waited_out.pop(unit["id"], None)
+        getattr(self.work, "started_out", {}).pop(unit["id"], None)
         return {"unwaited": self.work.unwait(unit["id"])}
 
     def start(self, project_id: str, variant: str, limits: Any = None,

@@ -16,6 +16,12 @@ from . import schema
 log = logging.getLogger(__name__)
 
 
+def _own_tmp(path: Path) -> Path:
+    """Where a save is written before it is moved into place: this process's
+    own, so two processes saving at once never move each other's."""
+    return path.with_name(f"{path.stem}.{os.getpid()}.tmp")
+
+
 USER_DEFAULTS_FILENAME = "user-defaults.json"
 
 
@@ -222,8 +228,11 @@ class ConfigStore:
         # values: every save goes through the one .tmp file, and two threads
         # saving at once - the round and the patterns built beside it - had
         # one move the file away while the other was still writing or moving
-        # it, and that save failed.
-        tmp = self.path.with_suffix(".tmp")
+        # it, and that save failed. AND A .TMP OF THIS PROCESS'S OWN: two
+        # debugger ways started together each began by saving the settings,
+        # one moved the shared .tmp into place first, and the other's move
+        # found it gone - that way never started (2026-10-24).
+        tmp = _own_tmp(self.path)
         with self._lock:
             payload = json.dumps(self._values, indent=2, ensure_ascii=False, sort_keys=True)
             tmp.write_text(payload, encoding="utf-8")
@@ -249,7 +258,7 @@ class ConfigStore:
                 log.warning("ignoring invalid user default %s", key)
 
     def _save_user_defaults(self) -> None:
-        tmp = self.user_defaults_path.with_suffix(".tmp")
+        tmp = _own_tmp(self.user_defaults_path)
         with self._lock:
             payload = json.dumps(self._user_defaults, indent=2, ensure_ascii=False,
                                  sort_keys=True)
@@ -350,6 +359,9 @@ class ConfigStore:
             )
         coerced = schema.coerce(key, value)
         with self._lock:
+            # A value set again as it was is not written again: every process
+            # that starts sets some (`workspace_root`), most often unchanged.
+            same = key in self._values and self._values[key] == coerced
             old = self._values.get(key)
             self._values[key] = coerced
             # Section 12.1: a value the user chose is their default from now on.
@@ -361,7 +373,8 @@ class ConfigStore:
                 changed_default = True
             else:
                 changed_default = False
-        self._save()
+        if not same:
+            self._save()
         if changed_default:
             self._save_user_defaults()
         if old != coerced and self._bus is not None:

@@ -4,12 +4,15 @@ and read while it is.
 
     files       every file kept: its path, the folder it was found under,
                 its size and time (what tells a change), and how it is kept
-                ("text": its words; "name": its name alone)
+                ("text": its words; "talk": a conversation record's, as
+                talk.py keeps it; "name": its name alone)
     pieces      each LINES_PER_PIECE lines of a text file: where they start
     piece_words the words of each piece (FTS5, rowid = the piece)
     name_words  the words of each file's name and its folders' (FTS5,
                 rowid = the file)
     roots       each folder indexed: how many files, how far, when done
+                ("within": walked with a folder it is inside)
+    meta        what the index was built by (the rules' version)
 
 The words are kept, not the text: the full-text tables keep no copy of what
 they index where SQLite can delete from one that does not
@@ -20,6 +23,7 @@ never the text of the file.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -75,6 +79,7 @@ class IndexStore:
             + (f", {keeps}" if keeps else "") + ")",
             "CREATE TABLE IF NOT EXISTS roots (path TEXT PRIMARY KEY, files INTEGER DEFAULT 0,"
             " texts INTEGER DEFAULT 0, started_at REAL, done_at REAL, state TEXT)",
+            "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)",
         ]
         for one in tables:
             self.con.execute(one)
@@ -92,6 +97,50 @@ class IndexStore:
         return {row["path"]: (row["id"], row["size"], row["mtime"]) for row in
                 self.con.execute("SELECT id, path, size, mtime FROM files WHERE root = ?",
                                  (root,))}
+
+    def known_under(self, root: str) -> Dict[str, Tuple[int, int, float, str, str]]:
+        """Every file kept under a folder, whichever folder it was found
+        under before - one inside it, walked on its own until then:
+        path -> (id, size, time, how kept, the folder it is under)."""
+        prefix = root.rstrip("\\/") + os.sep
+        same = "lower(substr(path, 1, ?)) = lower(?)" if os.name == "nt" \
+            else "substr(path, 1, ?) = ?"
+        return {row["path"]: (row["id"], row["size"], row["mtime"], row["kind"], row["root"])
+                for row in self.con.execute(
+                    f"SELECT id, path, size, mtime, kind, root FROM files WHERE root = ? OR {same}",
+                    (root, len(prefix), prefix))}
+
+    def move(self, file_id: int, root: str) -> None:
+        """A file kept as it was, now under the folder it is walked in."""
+        self.con.execute("UPDATE files SET root = ? WHERE id = ?", (root, file_id))
+
+    def meta(self, key: str) -> str:
+        try:
+            row = self.con.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        except sqlite3.Error:
+            return ""
+        return str(row[0]) if row else ""
+
+    def set_meta(self, key: str, value: str) -> None:
+        self.con.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
+
+    def tidy(self, loose: float = 0.25) -> Dict[str, Any]:
+        """THE FILE MADE SMALL AGAIN. What is forgotten leaves its room in
+        the file, kept for what comes next; when more than `loose` of it is
+        such room - a folder taken out, the rules changed - the file is
+        written again without it (VACUUM). Done by the builder, at its end:
+        nothing else writes the file then."""
+        pages = int(self.con.execute("PRAGMA page_count").fetchone()[0] or 0)
+        free = int(self.con.execute("PRAGMA freelist_count").fetchone()[0] or 0)
+        said: Dict[str, Any] = {"pages": pages, "free": free, "vacuumed": False}
+        if not pages or free / pages <= loose:
+            return said
+        self.con.commit()
+        self.con.execute("VACUUM")
+        self.con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        said["vacuumed"] = True
+        said["pages_after"] = int(self.con.execute("PRAGMA page_count").fetchone()[0] or 0)
+        return said
 
     def put(self, path: str, root: str, size: int, mtime: float, kind: str,
             pieces: Iterable[Tuple[int, str]], name: str) -> int:
@@ -178,14 +227,14 @@ class IndexStore:
         where, extra = self._where(roots)
         try:
             rows = self.con.execute(
-                "SELECT f.path, f.mtime, p.line, bm25(piece_words) AS score FROM piece_words "
+                "SELECT f.path, f.mtime, f.kind, p.line, bm25(piece_words) AS score FROM piece_words "
                 "JOIN pieces p ON p.id = piece_words.rowid JOIN files f ON f.id = p.file_id "
                 f"WHERE piece_words MATCH ?{where} ORDER BY score LIMIT ?",
                 [asked, *extra, limit * 3]).fetchall()
         except sqlite3.Error:
             return []
         return [{"path": row["path"], "line": row["line"], "score": float(row["score"]),
-                 "mtime": row["mtime"], "found_in": "text"} for row in rows]
+                 "mtime": row["mtime"], "found_in": "text", "kind": row["kind"]} for row in rows]
 
     def _names(self, asked: str, roots: Optional[List[str]], limit: int) -> List[Dict[str, Any]]:
         where, extra = self._where(roots)
@@ -204,7 +253,7 @@ class IndexStore:
                 for row in rows]
 
     def counts(self) -> Dict[str, int]:
-        one = self.con.execute("SELECT COUNT(*) AS files, SUM(kind = 'text') AS texts "
+        one = self.con.execute("SELECT COUNT(*) AS files, SUM(kind IN ('text', 'talk')) AS texts "
                                "FROM files").fetchone()
         return {"files": int(one["files"] or 0), "texts": int(one["texts"] or 0)}
 

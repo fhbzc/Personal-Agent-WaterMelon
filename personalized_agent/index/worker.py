@@ -10,8 +10,11 @@ build that takes an hour on a busy day costs them nothing:
 And on a computer running on its battery, it waits until it is plugged in.
 
 Started with the path of a job (a JSON file: the index file, the folders,
-the places never gone into); one line of JSON on stdout for each step of
-progress; ended by the end of its work, or by being ended.
+the places never gone into, and the folders alone to walk when only some
+are); one line of JSON on stdout for each step of progress; ended by the
+end of its work, or by being ended. A build that went to its end makes the
+file small again when much of it is room left by what was forgotten
+(store.tidy).
 """
 
 from __future__ import annotations
@@ -75,11 +78,16 @@ def serve(job_path: str) -> int:
     while on_battery():
         say({"waiting": "on battery"})
         time.sleep(BATTERY_WAIT_SECONDS)
+    say({"waiting": ""})
     store = IndexStore(Path(job["db"]))
     began = time.time()
     try:
         said = build(store, job.get("roots") or [], never=job.get("never") or [],
-                     told=say)
+                     told=say, only=job.get("only"))
+        if not said.get("stopped"):
+            say({"tidying": True})
+            said["tidied"] = store.tidy()
+            said["tidying"] = False
     finally:
         store.close()
     say({"finished": True, "seconds": round(time.time() - began, 1), **said})

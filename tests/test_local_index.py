@@ -57,10 +57,10 @@ class TheRulesTests(unittest.TestCase):
         self.assertEqual(kept(self._file(".env")), "")
         # A data file past its size: its name.
         self.assertEqual(kept(self._file("big.csv", b"a,b\n" * 900_000)), "name")
-        # Conversation records are read whole, to a larger size.
+        # Conversation records: what was said and done, bounded by what is kept of it.
         record = self._file("session.jsonl", b'{"text": "hi"}\n' * 300_000)
         self.assertEqual(kept(record), "name")
-        self.assertEqual(rules.how_kept(record, record.stat(), sessions=True), "text")
+        self.assertEqual(rules.how_kept(record, record.stat(), sessions=True), "talk")
 
     def test_folders_never_gone_into(self) -> None:
         for name in (".git", "node_modules", "__pycache__", ".venv", ".ssh", "build"):
@@ -190,7 +190,7 @@ class TheApplicationsIndexTests(unittest.TestCase):
                 if self.body.get(key) in (None, ""):
                     raise ApiError(f"missing parameter: {key}")
                 return self.body[key]
-        for action in ("add", "remove", "sessions"):
+        for action in ("add", "remove", "sessions", "enable"):
             with self.assertRaises(ApiError, msg=action):
                 routes[("POST", "/api/index")](Req({"action": action,
                                                     "path": str(self.folder)}))

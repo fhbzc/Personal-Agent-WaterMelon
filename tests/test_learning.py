@@ -674,7 +674,7 @@ class WhatTheReviewerIsGivenTests(_Base):
         rids = [self._reason(f"Reason {n}.", "stated", [self.judgment(slides)]) for n in range(7)]
         questions = [{"q": "How much text a slide?", "kind": "output"},
                      {"q": "Which tool are the slides made in?", "kind": "fact"}]
-        verdicts = {rid: {"holds": "yes", "answers": {"1": 3 - n % 3}} for n, rid in enumerate(rids[:5])}
+        verdicts = {rid: {"holds": "yes", "answers": {"1": 3 - n % 2}} for n, rid in enumerate(rids[:5])}
         verdicts[rids[5]] = {"holds": "yes", "answers": {}, "expected": True}
         verdicts[rids[6]] = {"holds": "yes", "answers": {}}
         seen = []
@@ -703,7 +703,8 @@ class WhatTheReviewerIsGivenTests(_Base):
             ask=lambda system, content, most: seen.append(content) or {
                 "reasons": {rid: {"holds": "yes", "answers": {"1": 3}}},
                 "cases": {slides: [jids[7], jids[3], "J-not-of-it"]}})
-        self.assertIn("CASES' JUDGMENTS", seen[0])
+        self.assertNotIn("CASES' JUDGMENTS", seen[0])
+        self.assertIn("CASES' JUDGMENTS", seen[1], "picked in a second call")
         self.assertEqual(said["found"]["judgments_picked"], {slides: [jids[7], jids[3]]})
         self.assertLess(said["text"].index(jids[7]), said["text"].index(jids[3]), "most first")
         self.assertNotIn(jids[20], said["text"])

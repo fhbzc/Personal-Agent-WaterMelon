@@ -1197,9 +1197,18 @@ given what bears on them. Judge as the user would.
     polish at most.
   - WHAT YOU WRITE IS YOURS, NOT THE USER'S: a criterion or a need resting
     on no word or decision of theirs says so.
+  - THE USER'S PAST WORK IS EVIDENCE, NOT A STANDARD. Follow their ways -
+    how they like a thing to look, be laid out, be made and be checked -
+    and use your own judgement as well. What they did before shows what
+    they knew and wanted then. It is not always the best way, and it may
+    have faults they would not want carried over. What counts is a result
+    the user is satisfied with. Where something of theirs falls short for
+    this work - a weakness, a risk, a better way they would take if they
+    saw it - say so, and do not carry it over.
   - WHAT THE WORK AGENT READS CARRIES NO IDS: criteria and approach notes
     are plain requirements and instructions. The user's past work is yours
-    to judge by; the work agent never sees it.
+    to judge by; the work agent sees of it only the references you choose
+    for a card.
   - You decide. The user is not asked.
 
 You can open cards, cases and reasons, search the user's files, read files - and run code
@@ -1278,6 +1287,32 @@ reasons - say where they differ. Give the addresses you used.
 
 """
 
+#: The same, to a reviewer told ANSWER_RULES before in the same context.
+ANSWER_AGAIN = """ANSWER THESE QUESTIONS AS YOU WRITE - in "answers", by their numbers, as told
+above.
+
+"""
+
+#: In place of the word list once the terms are written (`Review.forget`).
+WORDS_USED = "THE WORD LIST: (given for the terms - written; not needed now)\n"
+
+#: In place of a draft or a card shown before in the same context.
+SHOWN_ABOVE = "(as shown above, unchanged)"
+
+#: A contract as it is shown, at most: whole - one cut at 12,000 characters
+#: hid its last deliverable from the reviewer (try 4, 2026-10-24); past this
+#: it says where it was cut.
+CONTRACT_SHOWN = 60_000
+
+
+def _shown_whole(value: Any, indent: Optional[int] = None) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False,
+                                                            indent=indent)
+    if len(text) <= CONTRACT_SHOWN:
+        return text
+    return text[:CONTRACT_SHOWN] + f"\n... (cut here: {len(text) - CONTRACT_SHOWN} characters more)"
+
+
 #: The same answers, from a reviewer given no record of the user's work.
 SELF_ANSWER = """NO RECORD OF THE USER'S WORK is given for your questions: answer them yourself
 as you write - add to your answer
@@ -1344,6 +1379,27 @@ better: polish, done once every core promise holds. None is a core promise
 of its own - those are the user's words alone. Each is shown to the user as
 added, not theirs, and they can take it out. Only what bears on this work;
 none at all is a fine answer."""
+
+#: THE REFERENCES, CHOSEN BY THE REVIEWER (the user, 2026-10-24): what a
+#: call of their own proposed of the user's past work for each deliverable
+#: (learning/references.py), put to the reviewer in its own context - with
+#: what it was told of the user's work and its questions' answers - which
+#: keeps those the work agent is to look at, with what to take and what not.
+REVIEW_REFERENCES = """THE USER'S PAST WORK PROPOSED AS REFERENCES for the deliverables - each
+with what it is, why it was proposed and what might be taken from it:
+{proposed}
+
+Decide which the work agent is to look at as it makes each deliverable: at
+most {per_card} a deliverable, or none - a reference that does not fit
+misleads, and is worse than none. For each you keep, say what to take from
+it - its form alone, or parts of its content too - and what not to take: a
+part that is weak, outdated or does not fit this work. Open one with
+read_file when what is said of it does not settle it. The work agent reads
+what you write: plain words, no ids.
+
+Return ONLY this JSON object:
+{{"cards": {{"<card id>": [{{"path": "...", "take": "one sentence",
+                            "not": "one sentence, or empty"}}]}}}}"""
 
 REVIEW_CARD = """A CARD HAS OPENED - WRITE ITS CRITERIA:
 {card}
@@ -1914,7 +1970,8 @@ def contract_shown(contract: Dict[str, Any], cards: Dict[str, Dict[str, Any]],
                              for one in checked.get("criteria") or []
                              if isinstance(one, dict)],
                 "approach": _plain(checked.get("approach") or ""),
-                "references": [{"path": str(one.get("path") or ""), "take": str(one.get("take") or "")}
+                "references": [{"path": str(one.get("path") or ""), "take": str(one.get("take") or ""),
+                                **({"not": str(one["not"])} if one.get("not") else {})}
                                for one in checked.get("references") or [] if isinstance(one, dict)]}
 
     listed = [shown(cards.get(str(one.get("card") or "")), one)
@@ -2411,6 +2468,10 @@ class WorkRuns:
         #: A debugger way that waited for room and then could not start:
         #: why, by its unit, until it is started or asked about again.
         self.waited_out: Dict[str, str] = {}
+        #: A debugger way whose process could not start when asked: why, by
+        #: its unit, until it is started again - said on the way, not left
+        #: looking as if it was never asked for (2026-10-24).
+        self.started_out: Dict[str, str] = {}
         self.waiting: List[Dict[str, Any]] = []
         #: A DEBUGGER WAY WHOSE PROCESS IS GETTING READY - by unit, since when.
         #: Its run is not there until the process says so, a minute or two
@@ -2946,10 +3007,14 @@ class WorkRuns:
                 if waits:
                     return waits
             self.starting[str(unit.get("id") or "")] = _now()
+            self.started_out.pop(str(unit.get("id") or ""), None)
         try:
-            return self._launch(kind, unit, dict(args, given_room=True))
+            said = self._launch(kind, unit, dict(args, given_room=True))
         finally:
             self.starting.pop(str(unit.get("id") or ""), None)
+        if said.get("error") and not given_room:
+            self.started_out[str(unit.get("id") or "")] = str(said["error"])
+        return said
 
     def _launch(self, kind: str, unit: Dict[str, Any], args: Dict[str, Any]
                 ) -> Dict[str, Any]:
@@ -5140,11 +5205,15 @@ class Run:
         if key.startswith("round:"):
             keys.append("criteria:" + key.split(":", 1)[1])
         keys.append("contract")
+        #: What the text gives - its reasons and cases (`Review` names them
+        #: and does not give them again).
+        self.learned_found = {}
         for one in keys:
             said = self.experience_given(one)
             if said and said.get("text"):
                 if said.get("facets"):
                     self._facets = dict(said["facets"])
+                self.learned_found = dict(said.get("found") or {})
                 return str(said["text"])
         return ""
 
@@ -5191,8 +5260,11 @@ class Run:
         # added to them came from the user's work.
         words = self.finder.word_list() if self.finder is not None and not review.plain \
             else Vocabulary.fixed_listing(DIMENSIONS)
+        review.once(shown, "")
         said = review.ask(QUESTIONS_STEP.format(on=on, kinds=kinds, words=words, shown=shown),
                           tools=NoTools(self.review_tools), rounds=1)
+        # The word list was for the terms, now written: not sent again.
+        review.forget(f"THE WORD LIST:\n{words}\n", WORDS_USED)
         questions = [{"q": _clip(one.get("q") or one.get("question"), 400),
                       "kind": str(one.get("kind") or "requirement")}
                      for one in (said.get("questions") or []) if isinstance(one, dict)
@@ -5204,25 +5276,35 @@ class Run:
             return numbered + "\n\n" + SELF_ANSWER
         facets = self.finder.job_facets(said.get("terms"))
         self._facets = facets
-        job = " ".join(filter(None, [self.instruction, self._description()]))[:3000]
+        # The description, not when it is the instruction word for word.
+        job = " ".join(filter(None, [self.instruction,
+                                     self._description_text() and self._description()]))[:3000]
         try:
-            package = self.finder.answer(job, facets, questions, ask=self._learned_ask)
+            package = self.finder.answer(job, facets, questions, ask=self._learned_ask,
+                                         had=review.given, explain=self.debug)
         except Exception:                      # pragma: no cover - none given then
             log.warning("what was learned could not be found", exc_info=True)
             package = {"text": "NOTHING LEARNED OF THE USER'S WORK COULD BE READ NOW.",
                        "found": {}}
-        text = numbered + "\n\n" + package["text"] + "\n\n" + ANSWER_RULES
-        self.keep_experience_given(key, {"text": text, "found": package.get("found") or {},
-                                         "facets": facets})
+        # Kept whole, to be given alone later; given now without what its
+        # context holds already.
+        self.keep_experience_given(key, {
+            "text": numbered + "\n\n" + package.get("whole", package["text"]) + "\n\n"
+            + ANSWER_RULES, "found": package.get("found") or {}, "facets": facets})
+        text = numbered + "\n\n" + package["text"] + "\n\n" + (
+            ANSWER_AGAIN if review.rules_given else ANSWER_RULES)
+        review.took(package.get("found"))
+        review.rules_given = True
         self._log_questions(on, "reviewer", questions, package.get("found") or {})
         self._note("questions asked", on=on, questions=len(questions),
                    reasons=len((package.get("found") or {}).get("reasons") or []),
                    cases=len((package.get("found") or {}).get("cases") or []))
         return text
 
-    def _builder_questions(self, summary: Dict[str, Any]) -> str:
+    def _builder_questions(self, summary: Dict[str, Any], review: Optional["Review"] = None) -> str:
         """The work agent's questions of the round, for the reviewer to
-        answer: with what was learned for them (the full way)."""
+        answer: with what was learned for them (the full way) - without
+        what `review`'s context holds already."""
         questions = [{"q": _clip(one, 400), "kind": "output"}
                      for one in summary.get("questions") or [] if str(one or "").strip()][:6]
         if not questions:
@@ -5234,9 +5316,15 @@ class Run:
         if self.finder is not None:
             try:
                 package = self.finder.answer(self.instruction[:3000], self._facets, questions,
-                                             ask=self._learned_ask)
+                                             ask=self._learned_ask,
+                                             had=review.given if review is not None else None,
+                                             explain=self.debug)
                 found = package.get("found") or {}
-                extra = package["text"] + "\n\n" + ANSWER_RULES
+                extra = package["text"] + "\n\n" + (
+                    ANSWER_AGAIN if review is not None and review.rules_given else ANSWER_RULES)
+                if review is not None:
+                    review.took(found)
+                    review.rules_given = True
             except Exception:                  # pragma: no cover - answered without
                 log.debug("could not find what bears on the work agent's questions",
                           exc_info=True)
@@ -6047,6 +6135,8 @@ class Run:
         context: drafting the contract, amending it, each round, each
         review, the slides."""
         described = self._description()
+        if " ".join(described.split()) == " ".join(str(self.instruction or "").split()):
+            return ""                  # the instruction, said once after it
         return f"The user's description of this project: {described}" if described else ""
 
     def _last_findings(self) -> str:
@@ -6364,14 +6454,15 @@ class Run:
         # STEP 1, NO WEB: what it must know of the user, asked of the draft
         # once - what it answers may be kept; what it leaves open is asked
         # with the first review, the web too, for this work only.
-        left_open = self._what_to_know(review, "THIS CONTRACT", json.dumps(
-            {k: v for k, v in draft.items() if k != "written_by"},
-            ensure_ascii=False)[:12000], None)
+        left_open = self._what_to_know(review, "THIS CONTRACT", _shown_whole(
+            {k: v for k, v in draft.items() if k != "written_by"}), None)
         for number in range(CONTRACT_REVIEWS):
             last = number == CONTRACT_REVIEWS - 1
+            # The draft its questions were asked of is in its context:
+            # given again only when it has changed.
             judged = review.ask((left_open if number == 0 else "") + REVIEW_CONTRACT.format(
-                contract=json.dumps({k: v for k, v in draft.items() if k != "written_by"},
-                                    ensure_ascii=False)[:12000],
+                contract=review.once(_shown_whole(
+                    {k: v for k, v in draft.items() if k != "written_by"}), SHOWN_ABOVE),
                 criteria=CRITERIA_SHAPE, note=CRITERIA_NOTE, for_user=FOR_USER_NOTE,
                 expected=EXPECTED_SHAPE, expected_note=EXPECTED_NOTE,
                 last=("\nThis is the LAST review: approve it, or it is not "
@@ -6391,7 +6482,7 @@ class Run:
             draft = self._ask(self._system(), messages, self.tools, writing=False)
             if not self._going():
                 return False
-        self._apply_contract(draft, judged)
+        self._apply_contract(draft, judged, review)
         self._apply_expected(judged.get("expected"), "the reviewer", 0)
         self._answers_kept(judged, None)
         self._for_user(judged, "the contract")
@@ -6408,7 +6499,8 @@ class Run:
         self._set_checkpoint("the contract approved", made, 0)
         return True
 
-    def _apply_contract(self, draft: Dict[str, Any], judged: Dict[str, Any]) -> None:
+    def _apply_contract(self, draft: Dict[str, Any], judged: Dict[str, Any],
+                        review: Optional["Review"] = None) -> None:
         root, cards = self._tree()
         goal = str(draft.get("goal") or "").strip()[:1500]
         self.store.update_card(root["id"], {"statement": goal, "status": "working"})
@@ -6428,7 +6520,7 @@ class Run:
                 self._set_criteria(card, criteria, str(said.get("approach") or ""))
             listed.append({"card": card["id"], "title": card["title"],
                            "statement": card["statement"]})
-        self._pick_references(list(refs.values()))
+        self._pick_references(list(refs.values()), review)
         contract = {"goal": goal,
                     "scope": [str(one) for one in draft.get("scope") or []][:12],
                     "out_of_scope": [str(one) for one in draft.get("out_of_scope") or []][:12],
@@ -6627,17 +6719,21 @@ class Run:
             "criteria": criteria, "approach": approach[:1500],
             **({"references": before["references"]} if before.get("references") else {})}})
 
-    def _pick_references(self, cards: List[Dict[str, Any]]) -> None:
+    def _pick_references(self, cards: List[Dict[str, Any]],
+                         review: Optional["Review"] = None) -> None:
         """THE USER'S PAST WORK AS A REFERENCE for each deliverable (the user,
-        2026-10-23): a call of the reviewer's own - not in its context, which
+        2026-10-23): a call of its own - not in the reviewer's context, which
         each of its calls carries again - shown the deliverables and where the
         deliverables of the cases most like this job are, each with its first
-        lines; it may read any whole, and gives each deliverable at most two,
-        with what to take from each - or none. Each is checked before the card
-        carries it: there, readable by the work agent, in no folder left out
-        (learning/references.py). The full way only: the others are given
-        nothing of the user's work."""
-        if self.finder is None or not cards:
+        lines, may read any whole and PROPOSES a few for each deliverable,
+        with what each is, why it fits and what might be taken. THE REVIEWER
+        CHOOSES (the user, 2026-10-24) in `review`, its own context - what it
+        was told of the user's work there - at most two a deliverable, with
+        what to take and what not; with no review, none is given. Each is
+        checked before the card carries it: there, readable by the work agent,
+        in no folder left out (learning/references.py). The full way only: the
+        others are given nothing of the user's work."""
+        if self.finder is None or not cards or review is None:
             return
         from ...learning import references
         readable = self.tools._may_read
@@ -6645,13 +6741,21 @@ class Run:
             found = references.candidates(self.finder, self._facets, readable)
             if not found:
                 return
-            said = self._ask(references.PROMPT.format(per_card=references.PER_CARD)
+            said = self._ask(references.PROMPT.format(per_card=references.PROPOSED)
                              + "\n\n" + zone_rule(),
                              [{"role": "user", "content": references.content(cards, found)}],
                              self.review_tools, writing=False, rounds=references.READS,
                              work=False, quiet=True, who="reviewer",
                              language=in_english("the answer"))
-            picked = references.checked(said, cards, readable, self.finder.leave_out)
+            proposed = references.checked(said, cards, readable, self.finder.leave_out,
+                                          most=references.PROPOSED)
+            if not any(proposed.values()):
+                return
+            chose = review.ask(REVIEW_REFERENCES.format(
+                proposed=references.proposed_text(cards, proposed),
+                per_card=references.PER_CARD), rounds=references.READS)
+            picked = references.checked(chose, cards, readable, self.finder.leave_out,
+                                        among=proposed)
         except Exception:                      # pragma: no cover - none given then
             log.warning("no references could be chosen", exc_info=True)
             return
@@ -6661,6 +6765,7 @@ class Run:
             checked["references"] = picked.get(card["id"]) or []
             self.store.update_card(card["id"], {"checked_by": checked})
         self._note("references chosen", cards=len(cards), candidates=len(found),
+                   proposed=sum(len(one) for one in proposed.values()),
                    chosen=sum(len(one) for one in picked.values()),
                    given={card_id: [one["path"] for one in mine]
                           for card_id, mine in picked.items() if mine})
@@ -6759,7 +6864,7 @@ class Run:
                                  for one in before["deliverables"]]
         messages = [{"role": "user", "content": self._brief() + "\n\n" + AMEND_CONTRACT.format(
             words=words, done=done_text,
-            contract=json.dumps(shown, ensure_ascii=False, indent=1)[:12000])}]
+            contract=_shown_whole(shown, indent=1))}]
         draft = self._ask(self._system(), messages, self.tools, writing=False)
         if not self._going():
             return False
@@ -6768,18 +6873,17 @@ class Run:
         judged: Dict[str, Any] = {}
         approved = False
         # STEP 1, NO WEB, of the amended contract - as of the first one.
-        left_open = self._what_to_know(review, "THIS AMENDED CONTRACT", json.dumps(
-            {k: v for k, v in draft.items() if k != "written_by"},
-            ensure_ascii=False)[:12000], None)
+        left_open = self._what_to_know(review, "THIS AMENDED CONTRACT", _shown_whole(
+            {k: v for k, v in draft.items() if k != "written_by"}), None)
         for number in range(CONTRACT_REVIEWS):
             last = number == CONTRACT_REVIEWS - 1
             after = self._amended_contract(before, draft, words)
             judged = review.ask((left_open if number == 0 else "") + REVIEW_AMENDMENT.format(
                 words=words, done=done_text,
                 before="\n".join(contract_lines(before)),
-                after=json.dumps({k: v for k, v in draft.items() if k != "written_by"},
-                                 ensure_ascii=False)[:12000],
-                diff=contract_diff(before, after)[:12000],
+                after=review.once(_shown_whole({k: v for k, v in draft.items()
+                                          if k != "written_by"}), SHOWN_ABOVE),
+                diff=_shown_whole(contract_diff(before, after)),
                 criteria=CRITERIA_SHAPE, note=CRITERIA_NOTE,
                 last=("\nThis is the LAST review: approve it, or it is not approved "
                       "and the contract stays as it was." if last else "")))
@@ -6806,7 +6910,7 @@ class Run:
             self._record_amendment(words, draft, reviews, "", [], approved=False)
             self._note("amendment not approved", words=words)
             return False
-        after, reopened = self._apply_amendment(before, draft, judged, words, done)
+        after, reopened = self._apply_amendment(before, draft, judged, words, done, review)
         self._answers_kept(judged, None)
         diff = contract_diff(before, after)
         self._record_amendment(words, draft, reviews, diff, reopened, approved=True)
@@ -6842,7 +6946,8 @@ class Run:
 
     def _apply_amendment(self, before: Dict[str, Any], draft: Dict[str, Any],
                          judged: Dict[str, Any], words: str, done: List[Dict[str, Any]]
-                         ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+                         ,
+                         review: Optional["Review"] = None) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """The approved amendment, made so: the goal, each deliverable kept,
         changed, added or dropped (set aside, not deleted - the other line
         still has it), the criteria the reviewer wrote, the done cards it
@@ -6891,7 +6996,7 @@ class Run:
             criteria = self._criteria(said.get("criteria"))
             if card is not None and criteria:
                 self._set_criteria(card, criteria, str(said.get("approach") or ""))
-        self._pick_references(list(refs.values()))
+        self._pick_references(list(refs.values()), review)
         # Done work that no longer holds, opened again - and what it is part
         # of, which cannot be done while it is not.
         done_by_id = {card["id"]: card for card in done}
@@ -7029,7 +7134,8 @@ class Run:
             if not self._going():
                 return
             said = review.ask(left_open + REVIEW_CARD.format(
-                card=shown, criteria=CRITERIA_SHAPE, note=CRITERIA_NOTE))
+                card=review.once(shown, SHOWN_ABOVE), criteria=CRITERIA_SHAPE,
+                note=CRITERIA_NOTE))
             self._answers_kept(said, card)
             criteria = self._criteria(said.get("criteria"))
             if criteria:
@@ -7098,7 +7204,7 @@ class Run:
                         self._reviewer_context(card, recent=True),
                         same_as=f"round:{card.get('id', '')}")
         holding_before = set(self._unmet())
-        asks = self._builder_questions(summary)
+        asks = self._builder_questions(summary, review)
         judged = review.ask(asks + REVIEW_ROUND.format(
             summary=json.dumps({k: v for k, v in summary.items() if k != "written_by"},
                                ensure_ascii=False)[:14000],
@@ -8320,6 +8426,12 @@ class Review:
         self.shown_stages: set = set()
         #: What was learned for its questions is in its context already.
         self.attached = False
+        #: WHAT ITS CONTEXT HOLDS ALREADY - not given twice: the drafts and
+        #: cards shown it (`once`), the reasons and cases of what was learned
+        #: (`took`), and how its questions are answered (ANSWER_RULES).
+        self.shown: set = set()
+        self.given: Dict[str, set] = {"reasons": set(), "cases": set(), "index": set()}
+        self.rules_given = False
         self.messages: List[Dict[str, Any]]
         if self.plain:
             self.messages = [{"role": "user", "content": (
@@ -8332,7 +8444,29 @@ class Review:
         # now, it is given with the criteria (`Run._what_to_know`).
         kept = run.learned_given(same_as) if hasattr(run, "learned_given") else ""
         self.attached = bool(kept)
+        if kept:
+            self.took(getattr(run, "learned_found", None))
+            self.rules_given = ANSWER_RULES.split("\n", 1)[0] in kept
         self.messages = [{"role": "user", "content": context + ("\n\n" + kept if kept else "")}]
+
+    def once(self, text: str, after: str) -> str:
+        """`text` the first time its context is shown it; `after` then."""
+        if text in self.shown:
+            return after
+        self.shown.add(text)
+        return text
+
+    def took(self, found: Optional[Dict[str, Any]]) -> None:
+        """The reasons and cases of a package now in its context."""
+        for kind in self.given:
+            self.given[kind].update(str(one) for one in (found or {}).get(kind) or [])
+
+    def forget(self, text: str, instead: str) -> None:
+        """A part of what it was told that has done its job, taken out of
+        its context - not sent again with each later question."""
+        for one in self.messages:
+            if isinstance(one.get("content"), str) and text in one["content"]:
+                one["content"] = one["content"].replace(text, instead)
 
     def ask(self, content: str, tools: Any = None, rounds: int = TOOL_ROUNDS
             ) -> Dict[str, Any]:

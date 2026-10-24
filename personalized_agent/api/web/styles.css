@@ -3798,6 +3798,8 @@ body.chat-window .chat-only { height: 100vh; height: 100dvh; padding: 12px; box-
 .xp-learn-row input[type=number] { width: 12ch; margin-left: 6px; }
 .xp-learn-progress { display: flex; gap: 10px; align-items: center; margin: 6px 0; font-size: 13px; }
 .xp-learn-progress progress { flex: 1 1 auto; max-width: 420px; height: 10px; }
+/* Which bar it is: the local index's, the learning's - one width, so the bars line up. */
+.xp-learn-what { flex: 0 0 7.5em; font-weight: 600; }
 .xp-learn-counts { width: auto; max-width: 900px; margin: 6px 0; }
 .xp-learn-counts th, .xp-learn-counts td { text-align: left; vertical-align: top; padding: 4px 12px 4px 0;
   border-bottom: 1px solid var(--line); }

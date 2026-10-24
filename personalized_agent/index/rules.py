@@ -10,7 +10,10 @@ LEAVES ALONE.
     Mac): its name is kept, nothing is fetched.
   * READ: a text file up to MOST_TEXT_BYTES, by its kind or by its content
     (no NUL in its first bytes). A data file - CSV, JSON lines, logs - only
-    up to MOST_DATA_BYTES; past it, its name.
+    up to MOST_DATA_BYTES, and a JSON file up to MOST_JSON_BYTES; past it,
+    its name.
+  * A CONVERSATION RECORD (Claude Code's, Codex's): what was said and done
+    in it, not what the tools gave back (talk.py).
   * EVERY OTHER FILE - a picture, a video, an archive, a binary: its name,
     which is what it is found by. No picture is read for its words.
 """
@@ -27,9 +30,19 @@ from typing import Iterable, Optional
 MOST_TEXT_BYTES = 1_000_000
 #: The most of a data file read: past it, only its name.
 MOST_DATA_BYTES = 3_000_000
-#: The most of a conversation record read (Claude Code's and Codex's
-#: sessions, one JSON line a turn): they are what such a folder is for.
+#: The most of a JSON file read: past it, only its name. One larger is data
+#: - results, dumps - nearly all of it numbers and keys (on one machine,
+#: JSON was half of all that was read, and found next to nothing).
+MOST_JSON_BYTES = 200_000
+#: The most of a conversation record's text kept (Claude Code's and Codex's
+#: sessions, one JSON line a turn): of WHAT IS KEPT of it (talk.py), not of
+#: the file - a record of 1.3 GB keeps under 8 MB, and the longest records
+#: are the work the user did most. Past it, its name.
 MOST_SESSION_BYTES = 30_000_000
+#: What is read, and how. When it changes, the next build looks again at
+#: every file it kept and keeps it the new way (build.py) - reading again
+#: only what is now kept differently.
+RULES_VERSION = 2
 #: Lines to a piece of a file: what a search finds is a piece, with where.
 LINES_PER_PIECE = 40
 
@@ -100,9 +113,11 @@ def cloud_only(info: os.stat_result, name: str) -> bool:
 
 
 def how_kept(path: Path, info: os.stat_result, sessions: bool = False) -> str:
-    """"text" - its words read; "name" - only its name; "" - not at all.
-    `sessions`: a folder of conversation records, read up to
-    MOST_SESSION_BYTES each."""
+    """"text" - its words read; "talk" - a conversation record, kept as what
+    was said and done in it (talk.py); "name" - only its name; "" - not at
+    all. `sessions`: a folder of conversation records, each kept as "talk"
+    whatever its size - what is kept of it is what MOST_SESSION_BYTES
+    bounds (build.py)."""
     if not stat.S_ISREG(info.st_mode):
         return ""
     if secret_name(path.name):
@@ -112,7 +127,9 @@ def how_kept(path: Path, info: os.stat_result, sessions: bool = False) -> str:
     suffix = path.suffix.lower()
     size = int(info.st_size)
     if sessions and suffix in (".jsonl", ".json"):
-        return "text" if size <= MOST_SESSION_BYTES else "name"
+        return "talk"
+    if suffix == ".json" and size > MOST_JSON_BYTES:
+        return "name"
     if suffix in DATA_SUFFIXES and size > MOST_DATA_BYTES:
         return "name"
     if size > MOST_TEXT_BYTES:
@@ -154,4 +171,5 @@ def _norm(path: Path) -> str:
 
 
 __all__ = ["skipped_folder", "secret_name", "cloud_only", "how_kept", "read_text",
-           "MOST_TEXT_BYTES", "MOST_DATA_BYTES", "MOST_SESSION_BYTES", "LINES_PER_PIECE"]
+           "MOST_TEXT_BYTES", "MOST_DATA_BYTES", "MOST_JSON_BYTES", "MOST_SESSION_BYTES",
+           "LINES_PER_PIECE", "RULES_VERSION"]
