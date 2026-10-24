@@ -131,33 +131,44 @@ class Index:
         return out
 
 
-def records(db: Any) -> List[Dict[str, Any]]:
+def records(db: Any, leave_out: Any = None) -> List[Dict[str, Any]]:
     """Everything still kept, by its English words: every state, every task
-    (its English copy, else its words), every stage (its English keywords)."""
+    (its English copy, else its words), every stage (its English keywords).
+
+    With `leave_out` (learning/leave_out.py - a Work debugger way's): none
+    that rests on a folder left out - a state by the files and pages it
+    rests on, a task and a stage by those of their states - and of the rest,
+    no word that names one."""
     out: List[Dict[str, Any]] = []
+    places = _places_of_states(db) if leave_out else {}
     try:
         for row in db.query("SELECT id, title, detail, starts_at, ends_at FROM states"):
             out.append({"kind": "state", "id": row["id"], "title": str(row["title"] or ""),
                         "text": f"{row['title'] or ''} {row['detail'] or ''}",
                         "detail": str(row["detail"] or "")[:400],
-                        "at": row["ends_at"] or row["starts_at"]})
+                        "at": row["ends_at"] or row["starts_at"],
+                        "places": places.get(row["id"], [])})
     except Exception:
         pass
     try:
-        for row in db.query("SELECT id, described, updated_at FROM state_tasks "
+        for row in db.query("SELECT id, members, described, updated_at FROM state_tasks "
                             "WHERE scope = 'live' AND COALESCE(retired_at, '') = ''"):
             said = _loads(row["described"])
             english = said.get("in_english") if isinstance(said.get("in_english"), dict) else {}
             title = english.get("title") or said.get("title") or ""
             text = " ".join(str(english.get(k) or said.get(k) or "")
                             for k in ("title", "summary", "goal", "doing", "status"))
+            # A project's own row: the folders it is worked in, beside its states'.
+            folders = [str(one.get("path") if isinstance(one, dict) else one)
+                       for one in said.get("directories") or []]
             out.append({"kind": "task", "id": row["id"], "title": str(said.get("title") or title),
                         "text": text, "detail": str(said.get("summary") or "")[:400],
-                        "at": row["updated_at"]})
+                        "at": row["updated_at"],
+                        "places": folders + _of_states(places, row["members"])})
     except Exception:
         pass
     try:
-        for row in db.query("SELECT id, task_id, summary, work, ended, began FROM "
+        for row in db.query("SELECT id, task_id, summary, work, states, ended, began FROM "
                             "experience_stages WHERE scope = 'live'"):
             work = _loads(row["work"])
             words = " ".join(str(one) for one in work.get("keywords") or [])
@@ -165,10 +176,43 @@ def records(db: Any) -> List[Dict[str, Any]]:
                 continue
             out.append({"kind": "stage", "id": row["id"], "title": str(row["summary"] or "")[:200],
                         "text": words, "detail": str(row["summary"] or "")[:400],
-                        "at": row["ended"] or row["began"]})
+                        "at": row["ended"] or row["began"],
+                        "places": _of_states(places, row["states"])})
+    except Exception:
+        pass
+    if not leave_out:
+        return out
+    kept = []
+    for one in out:
+        if leave_out.record_out(one["places"], f"{one['title']} {one['text']} {one['detail']}"):
+            continue
+        kept.append(dict(one, **{key: leave_out.redact(one[key])
+                                 for key in ("title", "text", "detail")}))
+    return kept
+
+
+def _places_of_states(db: Any) -> Dict[str, List[str]]:
+    """Each state's files, folders and pages (task_projects.state_places)."""
+    from types import SimpleNamespace
+    from ...heartbeat.states.task_projects import state_places
+    out: Dict[str, List[str]] = {}
+    try:
+        for row in db.query("SELECT id, metadata FROM states"):
+            out[row["id"]] = state_places(SimpleNamespace(metadata=_loads(row["metadata"])))
     except Exception:
         pass
     return out
+
+
+def _of_states(places: Dict[str, List[str]], ids: Any) -> List[str]:
+    """The places of the states a task or a stage is made of - each as
+    often as its states rest on it."""
+    try:
+        said = json.loads(ids or "[]")
+    except (TypeError, ValueError):
+        said = []
+    return [place for one in said if isinstance(said, list)
+            for place in places.get(str(one), [])]
 
 
 def _loads(raw: Any) -> Dict[str, Any]:

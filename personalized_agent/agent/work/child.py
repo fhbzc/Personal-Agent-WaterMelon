@@ -330,9 +330,13 @@ def child_main(argv: List[str]) -> int:
     spec = read_json(spec_path) or {}
     logging.basicConfig(level=logging.INFO, filename=str(folder / LOG),
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    began = time.monotonic()
     try:
         from ...app import AgentApplication
         app = AgentApplication(root=Path(spec["root"]), configure_logs=False)
+        # How long each part of starting takes, in its log: the full way took
+        # two minutes to start (2026-10-23), and nothing said where they went.
+        log.info("started in %.1fs: the application built", time.monotonic() - began)
         work = app.work
         work.in_subprocess = False            # here, the run is in this process
         work.code_held_elsewhere = bool(spec.get("code_held"))
@@ -340,6 +344,7 @@ def child_main(argv: List[str]) -> int:
             app.drafts.collect_and_plan(str(spec.get("draft") or ""))
             return 0
         unit = _unit_of(app, str(spec.get("unit") or ""))
+        log.info("started in %.1fs: the work found", time.monotonic() - began)
         if unit is None:
             _write_json(folder / REPLY, {"error": "no such project or task"})
             return 2
@@ -352,6 +357,7 @@ def child_main(argv: List[str]) -> int:
             _write_json(folder / REPLY, {"error": said["error"]})
             return 2
         run = work._running.get(str(said["run"]))
+        log.info("started in %.1fs: the run going", time.monotonic() - began)
         _write_json(folder / REPLY, {k: v for k, v in said.items()})
     except Exception as exc:                  # said, rather than lost
         log.exception("the run could not start")

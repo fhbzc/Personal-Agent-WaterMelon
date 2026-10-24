@@ -22173,6 +22173,11 @@ function xdWayState(v) {
   const going = runs.find((run) => run.alive);
   const latest = going || runs[0];
   const waits = going ? null : xdWaits(v.variant);
+  if (waits && waits.starting) {
+    // Its process getting ready - a minute or two for the full way: its last
+    // run, ended, is not where it stands.
+    return { state: "starting", words: "starting", latest, going: null, waits, data: {} };
+  }
   if (waits) {
     return { state: "waiting_room", words: "waiting for room", latest, going: null,
              waits, data: {} };
@@ -22204,6 +22209,11 @@ function xdWayLive(v) {
   const way = xdWayState(v);
   const parts = [];
   const refused = ((xdState.waiting || {})[v.variant] || {}).could_not_start;
+  if (way.state === "starting") {
+    return `<span class="xp-live-state xp-live-state-going" data-xd-way-state="starting">${
+      escapeHtml(way.words)}</span> <span class="xp-live-spin xd-way-spin" aria-hidden="true"></span>
+      <span class="muted xd-way-wait">its process is getting ready - this can take a minute or two</span>`;
+  }
   if (way.waits) {
     parts.push(`<span class="xp-live-state xp-live-state-waiting_room"
       data-xd-way-state="waiting_room">${escapeHtml(way.words)}</span>`);
@@ -22493,13 +22503,14 @@ function xdLeaveOut(project) {
   const view = xdState.leaveOut && xdState.leaveOut.id === base
     && Array.isArray(xdState.leaveOut.folders) ? xdState.leaveOut : null;
   const folders = view ? view.folders : (project.leave_out || [project.folder]).map((path) => ({
-    path, own: path === project.folder }));
+    path, own: path === project.folder, agent: path === project.agent_folder }));
   const rows = folders.map((one) => {
     const path = escapeHtml(one.path);
     const asking = xdState.leaveOutAsk === one.path;
     const claude = (one.claude || []).map((dir) => `<code>${escapeHtml(dir)}</code>`).join(", ");
     return `<li><code>${path}</code> ${one.own
       ? `<span class="muted">this project's folder</span>`
+      : one.agent ? `<span class="muted">the agent's own folder</span>`
       : asking ? `<span class="xd-try-ask" role="alert">Give C what was learned from this folder
           again, and let the three ways read it?
           <button type="button" class="small danger" data-xd-leave-remove-yes="${path}">Use it again</button>
@@ -22512,8 +22523,9 @@ function xdLeaveOut(project) {
   return `<div class="xd-leave-out">
       <p><strong>Experience left out</strong> <span class="muted">C's reviewer is given nothing
         learned from these folders and all their subfolders, nor from the Claude Code and Codex
-        conversations held of work in any of them. A folder you add - the project this one
-        redoes, say - is closed to all three ways as well, with all its subfolders.</span></p>
+        conversations held of work in any of them; and no way finds, in your records, what was
+        done in them. A folder you add - the project this one redoes, say - is closed to all
+        three ways as well, with all its subfolders. So is the agent's own folder.</span></p>
       <ul class="xd-leave-out-list">${rows}</ul>
       <p>${view ? `<span class="muted">Left out of what was learned: ${Number(view.cases)} cases whole, ${
         Number(view.judgments)} judgments in all.</span> `

@@ -811,7 +811,8 @@ YOU MAY OPEN THE REFERENCES. Every file and folder the project's record or
 your tree points to - and any file or folder under the user's home - can be
 listed and read with your tools, and so can web pages. Read them to help you
 work: look at the actual files before you decide, and model what you make on
-what is there.
+what is there. A card's LOOK AT lines are the user's own past work chosen for
+it: open each, and take from it what its line says.
 
 THE WORK IS A TREE OF CARDS:
   - the ROOT is the goal - fixed by the contract, and not changed;
@@ -1912,7 +1913,9 @@ def contract_shown(contract: Dict[str, Any], cards: Dict[str, Dict[str, Any]],
                               "backed_by": one.get("backed_by", "")}
                              for one in checked.get("criteria") or []
                              if isinstance(one, dict)],
-                "approach": _plain(checked.get("approach") or "")}
+                "approach": _plain(checked.get("approach") or ""),
+                "references": [{"path": str(one.get("path") or ""), "take": str(one.get("take") or "")}
+                               for one in checked.get("references") or [] if isinstance(one, dict)]}
 
     listed = [shown(cards.get(str(one.get("card") or "")), one)
               for one in contract.get("deliverables") or [] if isinstance(one, dict)]
@@ -2158,6 +2161,13 @@ def _note_as_event(entry: Dict[str, Any], whole: bool = False
     if what == "branch instruction":
         return ("you", "start", f"You asked, from here: {_clip(said('text'), 300)}",
                 {"words": said("text")})
+    if what == "references chosen":
+        given = said("given") or {}
+        paths = [path for mine in given.values() for path in mine]
+        return ("reviewer", "note", f"Your past work as references: {said('chosen') or 0} "
+                f"of {said('candidates') or 0} looked at, for {len(given)} of "
+                f"{said('cards') or 0} deliverables" + (f" - {joined(paths)}" if paths else ""),
+                {"given": given})
     if what == "amendment reviewed":
         comments = joined(said("comments"))
         return ("reviewer", "verdict", f"The amendment: {said('verdict') or 'reviewed'}"
@@ -2402,6 +2412,12 @@ class WorkRuns:
         #: why, by its unit, until it is started or asked about again.
         self.waited_out: Dict[str, str] = {}
         self.waiting: List[Dict[str, Any]] = []
+        #: A DEBUGGER WAY WHOSE PROCESS IS GETTING READY - by unit, since when.
+        #: Its run is not there until the process says so, a minute or two
+        #: for the full way (2026-10-23: 121 s, 128 s); meanwhile the page
+        #: showed its last run, ended, and a second Start, waiting on the
+        #: first, came back "already going".
+        self.starting: Dict[str, str] = {}
         self._lock = threading.Lock()
         #: What installs a run's packages, given the work's policy: pip under
         #: the guard. Replaced in tests.
@@ -2611,6 +2627,8 @@ class WorkRuns:
         as the computer has room: each waits its turn as any run does
         (`_room_for`)."""
         if unit.get("debug"):
+            if str(unit.get("id") or "") in self.starting:
+                return "this one is starting - its process is getting ready"
             if any(run.alive() and run.unit.get("id") == unit["id"]
                    for run in self._running.values()):
                 return "this one is already going; stop it first"
@@ -2723,6 +2741,11 @@ class WorkRuns:
         the default - or "auto". `sound`: a sound is played when this
         session ends (see `Run._ring`). `given_room`: started from the
         queue, its turn come (`start_waiting`)."""
+        apart = self._way_apart("start", unit, given_room, {
+            "instruction": instruction, "limits": limits, "packages": packages,
+            "sound": sound})
+        if apart is not None:
+            return apart
         with self._lock:
             busy = self._busy(unit)
             if busy:
@@ -2735,11 +2758,6 @@ class WorkRuns:
                     "packages": packages, "sound": sound})
                 if waits:
                     return waits
-            if self.in_subprocess and unit.get("debug"):
-                # Its turn come (waited for above): in a process of its own.
-                return self._launch("start", unit, {
-                    "instruction": instruction, "limits": limits,
-                    "packages": packages, "sound": sound, "given_room": True})
             if self.in_subprocess:
                 return self._apart("start", unit, instruction=instruction,
                                    limits=limits, packages=packages, sound=sound)
@@ -2784,6 +2802,11 @@ class WorkRuns:
         had said there, went with the application, so its files and state
         are put back as they were at that milestone, and it goes on from
         there."""
+        apart = self._way_apart("continue", unit, given_room, {
+            "run_id": run_id, "limits": limits, "packages": packages,
+            "from_version": from_version, "instruction": instruction, "sound": sound})
+        if apart is not None:
+            return apart
         with self._lock:
             busy = self._busy(unit)
             if busy:
@@ -2795,11 +2818,6 @@ class WorkRuns:
                     "sound": sound})
                 if waits:
                     return waits
-            if self.in_subprocess and unit.get("debug"):
-                return self._launch("continue", unit, {
-                    "run_id": run_id, "limits": limits, "packages": packages,
-                    "from_version": from_version, "instruction": instruction,
-                    "sound": sound, "given_room": True})
             if self.in_subprocess:
                 return self._apart("continue", unit, run_id=run_id, limits=limits,
                                    packages=packages, from_version=from_version,
@@ -2887,7 +2905,11 @@ class WorkRuns:
 
     def waiting_of(self, unit_id: str) -> Optional[Dict[str, Any]]:
         """A run of this unit waiting for room - why, since when, and how
-        far along the queue - or None."""
+        far along the queue - or None. A debugger way whose process is
+        getting ready: starting, since when."""
+        if unit_id in self.starting:
+            return {"why": "starting", "since": self.starting[unit_id], "position": 0,
+                    "kind": "start", "starting": True}
         for at, one in enumerate(list(self.waiting)):
             if one["unit"].get("id") == unit_id:
                 return {"why": one.get("why", ""), "since": one.get("at", ""),
@@ -2901,6 +2923,33 @@ class WorkRuns:
             gone = len(kept) != len(self.waiting)
             self.waiting[:] = kept
         return gone
+
+    def _way_apart(self, kind: str, unit: Dict[str, Any], given_room: bool,
+                   args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """A DEBUGGER WAY IN A PROCESS OF ITS OWN: asked for under the runs'
+        lock - busy, new work with no words, or waiting for room - and its
+        process started outside it, the way said to be starting until the
+        process says its run started or why not. Held, the lock kept every
+        other start - the way beside it too - waiting the minute or two the
+        process takes. None for any other run."""
+        if not (self.in_subprocess and unit.get("debug")):
+            return None
+        with self._lock:
+            busy = self._busy(unit)
+            if busy:
+                return {"error": busy}
+            if kind == "start" and not str(args.get("instruction") or "").strip() \
+                    and not self.has_history(unit):
+                return {"error": "this is new work: say what you want done"}
+            if not given_room:
+                waits = self._wait_for_room(kind, unit, args)
+                if waits:
+                    return waits
+            self.starting[str(unit.get("id") or "")] = _now()
+        try:
+            return self._launch(kind, unit, dict(args, given_room=True))
+        finally:
+            self.starting.pop(str(unit.get("id") or ""), None)
 
     def _launch(self, kind: str, unit: Dict[str, Any], args: Dict[str, Any]
                 ) -> Dict[str, Any]:
@@ -3864,6 +3913,9 @@ class Run:
         # what the user's own context brings.
         local = not alone and self.variant != NO_CONTEXT
         self.tools.records_db = getattr(owner, "db", None) if local else None
+        # A debugger way's: nothing that rests on its project's folders, the
+        # agent's own, or those the user named (debug "leave_out").
+        self.tools.leave_out = _left_out(unit) if local else None
         self.tools.files_index = getattr(owner, "local_index", None) if local else None
         #: Its versions, kept in its own folder - written through the work's
         #: policy, like everything else it writes.
@@ -5913,6 +5965,8 @@ class Run:
             if checked.get("approach"):
                 approach = checked["approach"] if for_reviewer else _plain(checked["approach"])
                 lines.append(f"    how to go about it: {approach}")
+            from ...learning.references import shown as references_shown
+            lines += references_shown(checked.get("references"))
             if not checked.get("criteria"):
                 lines.append("    (criteria not yet written)")
         return "\n".join(lines)
@@ -6374,6 +6428,7 @@ class Run:
                 self._set_criteria(card, criteria, str(said.get("approach") or ""))
             listed.append({"card": card["id"], "title": card["title"],
                            "statement": card["statement"]})
+        self._pick_references(list(refs.values()))
         contract = {"goal": goal,
                     "scope": [str(one) for one in draft.get("scope") or []][:12],
                     "out_of_scope": [str(one) for one in draft.get("out_of_scope") or []][:12],
@@ -6566,9 +6621,49 @@ class Run:
 
     def _set_criteria(self, card: Dict[str, Any], criteria: List[Dict[str, Any]],
                       approach: str) -> None:
+        before = (self.store.card(card["id"]) or {}).get("checked_by") or {}
         self.store.update_card(card["id"], {"checked_by": {
             "by": "agent", "what": "the reviewer, against its criteria",
-            "criteria": criteria, "approach": approach[:1500]}})
+            "criteria": criteria, "approach": approach[:1500],
+            **({"references": before["references"]} if before.get("references") else {})}})
+
+    def _pick_references(self, cards: List[Dict[str, Any]]) -> None:
+        """THE USER'S PAST WORK AS A REFERENCE for each deliverable (the user,
+        2026-10-23): a call of the reviewer's own - not in its context, which
+        each of its calls carries again - shown the deliverables and where the
+        deliverables of the cases most like this job are, each with its first
+        lines; it may read any whole, and gives each deliverable at most two,
+        with what to take from each - or none. Each is checked before the card
+        carries it: there, readable by the work agent, in no folder left out
+        (learning/references.py). The full way only: the others are given
+        nothing of the user's work."""
+        if self.finder is None or not cards:
+            return
+        from ...learning import references
+        readable = self.tools._may_read
+        try:
+            found = references.candidates(self.finder, self._facets, readable)
+            if not found:
+                return
+            said = self._ask(references.PROMPT.format(per_card=references.PER_CARD)
+                             + "\n\n" + zone_rule(),
+                             [{"role": "user", "content": references.content(cards, found)}],
+                             self.review_tools, writing=False, rounds=references.READS,
+                             work=False, quiet=True, who="reviewer",
+                             language=in_english("the answer"))
+            picked = references.checked(said, cards, readable, self.finder.leave_out)
+        except Exception:                      # pragma: no cover - none given then
+            log.warning("no references could be chosen", exc_info=True)
+            return
+        for card in cards:
+            now_card = self.store.card(card["id"]) or card
+            checked = dict(now_card.get("checked_by") or {})
+            checked["references"] = picked.get(card["id"]) or []
+            self.store.update_card(card["id"], {"checked_by": checked})
+        self._note("references chosen", cards=len(cards), candidates=len(found),
+                   chosen=sum(len(one) for one in picked.values()),
+                   given={card_id: [one["path"] for one in mine]
+                          for card_id, mine in picked.items() if mine})
 
     def _record_contract(self, draft: Dict[str, Any], reviews: List[Dict[str, Any]],
                          approved: bool) -> None:
@@ -6796,6 +6891,7 @@ class Run:
             criteria = self._criteria(said.get("criteria"))
             if card is not None and criteria:
                 self._set_criteria(card, criteria, str(said.get("approach") or ""))
+        self._pick_references(list(refs.values()))
         # Done work that no longer holds, opened again - and what it is part
         # of, which cannot be done while it is not.
         done_by_id = {card["id"]: card for card in done}

@@ -703,6 +703,56 @@ class ARunIsTwoAgentsTests(unittest.TestCase):
         self.assertTrue(any("THE FINAL REVIEW FOUND THESE" in p and "no title" in p
                             for p in prompts))
 
+    def test_the_work_agent_is_pointed_to_the_users_past_work(self) -> None:
+        # A past deliverable like this one, where a case says it is: chosen
+        # for the notes by a call of the reviewer's own, checked, and on the
+        # card the work agent reads - with what to take from it.
+        import json as _json
+        import re
+        from personalized_agent.learning.store import LearningStore
+        past = Path(self.app.policy.workspace_root) / "past-notes"
+        past.mkdir(parents=True)
+        (past / "README.md").write_text("# Notes\n\n## Greeting\n", encoding="utf-8")
+        LearningStore(self.app.db).save_case({
+            "unit_id": "u-past", "title": "Notes written before",
+            "facets": {"deliverable": ["deliverable:notes"]},
+            "locations": [{"path": str(past / "README.md"), "what": "final version",
+                           "at": "2026-01-01"},
+                          {"path": str(past / "gone.md"), "what": "final version",
+                           "at": "2026-01-02"}]})
+
+        class _Pointing(_TwoAgents):
+            chose_from = ""
+
+            def invoke(self, request, role=""):
+                said = _json.dumps(request.messages, default=str)
+                last = _json.dumps(request.messages[-1], default=str)
+                if "BEFORE YOU WRITE THE CRITERIA OF" in last and "You review a work agent" in request.system:
+                    self.asked.append(request)
+                    return self._reply(_json.dumps({"terms": {"deliverable": ["deliverable:notes"]},
+                                                    "questions": []}))
+                if "THE USER'S PAST WORK AS REFERENCES" in (request.system or ""):
+                    self.asked.append(request)
+                    self.chose_from = said
+                    card = re.search(r"(card_[0-9a-zA-Z]+): The notes", said).group(1)
+                    return self._reply(_json.dumps({"cards": {card: [
+                        {"path": str(past / "README.md"), "take": "Its sections."},
+                        {"path": str(past / "gone.md"), "take": "Not there."}]}}))
+                return super().invoke(request, role)
+        models = _Pointing()
+        run, _started = self._run(models)
+        self.assertEqual(run["status"], "done", run["log"][-6:])
+        self.assertIn("## Greeting", models.chose_from, "shown by its first lines")
+        self.assertNotIn("gone.md", models.chose_from, "a candidate not on disk is not shown")
+        line = f"look at: {past / 'README.md'} - Its sections."
+        builder = [_json.dumps(r.messages, default=str) for r in models.asked
+                   if "You review a work agent" not in r.system
+                   and "THE USER'S PAST WORK AS REFERENCES" not in (r.system or "")
+                   and "DOES EACH OF THESE REASONS" not in r.system]
+        self.assertTrue(any(_json.dumps(line)[1:-1] in one for one in builder))
+        self.assertFalse(any("gone.md" in one for one in builder), "not there: never given")
+        self.assertTrue(any(one.get("what") == "references chosen" for one in run["log"]))
+
     def test_the_work_agent_never_sees_the_users_experience(self) -> None:
         # What was learned of the user's work (learning/): a reason the user
         # stated, that holds for any work - the reviewer is given it, the

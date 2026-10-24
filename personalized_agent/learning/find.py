@@ -10,15 +10,29 @@ this project. Then:
   covered, near (one dimension off by a sibling), or unknown - never the
   ones plainly outside; then a model reads each one's condition and says
   whether it holds this time (yes / no / unknown - an unknown becomes a
-  question for the reviewer). A reason the user stated always comes first;
-  an inferred one is given only on two observations or more, said to be
-  inferred. A rival is one line beside it.
+  question for the reviewer), WHICH OF THE QUESTIONS IT ANSWERS and how
+  well, and - answering none - whether this user would expect it of this
+  job all the same. Each question is given its `PER_QUESTION` best; the
+  unasked, `EXPECTED` more; the rest none (the user, 2026-10-23: thirty-four
+  reasons stacked under five headings answered "which stack?" with commit
+  habits). A reason the user stated comes first among equals; an inferred
+  one is given only on two observations or more, said to be inferred; each
+  with one short example. A rival is one line beside it.
 
   CASES, by how alike they are to the job, whatever reason they bear on:
   the closest `DETAILED` in full - where the deliverables are, what they
   look like, every judgment in them, how they were made - diverse (one or
   two of a unit) and covering the same deliverable and the same purpose
-  where there are such; the next ones as a short index.
+  where there are such; the next ones as a short index. When those in full
+  come to more than `CASES_CHARS`, the same model call picks, of each long
+  one, the judgments that bear on the questions; the rest are opened with
+  `open_case`. What a case was made with and how stays whole: the answer
+  to "which stack, which tools" is there, not in a reason.
+
+  PACKED BY PRIORITY within `PACKAGE_CHARS`: each question's first reason,
+  then the cases and the pointer to the facts, then the unasked reasons,
+  then each question's second and third - a reason that does not fit is
+  left out whole, never cut through.
 
   THE JUDGMENTS no reason explains yet, in those cases - plainly said.
 
@@ -50,6 +64,18 @@ INDEXED = 10
 PER_UNIT = 2
 #: What a package may take, at most.
 PACKAGE_CHARS = 40_000
+#: Reasons for one question; reasons asked about by none that the user
+#: would expect all the same.
+PER_QUESTION = 3
+EXPECTED = 5
+#: How well a reason must answer a question to be given for it: 2, bears on
+#: it. One that only touches it (1) took the places of better answers - the
+#: design-first habit under "how is the merged result shown" (2026-10-23).
+ANSWERS_AT_LEAST = 2
+#: The cases in full, together, beyond which their judgments are picked; and
+#: the judgments of one long case picked, at most.
+CASES_CHARS = 15_000
+JUDGMENTS_PICKED = 10
 #: Reasons on a page of `open_reason`'s cases.
 PAGE = 15
 
@@ -61,19 +87,32 @@ QUESTION_KINDS = {
     "fact": "a fact or limit of this project",
 }
 
-HOLDS_PROMPT = """DOES EACH OF THESE REASONS OF THE USER'S HOLD FOR THIS JOB?
+HOLDS_PROMPT = """DOES EACH OF THESE REASONS OF THE USER'S HOLD FOR THIS JOB - AND
+WHICH OF THE REVIEWER'S QUESTIONS DOES IT ANSWER?
 
 Each reason says why the user judges their work so, and WHEN it holds (and
 what it is excepted from). For the job described, say for each:
-  "yes" - its condition holds here;
-  "no" - it does not (say why in a few words);
-  "unknown" - it depends on something the job does not say: write the
-  question that would settle it.
+  "holds": "yes" - its condition holds here;
+           "no" - it does not (say why in a few words);
+           "unknown" - it depends on something the job does not say: write
+           the question that would settle it.
+  "answers": the reviewer's questions it bears on, by number, each with 3
+           (answers it), 2 (bears on it) or 1 (touches it) - {} for none.
+           Bearing on a question is about what the reason says, not its
+           heading: a habit of committing does not answer "which stack".
+  "expected": true only when it answers none of the questions and is still
+           a requirement this user would expect of this job.
 A reason last seen long ago may be one the user has left: say "no" with why
 when the record shows they have moved on.
 
+When CASES' JUDGMENTS are listed: for each case, the ids of the judgments
+most worth the reviewer's reading for its questions and this job, most
+first - at most the number said.
+
 Return ONLY this JSON object:
-{"R-...": {"holds": "yes|no|unknown", "why": "", "ask": ""}, ...}"""
+{"reasons": {"R-...": {"holds": "yes|no|unknown", "why": "", "ask": "",
+                       "answers": {"1": 3}, "expected": false}, ...},
+ "cases": {"C-...": ["J-...", ...]}}"""
 
 
 def _line(text: Any, most: int = 300) -> str:
@@ -161,11 +200,27 @@ class Finder:
 
     def holds(self, job: str, facets: Dict[str, List[str]],
               candidates: Sequence[Tuple[Dict[str, Any], str, List[str]]],
-              ask: Optional[Callable[[str, str, int], Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
-        if not candidates or ask is None:
-            return {reason["id"]: {"holds": "yes" if how == "covered" else "unknown", "why": ""}
+              ask: Optional[Callable[[str, str, int], Dict[str, Any]]],
+              questions: Sequence[Dict[str, Any]] = (),
+              long_cases: Sequence[Dict[str, Any]] = ()) -> Dict[str, Dict[str, Any]]:
+        """Each candidate's verdict - whether it holds, why, what would
+        settle it, which questions it answers (number -> 1..3) and whether
+        it is expected unasked. The judgments picked of each long case are
+        kept in `self.picked` (case id -> judgment ids)."""
+        self.picked = {}
+        if not candidates and not long_cases:
+            return {}
+        if ask is None:
+            return {reason["id"]: {"holds": "yes" if how == "covered" else "unknown", "why": "",
+                                   "answers": {}, "expected": False, "coverage": how}
                     for reason, how, _why in candidates}
-        lines = [f"THE JOB: {job}", f"ITS TERMS: {dumps(facets)}", "", "THE REASONS:"]
+        lines = [f"THE JOB: {job}", f"ITS TERMS: {dumps(facets)}", ""]
+        if questions:
+            lines.append("THE REVIEWER'S QUESTIONS:")
+            lines += [f"  {n}. ({one.get('kind') or 'requirement'}) {_line(one.get('q'), 300)}"
+                      for n, one in enumerate(questions, 1)]
+            lines.append("")
+        lines.append("THE REASONS:")
         for reason, how, why in candidates:
             cond = reason.get("condition") or {}
             lines.append(
@@ -174,13 +229,40 @@ class Finder:
                 f"(by the word list: {how}{'; ' + '; '.join(why) if why else ''}; "
                 f"last seen {str(reason.get('last_seen') or '')[:10]}"
                 f"{'; changed since ' + reason['since'][:10] if reason.get('since') else ''})")
+        if long_cases:
+            lines += ["", f"CASES' JUDGMENTS (pick at most {JUDGMENTS_PICKED} of each):"]
+            for case in long_cases:
+                lines.append(f"CASE {case['id']}: {case.get('title', '')}")
+                for one in self._kept(self.store.judgments_of(case["id"])):
+                    said = f' "{_line(one["said"], 120)}"' if one.get("said") else ""
+                    lines.append(f"  {one['id']} [{one.get('aspect') or ''}, {one['strength']}] "
+                                 f"{one['object'].split(':', 1)[-1]}: "
+                                 f"{_line(one['direction'], 160)}{said}")
         said = ask(HOLDS_PROMPT, "\n".join(lines), 3000) or {}
+        verdicts = said.get("reasons") if isinstance(said.get("reasons"), dict) else said
+        asked = range(1, len(questions) + 1)
         out = {}
         for reason, how, _why in candidates:
-            one = said.get(reason["id"]) if isinstance(said.get(reason["id"]), dict) else {}
+            one = verdicts.get(reason["id"]) if isinstance(verdicts.get(reason["id"]), dict) else {}
             holds = str(one.get("holds") or ("yes" if how == "covered" else "unknown")).lower()
+            answers = {}
+            for number, score in (one.get("answers") if isinstance(one.get("answers"), dict)
+                                  else {}).items():
+                try:
+                    number, score = int(number), int(score)
+                except (TypeError, ValueError):
+                    continue
+                if number in asked and score > 0:
+                    answers[number] = min(score, 3)
             out[reason["id"]] = {"holds": holds, "why": _line(one.get("why"), 200),
-                                 "ask": _line(one.get("ask"), 300), "coverage": how}
+                                 "ask": _line(one.get("ask"), 300), "coverage": how,
+                                 "answers": answers, "expected": bool(one.get("expected"))}
+        picks = said.get("cases") if isinstance(said.get("cases"), dict) else {}
+        for case in long_cases:
+            mine = {one["id"] for one in self.store.judgments_of(case["id"])}
+            chosen = [str(one) for one in picks.get(case["id"]) or [] if str(one) in mine]
+            if chosen:
+                self.picked[case["id"]] = list(dict.fromkeys(chosen))[:JUDGMENTS_PICKED]
         return out
 
     # -- cases ----------------------------------------------------------------
@@ -229,12 +311,14 @@ class Finder:
         index = [case for case in ranked if case not in detailed][:INDEXED]
         return detailed[:DETAILED], index
 
-    def case_text(self, case: Dict[str, Any], full: bool = True) -> str:
+    def case_text(self, case: Dict[str, Any], full: bool = True,
+                  only: Optional[Sequence[str]] = None, mark: bool = True) -> str:
         facets = case.get("facets") or {}
         terms = ", ".join(tag.split(":", 1)[1] for values in facets.values() for tag in values)
         if not full or case["id"] in self.expanded:
             return f"{case['id']} {case.get('title', '')} [{terms}] - {_line(case.get('looks_like'), 200)}"
-        self.expanded.add(case["id"])
+        if mark:
+            self.expanded.add(case["id"])
         lines = [f"CASE {case['id']}: {case.get('title', '')}", f"  terms: {terms}"]
         places = [one for one in case.get("locations") or []
                   if not self.leave_out.location_out(one)]
@@ -251,15 +335,25 @@ class Finder:
         if case.get("how_made"):
             lines.append("  how it was made: " + _line(case["how_made"], 600))
         judgments = self._kept(self.store.judgments_of(case["id"]))
+        more = 0
+        if only is not None:
+            # Of a long case, those picked for the questions, most first.
+            by_id = {one["id"]: one for one in judgments}
+            picked = [by_id[one] for one in only if one in by_id]
+            more, judgments = len(judgments) - len(picked), picked
         if judgments:
-            lines.append("  the user's judgments in it:")
-            for one in sorted(judgments, key=lambda j: str(j.get("at") or "")):
+            lines.append("  the user's judgments in it" + (" that bear on your questions:"
+                                                            if only is not None else ":"))
+            for one in (judgments if only is not None
+                        else sorted(judgments, key=lambda j: str(j.get("at") or ""))):
                 said = f' - "{_line(one["said"], 300)}"' if one.get("said") else ""
                 why = f" (why: {_line(one['why'], 200)})" if one.get("why") else ""
                 explained = "" if one["state"] == "linked" else " [no reason explains it yet]"
                 lines.append(f"    {one['id']} {one.get('at') or '?'} [{one['strength']}] "
                              f"{one.get('item') or ''} {one['object'].split(':', 1)[-1]}: "
                              f"{_line(one['direction'], 200)}{said}{why}{explained}")
+        if more:
+            lines.append(f"  ({more} more of the user's judgments in it: open_case {case['id']})")
         return "\n".join(lines)
 
     # -- the package ----------------------------------------------------------
@@ -269,103 +363,182 @@ class Finder:
                ) -> Dict[str, Any]:
         """The text the reviewer is given for its questions, and what it
         rests on (for the run's log)."""
+        questions = [one for one in questions if isinstance(one, dict)]
         candidates = self.candidates(facets)
-        verdicts = self.holds(job, facets, candidates, ask)
-        terms = self.vocab.by_id()
-        given: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
-        new_questions = []
-        for reason, how, _why in candidates:
-            verdict = verdicts.get(reason["id"]) or {}
-            if verdict.get("holds") == "no":
-                continue
-            if verdict.get("holds") == "unknown" and verdict.get("ask"):
-                new_questions.append({"q": verdict["ask"], "kind": reason.get("aspect") or "requirement",
-                                      "from": reason["id"]})
-            given.append((reason, verdict))
-        given.sort(key=lambda one: (one[0]["source"] != "stated",
-                                    -(one[0]["support"] + 1) / (one[0]["support"] + one[0]["contra"] + 2)))
         detailed, index = self.pick(facets)
+        whole = {case["id"]: self.case_text(case, mark=False) for case in detailed}
+        long_cases = []
+        if sum(len(one) for one in whole.values()) > CASES_CHARS:
+            long_cases = [case for case in detailed
+                          if len(self._kept(self.store.judgments_of(case["id"]))) > JUDGMENTS_PICKED]
+        verdicts = self.holds(job, facets, candidates, ask, questions, long_cases)
+        given: Dict[str, Tuple[Dict[str, Any], Dict[str, Any]]] = {}
+        new_questions = []
+        for reason, _how, _why in candidates:
+            verdict = verdicts.get(reason["id"]) or {}
+            if verdict.get("holds") != "no":
+                given[reason["id"]] = (reason, verdict)
+        if not any(verdict.get("answers") for _r, verdict in given.values()):
+            # No model said which question each answers: by its kind.
+            for reason, verdict in given.values():
+                verdict["answers"] = {n: ANSWERS_AT_LEAST for n, q in enumerate(questions, 1)
+                                      if (q.get("kind") or "requirement") == reason.get("aspect")}
+                verdict["expected"] = not verdict["answers"]
 
-        def reason_text(reason: Dict[str, Any], verdict: Dict[str, Any]) -> str:
-            cond = reason.get("condition") or {}
+        def rank(rid: str, number: int = 0) -> Tuple:
+            reason, verdict = given[rid]
             confidence = (reason["support"] + 1) / (reason["support"] + reason["contra"] + 2)
-            tag = "said by the user" if reason["source"] == "stated" else \
-                f"inferred, confidence {confidence:.1f}"
-            lines = [f"{reason['id']} [{tag}] {reason['statement']}"]
-            lines.append(f"    when: {cond.get('text', '')}"
-                         + (f" - except {dumps(cond.get('excluded'))}" if cond.get("excluded") else ""))
-            state = {"yes": "its condition holds here", "unknown": "it may hold - see the question"}
-            lines.append(f"    here: {state.get(verdict.get('holds'), 'it may hold')}"
-                         + (f" ({verdict.get('coverage')}: not seen in a job like this yet)"
-                            if verdict.get("coverage") == "near" else "")
-                         + (f" - {verdict['why']}" if verdict.get("why") else ""))
-            if reason.get("predictions"):
-                lines.append("    predicts: " + "; ".join(_line(p.get("text"), 160)
-                                                         for p in reason["predictions"][:4]))
-            lines.append(f"    first seen {str(reason.get('first_seen') or '?')[:10]}, last seen "
-                         f"{str(reason.get('last_seen') or '?')[:10]}"
-                         + (f", as it is since {reason['since'][:10]}" if reason.get("since") else ""))
-            if reason.get("rival"):
-                rival = self.store.reason(reason["rival"])
-                if rival:
-                    lines.append(f"    another explanation, not settled yet: {rival['id']} "
-                                 f"{_line(rival['statement'], 200)}")
-            supports = self._supports(reason["id"])
-            examples = sorted(supports, key=lambda j: -closeness(
-                facets, (self.store.case(j["case_id"]) or {}).get("facets") or {}, self.vocab, terms))[:2]
-            for one in examples:
-                case = self.store.case(one["case_id"]) or {}
-                said = f' "{_line(one["said"], 160)}"' if one.get("said") else ""
-                lines.append(f"    e.g. {case.get('id', '')} {case.get('title', '')}: "
-                             f"{_line(one['direction'], 160)}{said}")
-            return "\n".join(lines)
+            return (-(verdict.get("answers") or {}).get(number, 0), verdict.get("holds") != "yes",
+                    reason["source"] != "stated", -confidence)
 
-        by_kind: Dict[str, List[str]] = defaultdict(list)
-        shown_reasons: List[str] = []
-        for reason, verdict in given:
-            kind = reason.get("aspect") if reason.get("aspect") in ASPECTS else "requirement"
-            by_kind[kind].append(reason_text(reason, verdict))
-            shown_reasons.append(reason["id"])
-        out = ["WHAT WAS LEARNED OF THE USER'S OWN WORK, FOR YOUR QUESTIONS.",
-               "Reasons are why the user judges their work so - with when each holds, as read "
-               "from what they did. A reason SAID BY THE USER comes first; an INFERRED one is "
-               "the record's reading, weigh it as such."]
-        asked_kinds = {str(q.get("kind") or "") for q in questions}
-        for kind in list(QUESTION_KINDS):
-            if kind == "fact":
-                continue
-            mine = [q for q in questions if q.get("kind") == kind]
-            if not by_kind.get(kind) and not mine:
-                continue
-            out.append(f"\n== {QUESTION_KINDS[kind].upper()} ==")
-            for q in mine:
-                out.append(f"  your question: {_line(q.get('q'), 300)}")
-            out += by_kind.get(kind) or ["  (nothing learned bears on this)"]
-        for q in new_questions:
-            out.append(f"\nA QUESTION FOR YOU, from {q['from']}: {q['q']}")
+        by_question = {n: sorted((rid for rid, (_r, v) in given.items()
+                                  if (v.get("answers") or {}).get(n, 0) >= ANSWERS_AT_LEAST),
+                                 key=lambda rid, n=n: rank(rid, n))[:PER_QUESTION]
+                       for n in range(1, len(questions) + 1)}
+        answering = {rid for mine in by_question.values() for rid in mine}
+        expected = sorted((rid for rid, (_r, v) in given.items()
+                           if rid not in answering and v.get("expected")), key=rank)[:EXPECTED]
+        for rid in list(answering) + expected:
+            verdict = given[rid][1]
+            if verdict.get("holds") == "unknown" and verdict.get("ask"):
+                new_questions.append({"q": verdict["ask"], "kind": given[rid][0].get("aspect") or "requirement",
+                                      "from": rid})
+
+        # The cases: the long ones by their judgments picked (or, picked by
+        # none, by kind, words and strength); always with what they were
+        # made with.
+        cases_text = []
+        for case in detailed:
+            only = None
+            if case in long_cases:
+                only = self.picked.get(case["id"]) or self._by_tags(case, questions)
+            cases_text.append(self.case_text(case, only=only))
+        # A fact or a way of working no reason answers outright: where the
+        # user's past work says it, and where this project's files do.
+        facts_asked = [n for n, q in enumerate(questions, 1) if q.get("kind") in ("fact", "habit")
+                       and not any((given[rid][1].get("answers") or {}).get(n) == 3
+                                   for rid in by_question.get(n, []))]
+        made = [case["id"] for case in detailed] + [case["id"] for case in index[:4]]
+        pointer = ("  No reason learned answers this outright. What the user used and did before is in "
+                   f"the cases below - what each looks like and how it was made ({', '.join(made)}); "
+                   "what this machine and project have, find out (search_files, read_file, run_python).")
+        tail = []
+        if any(q.get("kind") == "fact" for q in questions) or facts_asked:
+            tail.append("\n== FOR THE FACTS OF THIS PROJECT: what the cases below say they were "
+                        "made with and how; and search its files (search_files, read_file). ==")
         if detailed:
-            out.append("\n== THE CASES MOST LIKE THIS JOB (in full) ==")
-            out += [self.case_text(case) for case in detailed]
+            tail.append("\n== THE CASES MOST LIKE THIS JOB (in full) ==")
+            tail += cases_text
         if index:
-            out.append("\n== OTHER CASES LIKE IT (open_case for more) ==")
-            out += ["  " + self.case_text(case, full=False) for case in index]
-        if "fact" in asked_kinds:
-            out.append("\n== FOR THE FACTS OF THIS PROJECT: search its files (search_files, "
-                       "read_file); the cases above say where its deliverables are. ==")
-        if not given and not detailed:
+            tail.append("\n== OTHER CASES LIKE IT (open_case for more) ==")
+            tail += ["  " + self.case_text(case, full=False) for case in index]
+        for q in new_questions:
+            tail.append(f"\nA QUESTION FOR YOU, from {q['from']}: {q['q']}")
+
+        # Packed by priority: each question's first; the unasked; the rest.
+        order = [mine[0] for mine in by_question.values() if mine] + expected + \
+            [rid for mine in by_question.values() for rid in mine[1:]]
+        head = ["WHAT WAS LEARNED OF THE USER'S OWN WORK, FOR YOUR QUESTIONS.",
+                "Reasons are why the user judges their work so - with when each holds, as read "
+                "from what they did. A reason SAID BY THE USER comes first; an INFERRED one is "
+                "the record's reading, weigh it as such."]
+        room = PACKAGE_CHARS - len("\n".join(head + tail)) - sum(
+            len(_line(q.get("q"), 300)) + 120 for q in questions) - len(pointer) * len(facts_asked)
+        texts: Dict[str, str] = {}
+        for rid in dict.fromkeys(order):
+            text = self._reason_text(*given[rid], facets)
+            if len(text) + 1 <= room:
+                texts[rid] = text
+                room -= len(text) + 1
+
+        out = list(head)
+        shown: List[str] = []
+        for n, q in enumerate(questions, 1):
+            out.append(f"\n== QUESTION {n} ({q.get('kind') or 'requirement'}): {_line(q.get('q'), 300)}")
+            mine = [rid for rid in by_question.get(n, []) if rid in texts]
+            for rid in mine:
+                out.append(f"{rid} - given above" if rid in shown else texts[rid])
+                shown.append(rid)
+            if n in facts_asked:
+                out.append(pointer)
+            elif not mine:
+                out.append("  (nothing learned bears on this)")
+        unasked = [rid for rid in expected if rid in texts]
+        if unasked:
+            out.append("\n== NOT ASKED, BUT THIS USER WOULD EXPECT IT OF THIS JOB ==")
+            out += [texts[rid] for rid in unasked]
+            shown += unasked
+        if not shown and not detailed:
             out = ["NOTHING LEARNED OF THE USER'S WORK BEARS ON THIS JOB YET. Answer your "
                    "questions from the user's words, their files, and - for what they leave "
                    "open - the web (as told), and say so."]
+        else:
+            out += tail
         text = "\n".join(out)
         if len(text) > PACKAGE_CHARS:
             text = text[:PACKAGE_CHARS] + "\n... (cut: open_case / open_reason for more)"
+        shown = list(dict.fromkeys(shown))
         return {"text": text,
-                "found": {"reasons": shown_reasons,
-                          "holds": {rid: verdicts.get(rid) for rid in shown_reasons},
+                "found": {"reasons": shown,
+                          "holds": {rid: given[rid][1] for rid in shown},
+                          "by_question": {str(n): [rid for rid in mine if rid in texts]
+                                          for n, mine in by_question.items()},
+                          "expected": unasked,
                           "cases": [case["id"] for case in detailed],
+                          "judgments_picked": {case["id"]: self.picked.get(case["id"]) or "by kind"
+                                               for case in long_cases},
                           "index": [case["id"] for case in index],
                           "questions_raised": new_questions,
                           "facets": facets}}
+
+    def _reason_text(self, reason: Dict[str, Any], verdict: Dict[str, Any],
+                     facets: Dict[str, List[str]]) -> str:
+        """A reason as given: what it says, when it holds, whether here - and
+        one short example, the case nearest the job."""
+        cond = reason.get("condition") or {}
+        confidence = (reason["support"] + 1) / (reason["support"] + reason["contra"] + 2)
+        tag = "said by the user" if reason["source"] == "stated" else \
+            f"inferred, confidence {confidence:.1f}"
+        lines = [f"{reason['id']} [{tag}] {reason['statement']}",
+                 f"    when: {cond.get('text', '')}"
+                 + (f" - except {dumps(cond.get('excluded'))}" if cond.get("excluded") else "")]
+        state = {"yes": "its condition holds here", "unknown": "it may hold - see the question"}
+        lines.append(f"    here: {state.get(verdict.get('holds'), 'it may hold')}"
+                     + (f" ({verdict.get('coverage')}: not seen in a job like this yet)"
+                        if verdict.get("coverage") == "near" else "")
+                     + (f" - {verdict['why']}" if verdict.get("why") else ""))
+        if reason.get("rival"):
+            rival = self.store.reason(reason["rival"])
+            if rival:
+                lines.append(f"    another explanation, not settled yet: {rival['id']} "
+                             f"{_line(rival['statement'], 200)}")
+        terms = self.vocab.by_id()
+        nearest = sorted(self._supports(reason["id"]), key=lambda j: -closeness(
+            facets, (self.store.case(j["case_id"]) or {}).get("facets") or {}, self.vocab, terms))[:1]
+        for one in nearest:
+            case = self.store.case(one["case_id"]) or {}
+            title = _line(case.get("title"), 60).split(":")[0].split(" (")[0]
+            lines.append(f"    e.g. {case.get('id', '')} {title}: {_line(one['direction'], 120)}")
+        return "\n".join(lines)
+
+    def _by_tags(self, case: Dict[str, Any], questions: Sequence[Dict[str, Any]]) -> List[str]:
+        """A long case's judgments picked with no model: of the kinds asked
+        about most, the tools it was made with when a stack or a tool is asked
+        about, the user's own words and what they changed first."""
+        kinds = defaultdict(int)
+        for one in questions:
+            kinds[one.get("kind") or "requirement"] += 1
+        tools = any(one.get("kind") in ("fact", "habit") for one in questions)
+        strength = {"changed": 0, "approved": 1, "noted": 2}
+
+        def score(one: Dict[str, Any]) -> Tuple:
+            about = str(one.get("object") or "")
+            return (-(tools and "tool" in about), -kinds.get(one.get("aspect") or "", 0),
+                    not one.get("said"), strength.get(one.get("strength"), 3),
+                    str(one.get("at") or ""))
+
+        mine = sorted(self._kept(self.store.judgments_of(case["id"])), key=score)
+        return [one["id"] for one in mine[:JUDGMENTS_PICKED]]
 
     # -- the reviewer's tools ---------------------------------------------------
     def open_case(self, case_id: str) -> str:

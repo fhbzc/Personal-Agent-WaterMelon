@@ -1095,7 +1095,8 @@ class WorkTools:
             return {"error": "no records to search"}
         from .context_search import Index, records
         if self._records_index is None:
-            self._records_index = Index(records(self.records_db))
+            self._records_index = Index(records(self.records_db,
+                                                getattr(self, "leave_out", None)))
         found = self._records_index.search([str(one) for one in args.get("keywords") or []])
         return {"found": [{"kind": one["kind"], "title": one["title"],
                            "detail": one.get("detail", ""), "at": one.get("at"),

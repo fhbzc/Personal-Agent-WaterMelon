@@ -668,6 +668,63 @@ class WhatTheReviewerIsGivenTests(_Base):
                                           rid: {"holds": "no", "why": "a handout"}})
         self.assertEqual(said["found"]["reasons"], [])
 
+    def test_each_question_its_few_reasons_and_the_unasked_expected(self) -> None:
+        from personalized_agent.learning import find as find_module
+        slides = self.case("Defence slides", deliverable=["deliverable:slides"])
+        rids = [self._reason(f"Reason {n}.", "stated", [self.judgment(slides)]) for n in range(7)]
+        questions = [{"q": "How much text a slide?", "kind": "output"},
+                     {"q": "Which tool are the slides made in?", "kind": "fact"}]
+        verdicts = {rid: {"holds": "yes", "answers": {"1": 3 - n % 3}} for n, rid in enumerate(rids[:5])}
+        verdicts[rids[5]] = {"holds": "yes", "answers": {}, "expected": True}
+        verdicts[rids[6]] = {"holds": "yes", "answers": {}}
+        seen = []
+        said = Finder(self.db).answer(
+            "slides", {"deliverable": ["deliverable:slides"]}, questions,
+            ask=lambda system, content, most: seen.append(content) or {"reasons": verdicts})
+        self.assertIn("THE REVIEWER'S QUESTIONS:", seen[0])
+        self.assertEqual(len(said["found"]["by_question"]["1"]), find_module.PER_QUESTION)
+        self.assertEqual(said["found"]["by_question"]["1"][0], rids[0], "the best answer first")
+        self.assertEqual(said["found"]["expected"], [rids[5]])
+        self.assertNotIn(rids[6], said["found"]["reasons"], "answering nothing, expected by no one")
+        self.assertIn("== QUESTION 2 (fact)", said["text"])
+        self.assertIn("No reason learned answers this", said["text"])
+        self.assertIn("FOR THE FACTS OF THIS PROJECT", said["text"])
+        self.assertLessEqual(said["text"].count("    e.g. "), len(said["found"]["reasons"]),
+                             "one example a reason")
+
+    def test_long_cases_their_judgments_picked_for_the_questions(self) -> None:
+        from personalized_agent.learning import find as find_module
+        slides = self.case("Defence slides", deliverable=["deliverable:slides"])
+        jids = [self.judgment(slides, direction=f"a long change, {n} " + "x" * 600) for n in range(80)]
+        rid = self._reason("Listen, not read.", "stated", jids[:1])
+        seen = []
+        said = Finder(self.db).answer(
+            "slides", {"deliverable": ["deliverable:slides"]}, [{"q": "How much text?", "kind": "output"}],
+            ask=lambda system, content, most: seen.append(content) or {
+                "reasons": {rid: {"holds": "yes", "answers": {"1": 3}}},
+                "cases": {slides: [jids[7], jids[3], "J-not-of-it"]}})
+        self.assertIn("CASES' JUDGMENTS", seen[0])
+        self.assertEqual(said["found"]["judgments_picked"], {slides: [jids[7], jids[3]]})
+        self.assertLess(said["text"].index(jids[7]), said["text"].index(jids[3]), "most first")
+        self.assertNotIn(jids[20], said["text"])
+        self.assertIn(f"(78 more of the user's judgments in it: open_case {slides})", said["text"])
+        self.assertLessEqual(len(said["text"]), find_module.PACKAGE_CHARS)
+
+    def test_reasons_that_do_not_fit_are_left_out_whole_the_cases_stay(self) -> None:
+        from personalized_agent.learning import find as find_module
+        slides = self.case("Defence slides", deliverable=["deliverable:slides"])
+        jid = self.judgment(slides)
+        rids = [self._reason(f"Reason {n}: " + "y" * 3000, "stated", [jid]) for n in range(30)]
+        questions = [{"q": f"Question {n}?", "kind": "output"} for n in range(12)]
+        said = Finder(self.db).answer(
+            "slides", {"deliverable": ["deliverable:slides"]}, questions,
+            ask=lambda system, content, most: {"reasons": {
+                rid: {"holds": "yes", "answers": {str(1 + n % 12): 3}} for n, rid in enumerate(rids)}})
+        self.assertNotIn("(cut:", said["text"])
+        self.assertLessEqual(len(said["text"]), find_module.PACKAGE_CHARS)
+        self.assertIn(f"CASE {slides}", said["text"])
+        self.assertLess(len(said["found"]["reasons"]), 30)
+
     def test_a_case_in_full_once_and_its_reason_page_by_page(self) -> None:
         slides = self.case("Defence slides", deliverable=["deliverable:slides"])
         jids = [self.judgment(slides) for _ in range(20)]

@@ -702,15 +702,20 @@ class DebugProjects:
                 "name": row["name"], "description": row["description"],
                 "instruction": row["instruction"], "folder": row["folder"],
                 "leave_out": self.leave_out_folders(row),
+                "agent_folder": str(_code_root()),
                 "created_at": row["created_at"], "updated_at": row["updated_at"],
                 "variants": variants}
 
     # -- what its experience leaves out ------------------------------------------
     def leave_out_folders(self, row: Dict[str, Any]) -> List[str]:
         """THE FOLDERS NOTHING LEARNED IS TAKEN FROM for this project's full
-        way (learning/leave_out.py): its own folder - what its tries made and
-        what the user wrote of them there - and those the user named."""
-        return list(dict.fromkeys([str(row["folder"])] + _extra(row)))
+        way (learning/leave_out.py), nor any record its ways search: its own
+        folder - what its tries made and what the user wrote of them there -
+        THE AGENT'S OWN (the user, 2026-10-23: a debugger way is given nothing
+        of the work on the agent itself - its code, and the conversations
+        with Claude Code and Codex held there; no way reads them besides,
+        `sealed_for`), and those the user named."""
+        return list(dict.fromkeys([str(row["folder"]), str(_code_root())] + _extra(row)))
 
     def leave_out_view(self, project_id: str) -> Dict[str, Any]:
         """Each folder left out, with the sessions Claude Code and Codex kept
@@ -726,6 +731,7 @@ class DebugProjects:
             kept = sessions_under([Path(one)])
             records += kept
             folders.append({"path": one, "own": one == str(row["folder"]),
+                            "agent": one == str(_code_root()),
                             "claude": [k for k in kept if not k.endswith(".jsonl")],
                             "codex": len([k for k in kept if k.endswith(".jsonl")])})
         cases, judgments = LeaveOut(self.leave_out_folders(row), records).parts_out(

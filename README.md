@@ -357,7 +357,8 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
-| [v0.2.4](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.4) | 2026-10-23 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.4) |
+| [v0.2.5](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.5) | 2026-10-24 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.5) |
+| [v0.2.4](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.4) | 2026-10-23 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.4) |
 | [v0.2.3](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.3) | 2026-10-23 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.3) |
 | [v0.2.2](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.2) | 2026-10-23 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.2) |
 | [v0.2.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.1) | 2026-10-22 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.1/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.1/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.1/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.1) |
@@ -596,6 +597,35 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.2.5](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.5) (2026-10-24, a pre-release)
+
+- **The Work debugger keeps the agent's own work out of a test.** Every
+  debugger project now leaves out the agent's own folder - its code, and
+  the Claude Code and Codex conversations held there - beside the project's
+  own: nothing learned from them reaches way C, and no way reads them. A
+  way that searches your records no longer finds what was done in a folder
+  left out either; before, it could find the notes of an earlier try's
+  evaluation. Experience left out lists the agent's own folder.
+- **Way C is given what bears on its questions.** For each question the
+  reviewer asks, at most three of your reasons that answer it; those it did
+  not ask about but you would expect, in a section of their own; one short
+  example each. What was learned no longer comes cut off part-way: the
+  cases most like the job are always there, and when they are long, only
+  their judgments that bear on the questions. For a question about tools or
+  a stack, the reviewer is pointed to what your past projects were made
+  with, and to the project's files.
+- **Your past work as a reference.** After the contract, way C may point a
+  deliverable to a file or folder of yours from past work like it - a
+  README, a report, a project laid out alike - with what to take from it.
+  The work agent sees it on the card; only what is there and readable is
+  given.
+- **A debugger way that is starting says so.** Starting a way can take a
+  minute or two: it said nothing meanwhile, showed its last run as ended,
+  and a second Start came back "already going". It now shows that it is
+  starting, and the other ways start beside it without waiting.
+- **On a Mac the watermelon is there again** (as in v0.2.4): the Mac app is
+  built with Tk 8.6.15, on which its clear window shows it.
 
 ### [v0.2.4](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.4) (2026-10-23, a pre-release)
 

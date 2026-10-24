@@ -234,6 +234,37 @@ class ADebuggerWayInItsOwnProcessTests(_Base):
         self.assertTrue(_wait(lambda: child.process.poll() is not None, seconds=90))
         self.assertTrue(_wait(lambda: CodeSeal.held(code) == 0, seconds=10))
 
+    def test_starting_while_its_process_gets_ready_and_the_others_not_kept_waiting(self) -> None:
+        # The full way took two minutes to start: its last run, ended, was
+        # shown meanwhile, and a second Start came back "already going".
+        import threading
+        gate = threading.Event()
+        launched = []
+
+        def slow(kind, unit, args):
+            launched.append(unit["id"])
+            if unit["id"].endswith(":full"):
+                gate.wait(30)
+            return {"run": "r-" + unit["id"]}
+        self.work._launch = slow
+        self.work._room_for = lambda head=False: ""
+        said = {}
+        first = threading.Thread(target=lambda: said.update(self.projects.start(
+            self.project["id"], "full", instruction="Write a short note about tea")))
+        first.start()
+        self.assertTrue(_wait(lambda: len(launched) == 1, seconds=20))
+        unit_id = launched[0]
+        self.assertEqual(self.work.waiting_of(unit_id)["starting"], True)
+        again = self.projects.start(self.project["id"], "full", instruction="again")
+        self.assertIn("starting", again.get("error", ""))
+        beside = self.projects.start(self.project["id"], "noctx", instruction="Write a note")
+        self.assertFalse(beside.get("error"), beside)
+        self.assertEqual(len(launched), 2, "started while the full way was getting ready")
+        gate.set()
+        first.join(30)
+        self.assertEqual(said.get("run"), "r-" + unit_id)
+        self.assertIsNone(self.work.waiting_of(unit_id))
+
     def test_the_child_never_changes_a_seal_held_for_it(self) -> None:
         from personalized_agent.runtime.isolation import CodeSeal
         code = self.agent.code_root
