@@ -828,6 +828,8 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
       <p class="panel-note">New versions come from this project's releases on GitHub.</p>
       <div id="settings-form-updates"></div>
       <p id="updates-status" class="muted"></p>
+      <!-- A version made ready: Restart now uses it at once (app.js). -->
+      <p id="updates-restart" hidden></p>
       <div id="updates-versions"></div>
       <div class="ov-lp-buttons">
         <button type="button" id="updates-check" class="secondary">Check now</button>
@@ -1436,5 +1438,7 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
 <script src="/debugger.js"></script>
 <script src="/chat-debugger.js"></script>
 <script src="/listener-debugger.js"></script>
+<!-- AN UPDATE SEEN THROUGH: stays while the agent is closed (app.js). -->
+<section id="update-follow" class="update-follow" role="status" aria-live="polite" hidden></section>
 </body>
 </html>

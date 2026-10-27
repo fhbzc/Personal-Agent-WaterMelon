@@ -638,10 +638,11 @@ everything it changed is written down.
   default.
 - **Pause and Resume answer at once.** A run no longer seems stuck for a
   moment after Resume: the button says "Resuming…" as you click it, and
-  the run hears it within a tenth of a second. Resuming a run that goes
-  back to its progress point checks its files in less than half the time,
-  and the Resume card says plainly where it goes on from, why, and this
-  time's settings.
+  the run hears it within a tenth of a second. A run that goes back to its
+  progress point is shown as it does - in Work and in the to-do: "rolling
+  back to its progress point: 3,200 of 7,856 files checked" - and checks
+  its files in a fifth of the time. The Resume card says plainly where it
+  goes on from, why, and this time's settings.
 - **The 10-minute progress points are light, and shown.** Saving one no
   longer holds up the work - only what changed is read, beside the run -
   and each shows in the live session: "Saved a progress point". Points

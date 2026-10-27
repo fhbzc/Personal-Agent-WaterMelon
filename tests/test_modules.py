@@ -257,6 +257,9 @@ class TheChartByModuleTests(unittest.TestCase):
         stub = {"/api/debugger": {"model_metrics": {"by_task": by_task,
                                                     "tokens_over_time": []}},
                 "/api/debugger/tokens_by_day": {"days": [today], "rows": rows},
+                # The Overview's own routes since 0.2.8.
+                "/api/tokens": {"by_task": by_task, "tokens_over_time": []},
+                "/api/tokens/by_day": {"days": [today], "rows": rows},
                 "/api/modules": modules.described(None, {})}
         steps = ("const pick=document.querySelector('#dbg-tokens-group');"
                  "pick.value='module';pick.dispatchEvent(new Event('change'));await wait(300);"

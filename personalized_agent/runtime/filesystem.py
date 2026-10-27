@@ -12,7 +12,9 @@ compares normalized case forms.
 
 from __future__ import annotations
 
+import contextlib
 import os
+import threading
 import shutil
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Union
@@ -26,8 +28,37 @@ def _normcase(path: Path) -> str:
     return os.path.normcase(str(path))
 
 
+#: REMEMBERED FOR ONE BATCH OF CHECKS (`remembering`): the real paths found,
+#: this thread's own - a rollback checks thousands of files against the same
+#: few folders, and worked them out again for each (2026-10-27: 10 ms a
+#: file). Nothing is remembered outside a batch.
+_remembered = threading.local()
+
+
+@contextlib.contextmanager
+def remembering():
+    """Real paths remembered while the block runs, on this thread - for a
+    batch of checks during which no folder is made or moved."""
+    before = getattr(_remembered, "paths", None)
+    _remembered.paths = {} if before is None else before
+    try:
+        yield
+    finally:
+        _remembered.paths = before
+
+
 def real_of_existing_ancestor(path: Path) -> Path:
     """Resolve symlinks/junctions on the deepest part of *path* that exists."""
+    memo = getattr(_remembered, "paths", None)
+    if memo is not None:
+        key = str(path)
+        if key not in memo:
+            memo[key] = _real_of_existing_ancestor(path)
+        return memo[key]
+    return _real_of_existing_ancestor(path)
+
+
+def _real_of_existing_ancestor(path: Path) -> Path:
     candidate = path
     tail: list[str] = []
     while True:

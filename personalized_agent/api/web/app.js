@@ -1381,9 +1381,16 @@ async function watchWorkGoing() {
       // WORK'S LINE OF THE GOING RUN, as it is now - paused, resumed or
       // stopped from the to-do, say; one that ended, the panel asked again.
       const titled = experienceState.titleGoing;
+      const unitNow = experienceState.unit && workGoing.byUnit[experienceState.unit.id];
+      const wasStarting = experienceState.unit
+        && ((before || {})[experienceState.unit.id] || {}).state === "starting";
       if (titled && typeof xpDrawTitleRun === "function") {
         if (workGoing.byUnit[titled.unit_id]) xpDrawTitleRun(titled);
         else if (activeTab === "experience") xpLoadRuns();
+      } else if (typeof xpDrawTitleRun === "function") {
+        // Being started: said as it goes; started, the panel asked again.
+        if (unitNow && unitNow.state === "starting") xpDrawTitleRun(null);
+        else if (wasStarting && activeTab === "experience") xpLoadRuns();
       }
       if (Object.keys(before).some((unit) => tracked.has(unit) && !workGoing.byUnit[unit])) {
         loadTodos();
@@ -3435,7 +3442,7 @@ const XP_LIVE_KEEP = 2000;         // events held on the page
 const XP_LIVE_SHOWN = 600;         // lines drawn; older ones are in the run's log
 const XP_LIVE_WHO = { worker: "worker", reviewer: "reviewer", run: "run", you: "you" };
 const XP_LIVE_STATE = { going: "going", paused: "paused", waiting_for_you: "waiting for you",
-                        ended: "ended", interrupted: "interrupted" };
+                        ended: "ended", interrupted: "interrupted", starting: "starting" };
 
 function xpLiveState(runId) {
   experienceState.live = experienceState.live || {};
@@ -4969,6 +4976,15 @@ function xpDrawTitleRun(going) {
   if (!box) return;
   experienceState.titleGoing = going || null;
   let html = "";
+  // BEING STARTED (the user, 2026-10-27: resumed, and Work showed nothing for
+  // the two minutes it was rolled back): what its process says it is doing.
+  const coming = !going && experienceState.unit
+    ? (workGoing.byUnit || {})[experienceState.unit.id] : null;
+  if (coming && coming.state === "starting") {
+    html = `<span class="xp-live-state xp-live-state-going">${escapeHtml(
+        XP_LIVE_STATE.starting)}</span><span class="xp-live-spin xd-way-spin"
+        aria-hidden="true"></span> <span class="muted">${escapeHtml(coming.activity || "")}</span>`;
+  }
   if (going) {
     const live = xpLiveState(going.id);
     // AS IT IS THIS MOMENT (the user, 2026-10-27: resumed from the to-do, and
@@ -10717,18 +10733,10 @@ function renderUpdates(said) {
    agent to the new version (followUpdate). Otherwise it is used from the
    next start, or when the user has been away a while. */
 function renderUpdateRestart(said) {
-  let row = $("#updates-restart");
-  if (!said.ready || said.mode === "off" || said.doing) {
-    if (row) row.remove();
-    return;
-  }
-  const line = $("#updates-status");
-  if (!line) return;
-  if (!row) {
-    row = document.createElement("p");
-    row.id = "updates-restart";
-    line.after(row);
-  }
+  const row = $("#updates-restart");
+  if (!row) return;
+  row.hidden = !said.ready || said.mode === "off" || Boolean(said.doing);
+  if (row.hidden) return;
   row.innerHTML = "";
   const button = document.createElement("button");
   button.type = "button";
@@ -10933,7 +10941,7 @@ async function followUpdate(info) {
     if (!updateFollowing.goneSince && !(said.step || "")) {
       // Not updating after all (the download failed, say): said, and left.
       updateFollowing = null;
-      $("#update-follow")?.remove();
+      if ($("#update-follow")) $("#update-follow").hidden = true;
       renderUpdates(said);
       if (said.error) toast(`The update did not happen: ${said.error}`, "error");
       return;
@@ -10949,15 +10957,9 @@ function version_of_tag(tag) {
 }
 
 function drawUpdateCard(gone, done) {
-  let card = $("#update-follow");
-  if (!card) {
-    card = document.createElement("section");
-    card.id = "update-follow";
-    card.className = "update-follow";
-    card.setAttribute("role", "status");
-    card.setAttribute("aria-live", "polite");
-    document.body.appendChild(card);
-  }
+  const card = $("#update-follow");
+  if (!card) return;
+  card.hidden = false;
   const info = updateFollowing.info;
   const waited = updateFollowing.goneSince
     ? Math.round((Date.now() - updateFollowing.goneSince) / 1000) : 0;
@@ -18890,7 +18892,7 @@ async function loadTodos() {
    asked every few seconds: watchWorkGoing), paused, waiting for you,
    finished, stopped - each opened from there: the plan, the work in Work,
    or the result. A line of them, opened out into one row each. */
-const OV_TODO_STATE = { going: "going", paused: "paused", waiting_for_you: "waiting for you" };
+const OV_TODO_STATE = { going: "going", paused: "paused", waiting_for_you: "waiting for you" , starting: "starting"};
 
 function ovTodoVersions(one) {
   return ((one.work || {}).versions || []).slice();
@@ -18900,7 +18902,8 @@ function ovTodoVersions(one) {
    Resume, and Stop - then Stop now while it wraps up - as in Work. */
 function ovTodoControls(version) {
   const going = version.unit ? workGoing.byUnit[version.unit] : null;
-  if (!going || !going.run) return "";
+  // Being started, it has nothing to pause or stop yet.
+  if (!going || !going.run || going.state === "starting") return "";
   const id = escapeHtml(going.run);
   const paused = going.pause_asked || going.state === "paused";
   const pause = going.stopping ? "" : paused

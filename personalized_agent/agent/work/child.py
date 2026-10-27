@@ -62,6 +62,26 @@ HEARD_WITHIN = 1.0
 
 SPEC, REPLY, SNAPSHOT, CONTROL, LOG = ("spec.json", "reply.json", "snapshot.json",
                                        "control.jsonl", "child.log")
+#: What a child starting a run says it is doing, until it has started.
+STARTING = "starting.json"
+#: Its steps, as the page says them.
+STARTING_STEPS = {"checking": "rolling back to its progress point: {done:,} of {total:,} "
+                              "files checked",
+                  "putting back": "rolling back to its progress point: {done:,} of "
+                                  "{total:,} files put back"}
+
+
+def starting_said(folder: Optional[Path], kind: str) -> str:
+    """What a run being started is doing, in words - from its child's
+    `STARTING`, or, before that says anything, what it is being started for."""
+    said = read_json(Path(folder) / STARTING) if folder else None
+    if isinstance(said, dict) and said.get("step") in STARTING_STEPS:
+        try:
+            return STARTING_STEPS[said["step"]].format(done=int(said.get("done") or 0),
+                                                       total=int(said.get("total") or 0))
+        except (TypeError, ValueError):
+            pass
+    return "resuming" if kind == "continue" else "starting"
 
 
 def children_dir(paths: Any) -> Path:
@@ -248,12 +268,17 @@ def spawn_draft(owner: Any, draft_id: str) -> None:
               **({"creationflags": flags} if flags else {}))
 
 
-def launch(owner: Any, kind: str, unit: Dict[str, Any], **args: Any) -> Dict[str, Any]:
+def launch(owner: Any, kind: str, unit: Dict[str, Any], seen: Any = None,
+           **args: Any) -> Dict[str, Any]:
     """Start a child for a run and wait for its word: the run started (the
-    agent then holds it as a `ChildRun`), or why not."""
+    agent then holds it as a `ChildRun`), or why not. `seen`: given the
+    child's folder at once, where it says what it is doing as it starts
+    (`starting_said`)."""
     base = children_dir(owner.paths)
     folder = base / uuid.uuid4().hex[:12]
     folder.mkdir(parents=True, exist_ok=True)
+    if seen is not None:
+        seen(folder)
     held = _hold_code(owner, unit)
     spec = {"kind": kind, "root": str(owner.paths.root), "unit": unit.get("id"),
             "args": args, "agent_pid": os.getpid(), "code_held": held is not None}
@@ -357,6 +382,9 @@ def child_main(argv: List[str]) -> int:
         log.info("started in %.1fs: the application built", time.monotonic() - began)
         work = app.work
         work.in_subprocess = False            # here, the run is in this process
+        # What it is doing as it starts - a rollback of thousands of files
+        # takes minutes - written where the agent reads it.
+        work.on_progress = lambda said: _write_json(folder / STARTING, said)
         work.code_held_elsewhere = bool(spec.get("code_held"))
         if spec.get("kind") == "draft":
             app.drafts.collect_and_plan(str(spec.get("draft") or ""))

@@ -61,7 +61,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 #: Inside a run's folder: where its versions are kept.
 VERSIONS_DIR = ".versions"
@@ -665,20 +665,52 @@ def _claim(paths: Iterable[Path]) -> None:
         mark_written(str(one))
 
 
+class _Saying:
+    """What a rollback is doing, said at most twice a second: `say` is given
+    {"step", "done", "total"} (the process starting a run writes it where
+    the agent reads it - child.py)."""
+
+    def __init__(self, say: Any) -> None:
+        self.say, self.at = say, 0.0
+
+    def __call__(self, step: str, done: int, total: int, now: bool = False) -> None:
+        if self.say is None or (not now and time.monotonic() - self.at < 0.5):
+            return
+        self.at = time.monotonic()
+        try:
+            self.say({"step": step, "done": done, "total": total})
+        except Exception:                      # pragma: no cover - only words
+            pass
+
+
 def restore_files(store: VersionStore, manifest: Dict[str, Any], folder: Path,
-                  run_id: str, policy: Any) -> Dict[str, Any]:
+                  run_id: str, policy: Any, progress: Any = None) -> Dict[str, Any]:
     """The work's folder made exactly the version's: files it does not hold
     removed, files that differ written back. Every object needed is checked
-    first, so a damaged version changes nothing."""
+    first, so a damaged version changes nothing. `progress`: told what it
+    is doing as it goes (`_Saying`)."""
+    from ...runtime.filesystem import remembering
+    say = _Saying(progress)
     files = manifest.get("files") or {}
     skipped = set(manifest.get("skipped") or [])
     current, too_big = work_files(folder, run_id)
     roots = _roots_of(folder, run_id)
+    total = len(files) + len(current)
+    say("checking", 0, total, now=True)
+    with remembering():
+        return _restore_files(store, files, skipped, current, too_big, roots, folder,
+                              run_id, policy, say, total)
+
+
+def _restore_files(store: VersionStore, files: Dict[str, Any], skipped: Set[str],
+                   current: Dict[str, Path], too_big: List[str], roots: Any, folder: Path,
+                   run_id: str, policy: Any, say: "_Saying", total: int) -> Dict[str, Any]:
     to_write: List[Tuple[Path, str]] = []
     # A path no version may write is left as it is, and said - not the whole
     # rollback refused for it.
     refused: List[str] = []
-    for relative, entry in files.items():
+    for done, (relative, entry) in enumerate(files.items()):
+        say("checking", done, total)
         try:
             target = _work_target(folder, run_id, relative, policy, roots)
         except VersionError as exc:
@@ -690,7 +722,8 @@ def restore_files(store: VersionStore, manifest: Dict[str, Any], folder: Path,
         store.get(str(entry.get("sha") or ""))       # missing or damaged: stop here
         to_write.append((target, entry["sha"]))
     to_remove = []
-    for relative in current:
+    for done, relative in enumerate(current):
+        say("checking", len(files) + done, total)
         if relative in files or relative in skipped:
             continue
         try:
@@ -700,12 +733,16 @@ def restore_files(store: VersionStore, manifest: Dict[str, Any], folder: Path,
             continue
         to_remove.append(current[relative])
     _claim([one for one, _sha in to_write] + to_remove)
-    for target in to_remove:
+    changing = len(to_remove) + len(to_write)
+    say("putting back", 0, changing, now=True)
+    for done, target in enumerate(to_remove):
+        say("putting back", done, changing)
         try:
             target.unlink()
         except OSError:
             pass
-    for target, sha in to_write:
+    for done, (target, sha) in enumerate(to_write):
+        say("putting back", len(to_remove) + done, changing)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(store.get(sha))
     return {"restored": [one.relative_to(folder).as_posix() for one, _ in to_write],

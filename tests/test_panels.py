@@ -4179,6 +4179,9 @@ class TokenUsageChartTests(unittest.TestCase):
         }
         if by_task is not None:
             stub["/api/debugger"]["model_metrics"]["by_task"] = by_task
+        # The Overview's own routes since 0.2.8 (served in every build).
+        stub["/api/tokens"] = stub["/api/debugger"]["model_metrics"]
+        stub["/api/tokens/by_day"] = stub["/api/debugger/tokens_by_day"]
         harness = (
             "<script>const STUB=" + json.dumps(stub) + ";"
             "window.fetch=(u)=>{const p=String(u).split('?')[0];"
@@ -4578,6 +4581,10 @@ class TheDebuggerChartsAreDrawnWhenOpenedTests(unittest.TestCase):
                 "measured_since": "2026-08-02T03:11:50+00:00"}},
             # The chart opens per day: a week of it.
             "/api/debugger/tokens_by_day": TokenUsageChartTests._days(),
+            # The Overview's own routes since 0.2.8 (served in every build).
+            "/api/tokens": {"tokens_over_time": calls,
+                            "measured_since": "2026-08-02T03:11:50+00:00"},
+            "/api/tokens/by_day": TokenUsageChartTests._days(),
             "/api/debugger/retrieval": {
                 "summary": {"queries": 60, "mean_ms": 2.1, "worst_ms": 9.0,
                             "trend": "flat"},

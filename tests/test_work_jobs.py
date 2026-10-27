@@ -137,7 +137,13 @@ class JobsTests(_Base):
         refused = self.tools.call("run_python", {"background": True, "code": "print(1)"})
         self.assertIn("jobs are running already", refused.get("error", ""), refused)
         self.tools.stop_jobs()
-        self.assertEqual({status(one) for one in jobs}, {"stopped"})
+        # Each stopped - and one that is not, said with how it ended.
+        not_stopped = {one["job"]: (status(one), {
+            key: str(value)[:600] for key, value in
+            (self.tools.jobs[one["job"]].get("result") or {}).items()
+            if key in ("ok", "error", "stderr", "returncode", "timed_out")})
+            for one in jobs if status(one) != "stopped"}
+        self.assertEqual(not_stopped, {}, "a job not stopped by the stop - how it ended")
 
     def test_not_among_the_slides_tools(self) -> None:
         self.tools.only = ("run_python", "read_file")

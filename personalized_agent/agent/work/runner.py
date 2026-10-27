@@ -2750,6 +2750,8 @@ class WorkRuns:
         #: showed its last run, ended, and a second Start, waiting on the
         #: first, came back "already going".
         self.starting: Dict[str, str] = {}
+        #: Runs being started in a process of their own, by unit (`_launch`).
+        self.coming: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.Lock()
         #: What installs a run's packages, given the work's policy: pip under
         #: the guard. Replaced in tests.
@@ -3421,8 +3423,20 @@ class WorkRuns:
 
     def _launch(self, kind: str, unit: Dict[str, Any], args: Dict[str, Any]
                 ) -> Dict[str, Any]:
+        """A run started in a process of its own - SEEN WHILE IT STARTS (the
+        user, 2026-10-27: resumed, and nothing showed for two minutes while
+        it was rolled back): in the runs going as "starting", with what its
+        process says it is doing (`run_states`)."""
         from .child import launch
-        said = launch(self, kind, unit, **args)
+        unit_id = str(unit.get("id") or "")
+        seen = {"run": str(args.get("run_id") or ""), "unit": unit_id, "kind": kind,
+                "since": _now(), "folder": None, "debug": bool(unit.get("debug"))}
+        self.coming[unit_id] = seen
+        try:
+            said = launch(self, kind, unit, seen=lambda folder: seen.update(folder=folder),
+                          **args)
+        finally:
+            self.coming.pop(unit_id, None)
         child = said.pop("child", None)
         if child is not None:
             self._running[child.id] = child
@@ -3539,7 +3553,8 @@ class WorkRuns:
                 store.get(sha)
         current = row["plan"] or {}
         agents = dict(current.get("granted_writes") or {})
-        files = restore_files(store, manifest, Path(row["folder"]), row["id"], policy)
+        files = restore_files(store, manifest, Path(row["folder"]), row["id"], policy,
+                              progress=getattr(self, "on_progress", None))
         granted = restore_granted(store, manifest, agents, policy)
         restore_tree(store, self.db, work_scope(row["unit_id"]), state.get("tree") or {})
         for path in granted["restored"]:
@@ -3925,6 +3940,13 @@ class WorkRuns:
                         # without its panel - the to-do's row of it.
                         "stopping": bool(getattr(run, "stopping", False)),
                         "pause_asked": bool(run.pause_asked)})
+        # BEING STARTED, in a process of its own: what it is doing, as it says.
+        from .child import starting_said
+        for seen in list(self.coming.values()):
+            out.append({"run": seen["run"], "unit": seen["unit"], "debug": seen["debug"],
+                        "state": "starting", "waiting_on": "", "why": "",
+                        "activity": starting_said(seen.get("folder"), seen["kind"]),
+                        "since": seen["since"], "stopping": False, "pause_asked": False})
         return out
 
     # -- the record ---------------------------------------------------------
