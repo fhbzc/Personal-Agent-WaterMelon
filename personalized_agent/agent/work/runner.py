@@ -656,6 +656,9 @@ SINGLE = "single"
 QUICK = "quick"
 #: The ways with no contract, cards or reviewer: one model's own loop.
 ALONE_WAYS = (SINGLE, QUICK)
+#: The ways by name, as the spec of a run says them.
+WAY_NAMES = {FULL: "the thorough way", QUICK: "the quick way", SINGLE: "one model alone",
+             NO_CONTEXT: "a builder and a reviewer, without your context"}
 #: The ways of the user's own work.
 WAYS = (QUICK, FULL)
 
@@ -2471,6 +2474,14 @@ def _note_as_event(entry: Dict[str, Any], whole: bool = False
         return "you", "start", f"You asked: {_clip(said('text'), 300)}", {}
     if what == "continued":
         return "run", "milestone", f"Continued - the {said('phase') or 'work'} goes on", {}
+    # A PROGRESS POINT SAVED, said where it happens (the user, 2026-10-27):
+    # every ten minutes of work, and after each round that advanced.
+    if what == "resume point saved":
+        return ("run", "saved", f"Saved a progress point - {said('label') or ''}: if the run "
+                "is cut off, it goes on from here", {"label": said("label"), "round": said("round")})
+    if what == "resume point not saved":
+        return ("run", "error", f"A progress point could not be saved: "
+                f"{_clip(said('error') or '', 200)}", {})
     if what == "contract reviewed":
         comments = joined(said("comments"))
         return ("reviewer", "verdict", f"The contract: {said('verdict') or 'reviewed'}"
@@ -2880,6 +2891,43 @@ class WorkRuns:
             closed_paths=[one.resolve() for one in self.closed_for(folder)],
             network=False)
 
+    def results_of(self, row: Dict[str, Any], most: int = 6) -> List[Dict[str, Any]]:
+        """WHAT A RUN MADE, TO OPEN (the user, 2026-10-27): the deliverables
+        its results deck lists, then the folder its result was asked into,
+        then its work's folder - each one that is there and the run's to
+        show, once. What it handed over (an email, an event...) is opened
+        from `handed` instead."""
+        plan = row.get("plan") or {}
+        places = [str(one.get("location") or "") for one in
+                  (plan.get("deck") or {}).get("deliverables") or [] if isinstance(one, dict)]
+        # Handed over with no folder of the user's: its own output folder
+        # (delegate.py, `output_folder_for`).
+        held = {}
+        if self.experience is not None and row.get("unit_id"):
+            try:
+                held = self.experience.store.workspace(row["unit_id"]) or {}
+            except Exception:                  # pragma: no cover - a read
+                held = {}
+        output = str(((held.get("summary") or {}) if isinstance(held.get("summary"), dict)
+                      else {}).get("output_folder") or "")
+        places += [output, str(row.get("folder") or "")]
+        out: List[Dict[str, Any]] = []
+        seen = set()
+        for place in places:
+            if not place.strip() or len(out) >= most:
+                continue
+            found = self.readable_by(str(row.get("id") or ""), place)
+            if found is None:
+                continue
+            key = str(found.resolve()).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"path": place, "name": found.name,
+                        "kind": "folder" if found.is_dir() else "file",
+                        "work_folder": place == str(row.get("folder") or "")})
+        return out
+
     def readable_by(self, run_id: str, path: str) -> Optional[Path]:
         """A file or folder of a run - in its folder or a folder it was
         granted - for the page to show; None for anything else."""
@@ -3129,7 +3177,7 @@ class WorkRuns:
                                    unconfined=unconfined, way=way)
             folder = self.folder_of(unit)
             run = Run(self, unit, instruction, self._runtime(unit, folder),
-                      limits_of(limits), packages=mode_of(packages),
+                      limits_of(limits), packages=mode_of(packages) if packages not in (None, "") else None,
                       sound=wants_sound(sound), unconfined=unconfined, way=way)
             self._running[run.id] = run
             run.start()
@@ -3770,11 +3818,26 @@ class WorkRuns:
         run = self._running.get(run_id)
         return bool(run is not None and run.pause())
 
-    def resume(self, run_id: str) -> bool:
-        """A paused run goes on exactly where it stopped. False for a run
+    def change_settings(self, run_id: str, settings: Dict[str, Any]) -> bool:
+        """A going run's settings changed now (`Run.change_settings`). False
+        for a run that is not going."""
+        run = self._running.get(run_id)
+        if run is None or not run.alive():
+            return False
+        run.change_settings(settings)
+        return True
+
+    def resume(self, run_id: str, settings: Optional[Dict[str, Any]] = None) -> bool:
+        """A paused run goes on exactly where it stopped - with `settings`
+        (packages, limits, sound), when given, as they are now: chosen beside
+        Resume while it was paused (the user, 2026-10-27). False for a run
         that is not going."""
         run = self._running.get(run_id)
-        return bool(run is not None and run.resume())
+        if run is None:
+            return False
+        if settings:
+            return bool(run.resume(settings=settings))
+        return bool(run.resume())
 
     def live(self, run_id: str, since: int = 0,
              calls: int = 0) -> Optional[Dict[str, Any]]:
@@ -3942,6 +4005,8 @@ class WorkRuns:
             # work's tree is its latest run's, the first listed of its work.
             latest = not any(one["unit_id"] == entry["unit_id"] for one in out)
             entry["contract_in_force"] = self.contract_in_force(entry, index, latest)
+            # WHAT IT MADE, to open (the user, 2026-10-27: not the logs alone).
+            entry["results"] = self.results_of(entry)
             # THE FULL TRANSCRIPT, as the files it is kept in - and where
             # they are: the project's run logs, and this run's folder in
             # them (where an older run's are, if it kept them in its own).
@@ -4389,7 +4454,15 @@ class Run:
         # Packages: how the user wants to be asked - kept from the run's
         # last session unless they chose again - and every request made.
         book = self.plan.setdefault("packages", {})
-        book["mode"] = packages if packages in (ASK, AUTO) else mode_of(book.get("mode"))
+        # AUTO BY DEFAULT for all work (the user, 2026-10-27): the mode asked
+        # for now; else the one chosen before, kept; else - never chosen, the
+        # old default of asking among them - Auto.
+        if packages in (ASK, AUTO):
+            book["mode"], book["chosen"] = packages, True
+        elif book.get("chosen") and book.get("mode") in (ASK, AUTO):
+            book["mode"] = mode_of(book["mode"])
+        else:
+            book["mode"] = mode_of(None)
         book.setdefault("requests", [])
         book.setdefault("installed", [])
         _settle_requests(self.plan, "the run ended while it waited")
@@ -4782,7 +4855,7 @@ class Run:
         return self._save_point(
             f"in round {number}, at {when}", {"round": number - 1, "in_round": number},
             {"resumed_mid_round": {"round": number, "did": did[-PROGRESS_POINT_TOOLS:],
-                                   "tools": len(did)}})
+                                   "tools": len(did)}}, behind=True)
 
     # -- the live session ----------------------------------------------------------------
     def _event(self, who: str, kind: str, text: str, **detail: Any) -> Dict[str, Any]:
@@ -4860,9 +4933,81 @@ class Run:
         self._set_status()
         return True
 
-    def resume(self, why: str = "") -> bool:
+    def spec(self) -> Dict[str, Any]:
+        """WHAT IT RUNS WITH NOW (the user, 2026-10-27): its way, its limits,
+        how packages are asked for, the sandbox, the sound - said as each
+        session starts, and shown beside the live session throughout."""
+        return {"way": self.variant,
+                "way_name": WAY_NAMES.get(self.variant, str(self.variant)),
+                "limits": dict(self.limits),
+                "packages": (self.plan.get("packages") or {}).get("mode", ASK),
+                "sandbox": not bool(getattr(self, "unconfined", False)),
+                "sound": bool(self.sound)}
+
+    def _say_spec(self) -> None:
+        spec = self.spec()
+        limits = ", ".join(f"{name.replace('_', ' ')} {value if value and value > 0 else 'none'}"
+                           for name, value in spec["limits"].items()) or "none"
+        self._event("run", "spec", "Started with: " + "; ".join([
+            spec["way_name"], f"limits: {limits}",
+            "Python packages: " + ("installed without asking" if spec["packages"] == AUTO
+                                   else "asked before each install"),
+            "in the sandbox" if spec["sandbox"] else "WITHOUT the sandbox",
+            "a sound at the end" if spec["sound"] else "no sound at the end"]), spec=spec)
+
+    def change_settings(self, settings: Dict[str, Any]) -> List[str]:
+        """SETTINGS CHANGED WHILE IT RUNS (the user, 2026-10-27), in effect
+        at once - from its next step: how packages are asked for, its limits,
+        the sound at its end, and the sandbox (each model call and each tool
+        asks for it as it goes: `_unconfined_for`, `tools.outside`). What
+        changed, said in the session as the user's. What to do and the
+        folders are not settings: they wait for the next Continue."""
+        said = []
+        packages = str(settings.get("packages") or "").strip().lower()
+        if packages in (ASK, AUTO):
+            mode = mode_of(packages)
+            book = self.plan.setdefault("packages", {})
+            book["chosen"] = True
+            if book.get("mode") != mode:
+                book["mode"] = mode
+                said.append("packages: " + ("installed without asking" if mode == AUTO
+                                            else "asked before each install"))
+        if isinstance(settings.get("limits"), dict):
+            limits = limits_of(settings["limits"])
+            if limits != self.limits:
+                self.limits = limits
+                self.plan["limits"] = limits
+                session = (self.plan.get("sessions") or [{}])[-1]
+                session["limits"] = limits
+                said.append("limits: " + ", ".join(
+                    f"{name} {value or 'none'}" for name, value in limits.items()))
+        if "sound" in settings and bool(settings["sound"]) != self.sound:
+            self.sound = bool(settings["sound"])
+            (self.plan.get("sessions") or [{}])[-1]["sound"] = self.sound
+            said.append("a sound at the end" if self.sound else "no sound at the end")
+        if "unconfined" in settings and not self.debug \
+                and bool(settings["unconfined"]) != bool(getattr(self, "unconfined", False)):
+            self.unconfined = bool(settings["unconfined"])
+            self.plan["unconfined"] = self.unconfined
+            session = (self.plan.get("sessions") or [{}])[-1]
+            session["unconfined"] = self.unconfined
+            self.tools.outside = self._run_outside if self.unconfined else None
+            self.tools.approve = self._request_approval if self.unconfined else None
+            said.append("WITHOUT the sandbox" if self.unconfined else "in the sandbox")
+        if said:
+            self._event("you", "settings", "You changed the settings, in effect now: "
+                        + "; ".join(said), spec=self.spec())
+            self._set_status()
+            # KEPT AT ONCE (the user, 2026-10-27): the work's settings are
+            # what its runs last ran with - shown so the next time it is opened.
+            self.owner.save(self)
+        return said
+
+    def resume(self, why: str = "", settings: Optional[Dict[str, Any]] = None) -> bool:
         if not self.alive():
             return False
+        if settings:
+            self.change_settings(settings)
         if not self.pause_asked:
             return True
         if self.status == PAUSED:
@@ -4999,7 +5144,8 @@ class Run:
                 "calls": calls_after(plan, calls),
                 "state": self.live_state(), "status": self.status,
                 "pending": pending, "requests": _requests_in_brief(plan),
-                "progress": {"stage": self.stage_now or plan.get("phase", ""),
+                "progress": {"spec": self.spec(),
+                             "stage": self.stage_now or plan.get("phase", ""),
                              "phase": plan.get("phase", ""),
                              "round": int(plan.get("round") or 0),
                              "rounds_done": len(plan.get("rounds") or []),
@@ -5013,6 +5159,7 @@ class Run:
                                       "calls": int(used.get("calls") or 0)},
                              "limits": dict(self.limits),
                              "sound": self.sound,
+                             "packages": (plan.get("packages") or {}).get("mode", ASK),
                              "paused_minutes": round(self._paused_seconds() / 60, 1),
                              "activity": self.activity if alive else "",
                              "pause_asked": alive and self.pause_asked,
@@ -5161,15 +5308,19 @@ class Run:
                                 {"round": number})
 
     def _save_point(self, label: str, details: Dict[str, Any],
-                    plan_extra: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-        """The run's progress point, in place of the one before it."""
+                    plan_extra: Optional[Dict[str, Any]] = None,
+                    behind: bool = False) -> Optional[Dict[str, Any]]:
+        """The run's progress point, in place of the one before it.
+
+        `behind`: LIGHT, OFF THE WORK'S THREAD (the user, 2026-10-27) - where
+        the run stands is taken now, in a moment; its files are kept by a
+        thread of their own, the work going on meanwhile (a file changed
+        while they are kept may be kept half written: the point is not
+        checked). One at a time; dropped if a version is saved meanwhile."""
         if self.alone:
             return None
         self._point_minutes = self._minutes()
         try:
-            files, skipped = keep_files(self.versions, self.folder, self.id)
-            granted = keep_granted(self.versions, self.plan.get("granted_writes") or {},
-                                   self.runtime.policy.extra_writable)
             plan = json.loads(json.dumps(self.plan, ensure_ascii=False, default=str))
             plan.pop("calls", None)
             plan.update(plan_extra or {})
@@ -5177,15 +5328,42 @@ class Run:
                 "plan": plan, "status": self.status, "final": self.final,
                 "instruction": self.instruction, "slides": None,
                 "tree": keep_tree(self.versions, self.owner.db, self.scope)})
-            point = self.versions.save_resume(label, files, granted, skipped, state, details)
+            written = dict(self.plan.get("granted_writes") or {})
+            head = self.versions.index()["head"]
         except Exception as exc:
-            log.warning("could not save a resume point of %s", self.id, exc_info=True)
-            self._note("resume point not saved", round=details.get("in_round") or details.get("round"),
-                       error=str(exc)[:300])
+            self._point_not_saved(details, exc)
             return None
-        self._note("resume point saved", round=details.get("in_round") or details.get("round"),
-                   label=point["label"])
-        return point
+
+        def keep() -> Optional[Dict[str, Any]]:
+            try:
+                files, skipped = keep_files(self.versions, self.folder, self.id)
+                granted = keep_granted(self.versions, written,
+                                       self.runtime.policy.extra_writable)
+                if self.versions.index()["head"] != head:
+                    return None          # a version saved meanwhile: it is where it goes on
+                point = self.versions.save_resume(label, files, granted, skipped, state,
+                                                  details)
+            except Exception as exc:
+                self._point_not_saved(details, exc)
+                return None
+            self._note("resume point saved",
+                       round=details.get("in_round") or details.get("round"),
+                       label=point["label"])
+            return point
+
+        if not behind:
+            return keep()
+        if getattr(self, "_saving", None) is not None and self._saving.is_alive():
+            return None                  # the last one is still being kept
+        self._saving = threading.Thread(target=keep, name=f"progress-point-{self.id}",
+                                        daemon=True)
+        self._saving.start()
+        return None
+
+    def _point_not_saved(self, details: Dict[str, Any], exc: BaseException) -> None:
+        log.warning("could not save a resume point of %s", self.id, exc_info=True)
+        self._note("resume point not saved",
+                   round=details.get("in_round") or details.get("round"), error=str(exc)[:300])
 
     def _slides_seen(self, plan: Optional[Dict[str, Any]] = None,
                      status: Optional[str] = None) -> Dict[str, Any]:
@@ -7146,6 +7324,8 @@ class Run:
     # -- the loop ------------------------------------------------------------------------------
     def _run(self) -> None:
         try:
+            # Each session begins by saying what it runs with.
+            self._say_spec()
             if self.alone:
                 # One model on its own - and then the same end as any run:
                 # the session's use, and the version it ends with.

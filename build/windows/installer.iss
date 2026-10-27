@@ -176,10 +176,12 @@ it.DataNotOnly=%1 contiene già altre cose (%2).%n%nLa cartella dei dati deve es
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-; UPDATES install by themselves only if this is ticked; otherwise the user is
-; told and chooses the version (platform_layer/updater.py). Unticked by
-; default - a broken release would otherwise reach everyone within a day; a
-; reinstall remembers the box as it was left.
+; UPDATES are had by themselves only if this is ticked; otherwise the user is
+; told and chooses the version (platform_layer/updater.py) - unticked by
+; default (the user, 2026-10-27). Either way an update is a quiet one: made
+; ready in the background, used from the next start, taken back by itself if
+; it does not start (platform_layer/quiet_update.py). A reinstall remembers
+; the box as it was left.
 Name: "autoupdate"; Description: "{cm:AutoUpdate}"; GroupDescription: "{cm:UpdatesGroup}"; Flags: unchecked
 
 [Files]
@@ -191,6 +193,16 @@ Source: "{#MySourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdir
 Type: filesandordirs; Name: "{autoprograms}\Personalized Agent"
 Type: files; Name: "{autodesktop}\Personalized Agent.lnk"
 Type: files; Name: "{app}\{#MyFormerExeName}"
+; A QUIET UPDATE (platform_layer/quiet_update.py) changes the program's own
+; files and keeps the version it replaced beside them: a full install starts
+; from none of that.
+Type: filesandordirs; Name: "{app}\_internal"
+Type: filesandordirs; Name: "{app}\.update"
+
+[UninstallDelete]
+; What a quiet update put there, which this installer's record does not list.
+Type: filesandordirs; Name: "{app}\_internal"
+Type: filesandordirs; Name: "{app}\.update"
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

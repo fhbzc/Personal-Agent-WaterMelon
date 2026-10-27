@@ -302,9 +302,59 @@ function xpGoesBack(run) {
   return Object.prototype.hasOwnProperty.call(XP_GOES_BACK, (run || {}).status || "");
 }
 
+/* RESUME OR CONTINUE, AS A CARD (the user, 2026-10-27: one run-on line was
+   unreadable): the button and where it goes on from; why, and what happens
+   to the files; this resume's own settings; what to change. */
+function xpResumeCard(run, from, versions, book) {
+  const id = escapeHtml(run.id);
+  const back = !from && xpGoesBack(run) && (run.milestone || {}).version;
+  const point = back && run.milestone.resume;
+  const where = point
+    ? `Goes back to its progress point: ${run.milestone.label || ""}`
+    : back ? `Goes back to version ${run.milestone.version}: ${run.milestone.label || ""}`
+    : !from ? "Goes on from where it stopped"
+    : from === versions.head ? `Goes on from version ${from}, the latest`
+    : `Goes on from version ${from}`;
+  // Each piece a text of its own, as the language tables hold it.
+  const why = back
+    ? `<span class="xp-spec-label">${escapeHtml("Why")}</span>
+      <span>${escapeHtml(XP_GOES_BACK[run.status] || "")}</span> ·
+      <span>${escapeHtml("Its files and where it stood come back as they were then; what came after is given up.")}</span>`
+    : from && from !== versions.head
+      ? `<span>${escapeHtml("Its files and where it stood come back, and it goes on as a new branch - the versions after it are kept.")}</span>`
+      : "";
+  return `<div class="xp-resume-card xp-continue-row">
+    <div class="xp-resume-head">
+      <button type="button" class="small" data-xp-continue="${id}">${
+        !from && xpGoesBack(run) ? "Resume" : "Continue"}</button>
+      <span class="xp-resume-where">${escapeHtml(where)}</span>${
+        point ? ` <span class="xp-resume-chip">${escapeHtml("not checked")}</span>` : ""}
+      ${from ? `<button type="button" class="small secondary" data-xp-version-latest="${
+        id}">From the latest instead</button>` : ""}
+    </div>
+    ${why ? `<p class="xp-resume-why muted">${why}</p>` : ""}
+    <div class="xp-resume-settings">
+      <span class="xp-spec-label">${escapeHtml("This time")}</span>
+      <label>${escapeHtml("Python packages")} <select data-xp-continue-packages="${id}">
+        <option value="ask"${book.chosen && book.mode === "ask" ? " selected" : ""}>${
+          escapeHtml("Ask first")}</option>
+        <option value="auto"${book.chosen && book.mode === "ask" ? "" : " selected"}>Auto</option>
+      </select></label>
+      ${xpContinueSound(run.id)}
+      ${xpContinueUnconfined(run)}
+      <span class="muted">${escapeHtml("Limits: as set above")}</span>
+    </div>
+    ${from ? `<p class="muted">${escapeHtml(`What to change from there: under ${from} in Versions`)}</p>`
+      : xpContinueWords(run.id)}
+  </div>`;
+}
+
 function xpContinueSound(runId) {
+  // As the run last ran, unless chosen here (the user, 2026-10-27).
+  const kept = xpVersionsState();
+  const chosen = kept.sound[runId];
   return xpSoundBox(`data-xp-continue-sound="${escapeHtml(runId)}"`,
-    xpVersionsState().sound[runId]);
+    chosen !== undefined ? chosen : xpRecordSpec(kept.runs[runId]).sound);
 }
 
 /* WITHOUT THE SANDBOX (agent/work/unconfined.py): the user's own work only -
@@ -327,8 +377,10 @@ function xpUnconfinedBox(attrs) {
 }
 
 function xpContinueUnconfined(run) {
+  // As the run last ran (the user, 2026-10-27), its warning beside it.
   return xpIsDebugRun(run) ? ""
-    : xpUnconfinedBox(`data-xp-continue-unconfined="${escapeHtml(run.id)}"`);
+    : xpUnconfinedBox(`data-xp-continue-unconfined="${escapeHtml(run.id)}"${
+      xpRecordSpec(run).sandbox ? "" : " checked"}`);
 }
 
 /* THE USER'S DESCRIPTION of a project they added - in their own words, never
@@ -1326,6 +1378,13 @@ async function watchWorkGoing() {
       if (typeof delegateFolderCheck === "function" && $("#delegate") && $("#delegate").open) {
         delegateFolderCheck();
       }
+      // WORK'S LINE OF THE GOING RUN, as it is now - paused, resumed or
+      // stopped from the to-do, say; one that ended, the panel asked again.
+      const titled = experienceState.titleGoing;
+      if (titled && typeof xpDrawTitleRun === "function") {
+        if (workGoing.byUnit[titled.unit_id]) xpDrawTitleRun(titled);
+        else if (activeTab === "experience") xpLoadRuns();
+      }
       if (Object.keys(before).some((unit) => tracked.has(unit) && !workGoing.byUnit[unit])) {
         loadTodos();
       } else if (typeof ovPlaceTodos === "function") {
@@ -2305,6 +2364,7 @@ function xpRun(run, idle, first) {
     <p class="muted" data-xp-run-totals="${id}">${xpRunTotals(run)}</p>
     ${plan.unconfined && !xpIsDebugRun(run) ? `<p class="xp-warning">This session works
       without the sandbox. ${escapeHtml(XP_UNCONFINED_WARNING)}</p>` : ""}
+    ${xpResultsRow(run)}
     ${run.folder ? `<p class="muted xp-logs-row">Logs: <code>${escapeHtml(run.log_dir || "")}</code>
       <button type="button" class="small" data-xp-open-logs="${id}"
         title="The project's run logs - a folder per run, by when it started, with its full transcript">Open
@@ -2334,35 +2394,8 @@ function xpRun(run, idle, first) {
       <span class="muted">from the finished work, with the limits above: the contract is
         amended by what you say - the goal too, if it calls for it - and the work goes on ·</span>
     </div>` : ""}
-    ${(run.continuable || from) && idle && !run.alive ? `<p class="xp-continue-row"><button
-      type="button" class="small" data-xp-continue="${id}">${
-        !from && xpGoesBack(run) ? "Resume" : "Continue"}</button>
-      ${xpContinueSound(run.id)}
-      <span class="muted">${!from && xpGoesBack(run) && (run.milestone || {}).version
-        // It did not stop cleanly: it goes back to its last save point.
-        ? (run.milestone.resume
-          ? `goes back to its progress point, ${escapeHtml(run.milestone.label || "")} - not
-            checked (${escapeHtml(XP_GOES_BACK[run.status])}; its files and where it stood
-            come back as they were then, and what came after is given up), with the limits
-            above ·`
-          : `goes back to its last version: ${escapeHtml(run.milestone.version)} - ${
-          escapeHtml(run.milestone.label || "")} (${escapeHtml(XP_GOES_BACK[run.status])}; its
-          files and where it stood come back as they were then, and what came after is given
-          up), with the limits above ·`)
-        : !from ? "from where it stopped, with the limits above ·"
-        : from === versions.head ? `from version ${escapeHtml(from)}, the latest - where it
-          stopped - with the limits above ·`
-        : `from version ${escapeHtml(from)}, with the limits above: its files and where it
-          stood come back, and it goes on as a new branch - the versions after it are kept ·`}</span>
-      ${from ? `<button type="button" class="small secondary" data-xp-version-latest="${
-        id}">From the latest instead</button>` : ""}
-      <label class="muted">packages <select data-xp-continue-packages="${id}">
-        <option value="ask"${book.mode !== "auto" ? " selected" : ""}>ask me before installing</option>
-        <option value="auto"${book.mode === "auto" ? " selected" : ""}>Auto</option>
-      </select></label>
-      ${xpContinueUnconfined(run)}
-      ${from ? `<span class="muted">· what to change from there: under ${escapeHtml(from)}
-        in Versions</span>` : xpContinueWords(run.id)}</p>` : ""}
+    ${(run.continuable || from) && idle && !run.alive ? xpResumeCard(run, from, versions, book)
+      : ""}
     ${requests.length ? `<details class="xp-packages"><summary><strong>Packages
       (${requests.length} request${requests.length === 1 ? "" : "s"})</strong> - ${
       book.mode === "auto" ? "installed without asking you (Auto)"
@@ -2476,6 +2509,47 @@ function xpAnswerParts(run) {
 const xpHandedItems = {};               // "run:n" -> the item, for its buttons
 const XP_HANDED_KIND = { email: "Email", event: "Event", text: "Text to paste",
                          file: "File", folder: "Folder", answer: "Answer" };
+
+/* THE RESULT, TO OPEN (the user, 2026-10-27: not the log folder alone) -
+   whatever it is: what the work handed over (an email opened in your mail,
+   an event in your calendar, a file, a folder; text to copy), and what it
+   made - the deliverables its deck lists, else the folder it worked in. */
+function xpResultsRow(run) {
+  const id = escapeHtml(run.id);
+  const handed = (run.handed || []).map((one, n) => {
+    const key = `${run.id}:${n}`;
+    xpHandedItems[key] = one;
+    const at = escapeHtml(key);
+    const title = escapeHtml(one.title || XP_HANDED_KIND[one.kind] || one.kind || "");
+    if (one.kind === "text" || one.kind === "answer") {
+      return `<button type="button" class="small secondary" data-xp-handed-copy="${at}"
+        title="${title}">${one.kind === "answer" ? "Copy the answer" : "Copy the text"}</button>`;
+    }
+    const words = one.kind === "email" ? "Open the email" : one.kind === "event"
+      ? "Add the event" : one.kind === "folder" ? "Open the folder" : "Open the file";
+    return `<button type="button" class="small" data-xp-handed-open="${at}"
+      title="${title}">${words}</button>`;
+  });
+  const made = (run.results || []).map((one) => `<button type="button" class="small${
+      handed.length ? " secondary" : ""}" data-xp-open-result="${id}"
+      data-xp-result-path="${escapeHtml(one.path)}" title="${escapeHtml(one.path)}">${
+      one.kind === "folder" ? (one.work_folder ? "Open the work folder" : "Open the folder")
+        : "Open"} <code>${escapeHtml(one.name)}</code></button>`);
+  if (!handed.length && !made.length) return "";
+  return `<p class="xp-results-row"><strong>The result:</strong> ${handed.join(" ")} ${
+    made.join(" ")}</p>`;
+}
+
+document.addEventListener("click", async (event) => {
+  const at = event.target.closest && event.target.closest("[data-xp-open-result]");
+  if (!at) return;
+  try {
+    await api.post("/api/work/reveal", { run: at.dataset.xpOpenResult,
+                                         path: at.dataset.xpResultPath, open: true });
+  } catch (err) {
+    toast(err.message, "error");
+  }
+});
 
 function xpHanded(run) {
   const items = run.handed || [];
@@ -3470,6 +3544,13 @@ function xpLiveAsk(runId, ask) {
 /* One line of the session: when, who, and what happened. A request shows
    its answer once it has one. */
 function xpLiveRow(e) {
+  // A PROGRESS POINT KEPT BEFORE ITS OWN LINE EXISTED (until 2026-10-27 it
+  // was a bare note, "resume point saved", lost among the tool calls): shown
+  // as one is now.
+  if (e.kind === "note" && String(e.text || "").startsWith("resume point saved")) {
+    e = Object.assign({}, e, { kind: "saved",
+      text: "Saved a progress point: if the run is cut off, it goes on from here" });
+  }
   const at = new Date(e.at);
   const time = Number.isNaN(at.getTime()) ? String(e.at || "").slice(11, 19)
     : at.toLocaleTimeString([], { hour12: false });
@@ -3522,6 +3603,105 @@ function xpPauseButton(run, data) {
           title="Stops at the next safe point - before a model call, before a tool call, between rounds - and waits for you">Pause</button>`;
 }
 
+/* WORK'S SETTINGS ARE FOR THE NEXT START OR CONTINUE (the user, 2026-10-27):
+   never sent to a run that goes. The going run's own are on the card at the
+   top of its live session - changed there, sent to it at once. */
+const XP_SETTINGS_NEXT = "These settings are for the next start or Continue. The run "
+  + "going now is changed on \"Running with now\", at the top of its live session.";
+
+/* THE ACTIVE SPEC CHANGED ON ITS CARD: sent to the run at once - all of the
+   card, which shows what the run has. */
+document.addEventListener("change", async (event) => {
+  const card = event.target.closest && event.target.closest("[data-xp-active-spec]");
+  if (!card || !card.dataset.xpAlive) return;
+  const runId = card.dataset.xpActiveSpec;
+  const limits = {};
+  card.querySelectorAll("[data-xp-as-limit]").forEach((input) => {
+    if (input.value.trim() !== "") limits[input.dataset.xpAsLimit] = Number(input.value);
+  });
+  const picked = card.querySelector(`input[name="xp-as-pk-${CSS.escape(runId)}"]:checked`);
+  const sandbox = card.querySelector(`input[name="xp-as-sb-${CSS.escape(runId)}"]:checked`);
+  const sound = card.querySelector(`input[name="xp-as-snd-${CSS.escape(runId)}"]:checked`);
+  // The one just chosen lit at once, before the run says it back.
+  if (event.target.type === "radio") {
+    event.target.closest(".xp-seg").querySelectorAll("label").forEach((label) =>
+      label.classList.toggle("xp-seg-lit", label.contains(event.target)));
+  }
+  try {
+    await api.post("/api/work/settings", { run: runId, limits,
+      ...(picked ? { packages: picked.value } : {}),
+      ...(sound ? { sound: sound.value === "on" } : {}),
+      ...(sandbox && !sandbox.disabled ? { unconfined: sandbox.value === "off" } : {}) });
+    toast("Changed - in effect now");
+    xpLiveFetch(runId).catch(() => {});
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+/* A run's spec from what its record keeps - for a run whose own process
+   says none (one started before it said its spec, going on still). */
+function xpRecordSpec(run, progress) {
+  const plan = (run || {}).plan || {};
+  const session = (plan.sessions || []).slice(-1)[0] || {};
+  const p = progress || {};
+  return { way: plan.way || "", limits: p.limits || session.limits || plan.limits || {},
+           packages: p.packages || (plan.packages || {}).mode || "auto",
+           // Chosen by the user, not the default of the time it started.
+           packages_chosen: Boolean((plan.packages || {}).chosen),
+           sandbox: !plan.unconfined,
+           sound: p.sound !== undefined ? Boolean(p.sound) : Boolean(session.sound) };
+}
+
+/* WHAT IT RUNS WITH NOW (the user, 2026-10-27): beside the live session the
+   whole time - its way, its limits, how packages are asked for, the sandbox,
+   the sound - as the run says them, changed when a Resume changes them. */
+const XP_WAY_NAMES = { full: "the thorough way", quick: "the quick way",
+  single: "one model alone", noctx: "a builder and a reviewer, without your context" };
+const XP_LIMIT_NAMES = { minutes: "minutes", tokens_in: "input tokens",
+  tokens_out: "output tokens", calls: "model calls", tokens: "tokens" };
+
+function xpLiveSpec(spec, run) {
+  if (!spec) return "";
+  const alive = Boolean((run || {}).alive);
+  const id = escapeHtml((run || {}).id || "");
+  const off = alive ? "" : " disabled";
+  const limits = spec.limits || {};
+  const limit = (name, step = "") => `<label class="xp-spec-limit">${escapeHtml(
+      XP_LIMIT_NAMES[name] || name)}<input type="number" min="0"${step ? ` step="${step}"` : ""}
+      data-xp-as-limit="${name}" value="${Number(limits[name]) > 0
+        ? escapeHtml(String(limits[name])) : ""}" placeholder="none"${off}></label>`;
+  const way = XP_WAY_NAMES[spec.way] || spec.way_name || spec.way || "";
+  const debug = typeof xpIsDebugRun === "function" && xpIsDebugRun(run || {});
+  // A choice of two as one segmented control: the one in force lit.
+  const seg = (name, choices, now, attrs, kind = "") => `<span class="xp-seg ${kind}">${
+    choices.map(([value, words]) => `<label class="xp-seg-${value}${value === now
+      ? " xp-seg-lit" : ""}"><input type="radio" name="${name}" value="${value}"${
+      value === now ? " checked" : ""}${attrs}><span>${escapeHtml(words)}</span></label>`)
+      .join("")}</span>`;
+  return `<section class="xp-active-spec${spec.sandbox ? "" : " xp-spec-unsandboxed"}"
+      data-xp-active-spec="${id}"${alive ? ' data-xp-alive="1"' : ""}>
+    <div class="xp-spec-head"><strong>${alive ? "Running with now" : "Ran with"}</strong>
+      ${alive ? `<span class="muted">- changes go to this run at once</span>` : ""}</div>
+    <div class="xp-spec-grid">
+      ${way ? `<div class="xp-spec-item"><span class="xp-spec-label">Way</span>
+        <span class="xp-spec-chip">${escapeHtml(way)}</span></div>` : ""}
+      <div class="xp-spec-item"><span class="xp-spec-label">Python packages</span>
+        ${seg(`xp-as-pk-${id}`, [["ask", "Ask first"], ["auto", "Auto"]],
+              spec.packages === "auto" ? "auto" : "ask", off)}</div>
+      <div class="xp-spec-item"><span class="xp-spec-label">Sandbox</span>
+        ${seg(`xp-as-sb-${id}`, [["on", "On"], ["off", "Off"]], spec.sandbox ? "on" : "off",
+              debug ? " disabled" : off, "xp-seg-sandbox")}</div>
+      <div class="xp-spec-item"><span class="xp-spec-label">Sound at the end</span>
+        ${seg(`xp-as-snd-${id}`, [["on", "On"], ["off", "Off"]], spec.sound ? "on" : "off", off)}</div>
+      ${spec.sandbox ? "" : `<p class="xp-warning xp-spec-warning">${
+        escapeHtml(XP_UNCONFINED_WARNING)}</p>`}
+      <div class="xp-spec-item xp-spec-limits"><span class="xp-spec-label">Limits</span>
+        ${limit("minutes")} ${limit("tokens_in", "100000")} ${limit("tokens_out", "10000")}
+        ${limit("calls")} <span class="muted">empty or 0: no limit</span></div>
+    </div></section>`;
+}
+
 /* Where the run stands, like a progress bar: its state, the part of the
    run it is in, rounds and cards, the limits - and Pause or Resume, unless
    `pause` is false: in the Experience debugger they are beside the way's
@@ -3552,7 +3732,7 @@ function xpLiveHead(run, data, pause = true) {
       ? " (amended)" : ""}:</span> ${escapeHtml(goal)}
     <span class="muted">· ${escapeHtml(c.branch || "main")} · ${Number(c.done || 0)}/${
       Number(c.total || 0)} deliverables done</span></div>` : "";
-  return `${instruction}${contractLine}<div class="xp-live-line"><span class="xp-live-state xp-live-state-${escapeHtml(state)}">${
+  return `${instruction}${contractLine}${xpLiveSpec(p.spec || xpRecordSpec(run, p), run)}<div class="xp-live-line"><span class="xp-live-state xp-live-state-${escapeHtml(state)}">${
       escapeHtml(XP_LIVE_STATE[state] || state)}</span>
     <strong>${escapeHtml(p.stage || p.phase || "")}</strong>
     <span class="muted">${Number(p.rounds_done || 0)} round${Number(p.rounds_done) === 1 ? "" : "s"}
@@ -3658,7 +3838,13 @@ function xpLiveDraw(runId, fresh, force) {
       given up.`)
     : !live.events.length ? (run.alive ? "Nothing yet - it starts in a moment."
       : "Nothing was kept of this session.") : "";
-  if (force || live.drawn.head !== parts.head) body.querySelector(".xp-live-head").innerHTML = parts.head;
+  // Not drawn again while the run's card is being changed: its values follow
+  // once the field is left (the change is sent as it is made).
+  const editing = document.activeElement && document.activeElement.closest
+    && document.activeElement.closest(".xp-active-spec");
+  if ((force || live.drawn.head !== parts.head) && !(editing && body.contains(editing))) {
+    body.querySelector(".xp-live-head").innerHTML = parts.head;
+  }
   if (force || live.drawn.doing !== parts.doing) {
     body.querySelector(".xp-live-doing-text").textContent = parts.doing;
     // Nothing being done - the run ended: the line is kept, empty, so the
@@ -4781,21 +4967,31 @@ function xpPanelSame(scope, sig) {
 function xpDrawTitleRun(going) {
   const box = $("#xp-title-run");
   if (!box) return;
+  experienceState.titleGoing = going || null;
   let html = "";
   if (going) {
     const live = xpLiveState(going.id);
-    const data = live.open ? live.data : null;
+    // AS IT IS THIS MOMENT (the user, 2026-10-27: resumed from the to-do, and
+    // Work still showed Resume): the runs going, asked every few seconds
+    // whichever tab is shown (watchWorkGoing), before what this panel last
+    // loaded.
+    const now = (workGoing.byUnit || {})[going.unit_id];
+    const fresh = now && now.run === going.id ? now : null;
+    const data = fresh ? { state: fresh.state, progress: { pause_asked: fresh.pause_asked,
+                                                          stopping: fresh.stopping } }
+      : live.open ? live.data : null;
     const p = (data || {}).progress || {};
     let state = data && data.state ? data.state
       : going.status === "waiting for you" ? "waiting_for_you"
         : going.paused ? "paused" : "going";
     if (p.pause_asked && state === "going") state = "pausing";
     const id = escapeHtml(going.id);
-    const stopping = going.stopping || p.stopping;
+    const stopping = fresh ? Boolean(fresh.stopping) : going.stopping || p.stopping;
     html = `<span class="xp-live-state xp-live-state-${escapeHtml(state)}">${
         escapeHtml(XP_LIVE_STATE[state] || state)}</span>${state === "going"
         ? `<span class="xp-live-spin xd-way-spin" aria-hidden="true"></span>` : ""}
-      ${xpPauseButton(going, data)}
+      ${xpPauseButton(fresh ? Object.assign({}, going, { paused: state === "paused" })
+        : going, data)}
       ${stopping
         ? `<span class="muted">wrapping up…</span> <button type="button"
             class="small secondary danger" data-xp-stop-now="${id}"
@@ -4869,15 +5065,25 @@ async function xpLoadRuns(force = false) {
   await xpVersionsReady(runs);
   if (unit !== experienceState.unit) return;
   const draft = ($("#xp-instruction") || {}).value || "";
-  // Asked before each install unless Auto is chosen - kept as it is redrawn.
-  const packagesMode = (document.querySelector('input[name="xp-packages"]:checked')
-    || {}).value || "ask";
-  // A sound when the run ends: as ticked, kept as it is redrawn.
-  const soundBox = $("#xp-sound");
+  // THE WORK'S SETTINGS ARE KEPT (the user, 2026-10-27): for the next start,
+  // what its latest run last ran with - else Auto and the defaults - unless
+  // changed here, kept as it is redrawn.
+  const last = runs.length ? xpRecordSpec(runs[0]) : null;
+  // What is typed in the form is kept only while it is this work's form.
+  const mine = panel.dataset.formUnit === String(unit);
+  const inForm = (selector) => (mine ? $(selector) : null);
+  const packagesMode = (inForm('input[name="xp-packages"]:checked') || {}).value
+    || (last && last.packages_chosen ? last.packages : "auto");
+  // A sound when the run ends: as ticked, kept as it is redrawn - at first,
+  // as the latest run last ran.
+  const soundBox = inForm("#xp-sound");
   if (soundBox) experienceState.startSound = soundBox.checked;
+  else experienceState.startSound = last ? last.sound : false;
   const asked = (name) => {
-    const typed = ($(`#xp-limit-${name}`) || {}).value;
-    return typed !== undefined && typed !== "" ? typed : (limits.defaults || {})[name] ?? "";
+    const typed = (inForm(`#xp-limit-${name}`) || {}).value;
+    if (typed !== undefined && typed !== "") return typed;
+    if (last && (last.limits || {})[name] !== undefined) return last.limits[name];
+    return (limits.defaults || {})[name] ?? "";
   };
   // What was being typed in, if it is drawn anyway: found again after, by
   // what it is, and given back its caret and selection.
@@ -4942,7 +5148,10 @@ async function xpLoadRuns(force = false) {
       ${String(folders.isolation || "").startsWith("not OS-isolated")
         ? `<p class="xp-warning">${escapeHtml(folders.isolation)} - Auto is not
           available: every install is asked</p>` : ""}</div>
-    <div class="xp-unconfined-mode">${xpUnconfinedBox('id="xp-unconfined"')}</div>
+    <div class="xp-unconfined-mode">${xpUnconfinedBox(`id="xp-unconfined"${
+      (inForm("#xp-unconfined") ? inForm("#xp-unconfined").checked : last && !last.sandbox)
+        ? " checked" : ""}`)}</div>
+    ${going ? `<p class="muted xp-settings-later">${escapeHtml(XP_SETTINGS_NEXT)}</p>` : ""}
     <textarea id="xp-instruction" rows="2"
       placeholder="${fresh ? "what you want done - needed: this is new work"
         : "what you want done this time (optional)"}">${escapeHtml(draft)}</textarea>
@@ -4957,6 +5166,7 @@ async function xpLoadRuns(force = false) {
     ${runs.map((run, i) => xpRun(run, !going, i === 0)).join("")}`;
   // What it was drawn for - with each run's versions as they are now loaded.
   panel._xpSig = sigOf();
+  panel.dataset.formUnit = String(unit);
   const treeBox = $("#xp-work-tree");
   if (treeBox) treeBox._xpHtml = xpShows(xpGraphSvg(tree, "work"));
   // How far making the files readable has got: looked at, and followed
@@ -5009,7 +5219,8 @@ function xpRunsTimer(going) {
   if (!going) return;
   experienceState.runsTimer = setTimeout(() => {
     if (activeTab === "experience" && !document.hidden) xpLoadRuns();
-    else if (activeTab === "experience") xpRunsTimer(true);
+    // Another tab shown: kept asking, so Work is as it is when it comes back.
+    else xpRunsTimer(true);
   }, 5000);
 }
 
@@ -5272,8 +5483,8 @@ async function xpRunClick(event, host) {
       // Packages asked about as the run did before, unless changed beside it.
       const asking = $(`[data-xp-continue-packages="${runId}"]`);
       // A sound when this session ends: this Continue's own choice.
-      const sound = (continueAt.parentElement
-        && continueAt.parentElement.querySelector("[data-xp-continue-sound]"))
+      const card = continueAt.closest(".xp-resume-card, .xp-continue-row");
+      const sound = (card && card.querySelector("[data-xp-continue-sound]"))
         || $(`[data-xp-continue-sound="${CSS.escape(runId)}"]`);
       // Without the sandbox: this Continue's own choice (never a debugger way's).
       const unconfined = $(`[data-xp-continue-unconfined="${CSS.escape(runId)}"]`);
@@ -5416,7 +5627,11 @@ async function xpRunClick(event, host) {
     // Paused, the run stops at its next safe point and waits; resumed, it
     // goes on exactly there.
     const runId = pauseAt ? pauseAt.dataset.xpLivePause : resumeAt.dataset.xpLiveResume;
-    (pauseAt || resumeAt).disabled = true;
+    const clicked = pauseAt || resumeAt;
+    clicked.disabled = true;
+    // SHOWN AS CLICKED (the user, 2026-10-27: Resume made it wait): the
+    // button says what is being done until the answer redraws it.
+    clicked.textContent = pauseAt ? "Pausing…" : "Resuming…";
     try {
       await api.post(pauseAt ? "/api/work/pause" : "/api/work/resume", { run: runId });
     } catch (err) {
@@ -10480,6 +10695,9 @@ function renderUpdates(said) {
     parts.push("Looking for newer versions…");
   } else if (said.doing) {
     parts.push(`Now: ${said.doing}.`);
+  } else if (said.ready) {
+    parts.push(`Version ${said.ready} is ready: it is used from the next start, `
+      + "or when you have been away a while.");
   } else if (said.newer) {
     parts.push(`Version ${said.latest} is available.`);
     if (!said.can_install) {
@@ -10490,8 +10708,43 @@ function renderUpdates(said) {
   }
   if (said.error) parts.push(`The last look failed: ${said.error}`);
   line.textContent = parts.join(" ");
+  renderUpdateRestart(said);
   renderUpdateVersions(said);
   showWhatIsNew(said.just_updated);
+}
+
+/* MADE READY: "Restart now" uses it at once - the page following the
+   agent to the new version (followUpdate). Otherwise it is used from the
+   next start, or when the user has been away a while. */
+function renderUpdateRestart(said) {
+  let row = $("#updates-restart");
+  if (!said.ready || said.mode === "off" || said.doing) {
+    if (row) row.remove();
+    return;
+  }
+  const line = $("#updates-status");
+  if (!line) return;
+  if (!row) {
+    row = document.createElement("p");
+    row.id = "updates-restart";
+    line.after(row);
+  }
+  row.innerHTML = "";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.classList.add("small");
+  button.textContent = "Restart now to use it";
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      renderUpdates(await api.post("/api/updates/restart", {}));
+      followUpdate({ to: said.ready, step: "restarting" });
+    } catch (err) {
+      button.disabled = false;
+      toast(err.message, "error");
+    }
+  });
+  row.appendChild(button);
 }
 
 /* THE VERSION TO UPDATE TO: a box of every version newer than this one,
@@ -10558,7 +10811,10 @@ function renderUpdateVersions(said) {
       install.addEventListener("click", async () => {
         try {
           renderUpdates(await api.post("/api/updates/install", { version: one.tag }));
-          toast("Updating: the agent closes and starts again on the new version");
+          // QUIETLY, LIKE EVERY UPDATE: made ready in the background, used
+          // from the next start - or at once, with Restart now.
+          toast(`Getting version ${one.tag} ready in the background`);
+          refreshUpdatesUntilReady();
         } catch (err) {
           toast(err.message, "error");
         }
@@ -10603,6 +10859,119 @@ $("#update-notes-close")?.addEventListener("click", async () => {
 async function refreshUpdates() {
   try { renderUpdates(await api.get("/api/updates")); }
   catch (err) { console.warn("updates", err); }
+}
+
+/* Asked for, a version is made ready in the background: Settings says how
+   far, and offers Restart now once it is ready. */
+async function refreshUpdatesUntilReady() {
+  for (let tries = 0; tries < 360; tries += 1) {
+    await new Promise((done) => setTimeout(done, 5000));
+    let said;
+    try { said = await api.get("/api/updates"); } catch (err) { return; }
+    renderUpdates(said);
+    if (said.ready || said.error) return;
+  }
+}
+
+/* AN UPDATE SEEN THROUGH (the user, 2026-10-27): the page outlives the
+   agent it shows, so it follows an update to the end - the download with
+   its share done, checked, installing, the agent closed and starting again
+   - asking each second, and opens on the new version (its sign-in holds:
+   the same address, a cookie made from the installation's own key). It
+   says so when the new version is slow to answer. */
+const UPDATE_STEPS = [
+  ["downloading", "Downloading"],
+  ["checking", "Checking the download"],
+  ["installing", "Installing"],
+  ["restarting", "Starting the new version"],
+];
+const UPDATE_SLOW_SECONDS = 180;
+
+/* The lines of the card: each step done, at, or to come - `gone`, the agent
+   has closed (it is installing or starting again). */
+function updateStepLines(info, gone) {
+  const at = gone ? "restarting" : (info.step || "downloading");
+  const index = Math.max(0, UPDATE_STEPS.findIndex(([key]) => key === at));
+  return UPDATE_STEPS.map(([key, label], i) => {
+    let text = label;
+    const p = info.progress || {};
+    if (key === "downloading" && i === index && p.total > 0) {
+      text += ` - ${Math.min(100, Math.floor((p.done / p.total) * 100))}% `
+        + `(${Math.round(p.done / 1048576)} of ${Math.round(p.total / 1048576)} MB)`;
+    }
+    if (key === "restarting" && gone) {
+      text += " - the agent is closed meanwhile";
+    }
+    return { key, text, state: i < index ? "done" : i === index ? "now" : "next" };
+  });
+}
+
+let updateFollowing = null;
+
+async function followUpdate(info) {
+  if (!info || !info.to) return;
+  if (updateFollowing) { updateFollowing.info = info; drawUpdateCard(false); return; }
+  updateFollowing = { info, since: Date.now(), goneSince: 0 };
+  drawUpdateCard(false);
+  for (;;) {
+    await new Promise((done) => setTimeout(done, 1000));
+    let said = null;
+    try {
+      said = await api.get("/api/updates");
+    } catch (err) {
+      // Closed - installing, or starting again: asked again in a second.
+      if (!updateFollowing.goneSince) updateFollowing.goneSince = Date.now();
+      drawUpdateCard(true);
+      continue;
+    }
+    if (version_of_tag(said.current) === version_of_tag(updateFollowing.info.to)) {
+      // The new version answers: the page opens on it, with what is new.
+      drawUpdateCard(true, "done");
+      setTimeout(() => location.reload(), 600);
+      return;
+    }
+    if (!updateFollowing.goneSince && !(said.step || "")) {
+      // Not updating after all (the download failed, say): said, and left.
+      updateFollowing = null;
+      $("#update-follow")?.remove();
+      renderUpdates(said);
+      if (said.error) toast(`The update did not happen: ${said.error}`, "error");
+      return;
+    }
+    if (said.step) updateFollowing.info = Object.assign({}, updateFollowing.info,
+      { step: said.step, progress: said.progress });
+    drawUpdateCard(Boolean(updateFollowing.goneSince));
+  }
+}
+
+function version_of_tag(tag) {
+  return String(tag || "").replace(/^v/i, "");
+}
+
+function drawUpdateCard(gone, done) {
+  let card = $("#update-follow");
+  if (!card) {
+    card = document.createElement("section");
+    card.id = "update-follow";
+    card.className = "update-follow";
+    card.setAttribute("role", "status");
+    card.setAttribute("aria-live", "polite");
+    document.body.appendChild(card);
+  }
+  const info = updateFollowing.info;
+  const waited = updateFollowing.goneSince
+    ? Math.round((Date.now() - updateFollowing.goneSince) / 1000) : 0;
+  const lines = updateStepLines(info, gone).map((one) => `<li class="update-step-${
+    done ? "done" : one.state}">${escapeHtml(one.text)}</li>`).join("");
+  const slow = waited >= UPDATE_SLOW_SECONDS
+    ? `<p class="update-follow-slow">${escapeHtml("It is taking longer than it should. "
+      + "If the agent does not come back, open Personal Agent WaterMelon yourself - "
+      + "the new version is installed, or the old one still is.")}</p>` : "";
+  card.innerHTML = `<strong>${escapeHtml(done ? `Updated to version ${version_of_tag(info.to)}`
+      : `Updating to version ${version_of_tag(info.to)}`)}</strong>
+    <ol class="update-follow-steps">${lines}</ol>
+    ${gone && !done ? `<p class="muted">${escapeHtml(`Waiting for the new version - ${waited} s. `
+      + "This page opens on it by itself.")}</p>` : ""}${slow}`;
 }
 
 /* CHECK NOW: the button says it is looking until the look has answered -
@@ -13464,6 +13833,7 @@ async function refresh() {
   try {
     const status = await api.get("/api/status");
     speaksInBubble = Boolean(status.speaks_in_bubble);
+    if (status.updating) followUpdate(status.updating);
     const app = status.application || {};
     // WHAT IT IS DOING, IF IT IS DOING ANYTHING. A grouping round is one
     // model call per task - minutes on a busy folder - and an application
@@ -19180,7 +19550,9 @@ async function delegateSettings(draft) {
   const settings = held || {
     way: ["auto", "quick", "full"].includes(options.way) ? options.way : "auto",
     limits: Object.assign({}, (experienceState.limits || {}).defaults || {}, given),
-    packages: options.packages === "auto" ? "auto" : "ask",
+    // Auto unless asked otherwise (the user, 2026-10-27); the server asks
+    // anyway where the system does not confine what is installed.
+    packages: options.packages === "ask" ? "ask" : "auto",
     sound: Boolean(options.sound), unconfined: Boolean(options.unconfined),
   };
   const limit = (name) => escapeHtml(String(settings.limits[name] ?? ""));
@@ -19283,7 +19655,7 @@ function delegateReadSettings() {
     draft: (delegateState.draft || {}).id,
     way: (box.querySelector('input[name="delegate-way"]:checked') || {}).value || "auto",
     limits,
-    packages: (box.querySelector('input[name="delegate-packages"]:checked') || {}).value || "ask",
+    packages: (box.querySelector('input[name="delegate-packages"]:checked') || {}).value || "auto",
     sound: Boolean((box.querySelector("[data-delegate-sound]") || {}).checked),
     unconfined: Boolean((box.querySelector("[data-delegate-unconfined]") || {}).checked),
   };
@@ -23181,8 +23553,9 @@ function formatTokenValue(value) {
 
 async function loadTokenUsage() {
   try {
-    const data = await api.get("/api/debugger");
-    const metrics = data.model_metrics || {};
+    // In every build - not the Debugger's, which a released one has not
+    // (the user, 2026-10-27: the Overview's Token usage was empty).
+    const metrics = await api.get("/api/tokens") || {};
     dbgTokens.calls = metrics.tokens_over_time || [];
     dbgTokens.since = metrics.measured_since || "";
     // Biggest spender first, over the whole history: what keeps a colour.
@@ -23191,7 +23564,6 @@ async function loadTokenUsage() {
     // past the seventh place and was drawn as "Other".
     if (dbgTokens.group !== "module") dbgTokens.order = Object.keys(metrics.by_task || {});
   } catch (err) {
-    // A build without the Debugger does not answer here.
     dbgTokens.calls = [];
     dbgTokens.since = "";
   }
@@ -23201,7 +23573,7 @@ async function loadTokenUsage() {
 
 async function loadTokenDays() {
   try {
-    const said = await api.get(`/api/debugger/tokens_by_day?days=${
+    const said = await api.get(`/api/tokens/by_day?days=${
       dbgTokens.days}&east=${-new Date().getTimezoneOffset()}`) || {};
     // Both lists always there: the per-day view is the default now, and an
     // answer without them stopped the page's script as it loaded.

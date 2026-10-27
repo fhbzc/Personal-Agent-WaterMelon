@@ -214,6 +214,11 @@ def parse_wechat_items(image: Any, chat: Sequence[float], items: List[Dict[str, 
         text = str(item.get("text") or "").strip()
         if not text:
             continue
+        if item.get("bubble") is False:
+            # Said by the window itself to be no bubble - a time, a notice
+            # (a Mac's WeChat marks its bubbles `chat_bubble_item_view`).
+            unresolved.append(text)
+            continue
         x, y, iw, ih = _scaled(item.get("box") or (0, 0, 0, 0), scale)
         low, high = max(top, y), min(bottom, y + ih)
         if high - low < 6:

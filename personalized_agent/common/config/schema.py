@@ -297,11 +297,13 @@ SETTINGS_SCHEMA: List[SettingField] = [
     SettingField("updates", "Updates", "choice", "ask", "General",
                  "New versions, from this project's published releases on GitHub "
                  "(never a merge or a pre-release). By default you are told, and "
-                 "choose which newer version to install; or the newest is "
-                 "installed by itself - never while a piece of work is running, "
-                 "and the agent starts again on it; or nothing is looked for. "
-                 "Where this copy cannot replace itself - run from source, a "
-                 "portable folder, the macOS .pkg - you are only told.",
+                 "choose which newer version to have; or the newest is had by "
+                 "itself; or nothing is looked for. Either way it is made ready in "
+                 "the background and used from the next start, or when you have "
+                 "been away a while and no work is running - a restart of seconds, "
+                 "or at once with Restart now; one that does not start is taken back "
+                 "by itself. Where this copy cannot replace itself - run from "
+                 "source, a portable folder, the macOS .pkg - you are only told.",
                  choices=["ask", "install", "off"]),
     SettingField("display_language", "Display language", "choice",
                  _default_display(), "General",

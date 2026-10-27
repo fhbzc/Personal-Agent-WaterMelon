@@ -599,6 +599,36 @@ _PASSED_X = frozenset(("utf8", "dev", "faulthandler", "importtime",
 #: CREATE_BREAKAWAY_FROM_JOB: never passed on - the run's job is what ends
 #: the child with the run.
 _BREAKAWAY = 0x01000000
+#: NO WINDOW FOR A CHILD OF THE SANDBOX (the user, 2026-10-27: a cmd window
+#: came up on their screen while a piece of work ran). A process in the
+#: AppContainer has no console of its own, so Windows gave every console
+#: program it started - cmd for run_command, Python, git - a new, visible
+#: one. Each child is started without a window; one asking for a console of
+#: its own, or none at all, is started without a window too: nothing the
+#: work starts puts a console on the user's screen.
+_NO_WINDOW = 0x08000000
+_OWN_CONSOLE = 0x00000010 | 0x00000008      # CREATE_NEW_CONSOLE, DETACHED_PROCESS
+
+
+def _has_console() -> bool:
+    """Whether this process has a console - hidden or not - for a child to
+    share. One with none (the sandbox's) gives a console child a new,
+    visible one."""
+    try:
+        import ctypes
+        return bool(ctypes.windll.kernel32.GetConsoleCP())
+    except Exception:                       # pragma: no cover - not Windows
+        return True
+
+
+def _windowless(flags) -> int:
+    """A child's flags: never breaking away from the run's job, and - where
+    this process has no console to share - with no window of its own. With
+    one, the child shares it, and what it prints reaches the run."""
+    flags = int(flags or 0) & ~_BREAKAWAY
+    if _has_console():
+        return flags
+    return (flags & ~_OWN_CONSOLE) | _NO_WINDOW
 
 # Taken as install() runs, before any of the script's own code.
 _os_backend = ""
@@ -970,12 +1000,12 @@ def _windows_create_process(real, list2cmdline):
             # As asked, its command line untouched (cmd.exe reads its own).
             return real(application_name, command_line, process_attributes,
                         thread_attributes, inherit_handles,
-                        int(creation_flags or 0) & ~_BREAKAWAY,
+                        _windowless(creation_flags),
                         child_environment(env_mapping), current_directory, startup_info)
         command = child_command(program, argv[1:], current_directory)
         return real(command[0], list2cmdline(command), process_attributes,
                     thread_attributes, inherit_handles,
-                    int(creation_flags or 0) & ~_BREAKAWAY,
+                    _windowless(creation_flags),
                     child_environment(env_mapping), current_directory, startup_info)
     return CreateProcess
 

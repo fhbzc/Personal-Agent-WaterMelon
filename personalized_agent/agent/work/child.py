@@ -52,8 +52,13 @@ CHILD_FLAG = "--work-child"
 #: files took two minutes, and at 90 seconds the agent gave up on a child
 #: that went on - a run going that the page could neither follow nor stop.
 STARTING_SECONDS = 30 * 60
-#: How often the child writes where it stands, and reads what it is told.
+#: How often the child writes where it stands.
 BEAT_SECONDS = 0.5
+#: How often it reads what it is told - and, having done something, says so
+#: at once (the user, 2026-10-27: Resume made the page wait).
+ORDERS_EVERY = 0.1
+#: How long the agent waits to hear a pause, a resume or settings done.
+HEARD_WITHIN = 1.0
 
 SPEC, REPLY, SNAPSHOT, CONTROL, LOG = ("spec.json", "reply.json", "snapshot.json",
                                        "control.jsonl", "child.log")
@@ -190,19 +195,32 @@ class ChildRun:
         return self.owner.log_dir_of(row) if row and row.get("folder") else None
 
     # -- what the user does --------------------------------------------------------------
-    def _tell(self, what: str, **said: Any) -> bool:
+    def _tell(self, what: str, wait: bool = False, **said: Any) -> bool:
+        """Told by a line in its control file. `wait`: until the child says
+        it has done it - a second at most - so what the page asks next is
+        already as it is now (the user, 2026-10-27: Resume made it wait)."""
         if not self.alive():
             return False
         entry = {"id": uuid.uuid4().hex[:10], "at": time.time(), "do": what, **said}
         with open(self.dir / CONTROL, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        if wait:
+            until = time.monotonic() + HEARD_WITHIN
+            while time.monotonic() < until:
+                if entry["id"] in (self._snap().get("obeyed") or []):
+                    break
+                time.sleep(0.02)
         return True
 
     def pause(self, why: str = "") -> bool:
-        return self._tell("pause", why=why)
+        return self._tell("pause", wait=True, why=why)
 
-    def resume(self, why: str = "") -> bool:
-        return self._tell("resume", why=why)
+    def change_settings(self, settings: Dict[str, Any]) -> bool:
+        return self._tell("settings", wait=True, settings=settings)
+
+    def resume(self, why: str = "", settings: Optional[Dict[str, Any]] = None) -> bool:
+        return self._tell("resume", wait=True, why=why,
+                          **({"settings": settings} if settings else {}))
 
     def release(self, now: bool = False) -> None:
         self._tell("stop", now=bool(now or self.stop_now))
@@ -392,16 +410,24 @@ def snapshot(run: Any) -> Dict[str, Any]:
 
 
 def _follow(run: Any, folder: Path, agent_pid: int) -> None:
-    """Twice a second: write where the run stands, and do what it is told -
-    until it ends, or the agent that asked for it does."""
+    """Twice a second, write where the run stands; ten times a second, do
+    what it is told - and write it at once, with what was done (`obeyed`),
+    so the agent hears it - until the run ends, or the agent that asked for
+    it does."""
     done: set = set()
+    obeyed: List[str] = []
+    written = 0.0
     while True:
-        try:
-            _write_json(folder / SNAPSHOT, snapshot(run))
-        except Exception:                      # pragma: no cover - next beat
-            log.debug("could not write the snapshot", exc_info=True)
-        for order in _orders(folder, done):
+        orders = _orders(folder, done)
+        for order in orders:
             _obey(run, order)
+            obeyed = (obeyed + [str(order.get("id") or "")])[-20:]
+        if orders or time.monotonic() - written >= BEAT_SECONDS:
+            try:
+                _write_json(folder / SNAPSHOT, dict(snapshot(run), obeyed=obeyed))
+            except Exception:                  # pragma: no cover - next beat
+                log.debug("could not write the snapshot", exc_info=True)
+            written = time.monotonic()
         if not run.alive():
             _write_json(folder / SNAPSHOT, dict(snapshot(run), alive=False))
             return
@@ -410,7 +436,7 @@ def _follow(run: Any, folder: Path, agent_pid: int) -> None:
             # closed - interrupted, to be continued from its last milestone.
             log.info("the agent ended; so does the run")
             os._exit(0)
-        time.sleep(BEAT_SECONDS)
+        time.sleep(ORDERS_EVERY)
 
 
 def _orders(folder: Path, done: set) -> List[Dict[str, Any]]:
@@ -436,8 +462,13 @@ def _obey(run: Any, order: Dict[str, Any]) -> None:
     try:
         if what == "pause":
             run.pause(why=str(order.get("why") or ""))
+        elif what == "settings":
+            if isinstance(order.get("settings"), dict):
+                run.change_settings(order["settings"])
         elif what == "resume":
-            run.resume(why=str(order.get("why") or ""))
+            run.resume(why=str(order.get("why") or ""),
+                       settings=order.get("settings") if isinstance(order.get("settings"), dict)
+                       else None)
         elif what == "stop":
             run.stopping = True
             if order.get("now"):

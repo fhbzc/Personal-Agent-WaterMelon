@@ -197,3 +197,48 @@ class TheStoreTakesItTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OnAMacFromItsAccessibilityTests(unittest.TestCase):
+    """A Mac's WeChat 4 gives Accessibility the same list (measured
+    2026-10-27): its bubbles marked chat_bubble_item_view, a time not."""
+
+    def test_read_from_the_tree_with_the_picture_at_twice_the_size(self) -> None:
+        import io
+        from personalized_agent.platform_layer.macos_window_text import FrontWindow, NativeReader
+        picture, draw, dark = window()
+        other_says(draw, dark, 110)
+        draw.text((610, 190), "10:42", fill=(150, 150, 150))
+        i_say(draw, 240)
+        big = picture.resize((WIDTH * 2, HEIGHT * 2))      # a Retina window's picture
+        out = io.BytesIO()
+        big.save(out, format="PNG")
+        # The tree, in screen points; the window at (100, 50) on the screen.
+        at = lambda box: (box[0] + 100, box[1] + 50, box[2], box[3])
+        bubble = lambda words, top: {"AXIdentifier": "chat_bubble_item_view", "AXValue": words,
+                                     "box": at((CHAT[0], top - 10, CHAT[2], 60))}
+        chat = {"AXIdentifier": "chat_message_list", "box": at(CHAT), "AXChildren": [
+            bubble("Are we still on for Wednesday?", 110),
+            {"AXValue": "10:42", "box": at((CHAT[0], 185, CHAT[2], 40))},
+            bubble("Yes, three o'clock", 240)]}
+        name = {"AXIdentifier": "content_view.left_ui_.current_chat_name_label",
+                "AXValue": "Example Friend", "box": at(HEADER["box"])}
+        tree = {"AXChildren": [name, chat]}
+        native = NativeReader.__new__(NativeReader)
+        native.attr = lambda element, key: element.get(key)
+        native.rect = lambda element: element.get("box")
+        front = FrontWindow("WeChat", "WeChat", 1, 2, (100, 50, WIDTH, HEIGHT), tree)
+        text, capture = native.wechat_messages(front, out.getvalue())
+        self.assertEqual(capture["peer_name"], "Example Friend")
+        self.assertEqual([(m["sender_role"], m["text"]) for m in capture["messages"]],
+                         [("other", "Are we still on for Wednesday?"), ("self", "Yes, three o'clock")])
+        self.assertEqual(capture["unresolved_text"], "10:42", "no bubble: nobody's")
+        self.assertIn("Yes, three o'clock", text)
+
+    def test_no_list_falls_back_to_recognition(self) -> None:
+        from personalized_agent.platform_layer.macos_window_text import FrontWindow, NativeReader
+        native = NativeReader.__new__(NativeReader)
+        native.attr = lambda element, key: element.get(key)
+        native.rect = lambda element: element.get("box")
+        front = FrontWindow("WeChat", "WeChat", 1, 2, (0, 0, WIDTH, HEIGHT), {"AXChildren": []})
+        self.assertIsNone(native.wechat_messages(front, b""))

@@ -7,14 +7,19 @@ a build is published without updating anyone.
 
 What the user chose (Settings > General, ``updates``):
 
-  - ``ask``, the default: the user is told, and shown every published
+  - ``ask``, the default (the user, 2026-10-27: looked for and told, not
+    installed by itself): the user is told, and shown every published
     version newer than theirs, each with what it says of itself; they
-    install the one they choose. Off by default because a release that
-    turns out broken would otherwise reach everyone within a day;
-  - ``install``: the newest is downloaded, checked against the release's
-    own SHA256SUMS.txt, and installed - never while a piece of work is
-    running - and the agent starts again on it;
+    choose the one to have;
+  - ``install``: the newest is had by itself;
   - ``off``: nothing is asked of GitHub at all.
+
+EVERY UPDATE IS A QUIET ONE (the user, 2026-10-27: "like Claude CLI's" - the
+one asked for too): made ready in the background, nothing stopped, and taken
+up as the agent next starts, or when the user has been away a while and no
+work runs - a restart of seconds - or at once at "Restart now". A version
+that does not start is taken back by itself and never made ready again
+(quiet_update.py).
 
 Only newer versions are offered: a version older than the one that last
 wrote the data folder may not read it.
@@ -31,6 +36,17 @@ How it is installed is how the program was:
 Anything else - run from source, a portable folder, a .deb, an
 application installed by the .pkg, which belongs to the system - is told
 there is a newer version and where it is, and nothing more.
+
+WHILE IT IS INSTALLED, IT IS SEEN THROUGH (the user, 2026-10-27): the
+download with its share done, then each step - checked, installing, the
+agent closed and starting again (`step`, `progress`, `updating` in the
+status) - and the page, which outlives the agent, follows it to the new
+version and opens on it. On Windows the installer shows its own progress
+window (/SILENT: no question, only the bar), for the page that is not open.
+
+CHECK NOW says what it found on the page, where the user is looking - no
+notice; that version counts as told, so the daily look does not tell it
+again. Only a look the agent makes by itself tells of a new version.
 
 AFTER AN UPDATE, WHAT IS NEW is shown: the release's own description, as
 written on GitHub, in a window the first time the page is opened on the
@@ -72,9 +88,21 @@ WAIT_FOR_WORK = 300
 NOTES_KEPT = 20000
 #: Written when an update is installed, read on the new version's start.
 MARKER = "updated.json"
+#: The download's share done is said at most this often.
+PROGRESS_EVERY = 0.5
+#: The Windows installer's helper says it is there in this file, and within
+#: this long, before the agent quits for it (`_after_quit_windows`).
+HELPER_READY = "helper-ready.txt"
+HELPER_READY_WITHIN = 15.0
+#: The steps of an update as the page follows them, in order.
+STEPS = ("downloading", "checking", "installing", "restarting")
 
 MODES = ("ask", "install", "off")
 DEFAULT_MODE = "ask"
+#: Made ready, a version is taken up when the user has been away this long
+#: and no work runs - looked at this often.
+AWAY_SECONDS = 15 * 60
+AWAY_LOOK_EVERY = 120
 
 #: Each way of being installed, and the release file it updates from.
 ASSET = {"windows": "PersonalAgentWaterMelon-Setup-windows-x64.exe",
@@ -166,9 +194,13 @@ class Updater:
 
     def __init__(self, config: Any, data_dir: Path,
                  notify: Optional[Callable[..., Any]] = None,
-                 working: Optional[Callable[[], bool]] = None) -> None:
+                 working: Optional[Callable[[], bool]] = None,
+                 away: Optional[Callable[[], Optional[float]]] = None) -> None:
         self.config = config
         self.folder = Path(data_dir) / "updates"
+        #: Seconds since the user last touched the computer - None where the
+        #: system does not say (then a version is taken up at the next start).
+        self.away = away or (lambda: None)
         self.notify = notify
         self.working = working or (lambda: False)
         self.quit: Optional[Callable[[], None]] = None
@@ -180,7 +212,11 @@ class Updater:
         self.state: Dict[str, Any] = {"current": __version__, "checked_at": "", "just_updated": None,
                                       "versions": [],
                                       "latest": "", "newer": False, "page": "",
-                                      "doing": "", "error": "", "can_install": False}
+                                      "doing": "", "error": "", "can_install": False,
+                                      "step": "", "progress": None, "updating_to": ""}
+        #: A look the user asked for (Check now): what it finds is shown
+        #: on the page, not told in a notice.
+        self._for_you = False
 
     # -- the choice -----------------------------------------------------------
     def mode(self) -> str:
@@ -191,6 +227,16 @@ class Updater:
         with self._lock:
             return dict(self.state, mode=self.mode(), installed_as=how_installed())
 
+    def updating(self) -> Optional[Dict[str, Any]]:
+        """An update under way - its version, its step and its download's
+        share done - or None: sent with the page's regular status, so a
+        page open anywhere follows an update it did not start."""
+        with self._lock:
+            if self.state.get("step") not in STEPS:
+                return None
+            return {"to": self.state.get("updating_to", ""), "step": self.state["step"],
+                    "progress": self.state.get("progress"), "from": __version__}
+
     def _set(self, **values: Any) -> None:
         with self._lock:
             self.state.update(values)
@@ -200,6 +246,7 @@ class Updater:
         if self._thread is not None:
             return
         self._said_updated()
+        self._said_taken_back()
         self._thread = threading.Thread(target=self._loop, name="updates", daemon=True)
         self._thread.start()
 
@@ -212,6 +259,7 @@ class Updater:
         or, run from source where no loop looks by itself, on one of its own
         (it only looks: such a copy cannot replace itself)."""
         self._set(doing="checking", error="")
+        self._for_you = True
         if self._thread is not None and self._thread.is_alive():
             self._wake.set()
         else:
@@ -229,11 +277,20 @@ class Updater:
         # asks sooner (Check now, Install this version wake it).
         self._wake.wait(FIRST_CHECK_AFTER)
         self._wake.clear()
+        looked_at = 0.0
         while not self._stop.is_set():
-            self._look()
-            self._wake.wait(WAIT_FOR_WORK if self.state.get("waiting_for_work")
-                            else CHECK_EVERY_SECONDS)
-            self._wake.clear()
+            if time.monotonic() - looked_at >= CHECK_EVERY_SECONDS or self._wake.is_set() \
+                    or not looked_at:
+                self._wake.clear()
+                looked_at = time.monotonic()
+                self._look()
+            # MADE READY: taken up when the user is away and no work runs.
+            if self._ready() is not None:
+                self._take_up_when_away()
+                self._wake.wait(AWAY_LOOK_EVERY)
+            else:
+                self._wake.wait(WAIT_FOR_WORK if self.state.get("waiting_for_work")
+                                else CHECK_EVERY_SECONDS)
 
     def _look(self) -> None:
         """One look at a time: one asked for while another runs is that one."""
@@ -249,6 +306,8 @@ class Updater:
 
     def once(self) -> Dict[str, Any]:
         """One look, and - where it is chosen and possible - one install."""
+        # Asked for by the user, this look: what it finds is on the page.
+        for_you, self._for_you = self._for_you, False
         if self.mode() == "off":
             self._set(doing="", error="")
             return self.status()
@@ -278,24 +337,47 @@ class Updater:
             chosen = newest if asked is True else next(
                 (one for one in newer if one["tag"] == asked), None)
         else:
-            self._tell_once(newest["tag"], newest["page"])
+            self._tell_once(newest["tag"], newest["page"], quietly=for_you)
             return self.status()
         if chosen is None or not installable(chosen):
             self._set(asked_to_install=None)
-            self._tell_once(newest["tag"], newest["page"])
+            self._tell_once(newest["tag"], newest["page"], quietly=for_you)
+            return self.status()
+        from . import quiet_update as quiet
+        if chosen["tag"] in quiet.skipped(self.folder):
+            # It did not start here once: not again (a newer one will be).
+            self._set(asked_to_install=None)
+            return self.status()
+        if quiet.QUIET_ASSET.get(kind) in chosen["files"] and quiet.can_make_ready(kind):
+            # QUIETLY: made ready in the background - while work runs too,
+            # it changes nothing yet - and taken up at the next start, when
+            # the user is away, or now when they asked for it.
+            ready = self._ready()
+            if ready is None or ready.get("tag") != chosen["tag"]:
+                self.make_ready(chosen, kind)
+            self._set(asked_to_install=None)
             return self.status()
         if self.working():
             self._set(waiting_for_work=True, doing="waiting for work to finish")
             return self.status()
         self._set(waiting_for_work=False, asked_to_install=None)
-        target = self.download(chosen, kind)
-        self.install(target, kind, chosen["tag"], chosen)
+        try:
+            target = self.download(chosen, kind)
+            self.install(target, kind, chosen["tag"], chosen)
+        except Exception:
+            # Not updating after all: the page stops following, and says why.
+            self._set(step="", progress=None, updating_to="")
+            raise
         return self.status()
 
-    def _tell_once(self, tag: str, page: str) -> None:
-        if self.notify is None or self.state.get("told") == tag:
+    def _tell_once(self, tag: str, page: str, quietly: bool = False) -> None:
+        """A newer version told once - in a notice, unless the user is
+        looking at it already (`quietly`: Check now)."""
+        if self.state.get("told") == tag:
             return
         self._set(told=tag)
+        if quietly or self.notify is None:
+            return
         try:
             self.notify(f"{APP_NAME} {tag} is available",
                         f"You have {__version__}. Settings > General updates it.",
@@ -305,10 +387,19 @@ class Updater:
             log.debug("could not tell of the update", exc_info=True)
 
     # -- download, checked ------------------------------------------------------
-    def download(self, release: Dict[str, Any], kind: str) -> Path:
-        name = ASSET[kind]
+    def download(self, release: Dict[str, Any], kind: str, name: str = "",
+                 shown: bool = True) -> Path:
+        """One of the release's files, checked. `shown`: the page follows it
+        (an update the user asked for); else it is fetched in the background,
+        said only in Settings."""
+        name = name or ASSET[kind]
         tag = release["tag"]
-        self._set(doing=f"downloading {tag}")
+        size = int((release["files"].get(name) or {}).get("size") or 0)
+        if shown:
+            self._set(doing=f"downloading {tag}", step="downloading", updating_to=tag,
+                      progress={"done": 0, "total": size})
+        else:
+            self._set(doing=f"getting {tag} ready in the background")
         with _get(release["files"][SUMS]["url"]) as response:
             expected = _sums(response.read().decode("utf-8", "replace")).get(name)
         if not expected:
@@ -323,25 +414,148 @@ class Updater:
         target = here / name
         partial = here / (name + ".part")
         digest = hashlib.sha256()
+        done, said_at = 0, 0.0
         with _get(release["files"][name]["url"], timeout=60) as response, open(partial, "wb") as out:
+            try:
+                size = int(response.headers.get("Content-Length") or 0) or size
+            except (AttributeError, TypeError, ValueError):
+                pass
             while True:
                 chunk = response.read(1 << 20)
                 if not chunk:
                     break
                 digest.update(chunk)
                 out.write(chunk)
+                done += len(chunk)
+                if shown and time.monotonic() - said_at >= PROGRESS_EVERY:
+                    said_at = time.monotonic()
+                    self._set(progress={"done": done, "total": size})
                 if self._stop.is_set():
                     raise RuntimeError("stopped while downloading")
+        if shown:
+            self._set(step="checking", progress={"done": done, "total": size or done})
         if digest.hexdigest() != expected:
             partial.unlink(missing_ok=True)
             raise RuntimeError(f"{name} of {tag} does not match its checksum; deleted")
         os.replace(partial, target)
         return target
 
+    # -- made ready, and taken up (quiet_update.py) --------------------------------
+    def _ready(self) -> Optional[Dict[str, Any]]:
+        from .quiet_update import staged
+        return staged(self.folder)
+
+    def make_ready(self, release: Dict[str, Any], kind: str, shown: bool = False) -> None:
+        """The release made ready beside the program, nothing of the running
+        one changed: downloaded, checked, unpacked (hard links for what did
+        not change) - and what came down let go."""
+        from . import quiet_update as quiet
+        tag = release["tag"]
+        archive = self.download(release, kind, name=quiet.QUIET_ASSET[kind], shown=shown)
+        if shown:
+            self._set(step="installing", doing=f"making {tag} ready")
+        live = quiet.live_root(kind)
+        where = quiet.place(kind)
+        if live is None or where is None:
+            raise RuntimeError("this copy cannot be updated quietly")
+        quiet.forget_staged(self.folder)
+        target = where / tag
+        if kind == "windows":
+            said = quiet.unpack_beside(archive, live, target, stop=self._stop.is_set)
+            parts = sorted(target.iterdir())
+            live_parts = [live / one.name for one in parts]
+            log.info("%s made ready: %s files unchanged (linked), %s written",
+                     tag, said["linked"], said["written"])
+        elif kind == "macos":
+            parts = [quiet.app_from_image(archive, target, self.folder)]
+            live_parts = [live]
+        else:
+            target.mkdir(parents=True, exist_ok=True)
+            fresh = target / live.name
+            shutil.copyfile(archive, fresh)
+            fresh.chmod(0o755)
+            parts, live_parts = [fresh], [live]
+        quiet._write(self.folder / quiet.STAGED, {
+            "tag": tag, "kind": kind, "dir": str(target),
+            "parts": [str(one) for one in parts], "live_parts": [str(one) for one in live_parts],
+            "notes": release.get("notes", ""), "page": release.get("page", "")})
+        shutil.rmtree(self.folder / tag, ignore_errors=True)
+        self._set(doing="", ready=tag, ready_notes=release.get("notes", ""))
+
+    def take_up_now(self) -> None:
+        """The version made ready taken up now: its helper started, and the
+        agent quits for it - started again on the new version, which the
+        helper watches (quiet_update.run_helper)."""
+        from . import quiet_update as quiet
+        said = self._ready()
+        if said is None:
+            raise RuntimeError("no update is ready")
+        tag = said["tag"]
+        self._set(step="restarting", updating_to=tag, doing=f"starting {tag}")
+        try:
+            quiet.mark_taking_up(self.folder, said)
+            port = 0 if self.config.get("api_enabled", True) is False else \
+                int(self.config.get("api_port", 8756) or 8756)
+            quiet.run_helper(said["kind"], self.folder, said, port, sys.argv[1:])
+        except Exception:
+            (self.folder / MARKER).unlink(missing_ok=True)
+            self._set(step="", updating_to="", doing="")
+            raise
+        log.info("taking up %s: quitting so it starts in this one's place", tag)
+        if self.quit is not None:
+            self.quit()
+
+    def restart_now(self) -> Dict[str, Any]:
+        """The user's "Restart now": the version made ready, used at once -
+        unless work runs, which it would end."""
+        if self.working():
+            raise RuntimeError("a piece of work is running: the new version is used "
+                               "once it has finished, or at the next start")
+        self.take_up_now()
+        return self.status()
+
+    def _take_up_when_away(self) -> None:
+        """Taken up once the user has been away a while and no work runs -
+        never under their hands; where the system does not say how long,
+        at the next start. (A version is made ready only by itself, chosen
+        so, or when the user asked for it.)"""
+        if self.mode() == "off" or self.quit is None or self.working():
+            return
+        try:
+            away = self.away()
+        except Exception:
+            away = None
+        if away is None or away < AWAY_SECONDS:
+            return
+        try:
+            self.take_up_now()
+        except Exception as exc:
+            log.info("the update made ready was not taken up: %s", exc)
+            self._set(error=str(exc)[:300])
+
+    def _said_taken_back(self) -> None:
+        """A version that did not start, and was taken back: said once, and
+        never made ready again (quiet_update.take_result)."""
+        from .quiet_update import take_result
+        said = take_result(self.folder)
+        if not said or said.get("ok"):
+            return
+        why = str(said.get("why") or "it did not start")
+        self._set(error=f"Version {said.get('tag')} was not kept: {why}. "
+                        f"This version, {__version__}, goes on as before.")
+        if self.notify is None:
+            return
+        try:
+            self.notify(f"{APP_NAME} stayed on {__version__}",
+                        f"Version {said.get('tag')} did not start, so it was taken back.",
+                        kind="warning", dedupe_key=f"taken-back-{said.get('tag')}")
+        except Exception:  # pragma: no cover - a notice
+            log.debug("could not say an update was taken back", exc_info=True)
+
     # -- install ------------------------------------------------------------------
     def install(self, target: Path, kind: str, tag: str,
                 release: Optional[Dict[str, Any]] = None) -> None:
-        self._set(doing=f"installing {tag}")
+        self._set(doing=f"installing {tag}", step="installing", updating_to=tag)
         # What the new version says it is, for the window it opens with.
         (self.folder / MARKER).write_text(json.dumps({
             "from": __version__, "to": tag,
@@ -354,6 +568,7 @@ class Updater:
         elif kind == "appimage":
             self._replace_appimage(target)
         log.info("updating to %s: quitting so it can be installed", tag)
+        self._set(step="restarting")
         if self.quit is not None:
             self.quit()
 
@@ -363,24 +578,51 @@ class Updater:
 
     def _after_quit_windows(self, installer: Path) -> None:
         """The installer, once this program has gone: started by a shell of
-        its own, outside this program's job, so it outlives it."""
+        its own, outside this program's job, so it outlives it. /SILENT: no
+        question asked, and its own progress window shown - the agent and its
+        page are gone meanwhile, and something must say it is being done.
+
+        WITH NO WINDOW, NOT DETACHED (found 2026-10-27, an update from 0.2.0
+        that quit and never came back): PowerShell started detached - no
+        console at all - ends at once without running its command, so the
+        installer was never started and the agent simply went away. Every
+        Windows update until 0.2.8 did so. And the shell says it is there
+        before this program quits (`HELPER_READY`): one that is not, and
+        nothing is quit - the update is said to have failed instead."""
         # A quote in a path is doubled, as PowerShell reads it.
         quoted = str(installer).replace("'", "''")
-        script = (f"Wait-Process -Id {os.getpid()} -ErrorAction SilentlyContinue; "
+        ready = self.folder / HELPER_READY
+        ready.unlink(missing_ok=True)
+        marked = str(ready).replace("'", "''")
+        script = (f"Set-Content -LiteralPath '{marked}' -Value 'ready'; "
+                  f"Wait-Process -Id {os.getpid()} -ErrorAction SilentlyContinue; "
                   f"Start-Process -FilePath '{quoted}' -ArgumentList "
-                  f"'/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LANG={self._language()}'")
-        flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
+                  f"'/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/LANG={self._language()}'")
+        flags = (getattr(subprocess, "CREATE_NO_WINDOW", 0)
                  | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
                  | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0))
-        command = ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", script]
+        command = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                   "-Command", script]
         try:
-            subprocess.Popen(command, creationflags=flags, close_fds=True)
+            subprocess.Popen(command, creationflags=flags, close_fds=True,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
         except OSError:
             # A job that may not be left: started inside it, it still ends
             # with this program - so not breaking away is not an option
             # worth having. Said, and left to the user.
             subprocess.Popen(command, creationflags=flags & ~getattr(
-                subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0), close_fds=True)
+                subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0), close_fds=True,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL)
+        until = time.monotonic() + HELPER_READY_WITHIN
+        while not ready.exists():
+            if time.monotonic() > until:
+                raise RuntimeError("the installer could not be started (its helper did not "
+                                   "answer); nothing was changed - try again, or install "
+                                   f"{installer.name} yourself")
+            time.sleep(0.1)
+        ready.unlink(missing_ok=True)
 
     def _replace_macos(self, image: Path) -> None:
         executable = Path(sys.executable).resolve()

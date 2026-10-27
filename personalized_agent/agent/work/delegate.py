@@ -715,7 +715,10 @@ class Drafts:
                 return {"error": said["error"]}
         said = work.start(unit, instruction_of(draft, approved, folders),
                           limits=options.get("limits") or {},
-                          packages=options.get("packages"), sound=options.get("sound"),
+                          # Auto unless the user chose Ask (2026-10-27); where the
+                          # system does not confine installs, asked all the same.
+                          packages=options.get("packages") or "auto",
+                          sound=options.get("sound"),
                           way=approved["way"],
                           **({"unconfined": True} if options.get("unconfined") else {}))
         if said.get("error"):

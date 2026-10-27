@@ -89,6 +89,50 @@ class AProgressPointEveryTenMinutesOfWorkTests(_RunsBase):
         self.assertEqual(set(progress), {"label", "at", "round", "in_round", "files"})
         kinds = [one["kind"] for one in self._versions(run["id"])["versions"]]
         self.assertNotIn("progress", kinds, "not a version")
+        # SAID IN THE LIVE SESSION as each is saved (the user, 2026-10-27).
+        events = self.app.work.live(run["id"])["events"]
+        saved = [one for one in events if one["kind"] == "saved"]
+        self.assertTrue(saved, [one["kind"] for one in events][-12:])
+        self.assertTrue(saved[0]["text"].startswith("Saved a progress point - "), saved[0]["text"])
+
+    def test_kept_off_the_works_thread(self) -> None:
+        # LIGHT (the user, 2026-10-27): its files are kept by a thread of
+        # their own - the tool that asked for it returns at once.
+        from personalized_agent.agent.work import runner as runner_module
+        import threading as _threading
+        started = _threading.Event()
+        release = _threading.Event()
+
+        def slow_keep(*args, **kwargs):
+            started.set()
+            release.wait(10)
+            return {}, []
+        run, _folder = self._run(_TwoAgents(rounds_to_complete=99, full_review="never"),
+                                 limits={"calls": 2, "minutes": 0, "tokens": 0})
+        live = runner_module.Run.__new__(runner_module.Run)
+        live.alone, live.id, live.plan, live.status, live.final = False, "run_x", {}, "running", {}
+        live.instruction, live.folder = "", Path(tempfile.mkdtemp(prefix="point-"))
+        live.versions = mock.Mock()
+        live.versions.index.return_value = {"head": "v1"}
+        live.versions.put_json.return_value = "0" * 64
+        live.versions.save_resume.return_value = {"label": "in round 1, at 10:00"}
+        live.owner = mock.Mock()
+        live.runtime = mock.Mock()
+        live.scope = "s"
+        live._minutes = lambda: 0.0
+        notes = []
+        live._note = lambda what, **said: notes.append(what)
+        with mock.patch.object(runner_module, "keep_files", slow_keep),                 mock.patch.object(runner_module, "keep_tree", return_value={}),                 mock.patch.object(runner_module, "keep_granted", return_value={}):
+            began = time.monotonic()
+            live._save_point("in round 1, at 10:00", {"round": 0, "in_round": 1}, behind=True)
+            self.assertLess(time.monotonic() - began, 1, "it did not wait for the files")
+            self.assertTrue(started.wait(5))
+            # One at a time: a second, while the first is kept, is not begun.
+            live._save_point("in round 1, at 10:10", {"round": 0, "in_round": 1}, behind=True)
+            release.set()
+            live._saving.join(10)
+        self.assertEqual(notes, ["resume point saved"])
+        live.versions.save_resume.assert_called_once()
 
     def test_not_every_tool_but_every_ten_minutes(self) -> None:
         run, _folder = self._run(_TwoAgents(rounds_to_complete=99, full_review="never"),
@@ -225,7 +269,9 @@ class TheStoreKeepsOnlyWhatIsHeldTests(unittest.TestCase):
         self.store.save("contract", "The contract", version_files, {}, [], state, {})
         round_five = self._files(**{"plan.py": "round five"})
         state5 = self.store.put_json({"plan": {"round": 5}, "tree": {}})
-        with mock.patch.object(versions_module, "COLLECT_GRACE_SECONDS", -1):
+        # Collected at every resume point here: in a run, at most each half
+        # hour (COLLECT_EVERY_SECONDS) - a progress point is kept light.
+        with mock.patch.object(versions_module, "COLLECT_GRACE_SECONDS", -1),                 mock.patch.object(versions_module, "COLLECT_EVERY_SECONDS", 0):
             self.store.save_resume("after round 5", round_five, {}, [], state5, {"round": 5})
             round_six = self._files(**{"plan.py": "round six"})
             state6 = self.store.put_json({"plan": {"round": 6}, "tree": {}})
@@ -236,6 +282,23 @@ class TheStoreKeepsOnlyWhatIsHeldTests(unittest.TestCase):
         self.assertTrue(exists(version_files["plan.py"]["sha"]), "the version's copy stays")
         self.assertTrue(exists(round_six["plan.py"]["sha"]))
         self.assertEqual(self.store.resume_point()["round"], 6)
+
+    def test_light_collected_at_most_each_half_hour(self) -> None:
+        state = self.store.put_json({"plan": {}, "tree": {}})
+        self.store.save("contract", "The contract", {}, {}, [], state, {})
+        with mock.patch.object(self.store, "collect", wraps=self.store.collect) as collected:
+            for n in range(3):
+                self.store.save_resume(f"in round {n}", {}, {}, [], state, {"round": n})
+        self.assertEqual(collected.call_count, 1, "the first, then not for half an hour")
+
+    def test_a_file_unchanged_is_kept_without_reading_it_or_the_store(self) -> None:
+        folder = self.dir / "work"
+        folder.mkdir()
+        (folder / "a.txt").write_text("one", encoding="utf-8")
+        files, _ = versions_module.keep_files(self.store, folder, "run_x")
+        with mock.patch.object(Path, "read_bytes", side_effect=AssertionError("read")),                 mock.patch.object(Path, "is_file", side_effect=AssertionError("looked")):
+            again, _ = versions_module.keep_files(self.store, folder, "run_x")
+        self.assertEqual(again, files)
 
     def test_nothing_new_and_nothing_with_an_unreadable_version_removed(self) -> None:
         state = self.store.put_json({"plan": {}, "tree": {}})

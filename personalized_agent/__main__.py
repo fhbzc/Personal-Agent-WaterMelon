@@ -474,6 +474,22 @@ def main(argv: list[str] | None = None) -> int:
                     headless=args.headless)
             return 5
 
+    # AN UPDATE MADE READY EARLIER IS TAKEN UP NOW, before anything is
+    # opened (platform_layer/quiet_update.py): its helper is started, this
+    # run ends, and the new version starts in its place - taken back by
+    # itself if it does not come up.
+    if guard is not None and not args.status:
+        from .platform_layer.quiet_update import take_up_at_start
+        try:
+            taken = take_up_at_start(resolve_root(args.root or args.data_dir),
+                                     list(args_in), no_api=bool(args.no_api))
+        except Exception:                    # never in the way of starting
+            log.warning("could not look for an update made ready", exc_info=True)
+            taken = False
+        if taken:
+            guard.release()
+            return 0
+
     try:
         application = AgentApplication(root=args.root or args.data_dir)
     except Exception:

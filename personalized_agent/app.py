@@ -451,7 +451,8 @@ class AgentApplication:
         from .platform_layer.updater import Updater
         self.updater = Updater(self.config, self.data_dir,
                                notify=self.notifications.notify,
-                               working=lambda: bool(self.work.going_now()))
+                               working=lambda: bool(self.work.going_now()),
+                               away=self._seconds_away)
 
         # -- protocol -------------------------------------------------------
         self.app_registry = ApplicationRegistry(self.db)
@@ -1316,6 +1317,15 @@ class AgentApplication:
             "needs_attention": self.reauthentication_required,
         }
 
+    def _seconds_away(self) -> Optional[float]:
+        """How long since the user last touched the computer - None where the
+        system does not say. An update made ready waits for this
+        (platform_layer/updater.py)."""
+        try:
+            return self.platform.activity.seconds_since_input()
+        except Exception:
+            return None
+
     def status(self) -> Dict[str, Any]:
         return {
             "running": self._started,
@@ -1342,6 +1352,9 @@ class AgentApplication:
             # somebody quits in the middle of, or waits in front of without
             # knowing there is anything to wait for.
             "heartbeats": self._heartbeats_now(),
+            # AN UPDATE UNDER WAY, followed by the page to the new version
+            # (platform_layer/updater.py) - None when there is none.
+            "updating": self.updater.updating() if getattr(self, "updater", None) else None,
             "library": self.library.stats(),
             "models": {
                 role: self.models.resolve(role).to_dict()

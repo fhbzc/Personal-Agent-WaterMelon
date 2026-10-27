@@ -12,6 +12,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from support import TemporaryAgent
 from test_work_packages import _FakeInstaller, _WantsPackages
@@ -176,6 +177,71 @@ class PauseAndResumeTests(_LiveBase):
         self.assertLess(session["minutes"], 5)
         report = (folder / "runs" / said["run"] / "report.md").read_text(encoding="utf-8")
         self.assertIn("paused by you", report)
+
+    def test_settings_changed_while_it_runs_take_effect_at_once(self) -> None:
+        # The user, 2026-10-27: Ask/Auto, the sandbox, the limits and the
+        # sound change while it runs - no pause, no Resume; the session says
+        # so, and the spec beside it follows.
+        from personalized_agent.agent.work import packages as packages_module
+        models = _Gated()
+        said, run = self._paused_at_the_tool(models)
+        # AUTO BY DEFAULT for all work (the user, 2026-10-27).
+        self.assertEqual(run.packages_mode,
+                         "auto" if packages_module.auto_allowed() else "ask")
+        self.assertFalse(run.unconfined)
+        answer = self._post("/api/work/settings", {
+            "run": said["run"], "packages": "ask", "unconfined": True,
+            "limits": {"minutes": 90, "calls": 0}, "sound": True})
+        self.assertEqual(answer, {"changed": True})
+        self.assertEqual((run.packages_mode, run.unconfined, run.sound), ("ask", True, True))
+        self.assertTrue(run.plan["packages"]["chosen"], "a choice, kept for the next session")
+        self.assertEqual(run.limits["minutes"], 90)
+        self.assertIsNotNone(run.tools.outside, "run_outside offered from its next step")
+        live = self._get("/api/work/live", {"run": said["run"]})
+        spec = live["progress"]["spec"]
+        self.assertEqual((spec["packages"], spec["sandbox"], spec["sound"]), ("ask", False, True))
+        changed = [e for e in live["events"] if e["kind"] == "settings"]
+        self.assertEqual(len(changed), 1)
+        self.assertEqual(changed[0]["who"], "you")
+        self.assertIn("in effect now", changed[0]["text"])
+        self.assertIn("WITHOUT the sandbox", changed[0]["text"])
+        # Back into the sandbox, the same way.
+        self._post("/api/work/settings", {"run": said["run"], "unconfined": False})
+        self.assertIsNone(run.tools.outside)
+        self.assertFalse(run.plan["unconfined"])
+        # THE SPEC as the session started: its first line.
+        started = [e for e in live["events"] if e["kind"] == "spec"]
+        self.assertEqual(len(started), 1)
+        self.assertEqual(live["events"][0]["kind"], "spec")
+        self.assertTrue(started[0]["text"].startswith("Started with: the thorough way; limits:"),
+                        started[0]["text"])
+        self.assertEqual(self._post("/api/work/resume", {"run": said["run"]}), {"paused": False})
+        row = self._finished(said["run"])
+        self.assertEqual(row["plan"]["packages"]["mode"], "ask")
+        self.assertEqual(row["plan"]["sessions"][-1]["sound"], True, "kept in its record")
+
+    def test_a_run_not_going_has_no_settings_to_change(self) -> None:
+        from personalized_agent.api.routes import ApiError
+        with self.assertRaises(ApiError):
+            self._post("/api/work/settings", {"run": "run_none", "sound": True})
+
+    def test_the_child_is_told_the_settings_at_once(self) -> None:
+        from personalized_agent.agent.work import child
+        told = []
+        run = child.ChildRun.__new__(child.ChildRun)
+        run._tell = lambda what, **said: told.append((what, said)) or True
+        run.change_settings({"packages": "auto"})
+        run.resume("", settings={"packages": "auto"})
+        # Each waited for, till the child says it is done (test_quick_resume).
+        self.assertEqual(told, [("settings", {"wait": True, "settings": {"packages": "auto"}}),
+                                ("resume", {"wait": True, "why": "",
+                                            "settings": {"packages": "auto"}})])
+        seen = mock.Mock()
+        child._obey(seen, {"do": "settings", "settings": {"unconfined": True}})
+        seen.change_settings.assert_called_once_with({"unconfined": True})
+        seen = mock.Mock()
+        child._obey(seen, {"do": "resume", "why": "", "settings": {"packages": "auto"}})
+        seen.resume.assert_called_once_with(why="", settings={"packages": "auto"})
 
     def test_stop_while_paused_ends_the_run(self) -> None:
         from personalized_agent.agent.work.runner import NOT_FINISHED
@@ -468,7 +534,9 @@ class TheSessionViewTests(unittest.TestCase):
                 "pending": [{"id": "req_1", "kind": "packages", "items": ["six"],
                              "what": "six", "why": "tables", "note": "From PyPI",
                              "status": "pending"}],
-                "progress": {"stage": "round 2", "phase": "rounds", "round": 1,
+                "progress": {"spec": {"way": "full", "limits": {"minutes": 45, "calls": 0},
+                                      "packages": "auto", "sandbox": True, "sound": False},
+                             "stage": "round 2", "phase": "rounds", "round": 1,
                              "rounds_done": 1, "cards": 4, "cards_done": 1,
                              "used": {"minutes": 12.5, "tokens": 250000, "calls": 50},
                              "limits": {"minutes": 45, "tokens": 1000000, "calls": 0},
@@ -497,6 +565,15 @@ class TheSessionViewTests(unittest.TestCase):
             "out.rows=[...box.querySelectorAll('.xp-live-ev')].map(li=>"
             "  li.querySelector('.xp-live-who').textContent+':'+li.querySelector('.xp-live-text').textContent);"
             "out.answer=box.querySelector('[data-xp-live-req=\"req_1\"]').textContent;"
+            "const card=box.querySelector('.xp-active-spec');"
+            "out.spec={head:card.querySelector('.xp-spec-head').textContent.replace(/\s+/g,' ').trim(),"
+            "way:card.querySelector('.xp-spec-chip').textContent.trim(),"
+            "packages:(card.querySelector('input[name^=\"xp-as-pk-\"]:checked')||{}).value,"
+            "sandbox:card.querySelector('input[name^=\"xp-as-sb-\"]:checked').value==='on',"
+            "sound:card.querySelector('input[name^=\"xp-as-snd-\"]:checked').value==='on',"
+            "lit:Array.from(card.querySelectorAll('.xp-seg-lit')).map(l=>l.textContent.trim()),"
+            "limits:Object.fromEntries(Array.from(card.querySelectorAll('[data-xp-as-limit]'))"
+            ".filter(i=>['minutes','calls'].includes(i.dataset.xpAsLimit)).map(i=>[i.dataset.xpAsLimit,i.value]))};"
             "out.ask=box.querySelector('.xp-live-asks .xp-package-ask').textContent.replace(/\\s+/g,' ');"
             "out.gets=window.__gets.filter(g=>g.includes('/api/work/live')).length;"
             "box.querySelector('[data-xp-allow=\"1\"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));"
@@ -587,6 +664,14 @@ class TheSessionViewTests(unittest.TestCase):
                                            "run:The contract"])
         self.assertIn("worker:read_file(data.csv) → 120 characters", out["rows"])
         self.assertIn("waiting for your answer", out["answer"])
+        # WHAT IT RUNS WITH NOW, a card at the top of the session (2026-10-27).
+        self.assertEqual(out["spec"]["head"], "Running with now - changes go to this run at once")
+        self.assertEqual(out["spec"]["way"], "the thorough way")
+        self.assertEqual(out["spec"]["packages"], "auto")
+        self.assertEqual((out["spec"]["sandbox"], out["spec"]["sound"]), (True, False))
+        self.assertEqual(out["spec"]["limits"], {"minutes": "45", "calls": ""})
+        # Each a segmented control, the one in force lit.
+        self.assertEqual(out["spec"]["lit"], ["Auto", "On", "Off"])
         self.assertIn("The agent asks to install six", out["ask"])
         self.assertIn("Why: tables", out["ask"])
         posts = out["posts"]

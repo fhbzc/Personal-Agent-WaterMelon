@@ -385,6 +385,14 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         """The window of what is new in this version was closed."""
         return app.updater.seen()
 
+    @route("POST", "/api/updates/restart")
+    def updates_restart(_request: Any) -> Any:
+        """The user's "Restart now": the version made ready, used at once."""
+        try:
+            return app.updater.restart_now()
+        except RuntimeError as exc:
+            raise ApiError(str(exc), 409)
+
     @route("POST", "/api/updates/install")
     def updates_install(request: Any) -> Any:
         """The user's "Install this version" - one of the newer ones listed."""
@@ -1852,10 +1860,23 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             raise ApiError("that run is not going, or is being stopped", 409)
         return {"paused": True}
 
+    @route("POST", "/api/work/settings")
+    def work_settings(request: Any) -> Any:
+        """A going run's settings changed now - packages, limits, sound, the
+        sandbox - in effect from its next step (the user, 2026-10-27)."""
+        settings = {key: request.get(key) for key in ("packages", "limits", "sound", "unconfined")
+                    if request.get(key) is not None}
+        if not app.work.change_settings(str(request.require("run")), settings):
+            raise ApiError("that run is not going", 409)
+        return {"changed": True}
+
     @route("POST", "/api/work/resume")
     def work_resume(request: Any) -> Any:
-        """A paused run goes on exactly where it stopped."""
-        if not app.work.resume(str(request.require("run"))):
+        """A paused run goes on exactly where it stopped - with the settings
+        chosen beside Resume, when sent (packages, limits, sound)."""
+        settings = {key: request.get(key) for key in ("packages", "limits", "sound")
+                    if request.get(key) is not None}
+        if not app.work.resume(str(request.require("run")), settings or None):
             raise ApiError("that run is not going", 409)
         return {"paused": False}
 
@@ -3062,6 +3083,24 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         else:
             app.notifications.mark_read(str(request.require("id")))
         return {"ok": True}
+
+    # ---------------------------------------------------------------- tokens
+    # WHAT THE MODELS SPENT, FOR THE OVERVIEW - in every build (found
+    # 2026-10-27: the Overview's Token usage asked the Debugger's routes,
+    # which a released build does not serve, and was empty for everyone).
+    @route("GET", "/api/tokens")
+    def tokens(_request: Any) -> Any:
+        """Tokens spent, call by call (the latest), and by kind of work."""
+        metrics = app.observability.snapshot().get("model_metrics") or {}
+        return {key: metrics.get(key) for key in
+                ("tokens_over_time", "measured_since", "by_task", "totals")}
+
+    @route("GET", "/api/tokens/by_day")
+    def tokens_by_day(request: Any) -> Any:
+        """Tokens spent per day and kind of work, over the last ?days= days,
+        cut at the reader's midnight (?east= minutes east of UTC)."""
+        return app.model_calls.by_day(days=request.int_param("days", 30),
+                                      minutes_east=request.int_param("east", 0))
 
     # -------------------------------------------------------------- debugger
     @route("GET", "/api/debugger/tokens_by_day")

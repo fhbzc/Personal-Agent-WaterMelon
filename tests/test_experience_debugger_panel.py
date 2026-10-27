@@ -170,7 +170,8 @@ class TheExperienceDebuggerPanelTests(unittest.TestCase):
                                           "sound": True}])
         self.assertEqual(out["continues"], [{"run": "run_single", "project": "dbg_1",
                                              "variant": "single", "limits": {},
-                                             "sound": False, "packages": "ask",
+                                             # Auto by default (the user, 2026-10-27).
+                                             "sound": False, "packages": "auto",
                                              "instruction": "add a title"}])
         self.assertEqual(out["workContinues"], 0)
         self.assertGreater(out["liveGets"], 0)

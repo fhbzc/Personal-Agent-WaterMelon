@@ -4097,3 +4097,102 @@ button.danger-text:not(:disabled) { color: var(--danger-ink); }
 .xp-progress-line { margin: 4px 0 6px; }
 .xp-progress-unchecked { font-size: 0.8em; padding: 1px 6px; border-radius: 8px; margin: 0 4px;
   border: 1px solid var(--muted, #888); color: var(--muted, #888); }
+
+/* THE ACTIVE SPEC: what the run runs with now, at the top of its live
+   session - a label and a control for each, changed in place. */
+.xp-active-spec { margin: 4px 0 8px; padding: 8px 10px; border: 1px solid var(--line, #d0d7de);
+  border-left: 4px solid var(--accent, #3d6be5); border-radius: 8px;
+  background: var(--card-alt, rgba(61, 107, 229, .04)); font-size: .84rem; }
+.xp-active-spec.xp-spec-unsandboxed { border-left-color: var(--warn, #c0392b); }
+.xp-spec-head { margin-bottom: 6px; }
+.xp-spec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 6px 14px; align-items: start; }
+.xp-spec-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.xp-spec-item.xp-spec-limits { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap;
+  align-items: center; gap: 4px 10px; }
+.xp-spec-label { font-size: .74rem; color: var(--muted); text-transform: none; }
+.xp-spec-chip { display: inline-block; width: fit-content; padding: 1px 8px; border-radius: 10px;
+  background: var(--chip, rgba(61, 107, 229, .12)); font-weight: 600; }
+/* A choice of two, as one segmented control: the one in force lit. */
+.xp-seg { display: inline-flex; width: fit-content; border: 1px solid var(--line, #c9d1d9);
+  border-radius: 7px; overflow: hidden; }
+.xp-seg label { position: relative; padding: 2px 12px; cursor: pointer; user-select: none; }
+.xp-seg label + label { border-left: 1px solid var(--line, #c9d1d9); }
+.xp-seg input { position: absolute; opacity: 0; pointer-events: none; }
+.xp-seg label.xp-seg-lit { background: var(--accent, #3d6be5); color: #fff; font-weight: 600; }
+.xp-seg-sandbox label.xp-seg-off.xp-seg-lit { background: var(--warn, #c0392b); }
+.xp-seg label:has(input:disabled) { cursor: default; }
+.xp-seg label:has(input:focus-visible) { outline: 2px solid var(--accent, #3d6be5);
+  outline-offset: -2px; }
+.xp-spec-warning { grid-column: 1 / -1; margin: 0; font-size: .8rem; }
+.xp-spec-limit { display: inline-flex; align-items: center; gap: 4px; }
+.xp-spec-limit input { width: 7.5em; }
+.xp-active-spec input:disabled + * , .xp-active-spec input:disabled { cursor: default; }
+
+/* A run's result, to open - beside its logs. */
+.xp-results-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
+.xp-results-row code { font-size: .8em; }
+
+/* A progress point saved: a quiet mark in the session. */
+.xp-live-kind-saved { color: var(--good, #2e7d32); }
+.xp-live-kind-saved::marker { content: "\2713  "; }
+
+/* AN UPDATE SEEN THROUGH: a card that stays while the agent is closed. */
+.update-follow {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 9000;
+  width: min(360px, calc(100vw - 32px));
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  font-size: 14px;
+}
+.update-follow-steps {
+  margin: 8px 0 4px;
+  padding-left: 20px;
+}
+.update-follow-steps li { margin: 3px 0; }
+.update-step-done { color: var(--muted); }
+.update-step-done::marker { content: "\2713  "; }
+.update-step-now { font-weight: 600; }
+.update-step-next { color: var(--muted); }
+.update-follow-slow { color: var(--err); margin: 6px 0 0; }
+
+/* RESUME OR CONTINUE, AS A CARD: where it goes on from, why, this time's
+   settings, what to change - each on a line of its own. */
+.xp-resume-card {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.xp-resume-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.xp-resume-where { font-weight: 600; }
+.xp-resume-chip {
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.xp-resume-why { margin: 6px 0 0; }
+.xp-resume-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  margin-top: 8px;
+}
+.xp-resume-card .xp-continue-words { display: block; margin-top: 8px; }
+.xp-resume-card .xp-continue-words textarea { width: 100%; box-sizing: border-box; }

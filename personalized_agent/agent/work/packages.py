@@ -68,13 +68,14 @@ _PLAIN = re.compile(rf"^({_NAME})\s*(?:({_CLAUSE}(?:\s*,\s*{_CLAUSE})*))?$")
 
 
 def mode_of(said: Any) -> str:
-    """The mode asked for; anything else is to ask.
+    """The mode asked for - and, none asked for, AUTO: the default of all
+    work (the user, 2026-10-27). Ask only when asked for.
 
     Auto only where the operating system confines pip and the code that
     imports what it installed (runtime/isolation.py): a package's native
     code steps past the in-process guard, so without the OS boundary every
     install is the user's own decision, asked each time."""
-    if str(said or "").strip().lower() != AUTO:
+    if str(said or "").strip().lower() == ASK:
         return ASK
     return AUTO if auto_allowed() else ASK
 

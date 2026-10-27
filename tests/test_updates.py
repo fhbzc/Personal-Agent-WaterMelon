@@ -116,13 +116,15 @@ class WhatIsDoneTests(unittest.TestCase):
 
 
 class ChooseTheVersionTests(unittest.TestCase):
-    """Not installed by themselves: every newer published version is listed,
-    each with what it says of itself, and the one chosen is installed."""
+    """Chosen to be asked (no longer the default): every newer published
+    version is listed, each with what it says of itself, and the one chosen
+    is installed."""
 
     def setUp(self) -> None:
         self.work = tempfile.TemporaryDirectory()
         self.addCleanup(self.work.cleanup)
-        self.updater = up.Updater(_Config(), Path(self.work.name), notify=lambda *a, **k: None)
+        self.updater = up.Updater(_Config(updates="ask"), Path(self.work.name),
+                                  notify=lambda *a, **k: None)
         self.updater.quit = lambda: None
         self.installed = []
         listed = [_release("v9.1.0"), _release("v9.0.0"), _release(up.__version__),
@@ -131,9 +133,12 @@ class ChooseTheVersionTests(unittest.TestCase):
         patches = [mock.patch.object(up, "how_installed", return_value="windows"),
                    mock.patch.object(up, "published_releases", return_value=listed),
                    mock.patch.object(self.updater, "download",
-                                     side_effect=lambda release, kind: Path("setup.exe")),
+                                     side_effect=lambda release, kind, **k: Path("setup.exe")),
                    mock.patch.object(self.updater, "install",
-                                     side_effect=lambda *a: self.installed.append(a[2]))]
+                                     side_effect=lambda *a: self.installed.append(a[2])),
+                   # The installer's way, here: no quiet one for this copy.
+                   mock.patch("personalized_agent.platform_layer.quiet_update.can_make_ready",
+                              return_value=False)]
         for one in patches:
             one.start()
             self.addCleanup(one.stop)
@@ -232,14 +237,23 @@ class CheckedBeforeItRunsTests(unittest.TestCase):
 class InstalledOnceTheProgramHasGoneTests(unittest.TestCase):
 
     def test_the_windows_installer_runs_silently_after_this_one_quits(self) -> None:
-        updater = up.Updater(_Config(display_language="zh"), Path(tempfile.gettempdir()))
-        with mock.patch.object(up.subprocess, "Popen") as started:
+        work = tempfile.TemporaryDirectory()
+        self.addCleanup(work.cleanup)
+        updater = up.Updater(_Config(display_language="zh"), Path(work.name))
+        updater.folder.mkdir(parents=True)
+
+        def ready(command, **kwargs):
+            # The helper says it is there before the agent quits.
+            (updater.folder / up.HELPER_READY).write_text("ready")
+            return mock.Mock()
+        with mock.patch.object(up.subprocess, "Popen", side_effect=ready) as started:
             updater._after_quit_windows(Path("C:/data/it's here/setup.exe"))
         command = started.call_args[0][0]
         script = command[-1]
         self.assertEqual(command[0], "powershell")
         self.assertIn("Wait-Process -Id", script)
-        self.assertIn("'/VERYSILENT'", script)
+        # Silent - no question - with the installer's own progress window.
+        self.assertIn("'/SILENT'", script)
         self.assertIn("'/LANG=zh'", script)
         self.assertIn("it''s here", script, "a quote in the path is doubled")
 
@@ -411,6 +425,8 @@ document.title=JSON.stringify({err,out});});</script></body></html>""" % script[
 class ChosenInSettingsTests(unittest.TestCase):
 
     def test_asked_by_default_on_general(self) -> None:
+        # The user, 2026-10-27: looked for and told by default, not installed
+        # by itself - every update a quiet one either way (quiet_update.py).
         from personalized_agent.common.config.schema import SCHEMA_BY_KEY
         field = SCHEMA_BY_KEY["updates"]
         self.assertEqual(field.default, "ask")
@@ -430,6 +446,9 @@ class ChosenInSettingsTests(unittest.TestCase):
         self.assertIn('Parameters: "--updates install"', script)
         self.assertRegex(script, r'"--updates install".*Tasks: autoupdate; Check: not AnUpdate')
         self.assertRegex(script, r'"--updates ask".*Tasks: not autoupdate; Check: not AnUpdate')
+        # A full install, and an uninstall, clear what a quiet update left.
+        self.assertRegex(script, r'\[InstallDelete\][^\[]*\{app\}\\\.update')
+        self.assertRegex(script, r'\[UninstallDelete\][^\[]*\{app\}\\_internal')
         lines = script.replace("\r\n", "\n")
         for code in ("en", "zh", "es", "ja", "ko", "ru", "fr", "de", "it"):
             for key in ("AutoUpdate", "UpdatesGroup"):

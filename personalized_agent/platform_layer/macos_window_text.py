@@ -354,6 +354,21 @@ class NativeReader:
             return text
         # Serialize the identified window in memory; local OCR has a deadline.
         png = self._encode_png(picture)
+        if is_wechat_application(front.application):
+            # WECHAT'S OWN WORDS FIRST (measured on a Mac, 2026-10-27: WeChat 4
+            # gives Accessibility its message list - one item a message, with
+            # its words - as on Windows): whose each is, from the picture.
+            # Recognition only where the list is not given.
+            found = self.wechat_messages(front, png)
+            if found is not None:
+                text, self.ocr_wechat_capture = found
+                self.ocr_wechat_capture['captured_at'] = captured_at
+                self.ocr_method = 'macos_wechat_messages'
+                if fingerprint is not None and text.strip():
+                    cache[key] = (text, self.ocr_method, copy.deepcopy(self.ocr_wechat_capture))
+                    while len(cache) > 4:
+                        cache.popitem(last=False)
+                return text
         self.ocr_executions = getattr(self, 'ocr_executions', 0) + 1
         if is_wechat_application(front.application):
             from .wechat_layout import prepare_wechat_ocr_cut, shift_layout
@@ -381,6 +396,80 @@ class NativeReader:
             while len(cache) > 4:
                 cache.popitem(last=False)
         return text
+
+    #: WeChat's message list and the labels of a Mac's WeChat window, by the
+    #: identifiers its Accessibility gives them (the same as on Windows).
+    WECHAT_LIST = "chat_message_list"
+    WECHAT_NAME = "current_chat_name_label"
+    WECHAT_BUBBLE = "chat_bubble_item_view"
+
+    def _found(self, element, wanted, most=600):
+        """The first element whose identifier is (or ends with) `wanted`,
+        looked for breadth first, at most `most` elements."""
+        queue = [element]
+        looked = 0
+        while queue and looked < most:
+            one = queue.pop(0)
+            looked += 1
+            ident = self.attr(one, "AXIdentifier")
+            if isinstance(ident, str) and (ident == wanted or ident.endswith(wanted)):
+                return one
+            queue.extend(list(self.attr(one, "AXChildren") or []))
+        return None
+
+    def _words(self, element):
+        for name in ("AXValue", "AXTitle", "AXDescription"):
+            value = self.attr(element, name)
+            if isinstance(value, str) and value.strip():
+                return value
+        return ""
+
+    def wechat_messages(self, front, png):
+        """WeChat's conversation in front, message by message, from what its
+        window says of itself (`wechat_items.parse_wechat_items`) - or None
+        when it gives no message list. Boxes in screen points are turned to
+        the picture's pixels (a Retina picture is twice as large)."""
+        from PIL import Image
+        import io
+        from .wechat_items import parse_wechat_items
+        window = front.element
+        if window is None:
+            return None
+        chat = self._found(window, self.WECHAT_LIST)
+        if chat is None:
+            return None
+        picture = Image.open(io.BytesIO(png))
+        left, top, width, height = front.bounds
+        if width <= 0 or height <= 0:
+            return None
+        sx, sy = picture.width / width, picture.height / height
+
+        def box(element):
+            found = self.rect(element)
+            if found is None:
+                return None
+            x, y, w, h = found
+            return ((x - left) * sx, (y - top) * sy, w * sx, h * sy)
+
+        chat_box = box(chat)
+        if chat_box is None:
+            return None
+        items = []
+        for item in list(self.attr(chat, "AXChildren") or [])[:200]:
+            where = box(item)
+            if where is None:
+                continue
+            ident = self.attr(item, "AXIdentifier")
+            items.append({"text": self._words(item), "box": where,
+                          # Only a bubble is anyone's message.
+                          "bubble": ident == self.WECHAT_BUBBLE if isinstance(ident, str) else False})
+        headers = []
+        name = self._found(window, self.WECHAT_NAME)
+        if name is not None and box(name) is not None:
+            headers.append({"text": self._words(name), "box": box(name)})
+        capture = parse_wechat_items(picture, chat_box, items, headers)
+        text = "\n".join(one["text"].strip() for one in items if one["text"].strip())
+        return text, capture
 
     def _encode_png(self, picture):
         from Foundation import NSMutableData

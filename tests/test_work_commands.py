@@ -239,6 +239,19 @@ class RunCommandTests(_WithTools):
             self.assertNotEqual(said["returncode"], 0, said)
             self.assertIn("PermissionError", said["stdout"])
 
+    @unittest.skipUnless(NATIVE and WINDOWS, f"an AppContainer: {STATUS['why']}")
+    def test_what_a_command_starts_shows_no_window(self) -> None:
+        # The user, 2026-10-27: a cmd window came up on their screen while a
+        # piece of work ran - each console program the container started was
+        # given a new, visible console of its own.
+        exe = sys.executable
+        probe = ("import ctypes; h = ctypes.windll.kernel32.GetConsoleWindow(); "
+                 "print('visible', bool(h and ctypes.windll.user32.IsWindowVisible(h)))")
+        with mock.patch.object(T, "programs_to_read", return_value=[]):
+            said = self.tools.run_command({"command": f'"{exe}" -c "{probe}"', "timeout": 120})
+        self.assertEqual(said["returncode"], 0, said)
+        self.assertIn("visible False", said["stdout"])
+
     @unittest.skipUnless(NATIVE, f"no system confinement for programs here: {STATUS['why']}")
     def test_a_real_command_runs_and_writes_no_more_than_the_work(self) -> None:
         with mock.patch.object(T, "programs_to_read", return_value=[]):

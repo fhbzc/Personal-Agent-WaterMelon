@@ -616,8 +616,10 @@ class ThePanelAsksTests(unittest.TestCase):
         self.assertIn("waiting for you", out["summary"])
         self.assertIn("pandas: installed - pandas 2.2.3", out["history"])
         self.assertIn("each request approved by you", out["history"])
-        self.assertEqual(out["radios"], ["ask:true:Ask me before installing packages",
-                                         "auto:false:Auto"])
+        # Work's settings are for the next start (the user, 2026-10-27): Auto
+        # by default, whatever the run going asks - its own are on its card.
+        self.assertEqual(out["radios"], ["ask:false:Ask me before installing packages",
+                                         "auto:true:Auto"])
         posts = out["posts"]
         self.assertEqual(posts[0], {"p": "/api/work/approve", "body": {
             "run": "run_1", "request": "req_1", "allow": True}})

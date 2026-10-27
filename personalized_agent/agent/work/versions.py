@@ -110,6 +110,10 @@ RESUME_FILE = "resume.json"
 #: - for a version being saved, its slides being drawn - may not be held by
 #: any version yet.
 COLLECT_GRACE_SECONDS = 1800
+#: A resume point saved collects what nothing holds at most this often: a
+#: progress point every ten minutes is a walk of the folder and its changed
+#: files, not a sweep of the store each time (measured 2026-10-27).
+COLLECT_EVERY_SECONDS = 1800
 
 #: The tables the work's tree lives in, each restored whole for its scope.
 TREE_TABLES = ("experience_cards", "experience_stages", "experience_edges")
@@ -163,6 +167,10 @@ class VersionStore:
         #: (path, modified, size) -> sha: a file not changed since the last
         #: version is not read again.
         self._hashes: Dict[Tuple[str, int, int], str] = {}
+        #: Objects known to be in the store since it was last collected: a
+        #: file not changed is kept without a look at the store at all.
+        self._present: set = set()
+        self._collected_at = 0.0
 
     # -- writing, only here ----------------------------------------------------
     def _checked(self, target: Path) -> Path:
@@ -216,16 +224,18 @@ class VersionStore:
         return self.put(json.dumps(value, ensure_ascii=False, sort_keys=True,
                                    default=str).encode("utf-8"))
 
-    def put_file(self, path: Path) -> Tuple[str, int]:
+    def put_file(self, path: Path, st: Any = None) -> Tuple[str, int]:
         """A file kept by its content: read only if it changed since it was
-        last kept, and its bytes stored only if no version holds them yet."""
-        st = path.stat()
+        last kept, and its bytes stored only if no version holds them yet.
+        `st`: what a walk of its folder already saw of it."""
+        st = st if st is not None else path.stat()
         key = (str(path), st.st_mtime_ns, st.st_size)
         sha = self._hashes.get(key)
-        if sha is None or not self._object(sha).is_file():
+        if sha is None or (sha not in self._present and not self._object(sha).is_file()):
             data = path.read_bytes()
             sha = self.put(data)
             self._hashes[key] = sha
+        self._present.add(sha)
         return sha, st.st_size
 
     # -- reading -----------------------------------------------------------------
@@ -360,7 +370,8 @@ class VersionStore:
             points[branch] = point
             self._write(self.root / RESUME_FILE,
                         json.dumps(points, ensure_ascii=False, indent=1).encode("utf-8"))
-            self.collect()
+            if time.time() - self._collected_at >= COLLECT_EVERY_SECONDS:
+                self.collect()
             return point
 
     def held(self) -> Optional[set]:
@@ -399,6 +410,9 @@ class VersionStore:
         """What no version and no resume point holds, removed from the
         store - never one written in the last `COLLECT_GRACE_SECONDS`.
         Only the store's own objects: the work's files are not touched."""
+        # What it removes is no longer known to be there.
+        self._present = set()
+        self._collected_at = time.time()
         objects = self.root / "objects"
         if not objects.is_dir():
             return 0
@@ -502,53 +516,83 @@ def with_message(entry: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # -- the work's folder ---------------------------------------------------------------
-def work_files(folder: Path, run_id: str) -> Tuple[Dict[str, Path], List[str]]:
-    """Every file of the work's folder a version holds, by its path inside
-    it ("notes/plan.md"), and those too many or too large to keep. Other
-    runs' records are theirs, and left out; so is what SKIP_DIRS and
-    SKIP_IN_RUN name, and the project's run logs (LOGS_DIR, at the top of
-    the folder only - a folder of the work's own that happens to share the
-    name deeper down is the work's). Links are not followed."""
+def _walked(folder: Path, run_id: str) -> Tuple[List[Tuple[str, Path, Any]], List[str]]:
+    """Every file of the work's folder a version holds, with what the walk
+    itself saw of it (its size and when it changed) - and those too many or
+    too large to keep. Other runs' records are theirs, and left out; so is
+    what SKIP_DIRS and SKIP_IN_RUN name, and the project's run logs
+    (LOGS_DIR, at the top of the folder only - a folder of the work's own
+    that happens to share the name deeper down is the work's). Links are
+    not followed.
+
+    LIGHT (measured 2026-10-27, 1329 files): what a folder listing already
+    says of each entry is used - no second look at a file to ask if it is a
+    link, or how big it is - so a progress point every ten minutes costs a
+    walk of the folder and the files that changed, nothing more."""
     folder = Path(folder)
     run_dir = folder / "runs" / run_id
-    found: Dict[str, Path] = {}
+    found: List[Tuple[str, Path, Any]] = []
     skipped: List[str] = []
     if not folder.is_dir():
         return found, skipped
-    for dirpath, dirnames, filenames in os.walk(folder):
-        here = Path(dirpath)
-        dirnames[:] = sorted(one for one in dirnames if one not in SKIP_DIRS
-                             and not os.path.islink(os.path.join(dirpath, one)))
-        if here == folder:
-            dirnames[:] = [one for one in dirnames if one != LOGS_DIR]
-        elif here == folder / "runs":
-            dirnames[:] = [one for one in dirnames if one == run_id]
-        elif here == run_dir:
-            dirnames[:] = [one for one in dirnames if one not in SKIP_IN_RUN]
-        for name in sorted(filenames):
-            whole = here / name
-            if os.path.islink(whole):
-                continue
-            relative = whole.relative_to(folder).as_posix()
+
+    def walk(here: Path, prefix: str) -> None:
+        try:
+            with os.scandir(here) as listing:
+                entries = sorted(listing, key=lambda one: one.name)
+        except OSError:
+            return
+        folders = []
+        for entry in entries:
             try:
-                size = whole.stat().st_size
+                if entry.is_symlink() or (hasattr(entry, "is_junction") and entry.is_junction()):
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    folders.append(entry)
+                    continue
+                if not entry.is_file(follow_symlinks=False):
+                    continue
+                st = entry.stat(follow_symlinks=False)
             except OSError:
                 continue
-            if size > MOST_BYTES or len(found) >= MOST_FILES:
+            relative = prefix + entry.name
+            if st.st_size > MOST_BYTES or len(found) >= MOST_FILES:
                 skipped.append(relative)
                 continue
-            found[relative] = whole
+            found.append((relative, Path(entry.path), st))
+        for entry in folders:
+            name = entry.name
+            if name in SKIP_DIRS:
+                continue
+            if here == folder and name == LOGS_DIR:
+                continue
+            if here == folder / "runs" and name != run_id:
+                continue
+            if here == run_dir and name in SKIP_IN_RUN:
+                continue
+            walk(Path(entry.path), prefix + name + "/")
+
+    walk(folder, "")
     return found, skipped
+
+
+def work_files(folder: Path, run_id: str) -> Tuple[Dict[str, Path], List[str]]:
+    """Every file of the work's folder a version holds, by its path inside
+    it ("notes/plan.md"), and those too many or too large to keep
+    (`_walked`)."""
+    found, skipped = _walked(folder, run_id)
+    return {relative: whole for relative, whole, _st in found}, skipped
 
 
 def keep_files(store: VersionStore, folder: Path, run_id: str
                ) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
-    """The work's folder, kept: each file's object and size."""
-    found, skipped = work_files(folder, run_id)
+    """The work's folder, kept: each file's object and size - a file not
+    changed since it was last kept, by what the walk saw, not read again."""
+    found, skipped = _walked(folder, run_id)
     files: Dict[str, Dict[str, Any]] = {}
-    for relative, whole in found.items():
+    for relative, whole, st in found:
         try:
-            sha, size = store.put_file(whole)
+            sha, size = store.put_file(whole, st)
         except OSError:
             skipped.append(relative)
             continue
@@ -577,9 +621,19 @@ def keep_granted(store: VersionStore, written: Dict[str, Optional[str]],
     return kept
 
 
-def _work_target(folder: Path, run_id: str, relative: str, policy: Any) -> Path:
+def _roots_of(folder: Path, run_id: str) -> Tuple[Path, Path, List[Path]]:
+    """The work's folder, its logs and what versions leave out of the run,
+    resolved - once for a whole rollback, not for each of its files."""
+    run_dir = Path(folder) / "runs" / run_id
+    return (Path(folder).resolve(), (Path(folder) / LOGS_DIR).resolve(),
+            [(run_dir / one).resolve() for one in SKIP_IN_RUN])
+
+
+def _work_target(folder: Path, run_id: str, relative: str, policy: Any,
+                 roots: Optional[Tuple[Path, Path, List[Path]]] = None) -> Path:
     """Where a file of a version goes back to: inside the work's folder, not
-    in what versions leave out, and allowed by the work's policy."""
+    in what versions leave out, and allowed by the work's policy. `roots`:
+    `_roots_of`, resolved once by a caller checking many files."""
     from ...runtime.filesystem import validate_write_path
     parts = Path(str(relative)).parts
     # On Windows "C:x" is relative and still names another drive.
@@ -587,9 +641,12 @@ def _work_target(folder: Path, run_id: str, relative: str, policy: Any) -> Path:
             or (os.name == "nt" and ":" in str(relative)):
         raise VersionError(f"not a path inside the work's folder: {relative!r}")
     target = Path(folder) / Path(*parts)
-    run_dir = Path(folder) / "runs" / run_id
-    if (not _inside(target, folder) or _inside(target, Path(folder) / LOGS_DIR)
-            or any(_inside(target, run_dir / one) for one in SKIP_IN_RUN)):
+    home, logs, left_out = roots or _roots_of(folder, run_id)
+    real = target.resolve()
+
+    def within(root: Path) -> bool:
+        return real == root or root in real.parents
+    if not within(home) or within(logs) or any(within(one) for one in left_out):
         raise VersionError(f"not a path a version restores: {relative!r}")
     # ANOTHER RUN'S RECORDS are its folder under runs/ - not a file the work
     # itself left loose in runs/ (a server's log, say), which versions keep
@@ -616,13 +673,14 @@ def restore_files(store: VersionStore, manifest: Dict[str, Any], folder: Path,
     files = manifest.get("files") or {}
     skipped = set(manifest.get("skipped") or [])
     current, too_big = work_files(folder, run_id)
+    roots = _roots_of(folder, run_id)
     to_write: List[Tuple[Path, str]] = []
     # A path no version may write is left as it is, and said - not the whole
     # rollback refused for it.
     refused: List[str] = []
     for relative, entry in files.items():
         try:
-            target = _work_target(folder, run_id, relative, policy)
+            target = _work_target(folder, run_id, relative, policy, roots)
         except VersionError as exc:
             refused.append(str(exc))
             continue
@@ -636,7 +694,7 @@ def restore_files(store: VersionStore, manifest: Dict[str, Any], folder: Path,
         if relative in files or relative in skipped:
             continue
         try:
-            _work_target(folder, run_id, relative, policy)
+            _work_target(folder, run_id, relative, policy, roots)
         except VersionError as exc:
             refused.append(str(exc))
             continue

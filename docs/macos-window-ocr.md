@@ -19,8 +19,13 @@ are `pyobjc-framework-Vision` and `pyobjc-framework-Quartz`, installed on a Mac
 with the requirements. Pictures and documents are read by the same Vision
 (`platform_layer/ocr.py`, `MacVisionOcr`).
 
-WeChat's reading keeps each line's box and confidence, from which its messages
-are told apart - see [WeChat observations](wechat-conversation-format.md).
+WeChat 4 gives Accessibility its message list (`chat_message_list`, one item a
+message, bubbles marked `chat_bubble_item_view`): its words are taken from
+there, and only whose each is from the window's picture - as on Windows
+(`wechat_items.py`). Measured 2026-10-27 on a Mac Studio: five messages of five
+placed right, about 60 ms. Only where no list is given is the picture read by
+Vision, each line's box and confidence kept to tell the messages apart - see
+[WeChat observations](wechat-conversation-format.md).
 
 A window that leaves the front before or while its picture is taken is thrown
 away. A picture taken while the window was in front may finish being read after
@@ -30,7 +35,8 @@ asked again before it is kept.
 The last four pictures' fingerprints and readings are remembered, so the same
 picture is not read twice.
 
-`screen.text`'s `how` is `macos_accessibility` or `macos_vision_ocr`.
+`screen.text`'s `how` is `macos_accessibility`, `macos_wechat_messages` or
+`macos_vision_ocr`.
 
 How often: chats, mail and social media in front are looked at every 3 seconds
 and read only when their picture changed (`listener/providers/fast_reading.py`,

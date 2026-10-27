@@ -1964,9 +1964,14 @@ class ThisEventOrAllEventsTests(unittest.TestCase):
     def test_a_task_with_no_anchor_keeps_the_grid_it_has_been_running_on(self) -> None:
         from personalized_agent.scheduler.core import series
 
+        from personalized_agent.scheduler.core.recurrence import step
+
         task = self._daily()
+        # Five days on, ON THE REPEAT'S OWN CLOCK - not five times 24 hours,
+        # which across a change to or from summer time (2026-11-01 here) is
+        # an hour off the grid it would have run on (found 2026-10-27).
         self.store.update(task.id, runs=5,
-                          scheduled_at=task.scheduled_at + timedelta(days=5),
+                          scheduled_at=step(task.recurrence, task.scheduled_at, 5),
                           metadata={})            # as though anchors never existed
         revived = self.store.get(task.id)
 
