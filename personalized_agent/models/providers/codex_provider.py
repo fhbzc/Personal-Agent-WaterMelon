@@ -48,6 +48,7 @@ from ..base import (
 # How tools travel through a transcript is shared with Claude Code; the words
 # they are offered in (TOOL_PROTOCOL below) are this client's own.
 from .local_tools import as_written, describe_tools, leading_tool_call, tool_results
+from .local_tools import TOOL_PROTOCOL as SHARED_TOOL_PROTOCOL
 from .mcp_bridge import SERVER_NAME
 
 log = logging.getLogger(__name__)
@@ -157,18 +158,20 @@ PROBE_ASK = "\n".join([
     "throw new Error('TOOLNAMES ' + JSON.stringify(names));",
 ])
 
+#: The longest instructions given as developer_instructions on the command
+#: line - Windows holds 32,767 characters in all; longer, they go in the
+#: prompt.
+DEVELOPER_INSTRUCTIONS_MOST = 24_000
+
 #: How long the agent's own MCP server is waited for at the start of a call.
 MCP_STARTUP_SECONDS = 30
 #: A tool of the agent's is not cut off by Codex: the agent runs it, may
 #: wait for the user in it (an install to approve), and ends it itself.
 MCP_TOOL_SECONDS = 24 * 3600
 
-TOOL_PROTOCOL = (
-    "You may use one of the tools listed below. To use one, reply with a single "
-    'JSON object and nothing else: {{"tool": "<name>", "arguments": {{...}}}}. '
-    "To answer without a tool, reply normally and do not mention this instruction.\n"
-    "Available tools:\n{tools}"
-)
+#: The agent's tools, offered as text: the same words for Claude Code and
+#: Codex (local_tools.TOOL_PROTOCOL).
+TOOL_PROTOCOL = SHARED_TOOL_PROTOCOL
 
 
 class CodexProvider(ModelProvider):
@@ -182,6 +185,9 @@ class CodexProvider(ModelProvider):
         self.workspace = workspace
         self.timeout_seconds = timeout_seconds
         self._usage = UsageSnapshot()
+        #: This Codex refused developer_instructions: the instructions go in
+        #: the prompt from then on (`_instructions_apart`).
+        self._developer_refused = False
         self._status_cache: Optional[Dict[str, Any]] = None
         self._status_checked_at = 0.0
         #: The catalog the client gave on "Refresh models", and the cache
@@ -531,10 +537,25 @@ class CodexProvider(ModelProvider):
                                  authentication_valid=True, checked_at=now,
                                  failure_class=FailureClass.TEMPORARY)
 
+    def _instructions_apart(self, system: str) -> bool:
+        """Whether the application's instructions go to Codex as its own
+        DEVELOPER INSTRUCTIONS (-c developer_instructions) rather than in the
+        prompt as text (the user, 2026-10-27, PR #3) - as Claude Code is
+        given them, as its system prompt. Not through a .cmd or .bat (npm's
+        on Windows): cmd.exe reads its line again, and a % or a ^ in the
+        words would be changed. Not past what a command line holds. Not
+        once this Codex has refused the setting (`_invoke`)."""
+        if not system or getattr(self, "_developer_refused", False):
+            return False
+        program = str(self.executable() or "").lower()
+        if program.endswith((".cmd", ".bat")):
+            return False
+        return len(system) <= DEVELOPER_INSTRUCTIONS_MOST
+
     def _prompt(self, request: ModelRequest, native: bool = False) -> str:
         parts: List[str] = []
         system = self._system(request, native=native)
-        if system:
+        if system and not self._instructions_apart(system):
             parts.append(f"System instructions:\n{system}")
         for message in request.messages:
             role = str(message.get("role", "user"))
@@ -612,6 +633,10 @@ class CodexProvider(ModelProvider):
                 # in a call, and what each of these tools may do is decided
                 # by the agent's own guard, which runs it.
                 "-c", f'mcp_servers.{SERVER_NAME}.default_tools_approval_mode="approve"'])
+        system = self._system(request, native=bridge is not None)
+        if self._instructions_apart(system):
+            command.extend(["-c", "developer_instructions="
+                            + json.dumps(system, ensure_ascii=False)])
         command.append("-")
         return command
 
@@ -922,6 +947,15 @@ class CodexProvider(ModelProvider):
         finally:
             # The pictures' files were for this call only.
             self._forget_pictures(pictures)
+        if completed.returncode != 0 and "developer_instructions" in " ".join(command) \
+                and "developer_instructions" in (completed.stderr or "") \
+                and not getattr(self, "_developer_refused", False):
+            # A Codex that does not take the setting: told in the prompt, as
+            # before, from now on - and this call made again so.
+            log.info("this Codex refused developer_instructions; the instructions "
+                     "go in the prompt")
+            self._developer_refused = True
+            return self._invoke(request, model, bridge)
         if completed.returncode != 0:
             verdict = self._translate(completed)
             raise ModelInvocationError(verdict.reason or "Codex failed", verdict)

@@ -165,8 +165,8 @@ class TheAgentsToolsServedNativelyTests(unittest.TestCase):
         self.assertIn("features.shell_tool=false", command)
         self.assertIn("features.computer_use=false", command)
         # Told the tools are served; not the words-only convention.
-        self.assertIn("MCP server named `pa`", seen["input"])
-        self.assertNotIn("reply with a single JSON object", seen["input"])
+        self.assertIn("MCP server named `pa`", seen["input"] + " ".join(seen["command"]))
+        self.assertNotIn("reply with a single JSON object", seen["input"] + " ".join(seen["command"]))
         # Ended when silent or stopped, not at a fixed time.
         self.assertIn("watch", seen["kw"])
         self.assertNotIn("timeout", seen["kw"])
@@ -209,8 +209,8 @@ class TheAgentsToolsServedNativelyTests(unittest.TestCase):
         # so it opens none; the agent's own web tools, checked, beside it.
         self.assertIn('web_search="cached"', said["command"])
         self.assertNotIn('web_search="live"', said["command"])
-        self.assertIn("- web_search:", said["input"])
-        self.assertIn("YOUR OWN WEB SEARCH reads an index OpenAI keeps", said["input"])
+        self.assertIn("- web_search:", said["input"] + " ".join(said["command"]))
+        self.assertIn("YOUR OWN WEB SEARCH reads an index OpenAI keeps", said["input"] + " ".join(said["command"]))
         # The app's own search chosen (Settings > Web search): Codex's is off.
         plain = ModelRequest(messages=[], tools=self._tools())
         _provider, command = self._command(codex, plain)

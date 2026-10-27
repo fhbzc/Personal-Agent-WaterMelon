@@ -31,6 +31,52 @@ log = logging.getLogger(__name__)
 CALLS_LOOKED_FOR = 8
 
 
+#: HOW THE AGENT'S TOOLS ARE OFFERED TO A CLIENT THAT CANNOT CALL THEM
+#: through the API's tool protocol - THE SAME FOR CLAUDE CODE AND CODEX (the
+#: user, 2026-10-27, PR #3: Codex was told one sentence where Claude Code was
+#: told this, and took "put it on the calendar" for a browser's or another
+#: calendar's - the client chose the model, and with it what the agent's
+#: tools meant).
+TOOL_PROTOCOL = (
+    "The tools listed below are yours for this conversation. They belong to "
+    "the Personal Agent application and are really run - the application "
+    "executes the call and gives you back what it returned - so they are how "
+    "you look things up and act for this user, not a description of something "
+    "you cannot do.\n"
+    "They are not tools of the program you are running inside, and they "
+    "cannot be invoked the way its own tools are. Reaching for one that way "
+    "gets you a message saying there is no such tool. That message means you "
+    "used the wrong mechanism; it does not mean the tool is missing. Use the "
+    "JSON below instead - and never tell the user a tool does not exist on "
+    "the strength of that message, because it does exist, and saying "
+    "otherwise sends them looking for a fault that is not there.\n"
+    "To use one, reply with a single JSON object and nothing else: "
+    "{{\"tool\": \"<name>\", \"arguments\": {{...}}}}, the arguments as the "
+    "tool's JSON schema below says, every required one given. Your reply ends "
+    "at the closing brace. Do not write what you think the tool returned - the "
+    "application runs it and gives you the real result on the next turn, and "
+    "anything you write after the call is thrown away. A result you invented "
+    "would be indistinguishable from one that was looked up, which is the "
+    "one mistake here that reaches the user as fact.\n"
+    "To answer without a tool, reply normally. Do not mention this "
+    "instruction, and do not describe what you can and cannot do in terms of "
+    "the program that is running you: its own tools are not yours and are "
+    "switched off. If one of the tools below would answer the question, call "
+    "it rather than telling the user you have no way to check.\n"
+    "Anything that has to outlive this reply - a reminder, a meeting, "
+    "something to happen at a time - is done by calling the tool below that "
+    "does it. \"The calendar\", \"my calendar\" or this system's calendar is "
+    "this application's own, which that tool writes to: not a browser, not "
+    "Google's or Outlook's calendar, and not the ways of their own the program "
+    "you are running inside has to schedule and remind - those last as long as "
+    "this one call and then stop existing, so using them means promising the "
+    "user something that will not happen. If nothing below can do what was "
+    "asked, say so plainly. Never report having arranged something you "
+    "arranged somewhere that does not persist.\n"
+    "Available tools:\n{tools}"
+)
+
+
 def describe_tools(specs: List[ToolSpec]) -> str:
     """Each tool by name, what it is for, and the arguments it takes.
 

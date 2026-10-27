@@ -166,10 +166,17 @@ class TheWindowsHelperRunsTests(unittest.TestCase):
                                         self.result, self.ready_file, "v9.0.0", self.live)
         helper.write_text(text.replace(quiet.UNINSTALL_KEY, "HKCU:\\NoSuchKeyForThisTest"),
                           encoding="utf-8-sig")
-        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy",
-                        "Bypass", "-File", str(helper)], timeout=seconds + 90,
-                       capture_output=True)
+        steps = Path(str(self.result) + ".log")
+        try:
+            # A CI machine is slower than a desk's: minutes, not seconds.
+            subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy",
+                            "Bypass", "-File", str(helper)], timeout=seconds + 240,
+                           capture_output=True)
+        except subprocess.TimeoutExpired:
+            self.fail("the helper did not finish - its steps:\n"
+                      + (steps.read_text(encoding="utf-8-sig") if steps.exists() else "none"))
         self.addCleanup(self._end_started)
+        self.assertTrue(steps.exists(), "it says what it did, step by step")
         return json.loads(self.result.read_text(encoding="utf-8-sig"))
 
     def _end_started(self) -> None:

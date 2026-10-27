@@ -56,6 +56,7 @@ from ...common import children
 # The mechanics of tools through a transcript are shared with Codex; the
 # words the protocol is offered in (TOOL_PROTOCOL below) are this client's own.
 from .local_tools import as_written, describe_tools, leading_tool_call, tool_results
+from .local_tools import TOOL_PROTOCOL as SHARED_TOOL_PROTOCOL
 
 log = logging.getLogger(__name__)
 
@@ -254,40 +255,9 @@ DENIED_TOOLS = (
 
 #: How the agent's own tools are offered to a client that cannot call them
 #: through the API's tool protocol.
-TOOL_PROTOCOL = (
-    "The tools listed below are yours for this conversation. They are really "
-    "run - the agent executes the call and gives you back what it returned - "
-    "so they are how you look things up, not a description of something you "
-    "cannot do.\n"
-    "They are not tools of the program you are running inside, and they "
-    "cannot be invoked the way its own tools are. Reaching for one that way "
-    "gets you a message saying there is no such tool. That message means you "
-    "used the wrong mechanism; it does not mean the tool is missing. Use the "
-    "JSON below instead - and never tell the user a tool does not exist on "
-    "the strength of that message, because it does exist, and saying "
-    "otherwise sends them looking for a fault that is not there.\n"
-    "To use one, reply with a single JSON object and nothing else: "
-    "{{\"tool\": \"<name>\", \"arguments\": {{...}}}}. Your reply ends at the "
-    "closing brace. Do not write what you think the tool returned - the "
-    "agent runs it and gives you the real result on the next turn, and "
-    "anything you write after the call is thrown away. A result you invented "
-    "would be indistinguishable from one that was looked up, which is the "
-    "one mistake here that reaches the user as fact.\n"
-    "To answer without a tool, reply normally. Do not mention this "
-    "instruction, and do not describe what you can and cannot do in terms of "
-    "the program that is running you: its own tools are not yours and are "
-    "switched off. If one of the tools below would answer the question, call "
-    "it rather than telling the user you have no way to check.\n"
-    "Anything that has to outlive this reply - a reminder, a task, something "
-    "to happen at a time - is done by calling the tool below that does it. "
-    "You are running inside a program that has ways of its own to schedule "
-    "and remind; they last as long as this one call and then stop existing, "
-    "so using them means promising the user something that will not happen. "
-    "If nothing below can do what was asked, say so plainly. Never report "
-    "having arranged something you arranged somewhere that does not "
-    "persist.\n"
-    "Available tools:\n{tools}"
-)
+#: The agent's tools, offered as text: the same words for Claude Code and
+#: Codex (local_tools.TOOL_PROTOCOL).
+TOOL_PROTOCOL = SHARED_TOOL_PROTOCOL
 
 
 #: How the agent's tools are offered when they are served to the client

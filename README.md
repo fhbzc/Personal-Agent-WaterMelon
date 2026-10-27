@@ -649,6 +649,15 @@ everything it changed is written down.
   kept before this version show so too.
 - **Each run's result, one click away.** Beside the logs, each run has a
   button that opens what it made - the folder, the file, the email draft.
+- **Chat puts things on your calendar the same with Claude Code or Codex.**
+  Both are now told the same of the agent's tools - Codex as its own
+  developer instructions - and Chat is told what the application has
+  (calendar, tasks, to-do, work, connections) so it takes none for another.
+  A time not fully said is taken from the conversation, put on, and said
+  back to you; it says an entry is on only once it is.
+- **Work can fetch public code and data.** Files on GitHub, GitLab, PyPI,
+  npm, jsDelivr, Zenodo and similar can be fetched without first being
+  found by a search.
 - **WeChat on a Mac, message by message from WeChat's own words.** WeChat
   4 tells a Mac its messages one by one, as on Windows: each is taken as
   written, and only whose it is is told from the picture - faster than

@@ -196,5 +196,30 @@ class TheContactsRoundIsGuardedTests(unittest.TestCase):
         self.assertNotIn("https://pix.example/ana-ruiz.jpg", tried)
 
 
+class PublicCodeAndDataTests(unittest.TestCase):
+    """Where public files, schemas and data live (the user, 2026-10-27: a work
+    could not fetch the CFF 1.2.0 schema): reference sites - none shows a
+    repository's owner who asked for what. Not the pages users host there."""
+
+    def test_a_file_made_up_there_is_opened(self) -> None:
+        guard = WebGuard()
+        for url in ("https://raw.githubusercontent.com/citation-file-format/"
+                    "citation-file-format/1.2.0/schema.json",
+                    "https://github.com/citation-file-format/citation-file-format",
+                    "https://files.pythonhosted.org/packages/source/r/requests/x.tar.gz",
+                    "https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js",
+                    "https://zenodo.org/records/1234567"):
+            with self.subTest(url=url):
+                self.assertIsNone(guard.check_address(url))
+
+    def test_not_the_pages_their_users_host_nor_a_collector(self) -> None:
+        guard = WebGuard()
+        for url in ("https://someone.github.io/page/notes",
+                    "https://example-unknown.org/data.json",
+                    "https://webhook.site/abc-def"):
+            with self.subTest(url=url):
+                self.assertIsNotNone(guard.check_address(url))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -329,7 +329,11 @@ def build_registry(
     registry.add(
         ToolSpec(
             "schedule_task",
-            "Create a delayed task. Use this whenever the work should happen later "
+            "Put an entry on this application's own calendar - a meeting, a "
+            "reminder, something at a time - from Chat or anywhere else. It lasts, "
+            "and it only notifies: nothing on the calendar is carried out. No "
+            "calendar of the program running you, and no external one, is needed "
+            "or stands in for it. Use this whenever something should happen later "
             "rather than during this reply. "
             "The title and the description are written for the user, not for you: "
             "the title is what they see in a list beside everything else scheduled, "
@@ -337,9 +341,10 @@ def build_registry(
             "or two they can read at a glance. Keep your evidence and your reasoning "
             "out of it and put them in 'rationale' instead - the user can open that "
             "when they want it, and it does not have to be short. "
-            "'notify' decides whether running this interrupts them: 'silent' means it "
-            "runs and shows on the calendar, 'notify' means it also raises a "
-            "notification. A check you are running to satisfy your own curiosity is "
+            "'notify' decides whether it interrupts them when its time comes: "
+            "'silent' means it is on the calendar and nothing more, 'notify' means "
+            "it also raises a notification - a meeting is silent unless they asked "
+            "to be reminded. A check you are running to satisfy your own curiosity is "
             "silent. Choose 'notify' only when the answer is something the user would "
             "want put in front of them at that moment. A task missing any of these "
             "will be refused.\n\n" + HOW_TO_GIVE,

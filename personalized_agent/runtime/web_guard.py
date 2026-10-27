@@ -84,6 +84,16 @@ REFERENCE_HOSTS = frozenset({
     "stackoverflow.com", "stackexchange.com", "superuser.com", "serverfault.com",
     "askubuntu.com", "arxiv.org", "doi.org", "rfc-editor.org", "ietf.org",
     "unicode.org", "iso.org", "latex-project.org", "ctan.org",
+    # PUBLIC CODE AND DATA, as hosted (the user, 2026-10-27: a work could not
+    # fetch the CFF 1.2.0 schema from raw.githubusercontent.com). Where files,
+    # schemas and data live - and none shows a repository's or a package's
+    # owner who asked for what, so an address made up there carries nothing
+    # to anyone. Not the pages their users host (github.io, a Space): those
+    # run their owner's own scripts, which can see the address.
+    "github.com", "githubusercontent.com", "gitlab.com", "bitbucket.org",
+    "codeberg.org", "files.pythonhosted.org", "registry.npmjs.org",
+    "cdn.jsdelivr.net", "unpkg.com", "zenodo.org", "figshare.com",
+    "json.schemastore.org", "schema.org",
 })
 
 #: SITES MADE TO COLLECT WHAT IS SENT TO THEM - request bins, tunnels,

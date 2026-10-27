@@ -275,10 +275,16 @@ def windows_helper(pid: int, pairs: List[List[str]], start: List[str], port: int
         "$ErrorActionPreference = 'Continue'",
         f"Set-Content -LiteralPath {_ps(ready)} -Value 'ready'",
         f"$result = {_ps(result)}",
+        # WHAT IT DID, STEP BY STEP, WITH THE TIME - beside what it says.
+        f"$steps = {_ps(str(result) + '.log')}",
+        "function Note($what) { Add-Content -LiteralPath $steps -Encoding UTF8 "
+        "-Value ((Get-Date -Format 'HH:mm:ss.fff') + ' ' + $what) }",
+        "Note 'started'",
         "function Say($ok, $why) { @{ok = $ok; tag = " + _ps(tag) + "; why = $why; "
         "at = (Get-Date -Format o)} | ConvertTo-Json | "
         "Set-Content -LiteralPath $result -Encoding UTF8 }",
         f"Wait-Process -Id {int(pid)} -Timeout 120 -ErrorAction SilentlyContinue",
+        "Note 'the agent has gone'",
         # And whatever it started from its folder (a worker of its own) - a
         # file still open would keep its part from moving. Twenty seconds
         # at most, by the clock.
@@ -288,6 +294,8 @@ def windows_helper(pid: int, pairs: List[List[str]], start: List[str], port: int
         "Where-Object { $_.Path -and $_.Path.StartsWith($home_of, "
         "[System.StringComparison]::OrdinalIgnoreCase) }; "
         "if (-not $left) { break }; Start-Sleep -Milliseconds 500 }",
+        "Note ('its folder free' + $(if ($left) { ' - not: ' + @($left).Count + ' left' } "
+        "else { '' }))",
         "function Move-Retry($from, $to) { for ($i = 0; $i -lt 60; $i++) { "
         "try { Move-Item -LiteralPath $from -Destination $to -ErrorAction Stop; return $true } "
         "catch { Start-Sleep -Milliseconds 500 } }; return $false }",
@@ -312,8 +320,10 @@ def windows_helper(pid: int, pairs: List[List[str]], start: List[str], port: int
         "$arguments = @(" + ", ".join(_ps(one) for one in args) + ")",
         "function Start-It { if ($arguments.Count) { Start-Process -FilePath $exe "
         "-ArgumentList $arguments -PassThru } else { Start-Process -FilePath $exe -PassThru } }",
-        "if ($failed) { Undo; [void](Start-It); Say $false $failed; exit }",
+        "Note $(if ($failed) { $failed } else { 'moved in' })",
+        "if ($failed) { Undo; Note 'moved back'; [void](Start-It); Say $false $failed; exit }",
         "$started = Start-It",
+        "Note 'started the new version'",
         "$up = $false",
         f"for ($i = 0; $i -lt {HEALTHY_WITHIN}; $i++) {{",
         "  Start-Sleep -Seconds 1",
@@ -322,10 +332,12 @@ def windows_helper(pid: int, pairs: List[List[str]], start: List[str], port: int
          "-ErrorAction SilentlyContinue) { $up = $true; break }") if port else
         f"  if ($i -ge {ALIVE_IS_UP}) {{ $up = $true; break }}",
         "}",
+        "Note $(if ($up) { 'it is up' } elseif ($started.HasExited) { 'it ended' } "
+        "else { 'not up in time' })",
         "if (-not $up) {",
         "  if (-not $started.HasExited) { & taskkill.exe /T /F /PID $started.Id | Out-Null; "
         "Start-Sleep -Seconds 2 }",
-        "  Undo; [void](Start-It)",
+        "  Undo; Note 'moved back'; [void](Start-It); Note 'the old version started'",
         "  Say $false 'the new version did not start'; exit",
         "}",
         f"if (Test-Path {_ps(UNINSTALL_KEY)}) {{ "
@@ -334,6 +346,7 @@ def windows_helper(pid: int, pairs: List[List[str]], start: List[str], port: int
         f"Set-ItemProperty -Path {_ps(UNINSTALL_KEY)} -Name DisplayName "
         f"-Value {_ps(APP_NAME + ' ' + tag.lstrip('v'))} -ErrorAction SilentlyContinue }}",
         "Say $true ''",
+        "Note 'done'",
     ]
     return "\r\n".join(lines) + "\r\n"
 

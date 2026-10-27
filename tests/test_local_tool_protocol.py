@@ -57,16 +57,15 @@ class TheToolListTests(unittest.TestCase):
                 self.assertEqual(schedule["properties"]["notify"]["enum"],
                                  ["silent", "notify"])
 
-    def test_each_client_keeps_its_own_protocol_wording(self):
-        """The schema is added to the list; neither protocol is replaced."""
+    def test_both_clients_are_told_the_same_words(self):
+        """The same of the agent's tools for Claude Code and Codex (the user,
+        2026-10-27, PR #3): the client chooses the model, not what the
+        agent's tools mean."""
         claude = ClaudeCodeProvider()._system(self.request)
         codex = CodexProvider()._system(self.request)
-        self.assertIn(claude_code_provider.TOOL_PROTOCOL.split("{tools}")[0]
-                      .replace("{{", "{").replace("}}", "}"), claude)
-        self.assertIn(codex_provider.TOOL_PROTOCOL.split("{tools}")[0]
-                      .replace("{{", "{").replace("}}", "}"), codex)
-        self.assertIn("they are how you look things up", claude)
-        self.assertNotIn("they are how you look things up", codex)
+        self.assertEqual(claude, codex)
+        self.assertIs(claude_code_provider.TOOL_PROTOCOL, codex_provider.TOOL_PROTOCOL)
+        self.assertIn("they are how you look things up", codex)
 
 
 class CodexTranscriptTests(unittest.TestCase):

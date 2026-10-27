@@ -975,6 +975,11 @@
    },
    {
     "type": "p",
+    "text": "*Amended 2026-10-27:* CHAT AND THE CALENDAR, WHICHEVER CLIENT (the user's decision, from PR #3, built on what is here rather than merged). Claude Code and Codex are told the same of the agent's tools (models/providers/local_tools.TOOL_PROTOCOL, the longer words Claude Code had, with \"the calendar\" said to be the application's own - not a browser's, Google's or Outlook's, nor the client's own reminders); Codex is told them as its own developer instructions (-c developer_instructions), as Claude Code is as its system prompt - in the prompt still through npm's codex.cmd (cmd.exe would read the line again), past what a command line holds, or once a Codex refuses the setting. Chat's prompt says what the application has - calendar, tasks, to-do, work, connections, notifications - and that it acts only through its tools, never saying it did what it has no tool for; a time not wholly said is taken from the conversation and the user's clock, put on, and said back; a meeting goes on silently; it is said to be on only once schedule_task gave its task_id. The time and the zone are in every call's prompt. Work's web tools take public code and data hosts (GitHub and its raw files, GitLab, Bitbucket, Codeberg, PyPI's files, npm's registry, jsDelivr, unpkg, Zenodo, figshare, schemastore) as reference sites - none shows an owner who asked for what - but not the pages users host there (github.io), which run their owner's scripts.",
+    "amended": true
+   },
+   {
+    "type": "p",
     "text": "*Amended 2026-10-27:* WHAT THE MODELS SPENT IS SHOWN IN EVERY BUILD (reported by a user: the Overview's Token usage was empty). The card had moved from the Debugger to the Overview, but still asked the Debugger's routes - which a build without the Debugger does not serve - so in every released build it showed nothing, whatever the model. It asks routes of its own: the latest calls with what kind of work spent each, and the totals per day, cut at the reader's midnight. Only what the chart draws is sent.",
     "amended": true
    }
