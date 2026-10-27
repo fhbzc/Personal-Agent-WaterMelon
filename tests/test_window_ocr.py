@@ -10,6 +10,11 @@ import types
 import unittest
 from unittest.mock import patch
 
+# Loaded before sys.modules is patched below: patch.dict takes away, on its
+# way out, every module first imported inside it - and numpy's own library
+# cannot be loaded a second time in one process (CI, 2026-10-27).
+import numpy  # noqa: F401
+
 from personalized_agent.platform_layer.window_ocr import LocalWindowOcr
 
 

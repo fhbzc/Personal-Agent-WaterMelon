@@ -201,7 +201,8 @@ class TheExperienceDebuggerPanelTests(unittest.TestCase):
         out = result["out"]
         self.assertEqual(out["label"], "Resume")
         self.assertTrue(out["noStart"], "Resume where Start was")
-        self.assertIn("its last saved version, v18", out["row"])
+        # It did not stop cleanly: back to its last save point (2026-10-26).
+        self.assertIn("it goes back to its last save point, Round 7", out["row"])
         self.assertEqual(out["inRun"], "Resume")
         self.assertEqual(out["said"], "Resuming\u2026")
         self.assertTrue(out["disabled"])

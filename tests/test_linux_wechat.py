@@ -10,6 +10,10 @@ import unittest
 from unittest.mock import patch
 
 from PIL import Image
+# Loaded before sys.modules is patched below: patch.dict takes away, on its
+# way out, every module first imported inside it - and numpy's own library
+# cannot be loaded a second time in one process (CI, 2026-10-27).
+import numpy  # noqa: F401
 
 from test_wechat_structure import frame
 
