@@ -7,6 +7,10 @@ folder becomes one the work may change, a file is named in what it is asked
 (and its folder is where the work is done). The agent then shows the
 Delegate work box - the context it collected and its plan, to check first.
 
+Beside it, on a file or a folder, "ADD TO LEARNING" (`--learn PATH`): the
+Learn box opens on it - a plan for learning it, to check first
+(learning/plan.py).
+
 Only the user's own part of the registry is written (HKCU\\Software\\
 Classes): nothing needs an administrator, and nothing of anyone else's is
 touched. Always there - not a setting: each start of the agent puts the
@@ -39,6 +43,13 @@ LABELS = {"en": "Delegate work", "zh": "委托工作", "es": "Delegar trabajo",
           "ru": "Поручить работу", "fr": "Déléguer une tâche", "de": "Arbeit delegieren",
           "it": "Delega un lavoro",
           "ja": "作業を任せる", "ko": "작업 맡기기"}
+#: "Add to learning": on a file and a folder only.
+LEARN_VERB = "PersonalizedAgent.Learn"
+LEARN_PLACES = PLACES[:2]
+LEARN_LABELS = {"en": "Add to learning", "zh": "加入学习", "es": "Añadir al aprendizaje",
+                "ru": "Добавить в обучение", "fr": "Ajouter à l'apprentissage",
+                "de": "Zum Lernen hinzufügen", "it": "Aggiungi all'apprendimento",
+                "ja": "学習に追加", "ko": "학습에 추가"}
 
 
 def available() -> bool:
@@ -69,6 +80,17 @@ def install(command: List[str], icon: Optional[Path], language: str = "en") -> b
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, f"{key_path}\\command") as key:
             winreg.SetValueEx(key, "", 0, winreg.REG_SZ,
                               _quoted([*command, "--delegate"]) + f' "{ARGUMENT[place]}"')
+    learn = LEARN_LABELS.get(language, LEARN_LABELS["en"])
+    for place in LEARN_PLACES:
+        key_path = f"{place}\\{LEARN_VERB}"
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, learn)
+            winreg.SetValueEx(key, "MUIVerb", 0, winreg.REG_SZ, learn)
+            if icon is not None and Path(icon).exists():
+                winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, str(icon))
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, f"{key_path}\\command") as key:
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ,
+                              _quoted([*command, "--learn"]) + f' "{ARGUMENT[place]}"')
     return True
 
 
@@ -77,8 +99,9 @@ def remove() -> bool:
     if not available():
         return False
     import winreg
-    for place in PLACES:
-        for sub in (f"{place}\\{VERB}\\command", f"{place}\\{VERB}"):
+    subs = [(place, VERB) for place in PLACES] + [(place, LEARN_VERB) for place in LEARN_PLACES]
+    for place, verb in subs:
+        for sub in (f"{place}\\{verb}\\command", f"{place}\\{verb}"):
             try:
                 winreg.DeleteKey(winreg.HKEY_CURRENT_USER, sub)
             except FileNotFoundError:
@@ -109,4 +132,5 @@ def follow(on: bool, command: List[str], icon: Optional[Path], language: str = "
         return False
 
 
-__all__ = ["install", "remove", "present", "follow", "available", "VERB", "LABELS"]
+__all__ = ["install", "remove", "present", "follow", "available", "VERB", "LABELS",
+           "LEARN_VERB", "LEARN_LABELS"]

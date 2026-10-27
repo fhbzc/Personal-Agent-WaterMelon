@@ -6,7 +6,9 @@ every process a run's code started, because a child ran with an unpatched
 standard library. The user's decision: where the operating system confines
 the run (an AppContainer, Seatbelt, bubblewrap, Landlock - which every process
 it starts inherits), a PYTHON child may start, its command rewritten so it
-loads the same guard first, under the same policy; no other program, ever;
+loads the same guard first, under the same policy; ANY OTHER PROGRAM only
+where the system alone keeps every rule - an AppContainer, Seatbelt or
+bubblewrap, with no network (the user, 2026-10-25) - never under Landlock;
 and where nothing confines the run, no child at all, as before
 (runtime/guard.py, "Process creation and native code").
 
@@ -405,20 +407,35 @@ class APythonChildRunsUnderTheSameRulesTests(_Run):
                           "print(r.returncode); print(r.stderr)")
         self.assertIn("SandboxViolation", said["out"], said)
         self.assertFalse(self.outside.exists())
-        said = self.child("import subprocess; subprocess.run(['cmd', '/c', 'echo x'])")
-        self.assertIn("only Python child processes", said["err"])
 
-    def test_other_programs_are_refused_with_the_hint(self) -> None:
-        program = ["cmd", "/c", "echo hi"] if WINDOWS else ["sh", "-c", "echo hi"]
-        for command in (program, ["git", "--version"]):
-            with self.subTest(command=command[0]):
-                result = self.run_code(f"""
-                    import subprocess
-                    subprocess.run({command!r})
-                    """)
-                self.assertFalse(result.ok)
-                self.assertIn("only Python child processes may be started", result.violation)
-                self.assertIn("pytest", result.violation)
+    def test_other_programs_start_where_the_system_alone_confines_them(self) -> None:
+        """The user, 2026-10-25: a shell, git - where the system keeps every
+        rule on its own (an AppContainer, Seatbelt, bubblewrap); under
+        Landlock still refused."""
+        program = ["cmd", "/d", "/c", "echo hi"] if WINDOWS else ["sh", "-c", "echo hi"]
+        result = self.run_code(f"""
+            import subprocess
+            done = subprocess.run({program!r}, capture_output=True, text=True)
+            print(done.returncode, done.stdout.strip())
+            """)
+        if STATUS.get("backend") in ("appcontainer", "seatbelt", "bubblewrap"):
+            self.assertTrue(result.ok, result.stderr)
+            self.assertIn("0 hi", result.stdout)
+        else:
+            self.assertFalse(result.ok)
+            self.assertIn("only Python child processes may be started", result.violation)
+
+    def test_another_program_writes_no_more_than_the_run(self) -> None:
+        if STATUS.get("backend") not in ("appcontainer", "seatbelt", "bubblewrap"):
+            self.skipTest("other programs do not start here")
+        target = os.path.relpath(self.outside, self.folder)
+        program = (["cmd", "/d", "/c", f"echo x> {target}"] if WINDOWS
+                   else ["sh", "-c", f"echo x > '{self.outside}'"])
+        self.run_code(f"""
+            import subprocess
+            subprocess.run({program!r})
+            """)
+        self.assertFalse(self.outside.exists())
 
     def test_a_shell_is_refused_with_the_hint(self) -> None:
         result = self.run_code("""
@@ -588,14 +605,22 @@ class WithoutOSIsolationNoChildStartsTests(_Run):
 
 class TheAgentsAreToldTests(unittest.TestCase):
 
-    def test_python_children_yes_other_programs_and_connections_no(self) -> None:
+    def test_what_may_start_is_said_as_the_system_allows_it(self) -> None:
+        from unittest import mock
         from personalized_agent.agent.work import runner
         # Said in the environment both prompts carry (`environment_rules`).
-        said = " ".join(runner.environment_rules("C:/work", "NETWORK RULES").split())
+        with mock.patch.object(runner, "native_code_loads", return_value=False):
+            said = " ".join(runner.environment_rules("C:/work", "NETWORK RULES").split())
         self.assertIn("CHILD PROCESSES: Python only", said)
         self.assertIn("each runs under these same rules", said)
         self.assertIn("No other program starts", said)
         self.assertIn("NETWORK: NETWORK RULES", said)
+        with mock.patch.object(runner, "native_code_loads", return_value=True):
+            said = " ".join(runner.environment_rules("C:/work", "NETWORK RULES").split())
+        self.assertIn("COMMANDS: run_command", said)
+        self.assertIn("reaches no network", said)
+        self.assertIn("git_fetch", said)
+        self.assertNotIn("No other program starts", said)
         for name in ("AGENT_SYSTEM", "ALONE_SYSTEM"):
             with self.subTest(prompt=name):
                 self.assertIn("{environment}", getattr(runner, name))

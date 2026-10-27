@@ -15,6 +15,8 @@ from ..languages import PINNED_LANGUAGES as _PINNED_LANGUAGES
 from ..languages import system_language as _system_language
 from ..languages import DISPLAY_CODES as _DISPLAY_CODES
 from ..languages import default_display as _default_display
+from ...listener.providers.fast_reading import FAST_APPLICATIONS as _FAST_APPLICATIONS
+from ...listener.providers.fast_reading import FAST_TITLES as _FAST_TITLES
 
 #: Every level of thinking a Codex model may be asked for, in order. Which of
 #: them a given model takes is its catalog's to say (models/providers/
@@ -776,6 +778,22 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
                  "looked up on the web with it.", hidden=True),
     SettingField("module_experience_enabled", "Work learning", "bool", True, "Modules",
                  "Work natures grouped and learned from by themselves.", hidden=True),
+    SettingField("mail_app", "Your mail", "choice", "auto", "Work",
+                 "Where an email the agent writes for you is opened - as a new message, "
+                 "filled in, for you to read and send yourself: Gmail, Outlook on the "
+                 "web, or this computer's mail program. Auto: what you use, by the "
+                 "windows you had open. Nothing is ever sent for you.",
+                 choices=["auto", "gmail", "outlook", "default"]),
+    SettingField("mail_account", "Your mail account", "string", "", "Work",
+                 "The account an email is opened in - your Gmail address, when you "
+                 "have more than one. Empty: the one you use most, by the windows you "
+                 "had open."),
+    SettingField("calendar_app", "Your calendar", "choice", "auto", "Work",
+                 "Where an event the agent makes for you is opened - filled in, for "
+                 "you to save yourself: Google Calendar, Outlook on the web, or a "
+                 "calendar file this computer's calendar program opens. Auto: what "
+                 "you use, by the windows you had open.",
+                 choices=["auto", "google", "outlook", "file"]),
     SettingField("work_in_subprocess", "Each run in a process of its own", "bool", True,
                  "Work",
                  "Each run of your work goes in a process of its own, within what the "
@@ -986,6 +1004,35 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
                  "few seconds. Past this the end is kept rather than the "
                  "beginning, because what a window shows last is what you "
                  "have just got to.", minimum=200, maximum=40000),
+    SettingField("listener_fast_enabled", "Read chats, mail and social media often",
+                 "bool", True, "Listener",
+                 "While a chat, a mailbox or a social site is in front, look at its "
+                 "window every 3 seconds - a small picture, to see whether anything "
+                 "changed - and read it only when it did, so a message arriving or a "
+                 "thread scrolled through is not missed. Slower while nothing "
+                 "changes; within the reading budget below; never more often than "
+                 "every few seconds on battery. Every other window is read at "
+                 "\"How often to look\"."),
+    SettingField("listener_fast_applications", "Applications read often", "multiline",
+                 "\n".join(_FAST_APPLICATIONS), "Listener",
+                 "One a line, by name - Weixin.exe and WeChat alike."),
+    SettingField("listener_fast_titles", "Pages read often, by their title", "multiline",
+                 "\n".join(_FAST_TITLES), "Listener",
+                 "One a line: words a browser tab's title holds - Gmail, Outlook, "
+                 "收件箱 / Inbox, Weibo - matched without regard to case."),
+    SettingField("listener_fast_interval_seconds", "Read often: at most every",
+                 "float", 3.0, "Listener",
+                 "Seconds between looks at a window read often, while it changes "
+                 "or you type.", minimum=3.0, maximum=15.0),
+    SettingField("listener_fast_cpu_percent", "Read often: reading budget",
+                 "int", 25, "Listener",
+                 "The most of one processor core the readings may take, over half a "
+                 "minute; past it, every 5 seconds until they are under it again.",
+                 minimum=5, maximum=100),
+    SettingField("listener_fast_battery_seconds", "Read often: on battery, at most every",
+                 "float", 5.0, "Listener",
+                 "Seconds between looks while the computer runs on battery.",
+                 minimum=3.0, maximum=30.0),
     SettingField("listener_screenshots_enabled",
                  "Take pictures of slides and figures", "bool", True, "Listener",
                  "When the window in front holds more than its text - a slide, a "

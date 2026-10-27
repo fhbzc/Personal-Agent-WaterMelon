@@ -22,6 +22,7 @@ DROPPED_KEPT = 200
 
 #: Each rule, by the key a refusal names it with.
 WHY = {
+    "untrusted_capture": "the screenshot was not produced by the trusted local capture",
     "switch_off": "its switch in Settings > Privacy is off",
     "application_list": "the application allowlist or denylist",
     "website_list": "the website allowlist or denylist",

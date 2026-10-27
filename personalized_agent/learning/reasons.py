@@ -352,9 +352,9 @@ class Reasons:
 
     @staticmethod
     def _enough(supports: Sequence[Dict[str, Any]]) -> bool:
-        """One rule the user wrote, two cases they changed or approved, or
-        three they let stand."""
-        if any(one["strength"] in ("written", "noted") for one in supports):
+        """One rule the user wrote, or a reference they endorsed for it; two
+        cases they changed or approved, or three they let stand."""
+        if any(one["strength"] in ("written", "noted", "endorsed") for one in supports):
             return True
         strong = {one["case_id"] for one in supports if one["strength"] in ("changed", "approved")}
         if len(strong) >= 2:

@@ -77,6 +77,8 @@ class Database:
         with self.write() as conn:
             conn.executescript(SCHEMA_SQL)
             self._add_missing_columns(conn)
+            from .wechat_store import WechatStore
+            WechatStore.repair_capture_links(conn)
             # After the columns, never with them. An index on a column that
             # an existing database has not got yet fails the whole script -
             # and CREATE TABLE IF NOT EXISTS leaves that database exactly as
@@ -225,6 +227,7 @@ class Database:
 #: SQLite can only add a column with a constant default, which is why each of
 #: these is nullable rather than NOT NULL.
 ADDED_COLUMNS = (
+    ('listener_wechat_captures', 'content_key', 'TEXT'),
     # Which chat project a conversation belongs to, if any.
     ("conversations", "project_id", "TEXT REFERENCES chat_projects(id)"),
     # Where its files are kept (agent/dialog/files.py), once it wrote one.
@@ -318,6 +321,8 @@ ADDED_COLUMNS = (
 
 #: Indexes on columns that only exist after a migration (see ``_init_schema``).
 LATE_INDEXES_SQL = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wechat_capture_position ON listener_wechat_message_captures(capture_id,position);
+CREATE INDEX IF NOT EXISTS idx_wechat_capture_content ON listener_wechat_captures(content_key);
 CREATE INDEX IF NOT EXISTS idx_context_uses_linked ON context_uses(linked, created_at);
 CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project_id);
 """
@@ -1449,6 +1454,122 @@ CREATE TABLE IF NOT EXISTS kv (
     value TEXT NOT NULL
 );
 
+-- Foreground WeChat OCR evidence, organized without claiming native message IDs.
+CREATE TABLE IF NOT EXISTS listener_wechat_conversations (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    person_id TEXT,
+    peer_name TEXT,
+    header_key TEXT NOT NULL,
+    peer_avatar TEXT,
+    kind TEXT NOT NULL DEFAULT 'unknown',
+    identity_status TEXT NOT NULL DEFAULT 'unresolved',
+    identity_basis TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_listener_wechat_peer
+    ON listener_wechat_conversations(account_id, header_key);
+CREATE TABLE IF NOT EXISTS listener_wechat_conversation_aliases (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES listener_wechat_conversations(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS listener_wechat_captures (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES listener_wechat_conversations(id) ON DELETE CASCADE,
+    source_event_id TEXT REFERENCES raw_events(id) ON DELETE SET NULL,
+    frame_hash TEXT NOT NULL,
+    content_key TEXT,
+    captured_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    observations INTEGER NOT NULL DEFAULT 1,
+    payload TEXT NOT NULL,
+    UNIQUE(conversation_id, frame_hash)
+);
+CREATE TABLE IF NOT EXISTS listener_wechat_messages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES listener_wechat_conversations(id) ON DELETE CASCADE,
+    sender_role TEXT NOT NULL CHECK(sender_role IN ('self','other','unknown')),
+    text TEXT NOT NULL,
+    content_status TEXT NOT NULL,
+    message_time TEXT,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    payload TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_listener_wechat_message_order
+    ON listener_wechat_messages(conversation_id, first_seen_at);
+CREATE TABLE IF NOT EXISTS listener_wechat_message_captures (
+    message_id TEXT NOT NULL REFERENCES listener_wechat_messages(id) ON DELETE CASCADE,
+    capture_id TEXT NOT NULL REFERENCES listener_wechat_captures(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    PRIMARY KEY(message_id,capture_id)
+);
+CREATE TABLE IF NOT EXISTS listener_wechat_views (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES listener_wechat_conversations(id) ON DELETE CASCADE,
+    message_ids TEXT NOT NULL DEFAULT '[]',
+    last_seen_at TEXT NOT NULL
+);
+-- Additive v2 tables: old messages/captures retain their identifiers.
+CREATE TABLE IF NOT EXISTS listener_wechat_segments (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    scope_key TEXT NOT NULL,
+    header_key TEXT NOT NULL,
+    peer_avatar TEXT,
+    conversation_id TEXT REFERENCES listener_wechat_conversations(id) ON DELETE SET NULL,
+    started_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    closed_at TEXT,
+    message_ids TEXT NOT NULL DEFAULT '[]',
+    match_basis TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_wechat_segment_scope ON listener_wechat_segments(account_id,scope_key,last_seen_at);
+CREATE TABLE IF NOT EXISTS listener_wechat_observations (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    scope_key TEXT NOT NULL,
+    segment_id TEXT REFERENCES listener_wechat_segments(id) ON DELETE SET NULL,
+    conversation_id TEXT REFERENCES listener_wechat_conversations(id) ON DELETE SET NULL,
+    capture_id TEXT REFERENCES listener_wechat_captures(id) ON DELETE SET NULL,
+    source_event_id TEXT REFERENCES raw_events(id) ON DELETE SET NULL,
+    semantic_hash TEXT NOT NULL,
+    captured_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    observations INTEGER NOT NULL DEFAULT 1,
+    payload TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wechat_observation_lookup ON listener_wechat_observations(account_id,scope_key,semantic_hash);
+CREATE TABLE IF NOT EXISTS listener_wechat_message_revisions (
+    id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL REFERENCES listener_wechat_messages(id) ON DELETE CASCADE,
+    observation_id TEXT REFERENCES listener_wechat_observations(id) ON DELETE SET NULL,
+    revised_at TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    before_payload TEXT NOT NULL,
+    after_payload TEXT NOT NULL
+);
+-- Retain old message rows and IDs while exposing one canonical message.
+CREATE TABLE IF NOT EXISTS listener_wechat_message_aliases (
+    id TEXT PRIMARY KEY REFERENCES listener_wechat_messages(id) ON DELETE CASCADE,
+    canonical_id TEXT NOT NULL REFERENCES listener_wechat_messages(id) ON DELETE CASCADE,
+    capture_id TEXT REFERENCES listener_wechat_captures(id) ON DELETE SET NULL,
+    position INTEGER,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    CHECK(id<>canonical_id)
+);
+CREATE TABLE IF NOT EXISTS listener_wechat_link_archive (
+    id INTEGER PRIMARY KEY,
+    capture_id TEXT REFERENCES listener_wechat_captures(id) ON DELETE SET NULL,
+    position INTEGER NOT NULL,
+    message_id TEXT REFERENCES listener_wechat_messages(id) ON DELETE SET NULL,
+    retained_message_id TEXT REFERENCES listener_wechat_messages(id) ON DELETE SET NULL,
+    reason TEXT NOT NULL,
+    archived_at TEXT NOT NULL
+);
+
 -- LEARNING (learning/): what the user's work shows about how they judge it.
 -- A UNIT is what is read together - a Work project of the user's, or a group
 -- of folders found in the places they listed - with how far each of its
@@ -1583,6 +1704,35 @@ CREATE TABLE IF NOT EXISTS learn_updates (
     note        TEXT NOT NULL DEFAULT '',
     started_at  TEXT NOT NULL,
     finished_at TEXT NOT NULL DEFAULT ''
+);
+-- THE LEARNING LIST (learning/items.py): what the user - or the state
+-- heartbeat, on evidence - added to be learned beside their own folders: a
+-- web page or site, a passage of text, a folder or a file; whose it is (the
+-- user's, learned in full; someone else's, learned as a reference they
+-- endorse), what to learn of it and from what angle, and how often it is
+-- read again.
+CREATE TABLE IF NOT EXISTS learn_items (
+    id          TEXT PRIMARY KEY,              -- L-xxxx
+    origin      TEXT NOT NULL DEFAULT 'you',   -- you | heartbeat
+    kind        TEXT NOT NULL,                 -- url | text | folder | file
+    source      TEXT NOT NULL DEFAULT '',      -- the address or the path
+    text        TEXT NOT NULL DEFAULT '',      -- a passage kept (kind text)
+    title       TEXT NOT NULL DEFAULT '',
+    about       TEXT NOT NULL DEFAULT '',      -- what it is, in a sentence
+    whose       TEXT NOT NULL DEFAULT 'mine',  -- mine | others
+    learn       TEXT NOT NULL DEFAULT '[]',    -- cases, rules, reference
+    angle       TEXT NOT NULL DEFAULT '',      -- what to learn of it, the purpose
+    evidence    TEXT NOT NULL DEFAULT '[]',    -- why the heartbeat added it
+    scope       TEXT NOT NULL DEFAULT 'page',  -- page | prefix | repo | folder | file | text
+    cadence     TEXT NOT NULL DEFAULT 'update',-- once | update | days:N
+    state       TEXT NOT NULL DEFAULT 'active',-- active | inactive
+    status      TEXT NOT NULL DEFAULT 'new',   -- new | pending | learned | unreachable
+    note        TEXT NOT NULL DEFAULT '',
+    estimate    INTEGER NOT NULL DEFAULT 0,    -- tokens a reading is expected to take
+    fetched     TEXT NOT NULL DEFAULT '{}',    -- each page: its hash, when, how it went
+    added_at    TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    read_at     TEXT NOT NULL DEFAULT ''
 );
 -- WHAT A WORK RUN'S REVIEWER ASKED, AND HOW IT WAS ANSWERED - a log for
 -- reading back; nothing in it is learned.

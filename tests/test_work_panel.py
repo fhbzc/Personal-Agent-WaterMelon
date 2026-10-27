@@ -876,5 +876,145 @@ class TheVersionTreeTests(_PanelBase):
         self.assertIsNone(out["keptAfter"])
 
 
+class StartedBeforeItsPlanTests(_PanelBase):
+
+    def test_the_settings_first_and_start_while_the_context_is_collected(self) -> None:
+        # The user's settings are there from the start, the context below
+        # them as it comes; Start may be pressed before the plan is drafted.
+        stub = {"/api/work/limits": {"defaults": {"minutes": 45, "tokens_in": 8000000,
+                                                  "tokens_out": 400000, "calls": 200}},
+                "/api/work/drafts": {"draft": {
+                    "id": "draft_9", "status": "collecting", "unit_id": "", "source": "todo",
+                    "text": "Reply to the club", "folders": [], "window": {}, "context": {},
+                    "plan": {}, "options": {"todo": "t1"}}},
+                "/api/work/drafts/start": {"starting": True, "draft": "draft_9",
+                                           "when_ready": True},
+                "/api/settings/choose-place": {"selected": "D:/work/club/notes.md",
+                                               "kind": "file"}}
+        steps = (
+            "openDelegateDraft('draft_9');await wait(1500);"
+            "const order=Array.from(document.querySelector('#delegate-form').children).map(e=>e.id||e.className);"
+            "out.order=order;"
+            "out.settings=Boolean(document.querySelector('#delegate-settings input[name=\"delegate-way\"][value=\"auto\"]:checked'));"
+            "out.suggested=text(document.querySelector('#delegate-way-suggested'));"
+            "out.waiting=text(document.querySelector('#delegate-body'));"
+            "out.folders=text(document.querySelector('#delegate-settings #delegate-folders'));"
+            # one button: whatever was selected last - a file here - is added, said so
+            "click(document.querySelector('#delegate-add-folder'));await wait(300);"
+            "out.added=text(document.querySelector('#delegate-folders ul'));"
+            # the header stays in sight as the box is scrolled
+            "const form=document.querySelector('#delegate-form');form.scrollTop=400;await wait(100);"
+            "out.headerTop=Math.round(document.querySelector('#delegate-title').getBoundingClientRect().top"
+            "-form.getBoundingClientRect().top);out.scrolled=form.scrollTop;"
+            "out.startOn=!document.querySelector('#delegate-start').disabled"
+            "&&!document.querySelector('#delegate-start').hidden;"
+            "const m=document.querySelector('[data-delegate-limit=\"minutes\"]');m.value='12';"
+            "m.dispatchEvent(new Event('change',{bubbles:true}));"
+            # a poll redraws the wait - the settings stay as changed
+            "await wait(1200);out.kept=document.querySelector('[data-delegate-limit=\"minutes\"]').value;"
+            "click(document.querySelector('#delegate-start'));await wait(400);"
+            "out.closed=!document.querySelector('#delegate').open;"
+            "out.started=window.__posts.filter(p=>p.p==='/api/work/drafts/start').map(p=>p.body);")
+        result = _render(self.engine, stub, steps)
+        self.assertEqual(result["err"], "", result["err"])
+        out = result["out"]
+        self.assertEqual(out["order"][:4], ["delegate-title", "delegate-head",
+                                            "delegate-settings", "delegate-body"])
+        self.assertTrue(out["settings"])
+        self.assertEqual(out["suggested"], "not drafted yet")
+        self.assertIn("Collecting the context", out["waiting"])
+        self.assertTrue(out["startOn"])
+        self.assertEqual(out["kept"], "12")
+        self.assertTrue(out["closed"])
+        start = out["started"][0]
+        # Where it works, chosen before any plan, with the settings.
+        self.assertIn("Add work directory", out["folders"])
+        self.assertNotIn("Add a file", out["folders"], "one button for a folder or a file")
+        self.assertIn("file D:/work/club/notes.md", out["added"])
+        self.assertGreater(out["scrolled"], 0)
+        self.assertLessEqual(abs(out["headerTop"]), 2, "Delegate work stays at the top")
+        self.assertIn("Nothing given", out["folders"])
+        self.assertEqual((start["id"], start["plan"]), ("draft_9", {"way": "auto"}))
+        self.assertEqual(start["options"]["limits"]["minutes"], 12)
+        self.assertEqual(start["folders"], ["D:/work/club/notes.md"])
+
+    def test_no_create_a_draft_saved_and_a_box_that_floats(self) -> None:
+        stub = {"/api/work/limits": {"defaults": {"minutes": 45}},
+                "/api/work/drafts": {"draft": {
+                    "id": "draft_7", "status": "collecting", "unit_id": "", "source": "menu",
+                    "text": "Reply to the club", "folders": [], "window": {}, "context": {},
+                    "plan": {}, "options": {"way": "quick", "limits": {"minutes": 5}}}},
+                "/api/work/drafts/save": {"draft": {"id": "draft_7"}},
+                "/api/work/drafts/saved": {"drafts": [{
+                    "id": "draft_6", "status": "ready", "plan": {"title": "Club reply"},
+                    "options": {"saved": True}, "updated_at": "2026-10-26T10:00:00"}]}}
+        steps = (
+            "openDelegateDraft('draft_7');await wait(1500);"
+            "const dialog=document.querySelector('#delegate');"
+            "out.create=Boolean(document.querySelector('#delegate-create'));"
+            "out.save=!document.querySelector('#delegate-save').hidden;"
+            "out.modal=dialog.matches(':modal');"
+            # a saved draft opens with what it was saved with
+            "out.way=(document.querySelector('input[name=\"delegate-way\"]:checked')||{}).value;"
+            "out.minutes=document.querySelector('[data-delegate-limit=\"minutes\"]').value;"
+            "const title=document.querySelector('#delegate-title');"
+            "const r=title.getBoundingClientRect();"
+            "title.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:r.left+5,clientY:r.top+5}));"
+            "document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:r.left+5-200,clientY:r.top+5+100}));"
+            "document.dispatchEvent(new PointerEvent('pointerup',{bubbles:true}));"
+            "const after=dialog.getBoundingClientRect();"
+            "out.moved=[Math.round(after.left-(r.left-(title.offsetLeft||0))),Math.round(after.top)];"
+            "out.movedLeft=Math.round(r.left-after.left)>150;"
+            "click(document.querySelector('#delegate-save'));await wait(400);"
+            "out.closed=!dialog.open;"
+            # opened again - a saved draft - and cancelled: closed, kept
+            "STUB['/api/work/drafts'].draft.options.saved=true;"
+            "openDelegateDraft('draft_7');await wait(1500);"
+            "click(document.querySelector('#delegate-cancel'));await wait(300);"
+            "out.cancelClosed=!dialog.open;"
+            "out.cancelled=window.__posts.filter(p=>p.p==='/api/work/drafts/cancel').length;"
+            "out.saved=window.__posts.filter(p=>p.p==='/api/work/drafts/save').map(p=>p.body);"
+            "await xpLoadDrafts();out.drafts=text(document.querySelector('#xp-drafts'));")
+        result = _render(self.engine, stub, steps)
+        self.assertEqual(result["err"], "", result["err"])
+        out = result["out"]
+        self.assertFalse(out["create"])
+        self.assertTrue(out["save"])
+        self.assertFalse(out["modal"], "the page behind stays to be read")
+        self.assertEqual((out["way"], out["minutes"]), ("quick", "5"))
+        self.assertTrue(out["movedLeft"], out["moved"])
+        self.assertTrue(out["closed"])
+        self.assertTrue(out["cancelClosed"])
+        self.assertEqual(out["cancelled"], 0, "Cancel leaves a saved draft as it was saved")
+        saved = out["saved"][0]
+        self.assertEqual((saved["id"], saved["options"]["way"], saved["options"]["limits"]),
+                         ("draft_7", "quick", {"minutes": 5}))
+        self.assertIn("Drafts", out["drafts"])
+        self.assertIn("Club reply", out["drafts"])
+        self.assertIn("Remove", out["drafts"])
+
+    def test_start_is_not_offered_while_its_folder_is_in_use(self) -> None:
+        said = ("the folder D:/work/club is being worked on by 'Reply to the club' - one "
+                "piece of work at a time in a folder: wait until it ends, or stop it")
+        stub = {"/api/work/limits": {"defaults": {"minutes": 45}},
+                "/api/work/drafts": {"draft": {
+                    "id": "draft_8", "status": "collecting", "unit_id": "", "source": "todo",
+                    "text": "Reply again", "folders": ["D:/work/club"], "window": {},
+                    "context": {}, "plan": {}, "options": {}}},
+                "/api/work/folders/held": {"held": {"folder": "D:/work/club",
+                                                    "by": "Reply to the club", "run": "r1"},
+                                           "said": said}}
+        steps = (
+            "openDelegateDraft('draft_8');await wait(1500);"
+            "out.disabled=document.querySelector('#delegate-start').disabled;"
+            "const note=document.querySelector('#delegate-folder-held');"
+            "out.note=note&&!note.hidden?text(note):'';")
+        result = _render(self.engine, stub, steps)
+        self.assertEqual(result["err"], "", result["err"])
+        self.assertTrue(result["out"]["disabled"])
+        self.assertIn("Start waits:", result["out"]["note"])
+        self.assertIn("Reply to the club", result["out"]["note"])
+
+
 if __name__ == "__main__":
     unittest.main()

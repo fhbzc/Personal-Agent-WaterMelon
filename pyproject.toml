@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personalized-agent"
-version = "0.2.6"
+version = "0.2.7"
 description = "Cross-platform desktop AI agent with activity awareness, a knowledge graph and a scheduler"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -35,6 +35,11 @@ dependencies = [
     "psutil>=5.9",
     "watchdog>=4.0",
     "pillow>=10.0",
+    "numpy>=1.24",
+    "pyobjc-framework-Vision>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
     "keyring>=25.0",
     "tzdata>=2024.1",
     "certifi>=2024.2",

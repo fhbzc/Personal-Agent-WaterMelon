@@ -1337,9 +1337,12 @@ class _AppContainer:
         process without one at all."""
         env = dict(os.environ if env is None else env)
         local = env.get("LOCALAPPDATA")
-        if writable and not (local and any(_within(_real(local), root)
-                                           for root in writable)):
-            local = str(writable[0] / ".agent_runtime" / "localappdata")
+        # A FOLDER it may write in: a root may be one file alone (a file
+        # handed over, granted as itself), and nothing is made inside that.
+        folders = [root for root in writable if Path(root).is_dir()]
+        if folders and not (local and any(_within(_real(local), root)
+                                          for root in folders)):
+            local = str(folders[0] / ".agent_runtime" / "localappdata")
         local = local or os.environ.get("LOCALAPPDATA") or str(Path.home())
         env["LOCALAPPDATA"] = local
         if writable:
@@ -1356,7 +1359,9 @@ class _AppContainer:
         if network == NETWORK_PYPI:
             container = PIP_CONTAINER
         else:
-            container = run_container(writable[0]) if writable else APP_CONTAINER
+            # Named for a folder it writes - never a file granted alone.
+            own = next((root for root in writable if Path(root).is_dir()), None)
+            container = run_container(own) if own is not None else APP_CONTAINER
         with cls._live_lock:
             cls._live[container] = cls._live.get(container, 0) + 1
         try:

@@ -1,0 +1,31 @@
+#listenerdebug { max-width: 1500px; margin: 0 auto; }
+#listenerdebug h2, #listenerdebug h3 { margin-top: 0; }
+.ld-heading p { margin-bottom: .5rem; }
+.ld-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-top: 16px; }
+.ld-controls label { display: grid; gap: 5px; font-size: .9rem; }
+.ld-controls select { max-width: 250px; min-width: 130px; }
+.ld-controls .ld-auto { display: flex; flex-direction: row; align-items: center; padding-bottom: 8px; }
+.ld-auto input { width: auto; }
+.ld-summary, .ld-provider-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.ld-stat, .ld-provider { padding: 14px; border: 1px solid var(--line, #d7dce5); border-radius: 9px; overflow-wrap: anywhere; }
+.ld-stat strong { display: block; margin: 5px 0; font-size: 1.2rem; }
+.ld-provider-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ld-badge { display: inline-block; padding: 3px 8px; border-radius: 12px; font-size: .8rem; background: #e7edf5; color: #29425f; }
+.ld-badge.ok { background: #e0f2e8; color: #155b35; }
+.ld-badge.warn { background: #fff0ce; color: #744d00; }
+.ld-badge.err { background: #ffe2e2; color: #852525; }
+.ld-metrics { display: flex; flex-wrap: wrap; gap: 6px 15px; margin: 12px 0; font-size: .85rem; }
+.ld-issue { border-left: 4px solid #d69a20; padding: 12px 16px; margin: 12px 0; background: var(--panel, #fff9ec); overflow-wrap: anywhere; }
+.ld-error { color: var(--err, #a43636); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ld-scroll { overflow-x: auto; }
+.ld-table { width: 100%; min-width: 900px; border-collapse: collapse; font-size: .88rem; }
+.ld-table th { white-space: nowrap; }
+.ld-table th, .ld-table td { text-align: left; border-bottom: 1px solid var(--line, #d7dce5); padding: 10px; vertical-align: top; }
+.ld-table td:first-child { min-width: 125px; }
+.ld-event { border-bottom: 1px solid var(--line, #d7dce5); padding: 12px 0; }
+.ld-event summary { cursor: pointer; overflow-wrap: anywhere; }
+.ld-event summary .muted { margin-left: 10px; }
+#listenerdebug pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 440px; overflow: auto; padding: 12px; background: var(--bg, #f4f6f8); border-radius: 6px; font-size: .83rem; }
+.ld-provider details { margin-top: 8px; }
+.ld-filter-link { border: 0; background: none; color: var(--accent, #326aca); cursor: pointer; padding: 0; text-align: left; font: inherit; }
+@media (max-width: 650px) { .ld-controls label { flex: 1 1 130px; } .ld-controls select { width: 100%; max-width: none; } .ld-provider-grid { grid-template-columns: 1fr; } }

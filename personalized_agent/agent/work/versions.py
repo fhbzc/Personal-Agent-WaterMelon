@@ -33,6 +33,16 @@ exactly that version's files, and the plan and the tree become its state.
 Nothing after it is lost - the versions saved after it stay, and the run
 goes on as a new BRANCH from it, so the user can go back to either line.
 
+A RESUME POINT (the user, 2026-10-24) is saved after every round the
+reviewer finds advanced: the same files and state a version holds, so that
+a run cut off - the application closed - goes on from there and loses at
+most the round it was in. It is not a version: no slides, not listed among
+the versions, not a checkpoint the full review counts from. Only the latest
+of a line is kept, and only while it is after that line's head; a version
+saved since leaves it behind. What no version and no resume point holds any
+more is removed from the store (`collect`) - the work's own files are never
+touched by that.
+
 CONTINUED WITH NEW WORDS, the contract is amended for that line (see
 `runner.Run._amend`): the version saved when the amendment is approved
 carries, on its entry, the words and what changed in the contract. The
@@ -66,8 +76,10 @@ VERSIONS_DIR = ".versions"
 LOGS_DIR = "run_logs"
 
 #: Folders that are never part of a version, wherever they are: the
-#: runtime's scratch and Python's caches - not the work, and remade at will.
-SKIP_DIRS = (".agent_runtime", "__pycache__")
+#: runtime's scratch and Python's caches - not the work, and remade at will;
+#: so are npm's packages (node_modules, installed again from package.json)
+#: and the package downloads kept in a debugger way's folder.
+SKIP_DIRS = (".agent_runtime", "__pycache__", "node_modules", ".npm-cache", ".pip-cache")
 
 #: Inside a run's folder: where each version's slides are drawn - a folder
 #: per version (`slides/v3/fig_progress.png`). Not the work: its figures are
@@ -91,6 +103,13 @@ MOST_BYTES = 256 * 1024 * 1024
 
 #: The first line of versions.
 MAIN = "main"
+
+#: Inside the store: the latest resume point of each line.
+RESUME_FILE = "resume.json"
+#: An object newer than this is never removed by `collect`: one just written
+#: - for a version being saved, its slides being drawn - may not be held by
+#: any version yet.
+COLLECT_GRACE_SECONDS = 1800
 
 #: The tables the work's tree lives in, each restored whole for its scope.
 TREE_TABLES = ("experience_cards", "experience_stages", "experience_edges")
@@ -182,8 +201,15 @@ class VersionStore:
 
     def put(self, data: bytes) -> str:
         sha = sha_of_bytes(data)
-        if not self._object(sha).is_file():
-            self._write(self._object(sha), data)
+        target = self._object(sha)
+        if not target.is_file():
+            self._write(target, data)
+        else:
+            # Used again: as new as a fresh one, for `collect`'s grace.
+            try:
+                os.utime(self._checked(target), None)
+            except OSError:
+                pass
         return sha
 
     def put_json(self, value: Any) -> str:
@@ -292,7 +318,109 @@ class VersionStore:
         index["versions"].append(entry)
         index["head"] = version_id
         self._save_index(index)
+        # A resume point of this line is behind the version now.
+        points = self.resume_points()
+        if points.pop(entry["branch"], None) is not None:
+            self._write(self.root / RESUME_FILE,
+                        json.dumps(points, ensure_ascii=False, indent=1).encode("utf-8"))
         return entry
+
+    # -- resume points -----------------------------------------------------------
+    def resume_points(self) -> Dict[str, Any]:
+        try:
+            said = json.loads((self.root / RESUME_FILE).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return said if isinstance(said, dict) else {}
+
+    def resume_point(self) -> Optional[Dict[str, Any]]:
+        """The latest resume point of the head's line - only while it was
+        saved after the head: a version saved since, or the head moved, and
+        it is left behind."""
+        index = self.index()
+        point = self.resume_points().get(index["branch"] or MAIN)
+        if isinstance(point, dict) and str(point.get("after") or "") == str(index["head"] or "") \
+                and SHA.match(str(point.get("state") or "")):
+            return point
+        return None
+
+    def save_resume(self, label: str, files: Dict[str, Dict[str, Any]],
+                    granted: Dict[str, Dict[str, Any]], skipped: List[str], state_sha: str,
+                    details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """The line's resume point, in place of the one before it - and what
+        neither a version nor a resume point holds any more, removed."""
+        with self._lock:
+            index = self.index()
+            branch = index["branch"] or MAIN
+            point = {"after": index["head"] or "", "branch": branch, "label": str(label)[:300],
+                     "at": _now(), "files": files, "granted": granted,
+                     "skipped": skipped[:500], "state": state_sha,
+                     **{k: v for k, v in (details or {}).items() if v is not None}}
+            points = self.resume_points()
+            points[branch] = point
+            self._write(self.root / RESUME_FILE,
+                        json.dumps(points, ensure_ascii=False, indent=1).encode("utf-8"))
+            self.collect()
+            return point
+
+    def held(self) -> Optional[set]:
+        """Every object a version or a resume point holds - None when one of
+        them cannot be read, and so nothing may be removed."""
+        held: set = set()
+        kept: List[Dict[str, Any]] = []
+        for path in sorted((self.root / "versions").glob("v*.json")):
+            try:
+                said = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return None
+            if isinstance(said, dict):
+                kept.append(said)
+        kept += [one for one in self.resume_points().values() if isinstance(one, dict)]
+        for one in kept:
+            for group in ("files", "granted"):
+                for entry in (one.get(group) or {}).values():
+                    sha = entry.get("sha") if isinstance(entry, dict) else None
+                    if sha:
+                        held.add(str(sha))
+            state = str(one.get("state") or "")
+            if not SHA.match(state):
+                continue
+            held.add(state)
+            try:
+                text = self.get(state).decode("utf-8", "replace")
+            except VersionError:
+                return None
+            # What the state holds by its id: the tree's rows, the slides'
+            # figures.
+            held.update(re.findall(r"\b[0-9a-f]{64}\b", text))
+        return held
+
+    def collect(self) -> int:
+        """What no version and no resume point holds, removed from the
+        store - never one written in the last `COLLECT_GRACE_SECONDS`.
+        Only the store's own objects: the work's files are not touched."""
+        objects = self.root / "objects"
+        if not objects.is_dir():
+            return 0
+        held = self.held()
+        if held is None:
+            return 0
+        cutoff = time.time() - COLLECT_GRACE_SECONDS
+        removed = 0
+        for folder in objects.iterdir():
+            if not folder.is_dir():
+                continue
+            for path in folder.iterdir():
+                if not SHA.match(path.name) or path.name in held:
+                    continue
+                try:
+                    if path.stat().st_mtime > cutoff:
+                        continue
+                    self._checked(path).unlink()
+                    removed += 1
+                except OSError:
+                    continue
+        return removed
 
     def set_slides(self, version_id: str, slides: Optional[Dict[str, Any]],
                    summary: Dict[str, Any]) -> None:

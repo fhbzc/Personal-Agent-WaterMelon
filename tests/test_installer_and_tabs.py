@@ -43,9 +43,10 @@ class TheTabsTests(unittest.TestCase):
                          "out.tabs=[...document.querySelectorAll('#tabs button')]"
                          ".map(b=>b.textContent.trim());")
         self.assertEqual(result["err"], "")
+        # Learning: the user's own tab after Work (2026-10-24), not a debugger's.
         self.assertEqual(result["out"]["tabs"], ["Overview", "Newspaper",
                                                  "Calendar", "Connections", "Work",
-                                                 "Chat", "Settings", "Record log"])
+                                                 "Learning", "Chat", "Settings", "Record log"])
 
     def test_nor_the_debuggers_record_of_computer_usage(self) -> None:
         """Section 8, as amended 2026-10-16: what the computer was used for -

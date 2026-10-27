@@ -31,6 +31,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 CANDIDATES = 20
 PER_CASE = 3
 EXCERPT = 1000
+#: Of a passage kept, what is shown, at most.
+PASSAGE = 1500
 #: References proposed for one deliverable, given it, at most; the tool
 #: rounds of a call.
 PROPOSED = 3
@@ -80,12 +82,36 @@ def _newest_first(places: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def candidates(finder: Any, facets: Dict[str, List[str]],
                readable: Callable[[str], bool]) -> List[Dict[str, Any]]:
     """Where the deliverables of the cases most like this job are, that the
-    work agent may read - most alike first."""
+    work agent may read - most alike first. Of the learning list's items
+    (items.py) kept as a reference: a web page by its address (the reviewer
+    and the work agent read it on the web), a passage the user kept by its
+    words; one not kept as a reference is none."""
     out: List[Dict[str, Any]] = []
     seen = set()
     for case in finder.similar_cases(facets):
         places = [one for one in case.get("locations") or [] if isinstance(one, dict)
                   and not finder.leave_out.location_out(one)]
+        item = finder.item_of_case(case) if hasattr(finder, "item_of_case") else None
+        if item is not None:
+            if "reference" not in (item.get("learn") or []) and item["whose"] == "others":
+                continue
+            if item["kind"] in ("url", "text"):
+                path = item["source"] if item["kind"] == "url" else f"text:{item['id']}"
+                if path.lower() in seen:
+                    continue
+                seen.add(path.lower())
+                place = next((one for one in places if one.get("path") == path), {})
+                out.append({"path": path, "what": str(place.get("what") or (
+                    "someone else's work, which the user endorses" if item["whose"] == "others"
+                    else "the user's own, on the web")), "at": str(place.get("at") or "")[:10],
+                    "case": case["id"], "project": str(item.get("title") or case.get("title") or ""),
+                    "web": item["kind"] == "url",
+                    "passage": item["text"][:PASSAGE] if item["kind"] == "text" else "",
+                    "kept": next((one.get("kept") for one in (item.get("fetched") or {}).values()
+                                  if one.get("kept")), "")})
+                if len(out) >= CANDIDATES:
+                    return out
+                continue
         taken = 0
         for one in _newest_first(places):
             path = Path(str(one.get("path") or "")).expanduser()
@@ -110,8 +136,20 @@ def candidates(finder: Any, facets: Dict[str, List[str]],
     return out
 
 
-def excerpt(path: str) -> str:
-    """A candidate's first lines - a folder's first two levels."""
+def excerpt(path: str, candidate: Optional[Dict[str, Any]] = None) -> str:
+    """A candidate's first lines - a folder's first two levels; a page's
+    from the copy kept of it; a passage's own words."""
+    candidate = candidate or {}
+    if candidate.get("passage"):
+        return candidate["passage"][:EXCERPT]
+    if candidate.get("web"):
+        kept = str(candidate.get("kept") or "")
+        try:
+            text = Path(kept).read_text(encoding="utf-8").split("\n", 1)[1] if kept else ""
+        except (OSError, IndexError):
+            text = ""
+        return (text[:EXCERPT] + ("\n..." if len(text) > EXCERPT else "")) if text else \
+            "(a web page: open it with fetch_url)"
     where = Path(path)
     try:
         if where.is_dir():
@@ -146,7 +184,7 @@ def content(cards: Sequence[Dict[str, Any]], found: Sequence[Dict[str, Any]]) ->
     for n, one in enumerate(found, 1):
         lines.append(f"\n[{n}] {one['path']}")
         lines.append(f"    {one['what'] or 'deliverable'} of \"{one['project']}\" ({one['case']}), {one['at']}")
-        lines += ["    " + line for line in excerpt(one["path"]).splitlines()]
+        lines += ["    " + line for line in excerpt(one["path"], one).splitlines()]
     return "\n".join(lines)
 
 
@@ -156,11 +194,15 @@ def _plain(text: Any, most: int = 300) -> str:
 
 def checked(said: Any, cards: Sequence[Dict[str, Any]], readable: Callable[[str], bool],
             leave_out: Any, most: int = PER_CARD,
-            among: Optional[Dict[str, List[Dict[str, str]]]] = None
+            among: Optional[Dict[str, List[Dict[str, str]]]] = None,
+            known: Optional[Dict[str, Dict[str, Any]]] = None
             ) -> Dict[str, List[Dict[str, str]]]:
     """What a call gave: for each deliverable at most `most`, each there,
     readable by the work agent and in no folder left out - and, chosen by
-    the reviewer, one of those proposed for that deliverable (`among`)."""
+    the reviewer, one of those proposed for that deliverable (`among`). A
+    web page or a kept passage only as it was a candidate (`known`: the
+    candidates by their path) - never an address a model wrote."""
+    known = known or {}
     given = said.get("cards") if isinstance(said, dict) and isinstance(said.get("cards"), dict) else {}
     out: Dict[str, List[Dict[str, str]]] = {}
     for card in cards:
@@ -174,6 +216,17 @@ def checked(said: Any, cards: Sequence[Dict[str, Any]], readable: Callable[[str]
             if not path or not take or any(path == k["path"] for k in kept):
                 continue
             if allowed is not None and path not in allowed:
+                continue
+            if path in known and (known[path].get("web") or known[path].get("passage")):
+                kept.append({"path": path, "take": take, **{
+                    key: _plain(one.get(key)) for key in ("summary", "why", "not")
+                    if _plain(one.get(key))},
+                    **({"passage": known[path]["passage"]} if known[path].get("passage") else {}),
+                    **({"title": str(known[path].get("project") or "")})})
+                if len(kept) >= most:
+                    break
+                continue
+            if path.startswith(("http://", "https://", "text:")):
                 continue
             try:
                 there = Path(path).expanduser().exists()
@@ -210,10 +263,20 @@ def proposed_text(cards: Sequence[Dict[str, Any]],
 
 
 def shown(references: Any) -> List[str]:
-    """A card's references as its lines read: what to take, and what not."""
-    return [f"    look at: {one.get('path')} - {one.get('take')}"
-            + (f" Not: {one['not']}" if one.get("not") else "")
-            for one in references or [] if isinstance(one, dict) and one.get("path")]
+    """A card's references as its lines read: what to take, and what not -
+    a passage the user kept, in its own words."""
+    out = []
+    for one in references or []:
+        if not isinstance(one, dict) or not one.get("path"):
+            continue
+        if one.get("passage"):
+            out.append(f"    look at the passage \"{one.get('title') or 'kept'}\" - "
+                       f"{one.get('take')}" + (f" Not: {one['not']}" if one.get("not") else "")
+                       + "\n      " + " ".join(str(one["passage"]).split())[:PASSAGE])
+            continue
+        out.append(f"    look at: {one.get('path')} - {one.get('take')}"
+                   + (f" Not: {one['not']}" if one.get("not") else ""))
+    return out
 
 
 def dumps(value: Any) -> str:

@@ -29,10 +29,17 @@ import logging
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
 log = logging.getLogger(__name__)
+
+
+def is_wechat_application(application: str) -> bool:
+    return (application or '').strip().lower() in {
+        'wechat', 'weixin', '微信', 'wechat.exe', 'weixin.exe'}
+
+
 
 
 @dataclass
@@ -49,6 +56,8 @@ class WindowText:
     #: Which process owns the window. The one reliable way to recognise the
     #: agent's own window, whatever it has been titled.
     pid: int = 0
+    capture_scope: str = ""
+    wechat_capture: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {"application": self.application, "title": self.title,
@@ -67,7 +76,11 @@ _TEXT = 50020
 #: which silently returns a handful of shell elements and no content at all.
 _DESCENDANTS = 4
 
+_CHILDREN = 2
+_LIST_ITEM = 50007
+
 _CONTROL_TYPE_PROPERTY = 30003
+_AUTOMATION_ID_PROPERTY = 30011
 _IS_PASSWORD_PROPERTY = 30019
 
 #: Whether the element is in the tree but not being shown.
@@ -175,6 +188,77 @@ class WindowTextReader:
         got.text, got.how, got.elements = body, how, elements
         got.milliseconds = (time.perf_counter() - began) * 1000
         return got
+
+    def wechat_frame(self, handle: int) -> Optional[tuple]:
+        """WeChat's conversation in front, message by message: the window's
+        picture, then its message list's items and the conversation's name
+        from Automation (`wechat_items.py`). None when the window has no
+        message list - an older WeChat, or a page that is not a chat - and
+        the window is read as any other.
+
+        Asked in physical pixels, the picture's: this thread is made DPI
+        aware for the asking, and put back after (measured 2026-10-26: not
+        aware, Automation answered in pixels scaled by 1.75).
+        """
+        if not self.available or not handle:
+            return None
+        user32 = ctypes.windll.user32
+        try:
+            before = user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
+        except Exception:
+            before = None
+        try:
+            return self._wechat_frame(handle)
+        except Exception as exc:
+            self.last_error = f"WeChat's messages could not be read: {exc}"[:200]
+            return None
+        finally:
+            if before:
+                user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(before))
+
+    def _wechat_frame(self, handle: int) -> Optional[tuple]:
+        from ctypes import wintypes
+        from PIL import ImageGrab
+
+        from .wechat_items import parse_wechat_items
+
+        frame = wintypes.RECT()
+        if ctypes.windll.dwmapi.DwmGetWindowAttribute(
+                wintypes.HWND(handle), 9, ctypes.byref(frame), ctypes.sizeof(frame)) != 0:
+            return None
+        origin = (frame.left, frame.top)
+        # The picture first: what Automation then says is checked against it.
+        picture = ImageGrab.grab(bbox=(frame.left, frame.top, frame.right, frame.bottom),
+                                 all_screens=True)
+        element = self._automation.ElementFromHandle(handle)
+
+        def box(found: Any) -> tuple:
+            r = found.CurrentBoundingRectangle
+            return (r.left - origin[0], r.top - origin[1], r.right - r.left, r.bottom - r.top)
+
+        chat = element.FindFirst(_DESCENDANTS, self._automation.CreatePropertyCondition(
+            _AUTOMATION_ID_PROPERTY, "chat_message_list"))
+        if not chat:
+            return None
+        items = []
+        listed = chat.FindAll(_CHILDREN, self._automation.CreatePropertyCondition(
+            _CONTROL_TYPE_PROPERTY, _LIST_ITEM))
+        for index in range(min(listed.Length, 200)):
+            item = listed.GetElement(index)
+            if self._is_hidden(item) or self._is_a_password(item):
+                continue
+            items.append({"text": item.CurrentName or "", "box": box(item)})
+        headers = []
+        texts = element.FindAll(_DESCENDANTS, self._automation.CreatePropertyCondition(
+            _CONTROL_TYPE_PROPERTY, _TEXT))
+        for index in range(min(texts.Length, 40)):
+            label = texts.GetElement(index)
+            # Its id is a path ending in this; the input box is never asked.
+            if (label.CurrentAutomationId or "").endswith("current_chat_name_label"):
+                headers.append({"text": label.CurrentName or "", "box": box(label)})
+        capture = parse_wechat_items(picture, box(chat), items, headers)
+        text = "\n".join(item["text"].strip() for item in items if item["text"].strip())
+        return text, capture, len(items)
 
     def _ask_the_window(self, element: Any) -> tuple:
         body = self._text_of(element)
@@ -331,17 +415,30 @@ def text_in_front() -> Optional[WindowText]:
     handle, title, pid = front_window()
     if not handle:
         return None
-    got = reader().read(handle)
+    try:
+        import psutil
+
+        application = psutil.Process(pid).name()
+    except Exception:
+        application = ""
+    got = None
+    if is_wechat_application(application):
+        # WeChat: its messages one by one, whose each is (wechat_items.py).
+        began = time.perf_counter()
+        found = reader().wechat_frame(handle)
+        if found is not None:
+            text, capture, elements = found
+            got = WindowText(handle=int(handle), text=text, how="windows_wechat_messages",
+                             elements=elements, capture_scope="visible_text_only",
+                             wechat_capture=capture,
+                             milliseconds=(time.perf_counter() - began) * 1000)
+    if got is None:
+        got = reader().read(handle)
     if got is None:
         return None
     got.title = title
     got.pid = pid
-    try:
-        import psutil
-
-        got.application = psutil.Process(pid).name()
-    except Exception:
-        got.application = ""
+    got.application = application
     return got
 
 

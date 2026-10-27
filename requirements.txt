@@ -9,6 +9,9 @@ psutil>=5.9             # process metrics, active window process lookup
 watchdog>=4.0           # realtime filesystem events (falls back to polling)
 pillow>=10.0            # character package rendering (falls back to vector shapes)
 pystray>=0.19           # the agent's icon beside the clock (none without it)
+pyobjc-framework-Vision>=10.0; sys_platform == 'darwin'  # WeChat on a Mac: its window read by Apple Vision
+pyobjc-framework-ApplicationServices>=10.0; sys_platform == 'darwin'
+pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'
 keyring>=25.0           # OS keychain credential storage (falls back to encrypted file)
 tzdata>=2024.1          # named time zones where the system has no IANA database (Windows)
 certifi>=2024.2         # the certificates a packaged build trusts for HTTPS on macOS and Linux

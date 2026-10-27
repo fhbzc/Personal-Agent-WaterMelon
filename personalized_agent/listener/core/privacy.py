@@ -31,6 +31,7 @@ CATEGORY_SETTINGS = {
     # rather than that it was there, which makes it the first one anybody
     # will want to switch off - so it switches off like any other.
     "screen": "listener_screen_enabled",
+    "screenshot": "listener_screenshots_enabled",
 }
 
 
@@ -239,12 +240,42 @@ class PrivacyFilter:
             path, names=self.excluded_names(), folders=excluded_folders(self.config))
 
     # -- event level --------------------------------------------------------
-    def allows(self, event: ListenerEvent, category: str) -> bool:
-        return self.refusal(event, category) is None
+    def screenshot_evidence_allowed(self, event: ListenerEvent,
+                                    trusted_root: Optional[Path]) -> bool:
+        """Only a fresh capture vouched for by the manager's native producer.
 
-    def refusal(self, event: ListenerEvent, category: str) -> Optional[str]:
-        """Which rule keeps this event out (a key of `filtered.WHY`), or None
-        when it is kept - so the Record log can say which rule it was."""
+        The root and file must stay physically inside the workspace. No
+        symlink, traversal, non-image file or untrusted event gets a path
+        exception. The caller supplies the root only during native emit.
+        """
+        if trusted_root is None or event.source != "screenshot":
+            return False
+        raw = (event.data or {}).get("path")
+        workspace = self.config.get("workspace_root", "")
+        if not isinstance(raw, str) or not raw or not workspace:
+            return False
+        try:
+            path, root, workspace = Path(raw), Path(trusted_root), Path(workspace)
+            if ".." in path.parts or ".." in root.parts or not path.is_absolute():
+                return False
+            relative_root = root.absolute().relative_to(workspace.absolute())
+            relative_file = path.relative_to(root.absolute())
+            physical_root = workspace.resolve(strict=True) / relative_root
+            if root.resolve(strict=True) != physical_root:
+                return False
+            if path.resolve(strict=True) != physical_root / relative_file:
+                return False
+            return path.suffix.lower() == ".jpg" and path.is_file()
+        except (OSError, ValueError, RuntimeError):
+            return False
+
+    def allows(self, event: ListenerEvent, category: str, *,
+               trusted_screenshot_root: Optional[Path] = None) -> bool:
+        return self.refusal(event, category, trusted_screenshot_root=trusted_screenshot_root) is None
+
+    def refusal(self, event: ListenerEvent, category: str, *,
+                trusted_screenshot_root: Optional[Path] = None) -> Optional[str]:
+        """The blocking rule, without retaining content the user excluded."""
         if not self.category_enabled(category):
             return "switch_off"
         if not self.application_allowed(event.application):
@@ -252,6 +283,10 @@ class PrivacyFilter:
         data: Dict[str, Any] = event.data or {}
         if not self.website_allowed(data.get("url")):
             return "website_list"
+        picture = event.event_type == "screen.shot"
+        if picture and (category != "screenshot" or not self.screenshot_evidence_allowed(
+                event, trusted_screenshot_root)):
+            return "untrusted_capture"
         # Section 19, as amended: a file event is the user's only if the user
         # was there. Applied to files alone - a page visited or a window
         # brought to the front is already somebody doing something.
@@ -271,6 +306,10 @@ class PrivacyFilter:
                         return "not_yours"
         for key in ("path", "source_path", "destination_path"):
             if key in data:
+                if picture and key == "path":
+                    if not self.file_name_allowed(data[key]):
+                        return "ignored_name"
+                    continue
                 # The agent writing its own memory is not the user doing
                 # something (section 19, as amended). Ownership rather than
                 # location, because the workspace also holds the documents

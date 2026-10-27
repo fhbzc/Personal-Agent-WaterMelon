@@ -336,6 +336,11 @@ class FilesystemProvider(ListenerProvider):
     #: interval so that nothing falls between two passes.
     WHAT_THEY_OPENED_SINCE = 900.0
 
+    #: The first look at what was opened waits this long after a start, so
+    #: as not to take the interpreter from the desktop window as it comes
+    #: up; WHAT_THEY_OPENED_SINCE reaches back past it.
+    QUIET_AT_START = 60.0
+
     #: One opening of one file is one event, however many ways we hear about
     #: it. The desktop stamps its shortcut when the application asks it to
     #: and the filesystem reports the access time when Windows flushes, so
@@ -358,6 +363,10 @@ class FilesystemProvider(ListenerProvider):
         and with no inference at all: a program calling open() never appears
         in it.
         """
+        # QUIET AT START (measured 2026-10-26): not while the application
+        # comes up - a minute later, the record asked fifteen minutes back.
+        if self._stop.wait(self.QUIET_AT_START):
+            return
         while not self._stop.is_set():
             try:
                 self._ask_the_desktop()
@@ -618,8 +627,10 @@ class FilesystemProvider(ListenerProvider):
         if not path:
             return False
         receiver = getattr(self._emit, "__self__", None)
-        if not isinstance(receiver, ListenerManager) or \
-                getattr(self._emit, "__func__", None) is not ListenerManager._on_event:
+        if not isinstance(receiver, ListenerManager):
+            return False
+        if (getattr(self._emit, "__func__", None) is not ListenerManager._on_event
+                and not receiver.receives_from(self, self._emit)):
             return False
         try:
             privacy = receiver.privacy

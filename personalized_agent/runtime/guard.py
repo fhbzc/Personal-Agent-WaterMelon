@@ -503,10 +503,16 @@ def _is_write_mode(mode: str) -> bool:
 #      environment carries this process's policy - where it may write, what
 #      is sealed, closed or the application's code, no network, the packages'
 #      folders - as this process was given it, whatever the caller's `env=`
-#      said (`child_environment`). Any other program - a shell, git, node,
-#      PowerShell - is refused: the system would confine it, but none of the
-#      rules that only the guard keeps (a network filtered by host name, the
-#      folders Landlock cannot hide) would hold in it.
+#      said (`child_environment`).
+#   3. ANY OTHER PROGRAM - a shell, git, node, PowerShell - only where the
+#      system alone keeps every rule (the user, 2026-10-25: the work runs
+#      commands as Claude Code does): an AppContainer, Seatbelt or
+#      bubblewrap, and no network at all - exactly where a native library
+#      may load (`_native_allowed`), which is the same power. It starts as
+#      asked, in the same confinement, with the same environment. Not under
+#      Landlock, which cannot hide a folder, nor where the network is
+#      filtered by host name (the package installer): those rules are the
+#      guard's alone, and would not hold in it.
 #
 # The rewrite sits at the lowest choke point - `_winapi.CreateProcess` on
 # Windows, `_posixsubprocess.fork_exec` elsewhere - so subprocess, asyncio and
@@ -722,6 +728,15 @@ def _the_browser(program: str, cwd=None) -> str:
     except (OSError, ValueError):
         return ""
     return wanted if same and os.path.isfile(wanted) else ""
+
+
+def other_program(program, cwd=None) -> bool:
+    """Whether `program` is started as it is - condition 3 above: not this
+    interpreter, not the testing browser, and only where the system alone
+    confines it."""
+    program = os.fsdecode(program) if isinstance(program, bytes) else str(program or "")
+    return (bool(program) and _native_allowed() and not _is_this_python(program, cwd)
+            and not _the_browser(program, cwd))
 
 
 def child_command(program, args, cwd=None) -> list:
@@ -949,6 +964,14 @@ def _windows_create_process(real, list2cmdline):
                       env_mapping, current_directory, startup_info):
         argv = split_windows_command_line(command_line or "")
         program = application_name or (argv[0] if argv else "")
+        if not _children_allowed():
+            raise SandboxViolation(f"process: {_no_child_reason()}")
+        if other_program(program, current_directory):
+            # As asked, its command line untouched (cmd.exe reads its own).
+            return real(application_name, command_line, process_attributes,
+                        thread_attributes, inherit_handles,
+                        int(creation_flags or 0) & ~_BREAKAWAY,
+                        child_environment(env_mapping), current_directory, startup_info)
         command = child_command(program, argv[1:], current_directory)
         return real(command[0], list2cmdline(command), process_attributes,
                     thread_attributes, inherit_handles,
@@ -979,15 +1002,18 @@ def _posix_fork_exec(real):
         else:
             program = first
         cwd = os.fsdecode(args[4]) if args[4] else None
-        command = child_command(program, argv[1:], cwd)
+        if not _children_allowed():
+            raise SandboxViolation(f"process: {_no_child_reason()}")
+        command = None if other_program(program, cwd) else child_command(program, argv[1:], cwd)
         given = None
         if args[5] is not None:
             given = {}
             for entry in args[5]:
                 key, _, value = os.fsdecode(entry).partition("=")
                 given[key] = value
-        args[0] = command
-        args[1] = (os.fsencode(command[0]),)
+        if command is not None:
+            args[0] = command
+            args[1] = (os.fsencode(command[0]),)
         args[5] = [os.fsencode(f"{key}={value}")
                    for key, value in child_environment(given).items()]
         if len(args) > 15:

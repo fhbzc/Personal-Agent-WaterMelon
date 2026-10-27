@@ -6,6 +6,7 @@ agent acting on it - and the user's say wins."""
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 import json
 import re
 import unittest
@@ -16,6 +17,13 @@ from personalized_agent.heartbeat.lessons.engine import (
     LessonEngine, PROMOTE_SUPPORT, SHORTLIST, relevance)
 from personalized_agent.models.base import ModelResponse, ModelUsage
 
+
+
+#: A day ago, whenever the tests run: evidence counts half as much every 60
+#: days (lessons/engine.py), and a fixed date in a stage put these tests out
+#: of date - two stages of 2026-10-01 fell just short of a lesson on
+#: 2026-10-26.
+RECENT = (date.today() - timedelta(days=1)).isoformat()
 
 class _Model:
     """Answers each of the cycle's questions from what it is shown: the
@@ -293,7 +301,7 @@ class OneAlgorithmForEveryKindTests(unittest.TestCase):
         for summary in stages:
             stage = self.store.add_stage({"task_id": "t", "kind": "evaluation",
                                           "summary": summary, "states": [],
-                                          "began": "2026-10-01", "ended": "2026-10-01"})
+                                          "began": RECENT, "ended": RECENT})
             self.store.link_stage_nature(stage["id"], record.id)
         return record
 
@@ -325,7 +333,7 @@ class OneAlgorithmForEveryKindTests(unittest.TestCase):
         for n in range(6):
             self.store.add_stage({"task_id": "t", "kind": "evaluation",
                                   "summary": f"added this event: a chat meeting {n}",
-                                  "states": [], "began": "2026-10-02", "ended": "2026-10-02"})
+                                  "states": [], "began": RECENT, "ended": RECENT})
         self.app.config.set("lessons_work_since", "2000-01-01T00:00:00+00:00", internal=True)
         self.app.lessons.learn("work")
         rule = self.app.lessons.rule(nature.id)

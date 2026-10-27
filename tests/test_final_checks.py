@@ -170,8 +170,8 @@ class TheSingleModelIsCheckedTooTests(_DebuggerBase):
         self.assertEqual(len(models.checks["privacy"]), 2)
         # What the check found went back to the single model, to fix.
         told = [json.dumps(r.messages, default=str) for r in models.inner.asked]
-        self.assertTrue(any("TWO INDEPENDENT CHECKS LOOKED AT YOUR FINISHED WORK" in one
-                            for one in told))
+        self.assertTrue(any("INDEPENDENT CHECKS LOOKED AT YOUR FINISHED WORK - its quality, "
+                            "and whether it keeps" in one for one in told))
         whos = {one["who"] for one in run["calls"]}
         self.assertTrue({"single", "quality check", "privacy check"} <= whos, whos)
 

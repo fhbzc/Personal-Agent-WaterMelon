@@ -379,6 +379,12 @@ class DesktopAgent:
                                    style=tk.ARC, outline="#22293a", width=3)
             if self.state == "notification":
                 self.canvas.create_oval(92, 12, 118, 38, fill="#e64646", outline="white", width=2)
+        # The readout put away by where the pointer is (see `_animate_live`).
+        if not getattr(self, "_carried", False) and (
+                getattr(self, "_hover", None) is not None
+                or getattr(self, "_hover_wait", None) is not None) \
+                and not self._pointer_on_avatar():
+            self._on_hover_leave()
         self.root.after(650, self._animate)
 
     #: How long the avatar takes to turn round.
@@ -444,6 +450,15 @@ class DesktopAgent:
             live["off_since"] = live.get("off_since") or now
             if now - live["off_since"] > 0.33:
                 live["hover"], live["off_since"] = False, None
+        # THE READOUT PUT AWAY BY WHERE THE POINTER IS, too: a leave over
+        # the see-through pixels round the figure, the pointer still in its
+        # square, is rightly not taken for the pointer going - and when it
+        # then went, no other leave came, and the readout stayed until the
+        # pointer came back and went again.
+        if not live["hover"] and not getattr(self, "_carried", False) and (
+                getattr(self, "_hover", None) is not None
+                or getattr(self, "_hover_wait", None) is not None):
+            self._on_hover_leave()
         mood = self.state if self.state != "idle" else ("hover" if live["hover"] else "idle")
         since = t - live["poked"]
         squash, hop = 1 + 0.015 * math.sin(2 * math.pi * t / 3.2), 0.0
@@ -497,8 +512,9 @@ class DesktopAgent:
     def _bind_events(self) -> None:
         self.canvas.bind("<Enter>", self._on_hover_enter)
         self.canvas.bind("<Leave>", self._on_hover_leave)
+        # One click or two counted in `_on_click` - not Tk's own double
+        # click, which any event between the presses broke.
         self.canvas.bind("<Button-1>", self._on_click)
-        self.canvas.bind("<Double-Button-1>", self._on_double_click)
         self.canvas.bind("<Button-3>", self._on_right_click)
         if sys.platform == "darwin":
             # A Mac's Tk calls the right button 2; and a Mac without one
@@ -546,12 +562,51 @@ class DesktopAgent:
             self._carried = False
             self._on_hover_enter()
 
-    def _on_click(self, _event: tk.Event) -> None:
+    #: How far apart, on the screen, two presses may be and still be one
+    #: double click (the system's own is a few pixels; a hand at 175%
+    #: scaling moves more).
+    DOUBLE_CLICK_PIXELS = 8
+
+    @staticmethod
+    def double_click_seconds() -> float:
+        """The system's own double-click time - Windows' 500 ms unless the
+        user set another - so a double click here is one wherever else."""
+        if sys.platform.startswith("win"):
+            try:
+                import ctypes
+                return max(0.2, min(1.5, ctypes.windll.user32.GetDoubleClickTime() / 1000))
+            except Exception:                      # pragma: no cover - read below
+                pass
+        return 0.4
+
+    def _on_click(self, event: tk.Event) -> None:
+        """ONE CLICK OR TWO, COUNTED HERE (the user, 2026-10-26): a double
+        click, sometimes, opened two conversations. Tk's own double click is
+        broken by any event between the two presses - and a click makes the
+        avatar hop, so the pixel under a pointer at its edge turns
+        see-through and back, and Windows says the pointer left and came
+        back between them: the second press was a single click again. And a
+        single click waited 240 ms, half the system's double-click time:
+        presses 300 ms apart opened the chat AND the Overview. Now the
+        presses are counted: a second within the system's double-click time,
+        and near the first, is a double click; a single waits that long."""
         # A hop for being clicked.
         self._live["poked"] = time.monotonic() - self._live["start"]
+        now = time.monotonic()
+        at = (getattr(event, "x_root", 0), getattr(event, "y_root", 0))
+        last = getattr(self, "_last_press", None)
+        self._last_press = (now, *at)
         if self._click_job is not None:
             self.root.after_cancel(self._click_job)
-        self._click_job = self.root.after(240, self._single_click)
+            self._click_job = None
+            if last is not None and now - last[0] <= self.double_click_seconds() \
+                    and abs(at[0] - last[1]) <= self.DOUBLE_CLICK_PIXELS \
+                    and abs(at[1] - last[2]) <= self.DOUBLE_CLICK_PIXELS:
+                self._last_press = None
+                self._on_double_click(event)
+                return
+        self._click_job = self.root.after(int(self.double_click_seconds() * 1000),
+                                          self._single_click)
 
     def _single_click(self) -> None:
         self._click_job = None
@@ -560,7 +615,7 @@ class DesktopAgent:
             return
         self.open_chat()
 
-    def _on_double_click(self, _event: tk.Event) -> None:
+    def _on_double_click(self, _event: Any = None) -> None:
         if self._click_job is not None:
             self.root.after_cancel(self._click_job)
             self._click_job = None
@@ -654,7 +709,14 @@ class DesktopAgent:
                   relief="flat", padx=8, pady=2, bg="#1c2028", fg="#e6e9f0",
                   activebackground="#3d6be5", activeforeground="#ffffff",
                   command=lambda: self._delegate_selection(said),
-                  **({"image": face, "compound": "right"} if face else {})).pack()
+                  **({"image": face, "compound": "right"} if face else {})).pack(side="left")
+        # LEARN, beside it (learning/plan.py): the text - and the page it was
+        # selected on - put in the learning list, its plan to check first.
+        tk.Button(button_window, text=self._words("Learn"),
+                  font=(font[0], max(8, font[1] - 1)),
+                  relief="flat", padx=8, pady=2, bg="#1c2028", fg="#e6e9f0",
+                  activebackground="#3d6be5", activeforeground="#ffffff",
+                  command=lambda: self._learn_selection(said)).pack(side="left", padx=(1, 0))
         button_window.geometry(f"+{int(said.get('x', 0)) + 14}+{int(said.get('y', 0)) + 18}")
         button_window.update_idletasks()
         from .selection import no_activate
@@ -709,6 +771,22 @@ class DesktopAgent:
             except Exception:
                 log.exception("could not hand the selected text over")
         threading.Thread(target=hand_over, name="delegate-selection", daemon=True).start()
+
+    def _learn_selection(self, said: Dict[str, Any]) -> None:
+        """Clicked: the text handed to the learning, with the window it came
+        from - and its learning plan opened, in a window of its own."""
+        self._hide_delegate_button()
+
+        def hand_over() -> None:
+            try:
+                draft = self.app.learning.planner.start({
+                    "kind": "text", "text": str(said.get("text") or ""),
+                    "window": {"title": said.get("title") or "", "app": said.get("app") or ""}})
+                self.queue.put(("call", lambda: self.open_box(
+                    f"/?solo=learn#learn={draft['id']}")))
+            except Exception:
+                log.exception("could not hand the selected text to the learning")
+        threading.Thread(target=hand_over, name="learn-selection", daemon=True).start()
 
     def toggle_character(self) -> None:
         """Show or hide the character on screen; the agent keeps running,
@@ -787,8 +865,34 @@ class DesktopAgent:
         self._keep_on_screen()
         self.root.after(self.ON_SCREEN_EVERY_MS, self._watch_the_screens)
 
+    @staticmethod
+    def _off_this_thread(what, name: str = "open-page") -> None:
+        """OPENED OFF THIS WINDOW'S THREAD (measured 2026-10-26): the first
+        page opened looks for every browser on the PATH - seconds with the
+        disk busy - and this window did not answer meanwhile, so a double
+        click seemed not to have been taken, and was made again."""
+        def run() -> None:
+            try:
+                what()
+            except Exception:                       # pragma: no cover - logged
+                log.warning("could not open the page", exc_info=True)
+        threading.Thread(target=run, name=name, daemon=True).start()
+
+    def _warm_up_when_idle(self, tries: int = 20) -> None:
+        """The folder dialog's warm-up, once nothing has been touched for a
+        while - asked again each half minute, and given up after ten."""
+        ask = getattr(getattr(self.app.platform, "activity", None), "seconds_since_input", None)
+        try:
+            idle = float(ask()) if callable(ask) else 0.0
+        except Exception:
+            idle = 0.0
+        if idle >= 20:
+            chooser.warm_up(self.root)
+        elif tries > 0:
+            self.root.after(30000, lambda: self._warm_up_when_idle(tries - 1))
+
     def _open_workspace(self) -> None:
-        webbrowser.open(self.app.policy.workspace_root.as_uri())
+        self._off_this_thread(lambda: webbrowser.open(self.app.policy.workspace_root.as_uri()))
 
     def open_url(self, fragment: str = "/") -> None:
         # Through a sign-in link, every time: the page's requests need the
@@ -796,14 +900,14 @@ class DesktopAgent:
         # this one opening and for two minutes - so the tray, the menu, the
         # chat and every "#tab" open the page signed in, and none of them
         # leaves a link behind that would sign anyone else in later.
-        webbrowser.open(self.app.sign_in_url(fragment))
+        self._off_this_thread(lambda: webbrowser.open(self.app.sign_in_url(fragment)))
 
     def open_box(self, fragment: str) -> None:
         """The Delegate work box alone, in a window of its own - not the
         whole page in a browser tab (platform_layer/app_window.py)."""
         from ..platform_layer import app_window
-        app_window.open_page(self.app.sign_in_url(fragment),
-                             self.app.paths.data_dir / app_window.PROFILE)
+        self._off_this_thread(lambda: app_window.open_page(
+            self.app.sign_in_url(fragment), self.app.paths.data_dir / app_window.PROFILE))
 
     # -- conversation -------------------------------------------------------
     def open_chat(self, initial_message: Optional[str] = None) -> None:
@@ -1411,11 +1515,16 @@ class DesktopAgent:
         application is ready.
         """
         self._up = True
+        # The browsers looked for now, off this thread: the first page
+        # opened - a double click - then opens at once.
+        self._off_this_thread(webbrowser.get, name="find-the-browser")
         # The first folder dialog is slow to appear, so one is opened unseen
         # (chooser.warm_up) - which holds this window's thread for a few
-        # seconds. Not while the agent is starting, when that thread is
-        # wanted most: half a minute after it is up.
-        self.root.after(30000, lambda: chooser.warm_up(self.root))
+        # seconds (6 s measured, 2026-10-26). Not on Windows, where adding a
+        # work directory has the system's own chooser, made ready by nothing
+        # here; elsewhere, only once the user has left the computer alone.
+        if sys.platform != "win32":
+            self.root.after(30000, self._warm_up_when_idle)
         if not bool(self.config.get("greet_on_start", True)):
             return
         # What it says is counted from the states - off this thread, as the

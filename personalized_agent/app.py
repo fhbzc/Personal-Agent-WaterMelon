@@ -392,6 +392,9 @@ class AgentApplication:
         from .index.service import LocalIndex
         self.local_index = LocalIndex(self)
         self.learning.before_update = lambda: self.local_index.build_now(wait=True)
+        # What the user endorses, looked for by the state heartbeat once a day
+        # and added to the learning list (learning/interests.py).
+        self.state_heartbeat.interests = self.learning.interests
         # PACKAGE ALL LESSONS and LOAD LESSONS (Overview): every lesson -
         # the experience, each work project's tree, the notification lessons,
         # the natures - packed into one folder in the workspace and a zip of

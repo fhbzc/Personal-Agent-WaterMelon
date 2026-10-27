@@ -61,6 +61,8 @@ LEARNING reads the user's work into CASES and REASONS. The reviewer asks its QUE
 4. Something the user approved.
 5. Something the user let stand.
 
+*Added 2026-10-24:* **Endorsed** - someone else's work the user put in the learning list (§2.5) with what of it they endorse - ranks with "changed" in weight. In the user's own words when they typed the angle; when the heartbeat added it, only words found in a record and certainly the user's. One endorsement is enough for a rule adopted from that work.
+
 An agent-generated `CLAUDE.md` counts as ordinary evidence.
 
 *Note 2026-10-21 (built):* whether a line is the user's is decided by code, not by the model (`learning/authorship.py`):
@@ -207,6 +209,39 @@ The model may also link a judgment to an existing reason.
 
 **Kept history.** Old versions, set-aside evidence and retired reasons are kept in history and never deleted.
 
+### 2.5 The learning list (2026-10-24, the user's design)
+
+- **Items beside the user's own folders**
+  - A web page or site, a GitHub repository, a passage of text, a folder or a file.
+  - Each has: **whose** (*mine* - learned in full, its decisions the user's judgments; *others* - learned as a reference the user endorses, never as their own), **what** (cases, rules, reference - any mix), **angle** (what of it to learn, the purpose), **scope** (a page, the pages under an address, a repository, a folder, a file, the passage), **cadence** (once, at every update, every N days), and a state (on or off) and status (new, waiting for the user, learned, unreachable).
+  - Stored in `learn_items`; each is a unit of its own (`item:<id>`), learned in the same updates under the same daily limit.
+- **The angle goes to the reading model**
+  - For the user's own work it is an emphasis; for someone else's it bounds what is learned - they endorse that part, not the rest.
+  - Someone else's work is read with its own prompt: the work as a case (its address as where it is, marked as someone else's, with what to take and not), what the user endorses as **endorsed** judgments, and - when asked - the rules it shows within the angle, kept as reasons with the source **adopted**.
+  - When the heartbeat added it, its purpose is a hypothesis: the model is shown the evidence and learns what the material actually shows.
+- **Online**
+  - Only the item's scope; public pages only, signed in to nothing; robots.txt kept to, one request a second to a site.
+  - A page that addresses an assistant, or hides such words from a reader (comments, styled away, invisible characters), is set aside and said so on the item.
+  - The reading model has no tools and is told that what it reads is material, never an instruction.
+  - A page up to 200,000 characters is kept as a copy (address, time, hash); a larger one only as its address - the reviewer reads it on the web.
+  - A repository of the user's own GitHub account (from their profile in Connections) is theirs, and their own review comments are read too.
+  - A page that can no longer be read is not updated: what was learned from it stays, and the item says since when.
+- **Adding** - the Learning tab's "Add to learning", a "Learn" button beside "Delegate work" on selected text (with the page it was selected on), Explorer's "Add to learning" (`--learn PATH`).
+  - As Delegate work: a first look, then a **learning plan** drafted by a model with no tools (title, whose and why, what to learn, angle, scope, cadence, what is left out, and the tokens a reading takes, estimated by code); the user changes it and adds it - now, or at the next update. An item over 500,000 tokens is marked large.
+- **The heartbeat adds what the user endorses** (`learning/interests.py`)
+  - Once a day after a round, while the learning's switch is on.
+  - The model judges whether the evidence is enough, told: visiting is not endorsing; a statement counts only when it is certainly the user's.
+  - Code holds that each piece of evidence is a record that exists, a quote is kept only where those words are in it, the thing is one the records name, and nothing on the never list or already listed is added. No daily cap.
+- **Waiting for the user**
+  - The first reading of the user's own work on the web, and of anything the heartbeat added, is given to no run until the user keeps it; not kept, what was learned goes and the item is turned off.
+- **Turning off, deleting, the never list**
+  - Any lesson - a project, a folder, an item - can be turned off: not read, and nothing learned from it given (`LeaveOut.holding`).
+  - Deleted, everything learned from it goes (its cases, judgments and their links; the reasons are weighed again, and go with nothing left), and its source - folders, address, or the unit - goes on the never list.
+  - The never list is shown and each entry can be taken off; the heartbeat cannot add past it (code, not the prompt).
+- **Given to a run as what it is**
+  - A case of someone else's work says so, with what the user endorses; a reason adopted from it says where it comes from; the reviewer's system prompt tells it to weigh the user's own and what they endorse for what each is.
+  - A web page or a kept passage can be a reference, given only as it was a candidate; the pages in the list may be opened by the reviewer and the work agent.
+
 ## 3. A Work run
 
 ### 3.1 Questions
@@ -290,7 +325,9 @@ The model may also link a judgment to an existing reason.
 | Single | Unchanged. |
 | Builder (all ways) | Never sees the learning (it asks the reviewer); in the full way, only the references the reviewer chose, on its cards. |
 
-## 4. The panel (Work, at the bottom)
+## 4. The panel (the Learning tab, after Work - 2026-10-24)
+
+*Amended 2026-10-24:* Learning is a tab of its own. Besides what is below: what waits for the user to look at, then every lesson in three groups - **your own folders and projects**, **added by you**, **added by the heartbeat** (with its evidence and purpose) - each with what was learned of it, and Turn off / Turn on, What was learned, Delete (asks first); an item also Change its plan. Then the **never list**, each entry taken off. The local index and the learning each have a progress bar.
 
 - **Updates**
   - The auto-learning switch and update times.

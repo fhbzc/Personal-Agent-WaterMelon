@@ -37,7 +37,8 @@ ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "personalized_agent" / "api" / "web"
 TABLES = WEB / "lang"
 LANGUAGES = ("zh", "es", "ja", "ko", "ru", "fr", "de", "it")
-SCRIPTS = ["app.js", "debugger.js", "chat.js", "chat-debugger.js", "chat-navigation.js"]
+SCRIPTS = ["app.js", "debugger.js", "chat.js", "chat-debugger.js", "chat-navigation.js",
+           "listener-debugger.js"]
 PAGES = ["index.html", "chat.html"]
 REGEX_BEFORE = set("(,=:[!&|?{};+-*%<>~^")
 ATTRS = ("title", "placeholder", "aria-label", "label", "alt")

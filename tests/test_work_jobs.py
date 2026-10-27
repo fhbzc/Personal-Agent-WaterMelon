@@ -138,6 +138,17 @@ class JobsTests(_Base):
         self.assertIn("here", said["stdout"])
         self.assertNotIn("job_status", [one.name for one in self.tools.specs()])
 
+    def test_who_may_start_one_while_reading_may_wait_for_it(self) -> None:
+        # A reviewer runs code and tests but writes nothing: it started jobs
+        # and, without their tools, slept in run_python waiting for them.
+        reading = {one.name for one in self.tools.specs(writing=False)}
+        self.assertFalse(reading & set(tools_module.JOB_TOOLS))
+        for runs in (("run_python",), ("run_tests",)):
+            self.tools.runs_code = runs
+            reading = {one.name for one in self.tools.specs(writing=False)}
+            self.assertLessEqual(set(tools_module.JOB_TOOLS) | set(runs), reading)
+            self.assertNotIn("edit_file", reading)
+
 
 class TheEnvironmentIsSaidTests(unittest.TestCase):
 
@@ -147,9 +158,12 @@ class TheEnvironmentIsSaidTests(unittest.TestCase):
         said = environment_rules("C:/work", "No network.", debug=True)
         for words in ("run logs", "where sign-ins and", "ONLY in C:/work", "WAL mode",
                       "NEW Python process", "ENDS WHEN IT ENDS", "background=true",
-                      "job_status", "at most 900", "no shell", "pip run from code",
-                      "No network.", "other folders closed to this work", "NATIVE LIBRARIES"):
+                      "job_status", "at most 900", "pip or npm run from code",
+                      "No network.", "other folders closed to this work", "NATIVE LIBRARIES",
+                      "wait_for", "git_fetch"):
             self.assertIn(words, said)
+        # Where programs start depends on the system (test_python_children).
+        self.assertTrue("no shell" in said or "COMMANDS: run_command" in said)
         self.assertNotIn("closed to this work", environment_rules("C:/work", "x"))
         # A way is never told it is one of several being compared.
         for words in ("debugger", "variant", "other two ways", "benchmark"):

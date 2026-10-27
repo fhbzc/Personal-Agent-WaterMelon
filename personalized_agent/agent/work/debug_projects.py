@@ -64,6 +64,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import as_of
 from .runner import FULL, NO_CONTEXT, SINGLE, TOTAL_TOKENS, work_scope
 
 log = logging.getLogger(__name__)
@@ -887,6 +888,7 @@ class DebugProjects:
             for run_id in [one for one, run in list(self.work._running.items())
                            if run.unit.get("id") == unit_id]:
                 self.work._running.pop(run_id, None)
+        as_of.forget(self.db, [ref_of(row["id"], n) for n in tries_of(row["folder"])])
         self.db.execute("DELETE FROM debug_projects WHERE id = ?", (row["id"],))
         return {"removed": row["id"]}
 
@@ -958,6 +960,7 @@ class DebugProjects:
                 for run_id in [one for one, run in list(self.work._running.items())
                                if run.unit.get("id") == unit_id]:
                     self.work._running.pop(run_id, None)
+            as_of.forget(self.db, [ref])
             for one in sessions:
                 try:
                     if os.path.isdir(one) and not os.path.islink(one):
@@ -1070,6 +1073,12 @@ class DebugProjects:
         for run_id in [one for one, run in list(self.work._running.items())
                        if run.unit.get("id") == unit_id]:
             self.work._running.pop(run_id, None)
+        # Its try with no run left begins again: what the user's work was is
+        # copied again at its new start (as_of.py).
+        ref = ref_of(row["id"], try_n)
+        if not self.db.query_one("SELECT id FROM work_runs WHERE unit_id IN (?, ?, ?)",
+                                 tuple(unit_id_of(ref, one) for one in VARIANTS)):
+            as_of.forget(self.db, [ref])
         return {"cleared": unit_id, "variant": variant, "folder": str(way),
                 "emptied": emptied, **counts,
                 "project": self.project(ref_of(row["id"], try_n))}

@@ -30,17 +30,22 @@ Each of these is load-bearing:
 from __future__ import annotations
 
 import collections
+import hashlib
+import copy
 import logging
 import os
 import threading
 import time
+import types
 from typing import Any, Dict, List, Optional, Tuple
 
-from ...common.events.models import ListenerEvent
+from ...common.events.models import ListenerEvent, new_id
 from ...platform_layer import get_platform
+from ...platform_layer.window_text import is_wechat_application
 from ...version import APP_NAME, FORMER_NAMES
 from ..core.provider import ListenerProvider, NotOnThisMachine, PluginManifest
 from ..core.manager import STOPPING_GRACE_SECONDS
+from . import fast_reading
 
 log = logging.getLogger(__name__)
 
@@ -84,12 +89,30 @@ class ScreenProvider(ListenerProvider):
     #: when they finally switched windows.
     HOLD_AT_MOST_SECONDS = 180.0
 
-    def __init__(self, config: Any, platform: Any = None) -> None:
+    #: How often the window in front is asked after - its application and
+    #: title alone, a fraction of a millisecond - so a window read often
+    #: (fast_reading.py) is known within a second of coming to the front.
+    FOCUS_CHECK_SECONDS = 1.0
+
+    def __init__(self, config: Any, platform: Any = None, bus: Any = None) -> None:
         super().__init__()
         self.config = config
         self.platform = platform or get_platform()
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
+        self.bus = bus
+        self._wake = threading.Event()
+        self._unsubscribe = None
+        self._front_application = ''
+        self._front_title = ''
+        self._was_fast = False
+        self._typing = False
+        self._next_read_at = 0.0
+        self._last_read_started_at = None
+        #: FAST SAMPLING (fast_reading.py): how often a window read often is
+        #: looked at, and whether it is read.
+        self._pace = fast_reading.Pace(config)
+        self._wechat_visit = None
         self._seen: "collections.OrderedDict[int, Tuple[float, set]]" = \
             collections.OrderedDict()
         #: What has been read in the window in front and not yet reported:
@@ -120,12 +143,22 @@ class ScreenProvider(ListenerProvider):
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
+        self._next_read_at = 0.0
+        self._last_read_started_at = None
+        self._was_fast = False
+        self._pace.forget()
+        if self.bus is not None and self._unsubscribe is None:
+            self._unsubscribe = self.bus.subscribe('listener.application.focused', self._focus_changed)
         self._thread = threading.Thread(target=self._loop, name="listener-screen",
                                         daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
+        self._wake.set()
+        if self._unsubscribe is not None:
+            self._unsubscribe()
+            self._unsubscribe = None
         if self._thread:
             self._thread.join(timeout=STOPPING_GRACE_SECONDS)
             self._thread = None
@@ -137,30 +170,133 @@ class ScreenProvider(ListenerProvider):
     def _loop(self) -> None:
         while not self._stop.is_set():
             try:
-                self._look()
+                delay = self._tick()
             except Exception as exc:       # one unreadable window is not fatal
                 self.record_error(str(exc)[:200])
-            self._stop.wait(self._interval())
+                delay = self._interval()
+            self._wake.wait(delay)
+
+    def _front(self) -> Any:
+        """The window in front - its application, title and process - asked
+        cheaply: no reading, no picture."""
+        ask = getattr(self.platform.activity, 'get_active_window', None)
+        if callable(ask):
+            try:
+                return ask()
+            except Exception:
+                return None
+        return None
+
+    def _tick(self) -> float:
+        """One turn of the loop: which window is in front, and - a window
+        read often - a look at it, read when it changed; any other window
+        read at the ordinary interval."""
+        requested = self._wake.is_set()
+        self._wake.clear()
+        now = time.monotonic()
+        front = self._front()
+        if front is not None:
+            self._front_application = front.application or ''
+            self._front_title = front.title or ''
+        peek = getattr(self.platform.activity, 'peek_foreground_application', None)
+        if callable(peek):
+            self._front_application = peek() or self._front_application
+            if front is None and self._front_application:
+                # The application alone, where that is all that is asked.
+                front = types.SimpleNamespace(application=self._front_application,
+                                              title=self._front_title, pid=None)
+        fast = (front is not None and self._allowed_front(front)
+                and fast_reading.wanted(self.config, self._front_application, self._front_title))
+        if not fast:
+            if self._was_fast:
+                self._pace.forget()
+                self._wechat_visit = None
+                # Back from a window read often: the ordinary interval from now.
+                self._next_read_at = now + self._interval()
+            self._was_fast = False
+            if requested and self._last_read_started_at is None or now >= self._next_read_at:
+                self._last_read_started_at = now
+                try:
+                    self._look()
+                finally:
+                    self._next_read_at = now + self._interval()
+            return max(0.1, min(self._next_read_at - time.monotonic(), self.FOCUS_CHECK_SECONDS))
+        if not self._was_fast:
+            self._pace.forget()
+        self._was_fast = True
+        # Only how long since a key was pressed - never which key.
+        self._typing = self._recent_keyboard_input()
+        picture = None
+        image_of = getattr(self.platform.activity, 'front_window_image', None)
+        if callable(image_of):
+            try:
+                picture = fast_reading.fingerprint(image_of())
+            except Exception:
+                picture = None
+        changed = self._pace.looked(
+            (self._front_application, self._front_title, getattr(front, 'pid', None)),
+            picture, now)
+        if self._pace.read_now(changed or requested, self._typing, now):
+            self._last_read_started_at = now
+            began = time.monotonic()
+            try:
+                self._look()
+            finally:
+                # Never overlapped: the next look is counted from the end.
+                self._pace.took(now, time.monotonic() - began)
+        return self._pace.interval(self._typing, time.monotonic())
+
+    def _focus_changed(self, _topic, payload) -> None:
+        self._front_application = payload.get('application') or ''
+        if not is_wechat_application(self._front_application):
+            self._wechat_visit = None
+        # A window come to the front is looked at now - and, read often,
+        # read if it changed.
+        self._wake.set()
+
+    def settings_changed(self) -> None:
+        self._wake.set()
 
     def _interval(self) -> float:
+        if self._was_fast:
+            return self._pace.interval(self._typing, time.monotonic())
         try:
             asked = float(self.config.get("listener_screen_interval_seconds", 5.0))
         except (TypeError, ValueError):
             asked = 5.0
-        # Reading a busy page costs about a third of a second, so asking much
-        # more often than this would spend a noticeable slice of a core doing
-        # it. Nothing downstream reads any of this in real time.
+        # Other windows keep their configured interval and their sittings.
         return max(2.0, asked)
+
+    def _recent_keyboard_input(self) -> bool:
+        if (not self.config.get('listener_enabled', True)
+                or not self.config.get('listener_screen_enabled', True)):
+            return False
+        ask = getattr(self.platform.activity, 'seconds_since_keyboard_input', None)
+        if not callable(ask):
+            return False
+        try:
+            age = ask()
+            return age is not None and 0 <= float(age) <= fast_reading.TYPING_SECONDS
+        except Exception:
+            return False
 
     # -- the reading --------------------------------------------------------
     def _look(self) -> None:
-        if not bool(self.config.get("listener_screen_enabled", True)):
+        if (not bool(self.config.get("listener_screen_enabled", True))
+                or not bool(self.config.get("listener_enabled", True))):
+            self._gathering = None
+            self._pace.forget()
             return
         if not self._somebody_is_here():
+            # Not read while away: what changed meanwhile is read on return.
+            self._pace.forget()
             return
         reading = self._read_the_front()
         if reading is None:
+            # Failed/blocked/skipped reads are not proof of a quiet window.
+            self._pace.forget()
             return
+        self._front_application = reading.application or ''
         self._readings += 1
         self._milliseconds += reading.milliseconds
         if self._is_the_agent_itself(reading):
@@ -168,6 +304,45 @@ class ScreenProvider(ListenerProvider):
             return
         if self._excluded(reading.application, reading.title):
             self._skipped += 1
+            return
+        structured = getattr(reading, 'wechat_capture', None)
+        if is_wechat_application(reading.application) and structured:
+            peer_name = str(structured.get('peer_name') or '')
+            if self._excluded(reading.application, peer_name):
+                self._skipped += 1
+                return
+            self.flush_what_is_gathered()
+            if self._wechat_visit is None:
+                self._wechat_visit = new_id('wechat_visit')
+            capture = copy.deepcopy(structured)
+            remaining = len(self._trimmed('x' * 16000))
+            kept = []
+            for message in reversed(capture.get('messages') or []):
+                text = str(message.get('text') or '')
+                if remaining <= 0:
+                    capture['content_truncated'] = True
+                    break
+                if len(text) > remaining:
+                    message['text'] = text[-remaining:]
+                    message['text_truncated'] = True
+                    capture['content_truncated'] = True
+                kept.append(message)
+                remaining -= min(len(text),remaining)
+            capture['messages'] = list(reversed(kept))
+            unresolved = str(capture.get('unresolved_text') or '')
+            if len(unresolved) > remaining:
+                capture['content_truncated'] = True
+            capture['unresolved_text'] = unresolved[-remaining:] if remaining else ''
+            capture['scope_id'] = f'{self._wechat_visit}:{reading.pid}:{reading.handle}'
+            self._recorded += 1
+            self.emit(ListenerEvent(event_type='screen.text', source=self.provider_id,
+                application=reading.application, data={
+                    'application': reading.application, 'window_title': reading.title,
+                    'handle': int(reading.handle or 0), 'text': reading.text,
+                    'characters': len(reading.text), 'readings': 1, 'over_seconds': 0,
+                    'how': reading.how, 'milliseconds': round(reading.milliseconds, 1),
+                    'capture_scope': reading.capture_scope, 'wechat_capture': capture},
+                metadata={'platform': getattr(self.platform, 'name', '')}))
             return
         # How much of this window was text - the screenshot provider's
         # measure of what reading it missed.
@@ -184,7 +359,12 @@ class ScreenProvider(ListenerProvider):
             return
         self._gathered += 1
         self._gather(reading, fresh)
-        self._report_if_it_is_time(reading)
+        if is_wechat_application(reading.application):
+            # Short chat visits cannot wait for the ordinary three-minute
+            # buffer. Deduplication still happens before immediate emission.
+            self.flush_what_is_gathered()
+        else:
+            self._report_if_it_is_time(reading)
 
     # -- gathering ---------------------------------------------------------
     def _gather(self, reading: Any, fresh: str) -> None:
@@ -196,7 +376,11 @@ class ScreenProvider(ListenerProvider):
         an interleaving of two.
         """
         held = self._gathering
-        if held is not None and held["handle"] != reading.handle:
+        chat_changed = (held is not None
+                        and (is_wechat_application(held["application"])
+                             or is_wechat_application(reading.application))
+                        and (held["title"], held["how"]) != (reading.title, reading.how))
+        if held is not None and (held["handle"] != reading.handle or chat_changed):
             self._report(held)
             held = None
         if held is None:
@@ -208,13 +392,13 @@ class ScreenProvider(ListenerProvider):
                     "readings": 0,
                     "milliseconds": 0.0,
                     "how": reading.how}
+            held['capture_scope'] = getattr(reading, 'capture_scope', '')
             self._gathering = held
         held["lines"].append(fresh)
         held["readings"] += 1
         held["milliseconds"] += reading.milliseconds
-        # The title is the newest one: a browser tab that has been navigated
-        # is still the same sitting, and what it ended up on is the useful
-        # half of what it was.
+        # Chat title changes separate conversations. Other applications keep
+        # upstream's sitting behavior and retain the newest window title.
         held["title"] = reading.title
 
     def _report_if_it_is_time(self, reading: Any) -> None:
@@ -262,16 +446,28 @@ class ScreenProvider(ListenerProvider):
                 "over_seconds": round(max(0.0, time.time() - held["since"]), 1),
                 "how": held["how"],
                 "milliseconds": round(held["milliseconds"], 1),
+                "capture_scope": held.get('capture_scope', ''),
             },
             metadata={"platform": getattr(self.platform, "name", "")},
         ))
 
     def _read_the_front(self) -> Any:
         activity = getattr(self.platform, "activity", None)
+        guarded = getattr(activity, "text_in_front_allowed", None)
+        if guarded is not None:
+            return guarded(self._allowed_front)
         read = getattr(activity, "text_in_front", None)
         if read is None:
             return None
         return read()
+
+    def _allowed_front(self, front: Any) -> bool:
+        from ..core.privacy import PrivacyFilter
+        privacy = PrivacyFilter(self.config)
+        return (privacy.category_enabled("screen")
+                and privacy.application_allowed(front.application)
+                and not self._excluded(front.application, front.title)
+                and not self._is_the_agent_itself(front))
 
     def _somebody_is_here(self) -> bool:
         """The same question the filesystem provider asks, for the same reason.
@@ -471,7 +667,16 @@ class ScreenProvider(ListenerProvider):
             "furniture_lines_dropped": self._furniture_dropped,
             "repeated_lines_dropped": self._repeats_dropped,
             "average_milliseconds": round(average, 1),
-            "last_error": self.last_error,
+            "effective_interval_seconds": round(self._interval(), 1),
+            # FAST SAMPLING: whether the window in front is one read often,
+            # and how it is paced.
+            "fast": dict(self._pace.status(), in_front=self._was_fast,
+                         typing=self._typing),
+            "wechat_immediate_write": True,
+            "focus_check_seconds": self.FOCUS_CHECK_SECONDS,
+            "last_error": self._why_not() or self.last_error,
+            "reader": (self.platform.activity.window_text_status()
+                       if hasattr(self.platform.activity, "window_text_status") else {}),
         }
 
     def supported_event_types(self) -> List[str]:
@@ -485,7 +690,7 @@ class ScreenProvider(ListenerProvider):
         return PluginManifest(
             plugin_id=self.provider_id,
             version="1.0.0",
-            supported_platforms=["windows"],
+            supported_platforms=["windows", "macos"],
             supported_event_types=self.supported_event_types(),
             required_permissions=["accessibility"],
             configuration_schema={

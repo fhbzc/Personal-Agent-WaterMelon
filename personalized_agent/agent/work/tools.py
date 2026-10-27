@@ -25,6 +25,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import threading
 import time
 import urllib.error
@@ -32,11 +33,12 @@ import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ...models.base import ToolSpec
 from ...runtime.filesystem import validate_read_path
 from ...runtime.permissions import SecurityViolation
+from . import fetching, notebooks
 from .versions import LOGS_DIR, SLIDES_DIR
 
 #: How much of a page or file is handed back in one call.
@@ -223,8 +225,14 @@ def search(query: str, limit: int = 8, timeout: float = 20.0,
 
 #: The tools that change something - offered only while a stage is being
 #: carried out. A job is code running: its tools go with run_python.
-WRITING_TOOLS = ("write_file", "delete_file", "run_python", "install_packages",
-                 "job_status", "stop_job")
+WRITING_TOOLS = ("write_file", "edit_file", "edit_notebook", "delete_file", "run_python",
+                 "run_tests",
+                 "run_command", "install_packages", "download", "git_fetch",
+                 "job_status", "stop_job", "wait_for", "run_outside",
+                 "request_approval", "hand_over")
+#: A job's own tools: whoever may start one (run_python, run_tests) may look
+#: at it, wait for it and stop it - even where nothing else is written.
+JOB_TOOLS = ("job_status", "stop_job", "wait_for")
 
 #: RUN_PYTHON: how long a call waits for its code - unless asked, and at
 #: most - and how much of what it printed comes back.
@@ -238,8 +246,236 @@ MOST_PRINTED = 20000
 MOST_JOBS = 3
 JOB_SECONDS = 1800
 JOB_MOST_SECONDS = 3600
-JOB_MOST_WAIT = 600
 JOB_TAIL = 8000
+#: What job_status says of a job still running (the user, 2026-10-25: seen in
+#: try 6, half its calls only "running" - the model asking again and again),
+#: and what a second call waiting on a job one is waiting on already is told.
+STILL_RUNNING_NOTE = (
+    "Still running. Do not ask again and again: when there is nothing else to do, "
+    "wait_for job={job} - ONE call, which returns when the job ends (or, with output, "
+    "a regular expression, when it prints the line you are after); meanwhile go on "
+    "with other work - every tool's result says when a job ended (jobs_ended).")
+ALREADY_WAITING_NOTE = (
+    "Already being waited for: another call of yours has been waiting on {job} for "
+    "{seconds}s, and answers when it ends or that wait is over. This call did not wait "
+    "- do not wait twice for the same job.")
+#: WAIT_FOR (the user, 2026-10-25: watched, as Claude Code's Monitor does):
+#: how long one call waits at most for a file or a server - then it says it
+#: is still waiting, and the agent decides whether to wait again - and how
+#: often it looks. WAITING ON A JOB HAS NO LIMIT OF ITS OWN (the user,
+#: 2026-10-25, after try 6 - about twenty calls a way came back only to say
+#: "still running", each a whole model turn): it lasts until the job ends,
+#: which its own time bounds - WAIT_JOB_MOST only in case one never says so.
+#: Nothing cuts a long wait short: Claude Code's watch counts an agent's tool
+#: at work as no silence, and its and Codex's tool timeouts are a day.
+WAIT_MOST = 300
+WAIT_JOB_MOST = JOB_MOST_SECONDS + 60
+WAIT_LOOK = 1.0
+#: How often a job's own server is tried, from inside the sandbox.
+WAIT_URL_LOOK = 4.0
+
+#: RUN_COMMAND (the user, 2026-10-25: commands, as Claude Code runs them -
+#: in the same sandbox): the shells a command may run in, the first the one
+#: used unless another is asked for. ON WINDOWS cmd alone, measured in the
+#: AppContainer: Windows PowerShell cannot find its own file system there
+#: (the drive's root is not open to a container), so it starts no program
+#: and knows no folder; Git Bash's runtime does not even start (0xC0000142).
+SHELLS_WINDOWS = ("cmd",)
+SHELLS_POSIX = ("bash", "sh")
+#: How a command runs: written to a script of its own in the work's runtime
+#: folder - no quoting to get wrong - and run by its shell from code run as
+#: run_python's is, so every rule of the sandbox holds for it and for all it
+#: starts. What it prints, both streams as one, line by line in UTF-8 (a
+#: line that is not, in the system's own code page).
+COMMAND_CODE = """import os, subprocess, sys
+env = dict(os.environ)
+env.update({env!r})
+for name, first in {prepend!r}.items():
+    env[name] = os.pathsep.join([first] + [one for one in [env.get(name, "")] if one])
+child =subprocess.Popen({argv!r}, cwd={cwd!r}, env=env, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+for line in child.stdout:
+    try:
+        text = line.decode("utf-8")
+    except UnicodeDecodeError:
+        text = line.decode("oem" if os.name == "nt" else "latin-1", "replace")
+    sys.stdout.write(text.replace("\\r\\n", "\\n"))
+    sys.stdout.flush()
+sys.exit(child.wait())
+"""
+#: PYTHON A COMMAND STARTS does not start through the guard, so it is without
+#: the guard's mending of os.mkdir(path, 0o700) on Windows (runtime/guard.py):
+#: in the AppContainer pytest's tmp_path then made folders the container is
+#: refused (measured, try 6: PermissionError on pytest-N\.lock, and the old
+#: ones never cleaned). That mending alone is given to it - a sitecustomize
+#: first on PYTHONPATH, which then loads whatever sitecustomize comes after it.
+COMMAND_PYTHON_FOLDER = "python"
+COMMAND_PYTHON_FIX = '''"""Given by the agent's sandbox to Python started by a command: on
+Windows, os.mkdir(path, 0o700) makes a folder only its user may enter - which
+a process in an AppContainer is refused - so 0o700 is made the plain mode."""
+import os
+import sys
+
+if os.name == "nt":
+    _plain_mkdir = os.mkdir
+
+    def _mkdir(path, mode=0o777, *args, **kwargs):
+        return _plain_mkdir(path, 0o777 if mode == 0o700 else mode, *args, **kwargs)
+
+    os.mkdir = _mkdir
+
+# Whatever sitecustomize comes after this one on the path is loaded as well.
+_here = os.path.normcase(os.path.dirname(os.path.abspath(__file__)))
+_this = sys.modules.get(__name__)
+_path = sys.path[:]
+sys.path[:] = [one for one in sys.path
+               if os.path.normcase(os.path.abspath(one or ".")) != _here]
+sys.modules.pop(__name__, None)
+try:
+    import sitecustomize  # noqa: F401
+except ImportError as exc:
+    if exc.name != "sitecustomize":
+        raise
+    sys.modules[__name__] = _this
+finally:
+    sys.path[:] = _path
+'''
+#: PROGRAMS A COMMAND MAY NOT CALL ON WINDOWS - refused at once, nothing run,
+#: with why, rather than the error they end in, which explains nothing
+#: (measured, try 6: in the AppContainer PowerShell took collective\server.py
+#: for C:\collective\server.py). Called as a program: first on a line, after
+#: & | ( or call, start, cmd /c - with or without a folder and .exe.
+SHELL_NOT_HERE = re.compile(
+    r'(?im)(?:^|[&|(]|\b(?:call|start(?:\s+/\w+)*(?:\s+"[^"]*")?|cmd(?:\.exe)?(?:\s+/\w+)*)\s)'
+    r'\s*@?"?(?:[^\s"&|<>()]*[\\/])?(powershell|pwsh|bash|wsl|sh)(?:\.exe)?"?(?=[\s&|)]|$)')
+SHELL_NOT_HERE_SAID = {
+    "powershell": "PowerShell does not work in this sandbox: in a Windows AppContainer it "
+                  "cannot see the file system - a relative path becomes one under C:\\ - and "
+                  "starts no program. Nothing was run. Say it in cmd (type, more +N, "
+                  "findstr /n, dir /s /b, ...), or read and search with read_file, "
+                  "search_files or run_python.",
+    "bash": "Git Bash, WSL and sh do not start in this sandbox (their runtime fails, "
+            "0xC0000142). Nothing was run. Say it in cmd, or do it in run_python.",
+}
+
+
+def shell_not_here(command: str, shell: str = "") -> str:
+    """Why a command cannot run here, on Windows: it asks for, or calls,
+    a shell that does not work in the sandbox (`SHELL_NOT_HERE`); '' when
+    it may run."""
+    if os.name != "nt":
+        return ""
+    names = [shell.strip().lower()] + [one.lower() for one in SHELL_NOT_HERE.findall(command)]
+    for name in names:
+        if name in ("powershell", "pwsh"):
+            return SHELL_NOT_HERE_SAID["powershell"]
+        if name in ("bash", "wsl", "sh"):
+            return SHELL_NOT_HERE_SAID["bash"]
+    return ""
+
+
+def commands_allowed(runtime: Any = None) -> bool:
+    """Whether commands may run here: only where the operating system
+    confines every program on its own - an AppContainer, Seatbelt or
+    bubblewrap - as the guard lets them start (runtime/guard.py,
+    `other_program`); never with the sandbox off or in a packaged build."""
+    if runtime is not None and not getattr(runtime, "sandbox_enabled", True):
+        return False
+    from ...runtime.isolation import isolation_status
+    try:
+        status = isolation_status()
+    except Exception:
+        return False
+    return (bool(status.get("isolated"))
+            and status.get("backend") in ("appcontainer", "seatbelt", "bubblewrap")
+            and not getattr(sys, "frozen", False))
+
+
+def shells() -> Dict[str, str]:
+    """The shells on this computer, by name: the system's cmd on Windows
+    (`SHELLS_WINDOWS`), bash and sh elsewhere."""
+    found: Dict[str, str] = {}
+    if os.name == "nt":
+        cmd = Path(os.environ.get("SystemRoot") or r"C:\Windows") / "System32" / "cmd.exe"
+        if cmd.is_file():
+            found["cmd"] = str(cmd)
+        return found
+    for name in SHELLS_POSIX:
+        path = shutil.which(name) or (f"/bin/{name}" if Path(f"/bin/{name}").is_file() else "")
+        if path:
+            found[name] = path
+    return found
+
+
+def programs_to_read() -> List[Path]:
+    """The folders on PATH a command's programs are in that the sandbox
+    would otherwise not open: those under where sign-ins are kept (AppData
+    on Windows - node, say, installed per user), each named on its own, so
+    that what is around it stays shut. Never WindowsApps: its programs are
+    links into installed apps."""
+    from ...runtime.filesystem import is_inside
+    from ...runtime.isolation import credential_stores
+    try:
+        stores = credential_stores()
+    except Exception:
+        return []
+    out: List[Path] = []
+    for one in (os.environ.get("PATH") or "").split(os.pathsep):
+        one = one.strip().strip('"')
+        if not one or "windowsapps" in one.lower():
+            continue
+        path = Path(one)
+        try:
+            if path.is_dir() and any(is_inside(path, store) for store in stores) \
+                    and path not in out:
+                out.append(path)
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def command_environment(home: Path) -> Dict[str, str]:
+    """What a command's shell is given besides the sandbox's own clean
+    environment: where programs are installed and the system's settings
+    folders (none of them the user's), the per-user folders pointed into
+    the work's runtime folder, and every prompt turned off - nothing waits
+    for an answer that never comes."""
+    env = {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never",
+           "NO_UPDATE_NOTIFIER": "1", "npm_config_update_notifier": "false",
+           "CI": "1", "TERM": "dumb"}
+    if os.name == "nt":
+        for key in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "CommonProgramFiles",
+                    "CommonProgramFiles(x86)", "CommonProgramW6432", "ProgramData",
+                    "SystemDrive", "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "OS"):
+            if os.environ.get(key):
+                env[key] = os.environ[key]
+        env["APPDATA"] = str(home / "roaming")
+        env["LOCALAPPDATA"] = str(home / "local")
+    else:
+        env["LANG"] = os.environ.get("LANG") or "C.UTF-8"
+        env["XDG_CONFIG_HOME"] = str(home / "config")
+        env["XDG_CACHE_HOME"] = str(home / "cache")
+    return env
+
+
+def command_script(shell: str, command: str) -> Tuple[str, str]:
+    """(the script's text, its extension) for a command in a shell: cmd's
+    in UTF-8 from its second line on (chcp 65001)."""
+    if shell == "cmd":
+        lines = command.replace("\r\n", "\n").split("\n")
+        return "\r\n".join(["@echo off", "chcp 65001 >nul", *lines, ""]), ".cmd"
+    return command.replace("\r\n", "\n") + "\n", ".sh"
+
+
+def shell_argv(shell: str, program: str, script: Path, cwd: Path) -> List[str]:
+    if shell == "cmd":
+        # From the folder it starts in: in an AppContainer cmd.exe refuses a
+        # script named by its whole path ("Access is denied"), measured.
+        return [program, "/d", "/c", os.path.relpath(script, cwd)]
+    if shell == "bash":
+        return [program, "--noprofile", "--norc", script.as_posix()]
+    return [program, script.as_posix()]
+
 
 #: What the guard writes when the code ends while programs it started are
 #: still running (runtime/guard.py) - and what the result then says.
@@ -298,6 +534,191 @@ runpy.run_path({code!r}, run_name="__main__")
 MOST_FILES_WATCHED = 20000
 
 
+#: What a test run's copy leaves out: caches, the runtime's scratch, the
+#: packages and the run's saved versions - none of them what tests read.
+TEST_COPY_SKIPPED = ("__pycache__", ".pytest_cache", ".agent_runtime", ".packages",
+                     ".versions", ".session", "run_logs", ".git", "node_modules", ".mypy_cache")
+#: PYTEST'S ARGUMENTS THAT ONLY CHANGE HOW THE RESULT IS PRINTED - how
+#: much it says, which outcomes it lists, the slowest tests, the shape of a
+#: traceback, colour, the cache: the same tests run the same way whatever
+#: they are (the user, 2026-10-25). Left out when telling whether tests
+#: ran already; the run has TEST_REPORT instead, so whoever asks gets the
+#: whole report. "-p no:cacheprovider" is always given (TESTS_CODE).
+OUTPUT_ONLY_FLAGS = {"-q", "-qq", "-qqq", "--quiet", "-v", "-vv", "-vvv", "--verbose",
+                     "--no-header", "-l", "--showlocals", "--no-showlocals"}
+#: ... of which these two say how much of a FAILURE is shown - its
+#: traceback's style, its locals: a result with failures is given again
+#: only to one asking for them as it was run (`TestRuns.fits`).
+SHOWS_LOCALS = ("-l", "--showlocals")
+#: ... with their value joined ("--durations=10", "-rA", "--tb=short") or
+#: given after them ("--durations", "10").
+OUTPUT_ONLY_WITH_VALUE = ("--durations", "--durations-min", "--tb", "--color",
+                          "--code-highlight", "-r")
+#: What a result given again says first (`run_tests`).
+NOT_A_NEW_RUN = ("NOT A NEW RUN: these tests were not run now. This is the result of the run "
+                 "{by} made at {at} ({seconds} s) on exactly these files. Run them again with "
+                 "fresh=true when you judge you should - a test that may pass one time and fail "
+                 "the next (timing, threads, processes, ports), one that measures time or load, "
+                 "or a result you doubt.")
+#: How every test run reports: each test's outcome, the 50 slowest.
+TEST_REPORT = ["-q", "-rA", "--durations=50"]
+#: A folder of more than this many files, or bytes, is not looked at to
+#: tell whether its tests ran: they are run.
+TEST_FILES_MOST = 5000
+TEST_BYTES_MOST = 200 * 1024 * 1024
+
+#: A run's own folder's name (runner.py: "run_" and 16 hex digits).
+RUN_FOLDER = re.compile(r"^run_[0-9a-f]{16}$")
+
+TESTS_CODE = """import os, re, shutil, subprocess, sys
+SRC = {src!r}
+DST = {dst!r}
+SKIP = set({skip})
+RUN = re.compile(r"^run_[0-9a-f]{{16}}$")
+
+
+def ignore(folder, names):
+    return [one for one in names if one in SKIP
+            or (os.path.basename(folder) == "runs" and RUN.match(one))]
+
+
+if os.path.exists(DST):
+    shutil.rmtree(DST)
+shutil.copytree(SRC, DST, ignore=ignore)
+env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+done = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *{args}],
+                      cwd=DST, env=env)
+sys.exit(done.returncode)
+"""
+
+
+class TestRuns:
+    """TESTS THAT RAN, BY EXACTLY WHAT THEY RAN ON (the user, 2026-10-24):
+    the content of every file of the folder - read whole and hashed, not
+    told by its time - the arguments, the packages and the Python. Only
+    exactly the same key gives a result again; a folder too large to read
+    whole gives none, and its tests are run."""
+
+    __test__ = False                     # not a test class, whatever pytest thinks
+
+    def __init__(self) -> None:
+        self._kept: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def key(folder: Path, args: Sequence[str], packages: Optional[List[Path]]) -> str:
+        """The folder's files by their content, each with its path in it;
+        the packages installed by what pip leaves of each (its path, size
+        and time - an install changes them); the arguments; the Python."""
+        import hashlib
+        import platform
+        digest = hashlib.sha256()
+        digest.update(json.dumps({"args": list(args), "python": sys.version,
+                                  "implementation": platform.python_implementation(),
+                                  "skip": TEST_COPY_SKIPPED}).encode("utf-8"))
+        files = total = 0
+        for path in sorted(_files_under(Path(folder), skip=TEST_COPY_SKIPPED)):
+            files += 1
+            try:
+                data = path.read_bytes()
+            except OSError:
+                return ""
+            total += len(data)
+            if files > TEST_FILES_MOST or total > TEST_BYTES_MOST:
+                return ""
+            digest.update(str(path.relative_to(folder)).replace("\\", "/").encode("utf-8")
+                          + b"\0" + hashlib.sha256(data).digest())
+        for root in packages or []:
+            digest.update(b"\0PACKAGES\0" + str(root).encode("utf-8"))
+            for path in sorted(_files_under(Path(root))):
+                try:
+                    seen = path.stat()
+                except OSError:
+                    return ""
+                digest.update(f"{path.relative_to(root)}|{seen.st_size}|{seen.st_mtime_ns}"
+                              .encode("utf-8"))
+        return digest.hexdigest()
+
+    @staticmethod
+    def fits(kept: Dict[str, Any], failures_shown: Sequence[str]) -> bool:
+        """A kept result, for one asking for failures to be shown so: one
+        that passed has none to show; one with failures, only when they
+        were shown as now asked - the traceback style, the locals."""
+        result = kept.get("result") or {}
+        if result.get("returncode") == 0:
+            return True
+        ran = [one for one in kept.get("ran_with") or []
+               if one.startswith("--tb=") or one == "-l"]
+        return sorted(ran) == sorted(failures_shown)
+
+    def get(self, key: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            kept = self._kept.get(key)
+            return json.loads(json.dumps(kept, default=str)) if kept else None
+
+    def put(self, key: str, result: Dict[str, Any], by: str, seconds: float,
+            ran_with: Sequence[str] = ()) -> None:
+        with self._lock:
+            self._kept[key] = {"result": result, "by": by, "seconds": seconds,
+                               "ran_with": list(ran_with), "at": time.strftime("%H:%M:%S")}
+
+
+def _a_runs_own(parent: str, name: str) -> bool:
+    """A run's own folder - runs/run_<id>: where the application keeps the
+    run's state and the reviewer's checks, changing as the run goes; not
+    the work (try 6: in it, no two test runs were ever the same)."""
+    return os.path.basename(parent) == "runs" and RUN_FOLDER.match(name) is not None
+
+
+def split_output_only(args: Sequence[str]) -> Tuple[List[str], List[str], List[str]]:
+    """The arguments that choose and run the tests; those that only change
+    how the result is printed (left out); and, of those, what a failure is
+    shown with - the traceback style, the locals - given to the run
+    ("--tb=long", "-l"), the last said winning."""
+    kept: List[str] = []
+    left: List[str] = []
+    tb = ""
+    locals_ = False
+    items = list(args)
+    i = 0
+    while i < len(items):
+        one = items[i]
+        if one in OUTPUT_ONLY_FLAGS:
+            left.append(one)
+            if one in SHOWS_LOCALS:
+                locals_ = True
+            elif one == "--no-showlocals":
+                locals_ = False
+        elif one == "-p" and i + 1 < len(items) and items[i + 1] == "no:cacheprovider":
+            left += [one, items[i + 1]]
+            i += 1
+        elif one in OUTPUT_ONLY_WITH_VALUE and i + 1 < len(items) \
+                and not items[i + 1].startswith("-"):
+            left += [one, items[i + 1]]
+            tb = items[i + 1] if one == "--tb" else tb
+            i += 1
+        elif any(one.startswith(flag + "=") for flag in OUTPUT_ONLY_WITH_VALUE if flag != "-r") \
+                or (one.startswith("-r") and len(one) > 2 and one[2:].isalpha()):
+            left.append(one)
+            tb = one.split("=", 1)[1] if one.startswith("--tb=") else tb
+        else:
+            kept.append(one)
+        i += 1
+    return kept, left, ([f"--tb={tb}"] if tb else []) + (["-l"] if locals_ else [])
+
+
+def _files_under(root: Path, skip: Sequence[str] = ()) -> List[Path]:
+    out: List[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [one for one in dirnames if one not in skip
+                       and not (skip and _a_runs_own(dirpath, one))]
+        for name in filenames:
+            if name.endswith((".pyc", ".pyo")):
+                continue
+            out.append(Path(dirpath) / name)
+    return out
+
+
 class WorkTools:
     """The tools of one agent in a run, bound to its runtime.
 
@@ -326,8 +747,9 @@ class WorkTools:
         #: Code that changes one anyway is caught when the round is checked,
         #: and the file is put back.
         self.locked: List[Path] = []
-        #: `install(packages, why)`: installs for the run - asking the user
-        #: first if that is their choice. None: no packages here.
+        #: `install(packages, why, ecosystem, folder)`: installs for the run
+        #: - pip's or npm's - asking the user first if that is their choice.
+        #: None: no packages here.
         self.install = install
         #: Where the run's packages are: first on run_python's path.
         self.packages_dir: Optional[Path] = None
@@ -352,19 +774,44 @@ class WorkTools:
         #: of the web: what fetch_url opens (`check_address`). The same
         #: guard holds a client's own web tools (`ModelRequest.web_guard`).
         self.guard = WebGuard()
+        #: THE READING TOOLS SIDE BY SIDE, everything else alone - within
+        #: the computer's limits (parallel.py); what each call says is
+        #: recorded one at a time.
+        from .parallel import ToolGate
+        self.gate = ToolGate()
+        self._log_lock = threading.Lock()
+        #: TESTS THAT RAN, by exactly what they ran on (`run_tests`): shared
+        #: by the work agent and the reviewer of one run (runner.py).
+        self.test_runs = TestRuns()
+        #: Who these tools are, in a result given again ("the work agent").
+        self.label = ""
         self.handlers: Dict[str, Callable[[Dict[str, Any]], Any]] = {
             "list_dir": self.list_dir, "read_file": self.read_file,
             "read_video": self.read_video, "find_files": self.find_files, "write_file": self.write_file,
+            "edit_file": self.edit_file, "run_tests": self.run_tests,
+            "edit_notebook": self.edit_notebook,
             "delete_file": self.delete_file,
-            "run_python": self.run_python, "web_search": self.web_search,
+            "run_python": self.run_python, "run_command": self.run_command,
+            "web_search": self.web_search,
             "install_packages": self.install_packages,
+            "download": self.download, "git_fetch": self.git_fetch,
             "fetch_url": self.fetch_url, "open_card": self.open_card,
             "search_stages": self.search_stages, "open_stage": self.open_stage,
             "job_status": self.job_status, "stop_job": self.stop_job,
+            "wait_for": self.wait_for, "delegate": self.hand_over,
+            "run_outside": lambda args: self.outside(args) if self.outside
+            else {"error": "the sandbox holds for this work"},
+            "request_approval": lambda args: self.approve(args) if self.approve
+            else {"error": "nothing here is asked of the user"},
             "search_records": self.search_records,
             "search_files": self.search_files,
             "open_case": self.open_case, "open_reason": self.open_reason,
+            "hand_over": self.give_to_user,
         }
+        #: WHAT THE USER GETS (handed.py): `on_hand_over(item)` keeps an item
+        #: the work hands over - set by the run whose work it is; None where
+        #: nothing is handed to the user (a helper, a reviewer).
+        self.on_hand_over: Optional[Callable[[Dict[str, Any]], Any]] = None
         #: WHAT WAS LEARNED OF THE USER'S WORK (learning/find.py), opened by
         #: id: set for the reviewer that has it - none for the work agent,
         #: nor for the way with no context.
@@ -377,6 +824,24 @@ class WorkTools:
         #: set by the run that may: none for the single model, or for the
         #: way with no context.
         self.files_index: Any = None
+        #: A WORK DEBUGGER WAY'S CUTOFF (as_of.py): no file the index finds
+        #: that changed after its try began. None: every one.
+        self.as_of: Any = None
+        #: `delegate(args)`: a task handed to a helper agent (runner.py,
+        #: `Run._delegate`), and the kinds of helper it may be - None where
+        #: there are none: a helper has none of its own.
+        self.delegate: Optional[Callable[[Dict[str, Any]], Any]] = None
+        #: Asked before every call: True when a helper's job was stopped -
+        #: its tools then refuse, and it answers with what it has.
+        self.halted: Callable[[], bool] = lambda: False
+        #: WITHOUT THE SANDBOX (unconfined.py), set by the run that has it:
+        #: `outside(args)` runs a command on this computer, judged first;
+        #: `approve(args)` asks the user to approve one that was refused.
+        #: None: the sandbox holds.
+        self.outside: Optional[Callable[[Dict[str, Any]], Any]] = None
+        self.approve: Optional[Callable[[Dict[str, Any]], Any]] = None
+        #: A helper's: the tools of the agent that handed it its task.
+        self.parent_tools: Any = None
 
     @property
     def folder(self) -> Path:
@@ -392,13 +857,21 @@ class WorkTools:
         reading ones while it is planned or judged. Packages only where
         something can install them."""
         every = self._specs()
+        runs_code = tuple(self.runs_code)
+        if {"run_python", "run_tests"} & set(runs_code):
+            runs_code += JOB_TOOLS
         # Cards and past stages only where there are some to open or search:
         # the Experience debugger's single model has neither.
         return [one for one in every if (writing or one.name not in WRITING_TOOLS
-                                         or one.name in self.runs_code)
+                                         or one.name in runs_code)
                 and (self.only is None or one.name in self.only)
                 and (one.name != "install_packages" or self.install is not None)
+                and (one.name != "run_command" or commands_allowed(self.runtime))
+                and (one.name != "delegate" or self.delegate is not None)
+                and (one.name != "run_outside" or self.outside is not None)
+                and (one.name != "request_approval" or self.approve is not None)
                 and (one.name != "open_card" or self.cards is not None)
+                and (one.name != "hand_over" or self.on_hand_over is not None)
                 and (one.name != "search_stages" or self.find is not None)
                 and (one.name != "search_records" or self.records_db is not None)
                 and (one.name != "search_files" or self.files_index is not None)
@@ -406,6 +879,13 @@ class WorkTools:
                 and (one.name not in ("open_case", "open_reason") or self.learned is not None)]
 
     def _specs(self) -> List[ToolSpec]:
+        from .parallel import READ_ONLY
+        specs = self._all_specs()
+        for one in specs:
+            one.read_only = one.name in READ_ONLY
+        return specs
+
+    def _all_specs(self) -> List[ToolSpec]:
         where = ", ".join(str(one) for one in self.writable)
         return [
             ToolSpec("list_dir", "List a folder: its files and subfolders, with each "
@@ -456,6 +936,33 @@ class WorkTools:
                               "content": {"type": "string"},
                               "append": {"type": "boolean"}},
                              ["path", "content"])),
+            ToolSpec("edit_file", "Change PART of a text file in place: each edit "
+                     "replaces old_text - copied exactly from the file, and found in it "
+                     "exactly once (add lines around it to make it so) - with new_text. "
+                     "The edits are applied in order, all or none. ONLY inside: " + where
+                     + ". Faster than writing the whole file again: use it to change a "
+                     "file that exists, write_file for a new one or one rewritten whole.",
+                     _schema({"path": {"type": "string"},
+                              "edits": {"type": "array", "items": {
+                                  "type": "object",
+                                  "properties": {"old_text": {"type": "string"},
+                                                 "new_text": {"type": "string"}},
+                                  "required": ["old_text", "new_text"]}}},
+                             ["path", "edits"])),
+            ToolSpec("edit_notebook", "Change ONE CELL of a Jupyter notebook (.ipynb) - "
+                     "everything else in it kept as it is. cell: its number (from 0, as "
+                     "read_file shows the notebook) or its id. mode: replace (the default: "
+                     "its source becomes source), insert (a new cell before that one; the "
+                     "number of cells puts it at the end) or delete. cell_type: code, "
+                     "markdown or raw (a new cell is code unless you say). A code cell "
+                     "changed loses its outputs. ONLY inside: " + where + ". Run a "
+                     "notebook with run_command (jupyter nbconvert --to notebook --execute).",
+                     _schema({"path": {"type": "string"},
+                              "cell": {"type": "string"},
+                              "mode": {"type": "string", "enum": list(notebooks.MODES)},
+                              "cell_type": {"type": "string",
+                                            "enum": list(notebooks.CELL_TYPES)},
+                              "source": {"type": "string"}}, ["path", "cell"])),
             ToolSpec("delete_file", "Delete a file or a folder - ONLY inside: "
                      + where + ". The folders themselves cannot be deleted.",
                      _schema({"path": {"type": "string"}}, ["path"])),
@@ -483,29 +990,168 @@ class WorkTools:
                      _schema({"code": {"type": "string"},
                               "timeout": {"type": "integer"},
                               "background": {"type": "boolean"}}, ["code"])),
-            ToolSpec("job_status", "A job started with run_python background=true: "
-                     "whether it is still running and for how long, what it has "
-                     f"printed so far (the last {JOB_TAIL:,} characters) - and, once "
-                     "it has ended, its whole result, as run_python gives one. With "
-                     f"wait (seconds, at most {JOB_MOST_WAIT}) it waits until the job "
-                     "ends or that time passes: the way to wait for one. With no job, "
-                     "every job of this run. A job is stopped when the run ends.",
+            ToolSpec("run_command", "Run a COMMAND in a shell - "
+                     + ("cmd (Windows PowerShell and Git Bash do not work in this "
+                        "sandbox; one line or several, as in a .cmd file)" if os.name == "nt"
+                        else "bash (the default) or sh")
+                     + " - as a terminal would: git, node, npm run, a build, a server, "
+                     "anything installed on this computer. It runs under the SAME rules as "
+                     "run_python, kept by the operating system for every program it starts: "
+                     "it may write only inside: " + where + "; it reads what the work may "
+                     "read; it reaches NO network - so nothing is downloaded from here: "
+                     "packages with install_packages (pip or npm), repositories with "
+                     "git_fetch, files with download. It starts in the work's own folder "
+                     "unless cwd says another inside it; nothing is typed into it: a "
+                     "command that waits for input ends instead. Each call is a NEW shell: "
+                     "nothing carries over but files. THE CALL WAITS for the command to end "
+                     f"- timeout seconds, {RUN_SECONDS} unless you ask, at most "
+                     f"{RUN_MOST_SECONDS} - and returns its exit code, what it printed "
+                     f"(both streams together, the last {MOST_PRINTED:,} characters) and "
+                     "the files it changed; whatever it starts ends with it. "
+                     "background=true runs it as a JOB, as run_python does.",
+                     _schema({"command": {"type": "string"},
+                              "shell": {"type": "string"},
+                              "cwd": {"type": "string"},
+                              "timeout": {"type": "integer"},
+                              "background": {"type": "boolean"}}, ["command"])),
+            ToolSpec("run_tests", "Run a folder's tests with pytest - on a fresh copy of "
+                     "the folder, so nothing they write lands in it - always with the whole "
+                     "report: each test's outcome and the 50 slowest. args: which tests and "
+                     "how they run (a test file, -k, -x, -m, ...); arguments that only "
+                     "change the printing (-q, -v, -r..., --durations) need not be given; "
+                     "--tb and -l are what failures are shown with. WHEN EXACTLY THE SAME "
+                     "TESTS ALREADY RAN - every file of the "
+                     "folder the same, byte for byte, the same tests chosen, the same "
+                     "packages and the same Python - the result comes back at once, saying "
+                     "when it ran and who ran it; fresh=true "
+                     "runs them again all the same (a test you think is not steady). Use "
+                     "it rather than starting pytest from run_python. background=true "
+                     "runs it as a job, as run_python does.",
+                     _schema({"folder": {"type": "string"},
+                              "args": {"type": "array", "items": {"type": "string"}},
+                              "timeout": {"type": "integer"},
+                              "background": {"type": "boolean"},
+                              "fresh": {"type": "boolean"}}, ["folder"])),
+            ToolSpec("job_status", "A job started with background=true (run_python, "
+                     "run_command, run_tests): whether it is still running and for how "
+                     f"long, what it has printed so far (the last {JOB_TAIL:,} characters) "
+                     "- and, once it has ended, its whole result, as run_python gives one. "
+                     "A LOOK, NOW: to wait until a job ends, use wait_for (one call). With "
+                     "wait (seconds) it waits that long at most, never past the job's end. "
+                     "With no job, every job of this run. A job is stopped when the run "
+                     "ends. Every tool's result also says which jobs ended since your last "
+                     "call (jobs_ended).",
                      _schema({"job": {"type": "string"},
                               "wait": {"type": "integer"}}, [])),
+            ToolSpec("run_outside", "Run a COMMAND ON THIS COMPUTER, OUTSIDE THE SANDBOX - "
+                     "the user chose to let this work run without it - as their account: "
+                     "shell cmd (the default), powershell or bash on Windows; bash or sh "
+                     "elsewhere; cwd any folder (the work's own unless you say). Each command "
+                     "is judged first: one that would change or delete anything outside the "
+                     "work's folder, install software, send anything out, or keep running "
+                     "afterwards is REFUSED as needing the user's approval - then find "
+                     "another way. NEVER, approved or not: the agent's own data, where "
+                     "sign-ins are kept, anything written out with the user's accounts "
+                     "(push, publish, post, send). The call waits for it - timeout seconds, "
+                     f"{RUN_SECONDS} unless you ask, at most {RUN_MOST_SECONDS} - and returns "
+                     "its exit code and what it printed.",
+                     _schema({"command": {"type": "string"},
+                              "shell": {"type": "string"},
+                              "cwd": {"type": "string"},
+                              "timeout": {"type": "integer"}}, ["command"])),
+            ToolSpec("request_approval", "Ask the USER to approve ONE exact command that was "
+                     "refused - only when you have tried other ways, at least two, each "
+                     "said in tried, and none could do it. why: what it is needed for. The "
+                     "run waits for their answer; approved, the command is run once, "
+                     "outside the sandbox, and what it printed comes back. Never for what "
+                     "is never done (the agent's own data, sign-ins, writing out with the "
+                     "user's accounts). Denied: do not ask again - do the work another way, "
+                     "or say in your answer what the user must do.",
+                     _schema({"command": {"type": "string"},
+                              "shell": {"type": "string"},
+                              "cwd": {"type": "string"},
+                              "why": {"type": "string"},
+                              "tried": {"type": "array", "items": {"type": "string"}}},
+                             ["command", "why", "tried"])),
+            ToolSpec("delegate", "Hand ONE TASK to a HELPER AGENT, which does it while you "
+                     "go on: kind explore - it reads and searches (files, the user's "
+                     "records, the web) and changes nothing; several can go side by side "
+                     "- or kind worker - it may change files and run code and commands; "
+                     "one at a time, and only where you may write. It has your tools (but "
+                     "this one), under the same rules, and NONE "
+                     "of your context: say in task all it needs - what to do, where, what "
+                     "you know already, and what to return. Give a worker files you are "
+                     "not changing yourself meanwhile. It answers with a JSON object "
+                     "(done, summary, files_changed, open). background=true: it runs as a "
+                     "job - wait_for it, or see jobs_ended - and the call returns at once; "
+                     "otherwise the call waits for its answer. Its tokens count as this "
+                     "run's.",
+                     _schema({"task": {"type": "string"},
+                              "kind": {"type": "string", "enum": ["explore", "worker"]},
+                              "background": {"type": "boolean"}}, ["task"])),
+            ToolSpec("wait_for", "WATCH for something and return the moment it happens - "
+                     "rather than waiting a fixed time or asking again and again: a job "
+                     "ending (job, or jobs - several, returning when the FIRST of them "
+                     "ends, saying which still run); a job printing a line that matches "
+                     "output (a regular expression, e.g. 'listening on|ready'; one job); a "
+                     "file appearing (file, a path); a server the work started answering "
+                     "(url, an address on 127.0.0.1 or localhost - tried from inside the "
+                     "sandbox). WAITING ON A JOB, it waits UNTIL IT ENDS - however long, as "
+                     "long as the job's own time - unless you give timeout (seconds); so "
+                     "call it ONCE, when there is nothing else to do meanwhile, and never "
+                     "for a job that does not end by itself (a server: wait for its "
+                     "'ready' line instead). A file or a url alone: timeout seconds, "
+                     f"{WAIT_MOST} at most, 60 unless you ask; then it says it is still "
+                     "waiting. Returns when a job ends first, saying so.",
+                     _schema({"job": {"type": "string"},
+                              "jobs": {"type": "array", "items": {"type": "string"}},
+                              "output": {"type": "string"},
+                              "file": {"type": "string"},
+                              "url": {"type": "string"},
+                              "timeout": {"type": "integer"}}, [])),
             ToolSpec("stop_job", "Stop a job started with run_python "
                      "background=true, and every program it started.",
                      _schema({"job": {"type": "string"}}, ["job"])),
-            ToolSpec("install_packages", "Install Python packages from PyPI for "
-                     "this run, so run_python can import them - into this run's own "
-                     "folder. Each one a plain name with an optional version (pandas, "
-                     "numpy>=1.26, scikit-learn==1.5.*) - no addresses, paths or "
-                     "options. Wheels only: nothing is built from source. Ask for "
+            ToolSpec("install_packages", "Install packages for this work. PYTHON "
+                     "(ecosystem pip, the default): from PyPI into this run's own folder, "
+                     "so run_python imports them - each a plain name with an optional "
+                     "version (pandas, numpy>=1.26, scikit-learn==1.5.*); wheels only, "
+                     "nothing built from source. JAVASCRIPT (ecosystem npm): from the "
+                     "public npm registry into the node_modules of folder (the work's "
+                     "own folder unless you name one inside it), added to its "
+                     "package.json - each a name with an optional @version or range "
+                     "(react, lodash@^4.17, @types/node@20); with none, what its "
+                     "package.json lists. Install scripts never run: build a package "
+                     "that needs them with run_command (npm rebuild <name>). No "
+                     "addresses, paths, git or file references, or options. Ask for "
                      "everything you need in one call, and say why. Where the user "
-                     "approves each request, the call waits for their answer. pip run "
-                     "from code cannot reach PyPI.",
+                     "approves each request, the call waits for their answer. Neither "
+                     "pip nor npm run from code or a command reaches the network.",
                      _schema({"packages": {"type": "array",
                                            "items": {"type": "string"}},
-                              "why": {"type": "string"}}, ["packages", "why"])),
+                              "why": {"type": "string"},
+                              "ecosystem": {"type": "string", "enum": ["pip", "npm"]},
+                              "folder": {"type": "string"}}, ["packages", "why"])),
+            ToolSpec("download", "Download a FILE from the web into the work's folder - "
+                     "an https address that already exists (a search result, a page's "
+                     "link, the user's files or instruction - as fetch_url opens), at most "
+                     f"{fetching.MOST_DOWNLOAD // (1024 * 1024)} MB. It is saved, never "
+                     "opened or run: unpack or use it with run_command or run_python. path: "
+                     "where to save it, inside the work's folder (downloads/<its name> "
+                     "unless you say).",
+                     _schema({"url": {"type": "string"},
+                              "path": {"type": "string"}}, ["url"])),
+            ToolSpec("git_fetch", "Clone a public git REPOSITORY over https into the work's "
+                     "folder (path: a new folder inside it; the repository's name unless "
+                     "you say) - shallow (depth 1) unless you ask for more (0: its whole "
+                     "history), ref: a branch or tag. Its address must already exist, as "
+                     "fetch_url's must. Nothing of it runs while it is fetched: no hook, "
+                     "no submodule, no symbolic link. Then use git locally with "
+                     "run_command (log, diff, branch, commit). Nothing is ever pushed.",
+                     _schema({"url": {"type": "string"},
+                              "path": {"type": "string"},
+                              "depth": {"type": "integer"},
+                              "ref": {"type": "string"}}, ["url"])),
             ToolSpec("web_search", "Search the web: up to 8 results, each a title, "
                      "an address and a snippet. A query is words - at most "
                      f"{MOST_QUERY} characters; one that carries anything like a "
@@ -567,19 +1213,81 @@ class WorkTools:
                      "stages linked to it. At most 6 at a time.",
                      _schema({"ids": {"type": "array", "items": {"type": "string"}}},
                              ["ids"])),
+            ToolSpec(
+                "hand_over", "HAND A RESULT TO THE USER, in the form most convenient "
+                "for what they will do with it - every result, at the end (again "
+                "when it changes; the same kind and title replaces it). KINDS: "
+                "\"email\" (to, cc, bcc, subject, body) - opened in their own mail as a "
+                "new message, filled in, for them to send; \"event\" (title, start, end "
+                "- ISO times, or a date for all day - where, details) - opened in their "
+                "calendar, filled in; \"text\" (text) - words to paste elsewhere, "
+                "copied; \"file\" or \"folder\" (path) - one this work made, opened; "
+                "\"answer\" (text) - shown. NOTHING IS SENT, SAVED OR SUBMITTED: it is "
+                "opened for the user, and what is done with it is theirs.",
+                _schema({"kind": {"type": "string",
+                                  "enum": ["email", "event", "text", "file", "folder",
+                                           "answer"]},
+                         "title": {"type": "string",
+                                   "description": "what it is, in a few words"},
+                         "to": {"type": "array", "items": {"type": "string"}},
+                         "cc": {"type": "array", "items": {"type": "string"}},
+                         "bcc": {"type": "array", "items": {"type": "string"}},
+                         "subject": {"type": "string"}, "body": {"type": "string"},
+                         "start": {"type": "string"}, "end": {"type": "string"},
+                         "where": {"type": "string"}, "details": {"type": "string"},
+                         "text": {"type": "string"}, "path": {"type": "string"}},
+                        ["kind", "title"])),
         ]
+
+    def give_to_user(self, args: Dict[str, Any]) -> Any:
+        """A result handed to the user (handed.py): kept by the run, and
+        opened for them - never sent, saved or submitted."""
+        from . import handed
+        if self.on_hand_over is None:
+            return {"error": "nothing is handed to the user from here"}
+        policy = self.runtime.policy
+        roots = [Path(policy.write_root), *[Path(one) for one in policy.extra_writable]]
+
+        def resolve(path: str) -> Optional[Path]:
+            if not str(path or "").strip():
+                return None
+            try:
+                target = self._readable(path).resolve()
+            except Exception:
+                return None
+            for root in roots:
+                root = root.resolve()
+                if target == root or root in target.parents:
+                    return target
+            return None
+        item = handed.checked(args, resolve)
+        if item.get("error"):
+            return item
+        self.on_hand_over(item)
+        return {"handed": item["kind"], "title": item["title"],
+                "note": "the user opens it - nothing was sent or saved for them"}
 
     def call(self, name: str, arguments: Dict[str, Any]) -> Any:
         handler = self.handlers.get(name)
         if handler is None or (self.only is not None and name not in self.only):
             return {"error": f"unknown tool {name}"}
+        if self.halted():
+            return {"error": "stopped: you were stopped - answer now, with the JSON "
+                             "object, from what you have"}
         try:
-            said = handler(arguments or {})
+            with self.gate.hold(name):
+                said = handler(arguments or {})
         except SecurityViolation as exc:
             said = exc.to_dict()
         except Exception as exc:
             said = {"error": f"{type(exc).__name__}: {exc}"[:600]}
-        self.log(name, {"arguments": arguments, "result": said})
+        # THE JOBS THAT ENDED meanwhile, told with whatever is called next -
+        # nobody has to keep asking.
+        ended = self.jobs_ended() if isinstance(said, dict) else []
+        if ended:
+            said = dict(said, jobs_ended=ended)
+        with self._log_lock:
+            self.log(name, {"arguments": arguments, "result": said})
         return said
 
     # -- reading ---------------------------------------------------------
@@ -710,6 +1418,12 @@ class WorkTools:
                 self.know_addresses(said.get("text") or "")
             return said
         text = where.read_text(encoding="utf-8", errors="replace")
+        if where.suffix.lower() == ".ipynb":
+            # A notebook as its cells, each with what it printed (notebooks.py).
+            try:
+                text = notebooks.shown(text)
+            except ValueError:
+                pass
         # The user's own files are where real addresses are; the agent's
         # own folders are where it could have put one.
         if not self._the_agents_own(where):
@@ -797,6 +1511,127 @@ class WorkTools:
         self.changed("wrote", [str(written)], said)
         return said
 
+    def edit_file(self, args: Dict[str, Any]) -> Any:
+        """PART OF A FILE CHANGED IN PLACE: each edit's old text, found
+        exactly once, replaced by its new text - all of them, or none. A
+        file with Windows line ends keeps them."""
+        from ...runtime.filesystem import validate_write_path
+        target = Path(validate_write_path(str(args.get("path") or ""), self.runtime.policy))
+        refused = self._refuse_locked(target)
+        if refused:
+            return refused
+        if not target.is_file():
+            return {"error": f"no file at {target}: write a new one with write_file"}
+        edits = [one for one in args.get("edits") or [] if isinstance(one, dict)]
+        if not edits:
+            return {"error": "no edits: each is {old_text, new_text}"}
+        try:
+            raw = target.read_bytes().decode("utf-8")
+        except UnicodeDecodeError:
+            return {"error": "not a UTF-8 text file: change it with run_python"}
+        windows = "\r\n" in raw
+        text = raw.replace("\r\n", "\n") if windows else raw
+        for number, one in enumerate(edits, 1):
+            old = str(one.get("old_text") or "").replace("\r\n", "\n")
+            new = str(one.get("new_text") or "").replace("\r\n", "\n")
+            if not old:
+                return {"error": f"edit {number}: old_text is empty - nothing was changed"}
+            found = text.count(old)
+            if found != 1:
+                return {"error": f"edit {number}: old_text is found {found} times, not once - "
+                                 "nothing was changed; copy it exactly from the file, with "
+                                 "lines around it to make it unique"}
+            text = text.replace(old, new, 1)
+        if windows:
+            text = text.replace("\n", "\r\n")
+        self._claim([str(target)])
+        written = self.runtime.write_text(str(target), text)
+        self._claim([str(written)])
+        said = {"edited": str(written), "edits": len(edits),
+                "lines": text.count("\n") + (0 if text.endswith("\n") else 1)}
+        self.changed("edited", [str(written)], said)
+        return said
+
+    # -- tests: run once for exactly the same files ------------------------------------
+    def edit_notebook(self, args: Dict[str, Any]) -> Any:
+        """One cell of a notebook replaced, inserted or deleted (notebooks.py)."""
+        from ...runtime.filesystem import validate_write_path
+        target = Path(validate_write_path(str(args.get("path") or ""), self.runtime.policy))
+        refused = self._refuse_locked(target)
+        if refused:
+            return refused
+        if not target.is_file():
+            return {"error": f"no notebook at {target}"}
+        if args.get("cell") is None:
+            return {"error": "say which cell: its number or its id"}
+        try:
+            text, said = notebooks.edit(
+                target.read_text(encoding="utf-8"), args.get("cell"),
+                str(args.get("mode") or "replace"), str(args.get("source") or ""),
+                str(args["cell_type"]) if args.get("cell_type") else None)
+        except (ValueError, UnicodeDecodeError) as exc:
+            return {"error": str(exc)[:400]}
+        self._claim([str(target)])
+        self.runtime.write_text(target, text)
+        said = dict(said, path=str(target))
+        self.changed("edited", [str(target)], said)
+        return said
+
+    def run_tests(self, args: Dict[str, Any]) -> Any:
+        """A folder's tests with pytest, on a fresh copy of it - or, when
+        exactly the same tests ran on exactly the same files (TestRuns),
+        their result again, said to be so."""
+        folder = self._readable(str(args.get("folder") or "."))
+        if not folder.is_dir():
+            return {"error": f"not a folder: {folder}"}
+        asked = [str(one) for one in args.get("args") or []]
+        if any(not one or "\x00" in one for one in asked):
+            return {"error": "an empty argument"}
+        # What only changes the printing is not what tells tests apart: run
+        # with the whole report, whoever asked and however.
+        pytest_args, left_out, failures_shown = split_output_only(asked)
+        ran_with = TEST_REPORT + failures_shown + pytest_args
+        key = self.test_runs.key(folder, pytest_args, self._packages())
+        if key and not args.get("fresh"):
+            kept = self.test_runs.get(key)
+            if kept is not None and TestRuns.fits(kept, failures_shown):
+                # Said first, before what the run printed: NOT A NEW RUN.
+                return {"not_a_new_run": NOT_A_NEW_RUN.format(
+                            by=kept["by"], at=kept["at"], seconds=kept["seconds"]),
+                        **kept["result"], "files_changed": [], "reused": {
+                    "ran_at": kept["at"], "by": kept["by"], "seconds": kept["seconds"],
+                    "ran_with": kept.get("ran_with") or [],
+                    "why": "every file of the folder, the tests chosen, the packages and "
+                           "Python are exactly what they were when these tests ran - this is "
+                           "that run's result, with the whole report (arguments that only "
+                           "change the printing are not told apart); fresh=true runs them "
+                           "again"}}
+        copy = self.folder / ".agent_runtime" / "test_runs" / (key[:16] if key else
+                                                               uuid.uuid4().hex[:16])
+        code = TESTS_CODE.format(src=str(folder), dst=str(copy), args=repr(ran_with),
+                                 skip=repr(TEST_COPY_SKIPPED))
+        by = self.label or "an agent of this run"
+
+        def kept(said: Dict[str, Any], seconds: float) -> None:
+            # Only a run that ended by itself is kept: not one cut off.
+            if isinstance(said, dict):
+                said["ran_with"] = ran_with
+                if left_out:
+                    said["printing_arguments_replaced"] = left_out
+            if key and isinstance(said, dict) and not said.get("timed_out") \
+                    and not said.get("violation") and said.get("returncode") is not None:
+                self.test_runs.put(key, said, by, seconds, ran_with)
+
+        if args.get("background") and (self.only is None or "job_status" in self.only):
+            return self._start_job(code, args.get("timeout"), done=kept)
+        timeout = max(5, min(RUN_MOST_SECONDS, int(args.get("timeout") or RUN_MOST_SECONDS)))
+        started = time.time()
+        before = self._look_over()
+        result = self.runtime.run_python_code(code, timeout=timeout, sys_path=self._packages())
+        said = self._ran(result, before)
+        kept(said, round(time.time() - started, 1))
+        return said
+
     def delete_file(self, args: Dict[str, Any]) -> Any:
         from ...runtime.filesystem import validate_write_path
         target = Path(validate_write_path(str(args.get("path") or ""),
@@ -834,7 +1669,8 @@ class WorkTools:
                 # the code runs.
                 dirnames[:] = [d for d in dirnames
                                if d not in (".agent_runtime", ".packages", ".versions",
-                                            ".session")
+                                            ".session", "node_modules", ".npm-cache",
+                                            ".pip-cache")
                                and not (d == LOGS_DIR and Path(dirpath) == work_root)]
                 for name in filenames:
                     whole = os.path.join(dirpath, name)
@@ -857,6 +1693,63 @@ class WorkTools:
         result = self.runtime.run_python_code(str(args.get("code") or ""),
                                               timeout=timeout, sys_path=self._packages())
         return self._ran(result, before)
+
+    def run_command(self, args: Dict[str, Any]) -> Any:
+        """A command in a shell, in the sandbox (`COMMAND_CODE`): its script
+        written in the work's runtime folder, run by the shell from guarded
+        code - foreground or as a job."""
+        from ...runtime.filesystem import validate_write_path
+        command = str(args.get("command") or "")
+        if not command.strip() or "\x00" in command:
+            return {"error": "say the command to run"}
+        if not commands_allowed(self.runtime):
+            return {"error": "commands cannot run on this computer: the operating system "
+                             "does not confine them here - use run_python"}
+        refused = shell_not_here(command, str(args.get("shell") or ""))
+        if refused:
+            return {"error": refused}
+        known = shells()
+        order = SHELLS_WINDOWS if os.name == "nt" else SHELLS_POSIX
+        shell = str(args.get("shell") or "").strip().lower() or next(
+            (one for one in order if one in known), "")
+        if shell not in known:
+            return {"error": f"no shell {shell or '(none found)'} here - "
+                             + ("these are: " + ", ".join(sorted(known)) if known
+                                else "none was found")}
+        cwd = self.folder
+        if args.get("cwd"):
+            cwd = Path(validate_write_path(str(args["cwd"]), self.runtime.policy))
+            if not cwd.is_dir():
+                return {"error": f"not a folder: {cwd}"}
+        text, extension = command_script(shell, command)
+        runtime_dir = self.folder / ".agent_runtime"
+        script = runtime_dir / "commands" / f"{uuid.uuid4().hex[:12]}{extension}"
+        home = runtime_dir / "home"
+        for one in ("roaming", "local", "config", "cache"):
+            self.runtime.mkdir(home / one)
+        self.runtime.mkdir(script.parent)
+        self.runtime.write_text(script, text)
+        prepend: Dict[str, str] = {}
+        if os.name == "nt":
+            fix = home / COMMAND_PYTHON_FOLDER
+            self.runtime.mkdir(fix)
+            self.runtime.write_text(fix / "sitecustomize.py", COMMAND_PYTHON_FIX)
+            prepend["PYTHONPATH"] = str(fix)
+        code = COMMAND_CODE.format(env=command_environment(home), prepend=prepend,
+                                   argv=shell_argv(shell, known[shell], script, cwd),
+                                   cwd=str(cwd))
+        readable = programs_to_read()
+        if args.get("background") and (self.only is None or "job_status" in self.only):
+            said = self._start_job(code, args.get("timeout"), readable=readable)
+            if isinstance(said, dict) and said.get("job"):
+                said["shell"] = shell
+            return said
+        timeout = max(5, min(RUN_MOST_SECONDS, int(args.get("timeout") or RUN_SECONDS)))
+        before = self._look_over()
+        result = self.runtime.run_python_code(code, timeout=timeout, readable=readable)
+        said = self._ran(result, before)
+        said["shell"] = shell
+        return said
 
     def _packages(self) -> Optional[List[Path]]:
         return [self.packages_dir] if self.packages_dir is not None \
@@ -900,7 +1793,9 @@ class WorkTools:
         return said
 
     # -- jobs: code that runs while the agent goes on ---------------------------------
-    def _start_job(self, code: str, timeout: Any) -> Dict[str, Any]:
+    def _start_job(self, code: str, timeout: Any,
+                   done: Optional[Callable[[Dict[str, Any], float], None]] = None,
+                   readable: Optional[List[Path]] = None) -> Dict[str, Any]:
         """A JOB: the code run as run_python runs it - the same process, the
         same sandbox, the same folders - on a thread of its own, the call
         returning its id at once. What it prints is kept in its log as it
@@ -935,8 +1830,9 @@ class WorkTools:
         def run() -> None:
             before = self._look_over()
             try:
-                result = self.runtime.run_python_code(launcher, timeout=seconds,
-                                                      sys_path=self._packages())
+                result = self.runtime.run_python_code(
+                    launcher, timeout=seconds, sys_path=self._packages(),
+                    **({"readable": readable} if readable else {}))
                 said = self._ran(result, before)
             except Exception as exc:          # said, as a result is
                 said = {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:600]}
@@ -946,12 +1842,17 @@ class WorkTools:
                 job["ended"] = time.time()
                 job["status"] = ("stopped" if stopped else "timed out" if said.get("timed_out")
                                  else "done" if said.get("ok") else "failed")
+            if done is not None and not stopped:
+                try:
+                    done(said, round(job["ended"] - job["started"], 1))
+                except Exception:              # pragma: no cover - kept or not, the job ended
+                    pass
 
         threading.Thread(target=run, name=f"job-{ident}", daemon=True).start()
         return {"job": ident, "status": "running", "timeout": seconds,
-                "note": f"Running in the background. Wait for it with job_status "
-                        f"(wait up to {JOB_MOST_WAIT} seconds at a time); stop it with "
-                        "stop_job. It is stopped when this run ends."}
+                "note": "Running in the background. Go on with what does not depend on "
+                        "it; then wait_for it - one call, returning when it ends. Stop it "
+                        "with stop_job. It is stopped when this run ends."}
 
     def _job_said(self, job: Dict[str, Any]) -> Dict[str, Any]:
         ended = job["ended"] or time.time()
@@ -967,6 +1868,7 @@ class WorkTools:
             said["printed_so_far"] = text[-JOB_TAIL:]
         else:
             said["result"] = job["result"]
+            job["told"] = True
         return said
 
     def job_status(self, args: Dict[str, Any]) -> Any:
@@ -980,10 +1882,231 @@ class WorkTools:
         job = self.jobs.get(ident)
         if job is None:
             return self._no_such_job(ident)
-        end = time.time() + max(0, min(JOB_MOST_WAIT, int(args.get("wait") or 0)))
-        while job["status"] == "running" and time.time() < end and not self.stopped():
-            time.sleep(0.5)
-        return self._job_said(job)
+        if job["status"] == "running":
+            since = self._begin_waiting(job)
+            if since is not None:
+                said = self._job_said(job)
+                said["note"] = self._already_waiting(job, since)
+                return said
+            try:
+                end = time.time() + max(0, min(WAIT_JOB_MOST, int(args.get("wait") or 0)))
+                while job["status"] == "running" and time.time() < end and not self.stopped():
+                    time.sleep(0.5)
+            finally:
+                self._end_waiting(job)
+        said = self._job_said(job)
+        if said["status"] == "running" and (self.only is None or "wait_for" in self.only):
+            said["note"] = STILL_RUNNING_NOTE.format(job=job["id"])
+        return said
+
+    # WAITING ONCE (the user, 2026-10-25): seen in try 6, two calls in one
+    # turn waiting on the same job (wait 600 and wait 240), both answering
+    # when it ended. A second call of the same agent waits for nothing: it
+    # is told the first one is waiting. Another agent's (a helper's) is its own.
+    def _begin_waiting(self, job: Dict[str, Any]) -> Optional[float]:
+        """None when no call of this agent was waiting on the job - this one
+        now is; else since when the one that is has been waiting."""
+        with self._jobs_lock:
+            waiting = job.setdefault("waiting", {})
+            since = waiting.get(id(self))
+            if since is None:
+                waiting[id(self)] = time.time()
+            return since
+
+    def _end_waiting(self, job: Dict[str, Any]) -> None:
+        with self._jobs_lock:
+            job.get("waiting", {}).pop(id(self), None)
+
+    @staticmethod
+    def _already_waiting(job: Dict[str, Any], since: float) -> str:
+        return ALREADY_WAITING_NOTE.format(job=job["id"], seconds=round(time.time() - since))
+
+    def wait_for(self, args: Dict[str, Any]) -> Any:
+        """Until what was asked for happens - a job ending (the first of
+        several), a line it prints, a file appearing, the work's own server
+        answering - or the time is up, looking every WAIT_LOOK seconds. On a
+        job, until it ends (`WAIT_JOB_MOST`) unless a timeout is given."""
+        named = [args.get("job")] + list(args.get("jobs") or [])
+        idents = list(dict.fromkeys(str(one).strip() for one in named
+                                    if str(one or "").strip()))
+        pattern = str(args.get("output") or "")
+        file = str(args.get("file") or "").strip()
+        url = str(args.get("url") or "").strip()
+        jobs = []
+        for ident in idents:
+            job = self.jobs.get(ident)
+            if job is None:
+                return self._no_such_job(ident)
+            jobs.append(job)
+        if pattern and len(jobs) != 1:
+            return {"error": "output is watched in one job's printing: name that job"}
+        if not (jobs or file or url):
+            return {"error": "say what to wait for: a job, output (with its job), a file "
+                             "or a url"}
+        found = None
+        if pattern:
+            try:
+                found = re.compile(pattern, re.IGNORECASE | re.MULTILINE)
+            except re.error as exc:
+                return {"error": f"output is not a regular expression: {exc}"}
+        target = None
+        if file:
+            target = self._readable(file)
+        if url and not re.match(r"(?i)^http://(127\.0\.0\.1|localhost)(:\d+)?(/|$)", url):
+            return {"error": "url is one of the work's own servers: http://127.0.0.1:<port>/..."}
+        if jobs:
+            seconds = max(1, min(WAIT_JOB_MOST, int(args.get("timeout") or WAIT_JOB_MOST)))
+        else:
+            seconds = max(1, min(WAIT_MOST, int(args.get("timeout") or 60)))
+        mine: List[Dict[str, Any]] = []
+        try:
+            for job in jobs:
+                if job["status"] != "running":
+                    continue
+                since = self._begin_waiting(job)
+                if since is not None:
+                    return self._with_jobs({"met": False, "waited": 0.0,
+                                            "what": self._already_waiting(job, since)}, jobs)
+                mine.append(job)
+            return self._watching(jobs, found, target, url, seconds)
+        finally:
+            for job in mine:
+                self._end_waiting(job)
+
+    def _watching(self, jobs: List[Dict[str, Any]], found: Optional["re.Pattern[str]"],
+                  target: Optional[Path], url: str, seconds: int) -> Dict[str, Any]:
+        began = time.time()
+        end = began + seconds
+        tried_url = 0.0
+        said: Dict[str, Any] = {}
+        while not self.stopped():
+            if found is not None:
+                try:
+                    text = (jobs[0]["folder"] / "output.log").read_text(encoding="utf-8",
+                                                                         errors="replace")
+                except OSError:
+                    text = ""
+                match = found.search(text)
+                if match:
+                    line_start = text.rfind("\n", 0, match.start()) + 1
+                    line_end = text.find("\n", match.end())
+                    said = {"met": True, "what": "the job printed it",
+                            "line": text[line_start:line_end if line_end >= 0 else None][:500]}
+                    break
+            if target is not None and target.exists():
+                said = {"met": True, "what": "the file is there", "file": str(target)}
+                break
+            if url and time.time() - tried_url >= WAIT_URL_LOOK:
+                tried_url = time.time()
+                answer = self._try_own_url(url)
+                if answer is not None:
+                    said = {"met": True, "what": "the server answered", "status": answer}
+                    break
+            ended = [job for job in jobs if job["status"] != "running"]
+            if ended:
+                said = {"met": found is None and target is None and not url,
+                        "what": "; ".join(f"{job['id']} ended ({job['status']})"
+                                          for job in ended)}
+                going = [job["id"] for job in jobs if job["status"] == "running"]
+                if going:
+                    said["still_running"] = going
+                break
+            if time.time() >= end:
+                said = {"met": False, "what": f"still waiting after {seconds} seconds"}
+                break
+            time.sleep(WAIT_LOOK)
+        else:
+            said = {"met": False, "what": "the run is stopping"}
+        said["waited"] = round(time.time() - began, 1)
+        return self._with_jobs(said, jobs)
+
+    def _with_jobs(self, said: Dict[str, Any], jobs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """A wait's answer with the jobs it was on: one, as job_status says
+        it; several, those that ended whole and the rest in a line each."""
+        if len(jobs) == 1:
+            said["job"] = self._job_said(jobs[0])
+        elif jobs:
+            said["jobs"] = [self._job_said(job) if job["status"] != "running" else
+                            {"job": job["id"], "status": "running",
+                             "seconds": round(time.time() - job["started"], 1)}
+                            for job in jobs]
+        return said
+
+    def _try_own_url(self, url: str) -> Optional[int]:
+        """The status a server of the work's answers `url` with, tried from
+        inside the sandbox - where its own loopback is; None when nothing
+        answers."""
+        code = ("import urllib.request, urllib.error\n"
+                "try:\n"
+                f"    print(urllib.request.urlopen({url!r}, timeout=3).status)\n"
+                "except urllib.error.HTTPError as e:\n"
+                "    print(e.code)\n"
+                "except Exception:\n"
+                "    print('none')\n")
+        try:
+            result = self.runtime.run_python_code(code, timeout=20)
+        except Exception:
+            return None
+        last = (getattr(result, "stdout", "") or "").strip().splitlines()[-1:] or ["none"]
+        return int(last[0]) if last[0].isdigit() else None
+
+    def jobs_ended(self) -> List[Dict[str, Any]]:
+        """The jobs that ended since this was last asked - said once each,
+        with every tool's result (`call`)."""
+        out = []
+        with self._jobs_lock:
+            for one in self.jobs.values():
+                if one["status"] != "running" and not one.get("told"):
+                    one["told"] = True
+                    printed = [line for line in str((one.get("result") or {}).get(
+                        "stdout") or "").splitlines() if line.strip()]
+                    out.append({"job": one["id"], "status": one["status"],
+                                "seconds": round((one["ended"] or time.time())
+                                                 - one["started"], 1),
+                                "last_line": printed[-1][:300] if printed else ""})
+        return out
+
+    def start_helper(self, who: str, work: Callable[[], Dict[str, Any]],
+                     halted: Dict[str, bool]) -> Dict[str, Any]:
+        """A helper agent as a JOB of these tools: waited for, looked at and
+        stopped as any job (job_status, wait_for, stop_job, jobs_ended)."""
+        with self._jobs_lock:
+            ident = f"job_{len(self.jobs) + 1}"
+            folder = self.folder / ".agent_runtime" / "jobs" / f"{ident}-{uuid.uuid4().hex[:8]}"
+            job = {"id": ident, "status": "running", "started": time.time(), "ended": 0.0,
+                   "timeout": 0, "folder": folder, "result": None, "helper": who,
+                   "halted": halted}
+            self.jobs[ident] = job
+        try:
+            self.runtime.mkdir(folder)
+            self.runtime.write_text(folder / "output.log", "")
+        except Exception:                      # pragma: no cover - its log only
+            pass
+
+        def run() -> None:
+            said = work()
+            try:
+                self.runtime.write_text(folder / "output.log",
+                                        json.dumps(said, ensure_ascii=False, indent=1))
+            except Exception:                  # pragma: no cover - its log only
+                pass
+            with self._jobs_lock:
+                job["result"] = dict(said, helper=who)
+                job["ended"] = time.time()
+                job["status"] = ("stopped" if halted["halt"] else
+                                 "failed" if said.get("error") or said.get("done") is False
+                                 else "done")
+
+        threading.Thread(target=run, name=f"helper-{ident}", daemon=True).start()
+        return {"job": ident, "status": "running", "helper": who,
+                "note": "The helper is working in the background: wait_for this job, or go "
+                        "on - jobs_ended says when it is done; its answer is the job's "
+                        "result (job_status)."}
+
+    def hand_over(self, args: Dict[str, Any]) -> Any:
+        if self.delegate is None:
+            return {"error": "no helper agents here"}
+        return self.delegate(args)
 
     def stop_job(self, args: Dict[str, Any]) -> Any:
         ident = str(args.get("job") or "").strip()
@@ -1005,6 +2128,10 @@ class WorkTools:
                          + ("its jobs: " + ", ".join(known) if known else "it has none")}
 
     def _ask_to_stop(self, job: Dict[str, Any]) -> None:
+        if job.get("halted") is not None:
+            # A helper: its tools refuse from now on, and it answers.
+            job["halted"]["halt"] = True
+            return
         try:
             self.runtime.write_text(job["folder"] / "stop", "stop")
         except Exception:        # pragma: no cover - its time runs out instead
@@ -1026,7 +2153,71 @@ class WorkTools:
         packages = args.get("packages")
         if isinstance(packages, str):
             packages = [packages]
-        return self.install(list(packages or []), str(args.get("why") or ""))
+        ecosystem = str(args.get("ecosystem") or "pip").strip().lower()
+        if ecosystem not in ("pip", "npm"):
+            return {"error": "ecosystem is pip or npm"}
+        if ecosystem == "pip":
+            return self.install(list(packages or []), str(args.get("why") or ""))
+        from ...runtime.filesystem import validate_write_path
+        folder = Path(validate_write_path(str(args.get("folder") or self.folder),
+                                          self.runtime.policy))
+        if not folder.is_dir():
+            return {"error": f"not a folder: {folder}"}
+        said = self.install(list(packages or []), str(args.get("why") or ""), "npm", folder)
+        if isinstance(said, dict) and not said.get("error") and said.get("folder"):
+            self._claim([str(folder / "package.json"), str(folder / "package-lock.json")])
+            self.changed("installed packages", [str(folder / "package.json")], said)
+        return said
+
+    # -- what is fetched from the network: outside, never run there (fetching.py) ----
+    def _fetch_target(self, given: Any, default: Path) -> Path:
+        from ...runtime.filesystem import validate_write_path
+        return Path(validate_write_path(str(given or default), self.runtime.policy))
+
+    def download(self, args: Dict[str, Any]) -> Any:
+        url = str(args.get("url") or "").strip()
+        refused = self.check_address(url)
+        if refused:
+            self.log("download refused", {"url": url[:300], "why": refused})
+            return {"error": refused}
+        name = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(
+            urllib.parse.urlsplit(url).path).name or "download")[:120] or "download"
+        target = self._fetch_target(args.get("path"), self.folder / "downloads" / name)
+        refused = self._refuse_locked(target)
+        if refused:
+            return refused
+        if target.is_dir():
+            return {"error": f"{target} is a folder - give the file's path"}
+        self.runtime.mkdir(target.parent)
+        said = fetching.download(url, target)
+        if not said.get("error"):
+            self._claim([str(target)])
+            self.changed("downloaded", [str(target)], said)
+        return said
+
+    def git_fetch(self, args: Dict[str, Any]) -> Any:
+        url = str(args.get("url") or "").strip()
+        refused = self.check_address(url)
+        if refused:
+            self.log("git fetch refused", {"url": url[:300], "why": refused})
+            return {"error": refused}
+        name = re.sub(r"\.git$", "", Path(urllib.parse.urlsplit(url).path).name or "repo")
+        name = re.sub(r"[^A-Za-z0-9._-]+", "_", name)[:100] or "repo"
+        target = self._fetch_target(args.get("path"), self.folder / name)
+        if target.exists() and (not target.is_dir() or any(target.iterdir())):
+            return {"error": f"{target} is there already - clone into a new folder"}
+        try:
+            depth = int(args.get("depth", 1) if args.get("depth") is not None else 1)
+        except (TypeError, ValueError):
+            depth = 1
+        self.runtime.mkdir(target.parent)
+        said = fetching.git_clone(url, target, self.folder / ".agent_runtime" / "home",
+                                  depth=max(0, depth), ref=str(args.get("ref") or ""))
+        if not said.get("error"):
+            made = [str(one) for one in target.rglob("*") if one.is_file()][:5000]
+            self._claim(made)
+            self.changed("cloned", made[:200], said)
+        return said
 
     # -- the web, in memory --------------------------------------------------
     def web_search(self, args: Dict[str, Any]) -> Any:
@@ -1115,12 +2306,24 @@ class WorkTools:
             limit = max(1, min(20, int(args.get("limit") or 8)))
         except (TypeError, ValueError):
             limit = 8
-        found = self.files_index.search(query, allowed=self._may_read, limit=limit)
+        allowed = self._may_read
+        if self.as_of is not None:
+            # As they were when the try began: one changed since is not given.
+            def allowed(path: str) -> bool:
+                return self._may_read(path) and not self._changed_since(path)
+        found = self.files_index.search(query, allowed=allowed, limit=limit)
         for one in found:
             # The user's own files: where real addresses are.
             self.know_addresses(one.get("text") or "")
         return {"found": found} if found else {"found": [], "said": "nothing found for "
                                                                     "these words"}
+
+    def _changed_since(self, path: str) -> bool:
+        """Whether a file changed after the cutoff - or cannot be told."""
+        try:
+            return os.path.getmtime(path) > self.as_of.timestamp()
+        except (OSError, AttributeError, TypeError, ValueError):
+            return True
 
     def _may_read(self, path: str) -> bool:
         """Whether this agent may read a file - as read_file decides, and as

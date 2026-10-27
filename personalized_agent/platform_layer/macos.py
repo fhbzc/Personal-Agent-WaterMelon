@@ -87,6 +87,62 @@ class MacActivityProvider(PlatformActivityProvider):
     def get_active_application(self) -> Optional[str]:
         return self.get_active_window().application
 
+    def peek_foreground_application(self) -> Optional[str]:
+        """Cheap focus hint for chat sampling; never reads window contents."""
+        import objc
+        from AppKit import NSWorkspace
+        with objc.autorelease_pool():
+            front = NSWorkspace.sharedWorkspace().frontmostApplication()
+            return str(front.localizedName() or '') if front is not None else None
+
+    def _text_reader(self):
+        from .macos_window_text import MacWindowTextReader
+        if not hasattr(self, "_mac_text_reader"):
+            self._mac_text_reader = MacWindowTextReader()
+        return self._mac_text_reader
+
+    def text_in_front_allowed(self, allowed):
+        # Section 19.2: the listener's policy is checked before AX or OCR,
+        # then again before a result leaves the platform boundary.
+        try:
+            import objc
+        except ImportError:
+            return self._text_reader().read(allowed)
+
+        # The listener is a Python worker thread, not AppKit's event loop.
+        # Release native AX objects and OCR images after each reading.
+        with objc.autorelease_pool():
+            return self._text_reader().read(allowed)
+
+
+    def text_in_front(self):
+        return self.text_in_front_allowed(lambda front: True)
+
+    @property
+    def window_text_error(self) -> str:
+        return self._text_reader().last_error
+
+    def window_text_status(self):
+        return self._text_reader().status()
+
+    def seconds_since_input(self) -> Optional[float]:
+        try:
+            import Quartz
+            return float(Quartz.CGEventSourceSecondsSinceLastEventType(
+                Quartz.kCGEventSourceStateCombinedSessionState,
+                Quartz.kCGAnyInputEventType))
+        except (ImportError, AttributeError):
+            return None
+
+    def seconds_since_keyboard_input(self) -> Optional[float]:
+        """Age only, no event monitor, key codes, characters or stored input."""
+        try:
+            import Quartz
+            return float(Quartz.CGEventSourceSecondsSinceLastEventType(
+                Quartz.kCGEventSourceStateCombinedSessionState, Quartz.kCGEventKeyDown))
+        except (ImportError, AttributeError):
+            return None
+
     def front_window_image(self) -> Optional[Any]:
         """The front window, by its position and size, with the system's own
         screencapture. Needs the Screen Recording permission; without it the
@@ -126,13 +182,25 @@ class MacActivityProvider(PlatformActivityProvider):
             "Safari": home / "Library/Safari/History.db",
         }
         firefox_root = home / "Library/Application Support/Firefox/Profiles"
-        if firefox_root.exists():
-            for profile in firefox_root.iterdir():
-                db = profile / "places.sqlite"
-                if db.exists():
-                    candidates["Firefox"] = db
-                    break
-        return {name: path for name, path in candidates.items() if path.exists()}
+        try:
+            if firefox_root.exists():
+                for profile in firefox_root.iterdir():
+                    db = profile / "places.sqlite"
+                    if db.exists():
+                        candidates["Firefox"] = db
+                        break
+        except OSError:
+            # Capability discovery runs during startup. A denied or removed
+            # profile is an unavailable source, not a failed application.
+            log.debug("Firefox history directory is unavailable", exc_info=True)
+        available = {}
+        for name, path in candidates.items():
+            try:
+                if path.exists():
+                    available[name] = path
+            except OSError:
+                log.debug("%s history path is unavailable", name, exc_info=True)
+        return available
 
     def files_the_user_opened(self, since: float) -> Dict[str, float]:
         """Spotlight keeps ``kMDItemLastUsedDate``; LaunchServices sets it.
@@ -195,4 +263,5 @@ class MacPlatform(Platform):
             process_isolation=self.sandbox.isolation_name == "seatbelt",
             native_notifications=self.notifications.available,
             process_info=psutil is not None,
+            window_text=self.activity._text_reader().available(),
         )

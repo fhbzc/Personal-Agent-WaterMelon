@@ -22,6 +22,7 @@
   --xp-call-single: #1baf7a;
   --xp-call-quality: #eda100;
   --xp-call-privacy: #e87ba4;
+  --xp-call-helper: #7c5cd6;
   /* A heading meant to stand out: the darkest ink here, white in the dark. */
   --heading-bright: #0f1420;
 }
@@ -40,6 +41,7 @@
     --xp-call-single: #199e70;
     --xp-call-quality: #c98500;
     --xp-call-privacy: #d55181;
+    --xp-call-helper: #9077e6;
     --heading-bright: #ffffff;
   }
 }
@@ -2376,8 +2378,11 @@ main:has(> #xdebug.active) { max-width: none; }
 /* Delegate work: the words first, then the avatar's face. */
 .delegate-label { vertical-align: middle; }
 .delegate-icon { width: 16px; height: 16px; margin-left: 6px; vertical-align: middle; }
-.ov-todo-item .ov-todo-delegate { grid-column: 1; justify-self: start; margin: 2px 0 2px 22px;
-  padding: 1px 8px; font-size: .78rem; }
+/* A to-do's buttons on one line under it: Delegate work - or what came of
+   it - then Remove, which asks first. */
+.ov-todo-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px;
+  align-items: center; margin: 2px 0 2px 22px; }
+.ov-todo-actions button { width: auto; padding: 1px 8px; font-size: .78rem; }
 .delegate { width: min(720px, 94vw); max-height: 88vh; border: 1px solid var(--line);
   border-radius: 10px; background: var(--panel); color: var(--ink); padding: 0; }
 .delegate::backdrop { background: rgba(0, 0, 0, .45); }
@@ -2421,15 +2426,21 @@ main:has(> #xdebug.active) { max-width: none; }
 @media (max-width: 760px) { .ov-tasks-top { grid-template-columns: 1fr; } }
 .ov-tasks-intro { min-width: 0; }
 .ov-tasks-intro .sb-progress-bars { max-width: 560px; margin-top: 8px; }
-.ov-todo { min-width: 0; border-left: 2px solid var(--line); padding-left: 14px; }
+.ov-todo { min-width: 0; border-left: 2px solid var(--line); padding: 8px 0 8px 14px; }
 /* Both headings the same: bright, and the same size. */
 #ov-tasks-card .ov-head { color: var(--heading-bright); font-size: 1rem; font-weight: 700;
   letter-spacing: .04em; margin: 0 0 6px; }
 #ov-tasks-card .ov-head-count { color: var(--heading-bright); font-weight: 400; }
-/* A long list scrolls in its own box rather than making the card taller. */
-.ov-todo-list { list-style: none; margin: 0; padding: 0 4px 0 0; display: grid; gap: 3px;
-  max-height: 320px; overflow-y: auto; overscroll-behavior: contain; }
-.ov-todo-item { display: grid; grid-template-columns: 1fr auto; column-gap: 6px;
+/* A long list scrolls in its own box rather than making the card taller.
+   At either end of it the wheel goes on to the page: on a short screen the
+   page is scrolled to reach the list, the sticky header then covers its top,
+   and a list that kept the wheel to itself could not be scrolled back out
+   from under it - its first to-do hidden, only its button showing. */
+/* Room above and below the list, and between its to-dos (the user,
+   2026-10-26): they ran into one another and the box's edges. */
+.ov-todo-list { list-style: none; margin: 0; padding: 6px 4px 6px 0; display: grid; gap: 10px;
+  max-height: min(320px, 45vh); overflow-y: auto; }
+.ov-todo-item { display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 6px;
   font-size: .86rem; overflow-wrap: anywhere; }
 .ov-todo-item label { display: flex; flex-direction: row; flex-wrap: nowrap; gap: 6px;
   align-items: baseline; justify-content: flex-start; cursor: pointer; margin: 0;
@@ -2439,11 +2450,8 @@ main:has(> #xdebug.active) { max-width: none; }
 /* EVERY × THAT REMOVES SOMETHING: large enough to see and to hit. */
 .x-remove { font-size: 20px !important; line-height: 1 !important; min-width: 28px;
   min-height: 28px; padding: 2px 8px !important; }
-.ov-todo-item .ov-todo-delete { grid-column: 2; grid-row: 1; width: auto;
-  background: none; border: none; color: var(--muted); box-shadow: none; }
-.ov-todo-confirm { grid-column: 2; grid-row: 1; display: flex; gap: 6px; align-items: center;
+.ov-todo-confirm { display: inline-flex; gap: 6px; align-items: center;
   font-size: .82rem; white-space: nowrap; }
-.ov-todo-item .ov-todo-delete:hover { color: var(--ink); }
 .ov-todo-done .ov-todo-text { text-decoration: line-through; color: var(--muted); }
 .sb-progress-row { display: grid; grid-template-columns: 170px 1fr 120px;
   align-items: center; gap: 8px; }
@@ -2579,13 +2587,22 @@ main:has(> #xdebug.active) { max-width: none; }
 /* The Work form's choices on one line each, with their words: the page's
    labels are columns and its inputs full width, which put a radio button
    and the sound's checkbox a page away from what they say. */
-.xp-limits label, .xp-packages-mode label, label.xp-sound, label.xp-auto-one {
+.xp-limits label, .xp-packages-mode label, label.xp-sound, label.xp-auto-one,
+.xp-unconfined label {
   display: inline-flex; flex-direction: row; align-items: center; gap: 4px; }
 .xp-packages-mode input, label.xp-sound input, label.xp-auto-one input { width: auto; }
 .xp-package-ask { border: 1px solid var(--warn); border-left-width: 4px;
   border-radius: 6px; padding: 6px 10px; margin: 8px 0; }
 .xp-package-ask p { margin: 4px 0; }
 .xp-package-ask button { margin-right: 6px; }
+/* Without the sandbox: the choice, with what it means beside it; and a
+   command asked to be approved, shown exactly as it would run. */
+.xp-unconfined-mode { margin: 8px 0; }
+.xp-unconfined input { width: auto; }
+.xp-unconfined-warning { display: block; margin: 2px 0 0 22px; color: var(--warn); }
+.xp-action-command { white-space: pre-wrap; word-break: break-word; margin: 4px 0;
+  padding: 6px 8px; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 4px; font-size: 12px; max-height: 240px; overflow: auto; }
 .xp-reviews ol { margin-top: 4px; }
 
 /* A run's live session: where it stands on top, like a progress bar, and
@@ -3497,6 +3514,36 @@ body.delegate-solo .delegate { width: 100vw; max-width: 100vw; height: 100vh;
 body.delegate-solo .delegate-form { max-height: 100vh; box-sizing: border-box; }
 body.delegate-solo .delegate::backdrop { background: var(--panel); }
 .delegate-started { font-size: 15px; margin: 24px 0; }
+/* The Learn box alone, in a window of its own (app.js, LEARN_SOLO). */
+body.learn-solo > :not(#learn-box):not(#toast),
+html.learn-solo body > :not(#learn-box):not(#toast) { display: none !important; }
+body.learn-solo, html.learn-solo body { margin: 0; overflow: hidden; background: var(--panel); }
+body.learn-solo .learn-box { width: 100vw; max-width: 100vw; height: 100vh;
+  max-height: 100vh; margin: 0; border: 0; border-radius: 0; box-sizing: border-box; }
+body.learn-solo .learn-box::backdrop { background: var(--panel); }
+.learn-field { display: block; margin: 10px 0; }
+.learn-field input[type="text"], .learn-field input[type="url"], .learn-field textarea,
+.learn-field select { display: block; width: 100%; box-sizing: border-box; margin-top: 4px; }
+.learn-field #learn-days { display: inline-block; width: 6em; margin-left: 6px; }
+fieldset.learn-field { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+.learn-where { margin: 6px 0; word-break: break-all; }
+/* The lessons of the Learning tab: one row each, its buttons beneath. */
+.xp-lessons { list-style: none; margin: 6px 0 12px; padding: 0; }
+.xp-lesson { border-top: 1px solid var(--line); padding: 8px 0; font-size: 13px; }
+.xp-lesson-off { opacity: .6; }
+.xp-lesson-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.xp-lesson-where { word-break: break-all; margin: 2px 0; }
+.xp-lesson-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.xp-lesson-badge { font-size: 11px; padding: 1px 6px; border-radius: 8px;
+  border: 1px solid var(--line); color: var(--muted); }
+.xp-lesson-wait { border-color: var(--accent, #3d6be5); color: var(--accent, #3d6be5); }
+.xp-lesson-large { border-color: #b26a00; color: #b26a00; }
+.xp-lesson-text { margin: 4px 0; padding: 4px 10px; border-left: 3px solid var(--line);
+  max-height: 7.5em; overflow: auto; white-space: pre-wrap; }
+.xp-lesson-evidence { margin: 2px 0 4px 18px; padding: 0; font-size: 12px; }
+.xp-lesson-detail { margin: 6px 0 0 12px; font-size: 12px; }
+.xp-lesson-detail h5 { margin: 6px 0 2px; font-size: 12px; }
+.xp-lesson-detail ul { margin: 0 0 4px 16px; padding: 0; }
 .delegate-items { margin: 0; padding-left: 18px; font-size: 12px; }
 .delegate-items code { word-break: break-all; }
 .delegate-asked { margin: 0 0 6px; }
@@ -3976,3 +4023,77 @@ button.danger-text:not(:disabled) { color: var(--danger-ink); }
 .xd-leave-out-list { list-style: none; padding: 0; margin: 4px 0; display: grid; gap: 6px; }
 .xd-leave-out-list li { min-width: 0; }
 .xd-leave-out-list code { overflow-wrap: anywhere; }
+.xp-unit-delegated { margin-left: 6px; }
+/* How work is done - Quick or Thorough - and its settings, in every box
+   that starts work: each choice on a line of its own, with its words. */
+.delegate-settings { display: grid; gap: 8px; border-top: 1px solid var(--line);
+  padding-top: 10px; }
+.delegate-way { display: grid; gap: 4px; }
+.delegate-way label { display: flex; flex-direction: row; align-items: baseline; gap: 6px;
+  color: var(--ink); }
+.delegate-way input, .delegate-settings .xp-packages-mode input { width: auto; }
+.delegate-way-why { margin: 0 0 0 22px; }
+.xp-way { display: inline-block; font-size: .72rem; padding: 0 6px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted); margin-left: 6px; }
+.xp-way-quick { border-color: var(--accent); color: var(--accent); }
+/* In the box that starts work, the sound's checkbox under the sandbox's. */
+.delegate-settings label.xp-sound { margin-left: 0; }
+/* What the user gets: each result as it will be opened, with its buttons. */
+.xp-handed-item { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+  margin: 6px 0; }
+.xp-handed-head { margin: 0 0 4px; }
+.xp-handed-head .xp-way { margin: 0 6px 0 0; }
+.xp-handed-mail { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px;
+  margin: 4px 0; font-size: .86rem; }
+.xp-handed-mail dt { color: var(--muted); }
+.xp-handed-mail dd { margin: 0; overflow-wrap: anywhere; }
+.xp-handed-text { white-space: pre-wrap; max-height: 18rem; overflow: auto; margin: 4px 0;
+  font: inherit; font-size: .86rem; }
+.xp-handed-buttons { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0 0; }
+.xp-handed-buttons button { width: auto; }
+/* A to-do's work, tracked: one row a version, newest first, live. */
+.ov-todo-versions { grid-column: 1 / -1; list-style: none; margin: 2px 0 4px 22px; padding: 0;
+  display: grid; gap: 3px; }
+/* Three columns - the version, where it stands, what opens it - so the
+   buttons line up whatever the words before them. */
+.ov-todo-versions { grid-template-columns: auto minmax(0, 1fr) auto auto; column-gap: 8px; }
+.ov-todo-drop { justify-self: end; }
+.ov-todo-drop button { width: auto; padding: 1px 8px; font-size: .76rem; }
+.ov-todo-version { display: contents; font-size: .8rem; }
+.ov-todo-version > span { font-size: .8rem; align-self: center; }
+.ov-todo-open { justify-self: stretch; }
+.ov-todo-version .ov-todo-open button { width: 100%; }
+/* An ongoing version's Pause or Resume, and Stop: on a row of their own
+   above "Follow it in Work", sharing its width. */
+.ov-todo-controls { display: flex; gap: 4px; margin-bottom: 3px; }
+.ov-todo-version .ov-todo-open .ov-todo-controls button { width: auto; flex: 1; }
+.ov-todo-version button { width: auto; padding: 1px 8px; font-size: .76rem; }
+.ov-todo-v { font-weight: 600; min-width: 2em; }
+.ov-todo-where { color: var(--muted); overflow-wrap: anywhere; }
+.ov-todo-version-ongoing .ov-todo-where { color: var(--accent); }
+.ov-todo-version-stopped .ov-todo-where { color: var(--warn); }
+/* The Delegate work box floats: over the page, not in front of all of it -
+   the page behind is read and copied from while it is open - and is dragged
+   by its title. */
+.delegate[open]:not(:modal) { position: fixed; top: 6vh; left: 50%; transform: translateX(-50%);
+  margin: 0; z-index: 60; box-shadow: 0 12px 40px rgba(0, 0, 0, .45); }
+.delegate.delegate-moved[open]:not(:modal) { transform: none; }
+.delegate:not(:modal) #delegate-title { cursor: move; user-select: none; }
+/* Work's drafts: each saved one, to open again or throw away. */
+.xp-drafts { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 4px; }
+.xp-draft { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px;
+  font-size: .86rem; }
+.xp-draft .muted { grid-column: 1; }
+.xp-draft-buttons { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 6px;
+  align-items: center; }
+.xp-draft-buttons button { width: auto; }
+/* "Delegate work" stays at the top of the box however far it is scrolled
+   - and it is where the box is dragged from. */
+#delegate-title { position: sticky; top: -18px; z-index: 2; background: var(--panel);
+  margin: -18px -20px 0; padding: 14px 20px 10px; border-bottom: 1px solid var(--line); }
+
+/* The progress point: saved every ten minutes of work, not a version. */
+.xp-progress-point:empty { display: none; }
+.xp-progress-line { margin: 4px 0 6px; }
+.xp-progress-unchecked { font-size: 0.8em; padding: 1px 6px; border-radius: 8px; margin: 0 4px;
+  border: 1px solid var(--muted, #888); color: var(--muted, #888); }

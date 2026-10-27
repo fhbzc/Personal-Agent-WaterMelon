@@ -292,9 +292,43 @@ function xpSoundBox(attrs, checked) {
 }
 
 /* The box beside a run's Continue: that session's own choice. */
+/* A RUN THAT DID NOT STOP CLEANLY (agent/work/runner.py, GOES_BACK): cut
+   off by the application closing, stopped at once, or failed - Resume takes
+   it back to its last save point. Why it goes back, said plainly. */
+const XP_GOES_BACK = { interrupted: "the application closed while it was going",
+  "stopped at once": "you stopped it at once, before it wrapped up",
+  failed: "it failed before it could stop" };
+function xpGoesBack(run) {
+  return Object.prototype.hasOwnProperty.call(XP_GOES_BACK, (run || {}).status || "");
+}
+
 function xpContinueSound(runId) {
   return xpSoundBox(`data-xp-continue-sound="${escapeHtml(runId)}"`,
     xpVersionsState().sound[runId]);
+}
+
+/* WITHOUT THE SANDBOX (agent/work/unconfined.py): the user's own work only -
+   never a way of the Work debugger - and always with what it means beside
+   it. Off unless chosen, each session. */
+const XP_UNCONFINED_WARNING = "Without the sandbox, the agent works on this computer as you: it "
+  + "can read what your account can read, reach the network, and change or delete files "
+  + "anywhere. Its permission rules still hold: whatever needs your approval is refused, and "
+  + "it asks you only when every other way has failed. Never - approved or not: the agent's "
+  + "own data, your sign-ins, or anything sent out with your accounts.";
+
+function xpIsDebugRun(run) {
+  return /^dbg_/.test(String((run || {}).unit_id || ""));
+}
+
+function xpUnconfinedBox(attrs) {
+  return `<span class="xp-unconfined"><label><input type="checkbox" ${attrs}> Work without
+    the sandbox</label> <span class="xp-warning xp-unconfined-warning">${
+    escapeHtml(XP_UNCONFINED_WARNING)}</span></span>`;
+}
+
+function xpContinueUnconfined(run) {
+  return xpIsDebugRun(run) ? ""
+    : xpUnconfinedBox(`data-xp-continue-unconfined="${escapeHtml(run.id)}"`);
 }
 
 /* THE USER'S DESCRIPTION of a project they added - in their own words, never
@@ -423,6 +457,7 @@ async function loadExperience(full) {
     return;
   }
   loadLearning();
+  xpLoadDrafts();
   experienceState.units = status.units || [];
   if (!experienceState.units.some((u) => u.id === experienceState.unit)) {
     experienceState.unit = (experienceState.units[0] || {}).id || null;
@@ -436,7 +471,8 @@ async function loadExperience(full) {
    update open or the last one - Update now, Pause, Continue - the places it
    reads (and the agents search), and what it spent. Read again every few
    seconds while an update or a search build is going. */
-const learningState = { timer: null, data: null, chartOpen: false, removing: null };
+const learningState = { timer: null, data: null, chartOpen: false, removing: null,
+                        detail: null, detailData: null };
 
 async function loadLearning() {
   try {
@@ -534,37 +570,180 @@ function learningUpdateHtml(s) {
     ${learningIndexHtml(s)}${lines.join("")}`;
 }
 
-function learningPlacesHtml(s) {
-  const listed = (s.places || []).map((one) => {
-    const what = one.kind === "claude" ? "Your Claude Code conversations"
-      : one.kind === "codex" ? "Your Codex conversations" : "";
-    // REMOVE ASKS FIRST, in the row itself.
-    const asking = learningState.removing === one.path;
-    return `<li><code>${escapeHtml(one.path)}</code>${what
-      ? ` <span class="muted">${escapeHtml(what)}</span>` : ""}
-      ${asking ? `<div class="xp-unit-ask" role="alert">
-        Remove this place? It is no longer read for learning or searched by the agents.
-        What was already learned from it stays, and nothing on your computer is deleted.
-        <button type="button" class="small danger" data-learn-remove-yes="${escapeHtml(one.path)}">Remove</button>
-        <button type="button" class="small secondary" data-learn-remove-no="1">Keep it</button>
-      </div>` : `<button type="button" class="small secondary" data-learn-remove="${
-        escapeHtml(one.path)}">Remove</button>`}</li>`;
-  }).join("") || `<li class="muted">No place listed: your Work projects are read, and the
-    folders you add here.</li>`;
-  const found = (s.found || []).map((one) => `<li${one.excluded ? ` class="muted"` : ""}>
-      <code>${escapeHtml(one.path)}</code>
-      <span class="muted">${one.excluded ? "left out"
-        : `found through your ${escapeHtml((one.via || []).map((v) => v === "claude"
-          ? "Claude Code" : "Codex").join(" and "))} conversations`}</span>
-      <button type="button" class="small secondary" data-learn-exclude="${escapeHtml(one.path)}"
-        data-out="${one.excluded ? "" : "1"}">${one.excluded ? "Let in" : "Leave out"}</button></li>`).join("");
-  const has = (kind) => (s.places || []).some((one) => one.kind === kind);
+/* THE LESSONS (learning/service.py `lessons`, the user, 2026-10-24): every
+   one the learning reads, in three groups - your own folders and projects,
+   what you added, what the heartbeat added - each turned off (not read,
+   nothing of it given to a run) or on, or deleted for good (it goes on the
+   never list); then the never list itself, each one taken off it again. */
+const LEARN_WHAT = { cases: "cases", rules: "rules", reference: "a reference" };
+
+function learningCadence(cadence) {
+  if (cadence === "once") return "read once";
+  if (cadence === "update") return "read again at every update";
+  const days = String(cadence || "").startsWith("days:") ? cadence.slice(5) : "";
+  return days ? `read again every ${days} days` : "";
+}
+
+function learningKind(one) {
+  if (one.kind === "work") return "Work project";
+  if (one.kind === "place") return "folder";
+  if (one.kind === "rules") return "your rules for every agent";
+  if (one.kind === "url") {
+    return one.scope === "repo" ? "repository" : one.scope === "prefix" ? "web pages" : "web page";
+  }
+  if (one.kind === "text") return "passage";
+  if (one.kind === "folder") return "folder";
+  if (one.kind === "file") return "file";
+  return one.kind || "";
+}
+
+function learningCounts(one) {
+  const n = (v) => Number(v || 0).toLocaleString();
+  if (!Number(one.cases || 0) && !Number(one.judgments || 0)) {
+    return one.first_read || one.read_at ? "nothing learned from it" : "not read yet";
+  }
+  return `${n(one.cases)} cases, ${n(one.judgments)} judgments, bearing on ${n(one.reasons)} reasons`;
+}
+
+/* A lesson's own buttons: turn it off or on, show what was learned, and
+   delete - which asks first, in the row itself. */
+function learningActions(unit, off, extra = "") {
+  const asking = learningState.removing === unit;
+  if (asking) {
+    return `<div class="xp-unit-ask" role="alert">Delete it for good? Everything learned from it
+      goes, and it is put on the list of what is never learned. Nothing on your computer or on
+      the web is touched.
+      <button type="button" class="small danger" data-learn-delete-yes="${escapeHtml(unit)}">Delete</button>
+      <button type="button" class="small secondary" data-learn-remove-no="1">Keep it</button></div>`;
+  }
+  return `<div class="xp-lesson-actions">${extra}
+    <button type="button" class="small secondary" data-learn-detail="${escapeHtml(unit)}">${
+      learningState.detail === unit ? "Hide what was learned" : "What was learned"}</button>
+    <button type="button" class="small secondary" data-learn-toggle="${escapeHtml(unit)}"
+      data-on="${off ? "1" : ""}">${off ? "Turn on" : "Turn off"}</button>
+    <button type="button" class="small secondary danger" data-learn-delete="${escapeHtml(unit)}">Delete</button>
+  </div>`;
+}
+
+/* What was learned of one lesson, opened from its row. */
+function learningDetailHtml(unit) {
+  if (learningState.detail !== unit) return "";
+  const d = learningState.detailData;
+  if (!d || d.unit !== unit) return `<div class="xp-lesson-detail muted">Opening&hellip;</div>`;
+  if (!(d.cases || []).length) return `<div class="xp-lesson-detail muted">Nothing learned from it yet.</div>`;
+  const STRENGTH = { written: "you wrote it down", noted: "noted from your words",
+    endorsed: "you endorse it", changed: "you changed it", approved: "you said yes",
+    accepted: "you let it stand" };
+  const cases = d.cases.map((c) => `<li><strong>${escapeHtml(c.title)}</strong>
+      ${c.looks_like ? `<div>${escapeHtml(c.looks_like)}</div>` : ""}
+      ${(c.judgments || []).length ? `<ul>${c.judgments.map((j) => `<li>${escapeHtml(j.direction)}
+        <span class="muted">(${escapeHtml(STRENGTH[j.strength] || j.strength)}${j.said
+          ? `: "${escapeHtml(j.said)}"` : ""})</span></li>`).join("")}</ul>` : ""}</li>`).join("");
+  const reasons = (d.reasons || []).map((r) => `<li>${escapeHtml(r.statement)}
+      <span class="muted">(${escapeHtml(r.source === "adopted" ? "adopted from it"
+        : r.source === "stated" ? "in your own words" : "inferred")}, ${escapeHtml(
+        r.state === "active" ? "in use" : r.state === "candidate" ? "forming" : r.state)})</span></li>`).join("");
+  return `<div class="xp-lesson-detail"><h5>Cases</h5><ul>${cases}</ul>${reasons
+    ? `<h5>Reasons it bears on</h5><ul>${reasons}</ul>` : ""}</div>`;
+}
+
+function learningUnitRow(one) {
+  const off = one.state === "inactive";
+  const folders = (one.folders || []).slice(0, 4).map((f) => `<code>${escapeHtml(f)}</code>`).join(" ");
+  return `<li class="xp-lesson${off ? " xp-lesson-off" : ""}">
+    <div class="xp-lesson-head"><strong>${escapeHtml(one.title || one.id)}</strong>
+      <span class="muted">${escapeHtml(learningKind(one))}</span>
+      ${off ? `<span class="xp-lesson-badge">turned off</span>` : ""}</div>
+    ${folders ? `<div class="xp-lesson-where">${folders}</div>` : ""}
+    <div class="muted">${escapeHtml(learningCounts(one))}</div>
+    ${learningActions(one.id, off)}
+    ${learningDetailHtml(one.id)}
+  </li>`;
+}
+
+function learningItemRow(one) {
+  const off = one.state === "inactive";
+  const whose = one.whose === "mine" ? "Yours - learned in full"
+    : "Someone else's - a reference you endorse";
+  const learns = (one.learn || []).map((key) => LEARN_WHAT[key] || key).join(", ");
+  const status = one.status === "pending" ? `<span class="xp-lesson-badge xp-lesson-wait">waiting for you to look</span>`
+    : one.status === "unreachable" ? `<span class="xp-lesson-badge">can not be read now</span>` : "";
+  const evidence = (one.evidence || []).map((ev) => `<li>${escapeHtml(ev.what || "")}${ev.quote
+    ? ` <span class="muted">"${escapeHtml(ev.quote)}"${ev.by_user ? "" : " (not certain to be yours)"}</span>` : ""}
+    ${ev.at ? `<span class="muted">${escapeHtml(localStamp(ev.at))}</span>` : ""}</li>`).join("");
+  const where = one.kind === "text" ? `<blockquote class="xp-lesson-text">${escapeHtml(one.text || "")}</blockquote>`
+    : `<div class="xp-lesson-where"><code>${escapeHtml(one.source)}</code></div>`;
+  return `<li class="xp-lesson${off ? " xp-lesson-off" : ""}">
+    <div class="xp-lesson-head"><strong>${escapeHtml(one.title)}</strong>
+      <span class="muted">${escapeHtml(learningKind(one))}</span>
+      ${off ? `<span class="xp-lesson-badge">turned off</span>` : ""} ${status}
+      ${one.large ? `<span class="xp-lesson-badge xp-lesson-large" title="${escapeHtml(
+        `About ${Number(one.estimate || 0).toLocaleString()} tokens a reading`)}">large</span>` : ""}</div>
+    ${where}
+    <div>${escapeHtml(whose)}. ${learns ? escapeHtml(`Learns ${learns}`) + "." : ""}
+      <span class="muted">${escapeHtml(learningCadence(one.cadence))}</span></div>
+    ${one.angle ? `<div><span class="muted">${escapeHtml(one.origin === "heartbeat"
+      ? "Its purpose, as the heartbeat saw it:" : "From the angle:")}</span> ${escapeHtml(one.angle)}</div>` : ""}
+    ${evidence ? `<div class="muted">Why the heartbeat added it:</div><ul class="xp-lesson-evidence">${evidence}</ul>` : ""}
+    ${one.note ? `<div class="muted">${escapeHtml(one.note)}</div>` : ""}
+    <div class="muted">${escapeHtml(learningCounts(one))}${one.read_at
+      ? ` - last read ${escapeHtml(localStamp(one.read_at))}` : ""}</div>
+    ${learningActions(one.unit_id, off,
+      `<button type="button" class="small secondary" data-learn-edit="${escapeHtml(one.id)}">Change its plan</button>`)}
+    ${learningDetailHtml(one.unit_id)}
+  </li>`;
+}
+
+/* WHAT WAITS FOR YOU: the first reading of your own work on the web, and of
+   anything the heartbeat added - nothing of it is given to a run until you
+   keep it. */
+function learningPendingHtml(s) {
+  const lessons = s.lessons || {};
+  const waiting = [...(lessons.added || []), ...(lessons.heartbeat || [])]
+    .filter((one) => one.status === "pending");
+  if (!waiting.length) return "";
+  return `<h3>Waiting for you</h3>
+    <p class="muted">Read for the first time. Nothing of it is used until you keep it - look at
+      what was learned first.</p>
+    <ul class="xp-lessons">${waiting.map((one) => `<li class="xp-lesson">
+      <div class="xp-lesson-head"><strong>${escapeHtml(one.title)}</strong>
+        <span class="muted">${escapeHtml(learningKind(one))}, ${escapeHtml(one.origin === "heartbeat"
+          ? "added by the heartbeat" : "added by you")}</span></div>
+      <div class="muted">${escapeHtml(learningCounts(one))}</div>
+      <div class="xp-lesson-actions">
+        <button type="button" class="small secondary" data-learn-detail="${escapeHtml(one.unit_id)}">${
+          learningState.detail === one.unit_id ? "Hide what was learned" : "What was learned"}</button>
+        <button type="button" class="small" data-learn-accept="${escapeHtml(one.id)}">Keep it</button>
+        <button type="button" class="small secondary" data-learn-reject="${escapeHtml(one.id)}">Don't keep it</button>
+      </div>
+      ${learningDetailHtml(one.unit_id)}</li>`).join("")}</ul>`;
+}
+
+function learningLessonsHtml(s) {
+  const lessons = s.lessons || {};
   const records = s.records || {};
-  return `<h3>Where it reads</h3>
-    <p class="muted">Your Work projects, the folders listed here with everything in them, and
-      your coding agents' conversations - also what the agents search. Never the agent's own data,
-      and never a key or password: they are taken out before anything is read.</p>
-    <ul class="xp-learn-places">${listed}</ul>
+  const has = (kind) => (s.places || []).some((one) => one.kind === kind);
+  const listed = (s.places || []).map((one) => `<li><code>${escapeHtml(one.path)}</code>${one.kind === "claude"
+    ? ` <span class="muted">${escapeHtml("Your Claude Code conversations")}</span>` : one.kind === "codex"
+      ? ` <span class="muted">${escapeHtml("Your Codex conversations")}</span>` : ""}</li>`).join("");
+  const found = (s.found || []).filter((one) => !one.excluded).map((one) => `<li>
+      <code>${escapeHtml(one.path)}</code> <span class="muted">found through your ${escapeHtml(
+        (one.via || []).map((v) => v === "claude" ? "Claude Code" : "Codex").join(" and "))} conversations,
+        not read yet</span></li>`).join("");
+  const yours = (lessons.yours || []).map(learningUnitRow).join("")
+    || `<li class="muted">Nothing read yet: your Work projects are read, and the folders you add here.</li>`;
+  const added = (lessons.added || []).map(learningItemRow).join("")
+    || `<li class="muted">Nothing yet. Add a web page, a site, a passage you like, a folder or a file.</li>`;
+  const heart = (lessons.heartbeat || []).map(learningItemRow).join("")
+    || `<li class="muted">Nothing yet. Once a day the heartbeat looks for what you show you endorse, and adds it here with its evidence.</li>`;
+  const never = (lessons.never || []).map((one) => `<li><code>${escapeHtml(one.title)}</code>
+      <button type="button" class="small secondary" data-learn-never-off="${escapeHtml(one.key)}">Take off the list</button></li>`).join("")
+    || `<li class="muted">Nothing on it.</li>`;
+  return `<h3>Your own folders and projects</h3>
+    <p class="muted">Your Work projects, the folders listed here with everything in them, and your
+      coding agents' conversations - also what the agents search. Never the agent's own data, and
+      never a key or password: they are taken out before anything is read.</p>
+    ${listed ? `<ul class="xp-learn-places">${listed}</ul>` : ""}
     <div class="xp-learn-row">
       <button type="button" class="small secondary" data-learn-add="folder">Add a folder…</button>
       <button type="button" class="small secondary" data-learn-add="claude"${!records.claude
@@ -572,8 +751,272 @@ function learningPlacesHtml(s) {
       <button type="button" class="small secondary" data-learn-add="codex"${!records.codex
         || has("codex") ? " disabled" : ""}>Add Codex records</button>
     </div>
-    ${found ? `<h4>Folders your conversations worked in</h4><ul class="xp-learn-places">${found}</ul>` : ""}`;
+    <ul class="xp-lessons">${yours}</ul>
+    ${found ? `<h4>Folders your conversations worked in</h4><ul class="xp-learn-places">${found}</ul>` : ""}
+    <h3>Added by you</h3>
+    <div class="xp-learn-row"><button type="button" class="small" data-learn-new="1">Add to learning…</button>
+      <span class="muted">A web page or site, a passage, a folder or a file - yours, or someone else's
+        you endorse. Also beside selected text ("Learn") and in Explorer ("Add to learning").</span></div>
+    <ul class="xp-lessons">${added}</ul>
+    <h3>Added by the heartbeat</h3>
+    <ul class="xp-lessons">${heart}</ul>
+    <h3>Never learned</h3>
+    <p class="muted">What you deleted. Nothing here is learned again - nor added by the heartbeat -
+      until you take it off the list.</p>
+    <ul class="xp-learn-places">${never}</ul>`;
 }
+
+async function learningOpenDetail(unit) {
+  if (learningState.detail === unit) {
+    learningState.detail = null;
+    drawLearning();
+    return;
+  }
+  learningState.detail = unit;
+  learningState.detailData = null;
+  drawLearning();
+  try {
+    learningState.detailData = await api.get(`/api/learning/unit?id=${encodeURIComponent(unit)}`);
+  } catch (err) {
+    toast(err.message, "error");
+    learningState.detail = null;
+  }
+  drawLearning();
+}
+
+/* LEARN: what is handed to the learning, and its plan to check
+   (learning/plan.py). Opened empty from the panel, on a draft from the
+   selection's "Learn" or Explorer's "Add to learning", or on an item to
+   change its plan. Nothing is learned before Add. */
+const learnState = { draft: null, timer: null, editing: null, plan: null };
+const LEARN_SOLO = new URLSearchParams(location.search).get("solo") === "learn";
+if (LEARN_SOLO) {
+  document.body.classList.add("learn-solo");
+  document.title = "Learn - Personal Agent WaterMelon";
+  $("#learn-box").addEventListener("close", () => setTimeout(() => window.close(), 60));
+  try {
+    const w = Math.min(760, screen.availWidth), h = Math.min(860, screen.availHeight);
+    window.resizeTo(w, h);
+    window.moveTo((screen.availLeft || 0) + Math.round((screen.availWidth - w) / 2),
+                  (screen.availTop || 0) + Math.round((screen.availHeight - h) / 2));
+  } catch (_err) { /* left as it opened */ }
+}
+
+function learnButtons(which) {
+  const show = { draft: which === "pick", add: which === "plan", now: which === "plan",
+                 save: which === "edit" };
+  $("#learn-draft").hidden = !show.draft;
+  $("#learn-add").hidden = !show.add;
+  $("#learn-now").hidden = !show.now;
+  $("#learn-save").hidden = !show.save;
+}
+
+function openLearnBox() {
+  const dialog = $("#learn-box");
+  clearTimeout(learnState.timer);
+  learnState.draft = null;
+  learnState.editing = null;
+  learnState.plan = null;
+  learnButtons("pick");
+  $("#learn-body").innerHTML = `<p class="muted">What should it learn from? A web address, a
+      passage, a folder or a file.</p>
+    <label class="learn-field">Web address <input type="url" id="learn-url" placeholder="https://"></label>
+    <label class="learn-field">Or a passage <textarea id="learn-text" rows="5"></textarea></label>
+    <div class="xp-learn-row">
+      <button type="button" class="small secondary" id="learn-pick-folder">Choose a folder…</button>
+      <button type="button" class="small secondary" id="learn-pick-file">Choose a file…</button>
+      <span class="muted" id="learn-picked"></span>
+    </div>`;
+  if (!dialog.open) dialog.showModal();
+}
+
+async function learnDraft(handed) {
+  const dialog = $("#learn-box");
+  if (!dialog.open) dialog.showModal();
+  learnButtons("none");
+  $("#learn-body").innerHTML = `<p class="muted">Looking at it&hellip;</p>`;
+  try {
+    const said = await learningPost({ action: "draft", ...handed });
+    learnFollow(said.draft.id);
+  } catch (err) {
+    $("#learn-body").innerHTML = `<p class="delegate-error">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+async function learningPost(body) {
+  return api.post("/api/learning", body);
+}
+
+async function learnFollow(id) {
+  clearTimeout(learnState.timer);
+  const dialog = $("#learn-box");
+  if (!dialog.open) dialog.showModal();
+  let draft;
+  try {
+    draft = (await api.get(`/api/learning/draft?id=${encodeURIComponent(id)}`)).draft;
+  } catch (err) {
+    $("#learn-body").innerHTML = `<p class="delegate-error">${escapeHtml(err.message)}</p>`;
+    learnButtons("none");
+    return;
+  }
+  learnState.draft = draft;
+  if (draft.state === "failed") {
+    $("#learn-body").innerHTML = `<p class="delegate-error">${escapeHtml(draft.error || "It could not be looked at.")}</p>`;
+    learnButtons("none");
+    return;
+  }
+  if (draft.state !== "ready") {
+    $("#learn-body").innerHTML = `<p class="muted">${draft.state === "looking"
+      ? "Looking at it…" : "Drafting the plan…"}</p>`;
+    learnState.timer = setTimeout(() => learnFollow(id), 1500);
+    return;
+  }
+  learnShowPlan(draft.plan, false);
+}
+
+/* The plan, to change: whose it is, what to learn of it, the angle, how
+   much of it, how often - and what a reading costs. */
+function learnShowPlan(plan, editing) {
+  learnState.plan = plan;
+  const kind = plan.kind;
+  const scopes = kind === "url" ? [["page", "This page"], ["prefix", "The pages under this address"],
+    ["repo", "The repository"]] : [];
+  const cadence = String(plan.cadence || "update");
+  const days = cadence.startsWith("days:") ? cadence.slice(5) : "7";
+  const page = plan.page && plan.page.url ? plan.page : null;
+  $("#learn-body").innerHTML = `
+    ${kind === "text" && !editing && page ? `<fieldset class="learn-field"><legend>What to learn</legend>
+      <label class="checkbox"><input type="radio" name="learn-source" value="text" checked> Only the passage you selected</label>
+      <label class="checkbox"><input type="radio" name="learn-source" value="page"> The page it is on:
+        <code>${escapeHtml(page.url)}</code></label></fieldset>` : ""}
+    <div class="learn-where">${kind === "text" ? `<blockquote class="xp-lesson-text">${escapeHtml(
+      String(plan.text || "").slice(0, 600))}</blockquote>` : `<code>${escapeHtml(plan.source || "")}</code>`}</div>
+    <label class="learn-field">Title <input type="text" id="learn-title-in" value="${escapeHtml(plan.title || "")}"></label>
+    <label class="learn-field">What it is <textarea id="learn-about" rows="2">${escapeHtml(plan.about || "")}</textarea></label>
+    <fieldset class="learn-field"><legend>Whose it is</legend>
+      <label class="checkbox"><input type="radio" name="learn-whose" value="mine"${plan.whose === "mine"
+        ? " checked" : ""}> Mine - learned in full, its decisions as mine</label>
+      <label class="checkbox"><input type="radio" name="learn-whose" value="others"${plan.whose !== "mine"
+        ? " checked" : ""}> Someone else's - a reference I endorse, never taken as mine</label>
+      ${plan.whose_why ? `<p class="muted">${escapeHtml(plan.whose_why)}</p>` : ""}</fieldset>
+    <fieldset class="learn-field"><legend>What to learn of it</legend>
+      ${["cases", "rules", "reference"].map((key) => `<label class="checkbox"><input type="checkbox"
+        name="learn-what" value="${key}"${(plan.learn || []).includes(key) ? " checked" : ""}> ${escapeHtml(
+        { cases: "Cases - what it looks like, how it is made", rules: "Rules - what work should follow",
+          reference: "A reference - to look at while making something" }[key])}</label>`).join("")}</fieldset>
+    <label class="learn-field">From what angle, and why
+      <textarea id="learn-angle" rows="3" placeholder="${escapeHtml(
+        "What of it to learn - of someone else's work, only this is learned")}">${escapeHtml(plan.angle || "")}</textarea></label>
+    ${scopes.length ? `<label class="learn-field">How much of it <select id="learn-scope">${scopes.map(([key, said]) =>
+      `<option value="${key}"${plan.scope === key ? " selected" : ""}>${escapeHtml(said)}</option>`).join("")}</select></label>` : ""}
+    <label class="learn-field">How often <select id="learn-cadence">
+      <option value="once"${cadence === "once" ? " selected" : ""}>Once</option>
+      <option value="update"${cadence === "update" ? " selected" : ""}>At every learning update</option>
+      <option value="days"${cadence.startsWith("days:") ? " selected" : ""}>Every few days</option></select>
+      <input type="number" id="learn-days" min="1" max="365" value="${escapeHtml(days)}"${cadence.startsWith("days:")
+        ? "" : " hidden"}></label>
+    ${plan.estimate ? `<p class="${plan.large ? "delegate-error" : "muted"}">${escapeHtml(
+      `About ${Number(plan.estimate).toLocaleString()} tokens a reading`)}${plan.large
+      ? ` - ${escapeHtml("large: marked so in the list")}` : ""}.</p>` : ""}
+    ${plan.not_learned ? `<p class="muted">${escapeHtml(`Left out: ${plan.not_learned}`)}</p>` : ""}
+    ${(plan.questions || []).length ? `<div class="muted">To say in the angle, if you know:<ul>${plan.questions.map((q) =>
+      `<li>${escapeHtml(q)}</li>`).join("")}</ul></div>` : ""}`;
+  const select = $("#learn-cadence");
+  select?.addEventListener("change", () => { $("#learn-days").hidden = select.value !== "days"; });
+  learnButtons(editing ? "edit" : "plan");
+}
+
+function learnRead() {
+  const plan = Object.assign({}, learnState.plan || {});
+  const chosen = document.querySelector('input[name="learn-source"]:checked');
+  if (chosen && chosen.value === "page" && plan.page && plan.page.url) {
+    plan.kind = "url";
+    plan.source = plan.page.url;
+    plan.text = "";
+    plan.scope = "page";
+  }
+  plan.title = ($("#learn-title-in") || {}).value || plan.title;
+  plan.about = ($("#learn-about") || {}).value || "";
+  plan.whose = (document.querySelector('input[name="learn-whose"]:checked') || {}).value || plan.whose;
+  plan.learn = [...document.querySelectorAll('input[name="learn-what"]:checked')].map((one) => one.value);
+  plan.angle = ($("#learn-angle") || {}).value || "";
+  if ($("#learn-scope")) plan.scope = $("#learn-scope").value;
+  const cadence = ($("#learn-cadence") || {}).value || "update";
+  plan.cadence = cadence === "days" ? `days:${Math.max(1, Number($("#learn-days").value || 7))}` : cadence;
+  return plan;
+}
+
+async function learnAdd(now) {
+  const plan = learnRead();
+  if (!(plan.learn || []).length) { toast("Choose what to learn of it", "error"); return; }
+  try {
+    const said = await learningPost({ action: "item_add", plan, learn_now: now });
+    learningState.data = said;
+    $("#learn-box").close();
+    toast(said.note || (now ? "Added - learning it now" : "Added to the learning list"));
+    drawLearning();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function learnSave() {
+  if (!learnState.editing) return;
+  const plan = learnRead();
+  try {
+    learningState.data = await learningPost({ action: "item_change", item: learnState.editing, plan });
+    $("#learn-box").close();
+    toast("Saved: read so from the next update");
+    drawLearning();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+function learnEdit(itemId) {
+  const lessons = (learningState.data || {}).lessons || {};
+  const item = [...(lessons.added || []), ...(lessons.heartbeat || [])].find((one) => one.id === itemId);
+  if (!item) return;
+  learnState.editing = itemId;
+  const dialog = $("#learn-box");
+  if (!dialog.open) dialog.showModal();
+  learnShowPlan(Object.assign({}, item, { page: null }), true);
+}
+
+document.addEventListener("click", async (event) => {
+  const target = event.target;
+  if (!target || !target.closest || !target.closest("#learn-box")) return;
+  const id = target.id;
+  if (id === "learn-cancel") {
+    clearTimeout(learnState.timer);
+    $("#learn-box").close();
+  } else if (id === "learn-pick-folder") {
+    const path = await xpChooseFolder("A folder to learn from");
+    if (path) { learnState.picked = { kind: "folder", source: path }; $("#learn-picked").textContent = path; }
+  } else if (id === "learn-pick-file") {
+    try {
+      const chosen = await api.post("/api/learning/choose-file", {});
+      if (chosen.selected) {
+        learnState.picked = { kind: "file", source: chosen.selected };
+        $("#learn-picked").textContent = chosen.selected;
+      }
+    } catch (err) { toast(err.message, "error"); }
+  } else if (id === "learn-draft") {
+    const url = ($("#learn-url") || {}).value || "";
+    const text = ($("#learn-text") || {}).value || "";
+    const handed = url.trim() ? { kind: "url", source: url.trim() }
+      : text.trim() ? { kind: "text", text } : learnState.picked;
+    if (!handed) { toast("Give an address, a passage, a folder or a file", "error"); return; }
+    learnState.picked = null;
+    await learnDraft(handed);
+  } else if (id === "learn-add") {
+    await learnAdd(false);
+  } else if (id === "learn-now") {
+    await learnAdd(true);
+  } else if (id === "learn-save") {
+    await learnSave();
+  }
+});
 
 /* WHAT IT HAS LEARNED, counted: the places, cases, judgments, reasons and
    terms, each with what it is made of (store.breakdown). */
@@ -590,7 +1033,8 @@ function learningLearnedHtml(s) {
                   ["habit", (v) => `${v} on how you work`],
                   ["requirement", (v) => `${v} on what is asked for`],
                   ["evaluation", (v) => `${v} on how you evaluate`]];
-  const SOURCE = [["stated", (v) => `${v} in your own words`], ["inferred", (v) => `${v} inferred from what you did`]];
+  const SOURCE = [["stated", (v) => `${v} in your own words`], ["inferred", (v) => `${v} inferred from what you did`],
+                  ["adopted", (v) => `${v} adopted from work you endorse`]];
   const rows = [];
   const places = b.places || {};
   if (sum(places)) {
@@ -669,7 +1113,7 @@ function drawLearning() {
   clearTimeout(learningState.timer);
   const going = (s.update && ["running", "waiting"].includes(s.update.state))
     || (s.index && s.index.building);
-  if (going && activeTab === "experience") {
+  if (going && activeTab === "learning") {
     learningState.timer = setTimeout(loadLearning, 3000);
   }
   const counts = s.counts || {};
@@ -681,8 +1125,9 @@ function drawLearning() {
   // Not while a time or the limit is being typed.
   if (host.contains(document.activeElement) && document.activeElement.matches("input")) return;
   host.innerHTML = `<h2>Learning</h2>
-    <p class="muted">Your own work, read into cases and the reasons behind how you judge it -
-      what a Work run's reviewer asks of when it checks the agent's work.</p>
+    <p class="muted">Your own work - and work of others you endorse - read into cases and the
+      reasons behind how you judge it: what a Work run's reviewer asks of when it checks the
+      agent's work.</p>
     <div class="xp-learn-row">
       <label class="checkbox"><input type="checkbox" id="xp-learn-on"${s.on ? " checked" : ""}>
         Learn by itself</label>
@@ -697,8 +1142,9 @@ function drawLearning() {
       <input type="number" id="xp-learn-limit" min="0" step="100000"
         value="${Number(s.daily_tokens || 0)}"></label>
       <span class="muted">0: no limit</span></div>
+    ${learningPendingHtml(s)}
+    ${learningLessonsHtml(s)}
     ${learningLearnedHtml(s)}
-    ${learningPlacesHtml(s)}
     ${learningChartHtml(s)}`;
   const control = recommendTimesControl((s.times || []).join(", "),
     "No time set: it learns only when you press Update now.");
@@ -749,6 +1195,31 @@ document.addEventListener("click", async (event) => {
   } else if (target.dataset.learnExclude) {
     await learningDo({ action: "exclude", path: target.dataset.learnExclude,
                        out: Boolean(target.dataset.out) });
+  } else if (target.dataset.learnToggle) {
+    const on = Boolean(target.dataset.on);
+    await learningDo({ action: on ? "activate" : "deactivate", unit: target.dataset.learnToggle },
+      on ? "Turned on: read again, and used" : "Turned off: not read, and not used");
+  } else if (target.dataset.learnDelete) {
+    learningState.removing = target.dataset.learnDelete;
+    drawLearning();
+  } else if (target.dataset.learnDeleteYes) {
+    learningState.removing = null;
+    await learningDo({ action: "delete", unit: target.dataset.learnDeleteYes },
+      "Deleted, and put on the list of what is never learned");
+  } else if (target.dataset.learnDetail) {
+    await learningOpenDetail(target.dataset.learnDetail);
+  } else if (target.dataset.learnAccept) {
+    await learningDo({ action: "accept", item: target.dataset.learnAccept }, "Kept: it is used now");
+  } else if (target.dataset.learnReject) {
+    await learningDo({ action: "reject", item: target.dataset.learnReject },
+      "Not kept: what was learned from it is gone, and it is turned off");
+  } else if (target.dataset.learnNeverOff) {
+    await learningDo({ action: "never_off", key: target.dataset.learnNeverOff },
+      "Taken off the list: it may be learned again");
+  } else if (target.dataset.learnNew) {
+    openLearnBox();
+  } else if (target.dataset.learnEdit) {
+    learnEdit(target.dataset.learnEdit);
   }
 });
 
@@ -756,9 +1227,8 @@ document.addEventListener("click", async (event) => {
    written: then once that is left. */
 function xpDrawUnits() {
   if (xpEditing("#xp-units")) { xpDefer("#xp-units", xpDrawUnits); return; }
-  // DELEGATED WORK under a heading of its own, after the rest.
-  const handed = experienceState.units.filter((unit) => unit.delegated);
-  const rest = experienceState.units.filter((unit) => !unit.delegated);
+  // DELEGATED WORK AMONG THE REST, by when it last moved - work just handed
+  // over is at the top (its run counts, `units`) - marked as delegated.
   const row = (unit) => `
     <div class="xp-unit${unit.id === experienceState.unit ? " selected" : ""}${
       unit.active ? " xp-unit-active" : ""}"
@@ -775,6 +1245,9 @@ function xpDrawUnits() {
       <div class="xp-unit-open" data-xp-unit="${escapeHtml(unit.id)}" role="button"
         tabindex="0">
         ${escapeHtml(xpName(unit.name))}
+        ${unit.delegated ? `<span class="muted xp-unit-delegated">delegated</span>` : ""}
+        ${unit.way ? `<span class="xp-way xp-way-${escapeHtml(unit.way)}">${
+          unit.way === "quick" ? "Quick" : "Thorough"}</span>` : ""}
         ${(unit.names_before || []).length ? `<span class="muted xp-unit-was">earlier called ${
           escapeHtml(unit.names_before.join("; "))}</span>` : ""}
         <span class="xp-unit-run" data-xp-unit-run="${escapeHtml(unit.id)}">${xpUnitRunBadge(unit.id)}</span>
@@ -795,9 +1268,8 @@ function xpDrawUnits() {
       ${unit.kind === "directory" ? xpFolderList(unit.id, unit.paths || [unit.workspace]) : ""}
       ${xpLearning(unit)}
     </div>`;
-  xpPut($("#xp-units"), (rest.map(row).join("") || (handed.length ? ""
-    : `<p class="muted">Nothing shown in the overview yet.</p>`))
-    + (handed.length ? `<h4 class="xp-group">Delegated work</h4>${handed.map(row).join("")}` : ""));
+  xpPut($("#xp-units"), experienceState.units.map(row).join("")
+    || `<p class="muted">Nothing shown in the overview yet.</p>`);
 }
 
 /* THE RUNS GOING NOW, AND HOW - asked every few seconds, whichever tab is
@@ -837,6 +1309,7 @@ async function watchWorkGoing() {
   try {
     if (!document.hidden) {
       const { going } = await api.get("/api/work/going");
+      const before = workGoing.byUnit;
       workGoing.byUnit = {};
       let mine = 0;
       let debug = 0;
@@ -846,6 +1319,18 @@ async function watchWorkGoing() {
           if (one.debug) debug += 1; else mine += 1;
         }
       });
+      // A TO-DO'S WORK, TRACKED: where each version stands, as it moves;
+      // one that ended - asked again, to say how.
+      const tracked = new Set(ovTodos.flatMap((one) => ovTodoVersions(one)
+        .map((version) => version.unit).filter(Boolean)));
+      if (typeof delegateFolderCheck === "function" && $("#delegate") && $("#delegate").open) {
+        delegateFolderCheck();
+      }
+      if (Object.keys(before).some((unit) => tracked.has(unit) && !workGoing.byUnit[unit])) {
+        loadTodos();
+      } else if (typeof ovPlaceTodos === "function") {
+        ovPlaceTodos();
+      }
       $$("[data-xp-unit-run]").forEach((span) => {
         const html = xpUnitRunBadge(span.dataset.xpUnitRun);
         if (span._xpHtml !== xpShows(html)) {
@@ -1798,7 +2283,9 @@ function xpRun(run, idle, first) {
   const deckOpen = Boolean(kept.decks[run.id]);
   return `<details class="xp-run" data-xp-run-box="${id}" data-xp-keep="run:${id}"${
       run.alive || first ? " open" : ""}>
-    <summary><strong>${escapeHtml(run.status)}${run.alive && run.paused
+    <summary>${plan.way ? `<span class="xp-way xp-way-${escapeHtml(plan.way)}">${
+        plan.way === "quick" ? "Quick" : "Thorough"}</span> ` : ""}<strong>${
+        escapeHtml(run.status)}${run.alive && run.paused
         && run.status !== "paused" ? " · paused" : ""}</strong> ·
       ${escapeHtml(localStamp(run.started_at))} ·
       ${escapeHtml(run.instruction || "carry it forward")}</summary>
@@ -1809,12 +2296,15 @@ function xpRun(run, idle, first) {
         ${escapeHtml(seen.branch || "main")})</span> ·
       <button type="button" class="small secondary" data-xp-version-latest="${id}">back to
         latest (head${versions.head ? ` ${escapeHtml(versions.head)}` : ""})</button></p>` : ""}
+    ${seen ? "" : xpHanded(run)}
     ${shownContract ? `<div class="xp-contract-box" data-xp-keep="contract:${id}">${
       shownContract}</div>` : ""}
     ${!seen && inForce && (contract.amended || []).length ? `<p class="muted">Added by the reviewer
       during the work: ${contract.amended.map((a) => `round ${a.round}: ${(a.added || [])
       .map(escapeHtml).join(", ")}`).join("; ")}</p>` : ""}
     <p class="muted" data-xp-run-totals="${id}">${xpRunTotals(run)}</p>
+    ${plan.unconfined && !xpIsDebugRun(run) ? `<p class="xp-warning">This session works
+      without the sandbox. ${escapeHtml(XP_UNCONFINED_WARNING)}</p>` : ""}
     ${run.folder ? `<p class="muted xp-logs-row">Logs: <code>${escapeHtml(run.log_dir || "")}</code>
       <button type="button" class="small" data-xp-open-logs="${id}"
         title="The project's run logs - a folder per run, by when it started, with its full transcript">Open
@@ -1830,24 +2320,35 @@ function xpRun(run, idle, first) {
     ${xpCallsSection(run)}
     ${xpLiveSection(run)}
     ${xpAnswer(run)}
+    ${plan.way === "quick" && idle && !run.alive ? `<p class="xp-continue-row">
+      <button type="button" class="small" data-xp-thorough="${id}">Continue thoroughly</button>
+      <span class="muted">${(run.final || {}).thorough ? `It said: ${escapeHtml(
+        run.final.thorough)} · ` : ""}a builder and a reviewer carry it on from what it
+        made, with the limits above</span></p>` : ""}
     ${run.extendable && !from && idle ? `<div class="xp-continue-row xp-continue-next">
       ${xpContinueWords(run.id, true)}
       <button type="button" class="small" data-xp-continue="${id}"
         data-xp-continue-needs-words="1">Continue</button>
       ${xpContinueSound(run.id)}
+      ${xpContinueUnconfined(run)}
       <span class="muted">from the finished work, with the limits above: the contract is
         amended by what you say - the goal too, if it calls for it - and the work goes on ·</span>
     </div>` : ""}
     ${(run.continuable || from) && idle && !run.alive ? `<p class="xp-continue-row"><button
       type="button" class="small" data-xp-continue="${id}">${
-        !from && run.status === "interrupted" ? "Resume" : "Continue"}</button>
+        !from && xpGoesBack(run) ? "Resume" : "Continue"}</button>
       ${xpContinueSound(run.id)}
-      <span class="muted">${!from && run.status === "interrupted" && (run.milestone || {}).version
-        // Where it was in its round went with the application: it goes on
-        // from the last version saved.
-        ? `resumes from the last milestone: ${escapeHtml(run.milestone.version)} - ${
-          escapeHtml(run.milestone.label || "")} (the application closed while it was going;
-          its files and where it stood come back as they were then), with the limits above ·`
+      <span class="muted">${!from && xpGoesBack(run) && (run.milestone || {}).version
+        // It did not stop cleanly: it goes back to its last save point.
+        ? (run.milestone.resume
+          ? `goes back to its progress point, ${escapeHtml(run.milestone.label || "")} - not
+            checked (${escapeHtml(XP_GOES_BACK[run.status])}; its files and where it stood
+            come back as they were then, and what came after is given up), with the limits
+            above ·`
+          : `goes back to its last version: ${escapeHtml(run.milestone.version)} - ${
+          escapeHtml(run.milestone.label || "")} (${escapeHtml(XP_GOES_BACK[run.status])}; its
+          files and where it stood come back as they were then, and what came after is given
+          up), with the limits above ·`)
         : !from ? "from where it stopped, with the limits above ·"
         : from === versions.head ? `from version ${escapeHtml(from)}, the latest - where it
           stopped - with the limits above ·`
@@ -1859,6 +2360,7 @@ function xpRun(run, idle, first) {
         <option value="ask"${book.mode !== "auto" ? " selected" : ""}>ask me before installing</option>
         <option value="auto"${book.mode === "auto" ? " selected" : ""}>Auto</option>
       </select></label>
+      ${xpContinueUnconfined(run)}
       ${from ? `<span class="muted">· what to change from there: under ${escapeHtml(from)}
         in Versions</span>` : xpContinueWords(run.id)}</p>` : ""}
     ${requests.length ? `<details class="xp-packages"><summary><strong>Packages
@@ -1966,6 +2468,83 @@ function xpAnswerParts(run) {
            next: !done && plan.next ? `Next, it said: ${plan.next}` : "" };
 }
 
+/* WHAT THE USER GETS, AND HOW (handed.py): each result the run handed
+   over, as it will be opened - an email as a message, an event with its
+   time - with what opens it: the user's own mail or calendar, filled in,
+   for them to send or save; the text to copy; the file. Nothing is sent or
+   saved for them. */
+const xpHandedItems = {};               // "run:n" -> the item, for its buttons
+const XP_HANDED_KIND = { email: "Email", event: "Event", text: "Text to paste",
+                         file: "File", folder: "Folder", answer: "Answer" };
+
+function xpHanded(run) {
+  const items = run.handed || [];
+  if (!items.length) return "";
+  const id = escapeHtml(run.id);
+  return `<div class="xp-results xp-handed" data-xp-keep="handed:${id}">
+    <h4>What you get</h4>${items.map((one, n) => {
+      const key = `${run.id}:${n}`;
+      xpHandedItems[key] = one;
+      const acts = one.actions || {};
+      const at = escapeHtml(key);
+      const open = (words) => `<button type="button" class="small" data-xp-handed-open="${at}">${
+        escapeHtml(words)}</button>`;
+      const copy = acts.copy ? `<button type="button" class="small secondary"
+        data-xp-handed-copy="${at}">Copy the text</button>` : "";
+      let body = "";
+      let buttons = "";
+      if (one.kind === "email") {
+        body = `<dl class="xp-handed-mail">${(one.to || []).length ? `<dt>To</dt><dd>${
+          escapeHtml(one.to.join(", "))}</dd>` : ""}${(one.cc || []).length ? `<dt>Cc</dt><dd>${
+          escapeHtml(one.cc.join(", "))}</dd>` : ""}<dt>Subject</dt><dd>${
+          escapeHtml(one.subject || "")}</dd></dl><pre class="xp-handed-text">${
+          escapeHtml(one.body || "")}</pre>`;
+        buttons = open(`Open in ${acts.in || "your mail"}`) + copy + (acts.whole === false
+          ? `<span class="muted">too long for the link: copy the text, then paste it into
+            the message</span>` : `<span class="muted">a new message, filled in - you send it</span>`);
+      } else if (one.kind === "event") {
+        body = `<p>${escapeHtml(localStamp(one.start) || one.start || "")}${one.end
+          ? ` - ${escapeHtml(localStamp(one.end) || one.end)}` : ""}${one.where
+          ? ` · ${escapeHtml(one.where)}` : ""}</p>${one.details
+          ? `<pre class="xp-handed-text">${escapeHtml(one.details)}</pre>` : ""}`;
+        buttons = open(`Add to ${acts.in || "your calendar"}`)
+          + `<span class="muted">filled in - you save it</span>`;
+      } else if (one.kind === "text" || one.kind === "answer") {
+        body = `<pre class="xp-handed-text">${escapeHtml(one.text || "")}</pre>`;
+        buttons = copy;
+      } else {
+        body = `<p><code>${escapeHtml(one.path || "")}</code></p>`;
+        buttons = open(one.kind === "folder" ? "Open the folder" : "Open it");
+      }
+      return `<div class="xp-handed-item"><p class="xp-handed-head"><span class="xp-way">${
+        escapeHtml(XP_HANDED_KIND[one.kind] || one.kind)}</span> <strong>${
+        escapeHtml(one.title || "")}</strong></p>${body}
+        <p class="xp-handed-buttons">${buttons}</p></div>`;
+    }).join("")}</div>`;
+}
+
+document.addEventListener("click", async (event) => {
+  if (!event.target.closest) return;
+  const openAt = event.target.closest("[data-xp-handed-open]");
+  const copyAt = event.target.closest("[data-xp-handed-copy]");
+  if (!openAt && !copyAt) return;
+  const key = (openAt || copyAt).dataset[openAt ? "xpHandedOpen" : "xpHandedCopy"];
+  const one = xpHandedItems[key] || {};
+  if (copyAt) {
+    try {
+      await navigator.clipboard.writeText((one.actions || {}).copy || "");
+      toast("Copied");
+    } catch (err) { toast(err.message, "error"); }
+    return;
+  }
+  const at = key.lastIndexOf(":");
+  try {
+    // Opened by the agent in your own browser - where you are signed in -
+    // not in this window.
+    await api.post("/api/work/handed/open", { run: key.slice(0, at), n: Number(key.slice(at + 1)) });
+  } catch (err) { toast(err.message, "error"); }
+});
+
 function xpAnswer(run) {
   const parts = xpAnswerParts(run);
   if (!parts.said) return "";
@@ -2001,6 +2580,9 @@ function xpRunSig(run) {
     ((plan.final_review || {}).findings || []).length, Boolean((run.transcript || []).length),
     run.run_log_dir || "", final.reason || "", Boolean(answer.said),
     run.contract_in_force || null, (plan.contract || {}).goal || "",
+    (run.handed || []).map((one) => [one.kind, one.title, one.subject || "", one.body || "",
+                                      one.text || "", one.start || "", one.path || "",
+                                      (one.actions || {}).open || ""]),
     (plan.contract || {}).amended || null, plan.todo || null, (plan.sessions || []).length,
     run.milestone || null]);
 }
@@ -2092,6 +2674,8 @@ const XP_CALLS_WHO = [
   { who: "builder", label: "builder", colour: "var(--xp-call-builder)" },
   { who: "reviewer", label: "reviewer", colour: "var(--xp-call-reviewer)" },
   { who: "single", label: "single model", colour: "var(--xp-call-single)" },
+  // Helper agents the builder or the reviewer handed a task (delegate).
+  { who: "helper", label: "helper agents", colour: "var(--xp-call-helper)" },
   // The two final checks: each a kind of its own (runner.CALL_WHO).
   { who: "quality check", label: "quality check", colour: "var(--xp-call-quality)" },
   { who: "privacy check", label: "privacy check", colour: "var(--xp-call-privacy)" },
@@ -2854,6 +3438,23 @@ function xpModelAsk(runId, ask) {
 function xpLiveAsk(runId, ask) {
   if (ask.kind === "model") return xpModelAsk(runId, ask);
   const id = escapeHtml(runId);
+  if (ask.kind === "action") {
+    // A command outside the sandbox, asked only after other ways were tried.
+    return `<div class="xp-package-ask xp-live-ask xp-action-ask">
+      <p><strong>The agent asks you to approve a command, run outside the sandbox</strong></p>
+      <p class="muted">Shell: <code>${escapeHtml(ask.shell || "")}</code></p>
+      <p class="muted">Folder: <code>${escapeHtml(ask.cwd || "")}</code></p>
+      <pre class="xp-action-command">${escapeHtml(ask.what || "")}</pre>
+      <p>Why: ${escapeHtml(ask.why || "")}</p>
+      ${(ask.tried || []).length ? `<p>What it tried first:</p><ul>${ask.tried.map((one) =>
+        `<li>${escapeHtml(one)}</li>`).join("")}</ul>` : ""}
+      <p class="muted">${escapeHtml(ask.note || "")}</p>
+      <button type="button" class="small" data-xp-approve="${id}"
+        data-xp-request="${escapeHtml(ask.id)}" data-xp-allow="1">Approve</button>
+      <button type="button" class="small secondary" data-xp-approve="${id}"
+        data-xp-request="${escapeHtml(ask.id)}" data-xp-allow="0">Deny</button>
+    </div>`;
+  }
   return `<div class="xp-package-ask xp-live-ask">
     <p><strong>The agent asks to install</strong> ${(ask.items || []).map((one) =>
       `<code>${escapeHtml(one)}</code>`).join(", ")}</p>
@@ -3045,11 +3646,16 @@ function xpLiveDraw(runId, fresh, force) {
         note: "From PyPI, wheels only, into this run's own folder. The run waits for "
           + "your answer; the wait does not count against its minutes." })) : []);
   parts.asks = pending.map((one) => xpLiveAsk(runId, one)).join("");
-  const resumes = (data || {}).resumes_from || (run.status === "interrupted" ? run.milestone : null);
+  const resumes = (data || {}).resumes_from || (xpGoesBack(run) ? run.milestone : null);
+  const why = XP_GOES_BACK[run.status] || XP_GOES_BACK.interrupted;
   parts.foot = resumes && resumes.version
-    ? `The application closed while this run was going: where it was in its round went
-      with it. Continue resumes from the last milestone: ${escapeHtml(resumes.version)} - ${
-      escapeHtml(resumes.label || "")}.`
+    ? (resumes.resume
+      ? `It did not stop cleanly - ${escapeHtml(why)}. Resume goes back to its progress
+        point, ${escapeHtml(resumes.label || "")} - saved every 10 minutes of work, not
+        checked; what came after is given up.`
+      : `It did not stop cleanly - ${escapeHtml(why)}. Resume goes back to its last version:
+      ${escapeHtml(resumes.version)} - ${escapeHtml(resumes.label || "")}; what came after is
+      given up.`)
     : !live.events.length ? (run.alive ? "Nothing yet - it starts in a moment."
       : "Nothing was kept of this session.") : "";
   if (force || live.drawn.head !== parts.head) body.querySelector(".xp-live-head").innerHTML = parts.head;
@@ -3577,6 +4183,7 @@ function xpVersionsModule(run, idle) {
     <h4 class="xp-versions-title">Versions (<span data-xp-versions-count="${id}">${count}</span>)
       <span class="muted">- saved at each key point: click one to see the run as it stood
       then, and continue from it</span></h4>
+    <div class="xp-progress-point" data-xp-progress="${id}">${xpProgressPoint(run, tree, idle)}</div>
     <div class="xp-version-graph" data-xp-version-graph="${id}" data-xp-keep="vgraph:${id}">${
       xpVersionGraph(run, tree)}</div>
     <div class="xp-version-picked" id="xp-version-view-${id}" data-xp-keep="vpicked:${id}">${
@@ -3587,6 +4194,31 @@ function xpVersionsModule(run, idle) {
         ? xpVersionTree(run, tree, idle) : `<p class="muted">loading…</p>`}</div>
     </details>
   </div>`;
+}
+
+/* THE PROGRESS POINT (agent/work/runner.py, PROGRESS_POINT_MINUTES): saved
+   every ten minutes of work, in the middle of a round too - the latest only,
+   and not a version: nothing checked it. A run cut off goes on from it; a
+   run stopped can be continued from it. */
+function xpProgressPoint(run, tree, idle) {
+  const point = tree && tree.progress;
+  if (!point) return "";
+  const kept = xpVersionsState();
+  const going = run.alive || tree.alive;
+  const picked = kept.from[run.id] === "progress";
+  const id = escapeHtml(run.id);
+  return `<p class="xp-progress-line"><strong>Progress point</strong>
+      <span class="xp-progress-unchecked">not checked</span>
+      ${escapeHtml(point.label || "")} <span class="muted">· ${escapeHtml(localStamp(point.at))}
+      · ${Number(point.files || 0)} files · saved every 10 minutes of work; if the run is
+      cut off, it goes on from here</span>
+      ${idle && !going && !picked ? `<button type="button" class="small secondary"
+        data-xp-progress-from="${id}">Continue from here</button>` : ""}</p>
+    ${idle && !going && picked ? `<div class="xp-version-continue">
+      ${xpContinueWords(run.id, false)}
+      <button type="button" class="small" data-xp-continue="${id}">Continue from the
+        progress point</button>
+      ${xpContinueSound(run.id)}</div>` : ""}`;
 }
 
 /* The tree and the list drawn again in their boxes - each only if it
@@ -3611,6 +4243,7 @@ function xpVersionsPut(runId) {
     at.scrollLeft = left;
     at.scrollTop = newestFirst && top > 0 ? top + (at.scrollHeight - tall) : top;
   };
+  put($(`[data-xp-progress="${key}"]`), xpProgressPoint(run, tree, idle));
   put($(`[data-xp-version-graph="${key}"]`), xpVersionGraph(run, tree), true);
   put($(`#xp-versions-${key}`), xpVersionTree(run, tree, idle));
   const count = $(`[data-xp-versions-count="${key}"]`);
@@ -4309,6 +4942,7 @@ async function xpLoadRuns(force = false) {
       ${String(folders.isolation || "").startsWith("not OS-isolated")
         ? `<p class="xp-warning">${escapeHtml(folders.isolation)} - Auto is not
           available: every install is asked</p>` : ""}</div>
+    <div class="xp-unconfined-mode">${xpUnconfinedBox('id="xp-unconfined"')}</div>
     <textarea id="xp-instruction" rows="2"
       placeholder="${fresh ? "what you want done - needed: this is new work"
         : "what you want done this time (optional)"}">${escapeHtml(draft)}</textarea>
@@ -4508,7 +5142,8 @@ $("#experience")?.addEventListener("click", async (event) => {
       limits: Object.fromEntries(XP_LIMITS.map((name) => [name, limit(name)])),
       packages: (document.querySelector('input[name="xp-packages"]:checked')
         || {}).value || "ask",
-      sound: Boolean(($("#xp-sound") || {}).checked) });
+      sound: Boolean(($("#xp-sound") || {}).checked),
+      ...(($("#xp-unconfined") || {}).checked ? { unconfined: true } : {}) });
     return;
   }
   if (event.target.id === "xp-grant") {
@@ -4594,6 +5229,20 @@ async function xpRunClick(event, host) {
     await host.redraw(true);
     return true;
   }
+  const thoroughAt = event.target.closest("[data-xp-thorough]");
+  if (thoroughAt) {
+    // A quick run's work carried on the thorough way, from what it made.
+    thoroughAt.disabled = true;
+    thoroughAt.textContent = "Starting\u2026";
+    try {
+      await api.post("/api/work/thorough", { run: thoroughAt.dataset.xpThorough,
+        limits: host.limits(thoroughAt) });
+    } catch (err) {
+      toast(err.message);
+    }
+    await host.redraw(true);
+    return true;
+  }
   const continueAt = event.target.closest("[data-xp-continue]");
   if (continueAt) {
     const runId = continueAt.dataset.xpContinue;
@@ -4626,10 +5275,13 @@ async function xpRunClick(event, host) {
       const sound = (continueAt.parentElement
         && continueAt.parentElement.querySelector("[data-xp-continue-sound]"))
         || $(`[data-xp-continue-sound="${CSS.escape(runId)}"]`);
+      // Without the sandbox: this Continue's own choice (never a debugger way's).
+      const unconfined = $(`[data-xp-continue-unconfined="${CSS.escape(runId)}"]`);
       const said = await api.post(host.continueUrl || "/api/work/continue", { run: runId,
         ...(host.extra ? host.extra(runId) : {}),
         limits: host.limits(continueAt),
         sound: Boolean(sound && sound.checked),
+        ...(unconfined && unconfined.checked ? { unconfined: true } : {}),
         ...(asking ? { packages: asking.value } : {}),
         ...(from ? { from_version: from } : {}),
         ...(words ? { instruction: words } : {}) });
@@ -4673,6 +5325,17 @@ async function xpRunClick(event, host) {
     if (!(await xpVersionLoad(runId, versionId))) return true;
     xpVersionPick(runId, versionId);
     await host.redraw(true);
+    return true;
+  }
+  const progressAt = event.target.closest("[data-xp-progress-from]");
+  if (progressAt) {
+    // Continue is set to go on from the progress point: the form under it
+    // says so, and nothing happens until it is pressed.
+    const runId = progressAt.dataset.xpProgressFrom;
+    xpVersionsState().from[runId] = "progress";
+    await host.redraw(true);
+    const words = $(`.xp-progress-point [data-xp-continue-instruction="${CSS.escape(runId)}"]`);
+    if (words) words.focus({ preventScroll: true });
     return true;
   }
   const versionFromAt = event.target.closest("[data-xp-version-from]");
@@ -4891,6 +5554,9 @@ $$("#tabs button").forEach((button) => {
     if (activeTab === "chatdebug" && window.chatDebuggerPanel) {
       window.chatDebuggerPanel.deactivate();
     }
+    if (activeTab === "listenerdebug" && window.listenerDebuggerPanel) {
+      window.listenerDebuggerPanel.deactivate();
+    }
     activeTab = button.dataset.tab;
     // THE PANEL IN THE ADDRESS, so a refresh opens the panel being looked
     // at - not the one the page was first opened on, which the address
@@ -4923,6 +5589,7 @@ $$("#tabs button").forEach((button) => {
     // from under the user.
     if (activeTab === "connections") loadConnections();
     if (activeTab === "experience") loadExperience(true);
+    if (activeTab === "learning") loadLearning();
     if (activeTab === "resourcedebug") rdTick();
     if (activeTab === "overview") ovCentreTheCurrent();
     refresh();
@@ -12875,6 +13542,9 @@ async function refresh() {
     if (activeTab === "chatdebug" && window.chatDebuggerPanel) {
       await window.chatDebuggerPanel.activate();
     }
+    if (activeTab === "listenerdebug" && window.listenerDebuggerPanel) {
+      await window.listenerDebuggerPanel.activate();
+    }
   } catch (err) {
     $("#status-pill").textContent = "backend unreachable";
   }
@@ -17831,6 +18501,7 @@ function drawWhatIsRunning(whole) {
    one done (its to-do step ticks a task's next steps, not these). Only the
    open ones are shown. */
 let ovTodos = [];
+let ovTodoDrawn = "";                     // what the box was last written with
 
 async function loadTodos() {
   try {
@@ -17841,6 +18512,150 @@ async function loadTodos() {
   ovPlaceTodos();
 }
 
+/* WHAT CAME OF A TO-DO HANDED OVER - EVERY TIME IT WAS (/api/todos, `work`,
+   the user 2026-10-26). Delegate work stays, however often it was handed
+   over: each time is a version of its own, V1, V2... And beside it ITS
+   WORK, TRACKED: every version with where it stands this moment - its plan
+   being written, starting, going and what it is doing now (the runs going,
+   asked every few seconds: watchWorkGoing), paused, waiting for you,
+   finished, stopped - each opened from there: the plan, the work in Work,
+   or the result. A line of them, opened out into one row each. */
+const OV_TODO_STATE = { going: "going", paused: "paused", waiting_for_you: "waiting for you" };
+
+function ovTodoVersions(one) {
+  return ((one.work || {}).versions || []).slice();
+}
+
+/* AN ONGOING VERSION RUN FROM ITS ROW (the user, 2026-10-26): Pause or
+   Resume, and Stop - then Stop now while it wraps up - as in Work. */
+function ovTodoControls(version) {
+  const going = version.unit ? workGoing.byUnit[version.unit] : null;
+  if (!going || !going.run) return "";
+  const id = escapeHtml(going.run);
+  const paused = going.pause_asked || going.state === "paused";
+  const pause = going.stopping ? "" : paused
+    ? `<button type="button" class="small" data-todo-run-resume="${id}">Resume</button>`
+    : `<button type="button" class="small secondary" data-todo-run-pause="${id}"
+        title="Stops at the next safe point and waits for you">Pause</button>`;
+  const stop = going.stopping
+    ? `<button type="button" class="small secondary danger" data-todo-run-stop-now="${id}"
+        title="Stop at once - no slides, no to-do list; it goes back to its last save point when resumed">Stop now</button>`
+    : `<button type="button" class="small secondary" data-todo-run-stop="${id}"
+        title="It wraps up: slides of what exists, and a to-do list">Stop</button>`;
+  return `<span class="ov-todo-controls">${pause}${stop}</span>`;
+}
+
+/* Where one version stands, in a few words - live while it goes. */
+function ovTodoWhere(version) {
+  if (version.state === "drafting") return "its plan, for you to check";
+  if (version.state === "finished") {
+    return `finished${version.ended ? ` ${localStamp(version.ended)}` : ""}`;
+  }
+  if (version.state === "stopped") {
+    // Said as Work says it: one that did not stop cleanly, and why.
+    return version.goes_back && XP_GOES_BACK[version.status]
+      ? `did not stop cleanly - ${XP_GOES_BACK[version.status]}`
+      : `stopped: ${version.status || ""}`;
+  }
+  const going = version.unit ? workGoing.byUnit[version.unit] : null;
+  if (!going) return version.held || "starting";
+  const state = OV_TODO_STATE[going.state] || going.state;
+  return going.activity ? `${state} - ${going.activity}` : state;
+}
+
+function ovTodoWork(one) {
+  const versions = ovTodoVersions(one);
+  const next = versions.length + 1;
+  const delegate = `<button type="button" class="small secondary ov-todo-delegate"
+    title="${versions.length ? "Hand it over again: a new version, beside the others"
+      : "Hand this to the agent: it collects the context and drafts a plan for you to check"}">
+    ${delegateLabel()}${versions.length ? ` <span class="muted">V${next}</span>` : ""}</button>`;
+  if (!versions.length) return delegate;
+  // WORK STATUS: where each version stands is in it, opened out.
+  const open = delegateState.tracking.has(one.id);
+  return `${delegate}<button type="button" class="small ov-todo-track" aria-expanded="${open}"
+    title="Every version handed over, and where each stands now">${open ? "&#9662;" : "&#9656;"}
+    Work status (${versions.length})</button>`;
+}
+
+/* What a version made, before it is opened: each thing it handed over -
+   an email, an event, a file or folder by its name - else the file or
+   folder its result is in. */
+function ovTodoMade(version) {
+  if ((version.items || []).length) {
+    return version.items.map((item) => ({
+      what: `${XP_HANDED_KIND[item.kind] || item.kind} · ${item.name || item.title || ""}`,
+      // Text and an answer are read and copied where the work is shown.
+      shown: item.kind === "text" || item.kind === "answer",
+      open: ` data-todo-handed="${escapeHtml(String(item.n))}"`,
+      words: item.kind === "folder" ? "Open the folder" : item.kind === "email"
+        ? "Open the email" : item.kind === "event" ? "Open the event" : "Open the file",
+    }));
+  }
+  if (version.result) {
+    const folder = version.result_kind === "folder";
+    return [{ what: `${folder ? "Folder" : "File"} · ${version.result_name || version.result}`,
+              open: ` data-todo-result="${escapeHtml(version.result)}"`,
+              words: folder ? "Open the folder" : "Open the file" }];
+  }
+  return [];
+}
+
+/* The rows of a to-do's work, opened out: the newest first. Three columns -
+   the version, where it stands, what opens it - so the buttons line up;
+   a finished one has a row for each thing it made, saying what it is. */
+function ovTodoTracked(one) {
+  const versions = ovTodoVersions(one);
+  if (!versions.length || !delegateState.tracking.has(one.id)) return "";
+  // REMOVE, asked first (the user, 2026-10-26): not shown again, its files
+  // kept; not while it goes.
+  const remove = (version) => version.state === "ongoing" ? ""
+    : delegateState.removingVersion === version.draft
+      ? `<span class="ov-todo-confirm">Remove V${version.version}?
+        <button type="button" class="small danger" data-todo-remove-yes="${
+          escapeHtml(version.draft)}">Yes</button>
+        <button type="button" class="small secondary" data-todo-remove-no="1">No</button></span>`
+      : `<button type="button" class="small secondary" data-todo-remove="${
+          escapeHtml(version.draft)}" title="Not shown again - its files are kept">Remove</button>`;
+  const row = (state, v, where, button, version) => `<li class="ov-todo-version ov-todo-version-${
+    escapeHtml(state)}"><span class="ov-todo-v">${v}</span><span class="ov-todo-where">${
+    escapeHtml(where)}</span><span class="ov-todo-open">${button}</span><span class="ov-todo-drop">${
+    version ? remove(version) : ""}</span></li>`;
+  return `<ol class="ov-todo-versions">${versions.slice().reverse().map((version) => {
+    const v = `V${version.version}`;
+    if (version.state === "drafting") {
+      return row("drafting", v, ovTodoWhere(version), `<button type="button"
+        class="small secondary ov-todo-ongoing" data-todo-draft="${escapeHtml(version.draft)}">Open the plan</button>`,
+        version);
+    }
+    const made = version.state === "finished" ? ovTodoMade(version) : [];
+    if (made.length) {
+      const when = `finished${version.ended ? ` ${localStamp(version.ended)}` : ""}`;
+      return made.map((thing, at) => row("finished", at ? "" : v,
+        at ? thing.what : `${when} - ${thing.what}`,
+        thing.shown ? `<button type="button" class="small secondary ov-todo-ongoing"
+          data-todo-unit="${escapeHtml(version.unit || "")}">See it in Work</button>`
+          : `<button type="button" class="small ov-todo-result" data-todo-run="${
+          escapeHtml(version.run)}"${thing.open}>${escapeHtml(thing.words)}</button>`,
+        at ? null : version)).join("");
+    }
+    // Stopped and able to go on: Resume - back to its last save point - or
+    // Continue, from where it stopped cleanly; as in Work.
+    const goOn = version.state === "stopped" && version.continuable && version.run
+      ? `<span class="ov-todo-controls"><button type="button" class="small"
+          data-todo-run-continue="${escapeHtml(version.run)}" title="${escapeHtml(
+          version.goes_back
+            ? `It goes back to its last save point${version.back_to ? `, ${version.back_to}` : ""}, and goes on from there; what came after is given up`
+            : "It goes on from where it stopped")}">${
+          version.goes_back ? "Resume" : "Continue"}</button></span>` : "";
+    return row(version.state, v, ovTodoWhere(version), version.unit ? `${
+      version.state === "ongoing" ? ovTodoControls(version) : goOn}<button type="button"
+      class="small secondary ov-todo-ongoing" data-todo-unit="${escapeHtml(version.unit)}">${
+      version.state === "ongoing" ? "Follow it in Work" : "See it in Work"}</button>` : "",
+      version);
+  }).join("")}</ol>`;
+}
+
 function ovTodoBox() {
   // WHAT IS LEFT TO DO, and only that: one done, or not wanted, is removed -
   // with a Yes first - not ticked and kept.
@@ -17849,14 +18664,12 @@ function ovTodoBox() {
   const items = open.map((one) => `<li class="ov-todo-item" data-todo="${escapeHtml(one.id)}">
     <span class="ov-todo-text">${escapeHtml(one.text)}</span>${
       one.detail ? `<span class="muted ov-todo-detail">${escapeHtml(one.detail)}</span>` : ""}
-    <button type="button" class="small secondary ov-todo-delegate"
-      title="Hand this to the agent: it collects the context and drafts a plan for you to check">
-      ${delegateLabel()}</button>
+    <span class="ov-todo-actions">${ovTodoWork(one)}
     ${asking === one.id ? `<span class="ov-todo-confirm">Remove it?
         <button type="button" class="small danger ov-todo-yes">Yes</button>
         <button type="button" class="small secondary ov-todo-no">No</button></span>`
-      : `<button type="button" class="link x-remove ov-todo-delete" title="Remove">&times;</button>`}
-    </li>`).join("");
+      : `<button type="button" class="small secondary ov-todo-delete">Remove</button>`}
+    </span>${ovTodoTracked(one)}</li>`).join("");
   return `<h3 class="ov-head">To do${open.length ? ` <span class="ov-head-count">(${
     open.length})</span>` : ""}</h3>${
     open.length ? `<ul class="ov-todo-list">${items}</ul>`
@@ -17875,23 +18688,114 @@ function ovPlaceTodos() {
   if (slot && bars) {
     slot.replaceChildren(bars);
   }
+  // REWRITTEN ONLY WHEN IT CHANGED, and scrolled where it was. The picture
+  // is redrawn whenever a round moves - every fifteen seconds while work
+  // runs - and each time the list was made anew, back at its top: what was
+  // below its first few could not be scrolled to.
   const box = card.querySelector("#ov-todo");
-  if (box) box.innerHTML = ovTodoBox();
+  if (!box) return;
+  const html = ovTodoBox();
+  if (ovTodoDrawn === html && box.firstChild) return;
+  const list = box.querySelector(".ov-todo-list");
+  const scrolled = list ? list.scrollTop : 0;
+  box.innerHTML = html;
+  ovTodoDrawn = html;
+  const again = box.querySelector(".ov-todo-list");
+  if (again) again.scrollTop = scrolled;
 }
+
+document.addEventListener("click", async (event) => {
+  const at = event.target.closest && event.target.closest(
+    "[data-todo-run-pause],[data-todo-run-resume],[data-todo-run-stop],[data-todo-run-stop-now],"
+    + "[data-todo-run-continue]");
+  if (!at) return;
+  // The same as Work's own: paused at its next safe point, resumed exactly
+  // there; stopped, it wraps up - stopped now, it ends at once. A run that
+  // ended goes on with the usual limits - set others in Work.
+  const d = at.dataset;
+  at.disabled = true;
+  try {
+    if (d.todoRunContinue) {
+      at.textContent = "Starting…";
+      await api.post("/api/work/continue", { run: d.todoRunContinue });
+      await loadTodos();
+    } else if (d.todoRunPause || d.todoRunResume) {
+      await api.post(d.todoRunPause ? "/api/work/pause" : "/api/work/resume",
+        { run: d.todoRunPause || d.todoRunResume });
+    } else {
+      await api.post("/api/work/stop", d.todoRunStop ? { run: d.todoRunStop }
+        : { run: d.todoRunStopNow, now: true });
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+  await watchWorkGoing();
+});
 
 document.addEventListener("click", (event) => {
   const handed = event.target.closest && event.target.closest(".ov-todo-delegate");
   if (!handed) return;
   const one = ovTodos.find((todo) => todo.id === handed.closest("[data-todo]").dataset.todo);
   if (one) openDelegate({ text: [one.text, one.detail].filter(Boolean).join("\n"),
-                          source: "todo" });
+                          source: "todo", todo: one.id });
+});
+
+document.addEventListener("click", async (event) => {
+  if (!event.target.closest) return;
+  const ask = event.target.closest("[data-todo-remove]");
+  const yes = event.target.closest("[data-todo-remove-yes]");
+  const no = event.target.closest("[data-todo-remove-no]");
+  if (!(ask || yes || no)) return;
+  delegateState.removingVersion = ask ? ask.dataset.todoRemove : "";
+  if (yes) {
+    try {
+      await api.post("/api/work/drafts/remove", { id: yes.dataset.todoRemoveYes });
+      toast("Removed - its files are kept");
+    } catch (err) { toast(err.message, "error"); }
+    loadTodos();
+    return;
+  }
+  ovPlaceTodos();
+});
+
+document.addEventListener("click", (event) => {
+  const track = event.target.closest && event.target.closest(".ov-todo-track");
+  if (!track) return;
+  const id = track.closest("[data-todo]").dataset.todo;
+  if (delegateState.tracking.has(id)) delegateState.tracking.delete(id);
+  else delegateState.tracking.add(id);
+  ovPlaceTodos();
+});
+
+document.addEventListener("click", async (event) => {
+  const going = event.target.closest && event.target.closest(".ov-todo-ongoing");
+  if (going && going.dataset.todoDraft) {
+    openDelegateDraft(going.dataset.todoDraft);
+  } else if (going) {
+    if (going.dataset.todoUnit) experienceState.unit = going.dataset.todoUnit;
+    const tab = $('nav button[data-tab="experience"]');
+    if (tab) tab.click();
+  }
+  const result = event.target.closest && event.target.closest(".ov-todo-result");
+  if (result) {
+    try {
+      if (result.dataset.todoHanded !== undefined) {
+        await api.post("/api/work/handed/open", { run: result.dataset.todoRun,
+                                                  n: Number(result.dataset.todoHanded) });
+      } else {
+        await api.post("/api/work/reveal", { run: result.dataset.todoRun,
+                                             path: result.dataset.todoResult, open: true });
+      }
+    } catch (err) { toast(err.message, "error"); }
+  }
 });
 
 /* DELEGATE WORK - and every start of work. What was handed over goes to the
    agent; it collects the context (in a process of its own) and drafts a
    high-level plan, which the user reads, changes as they like, and starts -
    or cancels. Nothing runs before Start. */
-const delegateState = { draft: null, timer: null, icon: "", folders: [] };
+const delegateState = { draft: null, timer: null, icon: "", folders: [],
+                        tracking: new Set() };     // the to-dos whose work is opened out
 
 /* SOLO: the box alone, in a window of its own (platform_layer/app_window.py) -
    opened from Explorer, the selection button or the avatar. Nothing else of
@@ -17935,12 +18839,14 @@ async function openDelegate(handed) {
   if (!dialog) return;
   delegateState.draft = null;
   delegateStep("start");
+  delegateClear();
   $("#delegate-body").innerHTML = `<p class="muted">Opening&hellip;</p>`;
   $("#delegate-start").disabled = true;
-  if (!dialog.open) dialog.showModal();
+  delegateShow(dialog);
   try {
     const said = await api.post("/api/work/drafts", Object.assign({ write_first: true }, handed));
     delegateFollow(said.draft.id);
+    if (handed.todo) loadTodos();         // handed over: the to-do says Ongoing
   } catch (err) {
     $("#delegate-body").innerHTML = `<p class="delegate-error">${escapeHtml(err.message)}</p>`;
   }
@@ -17955,9 +18861,27 @@ function openDelegateNew() {
 /* Which button ends the box's step: Create while the instruction is being
    written, Start once there is a plan - never both. */
 function delegateStep(which) {
-  const create = $("#delegate-create"), start = $("#delegate-start");
-  if (create) { create.hidden = which !== "create"; create.disabled = false; }
-  if (start) start.hidden = which === "create";
+  const start = $("#delegate-start"), save = $("#delegate-save");
+  if (save) save.disabled = false;
+  // START AT ANY STEP (the user, 2026-10-26): before the plan is drafted it
+  // starts the work once it is, with the settings as they are - no review.
+  if (start) {
+    start.hidden = false;
+    start.disabled = Boolean(delegateState.folderHeld);
+    start.title = which === "ready" ? "Start it with this plan and these settings"
+      : "Start it once its context is collected and its plan drafted - with these "
+        + "settings, and nothing more to approve";
+  }
+}
+
+/* The box emptied for another piece of work. */
+function delegateClear() {
+  $("#delegate-head").innerHTML = "";
+  const settings = $("#delegate-settings");
+  settings.innerHTML = "";
+  settings.dataset.draft = "";
+  delegateState.settings = null;
+  delegateState.folderHeld = "";
 }
 
 /* Step one: what was handed over, and the instruction - changed, or written. */
@@ -17966,36 +18890,129 @@ function delegateCompose(draft) {
   const items = [...(draft.folders || []).map((one) => `<li><span class="delegate-kind">folder</span> <code>${
       escapeHtml(one)}</code></li>`), ...(draft.files || []).map((one) => `<li><span
       class="delegate-kind">file</span> <code>${escapeHtml(one)}</code></li>`)].join("");
-  $("#delegate-body").innerHTML = `${delegateHanded(draft)}
+  $("#delegate-head").innerHTML = `${delegateHanded(draft)}
     ${items ? `<ul class="delegate-items">${items}</ul>` : ""}
     <label><span>${draft.text || items || draft.unit_id
       ? `Your instruction <span class="muted">(anything to add or change - optional)</span>`
       : "What should the agent do?"}</span><textarea id="delegate-instruction" rows="5"
-      placeholder="Say what you want done, as you would to a colleague">${escapeHtml(asked)}</textarea></label>
-    <p class="muted">Create collects the context and drafts a plan for you to approve. Nothing runs before you press Start.</p>`;
-  delegateStep("create");
+      placeholder="Say what you want done, as you would to a colleague">${escapeHtml(asked)}</textarea></label>`;
+  $("#delegate-body").innerHTML = `<p class="muted">Start collects the context, drafts a plan and
+    starts the work with these settings - nothing more to approve. Save as draft keeps it all, to
+    open again from Work and start later.</p>`;
+  delegateSettings(draft);
+  delegateStep("write");
   const box = $("#delegate-instruction");
   if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
 }
 
+/* SAVE AS DRAFT (the user, 2026-10-26) - in place of Create: the box kept
+   as it is - the instruction, where it works, the settings and the way, the
+   plan as changed - closed, and listed in Work's drafts to open again and
+   start. Saved before the instruction was taken, it is taken now, and the
+   context collected and the plan drafted meanwhile. */
 document.addEventListener("click", async (event) => {
-  if (!(event.target.closest && event.target.closest("#delegate-create"))) return;
+  if (!(event.target.closest && event.target.closest("#delegate-save"))) return;
   const draft = delegateState.draft;
   if (!draft) return;
-  const instruction = ($("#delegate-instruction") || {}).value || "";
-  if (!instruction.trim() && !draft.text && !(draft.folders || []).length
-      && !(draft.files || []).length && !draft.unit_id) {
-    toast("Say what you want done");
-    return;
-  }
-  $("#delegate-create").disabled = true;
+  $("#delegate-save").disabled = true;
+  const settings = delegateReadSettings() || {};
+  const ready = ["ready", "failed"].includes(draft.status);
   try {
-    await api.post("/api/work/drafts/compose", { id: draft.id, instruction });
-    delegateFollow(draft.id);
+    await api.post("/api/work/drafts/save", { id: draft.id,
+      instruction: draft.status === "writing" ? ($("#delegate-instruction") || {}).value || "" : null,
+      plan: ready ? delegatePlan() : null, folders: delegateState.folders,
+      options: { limits: settings.limits, packages: settings.packages, way: settings.way,
+                 sound: Boolean(settings.sound), unconfined: Boolean(settings.unconfined) } });
+    clearTimeout(delegateState.timer);
+    $("#delegate").close();
+    toast("Saved - open it again from Work, under Drafts");
+    if (draft.source === "todo") loadTodos();
+    xpLoadDrafts();
   } catch (err) {
     toast(err.message, "error");
-    $("#delegate-create").disabled = false;
+    $("#delegate-save").disabled = false;
   }
+});
+
+/* THE BOX FLOATS (the user, 2026-10-26): shown over the page, not in front
+   of all of it - the page behind it is read, scrolled and copied from as it
+   is open - and dragged by its title out of the way. */
+function delegateShow(dialog) {
+  if (dialog.open) return;
+  if (DELEGATE_SOLO) { dialog.showModal(); return; }
+  dialog.show();
+}
+
+document.addEventListener("pointerdown", (event) => {
+  const title = event.target.closest && event.target.closest("#delegate-title");
+  const dialog = $("#delegate");
+  if (!title || !dialog || DELEGATE_SOLO || event.button !== 0) return;
+  const box = dialog.getBoundingClientRect();
+  const dx = event.clientX - box.left, dy = event.clientY - box.top;
+  dialog.classList.add("delegate-moved");
+  const move = (at) => {
+    const left = Math.max(0, Math.min(window.innerWidth - 80, at.clientX - dx));
+    const top = Math.max(0, Math.min(window.innerHeight - 40, at.clientY - dy));
+    dialog.style.left = `${left}px`;
+    dialog.style.top = `${top}px`;
+  };
+  move(event);
+  const stop = () => {
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", stop);
+  };
+  document.addEventListener("pointermove", move);
+  document.addEventListener("pointerup", stop);
+  event.preventDefault();
+});
+
+/* WORK'S DRAFTS: each saved one, to open again - and start - or throw away. */
+async function xpLoadDrafts() {
+  const box = $("#xp-drafts");
+  if (!box) return;
+  let drafts = [];
+  try {
+    drafts = (await api.get("/api/work/drafts/saved")).drafts || [];
+  } catch (_err) {
+    return;
+  }
+  const asking = experienceState.draftRemoving || "";
+  const name = (one) => ((one.plan || {}).title || (one.options || {}).instruction
+    || one.text || "Untitled").split("\n")[0].slice(0, 120);
+  const where = { writing: "its instruction to finish", collecting: "collecting its context",
+                  drafting: "drafting its plan", ready: "its plan, for you to check",
+                  failed: "its plan, to write" };
+  xpPut(box, drafts.length ? `<h4 class="xp-group">Drafts</h4><ul class="xp-drafts">${
+    drafts.map((one) => `<li class="xp-draft"><span class="xp-draft-name">${escapeHtml(name(one))}</span>
+      <span class="muted">${escapeHtml(where[one.status] || one.status)}${one.updated_at
+        ? ` · ${escapeHtml(localStamp(one.updated_at))}` : ""}</span>
+      <span class="xp-draft-buttons">${asking === one.id ? `Remove it? <span class="muted">its files are kept</span>
+        <button type="button" class="small danger" data-xp-draft-yes="${escapeHtml(one.id)}">Yes</button>
+        <button type="button" class="small secondary" data-xp-draft-no="1">No</button>`
+        : `<button type="button" class="small" data-xp-draft-open="${escapeHtml(one.id)}">Open</button>
+        <button type="button" class="small secondary" data-xp-draft-drop="${escapeHtml(one.id)}">Remove</button>`}
+      </span></li>`).join("")}</ul>` : "");
+}
+
+document.addEventListener("click", async (event) => {
+  if (!event.target.closest) return;
+  const open = event.target.closest("[data-xp-draft-open]");
+  const drop = event.target.closest("[data-xp-draft-drop]");
+  const yes = event.target.closest("[data-xp-draft-yes]");
+  const no = event.target.closest("[data-xp-draft-no]");
+  if (!(open || drop || yes || no)) return;
+  if (open) {
+    openDelegateDraft(open.dataset.xpDraftOpen);
+    return;
+  }
+  experienceState.draftRemoving = drop ? drop.dataset.xpDraftDrop : "";
+  if (yes) {
+    try {
+      await api.post("/api/work/drafts/remove", { id: yes.dataset.xpDraftYes });
+    } catch (err) { toast(err.message, "error"); }
+    loadTodos();
+  }
+  xpLoadDrafts();
 });
 
 /* A draft made elsewhere - Explorer's menu, the button beside selected text -
@@ -18003,8 +19020,9 @@ document.addEventListener("click", async (event) => {
 function openDelegateDraft(id) {
   const dialog = $("#delegate");
   if (!dialog) return;
+  delegateClear();
   $("#delegate-body").innerHTML = `<p class="muted">Collecting the context&hellip;</p>`;
-  if (!dialog.open) dialog.showModal();
+  delegateShow(dialog);
   delegateFollow(id);
 }
 
@@ -18024,9 +19042,11 @@ async function delegateFollow(id) {
     if (first) delegateCompose(draft);
     return;
   }
-  delegateStep("start");
+  delegateStep(draft.status === "ready" || draft.status === "failed" ? "ready" : "start");
+  delegateSettings(draft);
   if (draft.status === "collecting" || draft.status === "drafting") {
-    $("#delegate-body").innerHTML = `${delegateHanded(draft)}<p class="muted delegate-wait">
+    if (first) $("#delegate-head").innerHTML = delegateHanded(draft);
+    $("#delegate-body").innerHTML = `<p class="muted delegate-wait">
       <span class="sb-spin" aria-hidden="true"></span>${draft.status === "collecting"
         ? "Collecting the context - what you handed over, the folders, and what of your own records bears on it&hellip;"
         : "Drafting a high-level plan for you to check&hellip;"}</p>`;
@@ -18049,7 +19069,6 @@ function delegateHanded(draft) {
 
 function delegateDraw(draft) {
   const plan = draft.plan || {};
-  delegateState.folders = [...(draft.folders || [])];
   const lines = (list) => (list || []).join("\n");
   const context = draft.context || {};
   const said = [];
@@ -18067,12 +19086,13 @@ function delegateDraw(draft) {
       <div class="muted delegate-why">${one.at ? escapeHtml(localStamp(one.at)) + " · " : ""}relevance ${
       Math.round(Number(one.relevance || 0) * 100)}%</div></li>`).join("");
   const searched = (context.query || {}).keywords || [];
-  $("#delegate-body").innerHTML = `${delegateHanded(draft)}
+  $("#delegate-head").innerHTML = delegateHanded(draft);
+  $("#delegate-body").innerHTML = `
     ${draft.status === "failed" ? `<p class="delegate-error">${escapeHtml(draft.error
       || "The plan could not be drafted.")} You can write it yourself below.</p>` : ""}
     <p class="muted">Context collected: ${escapeHtml(said.join(", ") || "only what you handed over")}.
       Check the plan - change anything - then Start. Nothing runs before that.</p>
-    ${found ? `<details class="delegate-found" open><summary>Found in your own records${
+    ${found ? `<details class="delegate-found"><summary>Found in your own records${
       searched.length ? ` <span class="muted">- searched for: ${escapeHtml(searched.join(", "))}</span>`
         : ""}</summary><ul>${found}</ul></details>` : ""}
     <label>Title<input type="text" data-plan="title" value="${escapeHtml(plan.title || "")}"></label>
@@ -18088,13 +19108,8 @@ function delegateDraw(draft) {
     ${(plan.questions || []).length ? `<label><span>Open questions <span class="muted">(answer them
       here, or leave them for the work to settle)</span></span><textarea data-plan="questions"
       rows="2">${escapeHtml(lines(plan.questions))}</textarea></label>` : ""}
-    ${draft.unit_id && draft.source !== "delegate" ? "" : `<div class="delegate-folders">
-      <span>Folders it may work in</span>
-      <ul>${delegateState.folders.map((one, i) => `<li><code>${escapeHtml(one)}</code>
-        <button type="button" class="link x-remove" data-delegate-drop="${i}" title="Take off">&times;</button></li>`).join("")
-        || `<li class="muted">None: it works in a folder of its own.</li>`}</ul>
-      <button type="button" class="small secondary" id="delegate-add-folder">Add a folder</button>
-    </div>`}`;
+`;
+  delegateSettings(draft);
   // EACH FIELD WHOLE: as tall as what is in it - the box grows, the fields
   // do not scroll - and growing as it is typed into.
   $$("#delegate-body textarea").forEach((box) => {
@@ -18112,36 +19127,222 @@ function delegatePlan() {
     plan[name] = ["title", "understanding", "goal"].includes(name) ? field.value.trim()
       : field.value.split("\n").map((one) => one.trim()).filter(Boolean);
   });
+  // The way as chosen - with the planner's why while it is the one it
+  // suggested.
+  const settings = delegateReadSettings();
+  if (settings) {
+    const suggested = ((delegateState.draft || {}).plan || {});
+    plan.way = settings.way === "auto" ? suggested.way || "full" : settings.way;
+    plan.way_why = plan.way === suggested.way ? suggested.way_why || "" : "";
+  }
   return plan;
 }
+
+/* HOW IT IS DONE, AND ITS SETTINGS - in every box that starts work, the
+   same as Work's own and with the same defaults (the user, 2026-10-26):
+   Quick or Thorough, as the plan suggests it and why; the limits; how
+   packages are asked for; a sound when it ends; without the sandbox.
+   What the box was opened with (Work's own settings) first; what the user
+   changes in it kept while it is redrawn. */
+const DELEGATE_WAYS = {
+  auto: "As the plan suggests",
+  quick: "Quick - one agent on its own judgement, with what was learned of your work",
+  full: "Thorough - a builder and a reviewer, with a contract each deliverable must meet",
+};
+
+async function delegateSettings(draft) {
+  if (!experienceState.limits) {
+    try {
+      experienceState.limits = await api.get("/api/work/limits");
+    } catch (_err) {
+      experienceState.limits = { defaults: {} };
+    }
+  }
+  const box = $("#delegate-settings");
+  if (!box || (delegateState.draft || {}).id !== draft.id) return;
+  const plan = draft.plan || {};
+  // DRAWN ONCE FOR A DRAFT: what is chosen in it is not drawn over while the
+  // context is collected; only the plan's suggestion is put in when it comes.
+  if (box.dataset.draft === draft.id) {
+    const said = $("#delegate-way-suggested");
+    const text = plan.way ? `now: ${plan.way === "quick" ? "Quick" : "Thorough"}${
+      plan.way_why ? ` - ${plan.way_why}` : ""}` : "not drafted yet";
+    if (said && said.textContent !== text) said.textContent = text;
+    return;
+  }
+  box.dataset.draft = draft.id;
+  delegateState.folders = [...(draft.folders || [])];
+  delegateState.kinds = Object.assign({}, draft.kinds || {});
+  const options = draft.options || {};
+  const held = (delegateState.settings || {}).draft === draft.id ? delegateState.settings : null;
+  const given = Object.fromEntries(Object.entries(options.limits || {})
+    .filter(([, value]) => value !== undefined && value !== null && value !== ""));
+  const settings = held || {
+    way: ["auto", "quick", "full"].includes(options.way) ? options.way : "auto",
+    limits: Object.assign({}, (experienceState.limits || {}).defaults || {}, given),
+    packages: options.packages === "auto" ? "auto" : "ask",
+    sound: Boolean(options.sound), unconfined: Boolean(options.unconfined),
+  };
+  const limit = (name) => escapeHtml(String(settings.limits[name] ?? ""));
+  box.innerHTML = `<div class="delegate-way"><strong>How it is done</strong>
+      ${WAYS_SHOWN.map((way) => `<label><input type="radio" name="delegate-way" value="${way}"${
+        settings.way === way ? " checked" : ""}> ${escapeHtml(DELEGATE_WAYS[way])}${
+        way === "auto" ? ` <span class="muted" id="delegate-way-suggested">${plan.way
+          ? escapeHtml(`now: ${plan.way === "quick" ? "Quick" : "Thorough"}${
+            plan.way_why ? ` - ${plan.way_why}` : ""}`) : "not drafted yet"}</span>` : ""}</label>`)
+        .join("")}
+    </div>
+    <div class="xp-limits"><strong>Limits:</strong>
+      <label>minutes <input type="number" data-delegate-limit="minutes" value="${limit("minutes")}"></label>
+      <label title="${escapeHtml(XP_INPUT_TOKENS_ABOUT)}">input tokens <input type="number"
+        data-delegate-limit="tokens_in" step="100000" value="${limit("tokens_in")}"></label>
+      <label title="What the models wrote">output tokens <input type="number"
+        data-delegate-limit="tokens_out" step="10000" value="${limit("tokens_out")}"></label>
+      <label>model calls <input type="number" data-delegate-limit="calls" value="${limit("calls")}"></label>
+      <span class="muted">0 or less: no limit</span></div>
+    <div class="xp-packages-mode"><strong>Python packages:</strong>
+      <label><input type="radio" name="delegate-packages" value="ask"${
+        settings.packages !== "auto" ? " checked" : ""}> Ask me before installing packages</label>
+      <label><input type="radio" name="delegate-packages" value="auto"${
+        settings.packages === "auto" ? " checked" : ""}> Auto</label></div>
+    <div class="xp-unconfined-mode">${xpUnconfinedBox(
+      `data-delegate-unconfined${settings.unconfined ? " checked" : ""}`)}</div>
+    ${xpSoundBox("data-delegate-sound", settings.sound)}
+    ${draft.unit_id && draft.source !== "delegate" ? ""
+      : `<div class="delegate-folders" id="delegate-folders"></div>`}`;
+  delegateState.settings = Object.assign({ draft: draft.id }, settings);
+  delegateState.folderHeld = "";
+  delegateFoldersDraw();
+  if (!$("#delegate-folders")) delegateFolderCheck();
+}
+
+const WAYS_SHOWN = ["auto", "quick", "full"];
+
+/* WHERE IT WORKS (the user, 2026-10-26), with the settings - before any
+   plan: a folder given is where it works, changing what is in it; a file,
+   that file alone, changed in place; none, it makes what it makes in a
+   folder of its own. What was handed over is listed already, each to take
+   off. */
+function delegateFoldersDraw() {
+  const box = $("#delegate-folders");
+  if (!box) return;
+  const kinds = delegateState.kinds || (delegateState.kinds = {});
+  box.innerHTML = `<strong>Where it works</strong>
+    <ul>${delegateState.folders.map((one, i) => `<li>${kinds[one] ? `<span
+      class="delegate-kind">${escapeHtml(kinds[one])}</span> ` : ""}<code>${escapeHtml(one)}</code>
+      <button type="button" class="link x-remove" data-delegate-drop="${i}" title="Take off">&times;</button></li>`).join("")
+      || `<li class="muted">Nothing given: it makes what it makes in a folder of its own.</li>`}</ul>
+    <button type="button" class="small secondary" id="delegate-add-folder"
+      title="A folder or a file - whichever you select last">Add work directory</button>
+    <span id="delegate-which" hidden>A folder or a file?
+      <button type="button" class="small secondary" data-delegate-which="folder">Folder</button>
+      <button type="button" class="small secondary" data-delegate-which="file">File</button></span>
+    <span class="muted">it works in them directly - a folder: anything in it may be changed
+      or deleted; a file: that file alone</span>
+    <p class="delegate-error" id="delegate-folder-held" hidden></p>`;
+  delegateFolderCheck();
+}
+
+/* ONE PIECE OF WORK AT A TIME IN A FOLDER (the user, 2026-10-26): while
+   other work is going in a folder this one would work in - its own project's
+   too - Start is not offered, and the box says which work it is waiting for.
+   Asked again as the runs going change (watchWorkGoing). */
+async function delegateFolderCheck() {
+  const draft = delegateState.draft;
+  if (!draft || !$("#delegate") || !$("#delegate").open) return;
+  let said = {};
+  try {
+    said = await api.post("/api/work/folders/held", {
+      paths: delegateState.folders || [],
+      unit: draft.unit_id && draft.source !== "delegate" ? draft.unit_id : "" });
+  } catch (_err) {
+    return;                               // the start itself is refused then
+  }
+  delegateState.folderHeld = said.held ? said.said : "";
+  const note = $("#delegate-folder-held");
+  if (note) {
+    note.hidden = !delegateState.folderHeld;
+    note.textContent = delegateState.folderHeld ? `Start waits: ${delegateState.folderHeld}` : "";
+  }
+  const start = $("#delegate-start");
+  if (start && !start.hidden) {
+    start.disabled = Boolean(delegateState.folderHeld);
+    if (delegateState.folderHeld) start.title = delegateState.folderHeld;
+  }
+}
+
+/* The settings as the box shows them now - null before they are drawn. */
+function delegateReadSettings() {
+  const box = $("#delegate-settings");
+  if (!box || !box.firstChild) return null;
+  const limits = {};
+  box.querySelectorAll("[data-delegate-limit]").forEach((field) => {
+    if (field.value !== "") limits[field.dataset.delegateLimit] = Number(field.value);
+  });
+  const settings = {
+    draft: (delegateState.draft || {}).id,
+    way: (box.querySelector('input[name="delegate-way"]:checked') || {}).value || "auto",
+    limits,
+    packages: (box.querySelector('input[name="delegate-packages"]:checked') || {}).value || "ask",
+    sound: Boolean((box.querySelector("[data-delegate-sound]") || {}).checked),
+    unconfined: Boolean((box.querySelector("[data-delegate-unconfined]") || {}).checked),
+  };
+  delegateState.settings = settings;
+  return settings;
+}
+
+document.addEventListener("change", (event) => {
+  if (event.target.closest && event.target.closest("#delegate-settings")) delegateReadSettings();
+});
 
 document.addEventListener("click", async (event) => {
   if (!event.target.closest) return;
   const drop = event.target.closest("[data-delegate-drop]");
   if (drop) {
     delegateState.folders.splice(Number(drop.dataset.delegateDrop), 1);
-    const draft = Object.assign({}, delegateState.draft, { folders: delegateState.folders,
-      plan: delegatePlan() });
-    delegateDraw(draft);
-    delegateState.folders = draft.folders;
+    delegateFoldersDraw();
     return;
   }
-  if (event.target.closest("#delegate-add-folder")) {
+  // ONE BUTTON FOR A FOLDER OR A FILE (the user, 2026-10-26): what is
+  // selected last in the one chooser is what is added. Where the machine has
+  // no chooser for both, which of the two is asked first.
+  const which = event.target.closest("[data-delegate-which]");
+  if (event.target.closest("#delegate-add-folder") || which) {
+    const add = (path, kind) => {
+      if (!path || delegateState.folders.includes(path)) return;
+      delegateState.folders.push(path);
+      (delegateState.kinds || (delegateState.kinds = {}))[path] = kind;
+      delegateFoldersDraw();
+    };
     try {
-      const chosen = await api.post("/api/settings/choose-directory", {
-        title: "A folder the work may change - it can edit and delete anything in it" });
-      if (chosen.selected) {
-        const draft = Object.assign({}, delegateState.draft, {
-          folders: [...delegateState.folders, chosen.selected], plan: delegatePlan() });
-        delegateDraw(draft);
+      if (which) {
+        $("#delegate-which").hidden = true;
+        const folder = which.dataset.delegateWhich === "folder";
+        const chosen = await api.post(folder ? "/api/settings/choose-directory"
+          : "/api/settings/choose-file", { title: folder
+            ? "A folder the work may change - anything in it" : "A file the work may change - that file alone" });
+        add(chosen.selected, folder ? "folder" : "file");
+        return;
       }
+      const chosen = await api.post("/api/settings/choose-place", {
+        title: "Where the work may change things - a folder, or a file alone" });
+      if (chosen.two) {
+        $("#delegate-which").hidden = false;
+        return;
+      }
+      add(chosen.selected, chosen.kind);
     } catch (err) { toast(err.message, "error"); }
     return;
   }
   if (event.target.closest("#delegate-cancel")) {
     clearTimeout(delegateState.timer);
     const draft = delegateState.draft;
-    if (draft) api.post("/api/work/drafts/cancel", { id: draft.id }).catch(() => {});
+    // A DRAFT SAVED stays as it was saved - Cancel only closes the box (Save
+    // as draft again keeps what changed); one never saved is thrown away.
+    if (draft && !(draft.options || {}).saved) {
+      api.post("/api/work/drafts/cancel", { id: draft.id }).catch(() => {})
+        .then(() => { if (draft.source === "todo") loadTodos(); });
+    }
     $("#delegate").close();
     return;
   }
@@ -18150,19 +19351,64 @@ document.addEventListener("click", async (event) => {
     if (!draft) return;
     $("#delegate-start").disabled = true;
     try {
-      const said = await api.post("/api/work/drafts/start", { id: draft.id,
-        plan: delegatePlan(), folders: delegateState.folders });
+      // STARTED BEFORE ITS PLAN IS DRAFTED (the user, 2026-10-26): the
+      // instruction taken as Create takes it, and the work starts once its
+      // context is collected and its plan drafted - with these settings,
+      // and nothing more to approve.
+      if (draft.status === "writing") {
+        const instruction = ($("#delegate-instruction") || {}).value || "";
+        if (!instruction.trim() && !draft.text && !(draft.folders || []).length
+            && !(draft.files || []).length && !draft.unit_id) {
+          toast("Say what you want done");
+          $("#delegate-start").disabled = false;
+          return;
+        }
+        await api.post("/api/work/drafts/compose", { id: draft.id, instruction });
+      }
+      clearTimeout(delegateState.timer);
+      const ready = ["ready", "failed"].includes(draft.status);
+      const settings = delegateReadSettings() || {};
+      const plan = ready ? delegatePlan() : { way: settings.way || "auto" };
+      // ANSWERED AT ONCE: the work is set going apart - seconds, with its
+      // process to start - and how it went is asked of the draft.
+      await api.post("/api/work/drafts/start", { id: draft.id,
+        plan, folders: delegateState.folders,
+        options: { limits: settings.limits, packages: settings.packages,
+                   sound: Boolean(settings.sound), unconfined: Boolean(settings.unconfined) } });
+      $("#delegate-head").innerHTML = "";
+      $("#delegate-settings").innerHTML = "";
       if (DELEGATE_SOLO) {
-        // Said in the box, which then closes with its window.
+        // Said in the box, which closes with its window once it is known.
+        $("#delegate-body").innerHTML = `<p class="delegate-started">${ready ? "Starting&hellip;"
+          : "Collecting its context - it starts once its plan is drafted&hellip;"}</p>`;
+        $(".delegate-actions").hidden = true;
+        const said = await delegateHowItStarted(draft.id);
+        if (said.error) {
+          $("#delegate-body").innerHTML = `<p class="delegate-error">It did not start: ${
+            escapeHtml(said.error)}</p>`;
+          $(".delegate-actions").hidden = false;
+          $("#delegate-start").disabled = false;
+          return;
+        }
         $("#delegate-body").innerHTML = `<p class="delegate-started">${said.waiting
           ? `Waiting to start: ${escapeHtml(said.why || "")}`
           : "Started. Follow it in Work."}</p>`;
-        $(".delegate-actions").hidden = true;
         setTimeout(() => $("#delegate").close(), 1800);
         return;
       }
       $("#delegate").close();
-      toast(said.waiting ? `Waiting to start: ${said.why}` : "Started - see it in Work");
+      toast(ready ? "Starting - see it in Work"
+        : "It starts once its context is collected - see it in Work");
+      if (draft.source === "todo") loadTodos();   // a to-do handed over: now Ongoing
+      const said = await delegateHowItStarted(draft.id);
+      if (said.error) {
+        // Back in the box, as it was, with why: to change and Start again.
+        toast(`It did not start: ${said.error}`, "error");
+        openDelegateDraft(draft.id);
+        return;
+      }
+      if (said.waiting) toast(`Waiting to start: ${said.why}`);
+      loadTodos();
       if (activeTab === "experience") {
         if (said.unit) experienceState.unit = said.unit;
         await loadExperience(false);
@@ -18173,6 +19419,29 @@ document.addEventListener("click", async (event) => {
     }
   }
 });
+
+/* How a start went (`start_apart`): the draft asked until it is started -
+   with what starting it said - or is back where it was, with why. Asked
+   each second at first, then every three. */
+async function delegateHowItStarted(id) {
+  for (let asked = 0; asked < 1200; asked += 1) {
+    await new Promise((done) => setTimeout(done, asked < 30 ? 1000 : 3000));
+    let draft;
+    try {
+      draft = (await api.get(`/api/work/drafts?id=${encodeURIComponent(id)}`)).draft;
+    } catch (_err) {
+      continue;                           // asked again
+    }
+    if (draft.status === "started") return Object.assign({ unit: draft.unit_id }, draft.start || {});
+    // Started before its plan was drafted: waiting for it, then starting.
+    const waiting = ["collecting", "drafting", "starting"].includes(draft.status)
+      || (draft.status === "ready" && (draft.options || {}).start_when_ready);
+    if (!waiting) {
+      return { error: draft.error || (draft.start || {}).error || "it did not start" };
+    }
+  }
+  return { error: "it has not said it started" };
+}
 
 document.addEventListener("click", async (event) => {
   if (!event.target.closest) return;
@@ -21042,6 +22311,8 @@ async function applyDebuggerAvailability() {
   // And the chat debugger, whose routes are the Debugger's too.
   document.querySelector('[data-tab="chatdebug"]')?.remove();
   document.querySelector("#chatdebug")?.remove();
+  document.querySelector('[data-tab="listenerdebug"]')?.remove();
+  document.querySelector("#listenerdebug")?.remove();
   // EVERY DEBUGGER: an installed build is for the user, not for whoever
   // develops the agent - run from Python, they are all there.
   ["naturedebug", "connectiondebug", "readingdebug", "languagedebug", "resourcedebug", "lessons"].forEach((name) => {
@@ -22480,12 +23751,13 @@ function xdVariant(project, v, shown) {
    computer went off - goes on from its last saved version with Resume,
    here where Start was; one that ended otherwise is continued below. */
 function xdGoOn(latest, id) {
-  if (latest && !latest.alive && latest.status === "interrupted") {
+  if (latest && !latest.alive && xpGoesBack(latest)) {
     const at = (latest.milestone || {}).version;
     return `<button type="button" class="small" data-xp-continue="${escapeHtml(latest.id)}"
-        >Resume</button> <span class="muted">it stopped when the application closed - it
-        goes on from ${at ? `its last saved version, ${escapeHtml(at)}` : "where it was"},
-        with the limits above</span>`;
+        >Resume</button> <span class="muted">it did not stop cleanly - ${
+        escapeHtml(XP_GOES_BACK[latest.status])} - it goes back to ${at
+        ? `its last save point, ${escapeHtml((latest.milestone || {}).label || at)}`
+        : "where it was"}, with the limits above</span>`;
   }
   return `<button type="button" class="small" data-xd-start="${id}"
       disabled>Start</button> <span class="muted">started - continue its run below</span>`;
@@ -23107,7 +24379,7 @@ function wireDebuggerExperience() {
   });
 }
 
-if (DELEGATE_SOLO) {
+if (DELEGATE_SOLO || LEARN_SOLO) {
   // The box alone: its face, and nothing else of the page asked for.
   loadDelegateIcon();
 } else {
@@ -23142,6 +24414,24 @@ setInterval(pollNotifications, 20000);
 (() => {
   const params = new URLSearchParams(location.search);
   const wanted = location.hash.replace(/^#/, "");
+  // Handed to the learning from Explorer: its learning plan drafted, to check.
+  if (params.has("learn_inbox")) {
+    const id = params.get("learn_inbox");
+    history.replaceState(null, "", location.pathname);
+    $("#learn-box").showModal();
+    $("#learn-body").innerHTML = `<p class="muted">Looking at it&hellip;</p>`;
+    api.post("/api/learning/inbox", { id })
+      .then((said) => learnFollow(said.draft.id))
+      .catch((err) => toast(err.message, "error"));
+    return;
+  }
+  // The selection's "Learn": its learning plan being drafted already.
+  if (wanted.startsWith("learn=")) {
+    const id = decodeURIComponent(wanted.slice("learn=".length));
+    history.replaceState(null, "", location.pathname);
+    learnFollow(id);
+    return;
+  }
   // Handed over from Explorer: made a piece of work, and its plan shown.
   if (params.has("delegate_inbox")) {
     const id = params.get("delegate_inbox");

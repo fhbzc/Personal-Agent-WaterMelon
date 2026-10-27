@@ -97,11 +97,14 @@ TASK_MODULE = {
     "reading": "recommend",
     "experience": "experience",
     # THE LEARNING (learning/): its folders mapped, its units read, its
-    # reasons found, its words kept.
+    # reasons found, its words kept; a plan for an item of its list drafted,
+    # and the heartbeat's look for what the user endorses (learning/items.py).
     "learning_folders": "experience",
     "learning_read": "experience",
     "learning_reasons": "experience",
     "learning_terms": "experience",
+    "learning_plan": "experience",
+    "learning_interests": "experience",
     "heartbeat": "heartbeat (before modules)",
     "work_run": "manual_work",
     # The two final checks of a run: kinds of their own, in Work runs.

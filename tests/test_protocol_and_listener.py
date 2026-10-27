@@ -2255,6 +2255,8 @@ class WhatTheWindowInFrontWasShowingTests(unittest.TestCase):
     def setUp(self) -> None:
         self.agent = TemporaryAgent()
         self.config = self.agent.app.config
+        # The provider now checks the master switch before native reads.
+        self.config.set("listener_enabled", True)
         self.config.set("listener_screen_enabled", True)
         self.seen = []
 
@@ -2821,6 +2823,8 @@ class ReadingIsGatheredIntoSittingsTests(unittest.TestCase):
     def setUp(self) -> None:
         self.agent = TemporaryAgent()
         self.config = self.agent.app.config
+        # The provider now checks the master switch before native reads.
+        self.config.set("listener_enabled", True)
         self.config.set("listener_screen_enabled", True)
         self.seen = []
 

@@ -275,7 +275,9 @@ class Places:
 
         def add(path: str, why: str, sessions: bool = False, **extra: Any) -> None:
             key = _norm(path)
-            if key and key not in seen and not self.is_never(path):
+            # Never one the user deleted from the learning (the never list).
+            if key and key not in seen and not self.is_never(path) and not (
+                    why != "sessions" and self._left_out(path)):
                 seen.add(key)
                 out.append({"path": path, "why": why, "sessions": sessions, **extra})
 

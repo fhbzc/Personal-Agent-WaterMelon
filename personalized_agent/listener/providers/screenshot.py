@@ -205,6 +205,9 @@ class ScreenshotProvider(ListenerProvider):
         self.taken = 0
         #: Pictures not kept because their words held a password or a code.
         self.held_back = 0
+        # Only the synchronous emit of an image we just saved may request
+        # the manager's screenshot-evidence path exception.
+        self._emitting_capture: Optional[Path] = None
 
     # -- lifecycle ----------------------------------------------------------
     def start(self) -> None:
@@ -336,7 +339,7 @@ class ScreenshotProvider(ListenerProvider):
         self._taken[key] = (now, measured["fingerprint"])
         self._count_today += 1
         self.taken += 1
-        self.emit(ListenerEvent(
+        event = ListenerEvent(
             event_type="screen.shot", source=self.provider_id,
             application=application or None,
             data={"application": application, "window_title": title,
@@ -345,7 +348,12 @@ class ScreenshotProvider(ListenerProvider):
                   "colourful": measured["colourful"],
                   "text_read": text_of(application, title),
                   "fingerprint": f"{measured['fingerprint']:016x}"},
-            metadata={"platform": getattr(self.platform, "name", "")}))
+            metadata={"platform": getattr(self.platform, "name", "")})
+        self._emitting_capture = path
+        try:
+            self.emit(event)
+        finally:
+            self._emitting_capture = None
         # Its words read now, on this computer, and kept as its copy - for
         # whatever reads it next (runtime/documents.py).
         try:
@@ -354,6 +362,15 @@ class ScreenshotProvider(ListenerProvider):
         except Exception:                          # pragma: no cover - read when asked
             pass
         return str(path)
+
+    def trusted_capture_root(self, event: ListenerEvent) -> Optional[Path]:
+        """Vouch for this exact path only while emitting a fresh capture."""
+        if (event.event_type == "screen.shot" and event.source == self.provider_id
+                and self._emitting_capture is not None
+                and str(self._emitting_capture) == (event.data or {}).get("path")):
+            self._emitting_capture = None
+            return self.folder or self._default_folder()
+        return None
 
     def _shows_credentials(self, image: Any) -> bool:
         """Whether the picture's words, read on this computer, hold a

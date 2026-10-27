@@ -3919,6 +3919,15 @@ class StateHeartbeat:
                     left.append("lessons")
             except Exception:         # pragma: no cover - a look, not a step
                 log.debug("could not see whether the lessons are due", exc_info=True)
+        # WHAT THE USER ENDORSES, looked for once a day (learning/interests.py):
+        # added to the learning list with its evidence.
+        interests = getattr(self, "interests", None)
+        if interests is not None and not getattr(self, "_interests_running", False):
+            try:
+                if interests.due():
+                    left.append("interests")
+            except Exception:         # pragma: no cover - a look, not a step
+                log.debug("could not see whether the interests are due", exc_info=True)
         from ...common.modules import enabled as module_on
         if self.experience is None or not self.config.get("experience_enabled", True) \
                 or not module_on(self.config, "experience"):
@@ -3953,6 +3962,24 @@ class StateHeartbeat:
         threading.Thread(target=run, name="lessons", daemon=True).start()
         return True
 
+    def _look_for_interests(self) -> bool:
+        """What the user endorses looked for, in a thread of its own."""
+        if getattr(self, "_interests_running", False):
+            return False
+        self._interests_running = True
+
+        def run() -> None:
+            try:
+                self.interests_said = self.interests.look()
+            except Exception:              # pragma: no cover - never the round's fault
+                log.warning("looking for what the user endorses failed", exc_info=True)
+            finally:
+                self._interests_running = False
+
+        import threading
+        threading.Thread(target=run, name="interests", daemon=True).start()
+        return True
+
     def _carry_on_the_steps(self, left: List[str]) -> Dict[str, Any]:
         """One visit's worth of the last round's unfinished steps, under its
         cutoff - never beside a round, which has the same lock."""
@@ -3967,6 +3994,8 @@ class StateHeartbeat:
                     going=lambda: self._going())}}
             if "lessons" in left:
                 report["lessons"] = {"started": self._learn_lessons()}
+            if "interests" in left:
+                report["interests"] = {"started": self._look_for_interests()}
             # Quick again only while it is getting somewhere: a step that
             # can do nothing - no model, every call refused - is looked at
             # once a minute, not every two seconds.

@@ -7,8 +7,10 @@
 <!-- THE DELEGATE WORK BOX ALONE, from its first frame: marked before the
      page is drawn, so the rest of it never shows while app.js loads -
      opened from the shortcut, it looked like the home page first. -->
-<script>if (/[?&]solo=delegate(&|$)/.test(location.search)) document.documentElement.classList.add("delegate-solo");</script>
+<script>if (/[?&]solo=delegate(&|$)/.test(location.search)) document.documentElement.classList.add("delegate-solo");
+if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classList.add("learn-solo");</script>
 <link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/listener-debugger.css">
 </head>
 <body>
 <header>
@@ -19,6 +21,7 @@
     <button data-tab="calendar">Calendar</button>
     <button data-tab="connections">Connections</button>
     <button data-tab="experience">Work</button>
+    <button data-tab="learning">Learning</button>
     <button data-tab="chat">Chat</button>
     <button data-tab="settings">Settings</button>
     <!-- What was recorded, by which Privacy switch: the user's, in every build. -->
@@ -35,6 +38,7 @@
     <button data-tab="connectiondebug">Connection debugger</button>
     <button data-tab="readingdebug">Reading debugger</button>
     <button data-tab="languagedebug">Language debugger</button>
+    <button data-tab="listenerdebug">Listener debugger</button>
     <button data-tab="chatdebug">Chat debugger</button>
     <button data-tab="heartbeat">Heartbeat debugger</button>
     <button data-tab="statebeat">State heartbeat debugger</button>
@@ -542,7 +546,7 @@
     <div class="xp-head">
       <strong>Work</strong>
       <span class="muted">what the agent does on each project, as the stages it
-        went through. What is learned of how you work - in Learning, below - is
+        went through. What is learned of how you work - in the Learning tab - is
         used by the agent, not shown here.</span>
       <span id="xp-status" class="muted"></span>
     </div>
@@ -566,6 +570,8 @@
           <button type="button" class="small" id="xp-new-create">Create</button>
           <button type="button" class="small secondary" id="xp-new-cancel">Cancel</button>
         </div>
+        <!-- THE DRAFTS SAVED (Save as draft), to open again and start. -->
+        <div id="xp-drafts"></div>
         <div id="xp-units"></div>
         <div id="xp-projects" hidden></div>
       </div>
@@ -584,8 +590,13 @@
         <div id="xp-work" class="xp-work"></div>
       </div>
     </div>
-    <!-- LEARNING (learning/): how the user's own work is read - when, how far,
-         from where - and what it spent. The same places are searched. -->
+  </section>
+
+  <!-- LEARNING (learning/), a tab of its own (the user, 2026-10-24): every
+       lesson - the user's own folders and projects, what they added, what
+       the heartbeat added - each turned on or off or deleted; the never
+       list; when it learns, how far it is, and what it spent. -->
+  <section id="learning" class="tab">
     <div class="card xp-learn" id="xp-learn"></div>
   </section>
 
@@ -1065,6 +1076,45 @@
     </div>
   </section>
 
+  <!-- --------------------------------------------- Listener debugger -->
+  <!-- WHETHER THE LISTENER READS, what is kept out and what is stored - read
+       only: opening it takes no picture and calls no model
+       (listener-debugger.js, debugger/listener.py). -->
+  <section id="listenerdebug" class="tab">
+    <div class="card ld-heading">
+      <div><h2>Listener debugger</h2><p class="muted">Whether the listener reads what is on
+        the screen, which events are kept out, and which are stored. Opening this page takes
+        no extra picture and calls no model.</p></div>
+      <div class="ld-controls">
+        <label>Counted over<select id="ld-hours"><option value="1">the last hour</option><option
+          value="24" selected>the last 24 hours</option><option value="72">the last 3 days</option><option
+          value="168">the last 7 days</option></select></label>
+        <label>Application<select id="ld-application"><option value="">All applications</option></select></label>
+        <label>Source<select id="ld-source"><option value="">All sources</option></select></label>
+        <label class="ld-auto"><input type="checkbox" id="ld-auto" checked>Refresh by itself</label>
+        <button type="button" class="secondary small" id="ld-refresh">Refresh</button>
+      </div>
+      <p id="ld-status" class="muted" role="status" aria-live="polite">Loaded when the page is opened.</p>
+    </div>
+    <div id="ld-summary"></div>
+    <div id="ld-issues" aria-live="polite"></div>
+    <div class="card"><h3>Collectors and storage</h3><p class="muted">Whether each runs is told apart
+      from whether what it reads is whole. The counts are since this start of the application;
+      what is within the time range comes from the stored events.</p><div id="ld-providers"
+      class="ld-provider-grid"></div></div>
+    <div class="card"><h3>What each application gave</h3><p class="muted">Times in front and pieces of
+      text are not coverage. A long while with no new text may be the same text, an empty window or a
+      read that failed - compare with what was on the screen.</p><div id="ld-apps" class="ld-scroll"></div></div>
+    <div class="card"><h3>WeChat conversations</h3><p class="muted">The 20 latest conversations (all
+      time, whatever is chosen above), grouped by the chat's title and the avatars; who wrote each is
+      read off the layout - mine, theirs, or unknown when it cannot be told. Only the structured records
+      made since this was added; older records are kept as they were.</p><div id="ld-wechat"></div><div
+      id="ld-wechat-detail"></div></div>
+    <div class="card"><h3>What was stored</h3><p class="muted">By the application and the source chosen
+      above, the 30 latest at most. Opened, each shows what was stored and whether it is linked to a
+      state; what privacy kept out is not kept here.</p><div id="ld-events"></div></div>
+  </section>
+
   <!-- ------------------------------------------------------- Debugger -->
   <section id="debugger" class="tab">
     <div class="dbg-shell" id="dbg-shell">
@@ -1348,11 +1398,33 @@
 <dialog id="delegate" class="delegate" aria-labelledby="delegate-title">
   <form method="dialog" class="delegate-form" id="delegate-form">
     <h3 id="delegate-title">Delegate work</h3>
+    <!-- What was handed over, and the instruction; then THE SETTINGS, there
+         from the start - Start may be pressed before the plan is drafted,
+         and the work then starts with them once it is; then the context
+         collected and the plan, as they come. -->
+    <div id="delegate-head"></div>
+    <div id="delegate-settings" class="delegate-settings"></div>
     <div id="delegate-body"></div>
     <div class="delegate-actions">
       <button type="button" class="secondary" id="delegate-cancel">Cancel</button>
-      <button type="button" id="delegate-create" hidden>Create</button>
+      <button type="button" class="secondary" id="delegate-save">Save as draft</button>
       <button type="button" id="delegate-start" disabled>Start</button>
+    </div>
+  </form>
+</dialog>
+<!-- LEARN: something handed to the learning - an address, a passage, a
+     folder, a file - and its learning plan, to check before anything is
+     learned (learning/plan.py). -->
+<dialog id="learn-box" class="delegate learn-box" aria-labelledby="learn-title">
+  <form method="dialog" class="delegate-form" id="learn-form">
+    <h3 id="learn-title">Learn</h3>
+    <div id="learn-body"></div>
+    <div class="delegate-actions">
+      <button type="button" class="secondary" id="learn-cancel">Cancel</button>
+      <button type="button" id="learn-draft" hidden>Draft the plan</button>
+      <button type="button" class="secondary" id="learn-add" hidden>Add to the list</button>
+      <button type="button" id="learn-now" hidden>Add and learn now</button>
+      <button type="button" id="learn-save" hidden>Save</button>
     </div>
   </form>
 </dialog>
@@ -1363,5 +1435,6 @@
 <script src="/app.js"></script>
 <script src="/debugger.js"></script>
 <script src="/chat-debugger.js"></script>
+<script src="/listener-debugger.js"></script>
 </body>
 </html>

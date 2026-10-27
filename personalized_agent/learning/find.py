@@ -44,6 +44,11 @@ The reviewer may open more (`open_case`, `open_reason`) and search the
 files themselves. A case is expanded once in a run; after, its id is
 enough. Nothing here is learned.
 
+WHAT THE LEARNING LIST BROUGHT (items.py) is given as what it is: a case of
+someone else's work says so, with what of it the user endorses; a reason
+ADOPTED from it says where it comes from - so the reviewer knows which is
+the user's own and which they endorse, and weighs them itself.
+
 LEFT OUT (leave_out.py): a run may be given nothing of some folders - a
 Work debugger project's own, and those the user names for it. A case of
 one is never shown nor opened; of any other, the judgments and places that
@@ -176,8 +181,35 @@ class Finder:
         self.vocab = Vocabulary(db)
         #: Cases expanded already in this run.
         self.expanded: set = set()
-        self.leave_out = leave_out or LeaveOut()
+        # What the user turned off in the learning list, and what waits for
+        # them to look at its first reading, is given to no run.
+        self.leave_out = (leave_out or LeaveOut()).holding(self.store.held_units())
         self._out: Optional[Tuple[set, set]] = None
+        self._items: Dict[str, Optional[Dict[str, Any]]] = {}
+
+    def item_of_case(self, case: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """The learning list's item a case was read from, if it was."""
+        unit_id = str(case.get("unit_id") or "")
+        if not unit_id.startswith("item:"):
+            return None
+        if unit_id not in self._items:
+            from .items import item_of_unit
+            self._items[unit_id] = item_of_unit(self.db, unit_id)
+        return self._items[unit_id]
+
+    def _endorsed(self, item: Dict[str, Any]) -> str:
+        angle = " ".join(str(item.get("angle") or "").split())[:200]
+        return (f"someone else's work the user endorses: {item.get('title', '')}"
+                + (f" - for: {angle}" if angle else ""))
+
+    def adopted_from(self, reason: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """The item a reason adopted from someone else's work rests on."""
+        for one in self.store.evidence(reason["id"]):
+            case = self.store.case(one["case_id"]) or {}
+            item = self.item_of_case(case)
+            if item is not None:
+                return item
+        return None
 
     def _parts_out(self) -> Tuple[set, set]:
         """(cases, judgments) left out of this run - found once, at its first ask."""
@@ -231,6 +263,9 @@ class Finder:
         if reason["state"] == "retired":
             return False
         supports = self._supports(reason["id"])
+        if reason["source"] == "adopted":
+            # From someone else's work the user endorses: while that rests here.
+            return bool(supports)
         if reason["source"] == "stated":
             # Said by the user - but not when all it rests on is left out.
             return bool(supports) or not self.judgments_out() or not any(
@@ -338,6 +373,9 @@ class Finder:
         out = self.out()
         for case in self.store.cases():
             if case["id"] in out:
+                continue
+            item = self.item_of_case(case)
+            if item is not None and not ({"cases", "reference"} & set(item.get("learn") or [])):
                 continue
             score = share(facets, case.get("facets") or {}, self.vocab, terms)
             if score <= 0:
@@ -461,6 +499,11 @@ class Finder:
         if mark:
             self.expanded.add(case["id"])
         lines = [f"CASE {case['id']}: {case.get('title', '')}", f"  terms: {terms}"]
+        item = self.item_of_case(case)
+        if item is not None:
+            lines.append("  NOT THE USER'S OWN WORK - " + self._endorsed(item)
+                         if item["whose"] == "others" else
+                         f"  the user's own work, from their learning list: {item['source'] or item['title']}")
         places = [one for one in case.get("locations") or []
                   if not self.leave_out.location_out(one)]
         if places:
@@ -706,6 +749,10 @@ class Finder:
         confidence = (reason["support"] + 1) / (reason["support"] + reason["contra"] + 2)
         tag = "said by the user" if reason["source"] == "stated" else \
             f"inferred, confidence {confidence:.1f}"
+        if reason["source"] == "adopted":
+            item = self.adopted_from(reason)
+            tag = "adopted from " + (self._endorsed(item) if item else
+                                     "someone else's work the user endorses")
         lines = [f"{reason['id']} [{tag}] {reason['statement']}",
                  f"    when: {cond.get('text', '')}"
                  + (f" - except {dumps(cond.get('excluded'))}" if cond.get("excluded") else "")]

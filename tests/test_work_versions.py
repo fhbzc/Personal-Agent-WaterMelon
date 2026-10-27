@@ -199,7 +199,7 @@ class VersionsAreSavedAtEachKeyPointTests(_RunsBase):
         run._version = lambda kind, label, message=None: saved.append(
             (kind, label, message["title"]))
         # The single model keeps each end: it has no review, no checkpoint.
-        run.variant = SINGLE
+        run.variant, run.alone = SINGLE, True
         for status, reason in ((DONE, ""), (NOT_FINISHED, "stopped"),
                                (NOT_FINISHED, "the call limit"),
                                (NOT_FINISHED, "the time limit"), (NOT_FINISHED, ""),
@@ -214,7 +214,7 @@ class VersionsAreSavedAtEachKeyPointTests(_RunsBase):
                          ["Finish: done", "Stop: stopped", "Pause: the call limit"])
         # A builder and a reviewer keep only the end that is a checkpoint.
         saved.clear()
-        run.variant = FULL
+        run.variant, run.alone = FULL, False
         for status, reason in ((DONE, ""), (NOT_FINISHED, "stopped"),
                                (NOT_FINISHED, "the call limit"), (BLOCKED, "")):
             run.status, run.stop_reason = status, reason
@@ -426,7 +426,7 @@ class TheVersionsApiTests(_RunsBase):
         run, folder = self._run(_TwoAgents())
         tree = self.routes[("GET", "/api/work/versions")](_Request({"run": run["id"]}))
         self.assertEqual(set(tree), {"run", "head", "branch", "branches", "versions",
-                                     "alive", "status"})
+                                     "progress", "alive", "status"})
         one = tree["versions"][1]
         # And what it did, as a commit says it; a round's number and what the
         # reviewer found of it, apart.

@@ -13,9 +13,16 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 #: weighed in, strongest first. "written": a rule the user wrote down;
 #: "noted": one the agent noted from the user's words (its memory);
 #: "changed": the user changed or turned down what was there; "approved":
-#: they said yes to it; "accepted": they let it stand.
-STRENGTHS = ("written", "noted", "changed", "approved", "accepted")
-WEIGHT = {"written": 3.0, "noted": 2.5, "changed": 2.0, "approved": 1.5, "accepted": 1.0}
+#: they said yes to it; "accepted": they let it stand; "endorsed": they
+#: put someone else's work in the learning list as a reference, saying what
+#: of it they endorse (learning/items.py) - or the heartbeat found them
+#: saying so (learning/interests.py).
+STRENGTHS = ("written", "noted", "endorsed", "changed", "approved", "accepted")
+WEIGHT = {"written": 3.0, "noted": 2.5, "endorsed": 2.0, "changed": 2.0, "approved": 1.5,
+          "accepted": 1.0}
+#: A unit the user turned off, or one whose first reading waits for them to
+#: look: nothing learned from it is given (learning/find.py).
+HELD = ("inactive", "pending")
 
 
 def now() -> str:
@@ -108,6 +115,65 @@ class LearningStore:
 
     def units(self) -> List[Dict[str, Any]]:
         return [self._unit_out(row) for row in self._all("learn_units")]
+
+    def set_unit_state(self, unit_id: str, state: str) -> None:
+        self.db.execute("UPDATE learn_units SET state = ?, updated_at = ? WHERE id = ?",
+                        (state, now(), unit_id))
+
+    def held_units(self) -> List[str]:
+        """The units nothing learned from is given: turned off, or waiting
+        for the user to look at their first reading."""
+        holes = ", ".join("?" for _ in HELD)
+        return [row["id"] for row in self.db.query(
+            f"SELECT id FROM learn_units WHERE state IN ({holes})", HELD)]
+
+    def forget_unit(self, unit_id: str) -> List[str]:
+        """EVERYTHING LEARNED FROM A UNIT, GONE: its cases, their judgments
+        and how they bore on reasons, the unit itself. The reasons they bore
+        on, for the caller to weigh again (or remove, with nothing left)."""
+        cases = [row["id"] for row in self.db.query(
+            "SELECT id FROM learn_cases WHERE unit_id = ?", (unit_id,))]
+        reasons: List[str] = []
+        for case_id in cases:
+            for judgment in self.db.query("SELECT id FROM learn_judgments WHERE case_id = ?",
+                                          (case_id,)):
+                for link in self.links_of_judgment(judgment["id"]):
+                    if link["reason_id"] not in reasons:
+                        reasons.append(link["reason_id"])
+                self.db.execute("DELETE FROM learn_links WHERE judgment_id = ?",
+                                (judgment["id"],))
+                self.db.execute("DELETE FROM learn_overrides WHERE judgment_id = ?",
+                                (judgment["id"],))
+            self.db.execute("DELETE FROM learn_judgments WHERE case_id = ?", (case_id,))
+        if cases:
+            holes = ", ".join("?" for _ in cases)
+            self.db.execute(f"DELETE FROM learn_cases WHERE id IN ({holes}) OR alias_of IN "
+                            f"({holes})", tuple(cases) * 2)
+        self.db.execute("DELETE FROM learn_units WHERE id = ?", (unit_id,))
+        return reasons
+
+    def drop_reason(self, reason_id: str) -> None:
+        self.db.execute("DELETE FROM learn_links WHERE reason_id = ?", (reason_id,))
+        self.db.execute("DELETE FROM learn_overrides WHERE winner = ? OR loser = ?",
+                        (reason_id, reason_id))
+        self.db.execute("UPDATE learn_reasons SET rival = '' WHERE rival = ?", (reason_id,))
+        self.db.execute("DELETE FROM learn_reasons WHERE id = ?", (reason_id,))
+
+    def unit_counts(self) -> Dict[str, Dict[str, int]]:
+        """For each unit: its cases and judgments, and the reasons they bear on."""
+        out: Dict[str, Dict[str, int]] = {}
+        for row in self.db.query("SELECT unit_id AS u, COUNT(*) AS n FROM learn_cases "
+                                 "WHERE alias_of = '' GROUP BY unit_id"):
+            out.setdefault(row["u"], {})["cases"] = int(row["n"])
+        for row in self.db.query(
+                "SELECT c.unit_id AS u, COUNT(DISTINCT j.id) AS n, COUNT(DISTINCT l.reason_id) AS r "
+                "FROM learn_judgments j JOIN learn_cases c ON c.id = j.case_id "
+                "LEFT JOIN learn_links l ON l.judgment_id = j.id AND l.role = 'supports' "
+                "GROUP BY c.unit_id"):
+            mine = out.setdefault(row["u"], {})
+            mine["judgments"] = int(row["n"])
+            mine["reasons"] = int(row["r"])
+        return out
 
     def save_unit(self, unit: Dict[str, Any]) -> None:
         marks = dict(unit.get("marks") or {})

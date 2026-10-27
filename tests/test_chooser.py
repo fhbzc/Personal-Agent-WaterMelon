@@ -97,9 +97,25 @@ class TheDialogOpensOnTheWindowsThreadTests(unittest.TestCase):
 
         from personalized_agent.ui import desktop
         self.assertIn("chooser.dialogs_on(self.root", inspect.getsource(desktop))
-        # After the agent is up (say_hello), not while it starts.
+        # After the agent is up (say_hello), not while it starts - and not
+        # on Windows, nor before the user has left the computer alone: it
+        # holds the window's thread (6 s measured, 2026-10-26).
+        hello = inspect.getsource(desktop.DesktopAgent.say_hello)
+        self.assertIn('if sys.platform != "win32"', hello)
+        self.assertIn("self._warm_up_when_idle", hello)
         self.assertIn("chooser.warm_up(self.root)",
-                      inspect.getsource(desktop.DesktopAgent.say_hello))
+                      inspect.getsource(desktop.DesktopAgent._warm_up_when_idle))
+
+    def test_warmed_up_only_when_idle(self) -> None:
+        from unittest import mock
+        from personalized_agent.ui import desktop
+        fake = mock.Mock()
+        fake.root.after = mock.Mock()
+        for idle, warmed in ((3.0, False), (25.0, True), (None, False)):
+            with self.subTest(idle=idle), mock.patch.object(desktop.chooser, "warm_up") as warm:
+                fake.app.platform.activity.seconds_since_input = lambda: idle
+                desktop.DesktopAgent._warm_up_when_idle(fake)
+                self.assertEqual(warm.called, warmed)
 
 
 if __name__ == "__main__":

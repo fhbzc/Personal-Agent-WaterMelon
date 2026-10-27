@@ -113,9 +113,38 @@ class DraftsTests(unittest.TestCase):
         self.assertTrue(made[1].name.startswith("Summarise the meeting 20"),
                         "a second copy told apart by when")
 
-    def test_a_file_handed_over_brings_its_folder(self) -> None:
-        draft = self.app.drafts.create(files=[str(self.folder / "notes.md")], collect=False)
-        self.assertIn(str(self.folder), draft["folders"])
+    def test_where_it_works_is_only_what_the_user_gave(self) -> None:
+        # What is handed over is where it works, each listed to take off: a
+        # folder, to work in; a FILE, that file alone - never its folder.
+        notes = self.folder / "notes.md"
+        draft = self.app.drafts.create(files=[str(notes)], collect=False)
+        self.assertEqual(draft["folders"], [str(notes)])
+        draft = self.app.drafts.create(folders=[str(self.folder)], collect=False)
+        self.assertEqual(draft["folders"], [str(self.folder)])
+        self.app.models = _Models(PLAN)
+        started = []
+        self.app.work.start = lambda unit, instruction, **kw: (
+            started.append((unit, instruction)) or {"run": "run_r"})
+        draft = self.app.drafts.create(files=[str(notes)], collect=False)
+        self.app.drafts.collect_and_plan(draft["id"])
+        unit = self.app.drafts.start(draft["id"])["unit"]
+        self.assertEqual(self.app.work.folders(unit), [str(notes.resolve())])
+        self.assertIn(f"{notes} (a file)", started[0][1])
+        self.assertIn("change that file in place", started[0][1])
+        # The sandbox: that file may be written; nothing beside it may.
+        from personalized_agent.runtime.filesystem import validate_write_path
+        from personalized_agent.runtime.permissions import SecurityViolation
+        unit_row = {"id": unit, "name": "Notes"}
+        policy = self.app.work._runtime(unit_row, self.app.work.folder_of(unit_row)).policy
+        self.assertEqual(validate_write_path(str(notes), policy), notes.resolve())
+        with self.assertRaises(SecurityViolation):
+            validate_write_path(str(self.folder / "README.md"), policy)
+        # Taken off in the box: nothing given, a folder of its own.
+        draft = self.app.drafts.create(files=[str(notes)], collect=False)
+        self.app.drafts.collect_and_plan(draft["id"])
+        unit = self.app.drafts.start(draft["id"], folders=[])["unit"]
+        self.assertEqual(self.app.work.folders(unit), [])
+        self.assertIn("no folder was given", started[1][1])
 
     def test_every_delegate_work_waits_for_the_instruction_first(self) -> None:
         """Handed over from anywhere: kept, and nothing collected until the
@@ -147,6 +176,151 @@ class DraftsTests(unittest.TestCase):
         empty = self.app.drafts.create(source="menu", write_first=True)
         self.assertIn("say what you want", self.app.drafts.compose(empty["id"], "  ")["error"])
         self.assertNotIn("error", self.app.drafts.compose(empty["id"], "Tidy my notes"))
+
+    def test_start_is_answered_at_once_and_says_after_how_it_went(self) -> None:
+        # Setting it going took seconds - the box held open meanwhile.
+        self.app.models = _Models(PLAN)
+        gate = threading.Event()
+        self.app.work.start = lambda unit, instruction, **kw: (
+            gate.wait(30) and {"run": "run_slow"})
+        draft = self.app.drafts.create(text="Summarise this", collect=False)
+        self.app.drafts.collect_and_plan(draft["id"])
+        said = self.app.drafts.start_apart(draft["id"], folders=[])
+        self.assertEqual(said, {"starting": True, "draft": draft["id"]})
+        self.assertEqual(self.app.drafts.get(draft["id"])["status"], "starting")
+        self.assertIn("error", self.app.drafts.start_apart(draft["id"]), "not twice")
+        self.assertFalse(self.app.drafts.cancel(draft["id"]))
+        gate.set()
+        for _ in range(300):
+            kept = self.app.drafts.get(draft["id"])
+            if kept["status"] != "starting":
+                break
+            time.sleep(0.05)
+        self.assertEqual(kept["status"], STARTED)
+        self.assertEqual(kept["start"]["run"], "run_slow")
+        # Not started: back where it was, with why - to be started again.
+        self.app.work.start = lambda unit, instruction, **kw: {"error": "no room on the disk"}
+        draft = self.app.drafts.create(text="Summarise this", collect=False)
+        self.app.drafts.collect_and_plan(draft["id"])
+        self.app.drafts.start_apart(draft["id"], folders=[])
+        for _ in range(300):
+            kept = self.app.drafts.get(draft["id"])
+            if kept["status"] != "starting":
+                break
+            time.sleep(0.05)
+        self.assertEqual((kept["status"], kept["error"]), (READY, "no room on the disk"))
+        # Starting when the application closed: to be started again.
+        self.app.db.execute("UPDATE work_drafts SET status = 'starting' WHERE id = ?",
+                            (draft["id"],))
+        self.assertEqual(self.app.drafts.get(draft["id"])["status"], READY)
+
+    def test_started_before_its_plan_it_starts_once_drafted_with_the_settings(self) -> None:
+        # The user may press Start while the context is collected: no review
+        # after - the work starts with the plan drafted and their settings.
+        self.app.models = _Models(dict(PLAN, way="quick", way_why="a short note"))
+        started = []
+        self.app.work.start = lambda unit, instruction, **kw: (
+            started.append(kw) or {"run": "run_early"})
+        self.app.drafts._when_ready.__func__.__defaults__ = (0.05, 30 * 60.0)
+        self.addCleanup(setattr, self.app.drafts._when_ready.__func__, "__defaults__",
+                        (1.0, 30 * 60.0))
+        draft = self.app.drafts.create(text="Summarise this", collect=False)
+        self.assertEqual(draft["status"], COLLECTING)
+        said = self.app.drafts.start_apart(draft["id"], plan={"way": "auto"},
+                                           options={"limits": {"minutes": 7}, "sound": True})
+        self.assertTrue(said["when_ready"])
+        time.sleep(0.3)
+        self.assertEqual(started, [], "not before its plan is drafted")
+        self.app.drafts.collect_and_plan(draft["id"])
+        for _ in range(300):
+            if started and self.app.drafts.get(draft["id"])["status"] == STARTED:
+                break
+            time.sleep(0.05)
+        kept = self.app.drafts.get(draft["id"])
+        self.assertEqual(kept["status"], STARTED)
+        self.assertEqual((started[0]["way"], started[0]["limits"], started[0]["sound"]),
+                         ("quick", {"minutes": 7}, True), "the plan's way, the user's settings")
+        self.assertNotIn("start_when_ready", kept["options"])
+        # A way chosen overrides the plan's; cancelled while waiting, it never starts.
+        draft = self.app.drafts.create(text="Summarise this", collect=False)
+        self.app.drafts.start_apart(draft["id"], plan={"way": "full"})
+        self.app.drafts.collect_and_plan(draft["id"])
+        for _ in range(300):
+            if len(started) > 1:
+                break
+            time.sleep(0.05)
+        self.assertEqual(started[1]["way"], "full")
+        draft = self.app.drafts.create(text="Summarise this", collect=False)
+        self.app.drafts.start_apart(draft["id"], plan={"way": "auto"})
+        self.assertTrue(self.app.drafts.cancel(draft["id"]))
+        self.app.drafts.collect_and_plan(draft["id"])
+        time.sleep(0.5)
+        self.assertEqual(len(started), 2)
+
+    def test_a_folder_given_is_where_it_works_and_may_change(self) -> None:
+        # Given before the plan, with the settings: the run is told it works
+        # there directly - and its sandbox may write there.
+        self.app.models = _Models(PLAN)
+        started = []
+        self.app.work.start = lambda unit, instruction, **kw: (
+            started.append((unit, instruction)) or {"run": "run_f"})
+        self.app.drafts._when_ready.__func__.__defaults__ = (0.05, 30 * 60.0)
+        self.addCleanup(setattr, self.app.drafts._when_ready.__func__, "__defaults__",
+                        (1.0, 30 * 60.0))
+        draft = self.app.drafts.create(text="Tidy the notes", collect=False)
+        self.app.drafts.start_apart(draft["id"], plan={"way": "auto"},
+                                    folders=[str(self.folder)])
+        self.app.drafts.collect_and_plan(draft["id"])
+        for _ in range(300):
+            if started:
+                break
+            time.sleep(0.05)
+        unit, instruction = started[0]
+        self.assertIn("WHERE YOU WORK - what the user gave for this work", instruction)
+        self.assertIn(str(self.folder), instruction)
+        self.assertIn("DIRECTLY", instruction)
+        self.assertIn(str(self.folder.resolve()), self.app.work.folders(unit["id"]))
+        runtime = self.app.work._runtime(unit, self.app.work.folder_of(unit))
+        self.assertIn(self.folder.resolve(),
+                      [Path(one).resolve() for one in runtime.policy.write_roots])
+        # None given: a folder of its own, and it is told so.
+        draft = self.app.drafts.create(text="Tidy the notes", collect=False)
+        self.app.drafts.collect_and_plan(draft["id"])
+        self.app.drafts.start(draft["id"], folders=[])
+        self.assertIn("no folder was given", started[1][1])
+
+    def test_saved_as_a_draft_kept_listed_and_started_later(self) -> None:
+        # No Create: Save as draft keeps the box as it is, to start later.
+        self.app.models = _Models(PLAN)
+        collected = []
+        self.app.drafts._collect_apart = lambda draft_id: collected.append(draft_id)
+        draft = self.app.drafts.create(text="Tidy the notes", collect=False, write_first=True)
+        said = self.app.drafts.save(draft["id"], instruction="As a table",
+                                    folders=[str(self.folder)],
+                                    options={"limits": {"minutes": 9}, "way": "quick",
+                                             "sound": True, "instruction": "not a setting"})
+        kept = said["draft"]
+        self.assertEqual(kept["status"], COLLECTING, "the instruction taken, as Create took it")
+        self.assertEqual(collected, [draft["id"]])
+        self.assertEqual((kept["options"]["instruction"], kept["options"]["way"],
+                          kept["options"]["limits"], kept["folders"]),
+                         ("As a table", "quick", {"minutes": 9}, [str(self.folder)]))
+        self.assertTrue(kept["options"]["saved"])
+        self.assertEqual([one["id"] for one in self.app.drafts.saved()], [draft["id"]])
+        # Its plan changed and saved again: the user's.
+        self.app.drafts.collect_and_plan(draft["id"])
+        self.app.drafts.save(draft["id"], plan=dict(PLAN, title="The notes as a table"))
+        kept = self.app.drafts.get(draft["id"])
+        self.assertEqual((kept["plan"]["title"], kept["plan_by"]),
+                         ("The notes as a table", "user"))
+        # Started: no longer a draft. Another, discarded: gone too.
+        self.app.work.start = lambda unit, instruction, **kw: {"run": "run_d"}
+        self.app.drafts.start(draft["id"])
+        other = self.app.drafts.create(text="Something else", collect=False, write_first=True)
+        self.app.drafts.save(other["id"])
+        self.assertEqual([one["id"] for one in self.app.drafts.saved()], [other["id"]])
+        self.assertTrue(self.app.drafts.discard(other["id"]))
+        self.assertEqual(self.app.drafts.saved(), [])
 
     def test_cancelled_never_runs(self) -> None:
         draft = self.app.drafts.create(text="x", collect=False)
@@ -446,3 +620,28 @@ class TheSelectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OneChooserForAFolderOrAFileTests(unittest.TestCase):
+    """Add work directory is one button: in Windows' Browse for Folder, files
+    shown, what is selected last is what is added - a file as a file."""
+
+    def test_what_was_selected_says_what_it_is(self) -> None:
+        from personalized_agent.common import chooser
+        with tempfile.TemporaryDirectory() as work:
+            notes = Path(work) / "notes.md"
+            notes.write_text("x", encoding="utf-8")
+            with mock.patch.object(chooser, "available", return_value=True), \
+                    mock.patch.object(chooser.sys, "platform", "win32"):
+                for chosen, kind in ((notes, "file"), (Path(work), "folder")):
+                    with mock.patch.object(chooser, "_show", return_value=str(chosen)):
+                        said = chooser.choose_place()
+                    self.assertEqual((said["selected"], said["kind"]), (str(chosen), kind))
+                with mock.patch.object(chooser, "_show", return_value=None):
+                    self.assertTrue(chooser.choose_place()["cancelled"])
+            # No chooser for both here: the page asks which of the two first.
+            with mock.patch.object(chooser, "available", return_value=True), \
+                    mock.patch.object(chooser.sys, "platform", "linux"):
+                self.assertTrue(chooser.choose_place()["two"])
+        # Never under the tests.
+        self.assertFalse(chooser.choose_place()["available"])

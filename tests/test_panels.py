@@ -2262,6 +2262,143 @@ class AgentStateTests(unittest.TestCase):
         self.assertIn('bind("<Enter>"', source)
         self.assertIn('bind("<Leave>"', source)
 
+    def test_a_double_click_is_one_whatever_comes_between_its_presses(self) -> None:
+        """A double click on the avatar sometimes opened two conversations:
+        Tk's own double click broke on the leave and enter the avatar's hop
+        made between the presses - and a single click waited 240 ms, half
+        the system's double-click time. Now the presses are counted."""
+        from unittest import mock
+
+        from personalized_agent.ui.desktop import DesktopAgent
+
+        class Root:
+            def __init__(self):
+                self.jobs = {}
+
+            def after(self, _ms, fn):
+                key = f"job{len(self.jobs)}"
+                self.jobs[key] = fn
+                return key
+
+            def after_cancel(self, key):
+                self.jobs.pop(key, None)
+
+            def fire(self):
+                for key in list(self.jobs):
+                    self.jobs.pop(key)()
+
+        class Probe:
+            _on_click = DesktopAgent._on_click
+            _single_click = DesktopAgent._single_click
+            _on_double_click = DesktopAgent._on_double_click
+            double_click_seconds = staticmethod(lambda: 0.5)
+            DOUBLE_CLICK_PIXELS = DesktopAgent.DOUBLE_CLICK_PIXELS
+
+            def __init__(self):
+                self.root, self._click_job, self.opened = Root(), None, []
+                self._live = {"poked": 0.0, "start": 0.0}
+                self._dragged = False
+
+            def open_chat(self):
+                self.opened.append("chat")
+
+            def open_url(self, url):
+                self.opened.append(url)
+
+        press = lambda x=100, y=100: type("E", (), {"x_root": x, "y_root": y})()
+        clock = [10.0]
+        with mock.patch("personalized_agent.ui.desktop.time.monotonic", lambda: clock[0]):
+            probe = Probe()
+            # Two presses 300 ms apart - a leave and an enter between them,
+            # which no longer matter: one double click, no chat.
+            probe._on_click(press())
+            clock[0] += 0.3
+            probe._on_click(press(102, 101))
+            probe.root.fire()
+            self.assertEqual(probe.opened, ["/#overview"])
+            # 600 ms apart: two single clicks.
+            probe.opened.clear()
+            clock[0] += 5
+            probe._on_click(press())
+            clock[0] += 0.6
+            probe.root.fire()
+            probe._on_click(press())
+            probe.root.fire()
+            self.assertEqual(probe.opened, ["chat", "chat"])
+            # Quick, but far apart on the screen: two.
+            probe.opened.clear()
+            clock[0] += 5
+            probe._on_click(press(100, 100))
+            clock[0] += 0.2
+            probe._on_click(press(160, 100))
+            probe.root.fire()
+            self.assertEqual(probe.opened, ["chat"], "the first single gave way, the second waits")
+            # A drag is no click.
+            probe.opened.clear()
+            probe._dragged = True
+            probe.root.fire()
+            clock[0] += 5
+            probe._on_click(press())
+            probe._dragged = True
+            probe.root.fire()
+            self.assertEqual(probe.opened, [])
+        source = (ROOT / "personalized_agent" / "ui" / "desktop.py").read_text(encoding="utf-8")
+        self.assertNotIn('bind("<Double-Button-1>"', source)
+
+    def test_the_readout_goes_when_the_pointer_does_with_no_leave(self) -> None:
+        """A leave over the see-through pixels round the figure, the pointer
+        still in its square, is not the pointer going; when it then went no
+        other leave came, and the readout stayed until the pointer came back
+        and left again. The frames put it away by where the pointer is."""
+        from personalized_agent.ui.desktop import DesktopAgent
+
+        class Canvas:
+            def __getattr__(self, _name):
+                return lambda *a, **k: None
+
+        class Window:
+            destroyed = False
+
+            def destroy(self):
+                Window.destroyed = True
+
+        class Probe:
+            _animate = DesktopAgent._animate
+            _on_hover_leave = DesktopAgent._on_hover_leave
+
+            def __init__(self):
+                self._rig, self._frames, self._frame_index = None, {}, 0
+                self.state, self.size = "idle", 128
+                self.canvas = Canvas()
+                self.root = type("Root", (), {"after": lambda *a: "job",
+                                              "after_cancel": lambda *a: None})()
+                self._hover, self._hover_job, self._hover_wait = Window(), "job", None
+                self.on_it = True
+
+            def _pointer_on_avatar(self):
+                return self.on_it
+
+        probe = Probe()
+        probe._on_hover_leave(object())        # a leave over the see-through pixels
+        self.assertIsNotNone(probe._hover)
+        probe._animate()                       # the pointer still on it
+        self.assertIsNotNone(probe._hover)
+        probe.on_it = False                    # gone - and no leave came
+        probe._animate()
+        self.assertIsNone(probe._hover)
+        self.assertTrue(Window.destroyed)
+        # A readout not opened yet is not opened once the pointer has gone.
+        probe._hover_wait = "waiting"
+        probe._animate()
+        self.assertIsNone(probe._hover_wait)
+        # Carried, it is the drag's to put away, not the frames'.
+        probe._hover, probe._carried = Window(), True
+        probe._animate()
+        self.assertIsNotNone(probe._hover)
+        source = (ROOT / "personalized_agent" / "ui" / "desktop.py").read_text(encoding="utf-8")
+        live = source.split("def _animate_live", 1)[1].split("\n    def ", 1)[0]
+        self.assertIn("self._on_hover_leave()", live, "the live avatar's frames too")
+
 
 class DesktopConversationTests(unittest.TestCase):
     """Section 7.1, as amended: the agent window holds one conversation."""

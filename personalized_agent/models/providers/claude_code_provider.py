@@ -334,6 +334,28 @@ NATIVE_READ_NOTE = (
 )
 
 
+def _unconfined_checks(request: ModelRequest) -> Any:
+    """Without the sandbox: the agent's check of the client's own tools,
+    for its hook (agent/work/unconfined.py) - each refusal told."""
+    spec = request.unconfined
+    if not spec:
+        return None
+    from ...agent.work import unconfined
+    places = [Path(str(one)) for one in spec.get("places") or []]
+    told = spec.get("on_denied")
+
+    def checks(body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if body.get("hook_event_name") not in (None, "PreToolUse"):
+            return None
+        why = unconfined.hook(body, places)
+        if why is None:
+            return None
+        if callable(told):
+            told(str(body.get("tool_name") or ""), body.get("tool_input") or {}, why)
+        return unconfined.denied_answer(why)
+    return checks
+
+
 def read_rule(place: str) -> str:
     """A place denied to Read, as Claude Code writes one: an absolute path as
     //c/Users/... (a Windows drive as its lower-case letter), a folder with
@@ -708,6 +730,8 @@ class ClaudeCodeProvider(ModelProvider):
 
     def _command(self, request: ModelRequest, model: str,
                  session_id: Optional[str] = None, bridge: Any = None) -> List[str]:
+        if request.unconfined:
+            return self._unconfined_command(request, model, session_id, bridge)
         command = [
             self.executable() or CLI_NAME,
             # The prompt is written to stdin, not passed as an argument: a
@@ -790,6 +814,47 @@ class ClaudeCodeProvider(ModelProvider):
             command += ["--append-system-prompt", system]
         return command
 
+    def _unconfined_command(self, request: ModelRequest, model: str,
+                            session_id: Optional[str], bridge: Any) -> List[str]:
+        """WITHOUT THE SANDBOX (agent/work/unconfined.py): its own tools - all
+        but those that reach anyone, arrange for later or publish - in its
+        "auto" permission mode, with NOBODY to answer a permission prompt:
+        whatever would need one is refused at once. Never the places listed
+        (deny rules for its file tools; its hook, answered by the agent, for
+        every command and file before it runs). It works from the work's
+        folder. Otherwise as any call: no MCP server but the agent's, no
+        session kept in the user's ~/.claude."""
+        from ...agent.work.unconfined import CLAUDE_STILL_DENIED
+        spec = request.unconfined or {}
+        places = [str(one) for one in spec.get("places") or []]
+        denied = list(CLAUDE_STILL_DENIED)
+        for place in places:
+            rule = read_rule(place)
+            denied += [rule, rule.replace("Read(", "Edit(", 1),
+                       rule.replace("Read(", "Write(", 1)]
+        command = [
+            self.executable() or CLI_NAME, "-p",
+            "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+            "--model", model,
+            *(["--effort", request.reasoning_effort]
+              if request.reasoning_effort in EFFORTS else []),
+            "--permission-mode", "auto", "--permission-prompts", "none",
+            "--disallowed-tools", *denied,
+            "--strict-mcp-config", "--no-session-persistence",
+        ]
+        if spec.get("workdir"):
+            command += ["--add-dir", str(spec["workdir"])]
+        if session_id:
+            command += ["--session-id", session_id]
+        if bridge is not None:
+            command += ["--settings", json.dumps(bridge.hook_settings(
+                unconfined=True, web=bool(request.builtin_web and bridge.guard is not None)))]
+            command += ["--mcp-config", bridge.config(), "--allowedTools", *bridge.allowed()]
+        system = self._system(request, native=bridge is not None)
+        if system:
+            command += ["--append-system-prompt", system]
+        return command
+
     def invoke(self, request: ModelRequest, model: str) -> ModelResponse:
         cli = self.executable()
         if not cli:
@@ -824,7 +889,8 @@ class ClaudeCodeProvider(ModelProvider):
         if (request.tools or web) and callable(request.tool_runner):
             from .mcp_bridge import ToolBridge
             with ToolBridge(request.tools, request.tool_runner,
-                            guard=request.web_guard if web else None) as bridge:
+                            guard=request.web_guard if web else None,
+                            checks=_unconfined_checks(request)) as bridge:
                 return self._invoke(request, model, cli, bridge)
         return self._invoke(request, model, cli, None)
 
@@ -840,6 +906,9 @@ class ClaudeCodeProvider(ModelProvider):
         settings_file = _settings_to_file(command)
         prompt = self._prompt(request)
         cwd = str(self.workspace) if self.workspace else None
+        if request.unconfined and (request.unconfined or {}).get("workdir"):
+            # Without the sandbox, its own tools work from the work's folder.
+            cwd = str(request.unconfined["workdir"])
         # Exactly what the client is handed, for a debugger watching this
         # call - the command, the system prompt it reads from its file, the
         # prompt on stdin, where it runs. Nothing is copied when nobody is
@@ -1134,6 +1203,8 @@ class _Stream:
 
     def line(self, line: str) -> None:
         self.last = time.monotonic()
+        if self.request.unconfined and '"tool_result"' in line:
+            self._refusals(line)
         if '"usage"' not in line or not callable(self.request.on_usage):
             return
         try:
@@ -1158,6 +1229,33 @@ class _Stream:
                 cache_written_tokens=total["cache_creation_input_tokens"]))
         except Exception:                    # pragma: no cover - the caller's count
             log.debug("could not report a call's usage so far", exc_info=True)
+
+    def _refusals(self, line: str) -> None:
+        """WITHOUT THE SANDBOX: each of its own tools refused for want of
+        permission, told as it comes back (`ModelRequest.unconfined`)."""
+        from ...agent.work.unconfined import is_denial
+        told = (self.request.unconfined or {}).get("on_denied")
+        if not callable(told):
+            return
+        try:
+            event = json.loads(line)
+        except ValueError:
+            return
+        message = event.get("message") if isinstance(event, dict) else None
+        if not isinstance(message, dict) or event.get("type") != "user":
+            return
+        for part in message.get("content") or []:
+            if not isinstance(part, dict) or part.get("type") != "tool_result" \
+                    or not part.get("is_error"):
+                continue
+            content = part.get("content")
+            text = content if isinstance(content, str) else " ".join(
+                str(one.get("text") or "") for one in content or [] if isinstance(one, dict))
+            if is_denial(text):
+                try:
+                    told("client", {"tool_use_id": part.get("tool_use_id")}, text[:400])
+                except Exception:            # pragma: no cover - the caller's record
+                    log.debug("could not tell a refusal", exc_info=True)
 
     def watch(self) -> Optional[str]:
         now = time.monotonic()

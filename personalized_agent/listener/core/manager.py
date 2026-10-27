@@ -8,8 +8,11 @@ isolation and event routing.  A failing provider is disabled, never fatal
 from __future__ import annotations
 
 import logging
+import copy
 import threading
 import time
+from datetime import datetime, timezone
+from types import MethodType
 from typing import Any, Dict, List
 
 from ...common.events.models import ListenerEvent
@@ -63,6 +66,7 @@ class ListenerManager:
         self.platform = platform
         self.privacy = PrivacyFilter(config, platform=platform)
         self._providers: Dict[str, ListenerProvider] = {}
+        self._provider_callbacks: Dict[str, Any] = {}
         self._states: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.RLock()
         self._running = False
@@ -83,7 +87,7 @@ class ListenerManager:
             lambda: FilesystemProvider(self.config, self.platform),
             lambda: BrowserProvider(self.config, self.platform),
             lambda: AssistantProvider(self.config, self.platform),
-            lambda: ScreenProvider(self.config, self.platform),
+            lambda: ScreenProvider(self.config, self.platform, bus=self.bus),
             lambda: ScreenshotProvider(self.config, self.platform),
         ):
             try:
@@ -99,29 +103,64 @@ class ListenerManager:
 
     def register(self, provider: ListenerProvider) -> None:
         with self._lock:
-            provider.bind(self._on_event)
+            # The emitting object is provenance; an event's source string
+            # alone is not proof that the screenshot provider produced it.
+            def receive(manager, event):
+                manager._on_event(event, provider)
+            # Providers use the bound manager to reject excluded files before
+            # opening them. Keep that relationship and the native producer's
+            # provenance together instead of hiding it behind a plain lambda.
+            callback = MethodType(receive, self)
+            provider.bind(callback)
+            self._provider_callbacks[provider.provider_id] = callback
             self._providers[provider.provider_id] = provider
             self._states[provider.provider_id] = {
                 "state": "registered", "started_at": None, "events": 0, "errors": 0,
                 "last_error": None,
+                "routing": {"received": 0, "filtered": 0, "failed": 0,
+                            "last_received_at": None, "last_recorded_at": None,
+                            "last_filtered_at": None, "filter_reasons": {}},
             }
         log.info("listener provider registered: %s (%s)", provider.provider_id, provider.category)
 
+    def receives_from(self, provider: ListenerProvider, callback: Any) -> bool:
+        """Whether this callback routes this registered producer's events."""
+        with self._lock:
+            return (self._providers.get(provider.provider_id) is provider
+                    and self._provider_callbacks.get(provider.provider_id) is callback)
+
     # -- routing ------------------------------------------------------------
-    def _on_event(self, event: ListenerEvent) -> None:
+    def _on_event(self, event: ListenerEvent, owner: Any = None) -> None:
         provider = self._providers.get(event.source)
         category = provider.category if provider else "generic"
         try:
+            # Metadata only: no denied content is retained for debugging.
+            moment = datetime.now(timezone.utc).isoformat()
+            with self._lock:
+                routing = self._states.get(event.source, {}).get("routing")
+                if routing is not None:
+                    routing["received"] += 1
+                    routing["last_received_at"] = moment
             # Before the filter: a window the user excluded from being
             # recorded is still evidence about who touched a file while it
             # was in front (section 19, as amended).
             self.privacy.remember_what_was_in_front(event)
-            refused = self.privacy.refusal(event, category)
+            from ..providers.screenshot import ScreenshotProvider
+            capture_root = (owner.trusted_capture_root(event)
+                            if owner is provider and isinstance(owner, ScreenshotProvider)
+                            else None)
+            refused = self.privacy.refusal(event, category,
+                                           trusted_screenshot_root=capture_root)
             if refused is not None:
-                # Kept out - and said so in the Record log: which rule, never
-                # what was in it.
                 from .filtered import note
                 note(event.source, category, event.event_type, refused, event.application or "")
+                reason = self._filter_reason(event, category, capture_root)
+                with self._lock:
+                    if routing is not None:
+                        routing["filtered"] += 1
+                        routing["last_filtered_at"] = moment
+                        reasons = routing["filter_reasons"]
+                        reasons[reason] = reasons.get(reason, 0) + 1
                 if self.observability is not None:
                     self.observability.increment("listener.events_filtered")
                 self.tracer.event(
@@ -153,7 +192,17 @@ class ListenerManager:
                 inputs={"source": event.source, "application": event.application},
                 metadata={"category": category, "kind": "listener"},
             )
-            self.raw_store.add_event(event)
+            if 'wechat_capture' in event.data:
+                from ..providers.screen import ScreenProvider
+                if owner is not provider or not isinstance(provider, ScreenProvider):
+                    event.data.pop('wechat_capture', None)
+            if self.raw_store.add_event(event) is None:
+                # A repeated frame updates observation times and links, but
+                # does not create another raw event or wake downstream work.
+                with self._lock:
+                    if routing is not None:
+                        routing['unchanged'] = routing.get('unchanged', 0) + 1
+                return
             self.tracer.event(
                 "event_pipeline.persist", event_type=event.event_type,
                 connection_id="event_pipeline->raw_event_storage",
@@ -162,14 +211,52 @@ class ListenerManager:
             with self._lock:
                 state = self._states.setdefault(event.source, {"events": 0})
                 state["events"] = state.get("events", 0) + 1
+                if routing is not None:
+                    routing["last_recorded_at"] = moment
             if self.observability is not None:
                 self.observability.increment("listener.events_recorded")
             if self.bus is not None:
                 self.bus.publish(f"listener.{event.event_type}", event.to_dict())
         except Exception:
+            with self._lock:
+                routing = self._states.get(event.source, {}).get("routing")
+                if routing is not None:
+                    routing["failed"] += 1
             log.exception("failed to route listener event %s", event.event_type)
             if self.observability is not None:
                 self.observability.record_error("listener", f"routing failed for {event.event_type}")
+
+    def _filter_reason(self, event: ListenerEvent, category: str,
+                       capture_root: Any = None) -> str:
+        """Explain a rejection after the existing policy has decided it."""
+        try:
+            if not self.privacy.category_enabled(category):
+                return "monitoring_or_category_disabled"
+            if not self.privacy.application_allowed(event.application):
+                return "application_excluded"
+            if not self.privacy.website_allowed(event.data.get("url")):
+                return "website_excluded"
+            if event.event_type == "screen.shot":
+                if category != "screenshot" or not self.privacy.screenshot_evidence_allowed(
+                        event, capture_root):
+                    return "untrusted_or_invalid_screenshot"
+            from ...common.agent_writes import was_written_by_agent
+            for key in ("path", "source_path", "destination_path"):
+                path = event.data.get(key)
+                if path:
+                    if event.event_type == "screen.shot" and key == "path":
+                        if not self.privacy.file_name_allowed(path):
+                            return "file_pattern_excluded"
+                        continue
+                    if was_written_by_agent(path):
+                        return "agent_bookkeeping"
+                    if not self.privacy.path_allowed(path):
+                        return "directory_excluded"
+                    if not self.privacy.file_name_allowed(path):
+                        return "file_pattern_excluded"
+        except Exception:
+            pass
+        return "presence_or_user_activity_policy"
 
     # -- lifecycle ----------------------------------------------------------
     def start(self) -> None:
@@ -259,7 +346,8 @@ class ListenerManager:
     def health(self) -> Dict[str, Any]:
         providers = []
         for provider_id, provider in self._providers.items():
-            state = dict(self._states.get(provider_id, {}))
+            with self._lock:
+                state = copy.deepcopy(self._states.get(provider_id, {}))
             try:
                 status = provider.get_status()
             except Exception as exc:

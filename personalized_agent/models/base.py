@@ -180,6 +180,8 @@ class ToolSpec:
     name: str
     description: str
     input_schema: Dict[str, Any]
+    #: It only reads: it may run beside other such calls (agent/work/parallel.py).
+    read_only: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {"name": self.name, "description": self.description,
@@ -233,6 +235,13 @@ class ModelRequest:
     #: client that reads by itself where nothing confines it is passed over
     #: (`ModelManager.invoke`, `READS_UNCONFINED`).
     sealed_reading: bool = field(default=False, repr=False, compare=False)
+    #: WITHOUT THE SANDBOX (agent/work/unconfined.py): None - the sandbox
+    #: holds, as always. Otherwise {"workdir", "places", "on_denied"}: a
+    #: client with tools of its own (Claude Code) uses them on this computer
+    #: from workdir, in its own "auto" permission mode, refusing at once
+    #: whatever would need a person's approval - never in the places listed
+    #: - and each refusal is told to on_denied(name, input, why).
+    unconfined: Optional[Dict[str, Any]] = field(default=None, repr=False, compare=False)
     #: Runs a tool the model calls natively - for a client that offers the
     #: tools that way (Claude Code, over MCP): (name, arguments) -> what it
     #: returned. With it, such a client runs the tools during the call and

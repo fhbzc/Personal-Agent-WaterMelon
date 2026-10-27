@@ -87,14 +87,27 @@ def session_ids(records: Iterable[Any]) -> Set[str]:
 
 
 class LeaveOut:
-    def __init__(self, folders: Iterable[Any] = (), records: Iterable[Any] = ()) -> None:
+    def __init__(self, folders: Iterable[Any] = (), records: Iterable[Any] = (),
+                 units: Iterable[str] = ()) -> None:
         self.folders = [one for one in dict.fromkeys(_norm(f) for f in folders) if one]
         self.records = [one for one in dict.fromkeys(_norm(r) for r in records) if one]
         self.names = {one.rsplit("/", 1)[-1] for one in self.folders}
         self.sessions = session_ids(records)
+        #: UNITS HELD BACK WHOLE, whatever their folders (the learning list,
+        #: 2026-10-24): one the user turned off, one whose first reading
+        #: waits for them to look (store.held_units).
+        self.units = {str(one) for one in units if str(one or "").strip()}
 
     def __bool__(self) -> bool:
         return bool(self.folders)
+
+    def holding(self, units: Iterable[str]) -> "LeaveOut":
+        """The same, with these units held back too."""
+        out = LeaveOut.__new__(LeaveOut)
+        out.__dict__.update(self.__dict__)
+        out._named = getattr(self, "_named", None)
+        out.units = set(self.units) | {str(one) for one in units if str(one or "").strip()}
+        return out
 
     def _naming(self) -> "re.Pattern[str]":
         """The words that name a folder left out: its path, and anything
@@ -178,8 +191,13 @@ class LeaveOut:
     def parts_out(self, store: Any) -> Tuple[Set[str], Set[str]]:
         """(the cases left out whole, the judgments left out - theirs and
         every other that lies in what is left out), of all the store has."""
-        if not self:
+        if not self and not self.units:
             return set(), set()
+        if not self:
+            # Only units held back: their cases whole, and those cases' judgments.
+            cases = {row["id"] for row in store.cases() if row["unit_id"] in self.units}
+            judgments = {one["id"] for one in store.judgments() if one["case_id"] in cases}
+            return cases, judgments
         units = {one["id"]: one for one in store.units()}
         # A unit read from one of the user's projects keeps no folder of its
         # own when the project's did not resolve on disk: the project's.
@@ -188,6 +206,7 @@ class LeaveOut:
                                        if one.get("kind") == "work"])
         whole = {one["id"] for one in units.values() if one.get("kind") == "work"
                  and self.folders_out(of_projects.get(str(one.get("key") or ""), []))}
+        whole |= self.units
         by_case: Dict[str, List[Dict[str, Any]]] = {}
         for one in store.judgments():
             by_case.setdefault(one["case_id"], []).append(one)

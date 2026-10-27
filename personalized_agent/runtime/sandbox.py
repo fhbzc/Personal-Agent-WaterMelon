@@ -435,12 +435,14 @@ class SandboxRuntime:
         timeout: Optional[float] = None,
         sys_path: Optional[Sequence[Path]] = None,
         environment: Optional[Dict[str, str]] = None,
+        readable: Optional[Sequence[Path]] = None,
     ) -> ScriptResult:
         """Run a script with the in-process guard installed (section 31).
 
         `sys_path` is put first on the script's import path - the packages
         installed for a piece of work - and `environment` is added to the
-        child's sanitized one."""
+        child's sanitized one. `readable`: folders it may read besides the
+        policy's - the programs a command runs (agent/work/tools.py)."""
         try:
             resolved = fs.validate_read_path(script_path, self.policy)
         except SecurityViolation as exc:
@@ -461,7 +463,8 @@ class SandboxRuntime:
             extra[SYS_PATH_ENV] = os.pathsep.join(str(one) for one in sys_path)
         result = self.execute(
             command,
-            readable_paths=[guard_dir, resolved.parent, *self.policy.readable_paths],
+            readable_paths=[guard_dir, resolved.parent, *self.policy.readable_paths,
+                            *(readable or [])],
             environment=extra or None,
             timeout=timeout,
         )
@@ -490,9 +493,12 @@ class SandboxRuntime:
         )
 
     def run_python_code(self, code: str, timeout: Optional[float] = None,
-                        sys_path: Optional[Sequence[Path]] = None) -> ScriptResult:
+                        sys_path: Optional[Sequence[Path]] = None,
+                        environment: Optional[Dict[str, str]] = None,
+                        readable: Optional[Sequence[Path]] = None) -> ScriptResult:
         script = self.store_generated_script(code)
-        return self.run_python_script(script, timeout=timeout, sys_path=sys_path)
+        return self.run_python_script(script, timeout=timeout, sys_path=sys_path,
+                                      environment=environment, readable=readable)
 
     def download(self, url: str, destination: str, timeout: float = 60.0) -> Path:
         """Downloads are writes and obey the same workspace rule (section 31)."""

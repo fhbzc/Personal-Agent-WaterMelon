@@ -83,7 +83,9 @@ until resumed, then goes on exactly there, its conversation still in
 memory; paused time is not counted against its minutes. That memory lives
 in the application: closing the page changes nothing, but a run going or
 paused when the APPLICATION closes is interrupted, and continues from its
-last milestone - the latest version.
+latest RESUME POINT - kept after every round the reviewer found advanced
+(versions.py; the user, 2026-10-24), so at most the round it was in is
+lost - or, with none after it, from its last milestone, the latest version.
 """
 
 from __future__ import annotations
@@ -94,6 +96,8 @@ import json
 import logging
 import os
 import re
+import shutil
+import subprocess
 import threading
 import time
 import uuid
@@ -148,6 +152,7 @@ WORK_LANGUAGE = in_display(
     "the Work tab shows")
 from ...runtime.permissions import SecurityViolation, WorkspacePolicy
 from ...runtime.sandbox import SandboxRuntime
+from . import as_of, handed
 from .packages import ASK, AUTO, Installer, PACKAGES_DIR, mode_of, validate
 from .tools import WorkTools, compact_experience, experience_text, stage_key_info
 from ...learning.find import QUESTION_KINDS, Finder
@@ -199,6 +204,18 @@ RESERVE_FLOOR = {"minutes": 5, "tokens_in": 400_000, "tokens_out": 20_000,
 #: draft, and a round of work.
 TOOL_ROUNDS = 14
 WORK_TOOL_ROUNDS = 40
+
+#: `from_version` naming the run's progress point, not a version.
+PROGRESS = "progress"
+#: A PROGRESS POINT every this many minutes of the run's own time (the user,
+#: 2026-10-26: a round takes about 27 minutes - the median of 53 measured -
+#: and a point only at its end was too far apart): in the middle of a round
+#: too, after a tool of the work agent's has finished. Like the point after
+#: a round that advanced, it is the latest only and not a version - nothing
+#: checked it - and a run cut off goes on from it.
+PROGRESS_POINT_MINUTES = 10
+#: The work agent's tools a point in the middle of a round recalls.
+PROGRESS_POINT_TOOLS = 40
 
 #: A VERSION'S SLIDES are drawn in a few rounds of tools - a handful of
 #: figures, not a second round of work - and with these tools alone: the
@@ -311,11 +328,25 @@ STOPPED_BY_REVIEW = "stopped by the reviewer"
 BLOCKED = "blocked"
 NO_CONTRACT = "no contract"
 INTERRUPTED = "interrupted"
+#: Stopped by the user at once, without wrapping up: where it was in its
+#: round was not said, so it is not gone on from.
+STOPPED_AT_ONCE = "stopped at once"
 #: One of the two final checks - quality, privacy - still not passed after
 #: its rounds of fixes (`Run._final_checks`): the run ends saying which.
 CHECK_FAILED = "failed a final check"
 CONTINUABLE = (NOT_FINISHED, STALLED, STOPPED_BY_REVIEW, BLOCKED, INTERRUPTED,
-               CHECK_FAILED)
+               CHECK_FAILED, "needs the thorough way", STOPPED_AT_ONCE, "failed")
+#: THE RUNS THAT DID NOT STOP CLEANLY (the user, 2026-10-26): cut off by the
+#: application closing, stopped at once, or failed. Continued, each GOES BACK
+#: to its last save point - its latest progress point after its last
+#: version, else that version - and the work after it is given up; it is
+#: Resume on the page. A run that stopped cleanly - wrapped up, at Stop or
+#: at a limit - goes on from where it stopped.
+GOES_BACK = (INTERRUPTED, STOPPED_AT_ONCE, "failed")
+
+#: A quick run that found the work too big for the quick way: carried on
+#: the thorough way (`WorkRuns.thorough`), or continued as it is.
+NEEDS_THOROUGH = "needs the thorough way"
 
 #: A run waiting for the user to answer a request to install packages.
 WAITING = "waiting for you"
@@ -354,7 +385,7 @@ CALLS_BATCH = 600
 
 #: Who made a call, as the chart names them: the work agent is the builder;
 #: the Experience debugger's first way, the single model.
-CALL_WHO = {"worker": "builder", "reviewer": "reviewer",
+CALL_WHO = {"worker": "builder", "reviewer": "reviewer", "learned": "what was learned",
             "quality": "quality check", "privacy": "privacy check"}
 
 #: THE TWO FINAL CHECKS, each a kind of its own in the token charts: the
@@ -612,9 +643,21 @@ EXPERIENCE_ID = re.compile(r"\b(?:stage|rec|pattern|principle|nature)_[0-9a-zA-Z
 #:   SINGLE - one model on its own: the task as the user gave it, the same
 #:     tools to read, run, search and write, and no contract, no cards, no
 #:     reviewer. It works until it says it is done.
+#: And of the user's own work, the way chosen when it starts (the user,
+#: 2026-10-26): FULL - "Thorough" - or
+#:   QUICK - one model on its own, as SINGLE, but WITH THE USER'S CONTEXT:
+#:     what was learned of how they work, for the job, given at the start,
+#:     and their files, records and past cases to search. Light work - an
+#:     email, a note - as a session told everything at the start would do
+#:     it, on its own judgement; at its end, only the privacy check.
 FULL = "full"
 NO_CONTEXT = "noctx"
 SINGLE = "single"
+QUICK = "quick"
+#: The ways with no contract, cards or reviewer: one model's own loop.
+ALONE_WAYS = (SINGLE, QUICK)
+#: The ways of the user's own work.
+WAYS = (QUICK, FULL)
 
 #: Where a single model's conversation is started again - from the task and
 #: its own reports so far - rather than grow past what a model can read.
@@ -732,7 +775,9 @@ refused the same way.
     this project's run logs (its run_logs folder: the record of what
     happened); the application's own settings and state; where sign-ins and
     keys are kept (AppData, .ssh and the like){more_closed}.
-  WRITE: ONLY in {folders} - with write_file, delete_file or code you run.
+  WRITE: ONLY in {folders} - with write_file, edit_file, delete_file or
+    code you run. To change part of a file that exists: edit_file, not the
+    whole file written again, not a script that patches it.
     Everywhere else is read-only, to everything: a SQLite database there in
     WAL mode cannot be opened even read-only - copy it into your folder
     first. The contract's own files are not written by any means: what code
@@ -745,19 +790,28 @@ refused the same way.
     STARTS ENDS WHEN IT ENDS: a program started and not waited for is
     stopped with it, never left running in the background. For anything
     longer, or to go on working while it runs: run_python with
-    background=true - a job of up to {job_most} seconds - then job_status
-    with wait (up to {job_wait} seconds at a time) until it ends. Do not
+    background=true - a job of up to {job_most} seconds - then wait_for it:
+    ONE call, which returns when it ends, however long that is. Do not
     sleep in code to wait for what another call started: nothing another
     call started is still running, but a job.
-  CHILD PROCESSES: Python only - subprocess with the command as a list
-    ([sys.executable, '-m', 'pytest', ...], a script, -c code); each runs
-    under these same rules. No other program starts: no shell
-    (shell=True), no git, node, npm, cmd or PowerShell; no new process group
-    or session.
+  TESTS: run_tests, not pytest started from run_python - when exactly the
+    same tests already ran on exactly the same files, it says so and gives
+    that result at once.
+  A JOB IS NOT WAITED FOR IDLY: while one runs, go on with what does not
+    depend on it - every result says which jobs ended since (jobs_ended).
+    When nothing is left to do but wait, call wait_for ONCE (job, or jobs -
+    it returns when the first ends): never ask job_status again and again.
+    To wait for a moment - a server's "ready" line, a file, the server
+    answering - use wait_for too: it returns as soon as it happens, never a
+    sleep.
+  {children}
   NETWORK: {network}
   {native}
-  PYTHON PACKAGES: with install_packages only. pip run from code cannot
-    reach PyPI.
+  PACKAGES: with install_packages only - Python's from PyPI, JavaScript's
+    from npm (their install scripts never run; build one with npm rebuild in
+    a command). pip or npm run from code or a command cannot reach them.
+  FROM THE WEB: a file with download, a public git repository with
+    git_fetch - each saved in your folder, not run; nothing is ever pushed.
   THE WEB: web_search for words; fetch_url only for an address that already
     exists - a search result, a page's link, the user's files and
     instruction, their recorded work; one you put together is refused. A
@@ -767,6 +821,22 @@ refused the same way.
 NATIVE_LOADS = """NATIVE LIBRARIES: ctypes, and the packages that load a native
 library as they are imported, work - under these same rules."""
 
+#: What may start, where the system confines every program (`native_code_loads`)
+#: - and where it does not.
+CHILDREN_ANY = """COMMANDS: run_command runs one in a shell ({shells}) - git, node,
+    npm run, a build, a server, any program installed here - and code may
+    start any program too (subprocess, with the command as a list); all of
+    it under these same rules, kept by the operating system: it writes only
+    where you may, and reaches no network. So nothing is downloaded by a
+    command: packages with install_packages, repositories with git_fetch,
+    files with download. Nothing is typed into a command: one that waits for
+    input ends instead. No new process group or session."""
+CHILDREN_PYTHON = """CHILD PROCESSES: Python only - subprocess with the command as a list
+    ([sys.executable, '-m', 'pytest', ...], a script, -c code); each runs
+    under these same rules. No other program starts: no shell
+    (shell=True), no git, node, npm, cmd or PowerShell; no new process group
+    or session."""
+
 
 def environment_rules(folders: str, network: str, debug: bool = False) -> str:
     """THE ENVIRONMENT, EXACTLY: what the work agents may read, write, run
@@ -774,18 +844,20 @@ def environment_rules(folders: str, network: str, debug: bool = False) -> str:
     one place, as plainly as they are enforced, so that a habit from another
     environment (a job left running in the background, a database opened in
     a read-only folder) is not found out by failing."""
-    from .tools import (JOB_MOST_SECONDS, JOB_MOST_WAIT, RUN_MOST_SECONDS,
-                        RUN_SECONDS)
+    from .tools import JOB_MOST_SECONDS, RUN_MOST_SECONDS, RUN_SECONDS
     native = NATIVE_SHUT if not native_code_loads() else NATIVE_LOADS
+    from .tools import SHELLS_POSIX, SHELLS_WINDOWS
+    shells = SHELLS_WINDOWS if os.name == "nt" else SHELLS_POSIX
+    children = CHILDREN_ANY.format(shells=", ".join(shells)) if native_code_loads() \
+        else CHILDREN_PYTHON
     return ENVIRONMENT_RULES.format(
-        folders=folders, network=network, native=native,
+        folders=folders, network=network, native=native, children=children,
         # NOT SAID WHY: a way that is told it is one of three in a debugger
         # knows it is being compared - the thing its letter-named folder is
         # there to keep from it.
         more_closed=("; other folders closed to this work, and the application's "
                      "own code" if debug else ""),
-        run_seconds=RUN_SECONDS, run_most=RUN_MOST_SECONDS, job_most=JOB_MOST_SECONDS,
-        job_wait=JOB_MOST_WAIT)
+        run_seconds=RUN_SECONDS, run_most=RUN_MOST_SECONDS, job_most=JOB_MOST_SECONDS)
 
 
 def network_rules(browser: bool = False) -> str:
@@ -801,6 +873,55 @@ def network_rules(browser: bool = False) -> str:
     if not mine:
         return NETWORK_NONE_AT_ALL
     return NETWORK_OWN_LOOPBACK + ("\n\n" + NETWORK_BROWSER if browser else "")
+
+
+#: WITHOUT THE SANDBOX (unconfined.py): what the work agent - and its helpers
+#: - are told when the user chose it for this session.
+UNCONFINED_RULES = """WITHOUT THE SANDBOX - the user chose it for this session. Your own
+tools, if your client has them (a shell, file tools, the web), run on this
+computer as the user's account, from the work's folder; and run_outside runs a
+command here too. Both under a permission system: what would change or
+delete anything outside the work's folder, install software, send anything
+out or keep running afterwards needs the user's approval - and is REFUSED at
+once, for no one is there to answer. A refusal is not an error to repeat:
+find ANOTHER WAY (in the work's folder, in the sandbox's tools, a different
+command). Only when you have tried other ways - at least two - and none can
+do it, ask the user with request_approval: the exact command, why, and what
+you tried. Never, approved or not: the agent's own data, where sign-ins are
+kept (browser profiles, .ssh, credentials), anything written out with the
+user's accounts (a push, a publish, a post, a message, an upload)."""
+
+
+#: HELPER AGENTS (the user, 2026-10-25: as Claude Code's subagents): a task
+#: the work agent or the reviewer hands over (`delegate`), done by a model
+#: of its own with the same tools - but delegate - under the same rules, its
+#: tokens the run's. At most so many at once (one while the computer is
+#: busy), one of them a worker; each with so many rounds of tools.
+MOST_HELPERS = 3
+HELPER_ROUNDS = 30
+HELPER_KINDS = {
+    "explore": ("You READ AND SEARCH ONLY - files and folders, the user's records, the "
+                "web - and change nothing: your tools write nothing."),
+    "worker": ("You may CHANGE THE WORK'S FILES that the task names, and run code and "
+               "commands to check what you did - nothing else: another agent is "
+               "working on the rest at the same time."),
+}
+HELPER_SYSTEM = """You are a HELPER of an agent doing a piece of the user's
+work. It handed you ONE TASK - below - to do while it goes on with the rest:
+do that task, completely and only it. {kind}
+
+You have none of its context but the task: what you need, find with your
+tools. Look at the actual files before you say anything about them; check
+what you do. Say what you found or did specifically - names, paths, lines,
+numbers, what you ran and what it gave - since the agent acts on it without
+looking again.
+
+{environment}
+
+END with ONE JSON object, nothing else:
+{"done": true or false, "summary": "what you found or did", "files_changed":
+["the paths you changed"], "open": "what is still not done or not known -
+empty when nothing is"}"""
 
 
 AGENT_SYSTEM = """You are working on a piece of the user's work - a project -
@@ -850,6 +971,7 @@ ONLY this JSON object:
                    "statement": "what is true when it is done",
                    "why": "what the goal needs it for",
                    "tier": "core|supporting|polish",
+                   "handed_as": "how the user gets it, in the form most convenient for what they do with it: an email draft opened in their mail to send, an event for their calendar, text to paste, a file and its format, a folder, an answer",
                    "promises": ["P1"]}]}
 
 CORE_PROMISES_RULES
@@ -956,6 +1078,12 @@ stop calling tools and return ONLY this JSON object:
  "complete": false}
 
   - Every claim needs evidence that can be opened or re-run.
+  - TESTS AS YOU GO, THE WHOLE SUITE ONCE: while you work, run the tests of
+    what you changed - its test file, or -k - not the whole suite after
+    every change; then the whole suite once, after your last change and
+    before you return this object, and say what it gave. The reviewer runs
+    it again on exactly those files, at no cost: do not run it twice
+    yourself.
   - "needs": what the work showed the user would need and the contract does
     not hold - with what showed it. "implied": their own words already call
     for it; "needed": what they asked would not serve them without it;
@@ -1205,6 +1333,12 @@ given what bears on them. Judge as the user would.
     the user is satisfied with. Where something of theirs falls short for
     this work - a weakness, a risk, a better way they would take if they
     saw it - say so, and do not carry it over.
+  - THE USER'S OWN, AND WHAT THEY ENDORSE. Some of what was learned is not
+    their work: someone else's they put in their learning list - a site, a
+    guide, a book - each marked so, with what of it they endorse; a reason
+    adopted from it says where it comes from. It shows what they want, as
+    an example they chose; their own work shows how they do it. Weigh each
+    for what it is.
   - WHAT THE WORK AGENT READS CARRIES NO IDS: criteria and approach notes
     are plain requirements and instructions. The user's past work is yours
     to judge by; the work agent sees of it only the references you choose
@@ -1212,7 +1346,12 @@ given what bears on them. Judge as the user would.
   - You decide. The user is not asked.
 
 You can open cards, cases and reasons, search the user's files, read files - and run code
-(run_python) to try what was built, as the user would. Trying it cannot change the work: the work's folder and
+(run_python) to try what was built, as the user would; its tests with run_tests,
+which gives at once the result of the same tests already run on exactly the
+same files - saying first that it is NOT A NEW RUN, and by whom and when it was
+run. Run them again (fresh=true) when you judge you should: a test that may
+pass one time and fail the next, one that measures time, a result you doubt.
+Trying it cannot change the work: the work's folder and
 every folder it was granted are read-only to you, and the code you run can
 write only in your checks folder, {checks}. When the work must write as it
 runs (a database, a cache), copy what it needs there and run it there."""
@@ -1341,7 +1480,9 @@ Is the goal what the user asked? Is the scope right, and are these the
 deliverables they would name? ARE THE CORE PROMISES EVERY REQUIREMENT IN THE
 USER'S WORDS - none missing, none invented - each tried under a real
 condition, with the failures that matter to the user (money, limits, errors
-from other services, many users at once)? Is each deliverable's tier right?
+from other services, many users at once)? Is each deliverable's tier right,
+and is it HANDED AS what is most convenient for what the user does with it -
+an email they will send as a draft opened in their mail, not a file?
 Send it back if not. Write each deliverable's ACCEPTANCE CRITERIA and
 APPROACH NOTES - each criterion serving a core promise; one that serves none
 is polish, and says so. Return ONLY this JSON object:
@@ -1394,8 +1535,10 @@ most {per_card} a deliverable, or none - a reference that does not fit
 misleads, and is worse than none. For each you keep, say what to take from
 it - its form alone, or parts of its content too - and what not to take: a
 part that is weak, outdated or does not fit this work. Open one with
-read_file when what is said of it does not settle it. The work agent reads
-what you write: plain words, no ids.
+read_file - a web address with fetch_url - when what is said of it does not
+settle it. One marked as someone else's work is a reference the user
+endorses, not their own: weigh it as that. The work agent reads what you
+write: plain words, no ids.
 
 Return ONLY this JSON object:
 {{"cards": {{"<card id>": [{{"path": "...", "take": "one sentence",
@@ -1474,6 +1617,14 @@ FULL_REVIEW_HINTS = """
 WHERE THE WORK STANDS, AS THE APPLICATION SEES IT (for "full_review"):
 {lines}
 """
+
+#: A ROUND GONE ON FROM A PROGRESS POINT IN ITS MIDDLE: what it had done.
+MIDWAY = """THIS ROUND WAS CUT OFF IN ITS MIDDLE and goes on from its last progress
+point: the files are as they were then. What you had done in it, before
+that point ({tools} tool calls, the latest shown):
+{did}
+Go on from there - check the files where you need to, and do not do again
+what is done."""
 
 #: THE FULL REVIEW, the reviewer's to ask for at a milestone: everything
 #: done since the last checkpoint, in one answer with room for it - or, when
@@ -1635,8 +1786,7 @@ Check it, then return ONLY this JSON object:
   "checked": ["each thing you opened or ran"],
   "problems": [{{"say": "what is wrong, and what it should become", "severity": "high|medium|low", "file": "..."}}]}}"""
 
-ALONE_CHECKS_FAILED = """TWO INDEPENDENT CHECKS LOOKED AT YOUR FINISHED WORK - its quality, and
-whether it keeps the user's private information private - AND IT HAS NOT
+ALONE_CHECKS_FAILED = """INDEPENDENT CHECKS LOOKED AT YOUR FINISHED WORK - {which} - AND IT HAS NOT
 PASSED YET:
 {findings}
 
@@ -1692,7 +1842,12 @@ reviewer would.
   - You decide. The user is not asked.
 
 You can open the cards of this work's tree, read files - and run code
-(run_python) to try what was built, as the user would. Trying it cannot change the work: the work's folder and
+(run_python) to try what was built, as the user would; its tests with run_tests,
+which gives at once the result of the same tests already run on exactly the
+same files - saying first that it is NOT A NEW RUN, and by whom and when it was
+run. Run them again (fresh=true) when you judge you should: a test that may
+pass one time and fail the next, one that measures time, a result you doubt.
+Trying it cannot change the work: the work's folder and
 every folder it was granted are read-only to you, and the code you run can
 write only in your checks folder, {checks}. When the work must write as it
 runs (a database, a cache), copy what it needs there and run it there."""
@@ -1744,6 +1899,59 @@ as a good commit message does: "title" one line of at most 72 characters in
 the imperative ("Add the parser for the survey's free-text answers") - what
 changed, not what was attempted; "body" two to six short lines, each one
 concrete change."""
+
+#: QUICK: what is added to the single model's system - the user's own
+#: context, and when the work is more than a quick piece of work.
+QUICK_RULES = """THIS IS THE USER'S OWN WORK, done the quick way: you on your own, told
+everything at the start. Do it as THEY would - what was learned of how
+they work on things like it is given with the task; take what holds here.
+Look further when the work needs it: search_files (their own files),
+search_records (what they did), open_case and open_reason (their past work
+and their reasons, by the ids given), the web.
+
+TOO BIG FOR THE QUICK WAY? If the work turns out to need much more than a
+quick piece of work - several deliverables that depend on each other, code
+that must be built and tested, a long piece of work worth an independent
+review - stop and say so: "done": false and "thorough": "why it needs the
+thorough way (a builder and a reviewer)". The user may carry it on that way
+from what you made.
+
+A README.md only when you made more than one file."""
+
+#: QUICK, before it starts: what it must know of the user to do the work as
+#: they would - asked once, answered by what was learned of their work.
+QUICK_QUESTIONS = """BEFORE YOU START THIS WORK - WHAT YOU NEED TO KNOW of the user to do it
+as they would. Write this job's TERMS and your QUESTIONS; what was learned
+of their past work is found for them and given to you with the task.
+
+THE JOB'S TERMS: from the word list below, the terms this job is in each
+dimension - deliverable, audience (who it is for), presentation (how it
+reaches them), purpose, environment (tools) - as term ids, as specific as
+the list allows. Leave out a dimension the job does not show.
+
+YOUR QUESTIONS, one sentence each, each of a kind:
+{kinds}
+ALWAYS ASK how the deliverable should be (structure, length, tone, look)
+and what the user would expect of it. Not what their instruction already
+says.
+
+THE WORD LIST:
+{words}
+
+THE WORK:
+{shown}
+
+Return ONLY this JSON object:
+{{"terms": {{"deliverable": ["deliverable:..."], "audience": [], "presentation": [],
+            "purpose": [], "environment": []}},
+  "questions": [{{"q": "one question", "kind": "requirement|output|evaluation|habit|fact"}}]}}"""
+
+QUICK_LEARNED = """HOW THE USER WORKS ON THINGS LIKE THIS - what was learned of their past
+work, for the questions you asked before you started. Take what holds
+here; where nothing of theirs bears on a question, go by common practice.
+{questions}
+
+{found}"""
 
 ALONE_GO_ON = """GO ON with the work. When the whole task is done, say so -
 "done": true, with your final report."""
@@ -2078,9 +2286,44 @@ def _clip(text: Any, most: int = 120) -> str:
 
 #: The argument that says what a tool call is about - the rest is detail.
 _KEY_ARGUMENT = {"list_dir": "path", "read_file": "path", "write_file": "path",
+                 "edit_file": "path", "run_tests": "folder", "edit_notebook": "path",
                  "delete_file": "path", "find_files": "pattern", "run_python": "code",
+                 "run_command": "command", "download": "url", "git_fetch": "url",
                  "web_search": "query", "fetch_url": "url", "open_card": "ids",
                  "search_stages": "query", "install_packages": "packages"}
+
+
+def _card_shown(card: Dict[str, Any]) -> str:
+    """A card as the reviewer is shown it to write its criteria."""
+    return json.dumps({"id": card["id"], "title": card["title"],
+                       "statement": card["statement"],
+                       "type": card.get("type", "")}, ensure_ascii=False)
+
+
+def _side_by_side(calls: List[Any]) -> List[List[Any]]:
+    """A turn's calls in the order asked, those next to one another that
+    only read put together, at most MOST_SIDE_BY_SIDE; every other call
+    alone (parallel.py)."""
+    from .parallel import MOST_SIDE_BY_SIDE, READ_ONLY
+    out: List[List[Any]] = []
+    for call in calls:
+        if out and call.name in READ_ONLY and all(one.name in READ_ONLY for one in out[-1]) \
+                and len(out[-1]) < MOST_SIDE_BY_SIDE:
+            out[-1].append(call)
+        else:
+            out.append([call])
+    return out
+
+
+def _run_calls(tools: Any, batch: List[Any]) -> List[Any]:
+    """The calls of a batch, each on a thread of its own when there are
+    several - the tools' gate keeps them within the computer's limits -
+    their answers in the order they were asked."""
+    if len(batch) == 1:
+        return [tools.call(batch[0].name, batch[0].arguments or {})]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=len(batch), thread_name_prefix="read") as pool:
+        return list(pool.map(lambda call: tools.call(call.name, call.arguments or {}), batch))
 
 
 def _short_args(name: str, arguments: Any) -> str:
@@ -2110,6 +2353,17 @@ def _short_result(name: str, result: Any) -> Tuple[str, bool]:
                      110), False
     if name == "write_file":
         return "written", True
+    if name == "edit_file":
+        return f"{result.get('edits', 0)} edit{'s' if result.get('edits') != 1 else ''}", True
+    if name == "edit_notebook":
+        for done in ("replaced", "inserted", "deleted"):
+            if done in result:
+                return f"cell {result[done]} {done}", True
+    if name == "run_tests" and result.get("reused"):
+        return (f"the same tests on the same files: {(result['reused'] or {}).get('by', '')}'s "
+                f"result of {(result['reused'] or {}).get('ran_at', '')}"), bool(result.get("ok"))
+    if name == "run_tests" and result.get("job"):
+        return f"started {result['job']} in the background", True
     if name == "delete_file":
         return "deleted", True
     if name == "read_file":
@@ -2117,7 +2371,7 @@ def _short_result(name: str, result: Any) -> Tuple[str, bool]:
     if name == "list_dir":
         entries = result.get("entries") or result.get("items") or []
         return f"{len(entries)} entries" if isinstance(entries, list) else "listed", True
-    if name == "run_python" and result.get("job"):
+    if name in ("run_python", "run_command") and result.get("job"):
         return f"started {result['job']} in the background", True
     if name in ("job_status", "stop_job") and result.get("job"):
         inner = result.get("result") or {}
@@ -2125,15 +2379,21 @@ def _short_result(name: str, result: Any) -> Tuple[str, bool]:
         said = f"{result['job']}: {result.get('status')} after {result.get('seconds')}s"
         return (_clip(f"{said}{' - ' + printed[-1] if printed else ''}", 110),
                 result.get("status") in ("running", "done", "stopped"))
+    if name == "wait_for":
+        return _clip(str(result.get("what") or "waited"), 110), True
     if name == "job_status" and isinstance(result.get("jobs"), list):
         return f"{len(result['jobs'])} jobs", True
-    if name == "run_python":
+    if name in ("run_python", "run_command"):
         code = result.get("returncode", result.get("exit_code"))
         printed = [one for one in str(result.get("stdout") or "").splitlines() if one.strip()]
         said = f"exit {code}" if code is not None else "ran"
         if result.get("ended_with_the_code"):
             said += f" - ended {len(result['ended_with_the_code'])} program(s) it left running"
         return _clip(f"{said}{' - ' + printed[-1] if printed else ''}", 110), code in (0, None)
+    if name == "download":
+        return f"{result.get('bytes', 0):,} bytes saved", True
+    if name == "git_fetch":
+        return _clip(f"cloned - {result.get('head') or ''}", 110), True
     if name == "install_packages":
         if result.get("approved") is False:
             return "not approved", False
@@ -2543,14 +2803,16 @@ class WorkRuns:
             (unit_id,))]
 
     def writable_folder(self, path: str) -> Dict[str, Any]:
-        """Whether the agents may be let write in a folder the user chose:
-        {"folder": the folder, resolved} - or {"error": why not}. Not a whole
-        drive or the home folder itself, and never the application's own
-        state. What a grant asks, and what a project of the Experience
-        debugger asks of the folder its three ways work in."""
+        """Whether the agents may be let write in a folder the user chose -
+        or ONE FILE (the user, 2026-10-26: a file handed over is the work's
+        to change, and nothing beside it): {"folder": it, resolved} - or
+        {"error": why not}. Not a whole drive or the home folder itself, and
+        never the application's own state. What a grant asks, and what a
+        project of the Experience debugger asks of the folder its three ways
+        work in."""
         folder = Path(str(path or "")).expanduser()
-        if not str(path or "").strip() or not folder.is_dir():
-            return {"error": f"not a folder: {path}"}
+        if not str(path or "").strip() or not (folder.is_dir() or folder.is_file()):
+            return {"error": f"not a folder or a file: {path}"}
         folder = folder.resolve()
         if folder.parent == folder:
             return {"error": "a whole drive cannot be granted"}
@@ -2609,7 +2871,10 @@ class WorkRuns:
             readable_paths=list(self.app_policy.readable_paths),
             readonly_paths=list(self.app_policy.readonly_paths),
             protected_paths=list(self.app_policy.protected_paths),
-            extra_writable=[Path(one) for one in granted if Path(one).is_dir()],
+            # A folder granted, or one file - written in place, nothing
+            # beside it (the guard, the tools and the container alike take
+            # a file as a root of its own).
+            extra_writable=[Path(one) for one in granted if Path(one).exists()],
             sealed_paths=[Path(one).resolve() for one in sealed],
             code_root=Path(code_root).resolve() if code_root else None,
             closed_paths=[one.resolve() for one in self.closed_for(folder)],
@@ -2679,6 +2944,39 @@ class WorkRuns:
             return Path(output)
         return self.folder_for(unit["name"], unit["id"])
 
+    def folder_in_use(self, folders: Any, unit_id: str = "") -> Optional[Dict[str, str]]:
+        """ONE PIECE OF WORK AT A TIME IN A FOLDER (the user, 2026-10-26): the
+        run of other work going now - paused too: it will go on - in one of
+        these folders, one inside it, or one it is inside: {"folder", "by",
+        "run"}; None when they are free. Two versions of a to-do given the
+        same folder each changed it, the later over the earlier."""
+        mine = []
+        for one in folders or []:
+            try:
+                mine.append(Path(str(one)).resolve())
+            except (OSError, ValueError):
+                continue
+        if not mine:
+            return None
+        for run in list(self._running.values()):
+            if getattr(run, "debug", False) or not run.alive():
+                continue
+            other = str(run.unit.get("id") or "")
+            if not other or other == unit_id:
+                continue
+            for theirs in self.folders(other):
+                held = Path(theirs).resolve()
+                for one in mine:
+                    if one == held or held in one.parents or one in held.parents:
+                        return {"folder": str(one), "by": str(run.unit.get("name") or ""),
+                                "run": run.id}
+        return None
+
+    @staticmethod
+    def folder_said(held: Dict[str, str]) -> str:
+        return (f"the folder {held['folder']} is being worked on by \"{held['by']}\" - one "
+                "piece of work at a time in a folder: wait until it ends, or stop it")
+
     def _busy(self, unit: Dict[str, Any]) -> str:
         """Why a run of this work cannot start now - "" when it can.
 
@@ -2705,7 +3003,8 @@ class WorkRuns:
                 return "this work is already going; stop it first"
             if any(one["unit"].get("id") == unit.get("id") for one in self.waiting):
                 return "this work is already waiting to start"
-            return ""
+            held = self.folder_in_use(self.folders(unit["id"]), unit["id"])
+            return self.folder_said(held) if held else ""
         if any(run.alive() and not getattr(run, "debug", False)
                for run in self._running.values()):
             return "a run is already going; stop it first"
@@ -2797,11 +3096,16 @@ class WorkRuns:
 
     def start(self, unit: Dict[str, Any], instruction: str = "",
               limits: Any = None, packages: Any = None,
-              sound: Any = False, given_room: bool = False) -> Dict[str, Any]:
+              sound: Any = False, given_room: bool = False,
+              unconfined: Any = False, way: Any = FULL) -> Dict[str, Any]:
         """Start a run. `packages` is "ask" - the user approves each install,
         the default - or "auto". `sound`: a sound is played when this
         session ends (see `Run._ring`). `given_room`: started from the
-        queue, its turn come (`start_waiting`)."""
+        queue, its turn come (`start_waiting`). `way`: QUICK or FULL - the
+        user's own work only; a debugger way is its own."""
+        way = str(way or FULL) if str(way or FULL) in WAYS else FULL
+        # WITHOUT THE SANDBOX: the user's own work only, never a debugger way.
+        unconfined = bool(unconfined) and not unit.get("debug")
         apart = self._way_apart("start", unit, given_room, {
             "instruction": instruction, "limits": limits, "packages": packages,
             "sound": sound})
@@ -2821,20 +3125,52 @@ class WorkRuns:
                     return waits
             if self.in_subprocess:
                 return self._apart("start", unit, instruction=instruction,
-                                   limits=limits, packages=packages, sound=sound)
+                                   limits=limits, packages=packages, sound=sound,
+                                   unconfined=unconfined, way=way)
             folder = self.folder_of(unit)
             run = Run(self, unit, instruction, self._runtime(unit, folder),
                       limits_of(limits), packages=mode_of(packages),
-                      sound=wants_sound(sound))
+                      sound=wants_sound(sound), unconfined=unconfined, way=way)
             self._running[run.id] = run
             run.start()
             return {"run": run.id, "folder": str(folder), "limits": run.limits,
-                    "packages": run.packages_mode, "sound": run.sound}
+                    "packages": run.packages_mode, "sound": run.sound,
+                    "unconfined": run.unconfined, "way": run.variant}
+
+    def thorough(self, run_id: str, unit: Dict[str, Any], limits: Any = None,
+                 packages: Any = None, sound: Any = False,
+                 unconfined: Any = False) -> Dict[str, Any]:
+        """CONTINUE THOROUGHLY: a quick run's work carried on the thorough
+        way - a run of its own, in the same folder, from what the quick one
+        made: told what was asked, what it reported and why it was too big
+        for the quick way, if it said so."""
+        row = self.run(run_id)
+        if row is None:
+            return {"error": "no such run"}
+        if row["unit_id"] != unit["id"]:
+            return {"error": "that run is of other work"}
+        plan = row.get("plan") or {}
+        if plan.get("way") != QUICK:
+            return {"error": "only a quick run is carried on the thorough way"}
+        live = self._running.get(run_id)
+        if live is not None and live.alive():
+            return {"error": "it is still going - stop or pause it first"}
+        report = str(plan.get("last_report") or (row.get("final") or {}).get("answer") or "")
+        instruction = "\n".join(filter(None, [
+            str(row.get("instruction") or "").strip(), "",
+            f"THIS WORK WAS BEGUN THE QUICK WAY (run {run_id}), by one agent on its own; "
+            f"what it made is in {row['folder']}. Carry it on thoroughly from there - "
+            "look at what it made before you plan.",
+            f"WHY IT NEEDS THE THOROUGH WAY: {plan['thorough']}" if plan.get("thorough") else "",
+            f"WHAT IT REPORTED LAST:\n{report[:8000]}" if report else ""]))
+        return self.start(unit, instruction, limits=limits,
+                          packages=packages, sound=sound, unconfined=unconfined, way=FULL)
 
     def continue_run(self, run_id: str, unit: Dict[str, Any],
                      limits: Any = None, packages: Any = None,
                      from_version: str = "", instruction: str = "",
-                     sound: Any = False, given_room: bool = False) -> Dict[str, Any]:
+                     sound: Any = False, given_room: bool = False,
+                     unconfined: Any = False) -> Dict[str, Any]:
         """Carry a run on from where it stopped, with new limits - and, if
         `packages` is given, a new choice of asking; else the one it had.
         `sound` is this session's own choice: whether one is played when it
@@ -2858,11 +3194,14 @@ class WorkRuns:
         it, and the work is taken up again. With nothing said, there is
         nothing to go on with.
 
-        AN INTERRUPTED RUN goes on from its LAST MILESTONE - the head - unless
-        another version is asked for: where it was in its round, and what it
-        had said there, went with the application, so its files and state
-        are put back as they were at that milestone, and it goes on from
-        there."""
+        A RUN THAT DID NOT STOP CLEANLY - interrupted (the application
+        closed), stopped at once, or failed (`GOES_BACK`) - goes back to its
+        LAST SAVE POINT unless another version is asked for: its latest
+        progress point after its last version, else that version. Where it
+        was in its round was never said, so its files and state are put back
+        as they were there, and it goes on from there; the work after it is
+        given up (the user, 2026-10-26)."""
+        unconfined = bool(unconfined) and not unit.get("debug")
         apart = self._way_apart("continue", unit, given_room, {
             "run_id": run_id, "limits": limits, "packages": packages,
             "from_version": from_version, "instruction": instruction, "sound": sound})
@@ -2882,7 +3221,8 @@ class WorkRuns:
             if self.in_subprocess:
                 return self._apart("continue", unit, run_id=run_id, limits=limits,
                                    packages=packages, from_version=from_version,
-                                   instruction=instruction, sound=sound)
+                                   instruction=instruction, sound=sound,
+                                   unconfined=unconfined)
             rows = self.db.query("SELECT * FROM work_runs WHERE id = ?", (run_id,))
             if not rows:
                 return {"error": "no such run"}
@@ -2893,9 +3233,23 @@ class WorkRuns:
             rolled: Dict[str, Any] = {}
             from_version = str(from_version or "").strip()
             store = VersionStore(self.run_dir_of(row), runtime.policy)
-            milestone = (not from_version and row["status"] == INTERRUPTED
+            milestone = (not from_version and row["status"] in GOES_BACK
                          and bool(store.index()["head"]))
-            if milestone:
+            # Cut off: from the latest round that advanced, when there is one
+            # after the last version - else from that version.
+            point = store.resume_point() if milestone else None
+            if from_version == PROGRESS:
+                # Gone on from the progress point, by the user's choice.
+                point = store.resume_point()
+                if point is None:
+                    return {"error": "this run has no progress point after its last version"}
+                from_version = ""
+            if point is not None:
+                try:
+                    rolled = self._roll_back(row, store, "", runtime.policy, point=point)
+                except (VersionError, SecurityViolation, OSError, ValueError) as exc:
+                    return {"error": f"could not go back to {point.get('label', '')}: {exc}"}
+            elif milestone:
                 from_version = store.index()["head"]
             if from_version:
                 index = store.index()
@@ -2916,11 +3270,12 @@ class WorkRuns:
             run = Run(self, unit, row["instruction"], runtime,
                       limits_of(limits), resumed=row,
                       packages=mode_of(packages) if packages not in (None, "") else None,
-                      amend=instruction, sound=wants_sound(sound))
+                      amend=instruction, sound=wants_sound(sound), unconfined=unconfined)
             self._running[run.id] = run
             run.start()
             return {"run": run.id, "folder": row["folder"], "limits": run.limits,
                     "packages": run.packages_mode, "sound": run.sound,
+                    "unconfined": run.unconfined,
                     **({"amending": True} if run.amend_words else {}),
                     **({"rolled_back": rolled} if rolled else {}),
                     **({"from_milestone": rolled.get("version", "")}
@@ -3033,18 +3388,33 @@ class WorkRuns:
             with self._lock:
                 if not self.waiting:
                     return started
-                head = self.waiting.pop(0)
                 why = self._room_for(head=True)
                 if why:
-                    self.waiting.insert(0, head)
-                    head["why"] = why
+                    self.waiting[0]["why"] = why
                     return started
+                # Started by itself, the room come: never into a folder other
+                # work is in - it waits for the folder, the others go on.
+                at = next((n for n, one in enumerate(self.waiting)
+                           if one.get("debug") or not self._folder_held(one)), None)
+                if at is None:
+                    return started
+                head = self.waiting.pop(at)
                 if not head.get("debug"):
                     started.append(self._launch(head["kind"], head["unit"], head["args"]))
                     continue
             # A debugger way: started as its button would - in a process of
             # its own, or here - outside the lock its start takes.
             started.append(self._start_waited(head))
+
+    def _folder_held(self, one: Dict[str, Any]) -> bool:
+        """Whether a run waiting to start waits for its folder now - and,
+        so, says so."""
+        unit_id = str(one["unit"].get("id") or "")
+        held = self.folder_in_use(self.folders(unit_id), unit_id)
+        if held:
+            one["why"] = (f"waiting for the folder {held['folder']}: \"{held['by']}\" "
+                          "is working in it")
+        return bool(held)
 
     def _start_waited(self, one: Dict[str, Any]) -> Dict[str, Any]:
         unit, args = one["unit"], dict(one["args"])
@@ -3103,16 +3473,18 @@ class WorkRuns:
         return logs
 
     def _roll_back(self, row: Dict[str, Any], store: VersionStore, version_id: str,
-                   policy: WorkspacePolicy) -> Dict[str, Any]:
+                   policy: WorkspacePolicy,
+                   point: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """The run made as it was at a version: its files, the agent's files
         in granted folders (each only if the user has not changed it since),
         its plan and the work's tree. `row` is changed to match, to be
         continued from. What it spent, its packages and its log are kept:
-        those happened, whichever line the work is on."""
-        manifest = store.manifest(version_id)
+        those happened, whichever line the work is on. `point`: a resume
+        point instead of a version - the head and its line stay as they are."""
+        manifest = point if point is not None else store.manifest(version_id)
         state = store.get_json(str(manifest.get("state") or ""))
         if not isinstance(state, dict) or not isinstance(state.get("plan"), dict):
-            raise VersionError(f"version {version_id} holds no state")
+            raise VersionError(f"version {version_id or manifest.get('label', '')} holds no state")
         # Every row of its tree read and checked before anything is changed.
         for table, shas in (state.get("tree") or {}).items():
             for sha in shas or []:
@@ -3130,8 +3502,12 @@ class WorkRuns:
             if name in current:
                 plan[name] = current[name]
         plan["granted_writes"] = agents
-        branch = store.move_head(version_id)
-        said = {"version": version_id, "label": manifest.get("label", ""),
+        branch = store.move_head(version_id) if point is None else (store.index()["branch"]
+                                                                    or "main")
+        said = {"version": version_id or str(manifest.get("label") or ""),
+                "label": manifest.get("label", ""),
+                **({"resume_point": True, "round": manifest.get("round")}
+                   if point is not None else {}),
                 "branch": branch, "at": _now(),
                 "restored": len(files["restored"]), "removed": len(files["removed"]),
                 "kept": [f"kept your version of {one}" for one in granted["kept"]],
@@ -3157,10 +3533,18 @@ class WorkRuns:
         row, store = self._store_of(run_id)
         index = store.index()
         alive = self._alive(run_id)
+        point = store.resume_point()
         return {"run": run_id, "head": index["head"], "branch": index["branch"],
                 "branches": index["branches"],
                 "versions": [_slides_settled(with_message(one), alive)
                              for one in index["versions"]],
+                # The latest progress point after the head - not a version:
+                # nothing checked it.
+                "progress": ({"label": point.get("label", ""), "at": point.get("at", ""),
+                              "round": point.get("in_round") or point.get("round"),
+                              "in_round": bool(point.get("in_round")),
+                              "files": len(point.get("files") or {})}
+                             if point is not None else None),
                 "alive": alive, "status": row["status"]}
 
     def take_out(self, run_id: str, unit: Dict[str, Any], added_id: str) -> Dict[str, Any]:
@@ -3442,9 +3826,10 @@ class WorkRuns:
                              "stopping": False},
                 "contract": _contract_brief(in_force),
                 # Where Continue goes on from: for a run the application
-                # closed on, its last milestone.
-                "resumes_from": {"version": head["id"], "label": head.get("label", "")}
-                if head and state == LIVE_INTERRUPTED else None}
+                # closed on, its latest round that advanced, else its last
+                # milestone.
+                "resumes_from": _resumes_from(run_dir, head)
+                if head and row["status"] in GOES_BACK else None}
 
     def approve(self, run_id: str, request_id: str,
                 allow: bool) -> Optional[Dict[str, Any]]:
@@ -3472,7 +3857,11 @@ class WorkRuns:
                               else "packages")
             out.append({"run": run.id, "unit": run.unit.get("id", ""),
                         "debug": bool(run.debug), "state": state, "waiting_on": waiting_on,
-                        "why": run.waiting_for(), "activity": run.activity})
+                        "why": run.waiting_for(), "activity": run.activity,
+                        # For Pause, Resume and Stop where the run is shown
+                        # without its panel - the to-do's row of it.
+                        "stopping": bool(getattr(run, "stopping", False)),
+                        "pause_asked": bool(run.pause_asked)})
         return out
 
     # -- the record ---------------------------------------------------------
@@ -3547,7 +3936,7 @@ class WorkRuns:
                                                 == "drawing") if entry["alive"] else 0}
             # Its last milestone - where Continue goes on from for a run the
             # application closed on.
-            entry["milestone"] = ({"version": head["id"], "label": head.get("label", "")}
+            entry["milestone"] = (_resumes_from(self.run_dir_of(entry), head)
                                   if head else None)
             # The contract in force, with where each deliverable stands - the
             # work's tree is its latest run's, the first listed of its work.
@@ -3577,6 +3966,20 @@ class WorkRuns:
     def run(self, run_id: str) -> Optional[Dict[str, Any]]:
         rows = self.db.query("SELECT * FROM work_runs WHERE id = ?", (run_id,))
         return self._row(rows[0]) if rows else None
+
+    def latest_of(self, unit_id: str) -> Optional[Dict[str, Any]]:
+        """A work's latest run - continued, its last session's - with whether
+        it is going this moment (`alive`) and, going, its status as it is."""
+        rows = self.db.query("SELECT * FROM work_runs WHERE unit_id = ? ORDER BY "
+                             "started_at DESC LIMIT 1", (unit_id,))
+        if not rows:
+            return None
+        entry = self._row(rows[0])
+        live = self._running.get(entry["id"])
+        entry["alive"] = bool(live and live.alive())
+        if entry["alive"]:
+            entry["status"] = live.status
+        return entry
 
     def tree(self, unit: Dict[str, Any]) -> Dict[str, Any]:
         """The work's own tree, as the page draws it: its cards in order,
@@ -3649,6 +4052,10 @@ def _requests_in_brief(plan: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     for one in plan_waits(plan):
         out[one["id"]] = {"status": one.get("status", ""), "note": one.get("note", ""),
                           "kind": "model"}
+    for one in list(plan.get("approvals") or []):
+        if isinstance(one, dict) and one.get("id"):
+            out[one["id"]] = {"status": one.get("status", ""), "note": one.get("note", ""),
+                              "kind": "action"}
     return out
 
 
@@ -3718,13 +4125,33 @@ def _as_permission(request: Dict[str, Any]) -> Dict[str, Any]:
     permission: what is asked, why, and how to answer it (POST
     /api/work/approve with its id)."""
     packages = [str(one) for one in request.get("packages") or []]
+    npm = request.get("ecosystem") == "npm"
     return {"id": request.get("id", ""), "kind": "packages",
-            "title": "Install Python packages", "what": ", ".join(packages),
+            "title": "Install JavaScript packages" if npm else "Install Python packages",
+            "what": ", ".join(packages),
             "items": packages, "why": request.get("why", ""),
             "asked_at": request.get("asked_at", ""), "status": request.get("status", ""),
-            "note": ("From PyPI, wheels only, into this run's own folder. The run "
+            "note": ("From the public npm registry, with every install script off, into "
+                     "the work's node_modules. The run waits for your answer; the wait does "
+                     "not count against its minutes." if npm else
+                     "From PyPI, wheels only, into this run's own folder. The run "
                      "waits for your answer; the wait does not count against its "
                      "minutes.")}
+
+
+def _approval_as_permission(request: Dict[str, Any]) -> Dict[str, Any]:
+    """A command the work agent asks the user to approve, without the
+    sandbox (unconfined.py): exactly what would run, where, why, and the
+    ways it says it tried."""
+    return {"id": request.get("id", ""), "kind": "action",
+            "title": "Run a command outside the sandbox",
+            "what": request.get("command", ""), "items": [request.get("command", "")],
+            "shell": request.get("shell", ""), "cwd": request.get("cwd", ""),
+            "why": request.get("why", ""), "tried": list(request.get("tried") or []),
+            "asked_at": request.get("asked_at", ""), "status": request.get("status", ""),
+            "note": ("Approved, this exact command runs once, on this computer, as you - "
+                     "outside the sandbox. The run waits for your answer; the wait does "
+                     "not count against its minutes.")}
 
 
 def _work_unit(unit: Dict[str, Any], instruction: str) -> Dict[str, Any]:
@@ -3806,7 +4233,8 @@ class Run:
                  runtime: SandboxRuntime, limits: Dict[str, int],
                  resumed: Optional[Dict[str, Any]] = None,
                  packages: Optional[str] = None, amend: str = "",
-                 sound: bool = False) -> None:
+                 sound: bool = False, unconfined: bool = False,
+                 way: str = FULL) -> None:
         from ...heartbeat.experience.stages import StageWriter
         from ...heartbeat.experience.store import ExperienceStore, LIVE
         self.owner = owner
@@ -3818,10 +4246,21 @@ class Run:
         #: FULL, exactly as it always was.
         debug = unit.get("debug") if isinstance(unit.get("debug"), dict) else {}
         self.debug = bool(debug)
-        self.variant = str(debug.get("variant") or FULL) if debug else FULL
+        # The user's own work: the way chosen when it started (QUICK or
+        # FULL), kept in its plan - a run continued goes on the same way.
+        chosen = str(((resumed or {}).get("plan") or {}).get("way") or FULL) \
+            if resumed else str(way or FULL)
+        self.variant = str(debug.get("variant") or FULL) if debug else \
+            (chosen if chosen in WAYS else FULL)
+        self.alone = self.variant in ALONE_WAYS
         #: The single model's tool calls so far - a turn with none, that does
         #: not say it is done, has not moved the work.
         self._worker_tools = 0
+        #: The run's own minutes at its last progress point, and where in
+        #: the log the round in progress began (None between rounds).
+        self._point_minutes = 0.0
+        self._round_log_from: Optional[int] = None
+        self._point_lock = threading.Lock()
         self.instruction = instruction.strip()
         #: The user's words this session was continued with - the contract
         #: is amended by them before any more work. Only a continued run has
@@ -3872,6 +4311,9 @@ class Run:
         self._model_waiting_since = 0.0
         #: THE VERSIONS' SLIDES, drawn behind the work (`_SlidesBehind`).
         self._behind = _SlidesBehind(self)
+        #: WHAT WAS LEARNED FOR THE NEXT CARDS' CRITERIA, looked up while the
+        #: reviewer reviews a round (`_criteria_ahead`).
+        self._ahead: Optional[threading.Thread] = None
         #: PAUSING. Clear while the user has the run paused: the run looks at
         #: it at each safe point - before a model call, before a tool call,
         #: between rounds - and is held there, doing nothing, until it is set
@@ -3925,9 +4367,11 @@ class Run:
         #: WHAT WAS LEARNED OF THE USER'S WORK (learning/find.py): asked by
         #: the full way's reviewer - a debugger way's too; nothing for the
         #: way with no context. Nothing a run does is learned. A debugger
-        #: way is given nothing of its project's folders (debug "leave_out").
-        self.finder = Finder(owner.db, _left_out(unit)) if self.variant == FULL and \
-            getattr(owner, "db", None) is not None else None
+        #: way is given nothing of its project's folders (debug "leave_out"),
+        #: and nothing learned after its try began (`_user_db`).
+        self.finder = Finder(self._user_db(), _left_out(unit)) \
+            if self.variant in (FULL, QUICK) and \
+            self._user_db() is not None else None
         #: The questions asked last and not answered yet: their number in
         #: the asking answer -> their row in work_run_questions.
         self._asked: Dict[int, int] = {}
@@ -3939,6 +4383,8 @@ class Run:
             "changed_files": [], "sessions": [],
             "total": {"calls": 0, "tokens_in": 0, "tokens_out": 0}}
         self.plan["limits"] = limits
+        if not self.debug:
+            self.plan["way"] = self.variant
         self.plan["granted"] = [str(one) for one in runtime.policy.extra_writable]
         # Packages: how the user wants to be asked - kept from the run's
         # last session unless they chose again - and every request made.
@@ -3949,9 +4395,13 @@ class Run:
         _settle_requests(self.plan, "the run ended while it waited")
         self.installer = owner.installer_for(runtime.policy)
         self.plan["used"] = self.used
+        #: WITHOUT THE SANDBOX (unconfined.py): this session's choice - the
+        #: user's own work only. Kept with the session, and as the run's now.
+        self.unconfined = bool(unconfined) and not self.debug
+        self.plan["unconfined"] = self.unconfined
         self.plan.setdefault("sessions", []).append(
             {"started": _now(), "limits": limits, "used": self.used,
-             "sound": self.sound})
+             "sound": self.sound, **({"unconfined": True} if self.unconfined else {})})
         #: ITS MODEL CALLS, one by one - when each began and ended, who made
         #: it, in which part of the run, what went in and what came out -
         #: for the chart of them over time. Across its sessions, the last
@@ -3962,7 +4412,7 @@ class Run:
             self._reopen()
         # The single model has the work agent's tools to read, run, search the
         # web and write - and no cards or stages, which it has none of.
-        alone = self.variant == SINGLE
+        alone = self.alone
         self.tools = WorkTools(runtime, log=self._tool_used,
                                cards=None if alone else self._open_cards,
                                find=None if alone or self.retriever is None
@@ -3972,12 +4422,18 @@ class Run:
                                else self._open_stages)
         # A wait for one of its jobs ends when the run is stopped.
         self.tools.stopped = lambda: self.stop_now or self.stopping
+        # WHAT THE USER GETS, AND HOW (handed.py): kept in the plan.
+        self.tools.on_hand_over = self._hand_over
         # The user's own records, to search while it plans in detail and works
         # - and their own files (the local index). Neither for the single
         # model, nor for the way with no context: what is compared there is
         # what the user's own context brings.
-        local = not alone and self.variant != NO_CONTEXT
-        self.tools.records_db = getattr(owner, "db", None) if local else None
+        local = self.variant not in (SINGLE, NO_CONTEXT)
+        self.tools.records_db = self._user_db() if local else None
+        # A debugger way's: nothing written after its try began - of the
+        # files the local index finds, as of its records (`_user_db`).
+        self.tools.as_of = as_of.cutoff_of(self._user_db()) \
+            if local and self.debug and self._user_db() is not None else None
         # A debugger way's: nothing that rests on its project's folders, the
         # agent's own, or those the user named (debug "leave_out").
         self.tools.leave_out = _left_out(unit) if local else None
@@ -4021,9 +4477,16 @@ class Run:
                                           name, said, who="reviewer"),
                                       cards=self._open_cards, find=None, stages=None)
         self.review_tools.locked = list(self.tools.locked)
-        self.review_tools.runs_code = ("run_python",)
+        self.review_tools.runs_code = ("run_python", "run_tests")
+        # Tests that ran on exactly the same files: the work agent's, given
+        # the reviewer, and the reviewer's, the work agent (tools.TestRuns).
+        self.tools.label, self.review_tools.label = "the work agent", "the reviewer"
+        self.review_tools.test_runs = self.tools.test_runs
         if self.finder is not None:
             self.review_tools.learned = _Learned(self.finder, lambda: self._facets)
+            if self.variant == QUICK:
+                # No reviewer: the quick model opens them itself.
+                self.tools.learned = self.review_tools.learned
         # The user's own files, searched by their words: the full way's
         # reviewer, as its builder.
         self.review_tools.files_index = self.tools.files_index
@@ -4033,6 +4496,20 @@ class Run:
         for words in [self.amend_words, *self._branch_words()]:
             self.tools.know_addresses(words)
             self.review_tools.know_addresses(words)
+        # HELPER AGENTS (the user, 2026-10-25): the work agent's explore or
+        # work; the reviewer's only explore. A helper has none of its own.
+        self._helpers = {"going": 0, "worker": False, "made": 0}
+        self._helpers_lock = threading.Lock()
+        self.tools.delegate = lambda args: self._delegate(self.tools, ("explore", "worker"),
+                                                          args)
+        self.review_tools.delegate = lambda args: self._delegate(self.review_tools,
+                                                                 ("explore",), args)
+        # WITHOUT THE SANDBOX (unconfined.py): the work agent's - and its
+        # helpers' - commands on this computer, judged; asking the user.
+        self._judged: Dict[str, Tuple[str, str]] = {}
+        if self.unconfined:
+            self.tools.outside = self._run_outside
+            self.tools.approve = self._request_approval
 
     @property
     def run_dir(self) -> Path:
@@ -4069,10 +4546,15 @@ class Run:
         return self.plan["packages"]["mode"]
 
     # -- packages ------------------------------------------------------------------
-    def _install(self, packages: List[str], why: str) -> Dict[str, Any]:
+    def _install(self, packages: List[str], why: str, ecosystem: str = "pip",
+                 folder: Optional[Path] = None) -> Dict[str, Any]:
         """install_packages: checked, then - asked first if the user wants
-        that - installed by pip under the guard, into this run's folder."""
-        allowed, refused = validate(packages)
+        that - installed: by pip under the guard, into this run's folder; or
+        by npm, outside with every script off, into `folder`'s node_modules
+        (fetching.py)."""
+        from . import fetching
+        npm = ecosystem == "npm"
+        allowed, refused = fetching.check_npm(packages) if npm else validate(packages)
         if refused:
             self._note("packages refused", packages=list(packages)[:20], why=refused)
             return {"error": "refused: " + "; ".join(refused), "installed": []}
@@ -4080,10 +4562,16 @@ class Run:
         if not why:
             return {"error": "say why the packages are needed (the why argument)",
                     "installed": []}
+        if npm and not allowed and not (folder is not None
+                                        and (Path(folder) / "package.json").is_file()):
+            return {"error": "name the npm packages, or install in a folder with a "
+                             "package.json", "installed": []}
         book = self.plan["packages"]
-        request = {"id": f"req_{uuid.uuid4().hex[:10]}", "packages": allowed,
+        request = {"id": f"req_{uuid.uuid4().hex[:10]}",
+                   "packages": allowed or ["(package.json)"],
                    "why": why[:600], "asked_at": _now(), "mode": book["mode"],
-                   "status": PENDING if book["mode"] == ASK else APPROVED}
+                   "status": PENDING if book["mode"] == ASK else APPROVED,
+                   **({"ecosystem": "npm", "folder": str(folder)} if npm else {})}
         book["requests"].append(request)
         if book["mode"] == ASK:
             self._note("asked to install packages", packages=allowed, why=why[:300],
@@ -4101,7 +4589,16 @@ class Run:
                                    f"{', '.join(allowed)}{note}. Do not ask for "
                                    "them again in this round: work without them, "
                                    "or say what is missing."}
-        said = self.installer.install(self.run_dir, allowed)
+        if npm:
+            runtime_dir = self.folder / ".agent_runtime"
+            said = fetching.npm_install(
+                Path(folder or self.folder), allowed, stage=runtime_dir / "npm-stage",
+                # Beside pip's: shared by the works, or a debugger way's own.
+                cache=self.installer.cache_dir().parent / ".npm-cache",
+                home=runtime_dir / "home")
+            said["installed"] = [dict(one, ecosystem="npm") for one in said.get("installed") or []]
+        else:
+            said = self.installer.install(self.run_dir, allowed)
         request.update(status=FAILED if said.get("error") else INSTALLED,
                        installed=said.get("installed") or [],
                        error=said.get("error", ""), done_at=_now())
@@ -4126,7 +4623,7 @@ class Run:
             self._answers[request["id"]] = event
         self.status = WAITING
         self.activity = "waiting for you: " + _clip(
-            "install " + ", ".join(request.get("packages") or []), 100)
+            request.get("what") or "install " + ", ".join(request.get("packages") or []), 100)
         self.owner.save(self)
         began = time.time()
         try:
@@ -4144,7 +4641,8 @@ class Run:
             # Paused while it waited: still paused once it is answered.
             self.status = PAUSED if self.pause_asked else "running"
             self.activity = ""
-            self._note("package request " + request["status"], request=request["id"])
+            self._note(("approval " if request.get("kind") == "action" else "package request ")
+                       + request["status"], request=request["id"])
 
     def answer(self, request_id: str, allow: bool) -> Optional[Dict[str, Any]]:
         """The user's answer to a request; None for no such request. For a
@@ -4162,7 +4660,8 @@ class Run:
                         self._settle_model(ask, ENDED, "you ended the run")
                 return dict(ask)
         with self._answer_lock:
-            request = next((one for one in self.plan["packages"]["requests"]
+            request = next((one for one in [*self.plan["packages"]["requests"],
+                                            *(self.plan.get("approvals") or [])]
                             if one.get("id") == request_id), None)
             if request is None:
                 return None
@@ -4250,12 +4749,40 @@ class Run:
             # Refused before it ran (a search or a page): said as it is.
             self._event(who, "tool", f"{name}: {_clip(said.get('why') or '', 110)}",
                         tool=name, ok=False)
-            return
-        args = _short_args(name, said.get("arguments"))
-        outcome, ok = _short_result(name, said.get("result"))
-        self._event(who, "tool", f"{name}({args}) → {outcome}", tool=name,
-                    args=args, result=outcome, ok=ok,
-                    full=_tool_in_full(name, said.get("arguments"), said.get("result")))
+        else:
+            args = _short_args(name, said.get("arguments"))
+            outcome, ok = _short_result(name, said.get("result"))
+            self._event(who, "tool", f"{name}({args}) → {outcome}", tool=name,
+                        args=args, result=outcome, ok=ok,
+                        full=_tool_in_full(name, said.get("arguments"), said.get("result")))
+        # A tool of the work agent's finished, in a round: a progress point,
+        # when the last is ten minutes of work behind.
+        if (who == "worker" and self._round_log_from is not None
+                and self._minutes() - self._point_minutes >= PROGRESS_POINT_MINUTES
+                and self._point_lock.acquire(blocking=False)):
+            # Tools may finish on several threads at once: one point.
+            try:
+                self._progress_point()
+            finally:
+                self._point_lock.release()
+
+    def _progress_point(self) -> Optional[Dict[str, Any]]:
+        """A PROGRESS POINT in the middle of a round: the files as they are
+        after the tool that just finished, and what the work agent did in
+        the round so far - for a round cut off to go on from, not done
+        again. Its round is the one in progress: gone on from, it is begun
+        again with that told."""
+        number = int(self.plan.get("round") or 0) + 1
+        did = []
+        for entry in self.log[self._round_log_from or 0:]:
+            if entry.get("what") == "tool":
+                did.append(f"{entry.get('tool')}("
+                           f"{_short_args(str(entry.get('tool')), entry.get('arguments'))})")
+        when = datetime.now().strftime("%H:%M")
+        return self._save_point(
+            f"in round {number}, at {when}", {"round": number - 1, "in_round": number},
+            {"resumed_mid_round": {"round": number, "did": did[-PROGRESS_POINT_TOOLS:],
+                                   "tools": len(did)}})
 
     # -- the live session ----------------------------------------------------------------
     def _event(self, who: str, kind: str, text: str, **detail: Any) -> Dict[str, Any]:
@@ -4400,7 +4927,7 @@ class Run:
         round, not per tool call), so the page asking often reads only what
         was counted, and nothing is read from the tree on its thread."""
         counted = self._cards_seen[1]
-        if self.variant == SINGLE:
+        if self.alone:
             # The single model has no cards: none is counted, and none shown.
             self._cards_seen = (time.time(), {})
             return
@@ -4460,6 +4987,8 @@ class Run:
         requests = list((self.plan.get("packages") or {}).get("requests") or [])
         pending = [_as_permission(one) for one in requests
                    if alive and one.get("status") == PENDING]
+        pending += [_approval_as_permission(one) for one in self.plan.get("approvals") or []
+                    if alive and one.get("status") == PENDING]
         pending += [_model_as_permission(one) for one in plan_waits(self.plan)
                     if alive and one.get("status") == PENDING]
         plan = self.plan
@@ -4558,7 +5087,7 @@ class Run:
             # added to it when they are drawn (`_SlidesBehind`).
             # The single model makes no slides: a call it was never asked for
             # would be spent on its account.
-            alone = self.variant == SINGLE
+            alone = self.alone
             # A CONTRACT'S VERSION HAS NONE: no work to show yet.
             no_slides = kind in NO_SLIDES_FOR
             slides_why = ""
@@ -4620,6 +5149,43 @@ class Run:
             self._behind.add({"entry": entry, "kind": kind, "label": label, "files": files,
                               "message": message, "seen": seen})
         return entry
+
+    def _resume_point(self, number: int, card: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """WHERE A RUN CUT OFF GOES ON FROM: after this round, which the
+        reviewer found advanced - the work's files, the agent's files in
+        granted folders and where the run stands, as a version holds them,
+        but no version: no slides, not a checkpoint of the full review. The
+        latest only (versions.py), shown as a progress point, not checked.
+        The single model saves each turn as a version already."""
+        return self._save_point(f"after round {number}: {card.get('title', '')}",
+                                {"round": number})
+
+    def _save_point(self, label: str, details: Dict[str, Any],
+                    plan_extra: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """The run's progress point, in place of the one before it."""
+        if self.alone:
+            return None
+        self._point_minutes = self._minutes()
+        try:
+            files, skipped = keep_files(self.versions, self.folder, self.id)
+            granted = keep_granted(self.versions, self.plan.get("granted_writes") or {},
+                                   self.runtime.policy.extra_writable)
+            plan = json.loads(json.dumps(self.plan, ensure_ascii=False, default=str))
+            plan.pop("calls", None)
+            plan.update(plan_extra or {})
+            state = self.versions.put_json({
+                "plan": plan, "status": self.status, "final": self.final,
+                "instruction": self.instruction, "slides": None,
+                "tree": keep_tree(self.versions, self.owner.db, self.scope)})
+            point = self.versions.save_resume(label, files, granted, skipped, state, details)
+        except Exception as exc:
+            log.warning("could not save a resume point of %s", self.id, exc_info=True)
+            self._note("resume point not saved", round=details.get("in_round") or details.get("round"),
+                       error=str(exc)[:300])
+            return None
+        self._note("resume point saved", round=details.get("in_round") or details.get("round"),
+                   label=point["label"])
+        return point
 
     def _slides_seen(self, plan: Optional[Dict[str, Any]] = None,
                      status: Optional[str] = None) -> Dict[str, Any]:
@@ -5095,7 +5661,7 @@ class Run:
         # that stopped, paused or ran out is not: it goes on from where it
         # is, as a pause does, or - cut off - from its last checkpoint.
         # The single model has no review: each of its turns is its own.
-        if self.status != DONE and self.variant != SINGLE:
+        if self.status != DONE and not self.alone:
             return
         if self.status == DONE:
             kind = "finished"
@@ -5217,41 +5783,139 @@ class Run:
                 return str(said["text"])
         return ""
 
+    def _user_db(self) -> Any:
+        """WHERE THE USER'S RECORDS AND WHAT WAS LEARNED OF THEIR WORK ARE
+        READ FROM: as they are now - or, for a way of the Work debugger, any
+        of the three, as they were when its try began (as_of.py). None when
+        that copy cannot be had: then nothing of the user is given."""
+        live = getattr(self.owner, "db", None)
+        debug = self.unit.get("debug") if isinstance(self.unit.get("debug"), dict) else None
+        if live is None or not debug:
+            return live
+        if not hasattr(self, "_as_of_db"):
+            ref = str(debug.get("project") or "")
+            units = [f"{ref}:{variant}" for variant in (SINGLE, NO_CONTEXT, FULL)]
+            try:
+                started = [row["started_at"] for row in live.query(
+                    "SELECT started_at FROM work_runs WHERE unit_id IN (?, ?, ?)", units)]
+            except Exception:
+                started = []
+            self._as_of_db = as_of.for_try(live, ref, [self.started_at, *started])
+        return self._as_of_db
+
     def _learned_ask(self, system: str, content: str, most: int) -> Dict[str, Any]:
         """A short call of the reviewer's, with no tools: whether reasons hold."""
         try:
             return self._ask(system + "\n\n" + zone_rule(), [{"role": "user", "content": content}],
                              NoTools(self.review_tools), writing=False, rounds=1, work=False,
-                             quiet=True, who="reviewer", language=in_english("the answer"))
+                             quiet=True, who="learned" if self.alone else "reviewer",
+                             language=in_english("the answer"))
         except Exception:                      # pragma: no cover - the code's verdicts then
             log.debug("could not ask whether the reasons hold", exc_info=True)
             return {}
 
     def _log_questions(self, step: str, asked_by: str, questions: List[Dict[str, Any]],
-                       found: Dict[str, Any]) -> None:
+                       found: Dict[str, Any], keep: bool = True) -> Dict[int, Any]:
+        """Each question logged; their ids by number - the run's own
+        (`_asked`, what its answers are tied to) unless `keep` is False."""
         from ...learning.store import LearningStore
         store = LearningStore(self.owner.db)
-        self._asked = {}
+        asked: Dict[int, Any] = {}
         for number, one in enumerate(questions, 1):
             try:
-                self._asked[number] = store.save_question(
+                asked[number] = store.save_question(
                     self.id, step, asked_by, str(one.get("q") or ""), str(one.get("kind") or ""),
                     found, {})
             except Exception:                  # pragma: no cover - a log
                 log.debug("could not log a question", exc_info=True)
+        if keep:
+            self._asked = asked
+        return asked
+
+    # -- what was learned for the next cards, looked up ahead ---------------------------
+    def _criteria_ahead(self) -> None:
+        """THE CARDS A ROUND OPENED, their questions asked and what was
+        learned found for them while the reviewer reviews the round - the
+        full way's slowest step before the next round's work, done beside
+        the review instead of before the work. The same steps as
+        `_write_criteria` takes, kept as it keeps them; the criteria are
+        written by it as always, then. Only the full way: the others look
+        nothing up."""
+        if getattr(self, "variant", FULL) != FULL or self.finder is None \
+                or (self._ahead is not None and self._ahead.is_alive()):
+            return
+        root, cards = self._tree()
+        waiting = [card for card in self._open(cards, root)
+                   if not (card.get("checked_by") or {}).get("criteria")
+                   and not self.experience_given(f"criteria:{card['id']}")
+                   ][:CRITERIA_PER_ROUND]
+        if not waiting:
+            return
+        # Made here, on the run's own thread: making one sets what the run
+        # knows of the job's facets - as they were, then, for the review.
+        facets, found = self._facets, getattr(self, "learned_found", None)
+        reviews = [(dict(card), Review(self, self._card_profile(card, {}),
+                                       self._reviewer_context(card),
+                                       same_as=f"criteria:{card['id']}"))
+                   for card in waiting]
+        self._facets, self.learned_found = facets, found
+
+        def look() -> None:
+            for card, review in reviews:
+                if self.stop_now or not self._going(quiet=True):
+                    return
+                try:
+                    self._what_to_know(review, "THIS CARD", _card_shown(card), card, ahead=True)
+                    self._note("looked up ahead", card=card.get("title", ""))
+                except Exception:              # looked up when the criteria are written
+                    log.debug("what was learned could not be looked up ahead", exc_info=True)
+
+        self._ahead = threading.Thread(target=look, name=f"criteria-ahead-{self.id}",
+                                       daemon=True)
+        self._ahead.start()
+
+    def _wait_ahead(self) -> None:
+        ahead = self._ahead
+        if ahead is not None and ahead.is_alive():
+            self.activity = "reviewer: what was learned for the next cards"
+            ahead.join()
+        self._ahead = None
+
+    def _ahead_still_holds(self, card: Dict[str, Any]) -> None:
+        """What was looked up ahead for a card is used only if the card is
+        still what it was then; otherwise it is looked up again."""
+        key = f"criteria:{card.get('id', '')}"
+        kept = self.experience_given(key)
+        if kept and kept.get("ahead_for") and kept["ahead_for"] != _card_shown(card):
+            try:
+                self.owner.db.execute("DELETE FROM work_run_experience WHERE run_id = ? "
+                                      "AND key = ?", (self.id, key))
+            except Exception:                  # pragma: no cover - used as it is then
+                log.debug("could not drop what was looked up ahead", exc_info=True)
+            self._note("looked up again", card=card.get("title", ""),
+                       why="the card changed since it was looked up ahead")
 
     def _what_to_know(self, review: "Review", on: str, shown: str,
-                      card: Optional[Dict[str, Any]]) -> str:
+                      card: Optional[Dict[str, Any]], ahead: bool = False) -> str:
         """STEP 1 OF WRITING CRITERIA: the reviewer's QUESTIONS of the user,
         and the job's terms, asked in an answer of their own with no tools;
         then what was learned of the user's work for them (the full way), or
         nothing (the way with no context) - the text put before the criteria
-        are asked for, with how they are to be answered (ANSWER_RULES)."""
+        are asked for, with how they are to be answered (ANSWER_RULES).
+
+        `ahead` (`_criteria_ahead`): looked up and kept for a card while the
+        reviewer reviews a round - the run's own facets and questions, which
+        that review is using, left as they are."""
         key = f"criteria:{card.get('id', '')}" if card else (
             "contract" if "AMENDED" not in on else f"amendment:{int(time.time())}")
         kept = self.experience_given(key) if not review.plain else None
         if kept and kept.get("text"):
+            if ahead:
+                return ""
             self._facets = dict(kept.get("facets") or {})
+            if kept.get("asked"):
+                # Looked up ahead: its questions, as they were logged.
+                self._asked = {int(n): ident for n, ident in kept["asked"].items()}
             # The same as the first time - and already in its context when
             # it was made for this card.
             return "" if review.attached else str(kept["text"])
@@ -5275,7 +5939,8 @@ class Run:
             self._log_questions(on, "reviewer", questions, {"given": "nothing"})
             return numbered + "\n\n" + SELF_ANSWER
         facets = self.finder.job_facets(said.get("terms"))
-        self._facets = facets
+        if not ahead:
+            self._facets = facets
         # The description, not when it is the instruction word for word.
         job = " ".join(filter(None, [self.instruction,
                                      self._description_text() and self._description()]))[:3000]
@@ -5288,14 +5953,18 @@ class Run:
                        "found": {}}
         # Kept whole, to be given alone later; given now without what its
         # context holds already.
+        asked = self._log_questions(on, "reviewer", questions, package.get("found") or {},
+                                    keep=not ahead)
         self.keep_experience_given(key, {
             "text": numbered + "\n\n" + package.get("whole", package["text"]) + "\n\n"
-            + ANSWER_RULES, "found": package.get("found") or {}, "facets": facets})
+            + ANSWER_RULES, "found": package.get("found") or {}, "facets": facets,
+            **({"ahead_for": _card_shown(card), "asked": {str(n): ident for n, ident
+                                                          in asked.items()}}
+               if ahead and card else {})})
         text = numbered + "\n\n" + package["text"] + "\n\n" + (
             ANSWER_AGAIN if review.rules_given else ANSWER_RULES)
         review.took(package.get("found"))
         review.rules_given = True
-        self._log_questions(on, "reviewer", questions, package.get("found") or {})
         self._note("questions asked", on=on, questions=len(questions),
                    reasons=len((package.get("found") or {}).get("reasons") or []),
                    cases=len((package.get("found") or {}).get("cases") or []))
@@ -5551,6 +6220,8 @@ class Run:
                                               rounds - 1 - round_number) if specs else None,
                 # A client's own web tools held to these tools' checks.
                 web_guard=getattr(tools, "guard", None),
+                # Without the sandbox: the work agent's calls, and its helpers'.
+                unconfined=self._unconfined_for(tools) if specs else None,
                 cancelled=lambda: self.stop_now, on_usage=self._usage_so_far))
             self._turn(who, response, spent)
             calls = getattr(response, "tool_calls", None) or []
@@ -5560,20 +6231,26 @@ class Run:
                              "content": getattr(response, "raw_content", None)
                              or getattr(response, "text", "")})
             results = []
-            for call in calls:
-                # SAFE POINT: before a tool call. Stopped while held, the
+            from ...models.vision import tool_content
+            for batch in _side_by_side(calls):
+                # SAFE POINT: before a tool call - or calls that only read,
+                # run side by side (parallel.py). Stopped while held, the
                 # rest of this turn's calls are not run - each still gets
                 # its answer, so the exchange stays whole.
-                self._hold(f"before {call.name}")
+                self._hold(f"before {batch[0].name}")
                 if self.stop_now or (work and self.stopping):
-                    said: Any = {"error": "not run: the user stopped the run"}
+                    answers: List[Any] = [{"error": "not run: the user stopped the run"}
+                                          for _ in batch]
                 else:
-                    self.activity = f"{who}: {call.name} {_short_args(call.name, call.arguments)}"
-                    said = tools.call(call.name, call.arguments or {})
+                    self.activity = f"{who}: {batch[0].name} " + _short_args(
+                        batch[0].name, batch[0].arguments) + (
+                        f" (and {len(batch) - 1} more read side by side)" if len(batch) > 1
+                        else "")
+                    answers = _run_calls(tools, batch)
                 # A picture it read goes as a picture (models/vision.py).
-                from ...models.vision import tool_content
-                results.append({"type": "tool_result", "tool_use_id": call.id,
-                                "content": tool_content(said)})
+                for call, said in zip(batch, answers):
+                    results.append({"type": "tool_result", "tool_use_id": call.id,
+                                    "content": tool_content(said)})
             if round_number == rounds - 2:
                 results.append({"type": "text", "text": "That is all the room for "
                                 "tools: answer now, with the JSON object."})
@@ -5654,7 +6331,7 @@ class Run:
         Anything else ends the run, as before. Stopping now ends any wait."""
         # A call with tools may read with the client's own reading tools -
         # denied every place this run may not read.
-        if request.tools and request.native_read is None:
+        if request.tools and request.native_read is None and not request.unconfined:
             unreadable = self._unreadable()
             if unreadable is not None:
                 request = replace(request, native_read=unreadable)
@@ -5950,8 +6627,10 @@ class Run:
         `CALLS_KEPT` are kept, across its sessions, each numbered in order."""
         try:
             finished = time.time()
-            named = CALL_WHO.get(who, str(who or ""))
-            if self.variant == SINGLE and named == "builder":
+            # Every helper agent one line of the chart: "helper".
+            named = "helper" if str(who or "").startswith("helper ") \
+                else CALL_WHO.get(who, str(who or ""))
+            if self.alone and named == "builder":
                 named = "single"
             number = int(self.plan.get("calls_made") or 0) + 1
             # THE RUN'S OWN TIME when it ended: this session's - not paused,
@@ -5987,13 +6666,325 @@ class Run:
                     "and say why." if self.packages_mode == ASK else
                     "They are installed without asking the user, and each install "
                     "is recorded for them: ask only for what the work needs.")
-        system = ALONE_SYSTEM if self.variant == SINGLE else AGENT_SYSTEM
-        environment = environment_rules("; ".join(where),
-                                        network_rules(browser=self._has_browser()),
-                                        debug=bool(self.debug))
-        return system.replace("{environment}", environment).replace(
+        system = ALONE_SYSTEM if self.alone else AGENT_SYSTEM
+        return system.replace("{environment}", self._environment_text()).replace(
             "{packages}", packages) \
+            + "\n\n" + handed.HAND_OVER_RULES \
+            + ("\n\n" + QUICK_RULES if self.variant == QUICK else "") \
+            + ("\n\n" + UNCONFINED_RULES if self.unconfined else "") \
             + "\n\n" + zone_rule()
+
+    def _environment_text(self) -> str:
+        """THE ENVIRONMENT, as every agent of this run is told it."""
+        where = [str(self.folder), *[str(one) for one in
+                                     self.runtime.policy.extra_writable]]
+        return environment_rules("; ".join(where),
+                                 network_rules(browser=self._has_browser()),
+                                 debug=bool(self.debug))
+
+    # -- helper agents (`delegate`) -------------------------------------------------------
+    def _delegate(self, parent: WorkTools, kinds: Tuple[str, ...],
+                  args: Dict[str, Any]) -> Dict[str, Any]:
+        """A TASK HANDED TO A HELPER AGENT: a model of its own, with tools of
+        its own - the parent's, but delegate - on the same sandbox and folders,
+        under the same rules; asked as the run asks (`_ask`), so its calls,
+        tokens and limits are the run's. In the background, a job of the
+        parent's (`WorkTools.start_helper`)."""
+        task = str(args.get("task") or "").strip()
+        kind = str(args.get("kind") or "explore").strip().lower()
+        if not task:
+            return {"error": "say the task: what to do, where, and what to return"}
+        if kind not in kinds:
+            return {"error": ("a helper here only explores (kind explore)"
+                              if kinds == ("explore",) else
+                              f"kind is one of {', '.join(kinds)}")}
+        from .parallel import machine_busy
+        with self._helpers_lock:
+            most = 1 if machine_busy() else MOST_HELPERS
+            if self._helpers["going"] >= most:
+                return {"error": f"{self._helpers['going']} helper(s) going already - the "
+                                 f"most at once now is {most}: wait for one (wait_for its "
+                                 "job), or do this yourself"}
+            if kind == "worker" and self._helpers["worker"]:
+                return {"error": "a worker helper is going already - one at a time: wait "
+                                 "for it, or give this one kind explore"}
+            self._helpers["going"] += 1
+            self._helpers["made"] += 1
+            if kind == "worker":
+                self._helpers["worker"] = True
+            who = f"helper {self._helpers['made']}"
+        halted = {"halt": False}
+        self._event("reviewer" if parent is self.review_tools else "worker",
+                    "tool", f"{who} ({kind}): {_clip(task, 200)}", full=task)
+
+        def work() -> Dict[str, Any]:
+            tools = None
+            try:
+                tools = self._helper_tools(parent, kind, who, halted)
+                system = HELPER_SYSTEM.replace("{kind}", HELPER_KINDS[kind]).replace(
+                    "{environment}", self._environment_text()) \
+                    + ("\n\n" + UNCONFINED_RULES if self._unconfined_for(tools) else "") \
+                    + "\n\n" + zone_rule()
+                said = self._ask(system, [{"role": "user", "content": "THE TASK:\n" + task}],
+                                 tools, writing=kind == "worker", rounds=HELPER_ROUNDS,
+                                 who=who, quiet=True)
+                return said or {"done": False, "summary": "", "open": "the helper gave no "
+                                "answer - the run had no room left, or was stopped"}
+            except Exception as exc:
+                return {"done": False, "error": f"the helper stopped: {exc}"[:400]}
+            finally:
+                if tools is not None:
+                    tools.stop_jobs()
+                with self._helpers_lock:
+                    self._helpers["going"] -= 1
+                    if kind == "worker":
+                        self._helpers["worker"] = False
+
+        if args.get("background"):
+            return parent.start_helper(who, work, halted)
+        said = work()
+        return dict(said, helper=who)
+
+    # -- without the sandbox (unconfined.py) ----------------------------------------------
+    def _unconfined_places(self) -> List[Path]:
+        """What nothing touches without the sandbox: the agent's own data,
+        where sign-ins are kept."""
+        from .unconfined import forbidden_places
+        return forbidden_places(getattr(self.runtime.policy, "protected_paths", None) or [])
+
+    def _unconfined_for(self, tools: Any) -> Optional[Dict[str, Any]]:
+        """The request's `unconfined`, for the work agent's calls and its
+        helpers' - never the reviewer's, the tester's or the checks'."""
+        if not self.unconfined:
+            return None
+        if tools is not self.tools and getattr(tools, "parent_tools", None) is not self.tools:
+            return None
+        return {"workdir": str(self.folder), "places": [str(one) for one in
+                                                        self._unconfined_places()],
+                "on_denied": self._denied}
+
+    def _denied(self, tool: str, given: Any, why: str) -> None:
+        """A refusal for want of permission, kept - what asking the user
+        rests on (`_request_approval`) - and said in the live session."""
+        what = ""
+        if isinstance(given, dict):
+            what = str(given.get("command") or given.get("file_path") or given.get("path")
+                       or given.get("tool_use_id") or "")
+        entry = {"at": _now(), "tool": tool, "what": _clip(what, 300), "why": _clip(why, 300)}
+        with self._helpers_lock:
+            kept = self.plan.setdefault("denials", [])
+            kept.append(entry)
+            del kept[:-200]
+            self.plan["denials_made"] = int(self.plan.get("denials_made") or 0) + 1
+        self._event("run", "refused", f"refused: {tool} {_clip(what, 80)} - {_clip(why, 120)}",
+                    tool=tool, ok=False)
+
+    def _outside_shells(self) -> Dict[str, str]:
+        """The shells a command outside the sandbox may run in, on this
+        computer, by name."""
+        found: Dict[str, str] = {}
+        if os.name == "nt":
+            system = Path(os.environ.get("SystemRoot") or r"C:\Windows") / "System32"
+            for name, path in (("cmd", system / "cmd.exe"),
+                               ("powershell", system / "WindowsPowerShell" / "v1.0" /
+                                "powershell.exe")):
+                if path.is_file():
+                    found[name] = str(path)
+            git = shutil.which("git")
+            for root in (Path(git).resolve().parents if git else []):
+                if (root / "bin" / "bash.exe").is_file():
+                    found["bash"] = str(root / "bin" / "bash.exe")
+                    break
+            return found
+        for name in ("bash", "sh"):
+            if shutil.which(name):
+                found[name] = shutil.which(name)
+        return found
+
+    def _run_on_computer(self, command: str, shell: str, cwd: Path,
+                         timeout: float) -> Dict[str, Any]:
+        """A command run on this computer, outside the sandbox - from a
+        script of its own in the work's runtime folder - with the user's
+        environment but its keys and tokens."""
+        from ...common import children
+        shells = self._outside_shells()
+        if shell not in shells:
+            return {"error": f"no shell {shell} here - these are: {', '.join(sorted(shells))}"}
+        folder = self.folder / ".agent_runtime" / "outside"
+        folder.mkdir(parents=True, exist_ok=True)
+        stem = folder / uuid.uuid4().hex[:12]
+        if shell == "powershell":
+            script = stem.with_suffix(".ps1")
+            script.write_text("\ufeff" + command + "\nif ($LASTEXITCODE) { exit $LASTEXITCODE }\n",
+                              encoding="utf-8")
+            argv = [shells[shell], "-NoLogo", "-NoProfile", "-NonInteractive",
+                    "-ExecutionPolicy", "Bypass", "-File", str(script)]
+        elif shell == "cmd":
+            script = stem.with_suffix(".cmd")
+            script.write_bytes(("@echo off\r\nchcp 65001 >nul\r\n"
+                                + command.replace("\r\n", "\n").replace("\n", "\r\n")
+                                + "\r\n").encode("utf-8"))
+            argv = [shells[shell], "/d", "/c", str(script)]
+        else:
+            script = stem.with_suffix(".sh")
+            script.write_text(command.replace("\r\n", "\n") + "\n", encoding="utf-8")
+            argv = [shells[shell], script.as_posix()]
+        env = {key: value for key, value in os.environ.items()
+               if not re.search(r"KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|COOKIE", key,
+                                re.IGNORECASE)}
+        env.update({"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"})
+        began = time.time()
+        try:
+            done = children.run(argv, cwd=str(cwd), env=env, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=timeout,
+                                stdin=subprocess.DEVNULL, whole_tree=True)
+        except subprocess.TimeoutExpired:
+            return {"error": f"it did not end within {int(timeout)} seconds - ended",
+                    "timed_out": True}
+        except Exception as exc:
+            return {"error": f"it could not run: {exc}"[:400]}
+        printed = ((done.stdout or "") + (done.stderr or "")).replace("\r\n", "\n")
+        from .tools import MOST_PRINTED
+        return {"ok": done.returncode == 0, "returncode": done.returncode,
+                "output": printed[-MOST_PRINTED:], "shell": shell, "cwd": str(cwd),
+                "seconds": round(time.time() - began, 1), "outside_the_sandbox": True}
+
+    def _command_asked(self, args: Dict[str, Any]) -> Tuple[str, str, Path, Optional[str]]:
+        """(command, shell, folder it runs in, why not) of a command asked
+        to run outside the sandbox."""
+        command = str(args.get("command") or "").strip()
+        shell = str(args.get("shell") or "").strip().lower() or (
+            "cmd" if os.name == "nt" else "bash")
+        cwd = Path(str(args.get("cwd") or self.folder))
+        if not command or "\x00" in command:
+            return command, shell, cwd, "say the command to run"
+        if not cwd.is_dir():
+            return command, shell, cwd, f"not a folder: {cwd}"
+        from .unconfined import forbidden
+        places = self._unconfined_places()
+        why = forbidden(command, places) or forbidden(str(cwd), places)
+        return command, shell, cwd, why
+
+    def _judge(self, command: str, cwd: Path) -> Tuple[str, str]:
+        """("allow" or "ask", why) - a short call of its own: whether a
+        command needs the user's approval (unconfined.JUDGE_SYSTEM). Asked
+        once a command; anything but a clear allow is ask."""
+        from .unconfined import JUDGE_SYSTEM
+        key = f"{cwd}\n{command}"
+        kept = self._judged.get(key)
+        if kept is not None:
+            return kept
+        try:
+            response = self._call("permission check", ModelRequest(
+                messages=[{"role": "user", "content": f"THE COMMAND (run in {cwd}):\n"
+                                                      f"{command[:6000]}"}],
+                system=JUDGE_SYSTEM.format(folder=self.folder), max_tokens=400,
+                task="work_run", metadata={"run": self.id},
+                language=in_english("the verdict")))
+            said = _as_json(getattr(response, "text", "") or "")
+        except ModelShut:
+            raise
+        except Exception as exc:              # judged unsure: ask
+            said = {"verdict": "ask", "why": f"it could not be judged ({exc})"[:200]}
+        verdict = "allow" if str(said.get("verdict") or "").lower() == "allow" else "ask"
+        answer = (verdict, _clip(str(said.get("why") or ""), 300))
+        self._judged[key] = answer
+        return answer
+
+    def _run_outside(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """run_outside: a command on this computer - never what is never
+        done; judged, and refused when it needs the user's approval."""
+        command, shell, cwd, never = self._command_asked(args)
+        if never:
+            self._denied("run_outside", {"command": command}, never)
+            return {"error": f"refused: {never}", "refused": True}
+        verdict, why = self._judge(command, cwd)
+        if verdict != "allow":
+            self._denied("run_outside", {"command": command}, why)
+            return {"error": f"refused - it needs the user's approval: {why}. Find another "
+                             "way to do it; only when you have tried other ways, ask with "
+                             "request_approval.", "refused": True}
+        from .tools import RUN_MOST_SECONDS, RUN_SECONDS
+        timeout = max(5, min(RUN_MOST_SECONDS, int(args.get("timeout") or RUN_SECONDS)))
+        said = self._run_on_computer(command, shell, cwd, timeout)
+        self._changed("ran outside the sandbox", [], {"command": _clip(command, 200)})
+        return said
+
+    def _request_approval(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """request_approval: ONE exact command, asked of the user - only
+        after the run has seen something refused, and the model has tried
+        other ways; never what is never done. Approved, run once."""
+        from .unconfined import TRIED_AT_LEAST
+        command, shell, cwd, never = self._command_asked(args)
+        if never:
+            return {"error": f"refused: {never} - not even with the user's approval",
+                    "refused": True}
+        why = str(args.get("why") or "").strip()
+        tried = [str(one).strip() for one in (args.get("tried") or []) if str(one).strip()]
+        tried = list(dict.fromkeys(one for one in tried if len(one) >= 10))
+        refused_since = int(self.plan.get("denials_made") or 0) - int(
+            self.plan.get("denials_at_ask") or 0)
+        if refused_since < 1:
+            return {"error": "nothing has been refused since you last asked - try it first "
+                             "(run_outside, or your own tools): ask only for what was refused"}
+        if len(tried) < TRIED_AT_LEAST:
+            return {"error": f"say at least {TRIED_AT_LEAST} other ways you tried (tried), "
+                             "and why each could not do it - and try them first if you have "
+                             "not"}
+        if not why:
+            return {"error": "say why it is needed (why)"}
+        self.plan["denials_at_ask"] = int(self.plan.get("denials_made") or 0)
+        request = {"id": f"act_{uuid.uuid4().hex[:10]}", "kind": "action",
+                   "command": command[:4000], "shell": shell, "cwd": str(cwd),
+                   "why": why[:600], "tried": [_clip(one, 300) for one in tried[:6]],
+                   "asked_at": _now(), "status": PENDING,
+                   "what": "run outside the sandbox: " + _clip(command, 80)}
+        self.plan.setdefault("approvals", []).append(request)
+        self._note("asked to approve a command", command=_clip(command, 300),
+                   why=_clip(why, 300), request=request["id"])
+        self._event("worker", "permission", f"asks you to approve: {_clip(command, 120)}",
+                    request=request["id"])
+        self._wait_for(request)
+        self._hold("before the approved command")
+        if request["status"] == APPROVED and (self.stop_now or self.stopping):
+            request.update(status=UNANSWERED, note="the run was stopped before it ran")
+        if request["status"] != APPROVED:
+            note = f" ({request['note']})" if request.get("note") else ""
+            return {"approved": False,
+                    "message": f"The user did not approve it{note}. Do not ask for it again: "
+                               "do the work another way, or say in your answer what the user "
+                               "must do themselves."}
+        from .tools import RUN_MOST_SECONDS
+        said = self._run_on_computer(command, shell, cwd, RUN_MOST_SECONDS)
+        request.update(status="done" if said.get("ok") else FAILED, done_at=_now(),
+                       returncode=said.get("returncode"))
+        self._changed("ran outside the sandbox, approved", [],
+                      {"command": _clip(command, 200)})
+        return dict(said, approved=True)
+
+    def _helper_tools(self, parent: WorkTools, kind: str, who: str,
+                      halted: Dict[str, bool]) -> WorkTools:
+        """A helper's tools: the parent's - its sandbox, the files it may not
+        write, what it may search, its packages, the addresses it knows, the
+        tests that ran - with a place of its own among the tools, its own
+        jobs, and no helper of its own."""
+        tools = WorkTools(parent.runtime,
+                          log=lambda name, said: self._tool_used(name, said, who=who),
+                          cards=parent.cards, find=parent.find, changed=parent.changed,
+                          install=parent.install if kind == "worker" else None,
+                          stages=parent.stages)
+        for name in ("packages_dir", "locked", "guard", "test_runs", "records_db",
+                     "files_index", "learned", "as_of", "runs_code", "only"):
+            setattr(tools, name, getattr(parent, name))
+        tools.stopped = lambda: parent.stopped() or halted["halt"]
+        tools.halted = lambda: halted["halt"]
+        # Without the sandbox, a worker's helper as the worker: its own tools
+        # opened, run_outside and asking the user (`_unconfined_for`).
+        tools.parent_tools = parent
+        tools.outside = parent.outside
+        tools.approve = parent.approve
+        tools.label = f"{who}, of {parent.label or 'an agent'}"
+        return tools
 
     def _has_browser(self) -> bool:
         """Whether this run's code may start the testing browser."""
@@ -6003,7 +6994,7 @@ class Run:
             return False
 
     def _tree(self) -> Tuple[Dict[str, Any], Dict[str, Dict[str, Any]]]:
-        if self.variant == SINGLE:
+        if self.alone:
             # The single model keeps no tree: nothing is made for it, and
             # what asks for one is told of a root with nothing under it.
             return {"id": "", "title": self.unit.get("name", ""), "statement": "",
@@ -6155,7 +7146,7 @@ class Run:
     # -- the loop ------------------------------------------------------------------------------
     def _run(self) -> None:
         try:
-            if self.variant == SINGLE:
+            if self.alone:
                 # One model on its own - and then the same end as any run:
                 # the session's use, and the version it ends with.
                 self._wrap_up_alone(self._alone())
@@ -6190,9 +7181,17 @@ class Run:
             self.stop_reason = self.stop_reason or "the model needs you"
             self._note("ended", status=self.status, reason=f"{self.stop_reason} - {exc}")
         except Exception as exc:          # pragma: no cover - reported
-            log.exception("a work run failed")
-            self.status = "failed"
-            self._note("failed", error=str(exc)[:800])
+            if self.stop_now:
+                # The call the user stopped at once, ended: their stop, not
+                # a failure (measured 2026-10-26: it showed as failed, and
+                # could not be continued).
+                self.status = STOPPED_AT_ONCE
+                self.stop_reason = self.stop_reason or "stopped"
+                self._note("ended", status=self.status, reason=self.stop_reason)
+            else:
+                log.exception("a work run failed")
+                self.status = "failed"
+                self._note("failed", error=str(exc)[:800])
         finally:
             self.ended_at = _now()
             self.activity = ""
@@ -6213,6 +7212,7 @@ class Run:
                 self.tools.stop_jobs()
             except Exception:        # pragma: no cover - each ends at its time
                 log.debug("could not stop the jobs of %s", self.id, exc_info=True)
+            self._wait_ahead()
             # KEY POINT: the session ended - finished, paused, stopped.
             self._end_version()
             # ITS VERSIONS' SLIDES, drawn behind the work: the session ends
@@ -6281,13 +7281,18 @@ class Run:
         write, and, continued, what it reported last."""
         plan = self.plan
         words = [str(one) for one in plan.get("words") or []]
-        parts = [f"THE TASK: {self.unit.get('name', '')}",
+        # Today, as the work agent is told it: not told, it ran code to
+        # learn the date.
+        parts = [today_line(), f"THE TASK: {self.unit.get('name', '')}",
                  self._description_text(),
                  f"\nWHAT THE USER ASKED: {self.instruction or 'carry the work forward'}"]
         if words:
             parts.append("\nTHE USER'S WORDS SINCE (verbatim - where anything above "
                          "says otherwise, these stand):\n"
                          + "\n".join(f"  <<<\n{one}\n  >>>" for one in words))
+        learned = self._quick_learned()
+        if learned:
+            parts.append("\n" + learned)
         parts.append("\nYOU MAY WRITE IN: " + str(self.folder))
         if self.resumed and plan.get("last_report"):
             parts.append("\n" + ALONE_RESUMED.format(
@@ -6295,6 +7300,51 @@ class Run:
                 next=f"WHAT YOU SAID YOU WOULD DO NEXT: {plan['next']}"
                 if plan.get("next") else ""))
         return "\n".join(filter(None, parts))
+
+    def _quick_learned(self) -> str:
+        """QUICK: WHAT WAS LEARNED OF THE USER'S WORK, for this job - its
+        terms and the model's questions asked once, with no tools, then
+        found for them (learning/find.py), as the reviewer's are for a
+        contract. Kept with the run, so a run continued is given the same.
+        "" for any other way, or where nothing was learned."""
+        if self.variant != QUICK or self.finder is None:
+            return ""
+        kept = self.experience_given("quick")
+        if kept and kept.get("text"):
+            self._facets = dict(kept.get("facets") or {})
+            return str(kept["text"])
+        try:
+            if not self.finder.anything_learned():
+                return ""
+            self.activity = "what was learned of how you work, for this job"
+            kinds = "\n".join(f'  "{name}" - {words}' for name, words in QUESTION_KINDS.items())
+            shown = "\n".join(filter(None, [f"{self.unit.get('name', '')}",
+                                             self._description_text(),
+                                             self.instruction[:6000]]))
+            said = self._ask(ALONE_SYSTEM.split("\n\n", 1)[0], [{
+                "role": "user", "content": QUICK_QUESTIONS.format(
+                    kinds=kinds, words=self.finder.word_list(), shown=shown)}],
+                NoTools(self.tools), writing=False, rounds=1, work=False, who="learned",
+                language=in_english("the terms and the questions"))
+            questions = [{"q": _clip(one.get("q") or one.get("question"), 400),
+                          "kind": str(one.get("kind") or "requirement")}
+                         for one in (said.get("questions") or []) if isinstance(one, dict)
+                         and str(one.get("q") or one.get("question") or "").strip()][:10]
+            self._facets = self.finder.job_facets(said.get("terms"))
+            package = self.finder.answer(self.instruction[:3000], self._facets, questions,
+                                         ask=self._learned_ask, explain=False)
+        except Exception:                      # pragma: no cover - it works without
+            log.warning("what was learned could not be found for a quick run", exc_info=True)
+            return ""
+        self._log_questions("the start", "quick agent", questions,
+                            package.get("found") or {})
+        text = QUICK_LEARNED.format(
+            questions="\n".join(f"  {n}. ({one['kind']}) {one['q']}"
+                                for n, one in enumerate(questions, 1)),
+            found=package.get("whole", package.get("text", "")))
+        self.keep_experience_given("quick", {"text": text, "facets": self._facets,
+                                             "found": package.get("found") or {}})
+        return text
 
     def _alone(self) -> str:
         """THE SINGLE MODEL AT WORK: the task, given once, and the model's
@@ -6315,7 +7365,10 @@ class Run:
             self._note("branch instruction", text=self.amend_words)
             self.plan["words"] = [*[str(one) for one in self.plan.get("words") or []],
                                   self.amend_words]
-        self._stage("alone", "One model on its own: no contract, no reviewer, no "
+        self._stage("alone", "Quick: one agent with what was learned of your work, on "
+                    "its own judgement - it works until it says it is done"
+                    if self.variant == QUICK else
+                    "One model on its own: no contract, no reviewer, no "
                     "stages - it works until it says it is done")
         messages: List[Dict[str, Any]] = [{"role": "user", "content": self._alone_brief()}]
         quiet = 0
@@ -6350,6 +7403,15 @@ class Run:
             self.owner.save(self)
             if interrupted:
                 return "paused"
+            thorough = str(said.get("thorough") or "").strip() \
+                if self.variant == QUICK and not done else ""
+            if thorough:
+                self.plan["thorough"] = thorough[:2000]
+                self.stop_reason = "it needs the thorough way: " + _clip(thorough, 300)
+                self._version("turn", f"Turn {number}: {progress}",
+                              message=commit_message(said, f"Turn {number}"),
+                              round=number, progress=progress)
+                return "thorough"
             if done:
                 if not self._checks_on():
                     return "complete"
@@ -6363,6 +7425,9 @@ class Run:
                 if not self._going():
                     return "paused"
                 messages.append({"role": "user", "content": ALONE_CHECKS_FAILED.format(
+                    which=("whether it keeps the user's private information private"
+                           if self.variant == QUICK else "its quality, and whether it "
+                           "keeps the user's private information private"),
                     findings="\n".join(
                         f"  - ({one.get('severity', '')}) {_plain(one.get('say', ''))}"
                         f"{' - ' + one['file'] if one.get('file') else ''}"
@@ -6393,7 +7458,8 @@ class Run:
         done, and its report - the run's final word, as it wrote it."""
         finished = ended == "complete"
         self.status = {"complete": DONE, "paused": NOT_FINISHED, "stalled": STALLED,
-                       "check failed": CHECK_FAILED}.get(ended, NOT_FINISHED)
+                       "check failed": CHECK_FAILED,
+                       "thorough": NEEDS_THOROUGH}.get(ended, NOT_FINISHED)
         if finished:
             self.plan["phase"] = "done"
         else:
@@ -6401,14 +7467,18 @@ class Run:
                                  "next": [one for one in [self.plan.get("next")] if one],
                                  "final_review": []}
         report = str(self.plan.get("last_report") or "")
-        # The README of what was made, when anything was.
-        if finished or any(Path(one).exists() for one in self.plan.get("changed_files") or []):
+        # The README of what was made, when anything was - quick work only
+        # when it made more than one file: an email needs none.
+        made = [one for one in self.plan.get("changed_files") or [] if Path(one).exists()]
+        if (len(made) > 1 if self.variant == QUICK else (finished or made)):
             self._readme(finished, alone=True)
         total = {k: int((self.plan.get("total") or {}).get(k, 0)) + int(self.used.get(k, 0))
                  for k in ("calls", "tokens_in", "tokens_out")}
         self.final = dict(self.final, done=finished, ended=ended, reason=self.stop_reason,
                           answer=report, rounds=len(self.plan.get("rounds") or []),
-                          total=total, report=f"Run {self.id}: {self.status}")
+                          total=total, report=f"Run {self.id}: {self.status}",
+                          **({"thorough": self.plan["thorough"]}
+                             if ended == "thorough" and self.plan.get("thorough") else {}))
         self._write(f"runs/{self.id}/report.md", "\n".join([
             f"# Report - {self.unit.get('name', '')}", "",
             f"Run {self.id}: {self.status}"
@@ -6563,7 +7633,7 @@ class Run:
         items = [one for one in items or []
                  if isinstance(one, dict) and str(one.get("need") or "").strip()]
         contract = self.plan.get("contract") or {}
-        if self.variant == SINGLE or not items or not contract.get("goal"):
+        if self.alone or not items or not contract.get("goal"):
             return []
         root, cards = self._tree()
         promises = {one["id"]: one for one in contract.get("promises") or []
@@ -6741,6 +7811,14 @@ class Run:
             found = references.candidates(self.finder, self._facets, readable)
             if not found:
                 return
+            # A web page or a kept passage given only as it was a candidate;
+            # the pages in the user's learning list may be opened, by the
+            # reviewer and by the work agent alike.
+            known = {one["path"]: one for one in found}
+            web = " ".join(one["path"] for one in found if one.get("web"))
+            if web:
+                self.tools.know_addresses(web, "user")
+                self.review_tools.know_addresses(web, "user")
             said = self._ask(references.PROMPT.format(per_card=references.PROPOSED)
                              + "\n\n" + zone_rule(),
                              [{"role": "user", "content": references.content(cards, found)}],
@@ -6748,14 +7826,14 @@ class Run:
                              work=False, quiet=True, who="reviewer",
                              language=in_english("the answer"))
             proposed = references.checked(said, cards, readable, self.finder.leave_out,
-                                          most=references.PROPOSED)
+                                          most=references.PROPOSED, known=known)
             if not any(proposed.values()):
                 return
             chose = review.ask(REVIEW_REFERENCES.format(
                 proposed=references.proposed_text(cards, proposed),
                 per_card=references.PER_CARD), rounds=references.READS)
             picked = references.checked(chose, cards, readable, self.finder.leave_out,
-                                        among=proposed)
+                                        among=proposed, known=known)
         except Exception:                      # pragma: no cover - none given then
             log.warning("no references could be chosen", exc_info=True)
             return
@@ -7118,17 +8196,17 @@ class Run:
     def _write_criteria(self) -> None:
         """Cards opened since the last round get their criteria - written by
         the reviewer, from the experience retrieved for each."""
+        self._wait_ahead()
         root, cards = self._tree()
         waiting = [card for card in self._open(cards, root)
                    if not (card.get("checked_by") or {}).get("criteria")]
         for card in waiting[:CRITERIA_PER_ROUND]:
             if not self._going():
                 return
+            self._ahead_still_holds(card)
             review = Review(self, self._card_profile(card, {}), self._reviewer_context(card),
                             same_as=f"criteria:{card.get('id', '')}")
-            shown = json.dumps({"id": card["id"], "title": card["title"],
-                                "statement": card["statement"],
-                                "type": card.get("type", "")}, ensure_ascii=False)
+            shown = _card_shown(card)
             # STEP 1, NO WEB - then the criteria, the web too.
             left_open = self._what_to_know(review, "THIS CARD", shown, card)
             if not self._going():
@@ -7158,6 +8236,11 @@ class Run:
         if todo:
             parts.append("THE RUN WAS PAUSED; ITS TO-DO LIST - START FROM HERE:\n"
                          + _plain(json.dumps(todo, ensure_ascii=False))[:6000])
+        midway = self.plan.pop("resumed_mid_round", None)
+        if isinstance(midway, dict) and int(midway.get("round") or 0) == number:
+            parts.append(MIDWAY.format(
+                tools=int(midway.get("tools") or 0),
+                did="\n".join(f"  - {one}" for one in midway.get("did") or []) or "  (nothing)"))
         if int(self.plan.get("stalls") or 0) >= STEP_BACK_AT:
             parts.append(STEP_BACK)
         if fix:
@@ -7166,26 +8249,32 @@ class Run:
                 f"{' - ' + one['file'] if one.get('file') else ''}" for one in fix)))
         parts.append(WORK_ROUND)
         messages = [{"role": "user", "content": "\n\n".join(parts)}]
-        summary = self._ask(self._system(), messages, self.tools, writing=True,
-                            rounds=WORK_TOOL_ROUNDS, pause=PAUSE)
-        if summary.get("interrupted"):
-            self._interrupted(number, summary)
-            return "paused"
-        if not summary and not self._going():
-            return "paused"
-        problems = self._gate(summary)
-        tries = 0
-        while problems and tries < GATE_RETRIES and self._going():
-            tries += 1
-            self._note("checks failed", round=number, problems=problems[:8])
-            messages.append({"role": "user", "content": GATE.format(
-                problems="\n".join(f"  - {one}" for one in problems))})
+        self._round_log_from = len(self.log)
+        try:
             summary = self._ask(self._system(), messages, self.tools, writing=True,
                                 rounds=WORK_TOOL_ROUNDS, pause=PAUSE)
             if summary.get("interrupted"):
                 self._interrupted(number, summary)
                 return "paused"
+            if not summary and not self._going():
+                return "paused"
             problems = self._gate(summary)
+            tries = 0
+            while problems and tries < GATE_RETRIES and self._going():
+                tries += 1
+                self._note("checks failed", round=number, problems=problems[:8])
+                messages.append({"role": "user", "content": GATE.format(
+                    problems="\n".join(f"  - {one}" for one in problems))})
+                summary = self._ask(self._system(), messages, self.tools, writing=True,
+                                    rounds=WORK_TOOL_ROUNDS, pause=PAUSE)
+                if summary.get("interrupted"):
+                    self._interrupted(number, summary)
+                    return "paused"
+                problems = self._gate(summary)
+        finally:
+            # The work agent's part of the round is over: no point in the
+            # middle of the review.
+            self._round_log_from = None
         root, cards = self._tree()
         refs = self._apply_parts(summary, root, cards)
         card = self._card_named(summary.get("card"), refs, cards) or root
@@ -7200,6 +8289,7 @@ class Run:
             summary, summary.get("result") or summary.get("objective") or card["title"],
             [one.get("claim") for one in summary.get("claims") or []
              if isinstance(one, dict)])
+        self._criteria_ahead()
         review = Review(self, self._card_profile(card, summary),
                         self._reviewer_context(card, recent=True),
                         same_as=f"round:{card.get('id', '')}")
@@ -7231,6 +8321,10 @@ class Run:
                                      str(asked.get("why") or ""),
                                      newly_holding=holding_before - set(self._unmet()),
                                      progress=progress)
+        # A RESUME POINT after a round that advanced - not after one a full
+        # review just saved as a version (the user, 2026-10-24).
+        if progress == "advanced" and not (full is not None and full.get("passed")):
+            self._resume_point(number, card)
         unmet = self._unmet()
         if judged.get("complete") and unmet:
             judged["complete"] = False
@@ -7262,6 +8356,9 @@ class Run:
 
     def _set_checkpoint(self, label: str, made: Optional[Dict[str, Any]],
                         after_round: Optional[int] = None) -> None:
+        # A checkpoint holds the work as it is: the next progress point is
+        # ten minutes of work from here.
+        self._point_minutes = self._minutes()
         self.plan["checkpoint"] = {
             "round": int(self.plan.get("round") or 0) if after_round is None else after_round,
             "label": label, "at": _now(),
@@ -7786,8 +8883,9 @@ class Run:
                                "text": root.get("statement", ""),
                                "tasks": self.project_tasks},
                         self._reviewer_context(None))
-        judged = review.ask(REVIEW_FINAL.format(files="\n".join(
-            f"  {one}" for one in files[:200]) or "  (no files)",
+        judged = review.ask(REVIEW_FINAL.format(files=("\n".join(
+            f"  {one}" for one in files[:200]) or "  (no files)")
+            + ("\n\n" + self._handed_text() if self._handed_text() else ""),
             for_user=FOR_USER_NOTE) + (
             "\n\nA TESTER WHO NEVER SAW HOW IT WAS BUILT USED IT AS THE USER WOULD:\n"
             + json.dumps(tested, ensure_ascii=False)[:8000] if tested else ""))
@@ -7848,7 +8946,9 @@ class Run:
                                           log=lambda name, said: self._tool_used(
                                               name, said, who="reviewer"))
             self.tester_tools.locked = list(self.tools.locked)
-            self.tester_tools.runs_code = ("run_python",)
+            self.tester_tools.runs_code = ("run_python", "run_tests")
+            self.tester_tools.label = "the tester"
+            self.tester_tools.test_runs = self.tools.test_runs
         return self.tester_tools
 
     def _checks_on(self) -> bool:
@@ -7877,7 +8977,11 @@ class Run:
         fixes = self.plan.setdefault("check_fixes", {})
         findings: List[Dict[str, Any]] = []
         failing: List[str] = []
-        for kind, system in (("quality", QUALITY_SYSTEM), ("privacy", PRIVACY_SYSTEM)):
+        # QUICK: the privacy check alone (the user, 2026-10-26) - its quality
+        # is the user's to read.
+        kinds = ((("privacy", PRIVACY_SYSTEM),) if self.variant == QUICK
+                 else (("quality", QUALITY_SYSTEM), ("privacy", PRIVACY_SYSTEM)))
+        for kind, system in kinds:
             if not self._going(work=False):
                 return "fix", []
             said = self._ask(
@@ -7886,7 +8990,8 @@ class Run:
                 [{"role": "user", "content": CHECK_ASK.format(
                     words=words or "(carry the work forward)",
                     goal=goal or words or "(as the user asked)",
-                    files="\n".join(f"  {one}" for one in files[:200]) or "  (no files)")}],
+                    files=("\n".join(f"  {one}" for one in files[:200]) or "  (no files)")
+                    + ("\n\n" + self._handed_text() if self._handed_text() else ""))}],
                 self._testing_tools(), writing=False, work=False, who=kind)
             problems = [one for one in said.get("problems") or [] if isinstance(one, dict)]
             checked = [str(one) for one in said.get("checked") or [] if str(one).strip()]
@@ -7965,6 +9070,9 @@ class Run:
                        "stop": STOPPED_BY_REVIEW, "blocked": BLOCKED,
                        "no contract": NO_CONTRACT,
                        "check failed": CHECK_FAILED}.get(ended, NOT_FINISHED)
+        if self.stop_now and not finished:
+            # Stopped at once: it did not wrap up, nor say where it was.
+            self.status = STOPPED_AT_ONCE
         if not finished and self.status != NO_CONTRACT:
             self._write_todo()
         # An amendment not approved did no work: no new deck to make.
@@ -8270,6 +9378,24 @@ class Run:
                                 if t.startswith("env:") and not t.startswith("env:medium:")],
                 "tasks": self.project_tasks, "text": text}
 
+    def _hand_over(self, item: Dict[str, Any]) -> None:
+        """A result handed to the user (handed.py): kept - in place of the
+        one of the same kind and title - and said in the live session."""
+        self.plan["handed"] = handed.kept(list(self.plan.get("handed") or []),
+                                          dict(item, at=_now()))
+        self._event("worker", "milestone",
+                    f"Handed to you: {item['kind']} - {_clip(item.get('title'), 160)}")
+
+    def _handed_text(self) -> str:
+        """What is handed to the user, as the checks and the reviewer read
+        it - each as it will be opened for them; "" when nothing is yet."""
+        items = list(self.plan.get("handed") or [])
+        if not items:
+            return ""
+        return ("WHAT IS HANDED TO THE USER - each opened for them, as it is "
+                "(nothing is sent or saved for them):\n"
+                + "\n\n".join(handed.shown(one)[:6000] for one in items))
+
     def _reviewer_context(self, card: Optional[Dict[str, Any]], recent: bool = False
                           ) -> str:
         """The work in brief for the reviewer - room kept for the user's
@@ -8285,6 +9411,8 @@ class Run:
             lines.append(contract)
         elif self._branch_words():
             lines.append(self._words_text())
+        if self._handed_text():
+            lines.append(self._handed_text())
         if card is not None and card.get("id"):
             path, here = [], card
             while here is not None:
@@ -8371,6 +9499,17 @@ class NoTools(NoWeb):
 
     def call(self, name: str, arguments: Dict[str, Any]) -> Any:
         return {"error": "no tools here - answer from what you were told"}
+
+
+def _resumes_from(run_dir: Optional[Path], head: Dict[str, Any]) -> Dict[str, Any]:
+    """Where a run cut off goes on from: its resume point - after the
+    latest round that advanced - when there is one after the head, else the
+    head, its last milestone."""
+    point = VersionStore(run_dir).resume_point() if run_dir else None
+    if point is not None:
+        return {"version": head["id"], "label": point.get("label", ""), "resume": True,
+                "round": point.get("round")}
+    return {"version": head["id"], "label": head.get("label", "")}
 
 
 def _left_out(unit: Dict[str, Any]) -> Optional[Any]:

@@ -220,6 +220,101 @@ def choose_directory(title: str = "Choose a directory",
             "reason": "", **describe_directory(chosen)}
 
 
+def choose_place(title: str = "Choose a folder or a file",
+                 start_at: Optional[str] = None) -> Dict[str, Any]:
+    """ONE CHOOSER FOR A FOLDER OR A FILE (the user, 2026-10-26): what is
+    selected last is what is chosen - a file is a file, a folder a folder.
+    Windows' own Browse for Folder, files shown in it. Where there is none
+    like it, said so (`two`): the page asks which of the two first."""
+    if not available():
+        return {"selected": None, "cancelled": False, "available": False,
+                "reason": "this machine has no chooser; type the path instead"}
+    if not sys.platform.startswith("win"):
+        return {"selected": None, "cancelled": False, "available": False, "two": True,
+                "reason": "no chooser here takes a folder or a file at once"}
+
+    def dialog(parent: Any) -> Any:
+        try:
+            owner = int(parent.wm_frame(), 16)
+        except (TypeError, ValueError):
+            owner = 0
+        return browse_folder_or_file(title, owner, start_at)
+
+    chosen = _show(dialog, "folder or file")
+    if isinstance(chosen, TimeoutError):
+        return {"selected": None, "cancelled": True, "available": True, "reason": str(chosen)}
+    if isinstance(chosen, Exception):
+        return {"selected": None, "cancelled": False, "available": False,
+                "reason": f"the chooser could not be opened: {chosen}"}
+    if not chosen or not Path(chosen).exists():
+        return {"selected": None, "cancelled": True, "available": True, "reason": ""}
+    return {"selected": str(Path(chosen)), "cancelled": False, "available": True,
+            "reason": "", "kind": "folder" if Path(chosen).is_dir() else "file"}
+
+
+def browse_folder_or_file(title: str, owner: int = 0, start_at: Optional[str] = None,
+                          accept_at_once: bool = False) -> Optional[str]:
+    """Windows' Browse for Folder with files in it (BIF_BROWSEINCLUDEFILES):
+    the path of what was selected, or None. `start_at`: selected when it
+    opens. `accept_at_once`: OK pressed as soon as it opens - for the check
+    of this call itself, never the page's."""
+    import ctypes
+    from ctypes import wintypes
+
+    BIF_EDITBOX, BIF_NEWDIALOGSTYLE = 0x10, 0x40
+    BIF_NONEWFOLDERBUTTON, BIF_BROWSEINCLUDEFILES = 0x200, 0x4000
+    BFFM_INITIALIZED, BFFM_SETSELECTIONW = 1, 0x467
+    WM_COMMAND, IDOK = 0x111, 1
+    callback_type = ctypes.WINFUNCTYPE(ctypes.c_int, wintypes.HWND, wintypes.UINT,
+                                       wintypes.LPARAM, wintypes.LPARAM)
+
+    class BrowseInfo(ctypes.Structure):
+        _fields_ = [("hwndOwner", wintypes.HWND), ("pidlRoot", ctypes.c_void_p),
+                    ("pszDisplayName", ctypes.c_wchar_p), ("lpszTitle", ctypes.c_wchar_p),
+                    ("ulFlags", wintypes.UINT), ("lpfn", callback_type),
+                    ("lParam", wintypes.LPARAM), ("iImage", ctypes.c_int)]
+
+    user32, shell32, ole32 = ctypes.windll.user32, ctypes.windll.shell32, ctypes.windll.ole32
+    user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM,
+                                    ctypes.c_wchar_p]
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM,
+                                    wintypes.LPARAM]
+    shell32.SHBrowseForFolderW.argtypes = [ctypes.POINTER(BrowseInfo)]
+    shell32.SHBrowseForFolderW.restype = ctypes.c_void_p
+    shell32.SHGetPathFromIDListW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+    ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+    start = str(start_at) if start_at and Path(start_at).exists() else ""
+
+    def on_event(hwnd: Any, message: int, _lparam: Any, _data: Any) -> int:
+        if message == BFFM_INITIALIZED:
+            if start:
+                user32.SendMessageW(hwnd, BFFM_SETSELECTIONW, 1, start)
+            if accept_at_once:
+                user32.PostMessageW(hwnd, WM_COMMAND, IDOK, 0)
+        return 0
+
+    callback = callback_type(on_event)
+    shown = ctypes.create_unicode_buffer(260)
+    info = BrowseInfo()
+    info.hwndOwner = owner or None
+    info.pszDisplayName = ctypes.cast(shown, ctypes.c_wchar_p)
+    info.lpszTitle = title
+    info.ulFlags = (BIF_NEWDIALOGSTYLE | BIF_EDITBOX | BIF_BROWSEINCLUDEFILES
+                    | BIF_NONEWFOLDERBUTTON)
+    info.lpfn = callback
+    ole32.OleInitialize(None)                       # the new style needs it
+    chosen = shell32.SHBrowseForFolderW(ctypes.byref(info))
+    if not chosen:
+        return None
+    try:
+        path = ctypes.create_unicode_buffer(32768)
+        if not shell32.SHGetPathFromIDListW(chosen, path):
+            return None
+        return path.value or None
+    finally:
+        ole32.CoTaskMemFree(chosen)
+
+
 def application_filetypes() -> list:
     """What counts as an application on this platform."""
     if sys.platform.startswith("win"):

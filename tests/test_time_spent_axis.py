@@ -18,7 +18,7 @@ class TheRunCountsItsOwnTimeTests(unittest.TestCase):
 
     def _run(self, plan, minutes):
         from personalized_agent.agent.work.runner import Run
-        run = SimpleNamespace(plan=plan, variant="full", id="run_x",
+        run = SimpleNamespace(plan=plan, variant="full", alone=False, id="run_x",
                               _minutes=lambda: minutes)
         run._active_before = lambda: Run._active_before(run)
         return run

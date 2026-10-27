@@ -193,6 +193,22 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         return open_chooser(title=str(request.get("title") or "Choose a directory"),
                             start_at=request.get("start_at"))
 
+    @route("POST", "/api/settings/choose-place")
+    def choose_a_place(request: Any) -> Any:
+        """A folder or a file in one chooser: what is selected last is it."""
+        from ..common.chooser import choose_place as open_chooser
+
+        return open_chooser(title=str(request.get("title") or "Choose a folder or a file"),
+                            start_at=request.get("start_at"))
+
+    @route("POST", "/api/settings/choose-file")
+    def choose_a_file(request: Any) -> Any:
+        """One existing file, chosen, not typed - a file the work may change."""
+        from ..common.chooser import choose_file as open_chooser
+
+        return open_chooser(title=str(request.get("title") or "Choose a file"),
+                            start_at=request.get("start_at"))
+
     @route("POST", "/api/settings/choose-application")
     def choose_application(request: Any) -> Any:
         """Section 12, as amended: an application is chosen, not typed."""
@@ -417,6 +433,42 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                            "the learning's, in Work's Learning panel")
         return index.status()
 
+    @route("POST", "/api/learning/inbox")
+    def learning_inbox(request: Any) -> Any:
+        """What Explorer's "Add to learning" handed over (a note of a path,
+        left by `--learn`): taken, and a learning plan drafted for it."""
+        from ..agent.work.handover import take
+        said = take(app.data_dir, str(request.require("id")))
+        if said is None:
+            raise ApiError("nothing was handed over under that id", 404)
+        folders, files = list(said.get("folders") or []), list(said.get("files") or [])
+        if not folders and not files:
+            raise ApiError("nothing was handed over under that id", 404)
+        kind, source = ("folder", folders[0]) if folders else ("file", files[0])
+        return {"draft": app.learning.planner.start({"kind": kind, "source": source}),
+                "more": max(0, len(folders) + len(files) - 1)}
+
+    @route("GET", "/api/learning/unit")
+    def learning_unit(request: Any) -> Any:
+        """What was learned from one lesson - a project, a folder, an item."""
+        return app.learning.unit_detail(str(request.require("id")))
+
+    @route("POST", "/api/learning/choose-file")
+    def learning_choose_file(_request: Any) -> Any:
+        """A file to learn from, chosen in the machine's own dialog."""
+        from ..common import chooser
+        return chooser.choose_file(title="Choose a file to learn from",
+                                   filetypes=[("All files", "*")])
+
+    @route("GET", "/api/learning/draft")
+    def learning_draft(request: Any) -> Any:
+        """A learning plan being drafted (learning/plan.py): how far, and
+        the plan once it is there."""
+        draft = app.learning.planner.get(str(request.require("id")))
+        if draft is None:
+            raise ApiError("no such plan - it may have been a while", 404)
+        return {"draft": draft}
+
     @route("GET", "/api/learning")
     def learning_status(_request: Any) -> Any:
         """WORK'S LEARNING PANEL: the switch and the times, the update open
@@ -455,9 +507,38 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                 learning.places.set_excluded(str(request.require("path")),
                                              bool(request.get("out", True)))
                 app.local_index.soon()
+            # THE LEARNING LIST (learning/items.py) and every lesson in it.
+            elif action in ("activate", "deactivate"):
+                learning.set_active(str(request.require("unit")), action == "activate")
+            elif action == "delete":
+                learning.delete(str(request.require("unit")))
+                app.local_index.soon()
+            elif action in ("accept", "reject"):
+                (learning.accept if action == "accept" else learning.reject)(
+                    str(request.require("item")))
+            elif action == "never_off":
+                if not learning.items.take_off_never(str(request.require("key"))):
+                    raise ApiError("it is not on the list of what is never learned")
+                learning.places._found = None
+            elif action == "draft":
+                handed = {key: request.get(key) for key in ("kind", "source", "text", "window")}
+                return {"draft": learning.planner.start(handed)}
+            elif action == "item_add":
+                plan = request.require("plan")
+                if not isinstance(plan, dict):
+                    raise ApiError("a plan is an object")
+                said = learning.add_item(plan, "you", bool(request.get("learn_now")))
+                return dict(learning_status(request), added=said["item"],
+                            note=said.get("note", ""))
+            elif action == "item_change":
+                plan = request.require("plan")
+                if not isinstance(plan, dict):
+                    raise ApiError("a plan is an object")
+                learning.items.change(str(request.require("item")), plan)
             else:
-                raise ApiError("action is update, pause, continue, auto, add, remove or "
-                               "exclude")
+                raise ApiError("action is update, pause, continue, auto, add, remove, exclude, "
+                               "activate, deactivate, delete, accept, reject, never_off, draft, "
+                               "item_add or item_change")
         except ValueError as exc:
             raise ApiError(str(exc))
         return learning_status(request)
@@ -1564,7 +1645,8 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         said = app.work.start(unit, str(request.get("instruction") or ""),
                               limits=request.get("limits") or {},
                               packages=request.get("packages"),
-                              sound=request.get("sound"))
+                              sound=request.get("sound"),
+                              **({"unconfined": True} if request.get("unconfined") else {}))
         if said.get("error"):
             raise ApiError(said["error"], 409)
         return said
@@ -1585,7 +1667,9 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             source=str(request.get("source") or "delegate"),
             # The instruction already typed (Experience's box): what the
             # Delegate work box opens with, to change before Create.
-            options={k: request.get(k) for k in ("limits", "packages", "sound", "instruction")
+            # A to-do handed over: its id, for what came of it (`of_todos`).
+            options={k: request.get(k) for k in ("limits", "packages", "sound", "instruction",
+                                                 "unconfined", "todo")
                      if request.get(k) is not None},
             write_first=bool(request.get("write_first", True)))
         return {"draft": draft}
@@ -1624,8 +1708,13 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     @route("POST", "/api/work/drafts/start")
     def work_draft_start(request: Any) -> Any:
         """Started with the plan as the user left it."""
-        said = app.drafts.start(str(request.require("id")), plan=request.get("plan"),
-                                folders=request.get("folders"))
+        # The settings as the box shows them - limits, packages, sound,
+        # without the sandbox - over those it was opened with.
+        # ANSWERED AT ONCE: the work is set going apart, and the page asks
+        # the draft how it went (`start_apart`).
+        said = app.drafts.start_apart(str(request.require("id")), plan=request.get("plan"),
+                                      folders=request.get("folders"),
+                                      options=request.get("options") or {})
         if said.get("error"):
             raise ApiError(said["error"], 409)
         return said
@@ -1645,6 +1734,31 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         image.save(out, format="PNG")
         return {"png": "data:image/png;base64," + base64.b64encode(out.getvalue()).decode(),
                 "name": app.avatar_name()}
+
+    @route("POST", "/api/work/drafts/save")
+    def work_draft_save(request: Any) -> Any:
+        """Save as draft: the box kept as it is, to start later."""
+        said = app.drafts.save(str(request.require("id")),
+                               instruction=request.get("instruction"),
+                               plan=request.get("plan"), folders=request.get("folders"),
+                               options=request.get("options") or {})
+        if said.get("error"):
+            raise ApiError(said["error"], 409)
+        return said
+
+    @route("POST", "/api/work/drafts/remove")
+    def work_draft_remove(request: Any) -> Any:
+        """A draft, or a work's result, removed as the user confirmed: not
+        shown again; its files kept."""
+        said = app.drafts.remove(str(request.require("id")))
+        if said.get("error"):
+            raise ApiError(said["error"], 409)
+        return said
+
+    @route("GET", "/api/work/drafts/saved")
+    def work_drafts_saved(_request: Any) -> Any:
+        """The drafts saved and not started, for Work's list of them."""
+        return {"drafts": app.drafts.saved()}
 
     @route("POST", "/api/work/drafts/cancel")
     def work_draft_cancel(request: Any) -> Any:
@@ -1677,7 +1791,8 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         unit = experience.unit(unit_id)
         said = app.work.start(unit, instruction, limits=request.get("limits") or {},
                               packages=request.get("packages"),
-                              sound=request.get("sound"))
+                              sound=request.get("sound"),
+                              **({"unconfined": True} if request.get("unconfined") else {}))
         if said.get("error"):
             raise ApiError(said["error"], 409)
         return dict(said, unit=unit_id)
@@ -1797,7 +1912,25 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                                      from_version=str(request.get("from_version") or ""),
                                      instruction=str(request.get("instruction") or "")
                                      .strip()[:INSTRUCTION_CHARS],
-                                     sound=request.get("sound"))
+                                     sound=request.get("sound"),
+                                     **({"unconfined": True} if request.get("unconfined") else {}))
+        if said.get("error"):
+            raise ApiError(said["error"], 409)
+        return said
+
+    @route("POST", "/api/work/thorough")
+    def work_thorough(request: Any) -> Any:
+        """CONTINUE THOROUGHLY: a quick run's work carried on the thorough
+        way - a builder and a reviewer - from what it made."""
+        run = app.work.run(str(request.require("run")))
+        if run is None:
+            raise ApiError("no such run", 404)
+        unit = app.state_heartbeat.experience.unit(run["unit_id"])
+        if unit is None:
+            raise ApiError("its project is gone", 404)
+        said = app.work.thorough(run["id"], unit, limits=request.get("limits") or {},
+                                 packages=request.get("packages"), sound=request.get("sound"),
+                                 **({"unconfined": True} if request.get("unconfined") else {}))
         if said.get("error"):
             raise ApiError(said["error"], 409)
         return said
@@ -1916,12 +2049,24 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     def work_reveal(request: Any) -> Any:
         """Show where a deliverable is, in the machine's own file manager.
         Only a file of the run's folders."""
+        import os
         import subprocess
         import sys
+        from ..agent.work.delegate import runs_as_program
         found = app.work.readable_by(str(request.require("run")),
                                      str(request.require("path")))
         if found is None:
             raise ApiError("not a file of this run", 404)
+        # OPENED, asked (a to-do's "Open the result"): a folder, or a file in
+        # the program it is opened with - never one that would run as a
+        # program itself, which is shown in its folder instead.
+        if request.get("open") and (found.is_dir() or not runs_as_program(found)):
+            if sys.platform.startswith("win"):
+                os.startfile(str(found))                    # type: ignore[attr-defined]
+            else:
+                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open",
+                                  str(found)])
+            return {"opened": str(found)}
         if sys.platform.startswith("win"):
             subprocess.Popen(["explorer", f"/select,{found}"])
         elif sys.platform == "darwin":
@@ -1946,7 +2091,82 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
 
     @route("GET", "/api/work/runs")
     def work_runs(request: Any) -> Any:
-        return {"runs": app.work.runs(str(request.get("unit") or ""))}
+        runs = app.work.runs(str(request.get("unit") or ""))
+        # WHAT EACH HANDS TO THE USER, with how it is opened for them - in
+        # their mail, their calendar, their own browser (handed.py).
+        from ..agent.work import handed
+        place = None
+        for run in runs:
+            items = (run.get("plan") or {}).get("handed") or []
+            if items and place is None:
+                place = handed.where(app.config, app.db)
+            run["handed"] = [dict(one, actions=handed.actions(one, place)) for one in items]
+        return {"runs": runs}
+
+    @route("POST", "/api/work/folders/held")
+    def work_folders_held(request: Any) -> Any:
+        """WHETHER THESE FOLDERS ARE FREE (the user, 2026-10-26): one piece of
+        work at a time in a folder - the folders a box would start work in
+        (and its project's own), and the work in one of them now, if any."""
+        paths = [str(one) for one in (request.get("paths") or []) if str(one).strip()]
+        unit = str(request.get("unit") or "")
+        if unit:
+            paths += app.work.folders(unit)
+        held = app.work.folder_in_use(paths, unit)
+        return {"held": held, "said": app.work.folder_said(held) if held else ""}
+
+    @route("POST", "/api/work/handed/open")
+    def work_handed_open(request: Any) -> Any:
+        """WHAT A RUN HANDED TO THE USER, opened for them: an email or an
+        event as a page filled in, in their own browser - where they are
+        signed in - or their mail or calendar program; a file in the program
+        it opens with, a folder. Only what that run handed over, and nothing
+        sent, saved or submitted."""
+        import os
+        import subprocess
+        import sys
+        import webbrowser
+        from ..agent.work import handed
+        from ..agent.work.delegate import runs_as_program
+        run = app.work.run(str(request.require("run")))
+        if run is None:
+            raise ApiError("no such run", 404)
+        items = (run.get("plan") or {}).get("handed") or []
+        at = request.int_param("n", 0)
+        if not 0 <= at < len(items):
+            raise ApiError("it handed over no such thing", 404)
+        item = items[at]
+        acts = handed.actions(item, handed.where(app.config, app.db))
+
+        def start(target: str) -> None:
+            if sys.platform.startswith("win"):
+                os.startfile(target)                        # type: ignore[attr-defined]
+            else:
+                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", target])
+        if acts.get("open"):
+            # The user's own browser (or mail program, for mailto:) - not
+            # this application's window, where they are signed in nowhere.
+            if not webbrowser.open(acts["open"]):
+                start(acts["open"])
+            return {"opened": item["kind"], "whole": acts.get("whole", True)}
+        if acts.get("ics"):
+            folder = app.paths.data_dir / "handed"
+            folder.mkdir(parents=True, exist_ok=True)
+            file = folder / f"{run['id']}-{at}.ics"
+            file.write_text(handed.ics(item), encoding="utf-8", newline="")
+            start(str(file))
+            return {"opened": "event", "file": str(file)}
+        if acts.get("path"):
+            found = app.work.readable_by(run["id"], acts["path"])
+            if found is None:
+                raise ApiError("it is no longer there", 404)
+            if found.is_dir() or not runs_as_program(found):
+                start(str(found))
+                return {"opened": str(found)}
+            if sys.platform.startswith("win"):
+                subprocess.Popen(["explorer", f"/select,{found}"])
+            return {"shown": str(found)}
+        raise ApiError("there is nothing to open: copy it", 409)
 
     # -- the Experience debugger: the same work done three ways ---------------
     # Its projects are never the user's - never in Experience - and each way
@@ -2138,7 +2358,7 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         names = {one["unit_id"]: one["name"]
                  for one in experience.store.workspaces() if one.get("name")}
         try:
-            names.update({one["id"]: one["name"] for one in experience.units()})
+            names.update({one["id"]: one["name"] for one in experience.units(leisure=True)})
         except Exception:        # pragma: no cover - names are a nicety
             pass
         units: Dict[str, Any] = {}
@@ -2350,6 +2570,23 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     @route("GET", "/api/listener")
     def listener(_request: Any) -> Any:
         return app.listener.health()
+
+    @route("GET", "/api/debugger/listener/wechat/conversations")
+    def wechat_conversations(request: Any) -> Any:
+        from ..debugger.listener import _safe
+        return _safe(app.raw_store.wechat.list_conversations(request.int_param('limit',30)))
+
+    @route("GET", "/api/debugger/listener/wechat/conversation")
+    def wechat_conversation(request: Any) -> Any:
+        try:
+            result = app.raw_store.wechat.conversation(str(request.require('id')),
+                        request.int_param('limit',200), request.get('before'))
+        except ValueError as exc:
+            raise ApiError(str(exc),400)
+        if result is None:
+            raise ApiError('No such captured WeChat conversation',404)
+        from ..debugger.listener import _safe
+        return _safe(result)
 
     @route("GET", "/api/events")
     def events(request: Any) -> Any:
@@ -2784,8 +3021,15 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
 
     @route("GET", "/api/todos")
     def todos(_request: Any) -> Any:
-        """The to-do list the Overview shows beside the progress bars."""
-        return {"todos": app.todos.shown()}
+        """The to-do list the Overview shows beside the progress bars - each
+        handed over with what came of it (`work`)."""
+        try:
+            came = app.drafts.of_todos()
+        except Exception:        # pragma: no cover - the list shows without it
+            log.debug("what came of the to-dos could not be read", exc_info=True)
+            came = {}
+        return {"todos": [dict(one, work=came[one["id"]]) if one.get("id") in came else one
+                          for one in app.todos.shown()]}
 
     @route("POST", "/api/todos/tick")
     def todos_tick(request: Any) -> Any:
@@ -2908,6 +3152,15 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         return {"id": module_id,
                 "monitoring": app.observability_service.monitoring_enabled,
                 "detail": detail_for(app, module_id, options)}
+
+    @route("GET", "/api/debugger/listener")
+    def debugger_listener(request: Any) -> Any:
+        from ..debugger.listener import snapshot
+
+        return snapshot(app, hours=request.int_param("hours", 24),
+                        application=str(request.get("application") or "")[:300],
+                        source=str(request.get("source") or "")[:100],
+                        limit=request.int_param("limit", 30))
 
     @route("POST", "/api/debugger/monitoring")
     def debugger_monitoring(request: Any) -> Any:

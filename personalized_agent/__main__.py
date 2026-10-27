@@ -236,6 +236,64 @@ def _delegate(root: Path | None, path: str) -> int:
     return 0
 
 
+def _learn(root: Path | None, path: str) -> int:
+    """`--learn PATH`: what was right-clicked in Explorer, handed to the
+    agent's learning (learning/plan.py) - started first if it is not running
+    - and the Learn box opened on it, in a window of its own."""
+    from .agent.work.handover import gathered, hand_over
+    from .common.paths import AppPaths, resolve_root
+    paths = AppPaths.create(resolve_root(root))
+    ident, mine = hand_over(paths.data_dir, path)
+    if not mine:
+        return 0                               # one of several chosen together
+    gathered(paths.data_dir, ident)
+    return _open_solo(root, f"/?solo=learn&learn_inbox={ident}")
+
+
+def _open_solo(root: Path | None, fragment: str) -> int:
+    """The page, signed in, in a window of its own - the agent started first
+    if it is not running."""
+    import time
+    import urllib.error
+    import urllib.request
+
+    from .api.access import ApiAccess, key_file_for
+    from .common.instance import AlreadyRunning, SingleInstance
+    from .common.paths import AppPaths, resolve_root
+    from .platform_layer.autostart import launch_command
+    paths = AppPaths.create(resolve_root(root))
+    try:
+        values = json.loads(paths.settings_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        values = {}
+    values = values if isinstance(values, dict) else {}
+    base = f"http://{values.get('api_host') or '127.0.0.1'}:{values.get('api_port') or 8756}"
+    try:
+        SingleInstance(resolve_root(root)).acquire().release()
+        running = False
+    except AlreadyRunning:
+        running = True
+    if not running:
+        import subprocess
+        subprocess.Popen(launch_command(root), close_fds=True,
+                         creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
+                         | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            try:
+                urllib.request.urlopen(base + "/", timeout=2)
+                break
+            except urllib.error.HTTPError:
+                break                          # it answers: it is up
+            except Exception:
+                time.sleep(1)
+    access = ApiAccess(key_file_for(paths.credentials_dir))
+    from .platform_layer import app_window
+    app_window.open_page(access.sign_in_url(base, fragment, LONG_TICKET_SECONDS),
+                         paths.data_dir / app_window.PROFILE)
+    return 0
+
+
 def _set_explorer_menu(root: Path | None, on: bool) -> int:
     """`--explorer-menu on|off`: Explorer's "Delegate work" put in place or
     taken out (the uninstaller takes it out)."""
@@ -352,6 +410,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--updates", choices=("install", "ask", "off"), default=None,
                         help="how new versions are taken - installed by themselves, "
                              "asked first, or not looked for; then exit (the installer)")
+    parser.add_argument("--learn", metavar="PATH", default=None,
+                        help="add a file or folder to the learning (Explorer's 'Add to learning')")
     parser.add_argument("--delegate", metavar="PATH", default=None,
                         help="hand a file or folder to the agent as a piece of work "
                              "(Explorer's \"Delegate work\"): it opens on its plan")
@@ -373,6 +433,8 @@ def main(argv: list[str] | None = None) -> int:
         return _set_updates(args.root or args.data_dir, args.updates)
     if args.delegate is not None:
         return _delegate(args.root or args.data_dir, args.delegate)
+    if args.learn is not None:
+        return _learn(args.root or args.data_dir, args.learn)
     if args.explorer_menu:
         return _set_explorer_menu(args.root or args.data_dir, args.explorer_menu == "on")
 

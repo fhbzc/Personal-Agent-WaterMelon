@@ -183,7 +183,18 @@ class AssistantProvider(ListenerProvider):
         if thread is not None:
             thread.join(timeout=STOPPING_GRACE_SECONDS)
 
+    #: QUIET AT START (measured 2026-10-26): the first pass reads every
+    #: session there is, and it took the interpreter from the desktop window
+    #: as the application came up. Where recording starts from is fixed at
+    #: once - a look at each file's size - and the pass waits this long.
+    QUIET_AT_START = 60.0
+
     def _loop(self) -> None:
+        if self.QUIET_AT_START > 0:
+            self._skip_to_end()
+            self._primed = True
+            if self._stop.wait(self.QUIET_AT_START):
+                return
         while not self._stop.is_set():
             try:
                 self.poll()

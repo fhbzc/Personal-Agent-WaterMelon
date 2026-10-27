@@ -37,10 +37,27 @@ def _away(application: str) -> bool:
 class RawStore:
     def __init__(self, db: Database) -> None:
         self.db = db
+        from .wechat_store import WechatStore
+        self.wechat = WechatStore(db)
 
     # -- raw events ---------------------------------------------------------
-    def add_event(self, event: ListenerEvent) -> ListenerEvent:
-        self.db.execute(
+    def add_event(self, event: ListenerEvent) -> Optional[ListenerEvent]:
+        with self.db.write() as conn:
+            capture_id = None
+            if event.source == 'screen' and event.event_type == 'screen.text' and isinstance(event.data.get('wechat_capture'), dict):
+                prepared = self.wechat.ingest(conn,event)
+                if prepared is None:
+                    return None
+                event,capture_id = prepared
+            self._insert_event(conn,event)
+            if capture_id:
+                conn.execute('UPDATE listener_wechat_captures SET source_event_id=? WHERE id=?',(event.id,capture_id))
+                conn.execute('UPDATE listener_wechat_observations SET source_event_id=? WHERE id=?',(event.id,capture_id))
+        return event
+
+    @staticmethod
+    def _insert_event(conn, event):
+        conn.execute(
             """
             INSERT OR REPLACE INTO raw_events
                 (id, event_type, source, timestamp, application, data, metadata)
@@ -56,9 +73,10 @@ class RawStore:
                 json_dump(event.metadata),
             ),
         )
-        return event
 
     def add_events(self, events: List[ListenerEvent]) -> int:
+        if any(isinstance(e.data.get('wechat_capture'), dict) for e in events):
+            return sum(self.add_event(event) is not None for event in events)
         rows = [
             (
                 e.id, e.event_type, e.source, iso(e.timestamp), e.application,
@@ -213,6 +231,8 @@ class RawStore:
                 if count:
                     conn.execute(f"DELETE FROM {table} WHERE timestamp < ?", (cutoff,))
             removed[table.replace("raw_", "")] = count
+        with self.db.write() as conn:
+            removed.update({k:v for k,v in self.wechat.prune(conn,cutoff).items() if v})
         if any(removed.values()):
             log.info("pruned raw activity older than %d days: %s", keep_days, removed)
         return removed

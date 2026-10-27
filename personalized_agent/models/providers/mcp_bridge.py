@@ -54,10 +54,16 @@ class ToolBridge:
     """One call's tools, served while it lasts. Use as a context manager."""
 
     def __init__(self, tools: List[Any], runner: Callable[[str, Dict[str, Any]], Any],
-                 guard: Any = None) -> None:
+                 guard: Any = None,
+                 checks: Optional[Callable[[Dict[str, Any]], Optional[Dict[str, Any]]]] = None
+                 ) -> None:
         self.tools = {str(one.name): one for one in tools or []}
         self.runner = runner
         self.guard = guard
+        #: WITHOUT THE SANDBOX: the agent's check of the client's own tools
+        #: (agent/work/unconfined.py, `hook`) - asked before each command and
+        #: file it touches; its answer, or None to leave it to the client.
+        self.checks = checks
         self.secret = secrets.token_urlsafe(32)
         self.calls: List[Dict[str, Any]] = []
         self._busy = 0
@@ -96,7 +102,8 @@ class ToolBridge:
                 except (ValueError, OSError):
                     self._empty(400)
                     return
-                hook = bridge.guard is not None and bridge._ours(self.path, "hook")
+                hook = (bridge.guard is not None or bridge.checks is not None) \
+                    and bridge._ours(self.path, "hook")
                 if not hook and not bridge._ours(self.path):
                     self._empty(404)
                     return
@@ -179,18 +186,38 @@ class ToolBridge:
             parts = [sys.executable, str(hook), self.hook_url]
         return " ".join('"' + str(one).replace("\\", "/") + '"' for one in parts)
 
-    def hook_settings(self) -> Dict[str, Any]:
+    def hook_settings(self, unconfined: bool = False, web: bool = True) -> Dict[str, Any]:
         """The client's settings for this call: the hook before and after its
-        WebSearch and WebFetch."""
-        entry = [{"matcher": "WebFetch|WebSearch",
-                  "hooks": [{"type": "command", "command": self.hook_command(),
-                             "timeout": 30}]}]
-        return {"hooks": {"PreToolUse": entry, "PostToolUse": entry}}
+        WebSearch and WebFetch - and, without the sandbox, before each of its
+        commands and file tools (`checks`)."""
+        hook = [{"type": "command", "command": self.hook_command(), "timeout": 30}]
+        entry = [{"matcher": "WebFetch|WebSearch", "hooks": hook}] if web else []
+        before = list(entry)
+        if unconfined:
+            from ...agent.work.unconfined import HOOKED
+            before.append({"matcher": "|".join(HOOKED), "hooks": hook})
+        settings: Dict[str, Any] = {"hooks": {"PreToolUse": before}}
+        if entry:
+            settings["hooks"]["PostToolUse"] = entry
+        return settings
 
     def _hook(self, body: Any) -> Dict[str, Any]:
         self.last_activity = time.monotonic()
         if not isinstance(body, dict):
             return {}
+        if str(body.get("tool_name") or "") not in ("WebFetch", "WebSearch") \
+                or self.guard is None:
+            if self.checks is None:
+                return {}
+            try:
+                return self.checks(body) or {}
+            except Exception as exc:          # pragma: no cover - refused then
+                log.warning("the check of a client's tool failed: %s", exc)
+                if body.get("hook_event_name") == "PreToolUse":
+                    return {"hookSpecificOutput": {
+                        "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                        "permissionDecisionReason": f"the check failed: {exc}"}}
+                return {}
         try:
             return self.guard.hook(body)
         except Exception as exc:              # pragma: no cover - refused then
@@ -219,7 +246,11 @@ class ToolBridge:
             result = {}
         elif method == "tools/list":
             result = {"tools": [{"name": name, "description": str(one.description or ""),
-                                 "inputSchema": one.input_schema or {"type": "object"}}
+                                 "inputSchema": one.input_schema or {"type": "object"},
+                                 # A tool that only reads, said so: a client may
+                                 # call several side by side.
+                                 **({"annotations": {"readOnlyHint": True}}
+                                    if getattr(one, "read_only", False) else {})}
                                 for name, one in self.tools.items()]}
         elif method == "tools/call":
             result = self._call(str(params.get("name") or ""), params.get("arguments") or {})
@@ -235,8 +266,15 @@ class ToolBridge:
             with self._lock:
                 self._busy += 1
             try:
-                with self._serial:
+                # A tool that only reads goes beside others: the tools that
+                # run it keep it within the computer's limits (a work run's
+                # gate, agent/work/parallel.py). Any other, one at a time.
+                if getattr(self.tools[name], "read_only", False):
                     said = self.runner(name, arguments if isinstance(arguments, dict) else {})
+                else:
+                    with self._serial:
+                        said = self.runner(name, arguments if isinstance(arguments, dict)
+                                           else {})
             except Exception as exc:          # the tool's failure is the model's to read
                 log.warning("a tool called through MCP failed", exc_info=True)
                 said = {"error": f"{type(exc).__name__}: {exc}"}

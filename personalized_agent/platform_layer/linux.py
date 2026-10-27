@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from ..common import children
 from .base import (
@@ -95,6 +95,26 @@ class LinuxActivityProvider(PlatformActivityProvider):
     def get_active_application(self) -> Optional[str]:
         return self.get_active_window().application
 
+    # -- WeChat's messages: the one window read on Linux (linux_wechat.py) --
+    def text_in_front_allowed(self, allowed) -> Optional[Any]:
+        from .linux_wechat import wechat_in_front
+        try:
+            got = wechat_in_front(self, allowed)
+            self._window_text_error = ""
+            return got
+        except Exception as exc:
+            self._window_text_error = str(exc)[:200]
+            log.debug("could not read WeChat", exc_info=True)
+            return None
+
+    @property
+    def window_text_error(self) -> str:
+        return getattr(self, "_window_text_error", "")
+
+    def can_read_wechat(self) -> bool:
+        from .linux_wechat import rapid_available
+        return bool(self._xdotool) and rapid_available()
+
     def get_browser_history_paths(self) -> Dict[str, Path]:
         home = Path.home()
         candidates = {
@@ -169,4 +189,7 @@ class LinuxPlatform(Platform):
             process_isolation=self.sandbox.isolation_name in ("bubblewrap", "landlock"),
             native_notifications=self.notifications.available,
             process_info=psutil is not None,
+            # WeChat's window only, read from its picture (linux_wechat.py).
+            window_text=self.activity.can_read_wechat(),
+            extra={"window_text_only": "WeChat"},
         )

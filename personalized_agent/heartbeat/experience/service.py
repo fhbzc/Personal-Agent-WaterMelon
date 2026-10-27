@@ -88,6 +88,15 @@ def _specific(folder: str, unit: Dict[str, Any], every_unit: List[Dict[str, Any]
 
 
 
+def is_leisure(unit: Dict[str, Any]) -> bool:
+    """A unit whose tasks are all of leisure (their `kind`, as the Overview
+    reads a project's); a folder or a project the user made has none, and
+    is work."""
+    tasks = unit.get("tasks") or []
+    return bool(tasks) and all(
+        (getattr(task, "described", None) or {}).get("kind") == "leisure" for task in tasks)
+
+
 def _moment_key(text: str) -> float:
     """When, as a number to sort by - 0 for never."""
     from datetime import datetime, timezone
@@ -1302,11 +1311,17 @@ class Experience:
             self.stop_learning(unit_id)
 
     # -- for the panel ---------------------------------------------------------------
-    def units(self) -> List[Dict[str, Any]]:
+    def units(self, leisure: bool = False) -> List[Dict[str, Any]]:
+        """Work's projects. NOT A PASTIME (`leisure=False`): one whose tasks
+        are all of leisure - the Overview's "Leisure" - is no work to be
+        done; it is left out unless asked for (a name looked up)."""
         live, _retired, projects = self._work(retired=False)
         writer = self.stages_writer()
+        ran = self._last_runs()
         out = []
         for unit in self._shown_units(writer, live, projects):
+            if not leisure and is_leisure(unit):
+                continue
             from .stages import unit_task_ids
             ids = unit_task_ids(unit)
             held = self.store.workspace(unit["id"]) or {}
@@ -1314,6 +1329,8 @@ class Experience:
                         "names_before": list(unit.get("names_before") or []),
                         # At work now, found from what the user is doing.
                         "active": bool(unit.get("active")),
+                        # Work the user handed over (Delegate work).
+                        "delegated": bool(unit.get("delegated")),
                         # Its learning: learned or not, and what it has cost.
                         "learning": self.learning_of(unit["id"]),
                         # Updated by itself at the times chosen, or not.
@@ -1333,15 +1350,36 @@ class Experience:
                                   for task in unit["tasks"]],
                         # When something last changed in it: the newest state
                         # of any of its tasks - or, a folder of the user's,
-                        # how far it has been read.
+                        # how far it has been read - or THE AGENT'S WORK ON IT,
+                        # its latest run: work just delegated is at the top.
                         "last_active": max([str(getattr(task, "last_seen", "") or "")
                                             for task in unit["tasks"]]
-                                           + [str(held.get("processed_until") or "")]),
+                                           + [str(held.get("processed_until") or ""),
+                                              (ran.get(unit["id"]) or {}).get("last", "")],
+                                             key=_moment_key),
+                        # How its latest run was done: "quick" or "full".
+                        "way": (ran.get(unit["id"]) or {}).get("way", ""),
                         "pending": len(writer.pending(unit)) if unit.get("tasks") else 0})
         # THE MOST LATELY ACTIVE FIRST: what last changed is at the top; one
         # never active at the bottom, the most learned of those first.
         out.sort(key=lambda unit: (_moment_key(unit["last_active"]), unit["stages"]),
                  reverse=True)
+        return out
+
+    def _last_runs(self) -> Dict[str, Dict[str, str]]:
+        """Each work's runs: when the latest last moved, and the way it was
+        done (quick or full) - unit id -> {"last", "way"}."""
+        try:
+            rows = self.db.query(
+                "SELECT unit_id, COALESCE(NULLIF(updated_at, ''), started_at) AS last, "
+                "json_extract(plan, '$.way') AS way FROM work_runs ORDER BY started_at")
+        except Exception:                 # pragma: no cover - a database without runs
+            return {}
+        out: Dict[str, Dict[str, str]] = {}
+        for row in rows:
+            held = out.setdefault(row["unit_id"], {"last": "", "way": ""})
+            held["last"] = max([held["last"], str(row["last"] or "")], key=_moment_key)
+            held["way"] = str(row["way"] or "")
         return out
 
     def unit(self, unit_id: str) -> Optional[Dict[str, Any]]:
