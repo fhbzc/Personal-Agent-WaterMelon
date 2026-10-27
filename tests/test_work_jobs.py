@@ -126,19 +126,18 @@ class JobsTests(_Base):
                 for _ in range(tools_module.MOST_JOBS)]
         self.assertTrue(all(one.get("job") for one in jobs), jobs)
         status = lambda one: self.tools.call("job_status", {"job": one["job"]})["status"]
-        before = [status(one) for one in jobs]
+        # A job of a minute that is not running a moment later did not start,
+        # or failed: never taken for a slow machine - said with why (CI,
+        # 2026-10-27: one had ended, and nothing told why).
+        ended = {one["job"]: {key: str(value)[:600] for key, value in
+                              (self.tools.jobs[one["job"]].get("result") or {}).items()
+                              if key in ("ok", "error", "stderr", "returncode", "timed_out")}
+                 for one in jobs if status(one) != "running"}
+        self.assertEqual(ended, {}, "a job ended at once - why it ended")
         refused = self.tools.call("run_python", {"background": True, "code": "print(1)"})
-        if set(before) == {"running"}:
-            self.assertIn("jobs are running already", refused.get("error", ""), refused)
-        else:
-            # A job ended already (a slow machine: CI, 2026-10-27): the rule
-            # itself - never more than so many running at once - still holds.
-            started = jobs + ([refused] if refused.get("job") else [])
-            self.assertLessEqual(sum(status(one) == "running" for one in started),
-                                 tools_module.MOST_JOBS, before)
+        self.assertIn("jobs are running already", refused.get("error", ""), refused)
         self.tools.stop_jobs()
-        self.assertEqual({status(one) for one, was in zip(jobs, before) if was == "running"},
-                         {"stopped"})
+        self.assertEqual({status(one) for one in jobs}, {"stopped"})
 
     def test_not_among_the_slides_tools(self) -> None:
         self.tools.only = ("run_python", "read_file")
