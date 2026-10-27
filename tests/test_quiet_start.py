@@ -22,7 +22,8 @@ class QuietAtStartTests(unittest.TestCase):
             began = time.monotonic()
             provider._loop()
         self.assertTrue(skipped.called and provider._primed, "where it starts from: now")
-        self.assertGreaterEqual(time.monotonic() - began, 0.3, "the heavy pass waited")
+        # Windows' clock ticks every 15 ms or so (CI, 2026-10-27: 0.296 s).
+        self.assertGreaterEqual(time.monotonic() - began, 0.25, "the heavy pass waited")
         self.assertEqual(provider.poll.call_count, 1)
 
     def test_stopped_while_quiet_reads_nothing(self) -> None:
@@ -43,7 +44,7 @@ class QuietAtStartTests(unittest.TestCase):
         provider._ask_the_desktop = mock.Mock(side_effect=lambda: provider._stop.set())
         began = time.monotonic()
         provider._watch_what_they_opened()
-        self.assertGreaterEqual(time.monotonic() - began, 0.2)
+        self.assertGreaterEqual(time.monotonic() - began, 0.15, "it waited")
         provider._ask_the_desktop.assert_called_once()
 
 
