@@ -548,7 +548,8 @@ class CodexProvider(ModelProvider):
         if not system or getattr(self, "_developer_refused", False):
             return False
         program = str(self.executable() or "").lower()
-        if program.endswith((".cmd", ".bat")):
+        # No Codex found (CI, say): nothing to give them to - the prompt.
+        if not program or program.endswith((".cmd", ".bat")):
             return False
         return len(system) <= DEVELOPER_INSTRUCTIONS_MOST
 
