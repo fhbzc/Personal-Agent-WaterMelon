@@ -67,6 +67,7 @@ What this application has - each its own thing, never taken for another:
   user saw them. The agent never contacts anyone.
 - Notifications: `notify_user` tells the user now; for later, `schedule_task`
   with notify="notify".
+- The web: search it and read public pages, to answer from what is there now.
 You act only through the tools offered here. For anything above you have no
 tool for, say where it is in the application - never that you did it.
 
@@ -82,6 +83,23 @@ Putting something on the calendar:
 {now}
 Workspace: {workspace}
 """
+
+#: THE WEB, FOR CHAT (the user, 2026-10-27): the app's search and page reader.
+#: A client with search of its own is never given web_search beside it
+#: (claude_code_provider, codex_provider); fetch_url reads a page as it is now.
+from ...models.base import ToolSpec as _ToolSpec
+CHAT_WEB_TOOLS = [
+    _ToolSpec("web_search", "Search the public web. Returns titles, addresses and "
+              "snippets. Public results only; nothing is signed in to.",
+              {"type": "object", "properties": {"query": {"type": "string"}},
+               "required": ["query"]}),
+    _ToolSpec("fetch_url", "Read a public http or https page as it is now, as text "
+              "with its links: an address found in a search, on a page read or in "
+              "the conversation - or one that carries nothing of the user's.",
+              {"type": "object", "properties": {"url": {"type": "string"}},
+               "required": ["url"]}),
+]
+CHAT_WEB_TOOL_NAMES = {one.name for one in CHAT_WEB_TOOLS}
 
 #: Added to the prompt when the older part of the conversation is summarised.
 EARLIER_IN_CONVERSATION = """
@@ -207,6 +225,11 @@ class AgentCore:
                 conversation_id, "assistant", result["answer"],
                 metadata={"task_id": result["task_id"],
                           "classification": result["classification"],
+                          # What it searched for and read, and which tools
+                          # it used - for the heartbeat beside the reply.
+                          "looked_up": result.get("looked_up") or [],
+                          "tools_used": sorted({one["tool"] for one in
+                                                result.get("tool_calls") or []}),
                           **({"origin": origin} if origin else {})},
             )
         result["conversation_id"] = conversation_id
@@ -438,8 +461,50 @@ class AgentCore:
         answer = ""
         classification = "immediate"
         error: Optional[str] = None
+        # THE WEB'S CHECKS FOR THIS TURN (runtime/web_guard), and what was
+        # looked up in it: what the user said and the conversation so far
+        # are theirs - the addresses in them exist, their words do not travel
+        # out in one. A client with search of its own is held to it through
+        # its hooks; the app's web tools ask it themselves.
+        import json as _json
+        from ...runtime.web_guard import WebGuard
+        guard = WebGuard()
+        guard.know(_json.dumps(messages, ensure_ascii=False, default=str), "user")
+        made = {"classification": classification, "iteration": 0}
+
+        def run_tool(name: str, arguments: Dict[str, Any], call_id: str = "") -> Any:
+            """ONE TOOL, RUN - by the client in the call (the checked route:
+            `tool_runner`) or here, from a call the model wrote out."""
+            iteration = made["iteration"]
+            arguments = arguments or {}
+            self._emit_debug(debug, "tool_call", {
+                "task_id": task_id, "trace_id": trace_id, "iteration": iteration,
+                "id": call_id, "name": name, "arguments": arguments})
+            self._step(task_id, f"Using {name}", _tool_summary(arguments))
+            # Not offered is not enough: a call written out by hand is
+            # still refused.
+            if name in withheld:
+                outcome: Any = {"error": f"{name} is not available to a scheduled run"}
+            elif name in CHAT_WEB_TOOL_NAMES:
+                outcome = self._web(guard, name, arguments)
+            else:
+                outcome = self._execute_tool(task_id, name,
+                                             self._placed(name, arguments, folder))
+            self._emit_debug(debug, "tool_result", {
+                "task_id": task_id, "trace_id": trace_id, "iteration": iteration,
+                "id": call_id, "name": name, "arguments": arguments,
+                "result": outcome,
+                "ok": not (isinstance(outcome, dict) and outcome.get("error"))})
+            self._step(task_id, f"{name} finished", result_to_text(outcome, 120))
+            tool_calls_made.append({"tool": name, "arguments": arguments,
+                                    "result": result_to_text(outcome, 400)})
+            if name == "schedule_task" and isinstance(outcome, dict) \
+                    and outcome.get("task_id"):
+                made["classification"] = "delayed"  # section 53
+            return outcome
 
         for iteration in range(self.max_tool_iterations):
+            made["iteration"] = iteration
             self._step(task_id, "Thinking",
                        f"{self._model_label()}"
                        + (f", step {iteration + 1}" if iteration else ""))
@@ -450,8 +515,15 @@ class AgentCore:
                 # not read.
                 native_read=unreadable_for(self.runtime.policy),
                 system=self._system_prompt(summary),
-                tools=[spec for spec in self.tools.specs
+                # The app's tools, and its web tools - which a client with
+                # search of its own is given only to read pages with.
+                tools=[spec for spec in [*self.tools.specs, *CHAT_WEB_TOOLS]
                        if spec.name not in withheld],
+                # ON THE CHECKED ROUTE (the user, 2026-10-27, Option A): a
+                # client that can runs the tools in the call, and its own
+                # search and reading are held to the web's checks.
+                tool_runner=lambda name, arguments: run_tool(name, arguments),
+                web_guard=guard,
                 max_tokens=int(self.config.get("max_output_tokens", 4096)),
                 task="agent_instruction",
                 language=in_display(),
@@ -517,31 +589,7 @@ class AgentCore:
                              "content": response.raw_content or response.text})
             results_block = []
             for call in response.tool_calls:
-                self._emit_debug(debug, "tool_call", {
-                    "task_id": task_id, "trace_id": trace_id, "iteration": iteration,
-                    "id": call.id, "name": call.name, "arguments": call.arguments})
-                self._step(task_id, f"Using {call.name}", _tool_summary(call.arguments))
-                # Not offered is not enough: a call written out by hand is
-                # still refused.
-                outcome = ({"error": f"{call.name} is not available to a "
-                                     "scheduled run"} if call.name in withheld
-                           else self._execute_tool(task_id, call.name,
-                                                   self._placed(call.name, call.arguments,
-                                                                folder)))
-                self._emit_debug(debug, "tool_result", {
-                    "task_id": task_id, "trace_id": trace_id, "iteration": iteration,
-                    "id": call.id, "name": call.name, "arguments": call.arguments,
-                    "result": outcome,
-                    "ok": not (isinstance(outcome, dict) and outcome.get("error"))})
-                self._step(task_id, f"{call.name} finished",
-                           result_to_text(outcome, 120))
-                tool_calls_made.append(
-                    {"tool": call.name, "arguments": call.arguments,
-                     "result": result_to_text(outcome, 400)}
-                )
-                if call.name == "schedule_task" and isinstance(outcome, dict) \
-                        and outcome.get("task_id"):
-                    classification = "delayed"  # section 53
+                outcome = run_tool(call.name, call.arguments, call.id)
                 # A picture it read goes as a picture (models/vision.py).
                 from ...models.vision import tool_content
                 results_block.append(
@@ -567,12 +615,17 @@ class AgentCore:
         if self.observability is not None:
             self.observability.task_finished(task_id, "error" if error else "completed",
                                              error or "")
+        classification = made["classification"]
         report = {
             "task_id": task_id,
             "trace_id": trace_id,
             "answer": answer,
             "classification": classification,
             "tool_calls": tool_calls_made,
+            # What it searched for and read, in order - by the app's tools or
+            # the client's own (the guard's record): kept with the reply, for
+            # the heartbeat to read beside it.
+            "looked_up": list(guard.looked),
             "error": error,
             "duration_seconds": round(
                 (datetime.now(timezone.utc) - started).total_seconds(), 2
@@ -581,6 +634,39 @@ class AgentCore:
         return report
 
     # -- tools --------------------------------------------------------------
+    @staticmethod
+    def _web(guard: Any, name: str, arguments: Dict[str, Any]) -> Any:
+        """The app's web search, or a page read - held to the web's checks
+        (runtime/web_guard), as Work's and Connections' are."""
+        import json as _json
+        import urllib.parse
+        from ..work.tools import fetch, search
+        if name == "web_search":
+            query = str(arguments.get("query") or "").strip()
+            if not query:
+                return {"error": "say what to search for"}
+            refused = guard.check_query(query)
+            if refused:
+                return {"error": refused}
+            said = search(query)
+            guard.know(_json.dumps(said, ensure_ascii=False, default=str), "web", "search")
+            guard.note("search", query)
+            return said
+        url = str(arguments.get("url") or "").strip()
+        refused = guard.check_address(url)
+        if refused:
+            return {"error": refused}
+        said = fetch(url)
+        if isinstance(said, dict):
+            guard.know(" ".join([str(said.get("url") or url), str(said.get("text") or "")]
+                                + [str(one) for one in said.get("links") or []]),
+                       "web", urllib.parse.urlsplit(url).netloc)
+            if not said.get("error"):
+                guard.note("read", url)
+            if isinstance(said.get("text"), str):
+                said = dict(said, text=said["text"][:12000])
+        return said
+
     @staticmethod
     def _placed(name: str, arguments: Dict[str, Any],
                 folder: Optional[ConversationFolder]) -> Dict[str, Any]:

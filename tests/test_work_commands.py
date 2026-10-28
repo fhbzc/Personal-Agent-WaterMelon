@@ -401,8 +401,9 @@ class FetchedOutsideTests(_WithTools):
     def test_the_tools_open_only_an_address_that_exists(self) -> None:
         for tool in ("download", "git_fetch"):
             with self.subTest(tool=tool):
-                said = self.tools.call(tool, {"url": "https://made-up.example/x"})
-                self.assertIn("did not come from a search", said["error"])
+                # Made up with a query: refused before anything is sent.
+                said = self.tools.call(tool, {"url": "https://made-up.example/x?k=1"})
+                self.assertIn("query", said["error"])
         self.tools.know_addresses("see https://github.example/me/repo", "web",
                                   "github.example")
         with mock.patch.object(fetching, "git_clone",

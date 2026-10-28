@@ -74,9 +74,14 @@ class NothingReadLeavesInAnAddressTests(unittest.TestCase):
             {"url": "https://papers.example.org/abs/2510.00001?x=draft"}))
 
     def test_a_sites_front_page_is_opened_once_the_site_is_known(self) -> None:
-        self.assertIn("error", self.tools.fetch_url({"url": "https://census-api.example.org/"}))
+        # A site's front page, seen or not (since 2026-10-27 a short address
+        # made up on any site may be opened - a few on each, a few sites).
+        self.assertNotIn("error", self.tools.fetch_url({"url": "https://census-api.example.org/"}))
         self.tools.web_search({"query": "census api"})
         self.assertNotIn("error", self.tools.fetch_url({"url": "https://census-api.example.org/"}))
+        # Not with a query: that is where a page could be sent what was read.
+        self.assertIn("query", self.tools.fetch_url(
+            {"url": "https://unseen.example.org/?q=census"})["error"])
         # A made-up path on it is not a front page: refused when it carries
         # the user's own words (a short one without them may be opened - the
         # wider checks, section 119 as amended 2026-10-18).

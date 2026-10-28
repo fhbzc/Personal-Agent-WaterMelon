@@ -5,6 +5,7 @@ and showed it there."""
 
 from __future__ import annotations
 
+import sys
 import unittest
 from unittest import mock
 
@@ -78,7 +79,8 @@ class PutBackOnAScreenTests(unittest.TestCase):
     def test_show_puts_it_back_and_the_menu_follows(self) -> None:
         window = _Window(5200, 900)
         agent = _desktop(window)
-        with mock.patch.object(desktop_module, "_on_a_screen", return_value=False):
+        with mock.patch.object(desktop_module.sys, "platform", "win32"), \
+                mock.patch.object(desktop_module, "_on_a_screen", return_value=False):
             agent.toggle_character()            # hide
             self.assertTrue(agent.character_hidden)
             agent._keep_on_screen()             # hidden: left alone
@@ -121,10 +123,60 @@ class PutBackOnAScreenTests(unittest.TestCase):
         self.assertFalse(agent.character_hidden)
 
     def test_on_a_mac_clear_only_on_the_tk_it_was_seen_on(self) -> None:
-        # On 8.6.16 a clear window showed the character's text, not its picture.
+        # Without the native view (PR #5): on 8.6.16 a clear window showed
+        # the character's text, not its picture.
         self.assertTrue(desktop_module._clear_window_shows_pictures("8.6.15"))
         self.assertFalse(desktop_module._clear_window_shows_pictures("8.6.16"))
         self.assertFalse(desktop_module._clear_window_shows_pictures("9.0.1"))
+
+    def test_native_renderer_receives_the_unchanged_avatar_frame(self) -> None:
+        from PIL import Image
+        agent = _desktop(_Window(10, 10))
+        agent._native_avatar = mock.Mock()
+        agent.canvas = mock.Mock()
+        agent._live = {}
+        frame = Image.new("RGBA", (128, 128), (20, 80, 30, 255))
+        before = frame.tobytes()
+        agent._present_frame(frame)
+        agent._native_avatar.show.assert_called_once_with(frame)
+        self.assertIs(agent._live["image"], frame)
+        self.assertEqual(frame.tobytes(), before)
+        agent.canvas.create_image.assert_not_called()
+
+    def test_native_draw_failure_keeps_the_avatar_visible(self) -> None:
+        from PIL import Image
+        agent = _desktop(_Window(10, 10))
+        native = mock.Mock()
+        native.show.side_effect = ValueError("cannot decode")
+        agent._native_avatar = native
+        agent.canvas = mock.Mock()
+        agent._live = {}
+        frame = Image.new("RGBA", (128, 128), (20, 80, 30, 255))
+        with mock.patch.object(desktop_module.ImageTk, "PhotoImage") as photo:
+            agent._present_frame(frame)
+        native.close.assert_called_once_with()
+        self.assertIsNone(agent._native_avatar)
+        photo.assert_called_once_with(frame)
+        self.assertIs(agent._live["image"], photo.return_value)
+        agent.canvas.create_image.assert_called_once_with(60, 60, image=photo.return_value)
+
+    def test_without_the_native_view_tk_s_own_clear_window_only_where_it_shows(self) -> None:
+        agent = _desktop(_Window(10, 10))
+        agent._rig, agent._frames, agent.canvas = object(), {}, mock.Mock()
+        agent.root = mock.Mock()
+        agent.agent_window = mock.Mock()
+        failing = mock.Mock(side_effect=RuntimeError("no AppKit"))
+        for patchlevel, clear in (("8.6.15", True), ("8.6.16", False)):
+            with self.subTest(patchlevel=patchlevel):
+                agent.agent_window.reset_mock()
+                agent.root.tk.call.return_value = patchlevel
+                with mock.patch.object(desktop_module.sys, "platform", "darwin"), \
+                        mock.patch.dict(sys.modules, {"personalized_agent.ui.macos_avatar":
+                                                      mock.Mock(NativeAvatar=failing)}):
+                    agent._enable_native_avatar()
+                self.assertIsNone(agent._native_avatar)
+                self.assertEqual(mock.call("-transparent", True) in
+                                 agent.agent_window.attributes.call_args_list, clear)
 
     @unittest.skipUnless(desktop_module.sys.platform.startswith("win"), "asked of Windows")
     def test_windows_says_which_points_are_on_a_screen(self) -> None:

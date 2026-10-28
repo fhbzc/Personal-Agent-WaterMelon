@@ -127,11 +127,13 @@ NATIVE_TOOLS = (
 WEB_TOOL_NAMES = ("web_search", "fetch_page", "fetch_url")
 WEB_NOTE = (
     "YOUR OWN WEB SEARCH reads an index OpenAI keeps, not the live web: use it "
-    "to find things out. To read a page as it is now, use the agent's own tools - "
-    "web_search to find its address, then fetch_url or fetch_page to read it; an "
-    "address you make up yourself is opened only where nothing you read could "
-    "travel inside it. Public pages only: never sign in to anything, never post "
-    "or send anything."
+    "to find things out - where your instructions say web_search, that is your "
+    "own search. A search that finds nothing is not evidence that nothing "
+    "exists: search again with other words. To read a page as it is now, find "
+    "its address with your own search, then read it with fetch_url or "
+    "fetch_page; an address you make up yourself is opened only where nothing "
+    "you read could travel inside it. Public pages only: never sign in to "
+    "anything, never post or send anything."
 )
 
 #: WHAT CODEX MAY OFFER OF ITS OWN to a call the agent makes, once its own
@@ -163,6 +165,74 @@ PROBE_ASK = "\n".join([
 #: prompt.
 DEVELOPER_INSTRUCTIONS_MOST = 24_000
 
+#: A Windows path holds 260 characters; past this, Codex's helper is not
+#: started (measured 2026-10-27: 260 exactly, "the system cannot find the
+#: path specified").
+PATH_HOLDS = 250
+
+
+def _codex_exe(found: Path) -> Optional[Path]:
+    """The real codex.exe: as found, or in npm's package beside the .cmd
+    that starts it (node_modules/@openai/codex/...vendor/<target>/bin)."""
+    if found.suffix.lower() == ".exe":
+        return found
+    package = found.parent / "node_modules" / "@openai" / "codex"
+    if not package.is_dir():
+        return None
+    for one in sorted(package.glob("node_modules/@openai/codex-win32-*/vendor/*/bin/codex.exe")):
+        return one
+    for one in sorted(package.glob("vendor/*/bin/codex.exe")):
+        return one
+    return None
+
+
+def _short_place(data_dir: Any, program: Path) -> Optional[Path]:
+    """Where a too-deep Codex is linked to: the agent's data folder,
+    clients/codex/<its version>."""
+    if not data_dir:
+        return None
+    version = "current"
+    try:
+        said = json.loads((program.parent.parent / "codex-package.json").read_text(
+            encoding="utf-8"))
+        version = re.sub(r"[^0-9A-Za-z._-]", "", str(said.get("version") or "")) or version
+    except (OSError, ValueError):
+        pass
+    return Path(data_dir) / "clients" / "codex" / version
+
+
+def _link_tree(source: Path, place: Path) -> Optional[Path]:
+    """Every file under `source` hard-linked under `place` - made once, and
+    made again when a file there is not the one installed. Other versions'
+    links let go. None when it cannot be (another disk)."""
+    import shutil
+    done = place / ".linked"
+    try:
+        if done.exists() and all(
+                (place / one.relative_to(source)).exists()
+                and os.path.samefile(one, place / one.relative_to(source))
+                for one in (source / "bin").glob("*.exe")):
+            return place
+    except OSError:
+        pass
+    try:
+        if place.exists():
+            shutil.rmtree(place)
+        for here, _dirs, files in os.walk(source):
+            target = place / Path(here).relative_to(source)
+            target.mkdir(parents=True, exist_ok=True)
+            for name in files:
+                os.link(os.path.join(here, name), target / name)
+        done.write_text("linked", encoding="utf-8")
+    except OSError:
+        shutil.rmtree(place, ignore_errors=True)
+        return None
+    for other in place.parent.iterdir():
+        if other != place:
+            shutil.rmtree(other, ignore_errors=True)
+    return place
+
+
 #: How long the agent's own MCP server is waited for at the start of a call.
 MCP_STARTUP_SECONDS = 30
 #: A tool of the agent's is not cut off by Codex: the agent runs it, may
@@ -180,9 +250,13 @@ class CodexProvider(ModelProvider):
     kind = "client"
 
     def __init__(self, credentials: Any = None, workspace: Any = None,
-                 timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> None:
+                 timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+                 data_dir: Any = None) -> None:
         self.credentials = credentials
         self.workspace = workspace
+        #: Where a Codex too deep for Windows' paths is linked to (`_short`).
+        self.data_dir = data_dir
+        self._shortened: Dict[str, Tuple[Any, str]] = {}
         self.timeout_seconds = timeout_seconds
         self._usage = UsageSnapshot()
         #: This Codex refused developer_instructions: the instructions go in
@@ -205,7 +279,44 @@ class CodexProvider(ModelProvider):
         # Including a Codex installed after this application started, which
         # this process's own PATH does not show (platform_layer/programs.py).
         from ...platform_layer.programs import find_program
-        return find_program(CLI_NAME)
+        found = find_program(CLI_NAME)
+        if found and sys.platform.startswith("win"):
+            try:
+                return self._short(found) or found
+            except Exception:                  # pragma: no cover - as found
+                log.info("could not start Codex from a short path", exc_info=True)
+        return found
+
+    def _short(self, found: str) -> Optional[str]:
+        """CODEX'S OWN PROGRAM, WHERE ITS HELPERS CAN BE STARTED (option 4):
+        npm's codex.cmd starts the real codex.exe in the package; started
+        here directly. Its helper past what a Windows path holds: started
+        from hard links to its files in the agent's data folder - the same
+        files, no space taken. None: as found."""
+        program = _codex_exe(Path(found))
+        if program is None:
+            return None
+        helper = program.parent / "codex-code-mode-host.exe"
+        if len(str(helper)) < PATH_HOLDS:
+            return str(program)
+        try:
+            stamp = f"{program.stat().st_size}:{program.stat().st_mtime_ns}"
+        except OSError:
+            return None
+        known = self._shortened.get(str(program))
+        if known is not None and known[0] == stamp:
+            return known[1]
+        place = _short_place(self.data_dir, program)
+        said = _link_tree(program.parent.parent, place) if place is not None else None
+        if said is None:
+            log.warning("Codex is installed past what a Windows path holds (%d "
+                        "characters) and could not be linked to a short place: its "
+                        "own search will not start - install it where the path is "
+                        "shorter", len(str(helper)))
+            return str(program)
+        short = str(place / program.relative_to(program.parent.parent))
+        self._shortened[str(program)] = (stamp, short)
+        return short
 
     @staticmethod
     def _model_cache_path() -> Path:
@@ -668,7 +779,11 @@ class CodexProvider(ModelProvider):
         flags.extend(["-c", "agents.max_depth=0",
                       "-c", "agents.max_concurrent_threads_per_session=1"])
         for name in OWN_TOOLS_OFF:
-            if native and name in CODE_MODE:
+            # Its own search runs in code mode: kept on where it searches
+            # (measured 2026-10-27, Codex 0.165, from a short path: off,
+            # "code-mode host is disabled" and no search; on, it searches).
+            # Its shell, browser and computer stay off all the same.
+            if (native or web) and name in CODE_MODE:
                 continue
             flags.extend(["-c", f"features.{name}=false"])
         return flags
@@ -829,6 +944,29 @@ class CodexProvider(ModelProvider):
         return leading_tool_call(text, request, "codex")
 
     @staticmethod
+    def _searched(line: str, guard: Any) -> None:
+        """ITS OWN SEARCH, AS IT STREAMS (a `web_search` item): what it asked
+        - looked up - and the site and snippet of each result, seen by the
+        web's checks (runtime/web_guard.found), so a page on one of them can
+        be read with the app's fetch_url."""
+        if guard is None or '"web_search"' not in line:
+            return
+        try:
+            event = json.loads(line)
+        except ValueError:
+            return
+        item = event.get("item") if isinstance(event, dict) else None
+        if event.get("type") != "item.completed" or not isinstance(item, dict) \
+                or item.get("type") != "web_search":
+            return
+        results = [one for one in item.get("results") or [] if isinstance(one, dict)]
+        query = str(item.get("query") or (item.get("action") or {}).get("query") or "")
+        guard.found([one.get("domain") for one in results],
+                    " ".join([query, *[str(one.get("snippet") or "") for one in results]]))
+        if query:
+            guard.note("search", query)
+
+    @staticmethod
     def _parse_events(output: str) -> tuple[str, ModelUsage, str]:
         text = ""
         usage = ModelUsage()
@@ -879,13 +1017,15 @@ class CodexProvider(ModelProvider):
         if not cli:
             verdict = self.check_availability(model)
             raise ModelInvocationError(verdict.reason or "Codex is unavailable", verdict)
-        web = bool(request.builtin_web) and any(
-            tool.name in WEB_TOOL_NAMES for tool in request.tools or [])
+        web = any(tool.name in WEB_TOOL_NAMES for tool in request.tools or [])
         if web:
-            # Its own search beside the agent's web tools - cached only
-            # (`WEB_TOOL_NAMES`; Settings > Web search: the model's own).
+            # ITS OWN SEARCH, NEVER THE APP'S BESIDE IT (the user, 2026-10-27:
+            # offered both, it took ours, met DuckDuckGo's check for a human
+            # and gave up as if nothing existed). OpenAI's cached index only;
+            # the app's page readers, checked, to read a page as it is now.
             request = replace(request, system="\n\n".join(
-                one for one in (request.system, WEB_NOTE) if one))
+                one for one in (request.system, WEB_NOTE) if one),
+                tools=[tool for tool in request.tools if tool.name != "web_search"])
         request = replace(request, builtin_web=web)
         if request.tools and callable(request.tool_runner):
             from .mcp_bridge import ToolBridge
@@ -916,7 +1056,11 @@ class CodexProvider(ModelProvider):
         if bridge is not None:
             from .claude_code_provider import _Stream
             stream = _Stream(request, bridge, self.timeout_seconds)
-            watched = {"on_line": stream.line, "watch": stream.watch}
+
+            def heard(line: str) -> None:
+                stream.line(line)
+                self._searched(line, request.web_guard)
+            watched = {"on_line": heard, "watch": stream.watch}
         else:
             watched = {"timeout": self.timeout_seconds}
         try:

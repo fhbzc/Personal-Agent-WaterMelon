@@ -233,14 +233,20 @@ class TheCommandTests(unittest.TestCase):
             self.assertIn("web_hook.py", command)
             self.assertRegex(command, r'"http://127\.0\.0\.1:\d+/[^/"]+/hook"')
             self.assertNotIn("\\", command)
-        # Without it - or with no checks to hold its own to: shut, and the
-        # agent's own web tools offered.
-        for other in (theirs, unchecked):
-            denied = other[other.index("--disallowed-tools") + 1:other.index("--strict-mcp-config")]
-            self.assertIn("WebSearch", denied)
-            self.assertIn("WebFetch", denied)
-            self.assertNotIn("--settings", other)
-            self.assertIn(tool_name("web_search"), values(other, "--allowedTools"))
+        # Asked for or not, its own (no setting since 2026-10-27).
+        denied = theirs[theirs.index("--disallowed-tools") + 1:theirs.index("--strict-mcp-config")]
+        self.assertNotIn("WebSearch", denied)
+        # With no checks to hold its own to: shut - and NEVER the app's
+        # search in its place (the user, 2026-10-27); the page reader only.
+        denied = unchecked[unchecked.index("--disallowed-tools") + 1:
+                           unchecked.index("--strict-mcp-config")]
+        self.assertIn("WebSearch", denied)
+        system = unchecked[unchecked.index("--append-system-prompt") + 1]
+        self.assertNotIn("- web_search", system)
+        self.assertIn("WebFetch", denied)
+        self.assertNotIn("--settings", unchecked)
+        self.assertNotIn(tool_name("web_search"), values(unchecked, "--allowedTools"))
+        self.assertIn(tool_name("fetch_url"), values(unchecked, "--allowedTools"))
 
     def test_its_own_reading_tools_denied_where_the_agents_may_not_read(self) -> None:
         """Read, Glob and Grep offered - and denied, as Claude Code writes a
@@ -329,21 +335,19 @@ class TheCommandTests(unittest.TestCase):
         self.assertLess(seen["length"], 32_767)
         self.assertNotIn(cc.NATIVE_READ_NOTE, seen["text"])
 
-    def test_the_setting_decides_which_search(self) -> None:
+    def test_no_setting_its_own_search_wherever_tools_are(self) -> None:
+        # The user, 2026-10-27: "Search with" is gone - nothing to choose.
         from personalized_agent.models.manager import ModelManager
-        sent = []
+        from personalized_agent.common.config.schema import SCHEMA_BY_KEY
+        self.assertNotIn("web_search_with", SCHEMA_BY_KEY)
 
         class _Config(dict):
             def get(self, key, default=None):
                 return super().get(key, default)
-
-        for chosen, expected in (("model", True), ("app", False)):
-            manager = ModelManager.__new__(ModelManager)
-            manager.config = _Config(web_search_with=chosen)
-            request = ModelRequest(messages=[{"role": "user", "content": "hi"}],
-                                   tools=[SPEC])
-            sent.append((manager._as_configured(request).builtin_web, expected))
-        self.assertEqual([one for one, _ in sent], [expected for _, expected in sent])
+        manager = ModelManager.__new__(ModelManager)
+        manager.config = _Config(web_search_with="app")      # an old setting, unread
+        request = ModelRequest(messages=[{"role": "user", "content": "hi"}], tools=[SPEC])
+        self.assertTrue(manager._as_configured(request).builtin_web)
 
     def test_a_call_ended_by_its_watch_says_why(self) -> None:
         from personalized_agent.common import children

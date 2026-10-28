@@ -9163,19 +9163,7 @@ function renderWebSearch(status) {
     : "No key: DuckDuckGo's page is tried, and may refuse.";
   const remove = $("#web-search-remove");
   if (remove) remove.disabled = !status.key_set;
-  const chosen = $("#web-search-with");
-  if (chosen && status.with) chosen.value = status.with;
 }
-
-$("#web-search-with")?.addEventListener("change", async (event) => {
-  try {
-    renderWebSearch(await api.post("/api/search/with", { with: event.target.value }));
-    toast(event.target.value === "model" ? "The model's own search"
-      : "The app's search: Brave, or DuckDuckGo");
-  } catch (err) {
-    toast(err.message, "error");
-  }
-});
 
 async function loadWebSearch() {
   try { renderWebSearch(await api.get("/api/search")); } catch (err) { /* said later */ }

@@ -162,7 +162,8 @@ class ModelManager:
         self.register(ClaudeDesktopProvider(self.credentials, settings=self.config))
         self._desktop_chosen_before()
         self._claude_models_by_name()
-        self.register(CodexProvider(self.credentials))
+        self.register(CodexProvider(self.credentials,
+                                    data_dir=getattr(self.config, "data_dir", None)))
         # The services that speak the OpenAI chat API - OpenAI, Gemini,
         # DeepSeek, the relays like OpenRouter, and one at any address.
         from .providers.openai_compatible import providers as openai_compatible
@@ -317,10 +318,11 @@ class ModelManager:
         return list(getattr(descriptor, "reasoning_efforts", None) or [])
 
     def _as_configured(self, request: ModelRequest) -> ModelRequest:
-        """The request as the settings have it: the model's own web search,
-        unless the user chose the app's (Settings > Web search)."""
-        if request.tools and str(self.config.get("web_search_with", "model")
-                                 or "model") == "model":
+        """THE MODEL'S OWN WEB SEARCH, WHERE IT HAS ONE - never a setting
+        (the user, 2026-10-27): a provider with search of its own takes it in
+        place of the app's web_search, and is never offered ours beside it
+        (claude_code_provider, codex_provider); one with none is given ours."""
+        if request.tools:
             return replace(request, builtin_web=True)
         return request
 

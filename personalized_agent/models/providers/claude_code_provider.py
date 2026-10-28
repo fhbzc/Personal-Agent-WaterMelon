@@ -837,11 +837,15 @@ class ClaudeCodeProvider(ModelProvider):
         if request.native_read is not None and sum(
                 len(read_rule(one)) + 1 for one in request.native_read) > READ_RULES_CHARS:
             request = replace(request, native_read=None)
-        # Its own search only where the agent's checks hold it (the hooks
-        # answered by the call's server): a request with no web guard, or
-        # whose tools are not served, keeps the agent's own web tools.
-        web = bool(request.builtin_web) and any(
-            tool.name in WEB_TOOL_NAMES for tool in request.tools or [])             and request.web_guard is not None and callable(request.tool_runner)
+        # NEVER THE APP'S SEARCH BESIDE ITS OWN (the user, 2026-10-27): it
+        # has search of its own, so web_search is not offered it - anywhere.
+        # Its own is used where the agent's checks hold it (the hooks the
+        # call's server answers); where they cannot, it has no search at all,
+        # and the app's page readers alone.
+        wanted = any(tool.name in WEB_TOOL_NAMES for tool in request.tools or [])
+        request = replace(request, tools=[tool for tool in request.tools or []
+                                          if tool.name != "web_search"])
+        web = wanted and request.web_guard is not None and callable(request.tool_runner)
         if web:
             # Its own search in place of the agent's web tools.
             request = replace(request, tools=[tool for tool in request.tools

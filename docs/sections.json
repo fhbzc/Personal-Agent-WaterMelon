@@ -12173,6 +12173,21 @@
     "amended": true
    },
    {
+    "type": "p",
+    "text": "*Amended 2026-10-27:* A MODEL'S OWN SEARCH, ALWAYS, AND NEVER THE APP'S BESIDE IT (the user's decisions). There is no \"Search with\" setting any more: a model with search of its own (Claude Code, Codex) always uses it, held to the checks as above, and is never offered the app's `web_search` beside it - anywhere, in Work, Chat, Connections or the heartbeat - since Codex, given both, chose the app's, met DuckDuckGo's human check and gave up as if nothing were there. The app's page reader (`fetch_url`) stays for every model; only a model without search of its own (an API such as DeepSeek) is given the app's search (Brave with the user's key, else DuckDuckGo). A call with no guard to hold a client's own search to has no search, not the app's. CODEX'S OWN SEARCH IS SEEN BY THE CHECKS: its JSON says each search as it streams - what it asked, and the site and snippet of each result, not its address - and the call's guard takes the sites as found and the snippets as public words (`CodexProvider._searched`, `WebGuard.found`), so an article on one of them can be read with `fetch_url`. Its search runs in its code mode, which is kept on where it searches (measured on Codex 0.165: off, \"code-mode host is disabled\" and no search); its shell, browser and computer stay off. A CODEX TOO DEEP FOR WINDOWS IS STARTED FROM A SHORT PATH: installed by npm under WinGet's Node, its search helper sat at a path of exactly 260 characters and never started (\"failed to spawn code-mode host\"); now, where its helper's path is 250 characters or more, Codex is started from hard links to its files in the agent's data folder (`internal/clients/codex/<version>`) - the same files, no space taken, made again for a new version and the old version's let go. A link to its folder would not do: Codex finds its helper from its real path.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-27:* AN ADDRESS MADE UP ON ANY SITE, A FEW (the user's decisions). The fifth way a page may be opened - a short address made up, with no query and none of the user's own words - had held only on a site already seen; a forecast's address on a weather site the model knew of was refused, and work could not get on. It now holds on any site, with the same checks, and its name held to them too (short parts, no long number, nothing key-like, no word of the user's alone), and A FEW: five such addresses on a site not seen, and thirty such sites in a run or turn, so nothing can be spelled out an address at a time (`MOST_MADE_UP_PER_SITE`, `MOST_NEW_SITES`). A site made to collect what is sent to it is still opened only at an address that already exists there. What looks like a key is judged piece by piece between the address's separators (`key_like_piece`): an article's name, words joined by hyphens, is not one - it had been taken for one, and a real forecast page was refused. Each refusal says what to do instead (search for the page, or open it without its query).",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-27:* CHAT ON THE CHECKED ROUTE, AND WHAT IT LOOKED UP KEPT (the user's decisions: Option A, and Chat as the heartbeat's input). Chat is held as Work is: each turn has a guard of its own, primed with the conversation; a client that can runs the app's tools in the call (`tool_runner`) and its own search and reading go through the guard's hooks; the app's `web_search` and `fetch_url` are offered (the first never to a model with its own). What was searched for and read, in order - by either - is the guard's record (`WebGuard.looked`) and is kept with the reply (`looked_up`, with the tools it used), and the heartbeat reads it beside the reply as what it was: no rule says what to keep of Chat - that is the heartbeat model's to judge. A cited direct-chat message (`msg_`) is now linked as material, and its turn kept whole: the user's message and the agent's reply (`Materials._chat_turn`; PR #8, items 1 and 2).",
+    "amended": true
+   },
+   {
     "type": "h",
     "text": "Which Client, Chosen Explicitly"
    },
@@ -12239,7 +12254,7 @@
     "text": "These are not defensive extras. Each one was a real failure before it was a rule, and each presented as the agent simply not answering."
    }
   ],
-  "amendment_note": "2026-10-17: Codex now runs with none of the user's own Codex setup, its own tools kept only where the agent's permissions still hold, and the agent's tools served to it over MCP, as to Claude Code. 2026-10-18: a client's own web tools are held to the agent's checks on the web (Claude Code by hooks, Codex's search cached only), and the checks on a page are wider.",
+  "amendment_note": "2026-10-17: Codex now runs with none of the user's own Codex setup, its own tools kept only where the agent's permissions still hold, and the agent's tools served to it over MCP, as to Claude Code. 2026-10-18: a client's own web tools are held to the agent's checks on the web (Claude Code by hooks, Codex's search cached only), and the checks on a page are wider. 2026-10-27: a model's own search always, never the app's beside it; an address made up on any site, a few; Chat on the checked route, what it looked up kept with the reply; Codex's own search seen by the checks, and started from a short path where Windows' could not hold it.",
   "amended": true
  },
  {
@@ -16292,8 +16307,15 @@
    {
     "type": "p",
     "text": "The taskbar and title-bar icons and the tray icon (`ui/tray.py`) are drawn from the live avatar at their own size and cut to the figure (`fitted`), with a 3% margin, because a frame is mostly empty around the figure and the icon looked smaller than other programs'."
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-10-28:* ON A MAC, DRAWN BY A NATIVE VIEW (PR #5). On the Tk of Python's own installer (8.6.16) a clear window drew no pictures, so the avatar sat on a dark tile. It is now drawn by an AppKit image view laid over a clear window (`ui/macos_avatar.py`), Tk still owning the window's place, its moods and the mouse - the view lets every click through to Tk. Measured on a Mac Studio (Tk 8.6.16): seen whole on the wallpaper, clear round it, dragged, hidden and shown, its moods and a character loaded again; a tenth of a core at thirty frames a second, against a fifth for Tk's own drawing. Where the view cannot be had, Tk's own clear window on a Tk known to show the character (8.6.15), else the plain tile; a view that fails to draw gives way to Tk at once. Its edges are drawn as they are there, not cut to whole pixels as for Windows' keyed colour.",
+    "amended": true
    }
-  ]
+  ],
+  "amendment_note": "2026-10-28: on a Mac the avatar is drawn by a native view over a clear window (pull request 5), seen whole on the Tk where a clear Tk window drew no pictures.",
+  "amended": true
  },
  {
   "number": "132",

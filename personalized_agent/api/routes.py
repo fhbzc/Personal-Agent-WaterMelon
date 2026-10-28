@@ -695,17 +695,7 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     def web_search_status(_request: Any) -> Any:
         """Which web search the agents use, and whether its key is set."""
         from ..agent.work.tools import search_status
-        return {**search_status(), "with": app.config.get("web_search_with", "model")}
-
-    @route("POST", "/api/search/with")
-    def web_search_with(request: Any) -> Any:
-        """The model's own web search ("model") or the app's ("app")."""
-        from ..agent.work.tools import search_status
-        chosen = str(request.require("with"))
-        if chosen not in ("model", "app"):
-            raise ApiError("model or app", 400)
-        app.config.set("web_search_with", chosen)
-        return {**search_status(), "with": chosen}
+        return search_status()
 
     @route("POST", "/api/search/key")
     def web_search_key(request: Any) -> Any:

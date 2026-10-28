@@ -49,6 +49,11 @@ TRANSPARENT = "#ff00ff"
 #: installer's) a clear window drew its text and not its pictures - the
 #: character was not there at all, on every way of making it clear that
 #: was tried (2026-10-23). Any other Tk: the plain tile, which is seen.
+#: SINCE PR #5 (2026-10-28) only where the native image view
+#: (ui/macos_avatar.py) cannot be had: that is seen whole, clear round it,
+#: on 8.6.16 too (measured on a Mac Studio, Tk 8.6.16: pressed, hidden and
+#: shown, its moods; 10.9% of a core at thirty frames a second, Tk's own
+#: drawing 19.8%).
 CLEAR_ON_TK = ("8.6.15",)
 
 
@@ -195,6 +200,8 @@ class DesktopAgent:
         #: window's own thread changes it, for the tray's menu to read.
         self.character_hidden = False
         self._frames: Dict[str, List[Any]] = {}
+        #: On a Mac, the native view the avatar is drawn in (PR #5), or None.
+        self._native_avatar: Any = None
         self._frame_index = 0
         #: An avatar whose face is drawn live (agent/character/watermelon.py),
         #: and what it is doing: where it looks, when it next blinks, whether
@@ -241,26 +248,11 @@ class DesktopAgent:
             self.agent_window.attributes("-transparentcolor", TRANSPARENT)
             background = TRANSPARENT
         except tk.TclError:  # macOS / Linux
+            # A plain tile. On a Mac only to begin with, seen whatever
+            # happens: made clear once the native view is in it, or by Tk's
+            # own means where those show the character (`_enable_native_avatar`).
             background = "#101216"
-            patchlevel = str(self.root.tk.call("info", "patchlevel"))
-            if sys.platform == "darwin" and not _clear_window_shows_pictures(patchlevel):
-                log.info("Tk %s: the character on a plain tile, not a clear window",
-                         patchlevel)
-            elif sys.platform == "darwin":
-                # Tk's own: ``-transparent`` with the system's clear colour on
-                # the window and the canvas. Tried on a Mac (Tk 8.6.15, Aqua)
-                # beside a plain tile and an NSWindow made clear by hand: seen
-                # whole, and pressed, with nothing round it. The NSWindow made
-                # clear for every window of the application had shown the
-                # character faint and let clicks through (2026-10-23).
-                try:
-                    self.agent_window.configure(bg="systemTransparent")
-                    self.agent_window.attributes("-transparent", True)
-                    background = "systemTransparent"
-                except tk.TclError:
-                    log.info("no clear window on this Tk: a plain tile", exc_info=True)
-            if background != "systemTransparent":
-                self.agent_window.attributes("-alpha", 0.96)
+            self.agent_window.attributes("-alpha", 0.96)
         self.canvas = tk.Canvas(self.agent_window, width=self.size, height=self.size,
                                 highlightthickness=0, bg=background)
         self.canvas.pack()
@@ -271,12 +263,14 @@ class DesktopAgent:
         self.agent_window.protocol("WM_DELETE_WINDOW", self.quit)
 
         self._load_character()
+        self._enable_native_avatar()
         self._bind_events()
         self.app.bus.subscribe("notification.created", self._on_notification)
         self.app.bus.subscribe("agent.proactive_message", self._on_proactive)
         self.app.bus.subscribe("character.changed", self._on_character_changed)
         self.root.after(120, self._drain_queue)
         self.root.after(400, self._animate)
+        self.root.after(1500, self._log_avatar_window)
         self.root.after(self.ON_SCREEN_EVERY_MS, self._watch_the_screens)
         self._start_selection_watch()
         # The folder and application dialogs open on this thread, the one
@@ -289,6 +283,26 @@ class DesktopAgent:
         self.tray.start()
 
     # -- window placement ---------------------------------------------------
+    def _log_avatar_window(self) -> None:
+        """Said once it is up: the window as mapped, not only that it began."""
+        log.info("avatar window: Tk %s, geometry %s, mapped %s, drawn natively %s",
+                 self.root.tk.call("info", "patchlevel"), self.agent_window.geometry(),
+                 self.agent_window.winfo_viewable(), self._native_avatar is not None)
+        if sys.platform != "darwin":
+            return
+        try:
+            from AppKit import NSApplication, NSWindowOcclusionStateVisible
+            for window in NSApplication.sharedApplication().windows():
+                if (str(window.title()) == self.app.avatar_name()
+                        and int(window.contentView().bounds().size.width) == self.size):
+                    log.info("avatar native window: visible %s, active desktop %s, "
+                             "unoccluded %s, level %s", window.isVisible(),
+                             window.isOnActiveSpace(),
+                             bool(window.occlusionState() & NSWindowOcclusionStateVisible),
+                             window.level())
+        except Exception:
+            log.debug("could not inspect the native avatar window", exc_info=True)
+
     def _be_in_the_dock(self) -> None:
         """On a Mac: an icon in the Dock, and a click on it - or opening the
         application again - opens the Overview. Not left to the menu-bar
@@ -314,7 +328,58 @@ class DesktopAgent:
         self.agent_window.geometry(f"{self.size}x{self.size}+{x}+{y}")
 
     # -- character ----------------------------------------------------------
+    def _enable_native_avatar(self) -> None:
+        """ON A MAC, the avatar drawn by a native image view over a clear
+        window (PR #5, ui/macos_avatar.py). Where it cannot be: Tk's own
+        clear window on a Tk it shows the character on, else the plain tile."""
+        if sys.platform != "darwin" or not (self._rig or self._frames):
+            return
+        try:
+            from .macos_avatar import NativeAvatar
+            self._native_avatar = NativeAvatar(self.agent_window, self.canvas, self.size)
+            log.info("the avatar is drawn by a native image view on a clear window")
+            return
+        except Exception:
+            log.warning("no native avatar view; Tk's drawing instead", exc_info=True)
+            self._native_avatar = None
+        patchlevel = str(self.root.tk.call("info", "patchlevel"))
+        if not _clear_window_shows_pictures(patchlevel):
+            log.info("Tk %s: the character on a plain tile, not a clear window", patchlevel)
+            return
+        # Tk's own: ``-transparent`` with the system's clear colour on the
+        # window and the canvas. Tried on a Mac (Tk 8.6.15, Aqua) beside a
+        # plain tile and an NSWindow made clear by hand: seen whole, and
+        # pressed, with nothing round it (2026-10-23).
+        try:
+            self.agent_window.configure(bg="systemTransparent")
+            self.canvas.configure(bg="systemTransparent")
+            self.agent_window.attributes("-transparent", True)
+            self.agent_window.attributes("-alpha", 1.0)
+        except tk.TclError:
+            log.info("no clear window on this Tk: a plain tile", exc_info=True)
+
+    def _present_frame(self, frame: Any) -> None:
+        """One frame of the avatar: to the native view where there is one,
+        else drawn by Tk - kept, or Tk draws nothing."""
+        if self._native_avatar is not None:
+            try:
+                self._native_avatar.show(frame)
+                self._live["image"] = frame
+                return
+            except Exception:
+                log.warning("the native avatar view could not draw; Tk's drawing instead",
+                            exc_info=True)
+                self._native_avatar.close()
+                self._native_avatar = None
+        image = ImageTk.PhotoImage(frame)
+        self.canvas.delete("all")
+        self.canvas.create_image(self.size // 2, self.size // 2, image=image)
+        self._live["image"] = image
+
     def _load_character(self) -> None:
+        if self._native_avatar is not None:
+            self._native_avatar.close()
+            self._native_avatar = None
         name = str(self.config.get("character", "watermelon"))
         package = self.app.characters.get(name) or self.app.characters.get("watermelon")
         self._rig = None
@@ -336,8 +401,10 @@ class DesktopAgent:
             images = []
             for path in paths:
                 try:
-                    image = Image.open(path).convert("RGBA").resize((self.size, self.size))
-                    images.append(ImageTk.PhotoImage(image))
+                    # Kept as pictures: drawn by Tk or the native view
+                    # (`_present_frame`).
+                    images.append(Image.open(path).convert("RGBA")
+                                  .resize((self.size, self.size)))
                 except Exception:
                     log.debug("could not load character frame %s", path, exc_info=True)
             if images:
@@ -363,9 +430,7 @@ class DesktopAgent:
         frames = self._frames.get(self.state) or self._frames.get("idle")
         if frames:
             self._frame_index = (self._frame_index + 1) % len(frames)
-            image = frames[self._frame_index]
-            self.canvas.delete("all")
-            self.canvas.create_image(self.size // 2, self.size // 2, image=image)
+            self._present_frame(frames[self._frame_index])
         else:
             self.canvas.delete("all")
             # Vector fallback so the agent is visible without image assets.
@@ -493,13 +558,12 @@ class DesktopAgent:
                 frame = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
                 frame.paste(thin, ((self.size - width) // 2, 0), thin)
             # Whole pixels only: an edge half see-through takes on the colour
-            # the window keys out, which shows as a pink fringe.
-            alpha = frame.getchannel("A").point(lambda a: 255 if a >= 110 else 0)
-            frame.putalpha(alpha)
-            image = ImageTk.PhotoImage(frame)
-            self.canvas.delete("all")
-            self.canvas.create_image(self.size // 2, self.size // 2, image=image)
-            live["image"] = image                  # kept, or Tk draws nothing
+            # the window keys out, which shows as a pink fringe. Not in the
+            # Mac's native view, whose edges are drawn as they are.
+            if self._native_avatar is None:
+                alpha = frame.getchannel("A").point(lambda a: 255 if a >= 110 else 0)
+                frame.putalpha(alpha)
+            self._present_frame(frame)
         except Exception:                          # pragma: no cover - drawn next time
             log.debug("could not draw the avatar", exc_info=True)
         # Turning, thirty frames a second, so the turn is seen as a turn.
@@ -1148,6 +1212,7 @@ class DesktopAgent:
                     self._frames.clear()
                     self._frame_index = 0
                     self._load_character()
+                    self._enable_native_avatar()
                     # Its name, which the avatar's may have changed with it.
                     for window in (self.root, self.agent_window):
                         window.title(self.app.avatar_name())

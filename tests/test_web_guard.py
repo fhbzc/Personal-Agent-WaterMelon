@@ -73,9 +73,14 @@ class TheFiveWaysTests(unittest.TestCase):
         self.assertTrue(refused("https://news.example/charts?x=1"))
         self.assertTrue(refused("https://news.example/" + "/".join(["a"] * 12)))
         self.assertTrue(refused("https://news.example/" + "Q" * 44))
-        # A site never seen, a subdomain of a known one, not http: no.
-        self.assertTrue(refused("https://unknown.example/charts"))
-        self.assertTrue(refused("https://zephyrine.blog.example/"))
+        # A SITE NEVER SEEN (widened 2026-10-27): a short address with
+        # nothing of theirs - but not its name made of their words, nor a
+        # number, nor a query; and a few, on a few sites.
+        self.assertFalse(refused("https://unknown.example/charts"))
+        guard2 = _guard()
+        self.assertTrue(guard2.check_address("https://zephyrine.blog.example/") is not None)
+        self.assertTrue(refused("https://n48213.example/"))
+        self.assertTrue(refused("https://unknown.example/charts?x=1"))
         self.assertTrue(refused("file:///C:/Users/notes.txt"))
 
     def test_a_collector_only_at_an_address_that_exists(self) -> None:
@@ -107,11 +112,11 @@ class ItsOwnWebToolsHookedTests(unittest.TestCase):
         with ToolBridge([SPEC], lambda *_: {}, guard=guard) as bridge:
             ask = lambda payload: self._post(bridge.hook_url, payload)
             made_up = {"hook_event_name": "PreToolUse", "tool_name": "WebFetch",
-                       "tool_input": {"url": "https://found.example/page/two", "prompt": "x"}}
+                       "tool_input": {"url": "https://found.example/page?id=2", "prompt": "x"}}
             said = ask(made_up)["hookSpecificOutput"]
             self.assertEqual((said["hookEventName"], said["permissionDecision"]),
                              ("PreToolUse", "deny"))
-            self.assertIn("did not come from a search", said["permissionDecisionReason"])
+            self.assertIn("query", said["permissionDecisionReason"])
             self.assertIn("hookSpecificOutput", ask({
                 "hook_event_name": "PreToolUse", "tool_name": "WebSearch",
                 "tool_input": {"query": "ghp_" + "x" * 30}}))
@@ -119,7 +124,7 @@ class ItsOwnWebToolsHookedTests(unittest.TestCase):
             self.assertEqual(ask({"hook_event_name": "PostToolUse", "tool_name": "WebSearch",
                                   "tool_input": {"query": "pages"},
                                   "tool_response": {"results": [
-                                      {"url": "https://found.example/page/two"}]}}), {})
+                                      {"url": "https://found.example/page?id=2"}]}}), {})
             # Let through by this answer alone - the client allows neither
             # tool by itself.
             said = ask(made_up)["hookSpecificOutput"]
@@ -135,7 +140,7 @@ class ItsOwnWebToolsHookedTests(unittest.TestCase):
     def test_the_hook_process_asks_and_fails_closed(self) -> None:
         guard = WebGuard()
         asked = {"hook_event_name": "PreToolUse", "tool_name": "WebFetch",
-                 "tool_input": {"url": "https://found.example/secret-page"}}
+                 "tool_input": {"url": "https://found.example/secret-page?k=1"}}
 
         def hook(url, payload):
             return subprocess.run([sys.executable, str(HOOK), url],
@@ -214,11 +219,49 @@ class PublicCodeAndDataTests(unittest.TestCase):
 
     def test_not_the_pages_their_users_host_nor_a_collector(self) -> None:
         guard = WebGuard()
+        # Not reference sites: what they may open is what any site may.
         for url in ("https://someone.github.io/page/notes",
-                    "https://example-unknown.org/data.json",
-                    "https://webhook.site/abc-def"):
+                    "https://example-unknown.org/data.json"):
             with self.subTest(url=url):
-                self.assertIsNotNone(guard.check_address(url))
+                self.assertNotEqual(guard.why_not(url)[0], "a reference site")
+        self.assertIsNotNone(guard.check_address("https://someone.github.io/notes?k=1"))
+        self.assertIsNotNone(guard.check_address("https://webhook.site/abc-def"))
+
+
+class MadeUpOnAnySiteTests(unittest.TestCase):
+    """An address made up on a site not seen (2026-10-27): a few on each,
+    a few such sites, its name held to the address's checks."""
+
+    def test_a_few_on_each_and_a_few_sites(self) -> None:
+        from personalized_agent.runtime import web_guard as wg
+        guard = WebGuard()
+        for n in range(wg.MOST_MADE_UP_PER_SITE):
+            self.assertIsNone(guard.check_address(f"https://weather.example/day{n}"))
+        self.assertIsNone(guard.check_address("https://weather.example/day0"), "again: one")
+        said = guard.check_address("https://weather.example/day-more")
+        self.assertIn("made up on weather.example already", said)
+        for n in range(wg.MOST_NEW_SITES - 1):
+            self.assertIsNone(guard.check_address(f"https://site{chr(97 + n % 26)}{n // 26}x.example/"))
+        self.assertIn("sites not seen", guard.check_address("https://onemore.example/"))
+
+    def test_what_was_looked_up_is_kept(self) -> None:
+        guard = WebGuard()
+        guard.note("search", "chicago weather")
+        guard.hook({"hook_event_name": "PreToolUse", "tool_name": "WebFetch",
+                    "tool_input": {"url": "https://www.weather.gov/lot/"}})
+        self.assertEqual(guard.looked, [{"how": "search", "what": "chicago weather"},
+                                        {"how": "read", "what": "https://www.weather.gov/lot/"}])
+
+    def test_sites_a_clients_own_search_found_are_seen(self) -> None:
+        guard = WebGuard()
+        guard.know("zephyrine is in my notes", "user")
+        guard.found(["www.fox32chicago.com"], "chicago weather forecast rain")
+        # Its front page, and a short page on it, as on any known site.
+        self.assertEqual(guard.why_not("https://www.fox32chicago.com/")[0],
+                         "the front page of a known site")
+        self.assertEqual(guard.why_not("https://www.fox32chicago.com/weather")[0],
+                         "on a known site, nothing of the user's in it")
+        self.assertIsNotNone(guard.check_address("https://www.fox32chicago.com/zephyrine"))
 
 
 if __name__ == "__main__":

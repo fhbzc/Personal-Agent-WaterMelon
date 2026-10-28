@@ -177,7 +177,9 @@ class TheAgentsToolsServedNativelyTests(unittest.TestCase):
         provider, command = self._command(codex, request)
         self.assertIn("features.code_mode_host=false", command)
         self.assertFalse(any(part.startswith("mcp_servers.pa") for part in command))
-        self.assertIn("reply with a single JSON object", provider._prompt(request))
+        # Told it - in the prompt, or apart where a real Codex is installed
+        # (developer_instructions).
+        self.assertIn("reply with a single JSON object", provider._system(request))
 
     def _command(self, codex, request, bridge=None):
         provider = CodexProvider()
@@ -209,10 +211,16 @@ class TheAgentsToolsServedNativelyTests(unittest.TestCase):
         # so it opens none; the agent's own web tools, checked, beside it.
         self.assertIn('web_search="cached"', said["command"])
         self.assertNotIn('web_search="live"', said["command"])
-        self.assertIn("- web_search:", said["input"] + " ".join(said["command"]))
-        self.assertIn("YOUR OWN WEB SEARCH reads an index OpenAI keeps", said["input"] + " ".join(said["command"]))
-        # The app's own search chosen (Settings > Web search): Codex's is off.
-        plain = ModelRequest(messages=[], tools=self._tools())
+        told = said["input"] + " ".join(said["command"])
+        # NEVER THE APP'S SEARCH BESIDE ITS OWN (the user, 2026-10-27).
+        self.assertNotIn("- web_search:", told)
+        self.assertIn("YOUR OWN WEB SEARCH reads an index OpenAI keeps", told)
+        # Its search runs in code mode: kept on where it searches.
+        self.assertNotIn("features.code_mode=false", said["command"])
+        # With no web tools asked for, none of its own either.
+        plain = ModelRequest(messages=[], tools=[one for one in self._tools()
+                                                 if one.name not in ("web_search", "fetch_url",
+                                                                     "fetch_page")])
         _provider, command = self._command(codex, plain)
         self.assertIn('web_search="disabled"', command)
 

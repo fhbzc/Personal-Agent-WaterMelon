@@ -11,6 +11,7 @@ import json
 import re
 import subprocess
 import unittest
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -148,6 +149,19 @@ class ThroughTheAgentTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, "--ignore-user-config\n", "")
             prompts.append(kwargs["input"])
             text = next(replies)
+            if "--mcp-config" in command:
+                # ON THE CHECKED ROUTE (Chat, 2026-10-27): the client calls the
+                # tool through the call's own server, as its own - not in words.
+                url = next(iter(json.loads(command[command.index("--mcp-config") + 1])
+                                ["mcpServers"].values()))["url"]
+                call = json.loads(text.splitlines()[0])
+                body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                   "params": {"name": call["tool"],
+                                              "arguments": call["arguments"]}}).encode()
+                urllib.request.urlopen(urllib.request.Request(
+                    url, data=body, method="POST",
+                    headers={"Content-Type": "application/json"}), timeout=30).read()
+                text = next(replies)
             if provider_id == "codex":
                 out = json.dumps({"type": "item.completed",
                                   "item": {"type": "agent_message", "text": text}})
@@ -177,6 +191,8 @@ class ThroughTheAgentTests(unittest.TestCase):
                 self.assertEqual(result["classification"], "delayed")
                 self.assertEqual(result["answer"], "Scheduled: Stretch.")
                 self.assertEqual(result["tool_calls"][0]["tool"], "schedule_task")
+                if len(prompts) == 1:
+                    continue                  # run in the call, through its server
                 # The next turn reads the real result, labelled as one, and
                 # not the one the model made up.
                 self.assertIn("Tool result:", prompts[1])

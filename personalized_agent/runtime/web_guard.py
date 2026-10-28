@@ -20,12 +20,14 @@ tell it to do exactly that (prompt injection). Two checks stand between:
      package registries, encyclopaedias - whose owners see nobody's visits;
   4. a known address made SHORTER - a level up, its query or fragment
      dropped, http made https: nothing can be added that way;
-  5. on a site already known, a short address with no query, NONE OF WHOSE
-     WORDS IS THE USER'S ALONE: every word in it either never appeared in
-     what was read of the user's, or appeared on the public pages of ANOTHER
-     site too - a page cannot make the user's words public for its own
-     site by listing every word there is - and no number of four digits
-     or more of the user's at all.
+  5. on ANY site (until 2026-10-27, a site already known), a short address
+     with no query, NONE OF WHOSE WORDS IS THE USER'S ALONE: every word in
+     it either never appeared in what was read of the user's, or appeared
+     on the public pages of ANOTHER site too - a page cannot make the
+     user's words public for its own site by listing every word there is -
+     and no number of four digits or more of the user's at all. On a site
+     not seen, A FEW, and a few such sites in all (`MOST_MADE_UP_PER_SITE`,
+     `MOST_NEW_SITES`): nothing can be spelled out an address at a time.
 
   A site made to collect what is sent to it (`COLLECTORS`) is opened only
   at an address that exists, whatever the rest allows.
@@ -42,7 +44,7 @@ from __future__ import annotations
 import re
 import threading
 import urllib.parse
-from typing import Any, Dict, Iterable, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 #: The longest search sent.
 MOST_QUERY = 300
@@ -52,6 +54,25 @@ MOST_QUERY = 300
 SECRET_LIKE = re.compile(
     r"(?:[A-Za-z0-9+/_\-]{40,}={0,2})|(?:\b[0-9a-fA-F]{32,}\b)"
     r"|(?:\b(?:sk-|ghp_|gho_|github_pat_|xox[abpr]-|AKIA|AIza|ya29\.)[\w\-]{8,})")
+#: In an address, a piece between its separators that could be a key or
+#: data: long, or letters and digits mixed at length - not a page's name
+#: made of words (measured 2026-10-27: SECRET_LIKE took a whole path with
+#: its hyphens, "weather/chicago-weather-halloween-rain-forecast", for one).
+PIECES = re.compile(r"[/\-_.~]+")
+
+
+def key_like_piece(path: str) -> bool:
+    """A piece of this address looks like a key or encoded data."""
+    if re.search(r"(?:\b[0-9a-fA-F]{32,}\b)|(?:\b(?:sk-|ghp_|gho_|github_pat_|xox[abpr]-"
+                 r"|AKIA|AIza|ya29\.)[\w\-]{8,})", path):
+        return True
+    for piece in PIECES.split(path):
+        if len(piece) >= 32 or (len(piece) >= 16 and re.search(r"\d", piece)
+                                and re.search(r"[A-Za-z]", piece)):
+            return True
+    return False
+
+
 URL_IN_TEXT = re.compile(r"""(?i)\bhttps?://[^\s<>"'()\[\]{}]+""")
 #: The words of a text, as they are compared.
 WORDS = re.compile(r"[a-z0-9]+")
@@ -112,6 +133,10 @@ COLLECTORS = frozenset({
 #: most this many parts.
 MOST_COMPOSED = 120
 MOST_PARTS = 8
+#: An address composed on a site NOT seen (way 5, widened 2026-10-27): at
+#: most this many on one such site, and this many such sites, for one guard.
+MOST_MADE_UP_PER_SITE = 5
+MOST_NEW_SITES = 30
 
 
 def address_key(url: str) -> str:
@@ -155,6 +180,12 @@ class WebGuard:
         #: by the site they were read on ("search" for search results).
         self.private_words: Set[str] = set()
         self.public_words: Dict[str, Set[str]] = {}
+        #: Addresses made up on sites not seen, by site (way 5's caps).
+        self.made_up: Dict[str, Set[str]] = {}
+        #: WHAT WAS LOOKED UP, in order: each search and page let through -
+        #: by the app's tools or a client's own, through its hooks - for
+        #: the record of a turn (Chat keeps it with its reply).
+        self.looked: List[Dict[str, str]] = []
 
     # -- what is known --------------------------------------------------------------
     def know(self, text: Any, source: str = "user", where: str = "") -> None:
@@ -217,16 +248,29 @@ class WebGuard:
                 return "a reference site", None
             if self._shorter(parts):
                 return "a known address, shorter", None
-            if parts.netloc in self.known_hosts:
-                why = self._composed(parts)
-                if why is None:
-                    return "on a known site, nothing of the user's in it", None
+            why = self._composed(parts)
+            if why is not None:
                 return "", why
-        return "", ("this address did not come from a search, a page read, the "
-                    "user's files or their instruction, and is not on a site they "
-                    "named or a reference site - only an address that already "
-                    "exists can be opened (so nothing read can be sent out inside "
-                    "one). Search for it, or open the page that links to it.")
+            if parts.netloc in self.known_hosts:
+                return "on a known site, nothing of the user's in it", None
+            # ON A SITE NOT SEEN (widened 2026-10-27): its name made up too,
+            # and a name is asked of the site's own name servers - so held to
+            # the address's own checks; and a few, on a few sites.
+            why = self._made_up_site(host)
+            if why is not None:
+                return "", why
+            made = self.made_up.get(parts.netloc, set())
+            if key not in made:
+                if len(made) >= MOST_MADE_UP_PER_SITE:
+                    return "", (f"{MOST_MADE_UP_PER_SITE} addresses have been made up on "
+                                f"{parts.netloc} already - open one found in a search or "
+                                "linked from a page read")
+                if not made and len(self.made_up) >= MOST_NEW_SITES:
+                    return "", (f"addresses have been made up on {MOST_NEW_SITES} sites "
+                                "not seen before already - search for this one, or open "
+                                "the page that links to it")
+                self.made_up.setdefault(parts.netloc, set()).add(key)
+            return "on a site not seen, nothing of the user's in it", None
 
     def _shorter(self, parts: urllib.parse.SplitResult) -> bool:
         """A known address made shorter: on its site (http or https), a level
@@ -248,11 +292,12 @@ class WebGuard:
         """Why an address composed on a known site may not be opened, or
         None: short, no query, nothing key-like, no word the user's alone."""
         if parts.query:
-            return "an address made up here may not carry a query - search for the page"
+            return ("an address made up here may not carry a query (the part after "
+                    "'?') - search for the page, or open it without the query")
         path = urllib.parse.unquote(parts.path or "/")
         if len(path) > MOST_COMPOSED or len(_segments(path)) > MOST_PARTS:
             return "an address made up here must be short - search for the page"
-        if SECRET_LIKE.search(path):
+        if key_like_piece(path):
             return "the address carries something that looks like a key or encoded data"
         host = _host(parts.netloc)
         elsewhere = [words for site, words in self.public_words.items() if site != host]
@@ -265,7 +310,53 @@ class WebGuard:
                     "work that no public page read has shown - search for the page")
         return None
 
+    def _made_up_site(self, host: str) -> Optional[str]:
+        """Why a site not seen may not be opened by a name made up, or None:
+        a name too long in a part, something key-like, a number, or a word
+        the user's alone in it - a site's name can carry what a page could.
+        Called under the lock."""
+        labels = [one for one in host.lower().split(".") if one]
+        if any(len(one) > 30 for one in labels) or len(labels) > 5:
+            return "a site's name made up here must be short - search for the site"
+        if SECRET_LIKE.search(host) or re.search(r"\d{4,}", host):
+            return "the site's name carries something that looks like a key or a number"
+        # Not the site's own pages, nor those of a site it is part of (or
+        # that is part of it): a page cannot make a word public for its own.
+        elsewhere = [words for site, words in self.public_words.items()
+                     if not (site == host or host.endswith("." + site)
+                             or site.endswith("." + host))]
+        theirs = [word for word in WORDS.findall(host.lower())
+                  if word in self.private_words
+                  and not any(word in words for words in elsewhere)]
+        if theirs:
+            return ("the site's name carries words from the user's own files or work "
+                    "that no public page read has shown - search for the site")
+        return None
+
+    def __deepcopy__(self, memo: Dict[int, Any]) -> "WebGuard":
+        # The turn's one checker, not data: a request copied (a debugger's
+        # record of it) shares it - and its lock cannot be copied.
+        return self
+
     # -- a client's own web tools, held to the same checks (its hooks) ---------------------
+    def found(self, sites: Iterable[str], words: str = "") -> None:
+        """Sites a client's own search found - their names, not addresses
+        (Codex says only the site of each result): seen, as a site a search
+        result was on; its snippets' words public ones."""
+        with self._lock:
+            for site in sites:
+                site = str(site or "").strip().lower()
+                if site and re.fullmatch(r"[a-z0-9.-]+(?::\d+)?", site):
+                    self.known_hosts.add(site)
+        if words:
+            self.know(words, "web", "search")
+
+    def note(self, how: str, what: str) -> None:
+        """A search ("search") or a page ("read") let through - kept, in
+        order, for the record of what was looked up (`looked`)."""
+        with self._lock:
+            self.looked.append({"how": how, "what": str(what)[:300]})
+
     def hook(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """A client's hook asking before its own WebSearch or WebFetch runs,
         or telling what came back: the answer the hook prints."""
@@ -283,6 +374,9 @@ class WebGuard:
                 return {}
             # Said either way: the client allows neither of them by itself
             # (claude_code_provider), so only this answer lets one through.
+            if not why:
+                self.note("search" if tool == "WebSearch" else "read",
+                          given.get("query") if tool == "WebSearch" else given.get("url"))
             return {"hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny" if why else "allow",

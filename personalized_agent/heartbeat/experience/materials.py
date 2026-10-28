@@ -49,7 +49,9 @@ TEXTS = (".txt", ".md", ".csv", ".tsv", ".json", ".tex", ".bib", ".py", ".r",
          ".js", ".ts", ".html", ".htm", ".css", ".yaml", ".yml", ".toml",
          ".ipynb", ".sql", ".sh", ".log", ".xml", ".rst")
 
-_ID = re.compile(r"event_[0-9a-f]{8,}")
+# Direct chat's messages are material too (msg_...), not only the
+# Listener's events (PR #8, 2026-10-27: they were dropped as linked).
+_ID = re.compile(r"(?:event|msg)_[0-9a-f]{8,}")
 
 #: How a message the agent's own harness put in the conversation begins -
 #: a subagent's report, a task notification. Not the user's words.
@@ -152,6 +154,12 @@ class Materials:
             picks.setdefault(one, "evidence")
         for one in self._said_to_the_session(state, looked_at):
             picks.setdefault(one, "session")
+        # A DIRECT-CHAT TURN KEPT WHOLE: one side of it cited, the user's
+        # message and the agent's reply both kept, each as who said it.
+        for one in list(picks):
+            if one.startswith("msg_"):
+                for message in self._chat_turn(one):
+                    picks.setdefault(message["id"], "chat")
         out = []
         for event_id, how in picks.items():
             try:
@@ -161,6 +169,33 @@ class Materials:
                 made = None
             if made:
                 out.append(made)
+        return out
+
+    def _chat_turn(self, message_id: str) -> List[Dict[str, Any]]:
+        """The direct-chat turn a message is in: the user's message and the
+        agent's reply to it - not what the Chat debugger sent, which is a
+        test."""
+        rows = self.db.query(
+            "SELECT m.* FROM messages m WHERE m.conversation_id = "
+            "(SELECT conversation_id FROM messages WHERE id = ?) "
+            "ORDER BY m.created_at, m.rowid", (message_id,))
+        index = next((i for i, row in enumerate(rows) if row["id"] == message_id), None)
+        if index is None:
+            return []
+        start = index
+        while start > 0 and rows[start]["role"] != "user":
+            start -= 1
+        end = start + 1
+        while end < len(rows) and rows[end]["role"] != "user":
+            end += 1
+        out = []
+        for row in rows[start:end]:
+            try:
+                origin = json.loads(row["metadata"] or "{}").get("origin")
+            except ValueError:
+                origin = None
+            if row["role"] in ("user", "assistant") and origin != "chat_debugger":
+                out.append(row)
         return out
 
     def _said_to_the_session(self, state: Any, looked_at: Dict[str, Any]
@@ -214,6 +249,17 @@ class Materials:
         else:
             rows = self.db.query("SELECT id, event_type, timestamp, data FROM "
                                  "raw_events WHERE id = ?", (event_id,))
+            if not rows and event_id.startswith("msg_"):
+                # Direct chat lives in its messages, not the Listener's events.
+                for message in self._chat_turn(event_id):
+                    if message["id"] == event_id:
+                        rows = [{"id": event_id, "timestamp": message["created_at"],
+                                 "event_type": "assistant.message",
+                                 "data": json.dumps({
+                                     "text": message["content"], "role": message["role"],
+                                     "tool": "direct chat",
+                                     "session_id": message["conversation_id"]})}]
+                        break
             if not rows:
                 return None
             row = rows[0]

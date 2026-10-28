@@ -859,30 +859,29 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
           signs in to anything, and never posts or sends anything. A Connections
           round runs with every state heartbeat, so it has a guard set far past
           what a round needs: 200 model calls or 100 lookups.</p>
-        <p><strong>Search with.</strong> By default, <em>the model's own
-          search</em>: a model that has one (Claude Code) searches and opens
-          pages itself, and those searches count toward your plan with it. A model
-          without one, such as an API like DeepSeek, uses the app's search. In <em>the
-          app's search</em>, the model asks and the app searches for it - with
-          Brave's Search API and a key of your own (it has a free plan; the key
-          is kept in the OS credential store and never shown again), or, with no
-          key, DuckDuckGo's results page, which may refuse an application.</p>
+        <p><strong>Which search.</strong> A model that has search of its own
+          (Claude Code, Codex) always uses its own, and those searches count toward
+          your plan with it; it is never given the app's beside it. A model
+          without one, such as an API like DeepSeek, uses the app's search: the
+          model asks and the app searches for it - with Brave's Search API and a
+          key of your own (it has a free plan; the key is kept in the OS
+          credential store and never shown again), or, with no key, DuckDuckGo's
+          results page, which may refuse an application.</p>
         <p><strong>What may be searched and opened.</strong> Whichever search is
           used, a search may not carry anything that looks like a key or a
           password, and a page is opened only when nothing of yours can travel in
           its address: an address found in a search, on a page read, or in your
           instruction, files or records; any page of a site you named, or of a
-          documentation, package or reference site; a known address made shorter;
-          or, on a site already seen, a short address with none of your own words
-          in it. Claude Code's own search is held to this by a check before and
-          after each search and page. Codex's own search reads only the copy of
-          the web OpenAI keeps, never a live page; live pages it reads with the
-          app's tools.</p>
+          documentation, package, code or reference site; a known address made
+          shorter; or, on any other site, a short address with no query, nothing
+          like a key, and none of your own words in it - a few on each new site,
+          and a few new sites in all, so nothing can be spelled out an address at
+          a time. A site made to collect what is sent to it is opened only at an
+          address that already exists there. Claude Code's own search is held to
+          this by a check before and after each search and page. Codex's own
+          search reads only the copy of the web OpenAI keeps; the sites it
+          finds count as found, and live pages it reads with the app's tools.</p>
       </div>
-      <label class="wide">Search with<select id="web-search-with">
-        <option value="model">the model's own search (default)</option>
-        <option value="app">the app's: Brave Search, or DuckDuckGo</option>
-      </select></label>
       <div id="web-search-status" class="muted"></div>
       <form id="web-search-form" class="grid">
         <label class="wide">Brave Search API key<input name="api_key" type="password"

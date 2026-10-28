@@ -2221,10 +2221,12 @@ class CodexProviderTests(unittest.TestCase):
     def test_tool_instruction_template_preserves_its_json_example(self) -> None:
         from personalized_agent.models.base import ToolSpec
 
-        prompt = self.provider._prompt(ModelRequest(messages=[], tools=[
+        # Its instructions - in the prompt, or apart where a real Codex is
+        # installed (developer_instructions).
+        told = self.provider._system(ModelRequest(messages=[], tools=[
             ToolSpec(name="remember", description="store a note", input_schema={}),
         ]))
-        self.assertIn('{"tool": "<name>", "arguments": {...}}', prompt)
+        self.assertIn('{"tool": "<name>", "arguments": {...}}', told)
 
     def test_jsonl_response_becomes_the_model_response(self) -> None:
         output = '\n'.join((

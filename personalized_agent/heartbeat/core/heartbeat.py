@@ -3865,6 +3865,13 @@ class AgentHeartbeat:
                 continue
             who = ("THE USER, to you (the agent)" if row["role"] == "user"
                    else "YOU (the agent), replying to the user")
+            # WHAT IT LOOKED UP for that reply (Chat's record): given as it
+            # was, beside the reply - what to keep of it is the model's.
+            looked = [one for one in meta.get("looked_up") or [] if isinstance(one, dict)]
+            if row["role"] == "assistant" and looked:
+                who += " - having " + "; ".join(
+                    (f"searched for {one.get('what')!r}" if one.get("how") == "search"
+                     else f"read {one.get('what')}") for one in looked[:20])
             out.append({"id": row["id"], "timestamp": row["created_at"],
                         "event_type": "chat.message", "application": CHAT_APPLICATION,
                         "data": {"content": f"{who}: {row['content']}",

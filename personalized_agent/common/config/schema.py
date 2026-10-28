@@ -279,11 +279,6 @@ SETTINGS_SCHEMA: List[SettingField] = [
     # WHAT THE AGENTS SEARCH THE WEB WITH: the model's own search where the
     # model has one (Claude Code), else the app's (Brave with a key, or
     # DuckDuckGo's page). Set on the Web search card.
-    SettingField("web_search_with", "Web search with", "choice", "model", "Others",
-                 "The model's own web search where it has one - held to the same "
-                 "checks as the app's own - or the app's own (Brave Search with "
-                 "your key, else DuckDuckGo's page).",
-                 choices=["model", "app"], hidden=True),
     SettingField("interface_language", "Interface language", "choice", "en", "General",
                  "The language of this application's own screens. Follows the "
                  "display language now: Chinese screens for Chinese, English "
