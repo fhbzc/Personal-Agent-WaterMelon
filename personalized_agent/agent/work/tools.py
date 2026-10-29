@@ -529,6 +529,23 @@ threading.Thread(target=_watch, daemon=True).start()
 runpy.run_path({code!r}, run_name="__main__")
 """
 
+#: FIND_IN_FILES (the user, 2026-10-29): a function looked for by its name
+#: was a file read whole from its first line, or a script written to search.
+#: So lines are found by a word or a pattern, each with its number, and read
+#: on from there - at most so many lines, files looked in, bytes a file and
+#: characters of a line, in so many seconds.
+MOST_FOUND = 200
+MOST_FILES_SEARCHED = 20000
+MOST_SEARCHED_BYTES = 8 * 1024 * 1024
+MOST_FOUND_CHARS = 300
+MOST_SEARCH_SECONDS = 30
+#: Folders find_in_files does not go into from above - asked to look in one,
+#: it does: installed packages, saved versions, caches, a repository's own
+#: store, the agent's scratch; and the run's own folder (`_a_runs_own`), whose
+#: reviewer's checks were 11,084 of a replication's 21,005 files.
+SEARCH_SKIPPED = frozenset({".packages", ".versions", ".git", "__pycache__", "node_modules",
+                            ".npm-cache", ".pip-cache", ".agent_runtime"})
+
 #: The most files a granted folder is looked over for, before and after code
 #: runs, to see what it changed.
 MOST_FILES_WATCHED = 20000
@@ -713,6 +730,75 @@ def split_output_only(args: Sequence[str]) -> Tuple[List[str], List[str], List[s
     return kept, left, ([f"--tb={tb}"] if tb else []) + (["-l"] if locals_ else [])
 
 
+def last_line(to_line: Any, start: int, count: int) -> Any:
+    """Where a read ends (the user, 2026-10-29): `to_line`, counting from 1
+    and read with it, as a slice's end - None for on to the end of the file;
+    what is wrong with it, said, when it is no line after `start`."""
+    if to_line in (None, ""):
+        return None
+    try:
+        end = int(to_line)
+    except (TypeError, ValueError):
+        return "to_line is a line number"
+    if end < start + 1:
+        return f"to_line {end} is before from_line {start + 1}"
+    return min(end, count)
+
+
+def _glob_pattern(pattern: str) -> "re.Pattern[str]":
+    """A glob as a pattern of a path from where it is looked for: "*" and
+    "?" within one folder's name, "**" any number of folders."""
+    parts = [one for one in pattern.replace("\\", "/").split("/") if one]
+    out = ""
+    for k, part in enumerate(parts):
+        last = k == len(parts) - 1
+        if part == "**":
+            out += ".*" if last else "(?:[^/]+/)*"
+            continue
+        out += "".join("[^/]*" if ch == "*" else "[^/]" if ch == "?" else re.escape(ch)
+                       for ch in part) + ("" if last else "/")
+    return re.compile(out or ".*", re.IGNORECASE if os.name == "nt" else 0)
+
+
+def _globbed(root: Path, pattern: str):
+    """The files a glob of `root` finds, in a steady order - going no deeper
+    than the pattern can reach, and never into SEARCH_SKIPPED, the run's own
+    folder or an installed environment below `root` (find_files)."""
+    from .environments import is_environment
+    wanted = _glob_pattern(pattern or "*")
+    parts = [one for one in str(pattern or "*").replace("\\", "/").split("/") if one]
+    deepest = None if "**" in parts else len(parts) - 1
+    for dirpath, dirnames, filenames in os.walk(root):
+        relative = Path(dirpath).relative_to(root).as_posix()
+        depth = 0 if relative == "." else relative.count("/") + 1
+        if deepest is not None and depth >= deepest:
+            dirnames[:] = []
+        else:
+            dirnames[:] = sorted(one for one in dirnames if one not in SEARCH_SKIPPED
+                                 and not _a_runs_own(dirpath, one)
+                                 and not is_environment(Path(dirpath) / one, one))
+        if deepest is not None and depth != deepest:
+            continue
+        for name in sorted(filenames):
+            if name.endswith((".pyc", ".pyo")):
+                continue
+            inside = name if relative == "." else f"{relative}/{name}"
+            if wanted.fullmatch(inside):
+                yield Path(dirpath) / name
+
+
+def next_line(start: int, body: str, most: int) -> int:
+    """Where a read cut at `most` characters goes on from, counting from 1:
+    the line the cut fell in, read again whole."""
+    return start + 1 + body[:most].count("\n")
+
+
+def _clip_line(line: str) -> str:
+    """A line find_in_files shows: at most MOST_FOUND_CHARS of it."""
+    line = line.rstrip()
+    return line if len(line) <= MOST_FOUND_CHARS else line[:MOST_FOUND_CHARS - 1] + "…"
+
+
 def _files_under(root: Path, skip: Sequence[str] = ()) -> List[Path]:
     from .environments import is_environment
     out: List[Path] = []
@@ -800,7 +886,8 @@ class WorkTools:
         self.label = ""
         self.handlers: Dict[str, Callable[[Dict[str, Any]], Any]] = {
             "list_dir": self.list_dir, "read_file": self.read_file,
-            "read_video": self.read_video, "find_files": self.find_files, "write_file": self.write_file,
+            "read_video": self.read_video, "find_files": self.find_files,
+            "find_in_files": self.find_in_files, "write_file": self.write_file,
             "edit_file": self.edit_file, "run_tests": self.run_tests,
             "edit_notebook": self.edit_notebook,
             "delete_file": self.delete_file,
@@ -909,8 +996,12 @@ class WorkTools:
                      _schema({"path": {"type": "string"}}, ["path"])),
             ToolSpec("read_file", "Read a file: at most 40,000 characters a "
                      "call - when \"cut\" is true there is more: read on with "
-                     "from_line (the line to start at, counting from 0); \"lines\" "
-                     "is how many it has. A text file as it is; a PICTURE as the words "
+                     "from_line = its next_from_line (lines count from 1); \"lines\" "
+                     "is how many it has. to_line is the last line read (with it); "
+                     "without it, on to the end. Looking for one part - a function, a "
+                     "setting - find its line with find_in_files and read only around "
+                     "it (from_line a little before, to_line where it ends), not the "
+                     "whole file. A text file as it is; a PICTURE as the words "
                      "read in it, and the picture itself where you can see pictures; a "
                      "PDF as the text of each page (\"--- page N ---\"), a scanned page "
                      "read off its picture; Word, PowerPoint and Excel as their text and "
@@ -918,7 +1009,8 @@ class WorkTools:
                      "logs, the application's state and where sign-ins and keys are "
                      "kept. Another binary file is read with run_python.",
                      _schema({"path": {"type": "string"},
-                              "from_line": {"type": "integer"}}, ["path"])),
+                              "from_line": {"type": "integer"},
+                              "to_line": {"type": "integer"}}, ["path"])),
             ToolSpec("read_video", "Watch a VIDEO file (mp4, mov, mkv, webm, ...): "
                      "frames taken evenly over the part asked for - as pictures where "
                      "you can see them, each with the words read in it - and what is "
@@ -936,10 +1028,37 @@ class WorkTools:
                               "speech": {"type": "boolean"}}, ["path"])),
             ToolSpec("find_files", "Find files under a folder by name pattern "
                      "(glob, e.g. **/*.py), optionally containing some text - at most "
-                     "200 found.",
+                     "200 found. For the LINES that hold it, find_in_files. Installed "
+                     "packages, saved versions, caches, .agent_runtime and the run's own "
+                     "folder are not gone into unless root is inside them.",
                      _schema({"root": {"type": "string"},
                               "pattern": {"type": "string"},
                               "containing": {"type": "string"}},
+                             ["root", "pattern"])),
+            ToolSpec("find_in_files", "Find LINES in text files - like grep: each "
+                     "line holding the pattern, with its file and LINE NUMBER, grouped by "
+                     "file (\"12: the line\"; with context, the lines around it as "
+                     "\"11- ...\"). root is a folder (searched all through) or one file; "
+                     "pattern a regular expression (literal=true: the words as written; "
+                     "ignore_case=true); files a name pattern (\"*.py\", \"**/*.md\"); "
+                     "context 0-5 lines either side; most lines (100 unless asked, at "
+                     f"most {MOST_FOUND}). A line found that OPENS a block - a "
+                     "function, a class, a {...} block, a Markdown section - is in its "
+                     "file's \"blocks\" with ends_about: where that block LIKELY ends, and "
+                     "by what it was told (Python's parser, indentation, matching braces, "
+                     "the next heading). It is an ESTIMATE - yours to change: read with "
+                     "read_file from_line a little before and to_line=ends_about, and if "
+                     "the part looks cut off read on, or ask for less. "
+                     "Installed packages, saved versions, caches, .agent_runtime, the "
+                     "run's own folder and binary files are not searched unless root is "
+                     "inside them; a notebook is searched as its stored JSON.",
+                     _schema({"root": {"type": "string"},
+                              "pattern": {"type": "string"},
+                              "literal": {"type": "boolean"},
+                              "ignore_case": {"type": "boolean"},
+                              "files": {"type": "string"},
+                              "context": {"type": "integer"},
+                              "most": {"type": "integer"}},
                              ["root", "pattern"])),
             ToolSpec("write_file", "Write a text file - whole, or added to its end "
                      "with append - ONLY inside: " + where + ". A path anywhere else "
@@ -1440,7 +1559,7 @@ class WorkTools:
             # the copy after (runtime/documents.py).
             try:
                 said = documents.read_for_model(where, int(args.get("from_line") or 1),
-                                                MOST_CHARS)
+                                                MOST_CHARS, to_line=args.get("to_line"))
             except Exception as exc:
                 return {"error": f"could not read {where.name}: {exc}"[:400]}
             if not self._the_agents_own(where):
@@ -1457,36 +1576,175 @@ class WorkTools:
         # own folders are where it could have put one.
         if not self._the_agents_own(where):
             self.know_addresses(text)
+        every = text.splitlines()
         start = max(0, int(args.get("from_line") or 1) - 1)
-        lines = text.splitlines()[start:]
-        body = "\n".join(lines)
-        return {"path": str(where), "from_line": start + 1,
+        end = last_line(args.get("to_line"), start, len(every))
+        if isinstance(end, str):
+            return {"error": end}
+        body = "\n".join(every[start:end])
+        said = {"path": str(where), "from_line": start + 1,
                 "text": body[:MOST_CHARS], "cut": len(body) > MOST_CHARS,
-                "lines": len(text.splitlines())}
+                "lines": len(every)}
+        if end is not None:
+            said["to_line"] = end
+        if said["cut"]:
+            said["next_from_line"] = next_line(start, body, MOST_CHARS)
+        return said
 
     def find_files(self, args: Dict[str, Any]) -> Any:
         root = self._readable(str(args.get("root") or "."))
         pattern = str(args.get("pattern") or "*")
         needle = str(args.get("containing") or "")
         found = []
-        for path in root.glob(pattern):
+        too_big = 0
+        # As a glob finds them, but never into what find_in_files leaves out
+        # from above (SEARCH_SKIPPED, the run's own folder, an environment):
+        # from the top of a replication's folder a glob went through some
+        # 70,000 files, seven virtual environments among them - 5 to 97
+        # seconds a call (2026-10-29).
+        for path in _globbed(root, pattern):
             if len(found) >= 200:
                 break
-            if not path.is_file():
-                continue
             try:
                 self._readable(str(path))
             except SecurityViolation:
                 continue
             if needle:
                 try:
+                    if path.stat().st_size > MOST_SEARCHED_BYTES:
+                        too_big += 1
+                        continue
                     if needle not in path.read_text(encoding="utf-8",
                                                     errors="ignore"):
                         continue
                 except OSError:
                     continue
             found.append(str(path))
-        return {"root": str(root), "files": found}
+        said = {"root": str(root), "files": found}
+        if too_big:
+            said["not_searched"] = (f"{too_big} file(s) over {MOST_SEARCHED_BYTES // 2**20} MB "
+                                    "were not looked into for the text")
+        return said
+
+    def find_in_files(self, args: Dict[str, Any]) -> Any:
+        """THE LINES THAT HOLD A WORD OR A PATTERN, each with its number - in
+        one file or all through a folder (FIND_IN_FILES above)."""
+        root = self._readable(str(args.get("root") or "."))
+        pattern = str(args.get("pattern") or "")
+        if not pattern:
+            return {"error": "say what to find: pattern"}
+        try:
+            wanted = re.compile(re.escape(pattern) if args.get("literal") else pattern,
+                                re.IGNORECASE if args.get("ignore_case") else 0)
+        except re.error as exc:
+            return {"error": f"not a regular expression ({exc}): send literal=true "
+                             "to find the words as written"}
+        names = str(args.get("files") or "*").replace("\\", "/")
+        try:
+            around = max(0, min(5, int(args.get("context") or 0)))
+            most = max(1, min(MOST_FOUND, int(args.get("most") or 100)))
+        except (TypeError, ValueError):
+            return {"error": "context and most are whole numbers"}
+        from ...runtime import documents
+        began = time.time()
+        found: List[Dict[str, Any]] = []
+        shown = searched = 0
+        left = {"binary": 0, "too big": 0, "not text": 0, "not readable": 0}
+        cut = ""
+        for path in self._searched(root, names):
+            if cut:
+                break
+            if searched >= MOST_FILES_SEARCHED:
+                cut = f"stopped after {MOST_FILES_SEARCHED} files - narrow root or files"
+                break
+            if time.time() - began > MOST_SEARCH_SECONDS:
+                cut = f"stopped after {MOST_SEARCH_SECONDS} seconds - narrow root or files"
+                break
+            try:
+                self._readable(str(path))
+                if path.stat().st_size > MOST_SEARCHED_BYTES:
+                    left["too big"] += 1
+                    continue
+                if documents.needs_reading(path):
+                    left["not text"] += 1
+                    continue
+                raw = path.read_bytes()
+            except (SecurityViolation, OSError):
+                left["not readable"] += 1
+                continue
+            if b"\0" in raw[:8192]:
+                left["binary"] += 1
+                continue
+            searched += 1
+            lines = raw.decode("utf-8", errors="replace").splitlines()
+            hits = [n for n, line in enumerate(lines) if wanted.search(line)]
+            if not hits:
+                continue
+            if len(hits) > most - shown:
+                cut = f"more than {most} lines hold it - ask for more with most, or narrow it"
+                hits = hits[:most - shown]
+                if not hits:
+                    break
+            shown += len(hits)
+            out: List[str] = []
+            last = -1
+            for n in hits:
+                for k in range(max(0, n - around, last + 1), min(len(lines), n + around + 1)):
+                    if out and k > last + 1:
+                        out.append("--")
+                    mark = ":" if k == n or wanted.search(lines[k]) else "-"
+                    out.append(f"{k + 1}{mark} {_clip_line(lines[k])}")
+                    last = k
+            entry: Dict[str, Any] = {"path": str(path), "lines": out}
+            # Where each block a line found opens likely ends (blocks.py).
+            from .blocks import ends_of
+            ends = ends_of(path.suffix, lines, hits)
+            if ends:
+                entry["blocks"] = [{"line": n + 1, "ends_about": end, "by": by}
+                                   for n, (end, by) in sorted(ends.items())]
+            found.append(entry)
+            # The user's own files are where real addresses are (read_file).
+            if not self._the_agents_own(path):
+                self.know_addresses("\n".join(out))
+        said: Dict[str, Any] = {"root": str(root), "pattern": pattern, "files": found,
+                                "lines_found": shown, "files_searched": searched}
+        skipped = {k: v for k, v in left.items() if v}
+        if skipped:
+            said["not_searched"] = skipped
+        if cut:
+            said["cut"] = cut
+        if not found:
+            said["note"] = "no line holds it" + (
+                "" if args.get("ignore_case") else " - ignore_case=true for any case")
+        return said
+
+    def _searched(self, root: Path, names: str):
+        """The files find_in_files looks in, in a steady order: `root` itself
+        when it is a file; else every file under it whose name, or its path
+        from `root` for a pattern with a "/", matches `names` - never into
+        SEARCH_SKIPPED or an installed environment (environments.py)."""
+        import fnmatch
+        from .environments import is_environment
+        if root.is_file():
+            yield root
+            return
+        by_path = "/" in names
+        flat = names[3:] if names.startswith("**/") else names
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = sorted(one for one in dirnames if one not in SEARCH_SKIPPED
+                                 and not _a_runs_own(dirpath, one)
+                                 and not is_environment(Path(dirpath) / one, one))
+            for name in sorted(filenames):
+                if name.endswith((".pyc", ".pyo")):
+                    continue
+                whole = Path(dirpath) / name
+                if by_path:
+                    relative = whole.relative_to(root).as_posix()
+                    if not (fnmatch.fnmatch(relative, names) or fnmatch.fnmatch(relative, flat)):
+                        continue
+                elif not fnmatch.fnmatch(name, names):
+                    continue
+                yield whole
 
     # -- writing: only here ------------------------------------------------
     def _claim(self, paths: List[str]) -> None:

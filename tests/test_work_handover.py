@@ -245,7 +245,7 @@ class NativeToolsStopAtTheCapTests(unittest.TestCase):
         text = HAND_OVER.format(steps=40, minutes=15)
         start = text.index("{")
         note = json.loads(text[start:])["handover"]
-        self.assertEqual(set(note), {"card", "done", "next", "files", "problems", "checks"})
+        self.assertEqual(set(note), {"card", "done", "next", "files", "read", "problems", "checks"})
 
 
 if __name__ == "__main__":

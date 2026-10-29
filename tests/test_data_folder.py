@@ -78,6 +78,109 @@ class WhereTheDataFolderIsTests(unittest.TestCase):
                 self.assertIn(f"\n{code}.{key}=", script.replace("\r\n", "\n"), (code, key))
 
 
+class TheFoldersFoundAreOfferedTests(unittest.TestCase):
+    """EVERY FOLDER HOLDING AN AGENT'S DATA, LISTED TO CHOOSE FROM (the user,
+    2026-10-29): installed anew on a computer whose data was in the user's
+    folder, the box said <program>\data and the agent came up empty. The box
+    starts at the folder this same copy used and nothing else - a computer
+    can hold the agent the user lives with and a copy installed to test - and
+    every folder found is listed, with when it was last used and its size."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.script = (ROOT / "build" / "windows" / "installer.iss").read_text(
+            encoding="utf-8-sig").replace("\r\n", "\n")
+
+    def _body(self, head: str) -> str:
+        start = self.script.index(head)
+        return self.script[start:self.script.index("\nend;", start)]
+
+    def test_the_box_starts_at_the_folder_this_copy_used(self) -> None:
+        used = self._body("function CopysData(AppDir: String): String;")
+        order = [used.index(one) for one in ("InstalledData(AppDir)", "PreviousData",
+                                             "StandardData")]
+        self.assertEqual(order, sorted(order), "data_root.txt, the last install's, the standard")
+        page = self._body("procedure CurPageChanged(CurPageID: Integer);")
+        self.assertIn("DataDefault := CopysData(WizardDirValue);", page)
+        self.assertIn("DataDefault := AddBackslash(WizardDirValue) + 'data';", page)
+
+    def test_a_folder_found_is_only_offered(self) -> None:
+        # Put in the box only when the user clicks it.
+        self.assertEqual(self.script.count("DataPage.Values[0] := FoundFolders["), 1)
+        self.assertIn("DataPage.Values[0] := FoundFolders[DataFound.ItemIndex];",
+                      self._body("procedure DataFoundClicked(Sender: TObject);"))
+        self.assertIn("DataFound.OnClickCheck := @DataFoundClicked;", self.script)
+
+    def test_each_with_when_it_was_last_used_and_its_size(self) -> None:
+        found = self._body("procedure FindFolders(AppDir: String);")
+        self.assertIn("LastUsed(FoundFolders[K])", found)
+        self.assertIn("BytesIn(FoundFolders[K], TicksNow + SIZE_COUNTED_FOR, Cut)", found)
+        self.assertIn("DataFound.AddRadioButton(FoundFolders[K]", found)
+        for place in ("CopysData(AppDir)", "PreviousData", "{userpf}\\{#MyAppDirName}",
+                      "{commonpf}\\{#MyAppDirName}", "Home + '{#MyAppDirName}'",
+                      "Home + 'PersonalizedAgent'", "AddBackslash(AppDir) + 'data'"):
+            self.assertIn(place, found, place)
+        offer = self._body("procedure Offer(Dir: String);")
+        self.assertIn("HasAgentData", offer)
+        for code in ("en", "zh", "es", "ja", "ko", "ru", "fr", "de", "it"):
+            self.assertIn(f"\n{code}.DataFound=", self.script, code)
+
+    def test_the_standard_folders_are_the_programs_own(self) -> None:
+        from personalized_agent.version import APP_DIR_NAME, FORMER_DIR_NAMES
+        self.assertIn(f'#define MyAppDirName "{APP_DIR_NAME}"', self.script)
+        standard = self._body("function StandardData: String;")
+        self.assertIn("Home + '{#MyAppDirName}'", standard)
+        for former in FORMER_DIR_NAMES:
+            self.assertIn(f"Home + '{former}'", standard)
+
+    def test_an_update_keeps_the_folder_the_program_reads(self) -> None:
+        written = self._body("function DataToWrite: String;")
+        self.assertIn("if WizardSilent then begin\n    Result := CopysData(ExpandConstant('{app}'));",
+                      written)
+        self.assertIn("ExpandFileName(DataToWrite)", self.script)
+        self.assertIn("if WizardSilent then DataPage.Values[0] := DataToWrite;",
+                      self._body("function CheckDataFolder: Boolean;"))
+
+
+class UninstallingNeverTakesTheDataTests(unittest.TestCase):
+    """THE DATA IS NEVER DELETED WITH THE PROGRAM (the user, 2026-10-29):
+    with data_root.txt gone, nothing was known to keep and the default data
+    folder went with the program; with the program's own folder as the data
+    folder, the folder to keep was the one being emptied. Now the installer
+    refuses that folder, and uninstalling never deletes a workspace or
+    internal folder, nor one holding an agent's data two folders down."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.script = (ROOT / "build" / "windows" / "installer.iss").read_text(
+            encoding="utf-8-sig").replace("\r\n", "\n")
+
+    def _body(self, head: str) -> str:
+        start = self.script.index(head)
+        return self.script[start:self.script.index("\nend;", start)]
+
+    def test_the_program_folder_or_one_holding_it_is_refused(self) -> None:
+        check = self._body("function CheckDataFolder: Boolean;")
+        self.assertIn("Under(FolderOf(WizardDirValue), FolderOf(Dir))", check)
+        self.assertIn("CustomMessage('DataHoldsProgram')", check)
+        # Before the question about using the data already there.
+        self.assertLess(check.index("DataHoldsProgram"), check.index("DataExisting"))
+        for code in ("en", "zh", "es", "ja", "ko", "ru", "fr", "de", "it"):
+            self.assertIn(f"\n{code}.DataHoldsProgram=", self.script, code)
+
+    def test_uninstalling_keeps_every_folder_with_data_in_it(self) -> None:
+        start = self.script.index("procedure CurUninstallStepChanged")
+        uninstall = self.script[start:self.script.index("RemoveDir(App);", start)]
+        guard = uninstall[:uninstall.index("DelTree(App + Name")]
+        for kept in ("CompareText(Name, 'workspace') <> 0", "CompareText(Name, 'internal') <> 0",
+                     "not DataBelow(App + Name, 2)"):
+            self.assertIn(kept, guard, kept)
+        below = self._body("function DataBelow(Dir: String; Depth: Integer): Boolean;")
+        self.assertIn("Result := HasAgentData(Dir);", below)
+        self.assertIn("DataBelow(AddBackslash(Dir) + FindRec.Name, Depth - 1)", below)
+        self.assertIn("REPARSE_POINT = 0", below)
+
+
 class AnotherFolderIsAnotherAgentTests(unittest.TestCase):
 
     def test_its_own_calendar(self) -> None:

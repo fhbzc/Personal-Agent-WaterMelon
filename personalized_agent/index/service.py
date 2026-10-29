@@ -30,12 +30,13 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
+from itertools import islice
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from .rules import LINES_PER_PIECE
 from .store import IndexStore, fts5_available
-from .talk import lines_of, talk_text
+from .talk import lines_from, lines_of, talk_text
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +45,10 @@ INDEX_FLAG = "--index-worker"
 AFTER_CHANGE_SECONDS = 20
 #: The most of a finding's text given.
 MOST_SHOWN = 1200
+#: A conversation record kept before where each piece starts was (talk.py)
+#: is read whole to show one - not one bigger than this: it is shown by
+#: its name and line until the index is built again.
+MOST_RECORD_READ_WHOLE = 50_000_000
 
 
 def session_folders() -> List[Path]:
@@ -339,7 +344,8 @@ class LocalIndex:
             age_days = max(0.0, (now - float(one.get("mtime") or now)) / 86400)
             one["rank"] = one["score"] * (1.0 + 0.3 / (1.0 + age_days / 30))
             if one["found_in"] == "text":
-                one["text"] = self._lines(path, int(one["line"] or 1), one.get("kind"), records)
+                one["text"] = self._lines(path, int(one["line"] or 1), one.get("kind"), records,
+                                          at=one.get("at"), skip=one.get("skip"))
             out.append(one)
         out.sort(key=lambda one: one["rank"])
         return [{"path": one["path"], "line": one.get("line"), "found_in": one["found_in"],
@@ -349,20 +355,34 @@ class LocalIndex:
 
     @staticmethod
     def _lines(path: str, line: int, kind: Optional[str] = None,
-               records: Optional[Dict[str, str]] = None) -> str:
-        """The piece found, from the file as it is now - a conversation
-        record's from what is kept of it (talk.py), read once a search."""
+               records: Optional[Dict[str, str]] = None, at: Optional[int] = None,
+               skip: Optional[int] = None) -> str:
+        """The piece found, from the file as it is now - read only as far
+        as it goes. A conversation record's from what is kept of it
+        (talk.py): read from where the piece starts in the file; kept by
+        an index made before that was, read whole - once a search, and not
+        at all when it is bigger than MOST_RECORD_READ_WHOLE (a 1.4 GB
+        record took 46 seconds, every search: 2026-10-29)."""
         if kind == "talk":
+            if at is not None:
+                return lines_from(Path(path), int(at), int(skip or 0),
+                                  LINES_PER_PIECE)[:MOST_SHOWN]
             records = {} if records is None else records
             if path not in records:
-                records[path] = talk_text(Path(path)) or ""
+                try:
+                    small = os.path.getsize(path) <= MOST_RECORD_READ_WHOLE
+                except OSError:
+                    small = False
+                records[path] = (talk_text(Path(path)) or "") if small else ""
             return lines_of(records[path], line, LINES_PER_PIECE)[:MOST_SHOWN]
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as handle:
-                lines = handle.read().splitlines()
+                # Up to the piece's last line, never the rest: a piece of a
+                # data file of gigabytes was the whole file read for it.
+                lines = list(islice(handle, line - 1, line - 1 + LINES_PER_PIECE))
         except OSError:
             return ""
-        return "\n".join(lines[line - 1:line - 1 + LINES_PER_PIECE])[:MOST_SHOWN]
+        return "\n".join(one.rstrip("\r\n") for one in lines)[:MOST_SHOWN]
 
 
 __all__ = ["LocalIndex", "INDEX_FLAG", "session_folders"]

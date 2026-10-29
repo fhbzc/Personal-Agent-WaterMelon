@@ -71,7 +71,7 @@ class IndexStore:
             "NULL, root TEXT NOT NULL, size INTEGER, mtime REAL, kind TEXT, indexed_at REAL)",
             "CREATE INDEX IF NOT EXISTS files_root ON files(root)",
             "CREATE TABLE IF NOT EXISTS pieces (id INTEGER PRIMARY KEY, file_id INTEGER NOT "
-            "NULL, line INTEGER NOT NULL)",
+            "NULL, line INTEGER NOT NULL, at INTEGER, skip INTEGER)",
             "CREATE INDEX IF NOT EXISTS pieces_file ON pieces(file_id)",
             "CREATE VIRTUAL TABLE IF NOT EXISTS piece_words USING fts5(body"
             + (f", {keeps}" if keeps else "") + ")",
@@ -83,7 +83,18 @@ class IndexStore:
         ]
         for one in tables:
             self.con.execute(one)
+        # A conversation record's piece, kept with where in the file it
+        # starts (talk.py): added to an index made before.
+        for column in ("at", "skip"):
+            if column not in self._columns("pieces"):
+                self.con.execute(f"ALTER TABLE pieces ADD COLUMN {column} INTEGER")
         self.con.commit()
+
+    def _columns(self, table: str) -> List[str]:
+        try:
+            return [row[1] for row in self.con.execute(f"PRAGMA table_info({table})")]
+        except sqlite3.Error:
+            return []
 
     def close(self) -> None:
         try:
@@ -143,8 +154,10 @@ class IndexStore:
         return said
 
     def put(self, path: str, root: str, size: int, mtime: float, kind: str,
-            pieces: Iterable[Tuple[int, str]], name: str) -> int:
-        """A file kept anew: whatever was kept of it before goes first."""
+            pieces: Iterable[Tuple[Any, ...]], name: str) -> int:
+        """A file kept anew: whatever was kept of it before goes first.
+        `pieces`: (line, words) each - and of a conversation record, where
+        in the file it starts too: (line, words, byte, lines to skip)."""
         row = self.con.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
         if row is not None:
             self.drop(row[0])
@@ -155,11 +168,14 @@ class IndexStore:
         file_id = int(cursor.lastrowid)
         self.con.execute("INSERT INTO name_words (rowid, body) VALUES (?, ?)",
                          (file_id, body(name)))
-        for line, words in pieces:
+        for one in pieces:
+            line, words = one[0], one[1]
             if not words:
                 continue
-            piece = self.con.execute("INSERT INTO pieces (file_id, line) VALUES (?, ?)",
-                                     (file_id, int(line)))
+            at, skip = (one[2], one[3]) if len(one) > 3 else (None, None)
+            piece = self.con.execute(
+                "INSERT INTO pieces (file_id, line, at, skip) VALUES (?, ?, ?, ?)",
+                (file_id, int(line), at, skip))
             self.con.execute("INSERT INTO piece_words (rowid, body) VALUES (?, ?)",
                              (int(piece.lastrowid), words))
         return file_id
@@ -225,16 +241,22 @@ class IndexStore:
 
     def _pieces(self, asked: str, roots: Optional[List[str]], limit: int) -> List[Dict[str, Any]]:
         where, extra = self._where(roots)
+        # Where a record's piece starts in its file - none in an index made
+        # before that was kept.
+        at = ", p.at, p.skip" if "at" in self._columns("pieces") else ""
         try:
             rows = self.con.execute(
-                "SELECT f.path, f.mtime, f.kind, p.line, bm25(piece_words) AS score FROM piece_words "
+                f"SELECT f.path, f.mtime, f.kind, p.line{at}, bm25(piece_words) AS score "
+                "FROM piece_words "
                 "JOIN pieces p ON p.id = piece_words.rowid JOIN files f ON f.id = p.file_id "
                 f"WHERE piece_words MATCH ?{where} ORDER BY score LIMIT ?",
                 [asked, *extra, limit * 3]).fetchall()
         except sqlite3.Error:
             return []
         return [{"path": row["path"], "line": row["line"], "score": float(row["score"]),
-                 "mtime": row["mtime"], "found_in": "text", "kind": row["kind"]} for row in rows]
+                 "mtime": row["mtime"], "found_in": "text", "kind": row["kind"],
+                 "at": row["at"] if at else None, "skip": row["skip"] if at else None}
+                for row in rows]
 
     def _names(self, asked: str, roots: Optional[List[str]], limit: int) -> List[Dict[str, Any]]:
         where, extra = self._where(roots)

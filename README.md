@@ -359,6 +359,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.2.11](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.11) | 2026-10-29 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.11) |
 | [v0.2.10](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.10) | 2026-10-29 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.10) |
 | [v0.2.9](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.9) | 2026-10-28 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.9) |
 | [v0.2.8](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.8) | 2026-10-27 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.8) |
@@ -402,7 +403,8 @@ workflow. Only how it gets onto your computer differs.
 **Your data folder.** The installer asks where to keep your data: one folder
 for everything the agent learns and makes.
 
-- **By default it is a `data` folder inside the program's folder.** A folder
+- **By default it is the folder this copy used before** - and for a copy
+  installed anew, a `data` folder inside the program's folder. A folder
   that needs administrator rights to write to (Program Files, the Windows
   folder) cannot be used, because the program works as you, without them: the
   installer says so and will not go on until you choose another.
@@ -412,13 +414,19 @@ for everything the agent learns and makes.
   other things in it (Documents, a whole drive, a project) would hide the
   work kept there. The installer refuses such a folder, and the program will
   not start in one.
-- **Reusing earlier data:** if the folder holds an earlier agent's data, the
-  installer asks whether to use it; say No and pick another folder.
+- **Reusing earlier data:** every folder found that already holds the
+  agent's data is listed under the box, each with when it was last used and
+  its size; click one to use it. Nothing else is chosen for you, so a copy
+  installed to try something never takes the data of the one you use. If the
+  folder in the box holds an earlier agent's data, the installer asks whether
+  to use it; say No and pick another folder. An update always keeps the
+  folder you use.
 - **A different folder is a different agent**, with its own calendar,
   contacts and keys, so you can try a new version on a fresh folder without
   touching your usual one.
-- Uninstalling leaves the data folder where it is, even inside the
-  program's folder.
+- Uninstalling never deletes the agent's data: the data folder stays where
+  it is, even inside the program's folder. The program's own folder cannot
+  be the data folder.
 - **Where your API keys are kept.** On Windows, in Windows' own credential
   store. On macOS (the downloaded app is not signed by an Apple developer,
   so macOS would ask again after every update) and on Linux without a
@@ -604,6 +612,15 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.2.11](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.11) (2026-10-29, a pre-release)
+
+- **Your earlier data is offered when you install.** Where the agent keeps its data is asked when it is installed, and on a computer whose data was kept elsewhere - in your user folder, as versions before 0.2.0 did - the installer suggested a new, empty folder, and the agent came up as if new. Now every folder that already holds the agent's data is listed under the box, each with when it was last used and how big it is, and you choose one with a click. The box starts at the folder this same copy used before; nothing else is chosen for you, so a copy installed to try something never takes the data of the one you live with. An update always keeps the folder you use.
+- **Uninstalling never deletes your data.** It already left the data folder, but only the one it had been told about: had that note beside the program gone missing, the default data folder went with the program. Now no folder holding the agent's data is ever deleted. And the program's own folder can no longer be chosen as the data folder.
+- **The work agent finds its way in code.** A new search gives the lines that hold a word - a function's name, say - with their file and line numbers and the lines around them, and where each function or section probably ends. Reading a file can then start and stop at those lines, instead of reading whole files into the agent's memory.
+- **Finding files is fast again.** A search for files by name no longer goes through installed environments, saved versions and caches: on a project folder of some 70,000 files, a search that took a minute and a half takes six seconds.
+- **Searching your files is fast again.** A search of your own files could take most of a minute when what it found was in a very long conversation record: the whole record was read to show six lines of it. Now each piece is read from where it is, in a twentieth of a second. Your index learns where each piece is at its next update.
+- Smaller things: a file's lines are counted from 1 everywhere the agent is told about them; a work handover note says which parts of which files were read, so the next call reads only those.
 
 ### [v0.2.10](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.10) (2026-10-29, a pre-release)
 

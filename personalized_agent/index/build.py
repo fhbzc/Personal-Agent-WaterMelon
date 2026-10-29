@@ -24,7 +24,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from .rules import (LINES_PER_PIECE, MOST_SESSION_BYTES, RULES_VERSION, how_kept, read_text,
                     skipped_folder)
 from .store import IndexStore
-from .talk import talk_text
+from .talk import talk_kept, where_lines_are
 from .tokens import body
 
 #: Files between commits: what a stop may have to read again.
@@ -120,6 +120,9 @@ def build(store: IndexStore, roots: List[Dict[str, Any]], never: Iterable[Path] 
     chosen = None if only is None else {_key(one) for one in only}
     # The rules changed since the last build: each file kept is looked at again.
     recheck = store.meta("rules") != str(RULES_VERSION)
+    # Conversation records kept before each piece was kept with where in
+    # the file it starts (talk.py): read again once, each.
+    talk_again = store.meta("talk_at") != "1"
     for inner in within:
         store.mark(inner, state="within", files=0, texts=0, done_at=time.time())
     store.commit()
@@ -166,15 +169,23 @@ def build(store: IndexStore, roots: List[Dict[str, Any]], never: Iterable[Path] 
             texts += kind != "name"
             held = known.get(text_path)
             if held is not None and held[1] == info.st_size and abs(
-                    (held[2] or 0) - info.st_mtime) < 1e-6 and (not recheck or held[3] == kind):
+                    (held[2] or 0) - info.st_mtime) < 1e-6 and (not recheck or held[3] == kind) \
+                    and not (talk_again and kind == "talk"):
                 if held[4] != key:
                     store.move(held[0], key)
                 said["unchanged"] += 1
                 continue
-            pieces: List[Tuple[int, str]] = []
-            if kind != "name":
-                text = (talk_text(path, most=MOST_SESSION_BYTES) if kind == "talk"
-                        else read_text(path))
+            pieces: List[Tuple[Any, ...]] = []
+            if kind == "talk":
+                kept = talk_kept(path, most=MOST_SESSION_BYTES)
+                if kept is None:
+                    kind = "name"
+                else:
+                    # Each piece with where in the file it starts.
+                    pieces = [(line, words, *where_lines_are(kept[1], line))
+                              for line, words in pieces_of(kept[0])]
+            elif kind != "name":
+                text = read_text(path)
                 if text is None:
                     kind = "name"
                 else:
@@ -196,6 +207,7 @@ def build(store: IndexStore, roots: List[Dict[str, Any]], never: Iterable[Path] 
             told({"root": key, "files": files, "done": True, "walked": walked_so_far, **said})
     if chosen is None:
         store.set_meta("rules", str(RULES_VERSION))
+        store.set_meta("talk_at", "1")
         store.commit()
     return said
 

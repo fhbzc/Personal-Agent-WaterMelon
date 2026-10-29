@@ -22,7 +22,7 @@ from typing import Any, Callable, Iterator
 from .governor import BUSY_CPU, SHORT_MEMORY, _psutil
 
 #: The tools that only read: run side by side with one another.
-READ_ONLY = frozenset({"list_dir", "read_file", "find_files", "search_files",
+READ_ONLY = frozenset({"list_dir", "read_file", "find_files", "find_in_files", "search_files",
                        "search_records", "search_stages", "open_card", "open_stage",
                        "open_case", "open_reason"})
 #: The tools that only WAIT - on a job, on a moment, on a helper agent: they

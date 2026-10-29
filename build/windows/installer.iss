@@ -6,7 +6,9 @@
 ;   the same Run key and the same setting as Settings > General.
 ;   After where the program goes, WHERE THE DATA IS KEPT (workspace and
 ;   internal): written beside the program as data_root.txt; a folder that
-;   already holds an agent's data is used only if the user says so.
+;   already holds an agent's data is used only if the user says so. Every
+;   folder found holding one is listed there to choose from, with when it was
+;   last used and its size; the box starts at the folder this copy used.
 ;   THE FIRST PAGE asks which language - the nine the agent is shown in -
 ;   and the installer speaks it from then on; the program installed starts
 ;   in it (--display-language), changed later in Settings > Display.
@@ -155,6 +157,24 @@ ru.DataProgramFiles=Выберите папку, в которую можно п
 fr.DataProgramFiles=Choisissez un dossier où vous pouvez écrire. Celui-ci exige des droits d'administrateur, et %1 fonctionne en votre nom, sans eux.
 de.DataProgramFiles=Wählen Sie einen Ordner, in den Sie schreiben können. Für diesen sind Administratorrechte nötig, und %1 läuft als Sie, ohne diese Rechte.
 it.DataProgramFiles=Scegli una cartella in cui puoi scrivere. Questa richiede diritti di amministratore, e %1 funziona come te, senza di essi.
+en.DataFound=These folders already hold data of %1 (last used, size). Choose one to use it again:
+zh.DataFound=以下文件夹里已经有 %1 的数据（最后使用时间、大小）。选择一个即可继续使用：
+es.DataFound=Estas carpetas ya tienen datos de %1 (último uso, tamaño). Elige una para volver a usarla:
+ja.DataFound=次のフォルダーにはすでに %1 のデータがあります（最終使用日時、サイズ）。もう一度使うフォルダーを選んでください：
+ko.DataFound=다음 폴더에 이미 %1의 데이터가 있습니다(마지막 사용, 크기). 다시 사용할 폴더를 선택하세요:
+ru.DataFound=В этих папках уже есть данные %1 (последнее использование, размер). Выберите одну, чтобы снова её использовать:
+fr.DataFound=Ces dossiers contiennent déjà des données de %1 (dernière utilisation, taille). Choisissez-en un pour le réutiliser :
+de.DataFound=Diese Ordner enthalten bereits Daten von %1 (zuletzt verwendet, Größe). Wählen Sie einen, um ihn weiter zu verwenden:
+it.DataFound=Queste cartelle contengono già dati di %1 (ultimo uso, dimensione). Scegline una per usarla di nuovo:
+en.DataHoldsProgram=The data folder cannot be the program's own folder, or a folder the program is installed in:%n%n%1%n%nChoose another folder, for example a "data" folder inside the program's folder.
+zh.DataHoldsProgram=数据文件夹不能是程序本身的文件夹，也不能是包含程序的文件夹：%n%n%1%n%n请选择别的文件夹，例如程序文件夹里的 "data" 文件夹。
+es.DataHoldsProgram=La carpeta de datos no puede ser la carpeta del programa ni una carpeta que lo contenga:%n%n%1%n%nElige otra carpeta, por ejemplo una carpeta "data" dentro de la del programa.
+ja.DataHoldsProgram=データフォルダーには、プログラム自体のフォルダーや、プログラムが入っているフォルダーは使えません：%n%n%1%n%n別のフォルダー（たとえばプログラムのフォルダー内の "data" フォルダー）を選んでください。
+ko.DataHoldsProgram=데이터 폴더는 프로그램 자체의 폴더나 프로그램이 설치된 폴더를 포함하는 폴더일 수 없습니다:%n%n%1%n%n다른 폴더를 선택하세요. 예: 프로그램 폴더 안의 "data" 폴더.
+ru.DataHoldsProgram=Папка данных не может быть папкой самой программы или папкой, в которой программа установлена:%n%n%1%n%nВыберите другую папку, например папку "data" внутри папки программы.
+fr.DataHoldsProgram=Le dossier de données ne peut pas être le dossier du programme, ni un dossier qui le contient :%n%n%1%n%nChoisissez un autre dossier, par exemple un dossier "data" dans celui du programme.
+de.DataHoldsProgram=Der Datenordner darf weder der Ordner des Programms sein noch ein Ordner, der es enthält:%n%n%1%n%nWählen Sie einen anderen Ordner, zum Beispiel einen Ordner "data" im Ordner des Programms.
+it.DataHoldsProgram=La cartella dei dati non può essere la cartella del programma né una cartella che lo contiene:%n%n%1%n%nScegli un'altra cartella, per esempio una cartella "data" dentro quella del programma.
 en.DataEmpty=Choose a folder for your data.
 en.DataNotOnly=%1 already holds other things (%2).%n%nThe data folder must be empty, or hold only an earlier %3's data (workspace and internal): everything in it belongs to the agent and is never listened to, so work kept there would go unseen.%n%nChoose an empty folder.
 zh.DataEmpty=请选择保存数据的文件夹。
@@ -247,6 +267,12 @@ var
   DataDefault: String;
   // Said under the box while the folder needs an administrator.
   DataNeedsAdmin: TNewStaticText;
+  // The folders found holding an agent's data, listed under the box to
+  // choose from - and the program folder they were looked for from.
+  DataFoundTitle: TNewStaticText;
+  DataFound: TNewCheckListBox;
+  FoundFolders: TStringList;
+  FoundFor: String;
   // The data folder of the program being uninstalled, read before its files go.
   UninstallDataRoot: String;
 
@@ -291,6 +317,220 @@ begin
   Result := Pos(Lowercase(AddBackslash(Base)), Lowercase(AddBackslash(Folder))) = 1;
 end;
 
+// THE FOLDERS THAT ALREADY HOLD AN AGENT'S DATA, OFFERED TO CHOOSE FROM (the
+// user, 2026-10-29). A copy installed anew suggested <program>\data while the
+// data its user had kept for months was in their own folder, and showed an
+// empty agent. Nothing is chosen for the user but the folder this same copy
+// used: one computer can hold the agent the user lives with and a copy
+// installed to test, and which one is meant is theirs to say - so every
+// folder found is listed, with when it was last used and how big it is.
+type
+  TClockTime = record
+    Year, Month, DayOfWeek, Day, Hour, Minute, Second, Milliseconds: Word;
+  end;
+
+const
+  REPARSE_POINT = $400;
+  // How long one folder's size is counted for, in milliseconds.
+  SIZE_COUNTED_FOR = 1500;
+
+function FileTimeToLocalFileTime(var Utc: TFileTime; var Local: TFileTime): Boolean;
+  external 'FileTimeToLocalFileTime@kernel32.dll stdcall';
+function FileTimeToSystemTime(var Time: TFileTime; var Clock: TClockTime): Boolean;
+  external 'FileTimeToSystemTime@kernel32.dll stdcall';
+function TicksNow: DWORD;
+  external 'GetTickCount@kernel32.dll stdcall';
+
+function FolderOf(Dir: String): String;
+begin
+  Result := RemoveBackslash(ExpandFileName(Trim(Dir)));
+end;
+
+function SameFolder(A, B: String): Boolean;
+begin
+  Result := (Trim(A) <> '') and (Trim(B) <> '') and
+            (CompareText(FolderOf(A), FolderOf(B)) = 0);
+end;
+
+// The folder the copy in `AppDir` reads its data from (data_root.txt) - ''
+// when there is none.
+function InstalledData(AppDir: String): String;
+var
+  Raw: AnsiString;
+begin
+  Result := '';
+  if (Trim(AppDir) <> '') and
+     LoadStringFromFile(AddBackslash(AppDir) + 'data_root.txt', Raw) then
+    Result := Trim(String(Raw));
+end;
+
+// Where a copy from before the data folder was asked (0.2.0) kept its data:
+// in the user's own folder, as the program finds it (common/paths.py,
+// default_root) - under its name now, else under its name before.
+function StandardData: String;
+var
+  Home: String;
+begin
+  Home := AddBackslash(GetEnv('USERPROFILE'));
+  Result := Home + '{#MyAppDirName}';
+  if (not DirExists(Result)) and DirExists(Home + 'PersonalizedAgent') then
+    Result := Home + 'PersonalizedAgent';
+end;
+
+// THE FOLDER THIS COPY USED: the one the copy in `AppDir` reads, else the one
+// chosen when it was last installed, else - over a copy from before either
+// was written - the standard one it used. '' for a copy installed anew.
+function CopysData(AppDir: String): String;
+begin
+  Result := InstalledData(AppDir);
+  if Result = '' then Result := PreviousData;
+  if (Result = '') and (FileExists(AddBackslash(AppDir) + '{#MyAppExeName}') or
+                        FileExists(AddBackslash(AppDir) + '{#MyFormerExeName}')) then
+    Result := StandardData;
+end;
+
+// How many bytes `Dir` holds, counted until the clock reaches `Deadline`;
+// `Cut` says it was not counted to the end.
+function BytesIn(Dir: String; Deadline: DWORD; var Cut: Boolean): Int64;
+var
+  FindRec: TFindRec;
+begin
+  Result := 0;
+  if FindFirst(AddBackslash(Dir) + '*', FindRec) then
+  try
+    repeat
+      if TicksNow > Deadline then
+        Cut := True
+      else if (FindRec.Name <> '.') and (FindRec.Name <> '..') then begin
+        if FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0 then begin
+          if FindRec.Attributes and REPARSE_POINT = 0 then
+            Result := Result + BytesIn(AddBackslash(Dir) + FindRec.Name, Deadline, Cut);
+        end else
+          Result := Result + Int64(FindRec.SizeHigh) * 4294967296 + Int64(FindRec.SizeLow);
+      end;
+    until Cut or (not FindNext(FindRec));
+  finally
+    FindClose(FindRec);
+  end;
+end;
+
+function SizeText(Bytes: Int64; Cut: Boolean): String;
+var
+  Tenths: Int64;
+begin
+  if Bytes >= 1073741824 then begin
+    Tenths := (Bytes * 10) div 1073741824;
+    Result := IntToStr(Tenths div 10) + '.' + IntToStr(Tenths mod 10) + ' GB';
+  end else if Bytes >= 1048576 then
+    Result := IntToStr(Bytes div 1048576) + ' MB'
+  else
+    Result := IntToStr(Bytes div 1024) + ' KB';
+  if Cut then Result := '> ' + Result;
+end;
+
+function TwoDigits(N: Integer): String;
+begin
+  Result := IntToStr(N);
+  if N < 10 then Result := '0' + Result;
+end;
+
+// `Path`'s last write, kept in `Latest` when it is later than what is there.
+procedure TakeLater(Path: String; var Latest: TFileTime; var Found: Boolean);
+var
+  FindRec: TFindRec;
+begin
+  if FindFirst(Path, FindRec) then
+  try
+    if (not Found) or
+       (FindRec.LastWriteTime.dwHighDateTime > Latest.dwHighDateTime) or
+       ((FindRec.LastWriteTime.dwHighDateTime = Latest.dwHighDateTime) and
+        (FindRec.LastWriteTime.dwLowDateTime > Latest.dwLowDateTime)) then begin
+      Latest := FindRec.LastWriteTime;
+      Found := True;
+    end;
+  finally
+    FindClose(FindRec);
+  end;
+end;
+
+// When the agent last used `Dir`: the last its database, settings or log was
+// written, in this computer's time - '' when none of them is there.
+function LastUsed(Dir: String): String;
+var
+  Latest, Local: TFileTime;
+  Clock: TClockTime;
+  Found: Boolean;
+  Internal: String;
+begin
+  Result := '';
+  Found := False;
+  Internal := AddBackslash(Dir) + 'internal\';
+  TakeLater(Internal + 'database\agent.db', Latest, Found);
+  TakeLater(Internal + 'database\agent.db-wal', Latest, Found);
+  TakeLater(Internal + 'settings\settings.json', Latest, Found);
+  TakeLater(Internal + 'logs\agent.log', Latest, Found);
+  if Found and FileTimeToLocalFileTime(Latest, Local) and
+     FileTimeToSystemTime(Local, Clock) then
+    Result := IntToStr(Clock.Year) + '-' + TwoDigits(Clock.Month) + '-' +
+              TwoDigits(Clock.Day) + ' ' + TwoDigits(Clock.Hour) + ':' +
+              TwoDigits(Clock.Minute);
+end;
+
+// `Dir` in the list, when it holds an agent's data and is not there yet.
+procedure Offer(Dir: String);
+var
+  K: Integer;
+begin
+  if (Trim(Dir) = '') or (not HasAgentData(Trim(Dir))) then Exit;
+  for K := 0 to FoundFolders.Count - 1 do
+    if SameFolder(FoundFolders[K], Dir) then Exit;
+  FoundFolders.Add(FolderOf(Dir));
+end;
+
+// Every folder known to hold an agent's data: the one this copy used, the
+// one chosen at the last install, those the copies in the usual places read,
+// the standard ones in the user's folder, and those beside the programs. A
+// folder only ever given with --root is not known here; it can be typed.
+procedure FindFolders(AppDir: String);
+var
+  Home, Shown: String;
+  K: Integer;
+  Cut: Boolean;
+  Bytes: Int64;
+begin
+  FoundFolders.Clear;
+  Offer(CopysData(AppDir));
+  Offer(PreviousData);
+  Offer(InstalledData(ExpandConstant('{userpf}\{#MyAppDirName}')));
+  Offer(InstalledData(ExpandConstant('{commonpf}\{#MyAppDirName}')));
+  Offer(InstalledData(ExpandConstant('{commonpf32}\{#MyAppDirName}')));
+  Home := AddBackslash(GetEnv('USERPROFILE'));
+  Offer(Home + '{#MyAppDirName}');
+  Offer(Home + 'PersonalizedAgent');
+  Offer(AddBackslash(AppDir) + 'data');
+  Offer(ExpandConstant('{userpf}\{#MyAppDirName}\data'));
+  Offer(ExpandConstant('{commonpf}\{#MyAppDirName}\data'));
+  DataFound.Items.Clear;
+  for K := 0 to FoundFolders.Count - 1 do begin
+    Cut := False;
+    Bytes := BytesIn(FoundFolders[K], TicksNow + SIZE_COUNTED_FOR, Cut);
+    Shown := LastUsed(FoundFolders[K]);
+    if Shown <> '' then Shown := Shown + '    ';
+    DataFound.AddRadioButton(FoundFolders[K], Shown + SizeText(Bytes, Cut), 0, False, True, nil);
+  end;
+  DataFound.Visible := FoundFolders.Count > 0;
+  DataFoundTitle.Visible := DataFound.Visible;
+end;
+
+// The folder in the box, marked in the list when it is one of them.
+procedure MarkChosen;
+var
+  K: Integer;
+begin
+  for K := 0 to FoundFolders.Count - 1 do
+    DataFound.Checked[K] := SameFolder(FoundFolders[K], DataPage.Values[0]);
+end;
+
 // WHETHER WRITING THERE NEEDS AN ADMINISTRATOR. The program works as the user
 // who installed it, never as an administrator, so its data folder must be one
 // they can write to. The system's own folders by name; and, when this setup is
@@ -330,11 +570,35 @@ begin
   Bad := NeedsAdmin(DataPage.Values[0]);
   DataNeedsAdmin.Visible := Bad;
   WizardForm.NextButton.Enabled := not Bad;
+  MarkChosen;
 end;
 
 procedure DataFolderChanged(Sender: TObject);
 begin
   FollowDataFolder;
+end;
+
+// One chosen from the list: put in the box.
+procedure DataFoundClicked(Sender: TObject);
+begin
+  if (DataFound.ItemIndex >= 0) and (DataFound.ItemIndex < FoundFolders.Count) then begin
+    DataPage.Values[0] := FoundFolders[DataFound.ItemIndex];
+    FollowDataFolder;
+  end;
+end;
+
+// WHAT IS WRITTEN BESIDE THE PROGRAM. As the page was left - but an update,
+// or any install without the page, keeps the folder this copy used: also one
+// put in data_root.txt by hand, which the record of the last install does
+// not know. Never a folder another copy uses, unless the user chose it.
+function DataToWrite: String;
+begin
+  Result := Trim(DataPage.Values[0]);
+  if WizardSilent then begin
+    Result := CopysData(ExpandConstant('{app}'));
+    if Result = '' then Result := Trim(DataPage.Values[0]);
+  end;
+  if Result = '' then Result := ExpandConstant('{app}\data');
 end;
 
 // AN UPDATE: a silent install over a copy already installed, as the
@@ -352,30 +616,57 @@ begin
   DataPage.Add('');
   PreviousData := GetPreviousData('DataFolder', '');
   DataPage.Values[0] := PreviousData;
+  DataDefault := PreviousData;
   DataPage.Edits[0].OnChange := @DataFolderChanged;
+  FoundFolders := TStringList.Create;
+  FoundFor := #0;
+  DataFoundTitle := TNewStaticText.Create(DataPage);
+  DataFoundTitle.Parent := DataPage.Surface;
+  DataFoundTitle.Left := DataPage.Edits[0].Left;
+  DataFoundTitle.Top := DataPage.Edits[0].Top + DataPage.Edits[0].Height + ScaleY(10);
+  DataFoundTitle.Width := DataPage.SurfaceWidth - DataPage.Edits[0].Left;
+  DataFoundTitle.AutoSize := False;
+  DataFoundTitle.WordWrap := True;
+  DataFoundTitle.Height := ScaleY(28);
+  DataFoundTitle.Caption := FmtMessage(CustomMessage('DataFound'), ['{#MyAppName}']);
+  DataFoundTitle.Visible := False;
+  DataFound := TNewCheckListBox.Create(DataPage);
+  DataFound.Parent := DataPage.Surface;
+  DataFound.Left := DataPage.Edits[0].Left;
+  DataFound.Top := DataFoundTitle.Top + DataFoundTitle.Height + ScaleY(2);
+  DataFound.Width := DataPage.SurfaceWidth - DataPage.Edits[0].Left;
+  DataFound.Height := DataPage.SurfaceHeight - DataFound.Top - ScaleY(40);
+  if DataFound.Height < ScaleY(48) then DataFound.Height := ScaleY(48);
+  DataFound.OnClickCheck := @DataFoundClicked;
+  DataFound.Visible := False;
   DataNeedsAdmin := TNewStaticText.Create(DataPage);
   DataNeedsAdmin.Parent := DataPage.Surface;
   DataNeedsAdmin.Left := DataPage.Edits[0].Left;
-  DataNeedsAdmin.Top := DataPage.Edits[0].Top + DataPage.Edits[0].Height + ScaleY(12);
+  DataNeedsAdmin.Top := DataFound.Top + DataFound.Height + ScaleY(4);
   DataNeedsAdmin.Width := DataPage.SurfaceWidth - DataPage.Edits[0].Left;
   DataNeedsAdmin.AutoSize := False;
   DataNeedsAdmin.WordWrap := True;
-  DataNeedsAdmin.Height := ScaleY(48);
+  DataNeedsAdmin.Height := ScaleY(36);
   DataNeedsAdmin.Font.Color := clRed;
   DataNeedsAdmin.Caption := FmtMessage(CustomMessage('DataProgramFiles'), ['{#MyAppName}']);
   DataNeedsAdmin.Visible := False;
 end;
 
-// THE DATA FOLDER IS UNDER THE PROGRAM'S BY DEFAULT: <program folder>\data,
-// following the program folder while the user has not typed one of their own.
-// An upgrade keeps the folder chosen before.
+// THE BOX STARTS AT THE FOLDER THIS COPY USED (CopysData) - for a copy
+// installed anew, <program folder>\data - following the program folder while
+// the user has not typed one of their own. Under it, every folder found
+// holding an agent's data, to choose from.
 procedure CurPageChanged(CurPageID: Integer);
 begin
   if CurPageID = DataPage.ID then begin
-    if (PreviousData = '') and ((Trim(DataPage.Values[0]) = '') or
-                                (DataPage.Values[0] = DataDefault)) then begin
-      DataDefault := AddBackslash(WizardDirValue) + 'data';
+    if (Trim(DataPage.Values[0]) = '') or SameFolder(DataPage.Values[0], DataDefault) then begin
+      DataDefault := CopysData(WizardDirValue);
+      if DataDefault = '' then DataDefault := AddBackslash(WizardDirValue) + 'data';
       DataPage.Values[0] := DataDefault;
+    end;
+    if CompareText(FoundFor, WizardDirValue) <> 0 then begin
+      FindFolders(WizardDirValue);
+      FoundFor := WizardDirValue;
     end;
     FollowDataFolder;
   end;
@@ -391,9 +682,17 @@ var
   Dir: String;
 begin
   Result := True;
+  if WizardSilent then DataPage.Values[0] := DataToWrite;
   Dir := Trim(DataPage.Values[0]);
   if Dir = '' then begin
     MsgBox(CustomMessage('DataEmpty'), mbError, MB_OK);
+    Result := False;
+  end else if Under(FolderOf(WizardDirValue), FolderOf(Dir)) then begin
+    // NOT THE PROGRAM'S OWN FOLDER, NOR ONE IT IS INSTALLED IN (the user,
+    // 2026-10-29): the program's files would sit among the data - and an
+    // existing data folder chosen as both was refused by the program at its
+    // start, and emptied by uninstalling it.
+    MsgBox(FmtMessage(CustomMessage('DataHoldsProgram'), [Dir]), mbError, MB_OK);
     Result := False;
   end else if NeedsAdmin(Dir) then begin
     MsgBox(FmtMessage(CustomMessage('DataProgramFiles'), ['{#MyAppName}']), mbError, MB_OK);
@@ -414,7 +713,7 @@ begin
   // Before the [Run] entries: the program's first start already reads it.
   if CurStep = ssPostInstall then
     SaveStringToFile(ExpandConstant('{app}\data_root.txt'),
-                     ExpandFileName(Trim(DataPage.Values[0])), False);
+                     ExpandFileName(DataToWrite), False);
 end;
 
 // The next word of a command line, quoted or not, taken off its front.
@@ -483,10 +782,36 @@ begin
                        SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
+// Whether `Dir` holds an agent's data - in it, or up to `Depth` folders down.
+function DataBelow(Dir: String; Depth: Integer): Boolean;
+var
+  FindRec: TFindRec;
+begin
+  Result := HasAgentData(Dir);
+  if Result or (Depth = 0) then Exit;
+  if FindFirst(AddBackslash(Dir) + '*', FindRec) then
+  try
+    repeat
+      if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0) and
+         (FindRec.Attributes and REPARSE_POINT = 0) and
+         (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+        Result := DataBelow(AddBackslash(Dir) + FindRec.Name, Depth - 1);
+    until Result or (not FindNext(FindRec));
+  finally
+    FindClose(FindRec);
+  end;
+end;
+
 // UNINSTALLING TAKES THE PROGRAM AND LEAVES THE DATA. The data folder is
 // under the program's by default, so the program's folder is emptied here
 // rather than deleted whole: everything in it goes except the folder the data
 // is in. Removing the data is the user's own act.
+// AND NEVER AN AGENT'S DATA, WHATEVER data_root.txt SAYS (the user,
+// 2026-10-29): with the file gone or unreadable, nothing was known to keep
+// and the default data folder went with the program; with the program's own
+// folder as the data folder, the folder to keep was the one being emptied.
+// So a workspace or internal folder is never deleted, nor any folder holding
+// an agent's database or settings two folders down.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Raw: AnsiString;
@@ -509,9 +834,11 @@ begin
       repeat
         Name := FindRec.Name;
         if (Name <> '.') and (Name <> '..') and ((Keep = '') or (CompareText(Name, Keep) <> 0)) then begin
-          if FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0 then
-            DelTree(App + Name, True, True, True)
-          else
+          if FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0 then begin
+            if (CompareText(Name, 'workspace') <> 0) and (CompareText(Name, 'internal') <> 0) and
+               (not DataBelow(App + Name, 2)) then
+              DelTree(App + Name, True, True, True);
+          end else
             DeleteFile(App + Name);
         end;
       until not FindNext(FindRec);

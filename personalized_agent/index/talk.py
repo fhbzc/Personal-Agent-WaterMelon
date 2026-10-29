@@ -18,7 +18,12 @@ what is kept of it:
     what came back - only that it failed, when it did.
 
 The same text is what a search shows of it: its line numbers are this
-text's, not the file's.
+text's, not the file's. And each piece is kept with WHERE IN THE FILE its
+first line comes from - the byte its turn starts at, and how many of that
+turn's lines come before it - so what a search shows is read from there,
+a few turns, never the whole record again: one of 1.4 GB took 46 seconds
+to show six lines of, every search (2026-10-29). A record is only ever
+added to, so where a turn starts stays where it is.
 """
 
 from __future__ import annotations
@@ -26,7 +31,8 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from bisect import bisect_right
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 #: The most of one call's line.
 MOST_CALL = 300
@@ -40,34 +46,95 @@ _PATCHED = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$|^\*\*\* Move t
                       re.MULTILINE)
 
 
-def talk_text(path: Path, most: Optional[int] = None) -> Optional[str]:
-    """The record's conversation as lines of text, or None when it is not
-    a record that can be read - or when what is kept of it is more than
+#: The most of a record read to show one piece of it, from where it starts.
+MOST_READ_FOR_A_PIECE = 20_000_000
+
+
+def _turns(handle: Any, subagent: bool, at: int = 0) -> Iterator[Tuple[int, List[str]]]:
+    """Each turn of a record read from byte `at` on, as what is kept of it,
+    with the byte its line starts at - those that keep nothing too."""
+    handle.seek(at)
+    offset = at
+    for raw in handle:
+        start = offset
+        offset += len(raw)
+        line = raw.decode("utf-8", errors="replace").strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict):
+            yield start, (_claude(entry, subagent) if "payload" not in entry
+                          else _codex(entry.get("payload") or {}))
+
+
+def talk_kept(path: Path, most: Optional[int] = None
+              ) -> Optional[Tuple[str, List[Tuple[int, int]]]]:
+    """The record's conversation as lines of text, and where each turn's
+    lines begin: (its first line, counting from 0 as the text's
+    splitlines() does, the byte its turn starts at) - or None when it is
+    not a record that can be read, or what is kept of it is more than
     `most` characters."""
     try:
-        handle = open(path, "r", encoding="utf-8", errors="replace")
+        handle = open(path, "rb")
     except OSError:
         return None
     subagent = "subagents" in Path(path).parts
     lines: List[str] = []
-    kept = 0
+    starts: List[Tuple[int, int]] = []
+    kept = counted = 0
     with handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
+        for at, said in _turns(handle, subagent):
+            if not said:
                 continue
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(entry, dict):
-                said = (_claude(entry, subagent) if "payload" not in entry
-                        else _codex(entry.get("payload") or {}))
-                lines.extend(said)
-                kept += sum(len(one) + 1 for one in said)
-                if most is not None and kept > most:
-                    return None
-    return "\n".join(lines)
+            starts.append((counted, at))
+            lines.extend(said)
+            # The text is these joined by line breaks: each one's lines,
+            # as splitlines() will count them in the whole.
+            counted += sum(len((one + "\n").splitlines()) for one in said)
+            kept += sum(len(one) + 1 for one in said)
+            if most is not None and kept > most:
+                return None
+    return "\n".join(lines), starts
+
+
+def talk_text(path: Path, most: Optional[int] = None) -> Optional[str]:
+    """The record's conversation as lines of text, or None when it is not
+    a record that can be read - or when what is kept of it is more than
+    `most` characters."""
+    kept = talk_kept(path, most)
+    return kept[0] if kept is not None else None
+
+
+def where_lines_are(starts: List[Tuple[int, int]], line: int) -> Tuple[int, int]:
+    """Where a line of the text (from 1) comes from in the file: the byte
+    its turn starts at, and how many of that turn's lines come before it."""
+    firsts = [one[0] for one in starts]
+    k = max(0, bisect_right(firsts, line - 1) - 1)
+    if not starts:
+        return 0, line - 1
+    return starts[k][1], line - 1 - starts[k][0]
+
+
+def lines_from(path: Path, at: int, skip: int, count: int) -> str:
+    """`count` lines of a record's text from where a piece starts - read
+    from byte `at` on, past `skip` lines of that turn, a few turns; never
+    more than MOST_READ_FOR_A_PIECE of it."""
+    try:
+        handle = open(path, "rb")
+    except OSError:
+        return ""
+    subagent = "subagents" in Path(path).parts
+    lines: List[str] = []
+    with handle:
+        for start, said in _turns(handle, subagent, at):
+            lines.extend(said)
+            if len("\n".join(lines).splitlines()) >= skip + count \
+                    or start - at > MOST_READ_FOR_A_PIECE:
+                break
+    return "\n".join("\n".join(lines).splitlines()[skip:skip + count])
 
 
 def _said(who: str, text: str) -> List[str]:
@@ -183,4 +250,4 @@ def lines_of(text: str, line: int, count: int) -> str:
     return "\n".join(text.splitlines()[line - 1:line - 1 + count])
 
 
-__all__ = ["talk_text", "lines_of"]
+__all__ = ["talk_text", "talk_kept", "where_lines_are", "lines_from", "lines_of"]

@@ -246,8 +246,8 @@ CLOSE_SECONDS = 30
 #: slides folder, the only place they write), and install_packages for what
 #: drawing needs (as the run's packages mode says). No web, no cards.
 SLIDES_TOOL_ROUNDS = 8
-SLIDES_TOOLS = ("list_dir", "read_file", "find_files", "write_file", "run_python",
-                "install_packages")
+SLIDES_TOOLS = ("list_dir", "read_file", "find_files", "find_in_files", "write_file",
+                "run_python", "install_packages")
 
 #: What one deck of slides may show: so many figures, each so large at
 #: most - each is kept in the version, and carried in the page that shows it.
@@ -1170,6 +1170,7 @@ knows nothing else of this call. Return ONLY this JSON object:
                "done": ["what is done in this round so far - each concrete: a file, a function, a result, a number"],
                "next": ["what to do next, in order - the first one exactly, as you would do it"],
                "files": ["the full path of each file you changed, and how"],
+               "read": ["each file you READ that the next call will need: its full path, what it holds, and WHERE - the lines of each part that matters (e.g. lines 120-210: the estimation; line 340: the table's columns) - so it reads only those"],
                "problems": ["what is open or not working, and what you know of why - what you tried"],
                "checks": ["what you ran to check, and what it gave"]}}}}"""
 
@@ -1178,8 +1179,11 @@ HANDED_OVER = """THIS ROUND GOES ON FROM AN EARLIER CALL OF YOURS, handed over t
 (call {calls} of this round); the files are as it left them. Its note:
 {note}
 The files the round wrote so far: {files}
-Go on from there - open the files where you need to; do not do again what
-is done. When the round is done, return the round JSON for THE WHOLE ROUND."""
+Go on from there - open the files where you need to: its "read" says what
+each file it read holds and at which lines, so read only the part you need
+(read_file from_line and to_line), or find it with find_in_files; do not
+read again whole what it read, nor do again what is done. When the round is
+done, return the round JSON for THE WHOLE ROUND."""
 
 MAKE_DECK = """MAKE THE RESULTS DECK: slides of what this work PRODUCED - not
 how it went.{unfinished}
@@ -2362,7 +2366,8 @@ def _clip(text: Any, most: int = 120) -> str:
 #: The argument that says what a tool call is about - the rest is detail.
 _KEY_ARGUMENT = {"list_dir": "path", "read_file": "path", "write_file": "path",
                  "edit_file": "path", "run_tests": "folder", "edit_notebook": "path",
-                 "delete_file": "path", "find_files": "pattern", "run_python": "code",
+                 "delete_file": "path", "find_files": "pattern", "find_in_files": "pattern",
+                 "run_python": "code",
                  "run_command": "command", "download": "url", "git_fetch": "url",
                  "web_search": "query", "fetch_url": "url", "open_card": "ids",
                  "search_stages": "query", "install_packages": "packages"}
@@ -2414,7 +2419,7 @@ def _short_args(name: str, arguments: Any) -> str:
         lines = [one for one in str(value).splitlines() if one.strip()
                  and not one.strip().startswith(("import ", "from ", "#"))]
         value = lines[0] if lines else str(value)
-    if name == "find_files" and arguments.get("root"):
+    if name in ("find_files", "find_in_files") and arguments.get("root"):
         value = f"{value} in {arguments['root']}"
     return _clip(value, 90)
 
@@ -2443,6 +2448,9 @@ def _short_result(name: str, result: Any) -> Tuple[str, bool]:
         return "deleted", True
     if name == "read_file":
         return f"{len(str(result.get('text') or ''))} characters", True
+    if name == "find_in_files":
+        return (f"{result.get('lines_found', 0)} lines in {len(result.get('files') or [])} "
+                f"files of {result.get('files_searched', 0)}"), True
     if name == "list_dir":
         entries = result.get("entries") or result.get("items") or []
         return f"{len(entries)} entries" if isinstance(entries, list) else "listed", True
@@ -8941,7 +8949,7 @@ class Run:
         note = handed.get("note") if isinstance(handed.get("note"), dict) else {}
         return HANDED_OVER.format(
             calls=int(handed.get("calls") or 0) + 1,
-            note=_plain(json.dumps(note, ensure_ascii=False, indent=1))[:8000],
+            note=_plain(json.dumps(note, ensure_ascii=False, indent=1))[:12000],
             files=", ".join(handed.get("written") or []) or "(none yet)")
 
     # -- the full review and the checkpoints -------------------------------------------

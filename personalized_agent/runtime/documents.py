@@ -353,7 +353,8 @@ def _read_waiting() -> None:
             log.debug("a picture could not be read in the background", exc_info=True)
 
 
-def read_for_model(path: Any, from_line: int = 1, most: int = 40000) -> Dict[str, Any]:
+def read_for_model(path: Any, from_line: int = 1, most: int = 40000,
+                   to_line: Any = None) -> Dict[str, Any]:
     """What a read_file tool gives a model of a picture or a document: the
     text (from the copy when there is one), from a line on; and of a picture
     the picture itself, under "_pictures" - the tools' answer is made into
@@ -362,11 +363,21 @@ def read_for_model(path: Any, from_line: int = 1, most: int = 40000) -> Dict[str
     said = extract(path)
     lines = str(said.get("text") or "").splitlines()
     start = max(0, int(from_line or 1) - 1)
-    body = "\n".join(lines[start:])
+    # Up to to_line, read with it (counting from 1); on to the end without.
+    try:
+        end = None if to_line in (None, "") else max(start + 1, min(int(to_line), len(lines)))
+    except (TypeError, ValueError):
+        end = None
+    body = "\n".join(lines[start:end])
     out: Dict[str, Any] = {
         "path": str(path), "kind": said["kind"], "from_line": start + 1,
         "text": body[:most], "cut": len(body) > most, "lines": len(lines),
         "read_off_pictures": bool(said.get("ocr")), "from_copy": bool(said.get("from_copy"))}
+    if end is not None:
+        out["to_line"] = end
+    if out["cut"]:
+        # Where to read on from, counting from 1 (the tools' read_file).
+        out["next_from_line"] = start + 1 + body[:most].count("\n")
     if said["kind"] == "pdf":
         out["pages"] = len(said.get("pages") or [])
     if said["kind"] == "picture":
