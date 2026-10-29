@@ -227,6 +227,8 @@ class Database:
 #: SQLite can only add a column with a constant default, which is why each of
 #: these is nullable rather than NOT NULL.
 ADDED_COLUMNS = (
+    ('learn_items', 'source_id', "TEXT DEFAULT ''"),
+    ('learn_items', 'more', "TEXT DEFAULT '[]'"),
     ('listener_wechat_captures', 'content_key', 'TEXT'),
     # Which chat project a conversation belongs to, if any.
     ("conversations", "project_id", "TEXT REFERENCES chat_projects(id)"),
@@ -1732,7 +1734,30 @@ CREATE TABLE IF NOT EXISTS learn_items (
     fetched     TEXT NOT NULL DEFAULT '{}',    -- each page: its hash, when, how it went
     added_at    TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
-    read_at     TEXT NOT NULL DEFAULT ''
+    read_at     TEXT NOT NULL DEFAULT '',
+    source_id   TEXT DEFAULT '',               -- the source it was split from (learn_sources)
+    more        TEXT DEFAULT '[]'              -- its other folders or addresses, as one unit
+);
+-- WHAT WAS HANDED OVER TO BE LEARNED AND SPLIT INTO UNITS (learning/sources.py):
+-- its tree as listed, the model's judgment round by round, and whether it
+-- waits for a site that limits or refuses being asked.
+CREATE TABLE IF NOT EXISTS learn_sources (
+    id            TEXT PRIMARY KEY,            -- S-xxxx
+    kind          TEXT NOT NULL,               -- folder | account | repo | site
+    source        TEXT NOT NULL,               -- the address or the path
+    title         TEXT NOT NULL DEFAULT '',
+    state         TEXT NOT NULL DEFAULT 'listing', -- listing | waiting | blocked | planned | following
+    why           TEXT NOT NULL DEFAULT '',    -- why it waits
+    waiting_until REAL NOT NULL DEFAULT 0,     -- epoch it is asked again at
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    tree          TEXT NOT NULL DEFAULT '{}',
+    judgment      TEXT NOT NULL DEFAULT '{}',
+    plan          TEXT NOT NULL DEFAULT '{}',
+    proposals     TEXT NOT NULL DEFAULT '[]',  -- new units waiting for the user
+    handed        TEXT NOT NULL DEFAULT '{}',
+    listed_at     TEXT NOT NULL DEFAULT '',
+    added_at      TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
 );
 -- WHAT A WORK RUN'S REVIEWER ASKED, AND HOW IT WAS ANSWERED - a log for
 -- reading back; nothing in it is learned.

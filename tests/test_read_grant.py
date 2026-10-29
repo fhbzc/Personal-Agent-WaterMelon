@@ -145,10 +145,15 @@ class TheWorkersCodeIsToldTests(_Home):
             "root": str(self.home), "state": "running", "done": 3, "total": 40}
         tools = work_tools.WorkTools.__new__(work_tools.WorkTools)
         tools.packages_dir = None
+        # Results by what they ran on (reuse.py, 2026-10-28): none kept here.
+        from personalized_agent.agent.work.reuse import PythonRuns
+        tools.python_runs = PythonRuns()
+        tools.label = ""
         tools._look_over = lambda: {}
         tools._claim = lambda touched: None
         tools.changed = lambda *a, **k: None
         tools.runtime = mock.Mock()
+        tools.runtime.policy.write_root = str(self.home)
         tools.runtime.run_python_code.return_value = mock.Mock(
             to_dict=lambda: {"ok": True, "stdout": "", "stderr": ""})
         said = tools.run_python({"code": "print(1)"})

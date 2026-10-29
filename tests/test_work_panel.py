@@ -795,15 +795,17 @@ class TheVersionTreeTests(_PanelBase):
             "out.shownRow=[...document.querySelectorAll('.xp-vrow-shown')].map(li=>li.dataset.xpVersionNode);"
             "out.kept=localStorage.getItem('pa.xp.version.run_2');"
             "out.gets=window.__gets.filter(g=>g.includes('/api/work/version?')).length;"
-            # Continue, on the version shown.
-            "out.fromHere=!!q('.xp-version-picked [data-xp-version-from=\"v2\"]');"
-            "q('.xp-version-picked [data-xp-version-from=\"v2\"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));await wait(300);"
-            "const words=q('.xp-version-picked .xp-version-continue textarea');"
-            "out.words=!!words;out.focused=document.activeElement===words;"
+            # Continue from it: chosen beside the one button (the user,
+            # 2026-10-28) - the version shown says where.
+            "out.fromHere=text(q('.xp-version-picked .xp-version-from-row'));"
+            "const from=q('[data-xp-continue-from=\"run_2\"]');"
+            "from.value='v2';from.dispatchEvent(new Event('change',{bubbles:true}));await wait(300);"
+            "const words=q('.xp-continue-row textarea');"
+            "out.words=!!words;out.focused=document.activeElement===q('[data-xp-continue-from=\"run_2\"]');"
             "out.continueRow=text(q('.xp-continue-row'));"
             # Kept across the panel asked again; a version saved meanwhile is
             # added to the tree in place.
-            "const runBox=q('[data-xp-run-box=\"run_2\"]');runBox.__mine=1;words.blur();"
+            "const runBox=q('[data-xp-run-box=\"run_2\"]');runBox.__mine=1;words.blur();q('[data-xp-continue-from=\"run_2\"]').blur();"
             "for(let n=0;n<3;n++){await xpLoadRuns();await wait(200);}"
             "out.stillShown=[...document.querySelectorAll('.xp-vrow-shown')].map(li=>li.dataset.xpVersionNode);"
             "out.sameRun=q('[data-xp-run-box=\"run_2\"]').__mine===1;"
@@ -857,8 +859,9 @@ class TheVersionTreeTests(_PanelBase):
         self.assertEqual(out["shownRow"], ["v2"])
         self.assertEqual(out["kept"], "v2")
         self.assertEqual(out["gets"], 1)
-        # Continue from it: offered there, the words asked there.
-        self.assertTrue(out["fromHere"])
+        # Continue from it: chosen beside the one button, the words asked
+        # in the same card.
+        self.assertIn("choose it beside Continue from here", out["fromHere"])
         self.assertTrue(out["words"])
         self.assertTrue(out["focused"])
         self.assertIn("from version v2", out["continueRow"])

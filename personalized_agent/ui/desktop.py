@@ -845,7 +845,9 @@ class DesktopAgent:
             try:
                 draft = self.app.learning.planner.start({
                     "kind": "text", "text": str(said.get("text") or ""),
-                    "window": {"title": said.get("title") or "", "app": said.get("app") or ""}})
+                    "window": {"title": said.get("title") or "", "app": said.get("app") or ""},
+                    # Learned at once, no plan to check (the user, 2026-10-29).
+                    "auto": True})
                 self.queue.put(("call", lambda: self.open_box(
                     f"/?solo=learn#learn={draft['id']}")))
             except Exception:

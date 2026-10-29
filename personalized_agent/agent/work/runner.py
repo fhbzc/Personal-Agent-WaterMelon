@@ -106,7 +106,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from ...common.sound import DONE as SOUND_DONE, FAILED as SOUND_FAILED
 from ...common.sound import STOPPED as SOUND_STOPPED, play_end_sound
@@ -204,6 +204,26 @@ RESERVE_FLOOR = {"minutes": 5, "tokens_in": 400_000, "tokens_out": 20_000,
 #: draft, and a round of work.
 TOOL_ROUNDS = 14
 WORK_TOOL_ROUNDS = 40
+#: A BUILDER CALL HANDED OVER BEFORE IT GROWS LONG (the user, 2026-10-28):
+#: each step of a call reads all of the call so far, and steps measured
+#: slowing from a few seconds to 10-24 as a call went on. Past this many
+#: tool steps, or minutes, the work agent writes a handover note - what is
+#: done, what is next, the files changed, what is open - and a FRESH call
+#: goes on from it, the contract, the cards and the files as they are.
+#: THE MINUTES ARE THE MODEL'S OWN (the user, 2026-10-29): its thinking and
+#: writing - not its tools running (a replication's code ran for minutes,
+#: and calls were handed over after 10-35 steps, their context still small),
+#: nor the run held paused, nor waiting for the model to come back.
+CALL_MOST_STEPS = 40
+CALL_MOST_MINUTES = 15
+#: Handovers in one round before the last call is let finish its round.
+HANDOVERS_PER_ROUND = 6
+#: THE REVIEWER'S CHECKS THAT DO NOT DEPEND ON ONE another, side by side
+#: (the user, 2026-10-28): at most this many contexts at once. The code
+#: they run still goes one at a time (their tools' gate, parallel.py).
+CHECKS_SIDE_BY_SIDE = 4
+#: How long the last call on this thread took, by its steps (`Run._ask`).
+_MEASURED = threading.local()
 
 #: `from_version` naming the run's progress point, not a version.
 PROGRESS = "progress"
@@ -216,6 +236,9 @@ PROGRESS = "progress"
 PROGRESS_POINT_MINUTES = 10
 #: The work agent's tools a point in the middle of a round recalls.
 PROGRESS_POINT_TOOLS = 40
+#: The application closing waits at most this long for the runs going to
+#: keep where they stand (`WorkRuns.close`).
+CLOSE_SECONDS = 30
 
 #: A VERSION'S SLIDES are drawn in a few rounds of tools - a handful of
 #: figures, not a second round of work - and with these tools alone: the
@@ -813,6 +836,14 @@ refused the same way.
   PACKAGES: with install_packages only - Python's from PyPI, JavaScript's
     from npm (their install scripts never run; build one with npm rebuild in
     a command). pip or npm run from code or a command cannot reach them.
+    What install_packages installed is already there for your code: no
+    environment of your own is needed to use it.
+  AN ENVIRONMENT OF ITS OWN (a virtual environment, conda) - only to try an
+    install from scratch - NEVER IN WHAT THE WORK DELIVERS: make it in
+    .agent_runtime/envs inside the folder you write (scratch, never
+    delivered, never kept with a version), and remove it when the try is
+    done. One left elsewhere is tens of thousands of files that slow every
+    step, and ships with the work.
   FROM THE WEB: a file with download, a public git repository with
     git_fetch - each saved in your folder, not run; nothing is ever pushed.
   THE WEB: web_search for words; fetch_url only for an address that already
@@ -975,7 +1006,8 @@ ONLY this JSON object:
                    "why": "what the goal needs it for",
                    "tier": "core|supporting|polish",
                    "handed_as": "how the user gets it, in the form most convenient for what they do with it: an email draft opened in their mail to send, an event for their calendar, text to paste, a file and its format, a folder, an answer",
-                   "promises": ["P1"]}]}
+                   "promises": ["P1"]}],
+ "packages": ["the Python packages, by their PyPI names, the work will import - as far as can be told now; [] when none"]}
 
 CORE_PROMISES_RULES
 
@@ -1128,6 +1160,26 @@ object again."""
 PAUSE = """THE RUN IS PAUSING HERE: stop working now. Return the round JSON
 for what you did so far - and in "open", what is left on this card and the
 next thing you would do."""
+
+#: A builder call at its cap (CALL_MOST_STEPS, CALL_MOST_MINUTES).
+HAND_OVER = """THIS CALL HAS GONE ON LONG ENOUGH ({steps} tool calls, {minutes} minutes):
+stop here and hand over - the round is not over. A FRESH CALL goes on from
+your note, with the contract, the cards and the files as they are now, and
+knows nothing else of this call. Return ONLY this JSON object:
+{{"handover": {{"card": "the id of the card you are on",
+               "done": ["what is done in this round so far - each concrete: a file, a function, a result, a number"],
+               "next": ["what to do next, in order - the first one exactly, as you would do it"],
+               "files": ["the full path of each file you changed, and how"],
+               "problems": ["what is open or not working, and what you know of why - what you tried"],
+               "checks": ["what you ran to check, and what it gave"]}}}}"""
+
+#: A fresh builder call going on from the note of the one before.
+HANDED_OVER = """THIS ROUND GOES ON FROM AN EARLIER CALL OF YOURS, handed over to you
+(call {calls} of this round); the files are as it left them. Its note:
+{note}
+The files the round wrote so far: {files}
+Go on from there - open the files where you need to; do not do again what
+is done. When the round is done, return the round JSON for THE WHOLE ROUND."""
 
 MAKE_DECK = """MAKE THE RESULTS DECK: slides of what this work PRODUCED - not
 how it went.{unfinished}
@@ -1670,17 +1722,23 @@ change that. Return ONLY this JSON object:
 FULL_REVIEW_CARD = """Check this card, one of those the rounds touched, against its criteria -
 open the files, run what was built:
 {card}
-
+{beside}
 Return ONLY this JSON object:
 {{"card": "{card_id}", "holds": "yes|no", "why": "what you checked",
   "reopen": false,
   "findings": [{{"say": "...", "type": "mainline|blocking",
                  "because": ["ids, or own judgement"]}}]}}"""
 
-FULL_REVIEW_CONCLUDE = """Every card the rounds touched is checked (your answers above). Now try
-EVERY core promise again, under its real condition, and conclude. You may
-also end the run: "stop": true, when it cannot reach the goal and more
-rounds would not change that. Return ONLY this JSON object:
+#: After the cards, each checked in a call of its own (side by side): their
+#: answers, and the core promises tried and concluded upon.
+FULL_REVIEW_CONCLUDE = """Every card the rounds touched is checked - each in a call of its own, at
+the same time. Their answers:
+{answers}
+
+Now try EVERY core promise again, under its real condition, and conclude,
+weighing those answers with your own. You may also end the run: "stop":
+true, when it cannot reach the goal and more rounds would not change that.
+Return ONLY this JSON object:
 {{"promises": [{{"id": "P1", "holds": "yes|no|untried|needs_user",
                  "tried": "what you ran", "failed": "what went wrong, when it did"}}],
   "reopen": [{{"card": "the id of a done card", "why": "what of it no longer holds"}}],
@@ -1692,6 +1750,12 @@ rounds would not change that. Return ONLY this JSON object:
   - "passed": true only when every card checked holds, every core promise
     holds or truly cannot be tried here, and nothing you found blocks the
     goal."""
+
+#: Said to each context checking beside others: where what it writes goes.
+BESIDE = """OTHER CHECKS RUN BESIDE YOU AT THE SAME TIME, in the same checks folder:
+put whatever your code writes under {folder} - your own - and nothing
+elsewhere in it.
+"""
 
 REVIEW_FINAL = """THE GOAL IS MET BY YOUR LAST REVIEW. Now review everything the
 work changed, as a whole:
@@ -1973,6 +2037,14 @@ ALONE_RESTARTED = """YOUR CONVERSATION GREW TOO LONG, and was started again here
 Your files are as you left them. WHAT YOU REPORTED, TURN BY TURN:
 {reports}"""
 
+
+
+def _package_name(requirement: Any) -> str:
+    """A requirement's package, as pip compares names: "NumPy>=1.26" and
+    "numpy" are one."""
+    import re as _re
+    name = _re.split(r"[<>=!~\[;@\s]", str(requirement or "").strip(), 1)[0]
+    return _re.sub(r"[-_.]+", "-", name).lower()
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -3576,7 +3648,11 @@ class WorkRuns:
                 "kept": [f"kept your version of {one}" for one in granted["kept"]],
                 "left": granted["left"],
                 "not_restored": [*granted["refused"], *files.get("refused", [])],
-                "not_kept": files["not_kept"]}
+                "not_kept": files["not_kept"],
+                # Installed environments, left as they are - and what changed
+                # in each since the version (versions.environments_left).
+                **({"environments_left": files["environments"]}
+                   if files.get("environments") else {})}
         plan["rolled_back"] = said
         row["plan"] = plan
         row["final"] = state.get("final") or {}
@@ -3825,6 +3901,29 @@ class WorkRuns:
         # only notice at its next look; let go, nothing holds the wrap-up.
         run.release(now)
         return True
+
+    def close(self, why: str, seconds: float = CLOSE_SECONDS) -> List[str]:
+        """THE APPLICATION CLOSING (the user, 2026-10-28): every run going
+        stops cleanly, each keeping where it stands (`Run.close_for`) - side
+        by side, waited for at most `seconds`. The ids of those that kept a
+        point."""
+        runs = [run for run in list(self._running.values()) if run.alive()]
+        kept: List[str] = []
+
+        def one(run: "Run") -> None:
+            try:
+                if run.close_for(why):
+                    kept.append(run.id)
+            except Exception:                  # pragma: no cover - it goes back then
+                log.exception("a run could not keep where it stood: %s", run.id)
+        threads = [threading.Thread(target=one, args=(run,), name=f"close-{run.id}",
+                                    daemon=True) for run in runs]
+        for thread in threads:
+            thread.start()
+        end = time.time() + seconds
+        for thread in threads:
+            thread.join(max(0.0, end - time.time()))
+        return kept
 
     def pause(self, run_id: str) -> bool:
         """Pause a run that is going: it stops at its next safe point and
@@ -4489,6 +4588,12 @@ class Run:
         book.setdefault("installed", [])
         _settle_requests(self.plan, "the run ended while it waited")
         self.installer = owner.installer_for(runtime.policy)
+        #: One pip at a time into the run's packages; and the contract's
+        #: packages installing in the background, with their names
+        #: (`_prefetch`).
+        self._install_lock = threading.Lock()
+        self._prefetch_thread: Optional[threading.Thread] = None
+        self._prefetching: Set[str] = set()
         self.plan["used"] = self.used
         #: WITHOUT THE SANDBOX (unconfined.py): this session's choice - the
         #: user's own work only. Kept with the session, and as the run's now.
@@ -4577,6 +4682,8 @@ class Run:
         # the reviewer, and the reviewer's, the work agent (tools.TestRuns).
         self.tools.label, self.review_tools.label = "the work agent", "the reviewer"
         self.review_tools.test_runs = self.tools.test_runs
+        # And code that ran, by what it ran on (reuse.py) - the same way.
+        self.review_tools.python_runs = self.tools.python_runs
         if self.finder is not None:
             self.review_tools.learned = _Learned(self.finder, lambda: self._facets)
             if self.variant == QUICK:
@@ -4641,6 +4748,109 @@ class Run:
         return self.plan["packages"]["mode"]
 
     # -- packages ------------------------------------------------------------------
+    def _prefetch(self, packages: Any) -> None:
+        """THE CONTRACT'S PACKAGES, READY BEFORE THEY ARE NEEDED (the user,
+        2026-10-28): installed in the background as the rounds begin - asked
+        once, for all of them, when the user wants to be asked - so no round
+        stops on pip. What is installed already is not asked for again."""
+        allowed, _refused = validate([str(one) for one in packages or []
+                                      if isinstance(one, str)][:40])
+        have = {_package_name(one.get("name", "")) for one in
+                self.plan["packages"].get("installed") or []}
+        wanted = [one for one in allowed if _package_name(one) not in have]
+        if not wanted:
+            return
+        book = self.plan["packages"]
+        request = {"id": f"req_{uuid.uuid4().hex[:10]}", "packages": wanted,
+                   "why": "the packages the contract names, installed before the rounds "
+                          "need them",
+                   "asked_at": _now(), "mode": book["mode"], "ahead": True,
+                   "status": PENDING if book["mode"] == ASK else APPROVED}
+        book["requests"].append(request)
+        event: Optional[threading.Event] = None
+        if book["mode"] == ASK:
+            # Asked once, beside the work - which goes on meanwhile.
+            event = threading.Event()
+            with self._answer_lock:
+                self._answers[request["id"]] = event
+            self._note("asked to install packages", packages=wanted, why=request["why"],
+                       request=request["id"])
+        self._prefetching = {_package_name(one) for one in wanted}
+        self._prefetch_request = request
+
+        def install() -> None:
+            try:
+                if event is not None:
+                    while not event.wait(WAIT_STEP):
+                        if self.stop_now or self.stopping:
+                            with self._answer_lock:
+                                if request["status"] == PENDING:
+                                    request.update(status=UNANSWERED, answered_at=_now(),
+                                                   note="the run was stopped while it waited")
+                            return
+                    if request["status"] != APPROVED:
+                        return
+                with self._install_lock:
+                    said = self.installer.install(self.run_dir, wanted)
+                self._installed(request, wanted, said, ahead=True)
+            except Exception:                  # pragma: no cover - asked for again in a round
+                log.warning("the contract's packages could not be installed ahead",
+                            exc_info=True)
+            finally:
+                with self._answer_lock:
+                    self._answers.pop(request["id"], None)
+                self._prefetching = set()
+        self._prefetch_thread = threading.Thread(target=install, daemon=True,
+                                                 name=f"work-packages-{self.id}")
+        self._prefetch_thread.start()
+
+    def _wait_for_prefetch(self, allowed: List[str]) -> List[str]:
+        """Packages asked for while the contract's install: that install
+        waited for, not another pip - what is still missing after it."""
+        ahead = self._prefetch_thread
+        names = {_package_name(one) for one in allowed}
+        if ahead is not None and ahead.is_alive() and names & self._prefetching:
+            self._note("waiting for the packages installing since the contract was approved",
+                       packages=list(allowed))
+            # Not answered yet (Ask): the run waits for the user, and says so.
+            request = getattr(self, "_prefetch_request", None) or {}
+            asking = request.get("status") == PENDING
+            if asking:
+                self.status = WAITING
+                self.activity = "waiting for you: install " + _clip(
+                    ", ".join(request.get("packages") or []), 100)
+                self.owner.save(self)
+            try:
+                while ahead.is_alive() and not (self.stop_now or self.stopping):
+                    ahead.join(WAIT_STEP)
+            finally:
+                if asking:
+                    self.status = PAUSED if self.pause_asked else "running"
+                    self.activity = ""
+        have = {_package_name(one.get("name", "")) for one in
+                self.plan["packages"].get("installed") or []}
+        return [one for one in allowed if _package_name(one) not in have]
+
+    def _installed(self, request: Dict[str, Any], allowed: List[str], said: Dict[str, Any],
+                   ahead: bool = False) -> None:
+        """An install's outcome, kept on its request and the run's list."""
+        book = self.plan["packages"]
+        request.update(status=FAILED if said.get("error") else INSTALLED,
+                       installed=said.get("installed") or [],
+                       error=said.get("error", ""), done_at=_now())
+        for one in said.get("installed") or []:
+            book["installed"] = [kept for kept in book["installed"]
+                                 if kept.get("name", "").lower() != one["name"].lower()]
+            book["installed"].append(dict(one, at=_now(), request=request["id"],
+                                          asked=book["mode"] == ASK))
+        self._note(("installed packages" if not said.get("error") else "install failed")
+                   + (" ahead of the rounds" if ahead else ""),
+                   packages=allowed, mode=book["mode"],
+                   installed=[f"{one['name']} {one['version']}"
+                              for one in said.get("installed") or []],
+                   error=said.get("error", ""))
+        self._changed("installed packages", [], {})
+
     def _install(self, packages: List[str], why: str, ecosystem: str = "pip",
                  folder: Optional[Path] = None) -> Dict[str, Any]:
         """install_packages: checked, then - asked first if the user wants
@@ -4661,6 +4871,17 @@ class Run:
                                         and (Path(folder) / "package.json").is_file()):
             return {"error": "name the npm packages, or install in a folder with a "
                              "package.json", "installed": []}
+        if not npm:
+            # Installing already, since the contract: waited for, not asked
+            # again - and what it installed is not installed twice.
+            left = self._wait_for_prefetch(allowed)
+            if not left:
+                return {"installed": [one for one in self.plan["packages"]["installed"]
+                                      if _package_name(one.get("name", ""))
+                                      in {_package_name(a) for a in allowed}],
+                        "message": "already installed - with the packages the contract "
+                                   "names, as the rounds began"}
+            allowed = left
         book = self.plan["packages"]
         request = {"id": f"req_{uuid.uuid4().hex[:10]}",
                    "packages": allowed or ["(package.json)"],
@@ -4693,21 +4914,9 @@ class Run:
                 home=runtime_dir / "home")
             said["installed"] = [dict(one, ecosystem="npm") for one in said.get("installed") or []]
         else:
-            said = self.installer.install(self.run_dir, allowed)
-        request.update(status=FAILED if said.get("error") else INSTALLED,
-                       installed=said.get("installed") or [],
-                       error=said.get("error", ""), done_at=_now())
-        for one in said.get("installed") or []:
-            book["installed"] = [kept for kept in book["installed"]
-                                 if kept.get("name", "").lower() != one["name"].lower()]
-            book["installed"].append(dict(one, at=_now(), request=request["id"],
-                                          asked=book["mode"] == ASK))
-        self._note("installed packages" if not said.get("error") else "install failed",
-                   packages=allowed, mode=book["mode"],
-                   installed=[f"{one['name']} {one['version']}"
-                              for one in said.get("installed") or []],
-                   error=said.get("error", ""))
-        self._changed("installed packages", [], {})
+            with self._install_lock:
+                said = self.installer.install(self.run_dir, allowed)
+        self._installed(request, allowed, said)
         return said
 
     def _wait_for(self, request: Dict[str, Any]) -> None:
@@ -4837,9 +5046,12 @@ class Run:
         if who == "worker":
             self._worker_tools += 1
         result = json.dumps(said.get("result"), ensure_ascii=False, default=str)
+        # Where its time went (tools.WorkTools.call): kept with it.
+        timing = said.get("timing") if isinstance(said.get("timing"), dict) else None
         self.log.append({"at": _now(), "what": "tool", "tool": name,
                          "arguments": said.get("arguments"),
-                         "result": result[:1200]})
+                         "result": result[:1200],
+                         **({"timing": timing} if timing else {})})
         if "result" not in said:
             # Refused before it ran (a search or a page): said as it is.
             self._event(who, "tool", f"{name}: {_clip(said.get('why') or '', 110)}",
@@ -4849,7 +5061,8 @@ class Run:
             outcome, ok = _short_result(name, said.get("result"))
             self._event(who, "tool", f"{name}({args}) → {outcome}", tool=name,
                         args=args, result=outcome, ok=ok,
-                        full=_tool_in_full(name, said.get("arguments"), said.get("result")))
+                        full=_tool_in_full(name, said.get("arguments"), said.get("result")),
+                        **({"timing": timing} if timing else {}))
         # A tool of the work agent's finished, in a round: a progress point,
         # when the last is ten minutes of work behind.
         if (who == "worker" and self._round_log_from is not None
@@ -4861,23 +5074,57 @@ class Run:
             finally:
                 self._point_lock.release()
 
-    def _progress_point(self) -> Optional[Dict[str, Any]]:
+    def _progress_point(self, closing: str = "") -> Optional[Dict[str, Any]]:
         """A PROGRESS POINT in the middle of a round: the files as they are
         after the tool that just finished, and what the work agent did in
         the round so far - for a round cut off to go on from, not done
         again. Its round is the one in progress: gone on from, it is begun
-        again with that told."""
+        again with that told. `closing`: the application closing - kept now,
+        on this thread, whatever the minutes since the last."""
         number = int(self.plan.get("round") or 0) + 1
         did = []
-        for entry in self.log[self._round_log_from or 0:]:
+        start = self._round_log_from
+        if start is None:
+            start = getattr(self, "_round_log_start", None) or 0
+        for entry in self.log[start:]:
             if entry.get("what") == "tool":
                 did.append(f"{entry.get('tool')}("
                            f"{_short_args(str(entry.get('tool')), entry.get('arguments'))})")
         when = datetime.now().strftime("%H:%M")
         return self._save_point(
-            f"in round {number}, at {when}", {"round": number - 1, "in_round": number},
+            f"in round {number}, at {when}" + (f", {closing}" if closing else ""),
+            {"round": number - 1, "in_round": number},
             {"resumed_mid_round": {"round": number, "did": did[-PROGRESS_POINT_TOOLS:],
-                                   "tools": len(did)}}, behind=True)
+                                   "tools": len(did)}}, behind=not closing)
+
+    def close_for(self, why: str) -> bool:
+        """THE APPLICATION CLOSING - Quit, or an update taken up (the user,
+        2026-10-28): the run STOPS CLEANLY. Held from its next safe point -
+        nothing more is begun - and where it stands kept now as its progress
+        point: in a round, the round and what it did in it (its handover
+        note with the plan); between rounds, after the last. Its status is
+        left as it is: the next start marks it interrupted, and it goes on
+        when the user continues it - never by itself, nothing told - from
+        here, not from a point before. True when a point was kept."""
+        if not self.alive() or self.alone:
+            return False
+        self._unpaused.clear()
+        self._event("run", "closing", f"The application is closing ({why}): where the run "
+                    "stands is kept now - continued, it goes on from here")
+        saving = getattr(self, "_saving", None)
+        if saving is not None and saving.is_alive():
+            saving.join(CLOSE_SECONDS)       # the point being kept, then this one
+        closing = f"when the application closed ({why})"
+        point: Optional[Dict[str, Any]] = None
+        number = int(self.plan.get("round") or 0)
+        if self._round_log_from is not None or getattr(self, "_round_log_start", None) is not None:
+            point = self._progress_point(closing=closing)
+        elif number >= 1 and self.plan.get("phase") != "done":
+            point = self._save_point(f"after round {number}, {closing}", {"round": number})
+        self._note("closed cleanly" if point else "closed", why=why,
+                   point=str((point or {}).get("label") or ""))
+        self.owner.save(self)
+        return point is not None
 
     # -- the live session ----------------------------------------------------------------
     def _event(self, who: str, kind: str, text: str, **detail: Any) -> Dict[str, Any]:
@@ -5306,6 +5553,10 @@ class Run:
             # The first version after an amendment carries it: the words and
             # what changed, for the tree to show on this line.
             amended, self._amended = self._amended, None
+            # What each installed environment held (left out of the files).
+            from .versions import environments_of
+            environments = environments_of(self.folder, self.id)
+            details = dict(details, environments=environments or None)
             entry = self.versions.save(kind, label, files, granted, skipped, state, summary,
                                        amended=amended, message=message, details=details)
         except Exception as exc:
@@ -5363,8 +5614,11 @@ class Run:
                                        self.runtime.policy.extra_writable)
                 if self.versions.index()["head"] != head:
                     return None          # a version saved meanwhile: it is where it goes on
-                point = self.versions.save_resume(label, files, granted, skipped, state,
-                                                  details)
+                from .versions import environments_of
+                environments = environments_of(self.folder, self.id)
+                point = self.versions.save_resume(
+                    label, files, granted, skipped, state,
+                    dict(details, **({"environments": environments} if environments else {})))
             except Exception as exc:
                 self._point_not_saved(details, exc)
                 return None
@@ -6377,17 +6631,39 @@ class Run:
     def _ask(self, system: str, messages: List[Dict[str, Any]], tools: WorkTools,
              writing: bool, rounds: int = TOOL_ROUNDS, work: bool = True,
              pause: str = "", who: str = "worker", quiet: bool = False,
-             language: Any = WORK_LANGUAGE) -> Dict[str, Any]:
+             language: Any = WORK_LANGUAGE,
+             cap: Optional[Tuple[int, float]] = None) -> Dict[str, Any]:
         """One answer, after as many rounds of tools as it needs: the JSON
         object it ends with. The messages keep the whole exchange, so the
         same context can be asked again.
 
         When the budget for work runs out part-way, and `pause` says how to
         stop, the agent is asked once more - from the reserve, with no tools
-        - for what it did so far; that answer is marked interrupted."""
+        - for what it did so far; that answer is marked interrupted.
+
+        `cap` - (tool steps, minutes): past either, the agent is asked for a
+        handover note (HAND_OVER) instead of more tools - the answer then
+        holds "handover", for a fresh call to go on from."""
         from ...heartbeat.experience.store import count_use
         response = None
         interrupted = False
+        steps = {"n": 0, "began": time.time(), "asked": False, "tools": 0.0,
+                 "paused": self._paused_seconds(), "waited": float(getattr(self, "waited", 0.0))}
+
+        def model_seconds() -> float:
+            """The call's own time: not its tools', the pauses' or the waits'."""
+            return max(0.0, time.time() - steps["began"] - steps["tools"]
+                       - (self._paused_seconds() - steps["paused"])
+                       - (float(getattr(self, "waited", 0.0)) - steps["waited"]))
+
+        def capped() -> bool:
+            return bool(cap) and not steps["asked"] and (
+                steps["n"] >= cap[0] or model_seconds() >= cap[1] * 60)
+
+        def hand_over() -> str:
+            steps["asked"] = True
+            return HAND_OVER.format(steps=steps["n"], minutes=round(model_seconds() / 60))
+
         for round_number in range(rounds):
             # SAFE POINT: before a model call.
             self._hold(f"before the {who}'s next model call")
@@ -6408,6 +6684,21 @@ class Run:
                     self._turn(who, response, spent)
                     break
                 return {}
+            if round_number and capped():
+                # AT ITS CAP: the note, with no tools - a fresh call goes on.
+                last_message = messages[-1]
+                if isinstance(last_message.get("content"), list):
+                    last_message["content"].append({"type": "text", "text": hand_over()})
+                else:
+                    messages.append({"role": "user", "content": hand_over()})
+                self.activity = f"{who}: writing a handover note"
+                spent = self._spent()
+                response = self._call(who, ModelRequest(
+                    messages=messages, system=system, tools=None,
+                    max_tokens=8000, task="work_run", metadata={"run": self.id},
+                    language=language))
+                self._turn(who, response, spent)
+                break
             last = round_number == rounds - 1
             self.activity = f"{who}: thinking - {self.stage_now or 'working'}"
             spent = self._spent()
@@ -6417,7 +6708,9 @@ class Run:
                 max_tokens=8000, task="work_run", metadata={"run": self.id},
                 language=language,
                 tool_runner=self._tool_runner(tools, specs, who, work, quiet,
-                                              rounds - 1 - round_number) if specs else None,
+                                              rounds - 1 - round_number,
+                                              steps=steps, capped=capped,
+                                              hand_over=hand_over) if specs else None,
                 # A client's own web tools held to these tools' checks.
                 web_guard=getattr(tools, "guard", None),
                 # Without the sandbox: the work agent's calls, and its helpers'.
@@ -6446,7 +6739,10 @@ class Run:
                         batch[0].name, batch[0].arguments) + (
                         f" (and {len(batch) - 1} more read side by side)" if len(batch) > 1
                         else "")
+                    ran_from = time.time()
                     answers = _run_calls(tools, batch)
+                    steps["tools"] += time.time() - ran_from
+                    steps["n"] += len(batch)
                 # A picture it read goes as a picture (models/vision.py).
                 for call, said in zip(batch, answers):
                     results.append({"type": "tool_result", "tool_use_id": call.id,
@@ -6468,6 +6764,11 @@ class Run:
                               "provider": getattr(response, "provider", "")}
         if interrupted:
             said["interrupted"] = True
+        # How long the call took, by its steps: the handovers measured.
+        _MEASURED.last = {"steps": steps["n"],
+                          "minutes": round((time.time() - steps["began"]) / 60, 1),
+                          "model_minutes": round(model_seconds() / 60, 1),
+                          "tool_minutes": round(steps["tools"] / 60, 1)}
         return said
 
     #: The most tool calls one call that runs its tools itself may make, for
@@ -6475,12 +6776,16 @@ class Run:
     NATIVE_CALLS_PER_ROUND = 3
 
     def _tool_runner(self, tools: WorkTools, specs: List[Any], who: str, work: bool,
-                     quiet: bool, rounds_left: int) -> Any:
+                     quiet: bool, rounds_left: int, steps: Optional[Dict[str, Any]] = None,
+                     capped: Optional[Callable[[], bool]] = None,
+                     hand_over: Optional[Callable[[], str]] = None) -> Any:
         """A TOOL CALLED NATIVELY, DURING THE CALL - Claude Code, over MCP -
         run by the run as its own loop runs one: before it, the safe point
         (paused, it waits there); not run when the run was stopped, has no
         room left, or has used the room for tools this call has; said in the
-        live session; run by the same tools, sandbox and guard."""
+        live session; run by the same tools, sandbox and guard. At the
+        call's cap (`capped`), not run: the agent is asked for its handover
+        note instead."""
         offered = {str(spec.name) for spec in specs or []}
         most = max(1, rounds_left) * self.NATIVE_CALLS_PER_ROUND
         made = {"n": 0}
@@ -6495,12 +6800,21 @@ class Run:
             if not self._going(work=work, quiet=True):
                 return {"error": "not run: the run has no room left - answer now, "
                                  "with the JSON object, from what you have"}
+            if capped is not None and hand_over is not None and (
+                    capped() or (steps or {}).get("asked")):
+                return {"error": "not run: " + hand_over()}
             made["n"] += 1
             if made["n"] > most:
                 return {"error": "That is all the room for tools: answer now, "
                                  "with the JSON object."}
             self.activity = f"{who}: {name} {_short_args(name, arguments)}"
+            if steps is not None:
+                steps["n"] += 1
+            ran_from = time.time()
             said = tools.call(name, arguments or {})
+            if steps is not None:
+                # Its tools' time is not the model's (the cap's minutes).
+                steps["tools"] = steps.get("tools", 0.0) + time.time() - ran_from
             self.owner.save(self)
             return said
         return run
@@ -7173,7 +7487,7 @@ class Run:
                           cards=parent.cards, find=parent.find, changed=parent.changed,
                           install=parent.install if kind == "worker" else None,
                           stages=parent.stages)
-        for name in ("packages_dir", "locked", "guard", "test_runs", "records_db",
+        for name in ("packages_dir", "locked", "guard", "test_runs", "python_runs", "records_db",
                      "files_index", "learned", "as_of", "runs_code", "only"):
             setattr(tools, name, getattr(parent, name))
         tools.stopped = lambda: parent.stopped() or halted["halt"]
@@ -7761,6 +8075,8 @@ class Run:
         self._record_contract(draft, reviews, approved=True)
         self.plan["phase"] = "rounds"
         self.owner.save(self)
+        # ITS PACKAGES READY BEFORE A ROUND NEEDS THEM (the user, 2026-10-28).
+        self._prefetch(draft.get("packages"))
         # KEY POINT: the contract approved.
         # The first checkpoint: the contract approved.
         self._set_checkpoint("the contract approved", None, 0)
@@ -8443,6 +8759,10 @@ class Run:
             parts.append(MIDWAY.format(
                 tools=int(midway.get("tools") or 0),
                 did="\n".join(f"  - {one}" for one in midway.get("did") or []) or "  (nothing)"))
+        # Gone on from a progress point after a handover: its note too.
+        handed = self.plan.pop("handover", None)
+        if not (isinstance(handed, dict) and int(handed.get("round") or 0) == number):
+            handed = None
         if int(self.plan.get("stalls") or 0) >= STEP_BACK_AT:
             parts.append(STEP_BACK)
         if fix:
@@ -8450,11 +8770,14 @@ class Run:
                 f"  - ({one.get('severity', '')}) {_plain(one.get('say', ''))}"
                 f"{' - ' + one['file'] if one.get('file') else ''}" for one in fix)))
         parts.append(WORK_ROUND)
-        messages = [{"role": "user", "content": "\n\n".join(parts)}]
+        messages = [{"role": "user", "content": "\n\n".join(
+            parts[:-1] + ([self._handed_over(handed)] if handed else []) + parts[-1:])}]
         self._round_log_from = len(self.log)
+        # Where the round began, kept until it is recorded - through its
+        # review too: closed then, its point still knows what it did.
+        self._round_log_start = self._round_log_from
         try:
-            summary = self._ask(self._system(), messages, self.tools, writing=True,
-                                rounds=WORK_TOOL_ROUNDS, pause=PAUSE)
+            summary = self._builder(number, parts, messages, handed)
             if summary.get("interrupted"):
                 self._interrupted(number, summary)
                 return "paused"
@@ -8465,10 +8788,10 @@ class Run:
             while problems and tries < GATE_RETRIES and self._going():
                 tries += 1
                 self._note("checks failed", round=number, problems=problems[:8])
-                messages.append({"role": "user", "content": GATE.format(
-                    problems="\n".join(f"  - {one}" for one in problems))})
-                summary = self._ask(self._system(), messages, self.tools, writing=True,
-                                    rounds=WORK_TOOL_ROUNDS, pause=PAUSE)
+                gate = GATE.format(problems="\n".join(f"  - {one}" for one in problems))
+                messages.append({"role": "user", "content": gate})
+                summary = self._builder(number, parts, messages,
+                                        self.plan.get("handover"), then=gate)
                 if summary.get("interrupted"):
                     self._interrupted(number, summary)
                     return "paused"
@@ -8477,6 +8800,7 @@ class Run:
             # The work agent's part of the round is over: no point in the
             # middle of the review.
             self._round_log_from = None
+            self.plan.pop("handover", None)
         root, cards = self._tree()
         refs = self._apply_parts(summary, root, cards)
         card = self._card_named(summary.get("card"), refs, cards) or root
@@ -8547,6 +8871,79 @@ class Run:
             return "blocked"
         return "next"
 
+    def _at_once(self, asks: List[Callable[[], Any]]) -> List[Any]:
+        """THE REVIEWER'S CHECKS THAT DO NOT DEPEND ON ONE ANOTHER, SIDE BY
+        SIDE (the user, 2026-10-28) - each its own context, at most
+        CHECKS_SIDE_BY_SIDE at once, one at a time while the computer is busy
+        (parallel.machine_busy). Not merged: each is the call it was. What
+        each returned, in order; a failure raised once all are back."""
+        from .parallel import machine_busy
+        if len(asks) <= 1 or machine_busy():
+            return [one() for one in asks]
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(len(asks), CHECKS_SIDE_BY_SIDE),
+                                thread_name_prefix=f"check-{self.id}") as pool:
+            futures = [pool.submit(one) for one in asks]
+        results: List[Any] = []
+        failed: Optional[BaseException] = None
+        for future in futures:
+            try:
+                results.append(future.result())
+            except BaseException as exc:       # raised once all are back
+                failed = failed or exc
+                results.append({})
+        if failed is not None:
+            raise failed
+        return results
+
+    def _builder(self, number: int, parts: List[str], messages: List[Dict[str, Any]],
+                 handed: Optional[Dict[str, Any]], then: str = "") -> Dict[str, Any]:
+        """THE WORK AGENT'S PART OF A ROUND, IN CALLS THAT STAY SHORT (the
+        user, 2026-10-28): a call at its cap (CALL_MOST_STEPS tool steps,
+        CALL_MOST_MINUTES minutes) writes a handover note, and a FRESH call
+        goes on from it - the brief as it is now, the note, the files the
+        round wrote, and `then` (a gate's problems) - its messages in place
+        of the last's. Past HANDOVERS_PER_ROUND, the last call is let finish.
+        The note is kept in the plan: a progress point holds it, and a round
+        gone on from that point goes on from it."""
+        calls = int((handed or {}).get("calls") or 0)
+        while True:
+            summary = self._ask(
+                self._system(), messages, self.tools, writing=True, rounds=WORK_TOOL_ROUNDS,
+                pause=PAUSE, cap=(CALL_MOST_STEPS, CALL_MOST_MINUTES)
+                if calls < HANDOVERS_PER_ROUND else None)
+            note = summary.get("handover") if isinstance(summary, dict) else None
+            if summary.get("interrupted") or not isinstance(note, dict) \
+                    or not self._going():
+                return summary
+            calls += 1
+            measured = dict(getattr(_MEASURED, "last", None) or {})
+            handed = {"round": number, "calls": calls, "note": note,
+                      "written": sorted(getattr(self, "_round_writes", set()))[:80]}
+            self.plan["handover"] = handed
+            self._note("builder call handed over", round=number, call=calls,
+                       steps=measured.get("steps"), minutes=measured.get("minutes"),
+                       model_minutes=measured.get("model_minutes"),
+                       tool_minutes=measured.get("tool_minutes"),
+                       next=[_clip(str(one), 160) for one in note.get("next") or []][:3])
+            self._event("worker", "handover",
+                        f"Round {number}: call {calls} handed over after "
+                        f"{measured.get('steps', '?')} tool steps, "
+                        f"{measured.get('minutes', '?')} min ({measured.get('model_minutes', '?')} "
+                        f"of the model's own, {measured.get('tool_minutes', '?')} running tools) "
+                        "- a fresh call goes on from its note",
+                        full=json.dumps(note, ensure_ascii=False, indent=1))
+            fresh = [self._brief()] + parts[1:-1] + [self._handed_over(handed)] + parts[-1:]
+            messages[:] = [{"role": "user", "content": "\n\n".join(
+                fresh + ([then] if then else []))}]
+
+    def _handed_over(self, handed: Dict[str, Any]) -> str:
+        note = handed.get("note") if isinstance(handed.get("note"), dict) else {}
+        return HANDED_OVER.format(
+            calls=int(handed.get("calls") or 0) + 1,
+            note=_plain(json.dumps(note, ensure_ascii=False, indent=1))[:8000],
+            files=", ".join(handed.get("written") or []) or "(none yet)")
+
     # -- the full review and the checkpoints -------------------------------------------
     def _checkpoint(self) -> Dict[str, Any]:
         """THE LAST CHECKPOINT: the contract approved or amended, or the last
@@ -8565,6 +8962,15 @@ class Run:
             "round": int(self.plan.get("round") or 0) if after_round is None else after_round,
             "label": label, "at": _now(),
             **({"version": made.get("id", "")} if isinstance(made, dict) else {})}
+
+    def _environments_note(self) -> str:
+        """THE INSTALLED ENVIRONMENTS IN THE WORK'S FOLDER, for a reviewer:
+        left out of every file list, and said to be there - each judged as
+        to whether it belongs in what the work delivers (environments.py)."""
+        from .environments import said
+        from .versions import environments_of
+        note = said(environments_of(self.folder, self.id))
+        return "\n\n" + note if note else ""
 
     def _files_since(self, version_id: str) -> Dict[str, Any]:
         """The work's files changed since that version: added, modified,
@@ -8634,6 +9040,7 @@ class Run:
              (f" (and {counts.get(kind, 0) - len(changed.get(kind) or [])} more)"
               if counts.get(kind, 0) > len(changed.get(kind) or []) else "")
              for kind in ("added", "modified", "deleted") if changed.get(kind)]) or "  none"
+        files += self._environments_note()
         earlier = [one for one in cards.values() if one["status"] == "done"
                    and one["id"] not in touched and one["id"] != root["id"]]
         head = dict(
@@ -8663,18 +9070,33 @@ class Run:
             said = review.ask(FULL_REVIEW_ASK.format(**head, what=FULL_REVIEW_WHOLE.format()),
                               rounds=FULL_REVIEW_TOOL_ROUNDS)
         else:
-            checked, reopen, findings = [], [], []
-            for at, name in enumerate(touched):
-                if not self._going():
-                    break
-                ask = FULL_REVIEW_CARD.format(card=shown(name), card_id=name)
-                one = review.ask(FULL_REVIEW_ASK.format(**head, what=ask) if at == 0 else ask)
+            # THE CARDS' OWN CALLS SIDE BY SIDE (the user, 2026-10-28) - each
+            # was a call of its own, one after another; now each in a context
+            # made from the review's, all at once. The call that concludes
+            # comes after them all, given their answers: no call split, none
+            # merged.
+            def check(name: str, side: "Review") -> Callable[[], Dict[str, Any]]:
+                ask = FULL_REVIEW_CARD.format(
+                    card=shown(name), card_id=name, beside=BESIDE.format(
+                        folder=self.checks_folder / f"full-review-{number}" / name))
+                return lambda: side.ask(FULL_REVIEW_ASK.format(**head, what=ask))
+            # Each made from the review before any is asked: none sees another.
+            asks = [check(name, review.beside()) for name in touched]
+            checked, reopen, findings, answered = [], [], [], []
+            for name, one in zip(touched, self._at_once(asks) if self._going() else []):
+                one = one if isinstance(one, dict) else {}
                 checked.append({"card": name, "holds": str(one.get("holds") or ""),
                                 "why": str(one.get("why") or "")})
                 if _yes(one.get("reopen")):
                     reopen.append({"card": name, "why": str(one.get("why") or "")})
-                findings += [f for f in one.get("findings") or [] if isinstance(f, dict)]
-            said = review.ask(FULL_REVIEW_CONCLUDE.format()) if self._going() else {}
+                found = [f for f in one.get("findings") or [] if isinstance(f, dict)]
+                findings += found
+                answered.append(dict(checked[-1], reopen=_yes(one.get("reopen")),
+                                     findings=[_clip(f.get("say"), 300) for f in found]))
+            answers = "\n".join(f"  {json.dumps(one, ensure_ascii=False)}"
+                                 for one in answered) or "  (none came back)"
+            said = review.ask(FULL_REVIEW_ASK.format(**head, what=FULL_REVIEW_CONCLUDE.format(
+                answers=answers))) if self._going() else {}
             said = dict(said, cards=checked,
                         reopen=reopen + [one for one in said.get("reopen") or []
                                          if isinstance(one, dict)],
@@ -8954,6 +9376,7 @@ class Run:
         """The round, kept in the work's tree as the agent's stage: its
         claims and evidence, the checks, and the review."""
         from ...heartbeat.experience.store import MEDIA, STAGE_KINDS
+        self._round_log_start = None
         kind = str(summary.get("kind") or "execution").lower()
         kind = kind if kind in STAGE_KINDS else "execution"
         medium = card.get("type") or "other"
@@ -9087,6 +9510,7 @@ class Run:
                         self._reviewer_context(None))
         judged = review.ask(REVIEW_FINAL.format(files=("\n".join(
             f"  {one}" for one in files[:200]) or "  (no files)")
+            + self._environments_note()
             + ("\n\n" + self._handed_text() if self._handed_text() else ""),
             for_user=FOR_USER_NOTE) + (
             "\n\nA TESTER WHO NEVER SAW HOW IT WAS BUILT USED IT AS THE USER WOULD:\n"
@@ -9151,6 +9575,7 @@ class Run:
             self.tester_tools.runs_code = ("run_python", "run_tests")
             self.tester_tools.label = "the tester"
             self.tester_tools.test_runs = self.tools.test_runs
+            self.tester_tools.python_runs = self.tools.python_runs
         return self.tester_tools
 
     def _checks_on(self) -> bool:
@@ -9183,18 +9608,29 @@ class Run:
         # is the user's to read.
         kinds = ((("privacy", PRIVACY_SYSTEM),) if self.variant == QUICK
                  else (("quality", QUALITY_SYSTEM), ("privacy", PRIVACY_SYSTEM)))
-        for kind, system in kinds:
-            if not self._going(work=False):
-                return "fix", []
-            said = self._ask(
+        if not self._going(work=False):
+            return "fix", []
+
+        environments = self._environments_note()
+
+        def check(kind: str, system: str) -> Callable[[], Dict[str, Any]]:
+            # SIDE BY SIDE (the user, 2026-10-28): neither waits for the other.
+            beside = ("\n\n" + BESIDE.format(folder=self.checks_folder / f"final-{kind}")
+                      if len(kinds) > 1 else "")
+            return lambda: self._ask(
                 system.replace("{checks}", str(self.checks_folder)) + "\n\n" + zone_rule()
                 + native_rule(),
                 [{"role": "user", "content": CHECK_ASK.format(
                     words=words or "(carry the work forward)",
                     goal=goal or words or "(as the user asked)",
                     files=("\n".join(f"  {one}" for one in files[:200]) or "  (no files)")
-                    + ("\n\n" + self._handed_text() if self._handed_text() else ""))}],
+                    + environments
+                    + ("\n\n" + self._handed_text() if self._handed_text() else ""))
+                    + beside}],
                 self._testing_tools(), writing=False, work=False, who=kind)
+        answers = self._at_once([check(kind, system) for kind, system in kinds])
+        for (kind, system), said in zip(kinds, answers):
+            said = said if isinstance(said, dict) else {}
             problems = [one for one in said.get("problems") or [] if isinstance(one, dict)]
             checked = [str(one) for one in said.get("checked") or [] if str(one).strip()]
             serious = [one for one in problems
@@ -9789,6 +10225,20 @@ class Review:
             self.took(getattr(run, "learned_found", None))
             self.rules_given = ANSWER_RULES.split("\n", 1)[0] in kept
         self.messages = [{"role": "user", "content": context + ("\n\n" + kept if kept else "")}]
+
+    def beside(self) -> "Review":
+        """A CONTEXT OF ITS OWN, made from this one as it is now - for a check
+        asked side by side with others (`Run._at_once`): what this one was
+        told, and nothing asked of either afterwards."""
+        other = Review.__new__(Review)
+        other.__dict__.update(self.__dict__)
+        other.messages = [dict(one, content=list(one["content"])
+                               if isinstance(one.get("content"), list) else one.get("content"))
+                          for one in self.messages]
+        other.shown = set(self.shown)
+        other.shown_stages = set(self.shown_stages)
+        other.given = {kind: set(held) for kind, held in self.given.items()}
+        return other
 
     def once(self, text: str, after: str) -> str:
         """`text` the first time its context is shown it; `after` then."""

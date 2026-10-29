@@ -178,11 +178,11 @@ class ATodosWorkIsTrackedTests(unittest.TestCase):
         self.assertEqual(out["paused"], "V2 | paused | ResumeStopFollow it in Work | ")
         self.assertEqual(out["stopping"], "V2 | going | Stop nowFollow it in Work | ")
         self.assertEqual(out["wired"], "r2", "the run it stops")
-        # ENDED, AND ABLE TO GO ON - from the to-do too: Resume, back to its
-        # last save point, for one that did not stop cleanly; Continue for
-        # one that did.
+        # ENDED, AND ABLE TO GO ON - from the to-do too: Continue, back to
+        # its last save point for one that did not stop cleanly, as its
+        # title says (the user, 2026-10-28: no Resume beside Continue).
         self.assertEqual(out["ended"], [
-            "V2 | did not stop cleanly - it failed before it could stop | ResumeSee it in Work | Remove",
+            "V2 | did not stop cleanly - it failed before it could stop | ContinueSee it in Work | Remove",
             "V1 | stopped: not finished | ContinueSee it in Work | Remove"])
         self.assertIn("after round 1: the page", out["back"])
         # Removing asks first.

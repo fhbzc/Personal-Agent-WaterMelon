@@ -1199,6 +1199,18 @@ class AgentApplication:
             import time as _time
 
             spent = {}
+            # WORK GOING STOPS CLEANLY (the user, 2026-10-28): each run keeps
+            # where it stands now - continued, it goes on from there, not
+            # from a point before; continued by hand, as always. Begun first,
+            # beside the rest of the closing, and waited for at its end.
+            import threading as _threading
+            from .agent.work.runner import CLOSE_SECONDS
+
+            why = "for an update" if self.updater.updating() else "it was quit"
+            began_work = _time.perf_counter()
+            closing = _threading.Thread(target=self._close_work, args=(why,),
+                                        name="close-work", daemon=True)
+            closing.start()
             self.updater.stop()
             self.work.governor.stop()
             # The learning clock told first, at once: it must not read a run
@@ -1220,6 +1232,8 @@ class AgentApplication:
                 except Exception:
                     log.exception("component shutdown failed")
                 spent[name] = round(_time.perf_counter() - began, 3)
+            closing.join(CLOSE_SECONDS + 5)
+            spent["WorkRuns"] = round(_time.perf_counter() - began_work, 3)
             if self.api is not None:
                 began = _time.perf_counter()
                 try:
@@ -1233,6 +1247,12 @@ class AgentApplication:
             self._shutdown_spent = spent
             self._started = False
             self.bus.publish("application.stopped", {})
+
+    def _close_work(self, why: str) -> None:
+        try:
+            self.work.close(why)
+        except Exception:
+            log.exception("the work going could not stop cleanly")
 
     def _heartbeats_now(self) -> Dict[str, Any]:
         """Which heartbeats are mid-round, in one shape.

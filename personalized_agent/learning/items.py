@@ -16,6 +16,9 @@ evidence that the user endorses it (learning/interests.py). Each says:
   SCOPE       one page, the pages under an address, a repository, a
               folder, a file, the passage itself.
   CADENCE     once; at every learning update; every N days.
+  SOURCE      what it was split from (sources.py), when it was: an account,
+              a site, a folder handed over whole - and its other folders or
+              addresses (`more`) when one piece of work spans several.
 
 Each is learned in the learning's own updates, under its daily limit, as a
 unit of its own (`unit_id`). Deactivated, it is not read and nothing
@@ -55,6 +58,27 @@ NEVER_UNITS = "learning_never_units"
 LARGE_TOKENS = 500_000
 #: The most of a passage kept.
 TEXT_MOST = 200_000
+
+
+#: A folder's own files only - not the folders in it: a part of a unit split
+#: from a folder (sources.py), written after the folder's path.
+FILES_ONLY = "|files"
+
+
+def part_path(part: str) -> str:
+    """A unit's part as the path or address it is at."""
+    part = str(part or "")
+    return part[:-len(FILES_ONLY)] if part.endswith(FILES_ONLY) else part
+
+
+def folder_parts(item: Dict[str, Any]) -> tuple:
+    """A folder item's folders, and those of them read for their own files
+    only: ([paths], [paths])."""
+    if item.get("kind") != "folder":
+        return [], []
+    parts = [str(one) for one in [item.get("source"), *(item.get("more") or [])] if one]
+    return ([part_path(one) for one in parts],
+            [part_path(one) for one in parts if one.endswith(FILES_ONLY)])
 
 
 def unit_id_of(item_id: str) -> str:
@@ -127,6 +151,8 @@ def _row_out(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     out["learn"] = loads(out.get("learn"), [])
     out["evidence"] = loads(out.get("evidence"), [])
     out["fetched"] = loads(out.get("fetched"), {})
+    out["more"] = loads(out.get("more"), []) or []
+    out["source_id"] = out.get("source_id") or ""
     out["unit_id"] = unit_id_of(out["id"])
     out["large"] = int(out.get("estimate") or 0) >= LARGE_TOKENS
     return out
@@ -147,6 +173,7 @@ class Items:
                 if isinstance(one, dict) and one.get("id")]
 
     def on_never(self, source: str) -> bool:
+        source = part_path(source)
         return bool(source) and any(under(source, one) for one in self.never())
 
     def put_never(self, source: str) -> None:
@@ -223,11 +250,13 @@ class Items:
             if not source:
                 raise ValueError("no path given")
             path = Path(source).expanduser()
+            own = kind == "folder" and source.endswith(FILES_ONLY)
+            path = Path(part_path(source)).expanduser()
             if kind == "folder" and not path.is_dir():
                 raise ValueError(f"{path} is not a folder on this computer")
             if kind == "file" and not path.is_file():
                 raise ValueError(f"{path} is not a file on this computer")
-            source = str(path)
+            source = str(path) + (FILES_ONLY if own else "")
         whose = str(plan.get("whose") or "mine")
         if whose not in WHOSE:
             raise ValueError("whose is mine or others")
@@ -247,7 +276,18 @@ class Items:
         except (TypeError, ValueError):
             estimate = 0
         evidence = [one for one in plan.get("evidence") or [] if isinstance(one, dict)][:20]
+        # A unit's other parts: of its own kind, each as its source is.
+        more = []
+        for one in plan.get("more") or []:
+            one = str(one or "").strip()
+            if kind == "url" and is_url(one):
+                more.append(one)
+            elif kind == "folder" and one and Path(part_path(one)).expanduser().is_dir():
+                more.append(str(Path(part_path(one)).expanduser())
+                            + (FILES_ONLY if one.endswith(FILES_ONLY) else ""))
         return {"kind": kind, "source": source, "text": text,
+                "more": list(dict.fromkeys(more))[:200],
+                "source_id": str(plan.get("source_id") or "")[:40],
                 "title": str(plan.get("title") or "")[:200]
                 or (source[:200] if source else text.strip().splitlines()[0][:80]),
                 "about": str(plan.get("about") or "")[:600],
@@ -275,7 +315,7 @@ class Items:
 
     def _put(self, row: Dict[str, Any]) -> None:
         values = dict(row)
-        for name in ("learn", "evidence", "fetched"):
+        for name in ("learn", "evidence", "fetched", "more"):
             if name in values and not isinstance(values[name], str):
                 values[name] = dumps(values[name])
         for name in ("unit_id", "large"):

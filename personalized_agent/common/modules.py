@@ -104,6 +104,8 @@ TASK_MODULE = {
     "learning_reasons": "experience",
     "learning_terms": "experience",
     "learning_plan": "experience",
+    # What was handed over split into units, and followed (learning/sources.py).
+    "learning_split": "experience",
     "learning_interests": "experience",
     "heartbeat": "heartbeat (before modules)",
     "work_run": "manual_work",

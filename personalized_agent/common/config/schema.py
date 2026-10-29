@@ -810,10 +810,18 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
     SettingField("learning_times", "Learning, each day at", "string", "", "Work",
                  "When Work's learning updates by itself: one or more times of day, in this "
                  "computer's time zone.", hidden=True),
-    SettingField("learning_daily_tokens", "Learning's tokens a day, at most", "int",
-                 3000000, "Work",
-                 "What one day's learning may spend; an update that reaches it waits for "
-                 "the next day. 0: no limit.", minimum=0, maximum=1000000000, hidden=True),
+    # TWO LIMITS, INPUT AND OUTPUT, as a Work run has (the user, 2026-10-28);
+    # none by default. Input counts what is read from the cache and written
+    # to it too.
+    SettingField("learning_daily_input_tokens", "Learning's input tokens a day, at most",
+                 "int", 0, "Work",
+                 "What one day's learning may read - fresh, from the cache and written to "
+                 "it; an update, or a plan being drafted, that reaches it waits for the "
+                 "next day. 0: no limit.", minimum=0, maximum=10_000_000_000, hidden=True),
+    SettingField("learning_daily_output_tokens", "Learning's output tokens a day, at most",
+                 "int", 0, "Work",
+                 "What one day's learning may write; reached, it waits for the next day. "
+                 "0: no limit.", minimum=0, maximum=1_000_000_000, hidden=True),
     SettingField("state_heartbeat_every_hours", "How often states are grouped",
                  "float", 12.0, "Heartbeat",
                  "How often that grouping runs - THE ONLY NUMBER FOR IT. "

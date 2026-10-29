@@ -83,6 +83,10 @@ class _Base(unittest.TestCase):
         self.config = _Config()
         self.items = Items(self.db, self.config)
         online_module._robots.clear()
+        # The hour's asks of a site are counted for the process: each test
+        # its own hour.
+        online_module._asked.clear()
+        online_module._held_until.clear()
         online_module.SPACING = 0.0
 
     def tearDown(self) -> None:

@@ -109,6 +109,12 @@ class _AmendBase(_RunsBase):
         self.assertNotIn("error", said, said)
         return said, self._wait(run_id)
 
+    def _amended(self, run_id):
+        """The id of the run's amended version - by what it is: its number
+        depends on how many versions came before it."""
+        return next(one["id"] for one in self._versions(run_id)["versions"]
+                    if one["kind"] == "amended")
+
     def _state(self, folder, run_id, version_id):
         from personalized_agent.agent.work.versions import VersionStore
         store = VersionStore(folder / "runs" / run_id)
@@ -177,18 +183,19 @@ class AnAmendmentForTheBranchTests(_AmendBase):
         # first version carrying the words and the diff.
         tree = self.routes[("GET", "/api/work/versions")](_Request({"run": run["id"]}))
         by_id = {one["id"]: one for one in tree["versions"]}
-        self.assertEqual(by_id["v6"]["kind"], "amended")
-        self.assertEqual((by_id["v6"]["parent"], by_id["v6"]["branch"]), ("v2", "branch 2"))
-        self.assertEqual(by_id["v6"]["amended"]["words"], [WORDS])
-        self.assertIn("+ DELIVERABLE: The title", by_id["v6"]["amended"]["diff"])
-        self.assertEqual([one["id"] for one in tree["versions"] if one.get("amended")], ["v6"])
+        made = self._amended(run["id"])
+        self.assertEqual(made, "v4", "after the finished run's three: contract, full review, finished")
+        self.assertEqual((by_id[made]["parent"], by_id[made]["branch"]), ("v2", "branch 2"))
+        self.assertEqual(by_id[made]["amended"]["words"], [WORDS])
+        self.assertIn("+ DELIVERABLE: The title", by_id[made]["amended"]["diff"])
+        self.assertEqual([one["id"] for one in tree["versions"] if one.get("amended")], [made])
         # v3 is still there, and its saved plan has the contract as it was.
         self.assertIn("v3", by_id)
         _store, v3 = self._state(folder, run["id"], "v3")
         self.assertEqual(v3["plan"]["contract"], old)
         self.assertNotIn("instructions", v3["plan"]["contract"])
-        _store, v6 = self._state(folder, run["id"], "v6")
-        self.assertEqual(v6["plan"]["contract"]["instructions"], [WORDS])
+        _store, then = self._state(folder, run["id"], made)
+        self.assertEqual(then["plan"]["contract"]["instructions"], [WORDS])
         # Both agents read the words, verbatim, for the rest of the line.
         rounds = [json.dumps(r.messages) for r in models.asked
                   if "You review a work agent" not in r.system
@@ -332,13 +339,15 @@ class TheContinueRouteTests(_AmendBase):
 
     def test_no_words_is_as_before(self) -> None:
         run, _folder = self._run(_TwoAgents())
+        before = len(self._versions(run["id"])["versions"])
         models = _Counts()
         said, after = self._continue_with(run["id"], models, "   ", from_version="v2")
         self.assertNotIn("amending", said)
         self.assertEqual(after["status"], "done")
         self.assertEqual(models.amendments, 0)
         self.assertNotIn("instructions", after["plan"]["contract"])
-        new = self._versions(run["id"])["versions"][5:]
+        new = self._versions(run["id"])["versions"][before:]
+        self.assertTrue(new, "the line went on: versions after the run's own")
         self.assertNotIn("amended", [one["kind"] for one in new])
         self.assertFalse([one for one in new if "amended" in one])
         self.assertFalse([e for e in self.app.work.live(run["id"])["events"]
@@ -352,10 +361,11 @@ class TheContinueRouteTests(_AmendBase):
         key = address_key("https://style.example.org/guide/titles")
         self.assertIn(key, live.tools.known_addresses)
         self.assertIn(key, live.review_tools.known_addresses)
-        # Continued again on that line without new words: still known - the
-        # words are in its contract.
+        # Continued again on that line without new words, from its amended
+        # version: still known - the words are in its contract.
         self.app.work.models = _Fails()
-        said = self.app.work.continue_run(run["id"], self.unit, {}, from_version="v6")
+        said = self.app.work.continue_run(run["id"], self.unit, {},
+                                          from_version=self._amended(run["id"]))
         self.assertNotIn("error", said, said)
         self._wait(run["id"])
         again = self.app.work._running[run["id"]]
@@ -390,8 +400,9 @@ class TheContractInForceTests(_AmendBase):
         # words and what changed; the new deliverable with its criteria.
         self._continue_with(run["id"], _Amends(), WORDS, from_version="v2")
         listed = self.app.work.runs(self.unit["id"])[0]["contract_in_force"]
+        made = self._amended(run["id"])
         self.assertEqual((listed["branch"], listed["since"], listed["since_kind"]),
-                         ("branch 2", "v6", "amended"))
+                         ("branch 2", made, "amended"))
         self.assertEqual(listed["instructions"], [WORDS])
         self.assertIn("+ DELIVERABLE: The title", listed["amended"]["diff"])
         self.assertEqual([one["title"] for one in listed["deliverables"]],
@@ -409,13 +420,13 @@ class TheContractInForceTests(_AmendBase):
         self.assertEqual(old["contract"]["instructions"], [])
         self.assertIsNone(old["amended"])
         amended = self.routes[("GET", "/api/work/version")](_Request({"run": run["id"],
-                                                                      "id": "v6"}))
+                                                                      "id": made}))
         self.assertEqual(amended["contract"]["instructions"], [WORDS])
         self.assertEqual(amended["amended"]["words"], [WORDS])
         # The live session's head has it in a line.
         live = self.app.work.live(run["id"])["contract"]
         self.assertEqual((live["branch"], live["since"], live["total"], live["amended"]),
-                         ("branch 2", "v6", 2, True))
+                         ("branch 2", made, 2, True))
 
 
 class ThePanelTests(unittest.TestCase):
@@ -591,17 +602,18 @@ class ThePanelTests(unittest.TestCase):
             "out.oldTitle=text(view.querySelector('.xp-contract-title'));"
             "out.oldMarked=!!view.querySelector('.xp-contract-not-in-force');"
             "out.oldGoal=text(view.querySelector('.xp-contract-now'));"
-            # Continue from v1: the words are asked under the tree, where v1
-            # is shown - the page still.
+            # Continue from v1: chosen beside the one button (the user,
+            # 2026-10-28); the words asked in the same card - the page still.
             "window.scrollTo(0,400);const y=window.scrollY;"
-            "document.querySelector('[data-xp-version-from=\"v1\"]')"
-            "  .dispatchEvent(new MouseEvent('click',{bubbles:true}));await wait();"
+            "const from=document.querySelector('[data-xp-continue-from=\"run_2\"]');"
+            "from.value='v1';from.dispatchEvent(new Event('change',{bubbles:true}));await wait();"
             "out.pageY=[y,window.scrollY];"
-            "box=document.querySelector('.xp-version-picked .xp-version-continue textarea');"
-            "out.underV1=!!box;out.focused=document.activeElement===box;"
-            "out.rowHasBox=!!document.querySelector('.xp-continue-row textarea');"
+            "out.where=text(document.querySelector('.xp-resume-where'));"
+            "out.focused=document.activeElement===document.querySelector('[data-xp-continue-from=\"run_2\"]');"
+            "out.boxes=document.querySelectorAll('[data-xp-continue-instruction=\"run_2\"]').length;"
+            "box=document.querySelector('.xp-continue-row [data-xp-continue-instruction=\"run_2\"]');"
             "box.value='Use the old style instead';box.dispatchEvent(new Event('input',{bubbles:true}));"
-            "document.querySelector('.xp-version-continue [data-xp-continue=\"run_2\"]')"
+            "document.querySelector('.xp-continue-row [data-xp-continue=\"run_2\"]')"
             "  .dispatchEvent(new MouseEvent('click',{bubbles:true}));await wait();"
             # Nothing said: nothing sent.
             "document.querySelector('.xp-continue-row [data-xp-continue=\"run_2\"]')"
@@ -643,9 +655,9 @@ class ThePanelTests(unittest.TestCase):
         self.assertTrue(out["oldMarked"])
         self.assertIn("Out of scope: anything else", out["oldGoal"])
         self.assertEqual(out["pageY"][0], out["pageY"][1], "the page did not move")
-        self.assertTrue(out["underV1"])
+        self.assertEqual(out["where"], "Goes on from version v1")
         self.assertTrue(out["focused"])
-        self.assertFalse(out["rowHasBox"], "one place to say it at a time")
+        self.assertEqual(out["boxes"], 1, "one place to say it")
         posts = out["posts"]
         self.assertEqual(len(posts), 3, posts)
         self.assertEqual(posts[0]["instruction"], "Make it shorter.")
@@ -673,8 +685,8 @@ class ThePanelTests(unittest.TestCase):
             "document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.id==='experience'));"
             "experienceState.unit='task-done';await xpLoadRuns();await wait();"
             "const text=(el)=>el?el.textContent.replace(/\s+/g,' ').trim():'';"
-            "const row=document.querySelector('.xp-continue-next');"
-            "out.row=!!row;out.label=text(row&&row.querySelector('label span'));"
+            "const row=document.querySelector('.xp-resume-card');"
+            "out.row=!!row;out.label=text(row&&row.querySelector('.xp-continue-words span'));"
             "out.plainRow=!!document.querySelector('p.xp-continue-row');"
             "row.querySelector('[data-xp-continue=\"run_9\"]')"
             "  .dispatchEvent(new MouseEvent('click',{bubbles:true}));await wait();"
@@ -686,6 +698,8 @@ class ThePanelTests(unittest.TestCase):
             "out.posts=window.__posts.filter(p=>p.p==='/api/work/continue').map(p=>p.body);")
         out = self._render(stub, steps)
         self.assertTrue(out["row"])
+        # The finished work, chosen first beside the one button: what to do
+        # next asked for.
         self.assertEqual(out["label"], "What to do next, building on what is done")
         self.assertFalse(out["plainRow"], "no plain Continue for a finished run")
         self.assertEqual(out["postsEmpty"], 0, "nothing said, nothing sent")

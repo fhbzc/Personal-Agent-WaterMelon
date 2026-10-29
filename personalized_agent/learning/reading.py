@@ -269,7 +269,10 @@ class UnitReader:
         if unit.get("only_files"):
             return []
         found: Dict[str, records.Session] = {}
+        own_only = set(unit.get("files_only") or [])
         for folder in unit.get("folders") or []:
+            if folder in own_only:
+                continue                    # its own files only: no conversation is its
             for one in self.places.sessions_in(folder, all_sessions):
                 if any(records.is_within(one.cwd or "", out)
                        for out in unit.get("leave_out") or []):
@@ -397,7 +400,7 @@ class UnitReader:
             root = Path(folder)
             if not root.is_dir():
                 continue
-            if unit.get("only_files"):
+            if unit.get("only_files") or folder in (unit.get("files_only") or []):
                 walker = [(str(root), [], [one.name for one in root.iterdir() if one.is_file()])]
             else:
                 walker = os.walk(root)
@@ -492,7 +495,7 @@ class UnitReader:
         out = []
         seen = marks.setdefault("git", {})
         for folder in unit.get("folders") or []:
-            if not (Path(folder) / ".git").exists():
+            if not (Path(folder) / ".git").exists() or folder in (unit.get("files_only") or []):
                 continue
             after = max(str(seen.get(folder) or ""), since)
             args = ["git", "-C", folder, "log", "--date=iso-strict",
@@ -606,7 +609,9 @@ class UnitReader:
                                         f"A FILE: {path} ({_iso(info.st_mtime)[:10]})\n"
                                         f"{text[:CHUNK_CHARS - 2000]}", ("file", "", state)))
         elif kind == "folder":
-            folder_unit = dict(unit, folders=[item["source"]], kind="place")
+            from .items import folder_parts
+            folders, files_only = folder_parts(item)
+            folder_unit = dict(unit, folders=folders, files_only=files_only, kind="place")
             first = not unit.get("first_read")
             if item["whose"] == "mine":
                 sessions = self._sessions(folder_unit, all_sessions)

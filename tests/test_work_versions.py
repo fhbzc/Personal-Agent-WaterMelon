@@ -598,8 +598,9 @@ class EachVersionSaysWhatItDidTests(_RunsBase):
 
 class ThePanelShowsVersionsTests(unittest.TestCase):
     """The run's Versions: the tree with its branch and head, View showing a
-    version's files and to-do list, and Continue from here setting Continue
-    to post from_version."""
+    version's files and to-do list - and ONE BUTTON to go on (the user,
+    2026-10-28), Continue from here, with where from chosen beside it:
+    posted as from_version."""
 
     def setUp(self) -> None:
         from test_panels import _javascript_engine
@@ -656,14 +657,17 @@ class ThePanelShowsVersionsTests(unittest.TestCase):
             "  +li.classList.contains('xp-version-head'));"
             "out.headText=document.querySelector('.xp-version-head').textContent.replace(/\\s+/g,' ');"
             "out.v2Text=document.querySelector('[data-xp-version-row=\"v2\"]').textContent.replace(/\\s+/g,' ');"
-            "out.fromButtons=[...document.querySelectorAll('[data-xp-version-from]')]"
-            "  .map(b=>b.dataset.xpVersionFrom);"
+            "out.choices=[...document.querySelectorAll('[data-xp-continue-from=\"run_2\"] option')]"
+            "  .map(o=>o.value);"
+            "out.buttons=[...document.querySelectorAll('button')].filter(b=>"
+            "  /continue|resume/i.test(b.textContent)).map(b=>b.textContent.trim());"
             "document.querySelector('[data-xp-version-view=\"v2\"]')"
             "  .dispatchEvent(new MouseEvent('click',{bubbles:true}));await wait();"
             "out.view=document.querySelector('.xp-version-view').textContent.replace(/\\s+/g,' ');"
             "out.gets=window.__gets.filter(g=>g.includes('version'));"
-            "document.querySelector('[data-xp-version-from=\"v1\"]')"
-            "  .dispatchEvent(new MouseEvent('click',{bubbles:true}));await wait();"
+            "out.hint=document.querySelector('.xp-version-from-row').textContent.replace(/\\s+/g,' ');"
+            "const from=document.querySelector('[data-xp-continue-from=\"run_2\"]');"
+            "from.value='v1';from.dispatchEvent(new Event('change',{bubbles:true}));await wait();"
             "out.form=document.querySelector('.xp-continue-row').textContent.replace(/\\s+/g,' ');"
             "out.stillOpen=document.querySelector('.xp-versions').open;"
             "document.querySelector('[data-xp-continue=\"run_2\"]')"
@@ -703,8 +707,9 @@ class ThePanelShowsVersionsTests(unittest.TestCase):
         result = json.loads(html.unescape(match.group(1)))
         self.assertEqual(result["err"], "", result["err"])
         out = result["out"]
-        # A finished run offers no plain Continue.
-        self.assertFalse(out["continueBefore"])
+        # A finished run that cannot go on from its latest: Continue from
+        # here, from an earlier version only.
+        self.assertTrue(out["continueBefore"])
         # The tree: the branch indented under the version it began from,
         # right after it; the head marked.
         self.assertEqual(out["rows"], ["v1:0em:false", "v4:1.4em:true",
@@ -713,8 +718,11 @@ class ThePanelShowsVersionsTests(unittest.TestCase):
         self.assertIn("round advanced", out["v2Text"])
         self.assertIn("1/2 cards done", out["v2Text"])
         self.assertIn("2 to do", out["v2Text"])
-        # Continue from here on every version but the head of a finished run.
-        self.assertEqual(out["fromButtons"], ["v1", "v2", "v3"])
+        # Every version but the head of a finished run, newest first - and
+        # one button only.
+        self.assertEqual(out["choices"], ["v3", "v2", "v1"])
+        self.assertEqual(out["buttons"], ["Continue from here"])
+        self.assertIn("choose it beside Continue from here", out["hint"])
         self.assertIn("notes.md", out["view"])
         self.assertIn("write the summary", out["view"])
         self.assertIn("notes.md says hello", out["view"])
@@ -737,8 +745,8 @@ class ThePanelShowsVersionsTests(unittest.TestCase):
         self.assertIn("No slides for the contract's version - there is no work to show yet",
                       out["skipped"])
         self.assertIn("limits", posts[0]["body"])
-        # Posted, the choice is spent: a finished run again offers no Continue.
-        self.assertFalse(out["continueAfter"])
+        # Posted, the choice is spent: the list is back at its first choice.
+        self.assertTrue(out["continueAfter"])
 
 
 

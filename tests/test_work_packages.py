@@ -477,6 +477,105 @@ class AskMeOrAutoTests(unittest.TestCase):
         self.assertIsNone(again.approve("run_old", "req_1", True))
 
 
+
+class _NamedInstaller:
+    """Installs what it is asked for, and only that - slowly, when told."""
+
+    def __init__(self, seconds=0.0):
+        self.calls = []
+        self.seconds = seconds
+
+    def install(self, run_dir, requirements):
+        import re
+        self.calls.append(list(requirements))
+        time.sleep(self.seconds)
+        names = [re.split(r"[<>=!~]", one, 1)[0] for one in requirements]
+        return {"requested": list(requirements), "folder": str(Path(run_dir) / ".packages"),
+                "installed": [{"name": name, "version": "1.0"} for name in names]}
+
+
+class _NamesPackages(_WantsPackages):
+    """Its contract names the packages the first round then asks for."""
+
+    def __init__(self, contract_packages, **kwargs):
+        super().__init__(**kwargs)
+        self.contract_packages = contract_packages
+
+    def invoke(self, request, role=""):
+        reply = super().invoke(request, role)
+        first = request.messages[0]["content"]
+        first = first if isinstance(first, str) else json.dumps(first)
+        if "DRAFT THE CONTRACT" in first and "You review a work agent" not in request.system:
+            draft = json.loads(reply.text)
+            draft["packages"] = list(self.contract_packages)
+            reply.text = reply.raw_content = json.dumps(draft)
+        return reply
+
+
+class AheadOfTheRoundsTests(unittest.TestCase):
+    """THE CONTRACT'S PACKAGES, READY BEFORE A ROUND NEEDS THEM (the user,
+    2026-10-28): installed in the background once it is approved - asked
+    once, when the user wants to be asked - and a round asking for one of
+    them waits for that install rather than starting another."""
+
+    # The same run and requests as AskMeOrAutoTests - its helpers, not its tests.
+    setUp = AskMeOrAutoTests.setUp
+    tearDown = AskMeOrAutoTests.tearDown
+    _until = staticmethod(AskMeOrAutoTests._until)
+    _post = AskMeOrAutoTests._post
+    _row = AskMeOrAutoTests._row
+    _pending = AskMeOrAutoTests._pending
+    _finished = AskMeOrAutoTests._finished
+
+    def _start_named(self, packages, contract_packages, seconds=0.0):
+        self.installer = _NamedInstaller(seconds)
+        self.app.work.installer_for = lambda policy: self.installer
+        self.app.work.models = self.models = _NamesPackages(contract_packages)
+        said = self.app.work.start(self.unit, "read the data", packages=packages)
+        self.assertNotIn("error", said, said)
+        return said
+
+    def test_the_contracts_packages_drafted_for(self) -> None:
+        from personalized_agent.agent.work.runner import DRAFT_CONTRACT
+        self.assertIn('"packages": ["the Python packages', DRAFT_CONTRACT)
+
+    def test_auto_installs_them_ahead_and_a_round_does_not_install_again(self) -> None:
+        self._start_named("auto", ["six", "numpy"], seconds=1.0)
+        row = self._finished()
+        # One pip: the contract's, ahead; the round's request waited for it.
+        self.assertEqual(self.installer.calls, [["six", "numpy"]])
+        requests = row["plan"]["packages"]["requests"]
+        self.assertTrue(requests[0]["ahead"])
+        self.assertEqual(requests[0]["status"], "installed")
+        self.assertEqual(len(requests), 1, "the round's request needed no other")
+        self.assertIn("already installed", json.dumps(self.models.install_results))
+        whats = [one.get("what") for one in row["log"]]
+        self.assertIn("installed packages ahead of the rounds", whats)
+
+    def test_what_the_contract_did_not_name_is_installed_by_the_round(self) -> None:
+        self._start_named("auto", ["six"])
+        row = self._finished()
+        self.assertEqual(self.installer.calls, [["six"], ["numpy>=1.26"]])
+        self.assertEqual(len(row["plan"]["packages"]["requests"]), 2)
+
+    def test_ask_asks_once_and_the_work_waits_only_when_it_needs_them(self) -> None:
+        self._start_named("ask", ["six", "numpy"])
+        request = self._pending()
+        self.assertTrue(request["ahead"])
+        self.assertEqual(request["packages"], ["six", "numpy"])
+        self.assertEqual(self.installer.calls, [])
+        self._post("/api/work/approve", {"run": self._row()["id"],
+                                         "request": request["id"], "allow": True})
+        row = self._finished()
+        self.assertEqual(self.installer.calls, [["six", "numpy"]])
+        self.assertEqual(len(row["plan"]["packages"]["requests"]), 1, "asked once")
+
+    def test_none_named_none_installed_ahead(self) -> None:
+        self._start_named("auto", [])
+        row = self._finished()
+        self.assertFalse(any(one.get("ahead") for one in row["plan"]["packages"]["requests"]))
+
+
 class RunPythonSeesThePackagesTests(unittest.TestCase):
 
     def setUp(self) -> None:

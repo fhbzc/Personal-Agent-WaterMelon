@@ -17,6 +17,12 @@ learning". Then:
    reading takes, estimated by code from what it holds.
 3. THE USER CHANGES IT, or not, and adds it - to be learned now or at the
    next update. Nothing is learned before that.
+
+What may hold several pieces of work - a folder, a GitHub account, a
+repository, a site - is first SPLIT by the model (sources.py): the plan is
+then its units, each a line to tick, merge, split or rename, each kept an
+item of its own. A site that holds the listing back leaves the plan WAITING:
+it is finished when the site answers, and shown in the Learning panel.
 """
 
 from __future__ import annotations
@@ -157,6 +163,18 @@ class Planner:
         self.ask = ask
         self.online = online or Online(online_dir)
         self.logins = logins
+        #: What splits what is handed over (sources.Splitter), set by the
+        #: learning - and, with the learning, a splitter and a model caller
+        #: made for each plan, counting what it takes and held to the day's
+        #: limit (`make_splitter`, `make_ask`, `over_limit`).
+        self.splitter: Any = None
+        self.make_splitter: Optional[Callable[[Any], Any]] = None
+        self.make_ask: Optional[Callable[[Callable[[int], None]], Any]] = None
+        self.over_limit: Callable[[], bool] = lambda: False
+        #: A plan drafted for what was handed over to be learned AT ONCE
+        #: ("auto" in what was handed - the user, 2026-10-29): added as soon
+        #: as it is ready, by the learning - what it says it did, or raises.
+        self.on_ready: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None
         self._drafts: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.Lock()
 
@@ -191,13 +209,82 @@ class Planner:
         draft = self.get(draft_id)
         if draft is None:
             return
+        spent = [0]
+
+        def counted(tokens: int) -> None:
+            spent[0] += int(tokens or 0)
+        ask = self.make_ask(counted) if self.make_ask is not None else self.ask
+        auto = bool(draft["handed"].get("auto"))
+        words = str(draft["handed"].get("instruction") or "").strip()
         try:
             kind, source, text, look = self._look(draft["handed"])
+            from .sources import LIMIT_WHY, kind_of
+            splitter = (self.make_splitter(ask) if self.make_splitter is not None
+                        else self.splitter)
+            splits = kind_of(kind, source, look) if splitter is not None else ""
+            if self.over_limit():
+                if auto and splits:
+                    # Kept, and judged when the limit allows: added then.
+                    pass
+                elif auto:
+                    # Nothing to judge: added as it is, read when the
+                    # limit allows.
+                    self._ready(draft_id, self._plain(kind, source, text, look, words), 0)
+                    return
+                else:
+                    self._set(draft_id, state="waiting", until=0, error=LIMIT_WHY, limit=True)
+                    return
+            if splits:
+                self._set(draft_id, state="splitting", look=look)
+                row = splitter.start(splits, source, str(look.get("title") or ""),
+                                     dict(draft["handed"]))
+                if row["state"] in ("waiting", "blocked") and not (row.get("plan") or {}).get("units"):
+                    self._set(draft_id, state="waiting", source_id=row["id"],
+                              until=row["waiting_until"], error=row.get("why", ""),
+                              limit=row.get("why", "") == LIMIT_WHY, spent=spent[0],
+                              auto=auto)
+                    return
+                plan = split_plan(row, kind)
+                if plan is not None:
+                    self._ready(draft_id, plan, spent[0])
+                    return
             self._set(draft_id, state="drafting", look=look)
-            plan = self._plan(kind, source, text, look)
-            self._set(draft_id, state="ready", plan=plan)
+            plan = self._plan(kind, source, text, look, ask, words)
+            self._ready(draft_id, plan, spent[0])
         except Exception as exc:
             self._set(draft_id, state="failed", error=str(exc)[:400])
+
+    def _ready(self, draft_id: str, plan: Dict[str, Any], spent: int) -> None:
+        """The plan ready - and, handed over to be learned at once, added
+        now: "added", with what came of it."""
+        plan["planning_tokens"] = spent
+        draft = self.get(draft_id) or {}
+        if not (draft.get("handed") or {}).get("auto") or self.on_ready is None:
+            self._set(draft_id, state="ready", plan=plan)
+            return
+        said = self.on_ready(plan)
+        self._set(draft_id, state="added", plan=plan, added=said)
+
+    @staticmethod
+    def _plain(kind: str, source: str, text: str, look: Dict[str, Any],
+               words: str) -> Dict[str, Any]:
+        """A plan without a model - the day's limit used up: as it is, the
+        user's words its angle; read when the limit allows."""
+        mine = bool(look.get("mine"))
+        scope = {"url": "repo" if look.get("repo") else "page", "text": "text",
+                 "folder": "folder", "file": "file"}.get(kind, "page")
+        plan = {"kind": kind, "source": source, "text": text,
+                "title": str(look.get("title") or source or text[:60])[:200], "about": "",
+                "whose": "mine" if mine else "others",
+                "whose_why": "a repository of your own GitHub account" if mine else "",
+                "learn": ["cases", "rules", "reference"] if mine else ["reference"],
+                "angle": words[:600], "scope": scope,
+                "cadence": "once" if kind == "text" else "update", "not_learned": "",
+                "questions": [], "page": look.get("page") or {}}
+        plan["estimate"] = estimate(look, kind, scope)
+        plan["large"] = plan["estimate"] >= LARGE_TOKENS
+        plan["pages"] = 1
+        return plan
 
     def _look(self, handed: Dict[str, Any]):
         kind = str(handed.get("kind") or "")
@@ -240,9 +327,13 @@ class Planner:
             raise ValueError("hand over a web address, a passage, a folder or a file")
         return kind, source, text, look
 
-    def _plan(self, kind: str, source: str, text: str, look: Dict[str, Any]) -> Dict[str, Any]:
+    def _plan(self, kind: str, source: str, text: str, look: Dict[str, Any],
+              ask: Any = None, words: str = "") -> Dict[str, Any]:
         shown = [f"HANDED OVER: a {kind}" + (f" - {source}" if source else ""),
                  f"ITS TITLE: {look.get('title') or '?'}"]
+        if words:
+            shown.append("WHAT THE USER SAID TO LEARN OF IT (their words - the angle is "
+                          f"theirs): {words[:1500]}")
         if look.get("page"):
             shown.append(f"SELECTED ON THE PAGE: {look['page'].get('title', '')} "
                          f"({look['page'].get('url', '')})")
@@ -254,7 +345,7 @@ class Planner:
             if look.get("state") != "ok":
                 shown.append(f"IT COULD NOT BE READ AS IT IS: {look.get('note', '')}")
         shown += ["", "THE START OF IT:", str(look.get("start") or "")[:SHOWN]]
-        said = self.ask("plan", PLAN_PROMPT, "\n".join(shown), 1500, "the plan") or {}
+        said = (ask or self.ask)("plan", PLAN_PROMPT, "\n".join(shown), 1500, "the plan") or {}
         if said.get("_failed"):
             raise ValueError("the plan could not be drafted: " + str(said["_failed"]))
         scope = str(said.get("scope") or "")
@@ -275,7 +366,9 @@ class Planner:
                 "about": str(said.get("about") or "")[:600], "whose": whose,
                 "whose_why": ("a repository of your own GitHub account" if look.get("mine")
                               else str(said.get("whose_why") or ""))[:300],
-                "learn": learn, "angle": str(said.get("angle") or "")[:600],
+                "learn": learn,
+                # The user's words, when they said what to learn: verbatim.
+                "angle": (words or str(said.get("angle") or ""))[:600],
                 "scope": scope, "cadence": cadence,
                 "not_learned": str(said.get("not_learned") or "")[:300],
                 "questions": [str(one)[:300] for one in said.get("questions") or []][:2],
@@ -287,4 +380,50 @@ class Planner:
         return plan
 
 
-__all__ = ["Planner", "PLAN_PROMPT", "estimate", "page_of_window"]
+def split_plan(row: Dict[str, Any], kind: str = "") -> Optional[Dict[str, Any]]:
+    """A source's judgment as a plan of units to tick - None when it is one
+    thing after all (planned as before)."""
+    said = row.get("plan") or {}
+    units = said.get("units") or []
+    if said.get("whole") or not units or (len(units) == 1 and not said.get("skipped")
+                                          and not (said.get("later") or {}).get("count")):
+        return None
+    kind = kind or ("folder" if row["kind"] == "folder" else "url")
+    out = []
+    for unit in units:
+        parts = unit.get("parts") or []
+        if not parts:
+            continue
+        out.append(unit_plan(row, unit, parts, kind))
+    return {"split": True, "source_id": row["id"], "kind": kind, "source": row["source"],
+            "title": row.get("title") or row["source"], "units": out,
+            "skipped": said.get("skipped") or [], "later": said.get("later") or {},
+            "cadence": "update"}
+
+
+def unit_plan(row: Dict[str, Any], unit: Dict[str, Any], parts: list, kind: str
+              ) -> Dict[str, Any]:
+    """One unit of a split source as an item's plan."""
+    first = parts[0]
+    scope = ("folder" if kind == "folder" else "repo" if first.get("kind") == "repo"
+             else "prefix" if first.get("kind") in ("prefix", "site") else "page")
+    if kind == "folder":
+        cost = estimate({"chars": sum(int(one.get("size") or 0) for one in parts)}, "folder",
+                        "folder")
+    else:
+        cost = sum(estimate({"pages": 20 if scope == "prefix" else 1, "chars": 8000}, "url", scope)
+                   for one in parts)
+    plan = {"kind": kind, "source": first["source"],
+            "more": [one["source"] for one in parts[1:]], "source_id": row["id"],
+            "title": unit.get("title") or first.get("name") or first["source"],
+            "about": unit.get("about", ""), "whose": unit.get("whose") or "others",
+            "learn": unit.get("learn") or ["reference"],
+            "angle": str((row.get("handed") or {}).get("instruction") or "")[:600],
+            "scope": scope,
+            "cadence": "update", "estimate": cost, "tick": bool(unit.get("tick", True)),
+            "why": unit.get("why", ""), "parts": parts}
+    plan["large"] = cost >= LARGE_TOKENS
+    return plan
+
+
+__all__ = ["Planner", "PLAN_PROMPT", "estimate", "page_of_window", "split_plan", "unit_plan"]

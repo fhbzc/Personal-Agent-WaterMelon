@@ -13,9 +13,11 @@ AN UPDATE reads everything up to its CUTOFF:
 
 ONE UPDATE AT A TIME. Its cutoff stays what it was when it began, through
 a pause, a day's limit or the application closing: it carries on where it
-stopped. PAUSE stops it until Continue. THE DAY'S LIMIT (`learning_daily_tokens`,
-counted over every learning call today, this computer's day) makes it wait
-for the next day. Update now starts one with the cutoff now - not while one
+stopped. PAUSE stops it until Continue. THE DAY'S LIMITS - INPUT AND OUTPUT
+(`learning_daily_input_tokens`, `learning_daily_output_tokens`; none by
+default), counted over every learning call today, this computer's day, input
+with what is read from the cache and written to it - make it wait for the
+next day when either is reached. Update now starts one with the cutoff now - not while one
 is open.
 
 THE CLOCK (`learning_auto_on`, `learning_times`): updates by themselves only
@@ -42,12 +44,13 @@ from __future__ import annotations
 import hashlib
 import logging
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from .ask import Asker
-from .items import Items, unit_id_of
+from .items import Items, folder_parts, unit_id_of
 from .places import Places
 from .reading import UnitReader
 from .reasons import Reasons
@@ -58,8 +61,8 @@ log = logging.getLogger(__name__)
 
 AUTO_ON = "learning_auto_on"
 TIMES = "learning_times"
-DAILY_TOKENS = "learning_daily_tokens"
-DEFAULT_DAILY_TOKENS = 3_000_000
+DAILY_INPUT = "learning_daily_input_tokens"
+DAILY_OUTPUT = "learning_daily_output_tokens"
 #: The latest scheduled time already started or cancelled.
 LAST_SLOT = "learning_last_slot"
 LOOKS_EVERY = 60
@@ -89,6 +92,18 @@ class Learning:
         from .plan import Planner
         self.planner = Planner(db, Asker(models), self.data_dir / "learning" / "online",
                                logins=lambda: my_logins(db))
+        # WHAT IS HANDED OVER, SPLIT INTO UNITS AND FOLLOWED (sources.py).
+        from .sources import Sources
+        self.sources = Sources(db)
+        self.planner.splitter = self._splitter(Asker(models))
+        # A PLAN BEING DRAFTED IS HELD TO THE DAY'S LIMIT, and what it took is
+        # counted - and shown on the plan (the user, 2026-10-28).
+        self.planner.over_limit = self._over_limit
+        self.planner.make_ask = lambda spent: Asker(models, spent=spent,
+                                                    stopped=self._over_limit)
+        self.planner.make_splitter = self._splitter
+        # HANDED OVER, LEARNED AT ONCE (the user, 2026-10-29): no plan to check.
+        self.planner.on_ready = self._add_drafted
         # What the user endorses, looked for by the state heartbeat once a day.
         from .interests import Interests
         self.interests = Interests(db, config, self.items, Asker(models))
@@ -101,6 +116,16 @@ class Learning:
         #: local index brought up to date (set by the application).
         self.before_update: Optional[Callable[[], Any]] = None
 
+    def _splitter(self, ask: Any) -> Any:
+        from .folders import FolderMap
+        from .online import Online, my_logins
+        from .sources import Lister, Splitter
+        online = Online(self.data_dir / "learning" / "online")
+        return Splitter(self.sources, ask, Lister(online, self.items.on_never),
+                        logins=lambda: my_logins(self.db),
+                        mapper=lambda path: FolderMap(self.store, ask, self.never).map(path),
+                        stopped=self._over_limit)
+
     # -- settings -------------------------------------------------------------
     def times(self) -> List[str]:
         from ..heartbeat.connections.schedule import parse_times
@@ -109,21 +134,29 @@ class Learning:
     def auto_on(self) -> bool:
         return bool(self.config.get(AUTO_ON, False))
 
-    def daily_tokens(self) -> int:
-        try:
-            return max(0, int(self.config.get(DAILY_TOKENS, DEFAULT_DAILY_TOKENS)))
-        except (TypeError, ValueError):
-            return DEFAULT_DAILY_TOKENS
+    def daily_limits(self) -> Dict[str, int]:
+        """The day's limits, {"input": n, "output": n} - 0: none (the
+        default: no limit unless the user sets one)."""
+        out = {}
+        for key, name in (("input", DAILY_INPUT), ("output", DAILY_OUTPUT)):
+            try:
+                out[key] = max(0, int(self.config.get(name, 0) or 0))
+            except (TypeError, ValueError):
+                out[key] = 0
+        return out
 
     def set_auto(self, on: Optional[bool] = None, times: Optional[str] = None,
-                 daily_tokens: Optional[int] = None) -> None:
+                 daily_input: Optional[int] = None,
+                 daily_output: Optional[int] = None) -> None:
         if on is not None:
             self.config.set(AUTO_ON, bool(on), internal=True)
         if times is not None:
             from ..heartbeat.connections.schedule import parse_times
             self.config.set(TIMES, ", ".join(parse_times(times)), internal=True)
-        if daily_tokens is not None:
-            self.config.set(DAILY_TOKENS, max(0, int(daily_tokens)), internal=True)
+        if daily_input is not None:
+            self.config.set(DAILY_INPUT, max(0, int(daily_input)), internal=True)
+        if daily_output is not None:
+            self.config.set(DAILY_OUTPUT, max(0, int(daily_output)), internal=True)
         # Times already passed when the clock was set are not "missed".
         latest = self._latest()
         if latest is not None:
@@ -135,25 +168,50 @@ class Learning:
 
     # -- spending -------------------------------------------------------------
     def tokens_today(self) -> int:
+        """Today's learning tokens - EVERY KIND, cached reads too, as the
+        Overview's Token usage counts them (the user, 2026-10-28): the limit
+        is held to this."""
+        return sum(self.tokens_today_parts().values())
+
+    def tokens_today_parts(self) -> Dict[str, int]:
+        """Today's learning tokens by kind, counted apart: input read fresh,
+        input read from the cache, input written to the cache, output."""
         midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0,
                                                        microsecond=0)
         row = self.db.query_one(
-            "SELECT COALESCE(SUM(total_tokens), 0) AS n FROM model_calls "
+            "SELECT COALESCE(SUM(input_tokens), 0) AS fresh, "
+            "COALESCE(SUM(cached_input_tokens), 0) AS cached, "
+            "COALESCE(SUM(cache_written_tokens), 0) AS written, "
+            "COALESCE(SUM(output_tokens), 0) AS output FROM model_calls "
             "WHERE task LIKE 'learning%' AND created_at >= ?",
             (midnight.astimezone(timezone.utc).isoformat(),))
-        return int(row["n"]) if row else 0
+        return {key: int((row or {})[key] or 0) if row else 0
+                for key in ("fresh", "cached", "written", "output")}
 
     def _over_limit(self) -> bool:
-        cap = self.daily_tokens()
-        return bool(cap) and self.tokens_today() >= cap
+        """Either of the day's limits reached - input (with the cache's
+        reads and writes) or output."""
+        caps = self.daily_limits()
+        if not caps["input"] and not caps["output"]:
+            return False
+        parts = self.tokens_today_parts()
+        taken = {"input": parts["fresh"] + parts["cached"] + parts["written"],
+                 "output": parts["output"]}
+        return any(caps[key] and taken[key] >= caps[key] for key in caps)
 
     def spending(self, days: int = 30) -> List[Dict[str, Any]]:
         """Each day's learning calls and tokens, by what they were for."""
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         try:
+            # Every kind, and each apart (2026-10-28): `tokens` is all of them.
             rows = self.db.query(
                 "SELECT substr(created_at, 1, 10) AS day, task, COUNT(*) AS calls, "
-                "COALESCE(SUM(total_tokens), 0) AS tokens, "
+                "COALESCE(SUM(input_tokens + output_tokens + COALESCE(cached_input_tokens, 0) "
+                "+ COALESCE(cache_written_tokens, 0)), 0) AS tokens, "
+                "COALESCE(SUM(input_tokens), 0) AS fresh, "
+                "COALESCE(SUM(cached_input_tokens), 0) AS cached, "
+                "COALESCE(SUM(cache_written_tokens), 0) AS written, "
+                "COALESCE(SUM(output_tokens), 0) AS output, "
                 "COALESCE(SUM(estimated_cost), 0) AS cost FROM model_calls "
                 "WHERE task LIKE 'learning%' AND created_at >= ? GROUP BY day, task "
                 "ORDER BY day", (since,))
@@ -399,14 +457,18 @@ class Learning:
                          "summary": "a project's folder in Work", "folders": [found["path"]]})
             self.store.save_unit(unit)
             units.append(unit)
+        # WHAT WAS SPLIT, LISTED AGAIN: anything new joined to its unit or
+        # proposed, what is gone said so (sources.py).
+        self._follow_sources(update_id, ask)
         # THE LEARNING LIST: every item a unit of its own; read when due.
         due = {one["id"] for one in self.items.due()}
         for item in self.items.all():
             unit_id = unit_id_of(item["id"])
             unit = self.store.unit(unit_id) or {"id": unit_id, "kind": "item", "key": item["id"],
                                                 "marks": {}}
+            folders, files_only = folder_parts(item)
             unit.update({"title": item["title"], "summary": item.get("about") or "",
-                         "folders": [item["source"]] if item["kind"] == "folder" else []})
+                         "folders": folders, "files_only": files_only})
             if item["state"] != "active":
                 unit["state"] = "inactive"
             elif unit.get("state") == "inactive":
@@ -448,6 +510,217 @@ class Learning:
         planned.sort(key=lambda one: one["latest"], reverse=True)
         planned.sort(key=lambda one: not one["talk"])
         return {"units": planned}
+
+    # -- what was handed over and split (sources.py) ------------------------------------
+    def _follow_sources(self, update_id: str, ask: Any) -> None:
+        """Each source split into items, listed again when due: a new node
+        JOINED to the item it belongs to - no question asked - or a new unit
+        proposed, for the user to keep; an item all of whose parts are gone
+        said so. A source a site holds back waits for it."""
+        splitter = self._splitter(ask)
+        for row in self.sources.all():
+            if not splitter.due(row):
+                continue
+            items = [one for one in self.items.all() if one.get("source_id") == row["id"]]
+            if not items and row["state"] == "following":
+                continue
+            self._check(update_id)
+            current = self.store.update(update_id)
+            if current:
+                current["now_reading"] = "looking again at " + (row.get("title") or row["source"])
+                self.store.save_update(current)
+            units = [{"id": one["id"], "title": one["title"], "about": one.get("about", ""),
+                      "nodes": [one["source"], *(one.get("more") or [])]} for one in items]
+            try:
+                said = splitter.follow(row["id"], units)
+            except Exception:
+                log.warning("learning: %s could not be listed again", row["source"],
+                            exc_info=True)
+                continue
+            # NEW UNITS, KEPT AS JUDGED (the user, 2026-10-29): those it
+            # would learn added, the rest not - nothing waits for the user.
+            fresh = self.sources.get(row["id"]) or row
+            for proposal in list(fresh.get("proposals") or []):
+                try:
+                    self.keep_proposal(row["id"], proposal["id"], bool(proposal.get("tick", True)))
+                except ValueError:
+                    pass
+            for item_id, node in said["join"]:
+                item = self.items.get(item_id)
+                if item is not None and node["source"] not in [item["source"], *item["more"]]:
+                    item["more"] = [*item["more"], node["source"]]
+                    self.items.save(item)
+            gone = set(said["gone"])
+            for item in items:
+                parts = [item["source"], *(item.get("more") or [])]
+                if gone and all(one in gone for one in parts):
+                    item["status"] = "unreachable"
+                    item["note"] = (f"no longer in {row.get('title') or row['source']} since "
+                                    f"{now()[:10]} - what was learned of it stays")
+                    self.items.save(item)
+
+    def _add_drafted(self, plan: Dict[str, Any]) -> Dict[str, Any]:
+        """A PLAN READY, ADDED AT ONCE - no plan to check (the user,
+        2026-10-29): a split source's units it ticked, each an item; else
+        the one item. Read now, when nothing stops it. What came of it."""
+        if plan.get("split"):
+            units = [one for one in plan.get("units") or [] if one.get("tick")]
+            if not units:
+                return {"items": [], "note": "nothing in it was judged worth learning"}
+            said = self.add_split(str(plan["source_id"]), units, learn_now=True)
+            return {"items": [{"id": one["id"], "title": one["title"]} for one in said["items"]],
+                    "refused": said.get("refused") or [], "note": said.get("note", "")}
+        said = self.add_item(plan, "you", learn_now=True)
+        return {"items": [{"id": said["item"]["id"], "title": said["item"]["title"]}],
+                "note": said.get("note", "")}
+
+    def _added_when_ready(self, row: Dict[str, Any]) -> None:
+        """A source held back, handed over to be learned at once: added as
+        soon as its plan is ready - its units, or it as one thing."""
+        from .plan import split_plan
+        row = self.sources.get(row["id"]) or row
+        handed = row.get("handed") or {}
+        if not handed.get("auto") or not (row.get("plan") or {}) or any(
+                one.get("source_id") == row["id"] for one in self.items.all()):
+            return
+        plan = split_plan(row)
+        if plan is not None:
+            self._add_drafted(plan)
+            return
+        if not (row["plan"].get("whole") or row["plan"].get("units")):
+            return                                # not judged yet
+        # One thing after all: planned as one - not split again - and added.
+        planner = self.planner
+        ask = planner.make_ask(lambda _tokens: None) if planner.make_ask else planner.ask
+        kind, source, text, look = planner._look(handed)
+        self._add_drafted(planner._plan(kind, source, text, look, ask,
+                                        str(handed.get("instruction") or "").strip()))
+        self.sources.remove(row["id"])
+
+    def resume_sources(self) -> None:
+        """A plan a site held back, carried on when it may be asked again."""
+        splitter = None
+        for row in self.sources.all():
+            if row["state"] not in ("waiting", "blocked") or (row.get("plan") or {}).get("units"):
+                continue
+            if row["waiting_until"] and time.time() < row["waiting_until"]:
+                continue
+            if any(one.get("source_id") == row["id"] for one in self.items.all()):
+                continue
+            splitter = splitter or self._splitter(Asker(self.models))
+            try:
+                handed = dict(row.get("handed") or {}, waited=True)
+                self.sources.save(dict(row, handed=handed))
+                splitter.go(row["id"])
+                self._added_when_ready(row)
+            except Exception:
+                log.warning("learning: the plan for %s could not go on", row["source"],
+                            exc_info=True)
+
+    def source_plan(self, source_id: str) -> Dict[str, Any]:
+        """A split source's plan, to look at and add from (the panel)."""
+        from .plan import split_plan
+        row = self.sources.get(source_id)
+        if row is None:
+            raise ValueError("no such source")
+        plan = split_plan(row)
+        if plan is None:
+            raise ValueError("it is one thing after all - add it from Add to learning")
+        return plan
+
+    def add_split(self, source_id: str, units: List[Dict[str, Any]],
+                  learn_now: bool = False) -> Dict[str, Any]:
+        """The units of a split source the user kept, each an item of its
+        own; the source followed from now on."""
+        row = self.sources.get(source_id)
+        if row is None:
+            raise ValueError("the plan is gone - look at it again")
+        kept = [one for one in units if isinstance(one, dict)]
+        if not kept:
+            raise ValueError("tick at least one part to learn")
+        added, refused = [], []
+        for unit in kept:
+            plan = dict(unit, source_id=source_id)
+            try:
+                added.append(self.items.add(plan, "you"))
+            except ValueError as exc:
+                refused.append(f"{plan.get('title') or plan.get('source')}: {exc}")
+        if not added:
+            raise ValueError("; ".join(refused) or "nothing could be added")
+        self.sources.save(dict(row, state="following" if row["state"] == "planned" else
+                               row["state"], plan={}))
+        said: Dict[str, Any] = {"items": added, "refused": refused}
+        if learn_now:
+            if self.store.open_update():
+                said["note"] = "an update is going: they are read at the next one"
+            elif self._over_limit():
+                said["note"] = "today's learning limit is used up: they are read tomorrow"
+            else:
+                self.update_now()
+        return said
+
+    def keep_proposal(self, source_id: str, proposal_id: str, keep: bool) -> Dict[str, Any]:
+        """A new unit found in a source: kept as an item, or not learned."""
+        from .plan import unit_plan
+        row = self.sources.get(source_id)
+        if row is None:
+            raise ValueError("no such source")
+        proposal = self._splitter(Asker(self.models)).drop_proposal(source_id, proposal_id,
+                                                                     skipped=not keep)
+        if proposal is None:
+            raise ValueError("no such part - it may have been decided already")
+        if keep:
+            kind = "folder" if row["kind"] == "folder" else "url"
+            self.items.add(unit_plan(row, proposal, proposal.get("parts") or [], kind), "you")
+        return self.status()
+
+    def delete_source(self, source_id: str) -> Dict[str, Any]:
+        """A whole source deleted: each item from it deleted - what was
+        learned gone, its parts on the never list - and the source too."""
+        if self.store.open_update() and self.running():
+            raise ValueError("an update is going - pause it first, then delete")
+        row = self.sources.get(source_id)
+        if row is None:
+            raise ValueError("no such source")
+        for item in [one for one in self.items.all() if one.get("source_id") == source_id]:
+            self.items.remove(item["id"])
+            for part in item.get("more") or []:
+                self.items.put_never(part)
+            self._forget_unit(item["unit_id"])
+        self.items.put_never(row["source"])
+        self.sources.remove(source_id)
+        self.places._found = None
+        return self.status()
+
+    def drop_source(self, source_id: str) -> Dict[str, Any]:
+        """A plan never added, put away: nothing was learned of it."""
+        row = self.sources.get(source_id)
+        if row is not None and not any(one.get("source_id") == source_id
+                                       for one in self.items.all()):
+            self.sources.remove(source_id)
+        return self.status()
+
+    def _sources_shown(self) -> List[Dict[str, Any]]:
+        shown = []
+        held = {one.get("source_id") for one in self.items.all() if one.get("source_id")}
+        for row in self.sources.all():
+            ready = row["state"] in ("planned", "waiting", "blocked") and bool(
+                (row.get("plan") or {}).get("units")) and bool((row.get("handed") or {}).get("waited"))
+            waiting_plan = row["state"] in ("waiting", "blocked") and row["id"] not in held
+            if row["id"] not in held and not ready and not waiting_plan:
+                continue
+            shown.append({
+                "id": row["id"], "kind": row["kind"], "source": row["source"],
+                "title": row.get("title") or row["source"], "state": row["state"],
+                "why": row.get("why", ""),
+                "waiting_until": (datetime.fromtimestamp(row["waiting_until"], timezone.utc)
+                                  .isoformat(timespec="seconds") if row["waiting_until"] else ""),
+                "listed_at": row.get("listed_at", ""), "followed": row["id"] in held,
+                "ready": ready and row["id"] not in held,
+                "proposals": [{key: one.get(key) for key in (
+                    "id", "title", "about", "whose", "learn", "tick", "why", "parts")}
+                    for one in row.get("proposals") or []]})
+        return shown
 
     # -- the learning list, and turning a unit off or deleting it -------------------
     @staticmethod
@@ -607,7 +880,7 @@ class Learning:
             listed.append({key: item[key] for key in (
                 "id", "origin", "kind", "source", "title", "about", "whose", "learn", "angle",
                 "evidence", "scope", "cadence", "state", "status", "note", "estimate", "large",
-                "added_at", "read_at", "unit_id")}
+                "added_at", "read_at", "unit_id", "source_id", "more")}
                 | {"text": item["text"][:400], "unit_state": unit.get("state", ""),
                    "pages": len(item.get("fetched") or {}),
                    **{key: int((counts.get(item["unit_id"]) or {}).get(key) or 0)
@@ -616,7 +889,7 @@ class Learning:
                    else "folder"} for one in self.items.never()]
                  + [{"key": one["id"], "title": one.get("title") or one["id"], "kind": "unit"}
                     for one in self.items.never_units()])
-        return {"yours": yours,
+        return {"yours": yours, "sources": self._sources_shown(),
                 "added": [one for one in listed if one["origin"] == "you"],
                 "heartbeat": [one for one in listed if one["origin"] == "heartbeat"],
                 "never": never}
@@ -625,6 +898,11 @@ class Learning:
     def look(self, moment: Optional[datetime] = None) -> None:
         from ..common.modules import enabled as module_on
         moment = moment or datetime.now().astimezone()
+        # A plan a site held back, carried on when the site may be asked.
+        try:
+            self.resume_sources()
+        except Exception:                          # pragma: no cover - tried again
+            log.warning("learning: held plans could not go on", exc_info=True)
         update = self.store.open_update()
         # An open update carries on: after a restart, or the next day.
         if update and not self.running():
@@ -684,7 +962,8 @@ class Learning:
             "on": self.auto_on(), "times": self.times(),
             "time_zone": moment.strftime("%Z (UTC%z)"),
             "next": upcoming.isoformat() if upcoming else "",
-            "daily_tokens": self.daily_tokens(), "tokens_today": self.tokens_today(),
+            "daily_limits": self.daily_limits(), "tokens_today": self.tokens_today(),
+            "tokens_today_parts": self.tokens_today_parts(),
             "over_limit": self._over_limit(),
             "update": None,
             "places": listed,

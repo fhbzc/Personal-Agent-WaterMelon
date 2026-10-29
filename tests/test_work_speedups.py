@@ -30,6 +30,19 @@ from personalized_agent.models.base import ToolCall
 from personalized_agent.runtime.sandbox import ScriptResult
 
 
+def _recorded(environment):
+    """What the guard writes as the code ends, when asked (RECORD_ENV): here
+    nothing read besides the tests' own folder - so a result may be given
+    again (agent/work/reuse.py)."""
+    import json
+    from personalized_agent.runtime.guard import RECORD_ENV
+    target = (environment or {}).get(RECORD_ENV)
+    if target:
+        Path(f"{target}-1").write_text(json.dumps(
+            {"read": [], "wrote": [], "listed": [], "spawned": False, "modules": []}),
+            encoding="utf-8")
+
+
 class _WithTools(unittest.TestCase):
 
     def setUp(self) -> None:
@@ -96,8 +109,9 @@ class RunTestsTests(_WithTools):
                                                   encoding="utf-8")
         self.runs = []
 
-        def ran(code, timeout=0, sys_path=None):
+        def ran(code, timeout=0, sys_path=None, environment=None):
             self.runs.append(code)
+            _recorded(environment)
             return ScriptResult(ok=True, returncode=0, stdout="1 passed", stderr="",
                                 isolation="test")
         self.tools.runtime.run_python_code = ran
@@ -158,8 +172,9 @@ class RunTestsTests(_WithTools):
         self.assertEqual(len(self.runs), 5)
 
     def test_failures_shown_as_asked(self) -> None:
-        self.tools.runtime.run_python_code = lambda code, timeout=0, sys_path=None: (
-            self.runs.append(code) or ScriptResult(ok=False, returncode=1,
+        self.tools.runtime.run_python_code = lambda code, timeout=0, sys_path=None, \
+            environment=None: (
+            self.runs.append(code) or _recorded(environment) or ScriptResult(ok=False, returncode=1,
                                                    stdout="1 failed", stderr="",
                                                    isolation="test"))
         folder = str(self.folder)
@@ -188,8 +203,9 @@ class RunTestsTests(_WithTools):
         self.assertEqual(len(self.runs), 1)
 
     def test_a_run_cut_off_is_not_given_again(self) -> None:
-        self.tools.runtime.run_python_code = lambda code, timeout=0, sys_path=None: (
-            self.runs.append(code) or ScriptResult(ok=False, returncode=-1, stdout="",
+        self.tools.runtime.run_python_code = lambda code, timeout=0, sys_path=None, \
+            environment=None: (
+            self.runs.append(code) or _recorded(environment) or ScriptResult(ok=False, returncode=-1, stdout="",
                                                    stderr="", isolation="test",
                                                    timed_out=True))
         self.tools.call("run_tests", {"folder": str(self.folder)})

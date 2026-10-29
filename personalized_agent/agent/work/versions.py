@@ -63,6 +63,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+from .environments import is_environment
+
 #: Inside a run's folder: where its versions are kept.
 VERSIONS_DIR = ".versions"
 
@@ -307,6 +309,8 @@ class VersionStore:
 
     def _save(self, kind, label, files, granted, skipped, state_sha, summary, amended,
               message, details) -> Dict[str, Any]:
+        details = dict(details or {})
+        environments = details.pop("environments", None)
         index = self.index()
         number = len(index["versions"]) + 1
         version_id = f"v{number}"
@@ -323,6 +327,8 @@ class VersionStore:
                 entry[name] = value
         manifest = dict(entry, files=files, granted=granted,
                         skipped=skipped[:500], state=state_sha)
+        if environments:
+            manifest["environments"] = environments
         self._write(self.root / "versions" / f"{version_id}.json",
                     json.dumps(manifest, ensure_ascii=False, indent=1).encode("utf-8"))
         index["versions"].append(entry)
@@ -564,6 +570,10 @@ def _walked(folder: Path, run_id: str) -> Tuple[List[Tuple[str, Path, Any]], Lis
             name = entry.name
             if name in SKIP_DIRS:
                 continue
+            # AN INSTALLED ENVIRONMENT is not the work, and never kept
+            # (environments.py): what it held is (`environments_of`).
+            if is_environment(Path(entry.path), name):
+                continue
             if here == folder and name == LOGS_DIR:
                 continue
             if here == folder / "runs" and name != run_id:
@@ -574,6 +584,20 @@ def _walked(folder: Path, run_id: str) -> Tuple[List[Tuple[str, Path, Any]], Lis
 
     walk(folder, "")
     return found, skipped
+
+
+def environments_of(folder: Path, run_id: str) -> List[Dict[str, Any]]:
+    """The installed environments in the work's folder - each by its path
+    and the packages it holds - kept with a version for a rollback to say
+    what changed in them (it leaves them as they are)."""
+    from .environments import found_in
+    try:
+        found = found_in(Path(folder), skip=SKIP_DIRS)
+    except OSError:
+        return []
+    # Another run's records are theirs.
+    return [one for one in found
+            if not (one["path"].startswith("runs/") and not one["path"].startswith(f"runs/{run_id}/"))]
 
 
 def work_files(folder: Path, run_id: str) -> Tuple[Dict[str, Path], List[str]]:
@@ -690,16 +714,47 @@ def restore_files(store: VersionStore, manifest: Dict[str, Any], folder: Path,
     first, so a damaged version changes nothing. `progress`: told what it
     is doing as it goes (`_Saying`)."""
     from ...runtime.filesystem import remembering
+    from .environments import inside, roots_in
     say = _Saying(progress)
     files = manifest.get("files") or {}
+    # INSTALLED ENVIRONMENTS ARE LEFT AS THEY ARE (the user, 2026-10-29): a
+    # version kept before they were left out holds their files - not
+    # written back, as they are not removed.
+    held = roots_in(files)
+    files = {relative: entry for relative, entry in files.items()
+             if not inside(relative, held)}
     skipped = set(manifest.get("skipped") or [])
     current, too_big = work_files(folder, run_id)
     roots = _roots_of(folder, run_id)
     total = len(files) + len(current)
     say("checking", 0, total, now=True)
     with remembering():
-        return _restore_files(store, files, skipped, current, too_big, roots, folder,
+        done = _restore_files(store, files, skipped, current, too_big, roots, folder,
                               run_id, policy, say, total)
+    left = environments_left(manifest, folder, run_id)
+    if left:
+        done["environments"] = left
+    return done
+
+
+def environments_left(manifest: Dict[str, Any], folder: Path,
+                      run_id: str) -> List[Dict[str, Any]]:
+    """The environments a rollback left as they are - each with what it
+    holds now that the version's did not, and what it no longer holds."""
+    then = {one.get("path"): set(one.get("packages") or [])
+            for one in manifest.get("environments") or [] if isinstance(one, dict)}
+    out = []
+    for one in environments_of(folder, run_id):
+        was = then.get(one["path"])
+        now = set(one["packages"])
+        entry = {"path": one["path"], "packages": one["count"], "left_as_is": True}
+        if was is None:
+            entry["since"] = "made after the version"
+        else:
+            entry["added_since"] = sorted(now - was)[:50]
+            entry["gone_since"] = sorted(was - now)[:50]
+        out.append(entry)
+    return out
 
 
 def _restore_files(store: VersionStore, files: Dict[str, Any], skipped: Set[str],

@@ -26,6 +26,16 @@ Only what an item names, as anyone could read it:
 
 A page that cannot be read is tried again at the next update; the item says
 since when it could not be.
+
+A SITE'S LIMITS ARE KEPT TO (the user, 2026-10-28). GitHub answers 60 asks
+an hour to whoever is not signed in, counted by the computer's address - the
+user's own browsing and the agent's work included - so the learning takes
+at most `HOURLY` of them. A site that says it is asked too often (429, or
+GitHub's 403 with no asks left) is not asked again before the time it gave
+(`limited_until`); one that does not answer, or refuses, is said so (`wait`)
+for whoever asked to wait (sources.py). A listing asked for again carries
+the ETag it came with: unchanged, the site answers 304 - which GitHub does
+not count - and the copy kept is used.
 """
 
 from __future__ import annotations
@@ -62,6 +72,13 @@ TIMEOUT = 20.0
 
 _last_asked: Dict[str, float] = {}
 _spacing_lock = threading.Lock()
+#: Asks an hour the learning takes of a site, at most - room left for work
+#: and the user on the same address.
+HOURLY = {"api.github.com": 40}
+#: When each limited site was asked, in the last hour; and until when a
+#: site that said it was asked too often is not asked.
+_asked: Dict[str, List[float]] = {}
+_held_until: Dict[str, float] = {}
 _robots: Dict[str, Optional[urllib.robotparser.RobotFileParser]] = {}
 
 #: Words addressed to an assistant reading the page.
@@ -142,32 +159,100 @@ def robots_allow(url: str, opener: Optional[Callable[..., Any]] = None) -> bool:
     return True if parser is None else parser.can_fetch(AGENT, url)
 
 
-def get(url: str, accept: str = "", opener: Optional[Callable[..., Any]] = None
-        ) -> Dict[str, Any]:
+def _held(host: str) -> float:
+    """Until when a site is not asked: the time it gave, or the hour's
+    asks used up - 0 when it may be asked now."""
+    moment = time.time()
+    with _spacing_lock:
+        if _held_until.get(host, 0) > moment:
+            return _held_until[host]
+        most = HOURLY.get(host)
+        if most is None:
+            return 0.0
+        asked = [one for one in _asked.get(host, []) if moment - one < 3600]
+        _asked[host] = asked
+        return asked[0] + 3600 if len(asked) >= most else 0.0
+
+
+def _count(host: str, back: bool = False) -> None:
+    if host not in HOURLY:
+        return
+    with _spacing_lock:
+        asked = _asked.setdefault(host, [])
+        if back:
+            if asked:
+                asked.pop()
+        else:
+            asked.append(time.time())
+
+
+def _limited(exc: Any) -> float:
+    """When a site that refused said it may be asked again - 0 when the
+    refusal was not about being asked too often."""
+    headers = getattr(exc, "headers", None) or {}
+    moment = time.time()
+    remaining = str(headers.get("X-RateLimit-Remaining", "") or "")
+    if exc.code == 429 or (exc.code == 403 and remaining == "0"):
+        after = str(headers.get("Retry-After", "") or "")
+        if after.isdigit():
+            return moment + int(after)
+        reset = str(headers.get("X-RateLimit-Reset", "") or "")
+        if reset.isdigit():
+            return max(moment + 5, float(reset) + 5)
+        return moment + 3600
+    return 0.0
+
+
+def get(url: str, accept: str = "", opener: Optional[Callable[..., Any]] = None,
+        etag: str = "") -> Dict[str, Any]:
     """One address read, signed in to nothing: its kind, its text, the raw
-    page; or what went wrong."""
+    page, its ETag; `not_modified` when the ETag given still holds; or what
+    went wrong - with `wait` ("limited" and `limited_until`, "temporary",
+    "refused") when asking again later may go otherwise."""
     if not re.match(r"(?i)^https?://", url or ""):
         return {"error": "only http and https addresses are read"}
     host = urllib.parse.urlsplit(url).netloc.lower()
+    held = _held(host)
+    if held:
+        return {"error": f"{host} is not asked again before {time.strftime('%H:%M', time.localtime(held))} "
+                         "- it limits how often it is asked", "wait": "limited",
+                "limited_until": held}
     _wait_for(host)
     headers = {"User-Agent": AGENT}
     if accept:
         headers["Accept"] = accept
+    if etag:
+        headers["If-None-Match"] = etag
     request = urllib.request.Request(url, headers=headers)
+    _count(host)
     try:
         with (opener or urllib.request.urlopen)(request, timeout=TIMEOUT) as response:
             kind = response.headers.get("Content-Type", "") or ""
+            tag = response.headers.get("ETag", "") or ""
             body = response.read(MOST_BYTES)
             final = response.geturl() if hasattr(response, "geturl") else url
     except urllib.error.HTTPError as exc:
+        if exc.code == 304:
+            _count(host, back=True)            # not counted by the site either
+            return {"url": url, "not_modified": True, "etag": etag}
+        until = _limited(exc)
+        if until:
+            with _spacing_lock:
+                _held_until[host] = until
+            return {"error": f"{host} limits how often it is asked - asked again at "
+                             f"{time.strftime('%H:%M', time.localtime(until))}",
+                    "wait": "limited", "limited_until": until}
         if exc.code in (401, 403):
-            return {"error": f"it asks to be signed in ({exc.code}) - only public pages are read"}
+            return {"error": f"it asks to be signed in ({exc.code}) - only public pages are read",
+                    "wait": "refused"}
+        if exc.code >= 500:
+            return {"error": f"it could not be read ({exc.code})", "wait": "temporary"}
         return {"error": f"it could not be read ({exc.code})"}
     except Exception as exc:
-        return {"error": f"it could not be read: {exc}"[:300]}
+        return {"error": f"it could not be read: {exc}"[:300], "wait": "temporary"}
     charset = (re.search(r"charset=([\w-]+)", kind) or [None, "utf-8"])[1]
     raw = body.decode(charset or "utf-8", errors="replace")
-    return {"url": final, "kind": kind, "raw": raw}
+    return {"url": final, "kind": kind, "raw": raw, "etag": tag}
 
 
 def _links(raw: str, base: str) -> List[str]:
@@ -223,11 +308,43 @@ class Online:
     def __init__(self, folder: Path, opener: Optional[Callable[..., Any]] = None) -> None:
         self.folder = Path(folder)
         self.opener = opener
+        self._tags: Optional[Dict[str, Any]] = None
 
     def _get(self, url: str, accept: str = "") -> Dict[str, Any]:
         if not robots_allow(url, self.opener):
-            return {"error": "the site's robots.txt asks not to be read"}
-        return get(url, accept, self.opener)
+            return {"error": "the site's robots.txt asks not to be read", "wait": "refused"}
+        if "github" not in accept:
+            return get(url, accept, self.opener)
+        # A listing of GitHub's: asked with the ETag it came with, the copy
+        # kept used when it has not changed (304, not counted by GitHub).
+        tags = self._etags()
+        kept = tags.get(url) or {}
+        got = get(url, accept, self.opener, str(kept.get("etag") or ""))
+        if got.get("not_modified") and "raw" in kept:
+            return {"url": url, "kind": "application/json", "raw": kept["raw"],
+                    "etag": kept.get("etag", ""), "not_modified": True}
+        if got.get("etag") and not got.get("error") and len(got.get("raw") or "") <= 2_000_000:
+            tags[url] = {"etag": got["etag"], "raw": got["raw"]}
+            self._save_etags()
+        return got
+
+    def _etags(self) -> Dict[str, Any]:
+        if self._tags is None:
+            try:
+                self._tags = json.loads((self.folder / "etags.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                self._tags = {}
+        return self._tags
+
+    def _save_etags(self) -> None:
+        try:
+            self.folder.mkdir(parents=True, exist_ok=True)
+            tags = self._etags()
+            while len(tags) > 400:
+                tags.pop(next(iter(tags)))
+            (self.folder / "etags.json").write_text(json.dumps(tags), encoding="utf-8")
+        except OSError:
+            pass
 
     def keep(self, page: Page) -> str:
         """Its text kept as a copy, when it is small enough: where."""
@@ -246,14 +363,23 @@ class Online:
 
     # -- an item's pages ----------------------------------------------------------
     def pages(self, item: Dict[str, Any], login: str = "") -> List[Page]:
-        """Every page of the item's scope, as it is now."""
-        source = str(item.get("source") or "")
-        scope = item.get("scope") or "page"
+        """Every page of the item's scope, as it is now - of each of its
+        addresses, when a unit holds several (`more`, sources.py)."""
+        out: List[Page] = []
+        for source in [str(item.get("source") or ""), *[str(one) for one in item.get("more") or []]]:
+            if source:
+                out += self._pages_of(source, item.get("scope") or "page",
+                                      login if item.get("whose") == "mine" else "")
+        return out
+
+    def _pages_of(self, source: str, scope: str, login: str) -> List[Page]:
         if scope == "repo" or (scope != "prefix" and _github_repo(source)):
             found = _github_repo(source)
             if found:
-                return self._repo(found[0], found[1], login if item.get("whose") == "mine" else "")
-        if scope == "prefix":
+                # "?files=top": the files at its top level only (sources.py).
+                return self._repo(found[0], found[1], login, _repo_folder(source),
+                                  top_only=source.endswith("?files=top"))
+        if scope == "prefix" or (scope == "repo" and source.endswith("/")):
             return self._crawl(source)
         return [_page(source, self._get(source))]
 
@@ -270,7 +396,8 @@ class Online:
                     queue.append(link)
         return out
 
-    def _repo(self, owner: str, name: str, login: str) -> List[Page]:
+    def _repo(self, owner: str, name: str, login: str, folder: str = "",
+              top_only: bool = False) -> List[Page]:
         api = f"https://api.github.com/repos/{owner}/{name}"
         out: List[Page] = []
         meta = self._get(api, "application/vnd.github+json")
@@ -295,6 +422,11 @@ class Online:
                      if one.get("type") == "blob"]
         except (ValueError, AttributeError):
             files = []
+        if folder:
+            # One project of a repository that holds several (sources.py).
+            files = [one for one in files if one.startswith(folder.rstrip("/") + "/")]
+        elif top_only:
+            files = [one for one in files if "/" not in one]
         if files:
             listing = "THE FILES OF THE REPOSITORY:\n" + "\n".join(f"  {one}" for one in files[:400])
             out.append(Page(url=f"https://github.com/{owner}/{name}/tree/{branch}",
@@ -351,6 +483,13 @@ class Online:
                         if _within(one, url) and not _ASSET.search(one)]
             out["pages"] = min(MOST_PAGES, 1 + len(set(under_it)))
         return out
+
+
+def _repo_folder(url: str) -> str:
+    """The folder of a repository an address names (.../tree/<branch>/<path>), or ""."""
+    found = re.match(r"(?i)^https?://(?:www\.)?github\.com/[\w.-]+/[\w.-]+/tree/[^/]+/(.+?)/?$",
+                     str(url or "").strip())
+    return found.group(1) if found else ""
 
 
 def _github_repo(url: str) -> Optional[Tuple[str, str]]:

@@ -453,7 +453,8 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         if not folders and not files:
             raise ApiError("nothing was handed over under that id", 404)
         kind, source = ("folder", folders[0]) if folders else ("file", files[0])
-        return {"draft": app.learning.planner.start({"kind": kind, "source": source}),
+        return {"draft": app.learning.planner.start({"kind": kind, "source": source,
+                                                     "auto": True}),
                 "more": max(0, len(folders) + len(files) - 1)}
 
     @route("GET", "/api/learning/unit")
@@ -501,9 +502,10 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             elif action == "continue":
                 learning.resume()
             elif action == "auto":
-                tokens = request.get("daily_tokens")
+                given = {key: request.get(key) for key in ("daily_input", "daily_output")}
                 learning.set_auto(on=request.get("on"), times=request.get("times"),
-                                  daily_tokens=int(tokens) if tokens not in (None, "") else None)
+                                  **{key: int(value) for key, value in given.items()
+                                     if value not in (None, "")})
             elif action == "add":
                 learning.places.add(str(request.get("path") or ""),
                                     str(request.get("kind") or "folder"))
@@ -529,7 +531,10 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                     raise ApiError("it is not on the list of what is never learned")
                 learning.places._found = None
             elif action == "draft":
-                handed = {key: request.get(key) for key in ("kind", "source", "text", "window")}
+                handed = {key: request.get(key) for key in ("kind", "source", "text", "window",
+                                                            "instruction")}
+                # Learned at once, unless the page asks for a plan to check.
+                handed["auto"] = request.get("auto", True) is not False
                 return {"draft": learning.planner.start(handed)}
             elif action == "item_add":
                 plan = request.require("plan")
@@ -543,10 +548,33 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                 if not isinstance(plan, dict):
                     raise ApiError("a plan is an object")
                 learning.items.change(str(request.require("item")), plan)
+            # WHAT WAS SPLIT INTO UNITS (learning/sources.py).
+            elif action == "split_add":
+                units = request.require("units")
+                if not isinstance(units, list):
+                    raise ApiError("units is a list of plans")
+                said = learning.add_split(str(request.require("source")), units,
+                                          bool(request.get("learn_now")))
+                note = said.get("note", "")
+                if said.get("refused"):
+                    note = (note + " " if note else "") + "Not added: " + "; ".join(said["refused"])
+                return dict(learning_status(request), added=said["items"], note=note)
+            elif action in ("proposal_keep", "proposal_skip"):
+                learning.keep_proposal(str(request.require("source")),
+                                       str(request.require("proposal")),
+                                       action == "proposal_keep")
+            elif action == "source_delete":
+                learning.delete_source(str(request.require("source")))
+                app.local_index.soon()
+            elif action == "source_drop":
+                learning.drop_source(str(request.require("source")))
+            elif action == "source_plan":
+                return {"plan": learning.source_plan(str(request.require("source")))}
             else:
                 raise ApiError("action is update, pause, continue, auto, add, remove, exclude, "
                                "activate, deactivate, delete, accept, reject, never_off, draft, "
-                               "item_add or item_change")
+                               "item_add, item_change, split_add, proposal_keep, "
+                               "proposal_skip, source_delete, source_drop or source_plan")
         except ValueError as exc:
             raise ApiError(str(exc))
         return learning_status(request)

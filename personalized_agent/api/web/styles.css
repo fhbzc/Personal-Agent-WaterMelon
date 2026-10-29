@@ -3842,7 +3842,16 @@ body.chat-window .chat-only { height: 100vh; height: 100dvh; padding: 12px; box-
 .xp-learn p { margin: 4px 0; font-size: 13px; }
 .xp-learn-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 6px 0; }
 .xp-learn-times { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
-.xp-learn-row input[type=number] { width: 12ch; margin-left: 6px; }
+.xp-learn-row input[type=number] { width: 14ch; margin-left: 6px; }
+/* A label in a row on one line - its words, its box - not stacked as the
+   page's labels are (the user saw "Tokens a day" out of line, 2026-10-28). */
+.xp-learn-row > label { flex-direction: row; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--ink); white-space: nowrap; }
+.xp-learn-row > label input[type=number] { margin-left: 0; }
+/* What it learns, below the settings: each part folded until opened. */
+.xp-learn-fold { margin: 10px 0; border-top: 1px solid var(--line); padding-top: 8px; }
+.xp-learn-fold > summary { cursor: pointer; font-size: 15px; }
+.xp-learn-fold[open] > summary { margin-bottom: 4px; }
 .xp-learn-progress { display: flex; gap: 10px; align-items: center; margin: 6px 0; font-size: 13px; }
 .xp-learn-progress progress { flex: 1 1 auto; max-width: 420px; height: 10px; }
 /* Which bar it is: the local index's, the learning's - one width, so the bars line up. */
@@ -4108,8 +4117,10 @@ button.danger-text:not(:disabled) { color: var(--danger-ink); }
 .xp-spec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 6px 14px; align-items: start; }
 .xp-spec-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.xp-spec-item.xp-spec-limits { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap;
-  align-items: center; gap: 4px 10px; }
+/* The limits as the rest are: "Limits" on top; each limit's name above its
+   box, at its left; the note on the boxes' line. */
+.xp-spec-item.xp-spec-limits { grid-column: 1 / -1; }
+.xp-spec-limit-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 12px; }
 .xp-spec-label { font-size: .74rem; color: var(--muted); text-transform: none; }
 .xp-spec-chip { display: inline-block; width: fit-content; padding: 1px 8px; border-radius: 10px;
   background: var(--chip, rgba(61, 107, 229, .12)); font-weight: 600; }
@@ -4125,8 +4136,10 @@ button.danger-text:not(:disabled) { color: var(--danger-ink); }
 .xp-seg label:has(input:focus-visible) { outline: 2px solid var(--accent, #3d6be5);
   outline-offset: -2px; }
 .xp-spec-warning { grid-column: 1 / -1; margin: 0; font-size: .8rem; }
-.xp-spec-limit { display: inline-flex; align-items: center; gap: 4px; }
-.xp-spec-limit input { width: 7.5em; }
+.xp-spec-limit { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.xp-spec-limit > span { font-size: .74rem; color: var(--muted); }
+.xp-spec-limit input { width: 7.5em; margin: 0; }
+.xp-spec-limit-note { align-self: center; padding-top: 1.1em; }
 .xp-active-spec input:disabled + * , .xp-active-spec input:disabled { cursor: default; }
 
 /* A run's result, to open - beside its logs. */
@@ -4178,6 +4191,21 @@ button.danger-text:not(:disabled) { color: var(--danger-ink); }
   align-items: center;
   gap: 8px;
 }
+/* Where from, chosen: the label beside its list, the list as wide as the
+   card lets it be - a version's title can be long. */
+.xp-resume-from {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 320px;
+  min-width: 0;
+}
+.xp-resume-from select { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+/* Its label on one line, never squeezed by the list beside it ("来自"
+   went onto two). */
+.xp-resume-from > span { flex: none; white-space: nowrap; }
+.xp-resume-where-line { margin: 6px 0 0; }
 .xp-resume-where { font-weight: 600; }
 .xp-resume-chip {
   font-size: 12px;
@@ -4196,3 +4224,15 @@ button.danger-text:not(:disabled) { color: var(--danger-ink); }
 }
 .xp-resume-card .xp-continue-words { display: block; margin-top: 8px; }
 .xp-resume-card .xp-continue-words textarea { width: 100%; box-sizing: border-box; }
+
+/* A split plan (learning/sources.py): a line for each piece of work. */
+.learn-split { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 8px; }
+.learn-split-unit { border: 1px solid var(--border, #d0d4dc); border-radius: 6px; padding: 8px 10px;
+  display: grid; gap: 4px; }
+.learn-split-off { opacity: 0.55; }
+.learn-split-head { display: flex; gap: 8px; align-items: center; }
+.learn-split-title { flex: 1; min-width: 0; }
+.learn-split-parts code { font-size: 12px; }
+.learn-split-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.learn-split-skipped { margin: 6px 0; padding-left: 18px; }
+.xp-source > .xp-lessons { margin-left: 14px; }

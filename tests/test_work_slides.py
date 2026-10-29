@@ -109,7 +109,8 @@ class EachVersionsSlidesTests(_Base):
         said, row = self._done(_Slides(failing=True))
         self.assertEqual(row["status"], "done", row["log"][-6:])
         versions = self.app.work.versions(said["run"])["versions"]
-        self.assertGreaterEqual(len(versions), 4)
+        # A version at each checkpoint (2026-10-18): not each round.
+        self.assertEqual([one["kind"] for one in versions], ["contract", "full review", "finished"])
         self.assertEqual({one["summary"]["slides"] for one in versions[1:]}, {"not made"})
         # WHY, kept with each - not "the model could not be asked" for all.
         detail = self.app.work.version(said["run"], "v2")
@@ -330,7 +331,9 @@ class BrokenSlideSpecsAndSlidesBehindTests(_Base):
         said, row = self._done(models)
         self.assertEqual(row["status"], "done", row["log"][-6:])
         versions = self.app.work.versions(said["run"])["versions"]
-        rounds = [one for one in versions if one["kind"] == "round"]
+        # The versions saved while the work goes on - each full review that
+        # passed (2026-10-18: no version a round).
+        rounds = [one for one in versions if one["kind"] == "full review"]
         self.assertTrue(rounds)
         # Every version's slides were drawn, and added to it, by the end.
         self.assertEqual({one["summary"]["slides"] for one in versions[1:]}, {"made"})

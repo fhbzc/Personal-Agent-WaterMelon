@@ -92,6 +92,10 @@ CLOSED_ENV = "AGENT_CLOSED_PATHS"
 CLOSED_REASON = ("that is the project's run logs - the record of what happened: "
                  "the agents may not read it")
 RUNTIME_DIR = ".agent_runtime"
+#: Where to write what the code read, wrote and listed, as it ends - asked
+#: by run_python (agent/work/reuse.py), to give a result again only on
+#: exactly the same inputs. Unset: nothing is recorded.
+RECORD_ENV = "AGENT_RECORD_INPUTS"
 
 _installed = False
 _workspace = None
@@ -1654,8 +1658,111 @@ def install(workspace: str | None = None, protected: list | None = None,
     # script's own code could change the environment it is taken from.
     _note_children_policy()
     _install_process_and_native_blocks()
+    _record_inputs()
 
     _installed = True
+
+
+def _record_inputs() -> None:
+    """WHAT THE CODE READ, WROTE AND LISTED, written as it ends - when asked
+    (`RECORD_ENV`): every file opened through Python - its data, and every
+    script it imported, however deep - every folder listed, every file
+    written; whether it started another program; which modules it loaded.
+    Audit events see what Python itself opens: a library that opens files
+    in its own native code is told by its name (agent/work/reuse.py)."""
+    target = os.environ.get(RECORD_ENV)
+    if not target:
+        return
+    import atexit
+    import json as _json
+    record = {"read": set(), "wrote": set(), "listed": set(), "spawned": False}
+    spawning = ("subprocess.Popen", "os.system", "os.exec", "os.spawn", "os.posix_spawn",
+                "os.startfile", "os.fork", "os.forkpty", "_winapi.CreateProcess")
+
+    def hook(event, args):
+        try:
+            if event == "open":
+                path, mode = args[0], args[1] if len(args) > 1 else "r"
+                flags = args[2] if len(args) > 2 else 0
+                if not isinstance(path, (str, bytes, os.PathLike)):
+                    return
+                path = os.fsdecode(path)
+                written = (isinstance(mode, str) and _is_write_mode(mode)) or bool(
+                    isinstance(flags, int) and flags & (getattr(os, "O_WRONLY", 0)
+                                                        | getattr(os, "O_RDWR", 0)
+                                                        | getattr(os, "O_CREAT", 0)))
+                record["wrote" if written else "read"].add(os.path.abspath(path))
+            elif event in ("os.listdir", "os.scandir"):
+                path = args[0] if args and args[0] is not None else "."
+                if isinstance(path, (str, bytes, os.PathLike)):
+                    record["listed"].add(os.path.abspath(os.fsdecode(path)))
+            elif event == "sqlite3.connect":
+                if args and isinstance(args[0], (str, bytes, os.PathLike)):
+                    record["read"].add(os.path.abspath(os.fsdecode(args[0])))
+            elif event in ("shutil.copyfile", "shutil.copytree"):
+                if len(args) > 1 and isinstance(args[0], (str, bytes, os.PathLike)):
+                    record["read"].add(os.path.abspath(os.fsdecode(args[0])))
+                    record["wrote"].add(os.path.abspath(os.fsdecode(args[1])))
+            elif event.startswith(spawning):
+                # A Python child is guarded as this one is, and records
+                # itself: only another program's reading cannot be seen.
+                if not _is_python(_program_of(event, args)):
+                    record["spawned"] = True
+        except Exception:                     # pragma: no cover - never in the code's way
+            pass
+
+    def write():
+        try:
+            # Each process its own record - a Python child's beside its
+            # parent's - read together (agent/work/reuse.py).
+            with _open_unguarded(f"{target}-{os.getpid()}", "w") as out:
+                _json.dump({"read": sorted(record["read"]), "wrote": sorted(record["wrote"]),
+                            "listed": sorted(record["listed"]), "spawned": record["spawned"],
+                            "modules": sorted(name for name in list(sys.modules) if name)},
+                           out)
+        except Exception:                     # pragma: no cover - then nothing is reused
+            pass
+
+    sys.addaudithook(hook)
+    atexit.register(write)
+
+
+def _program_of(event, args):
+    """The program a process-starting audit event starts, as far as told."""
+    try:
+        if event == "subprocess.Popen":         # (executable, args, cwd, env)
+            if args[0]:
+                return args[0]
+            listed = args[1]
+            return listed[0] if isinstance(listed, (list, tuple)) and listed else                 str(listed or "").split()[0] if listed else None
+        if event == "_winapi.CreateProcess":     # (application_name, command_line, cwd)
+            if args[0]:
+                return args[0]
+            line = str(args[1] or "").strip()
+            return line[1:].split('"', 1)[0] if line.startswith('"') else line.split(" ", 1)[0]
+        if event.startswith(("os.exec", "os.posix_spawn")):   # (path, args, env)
+            return args[0]
+        if event.startswith("os.spawn"):       # (mode, path, args, env)
+            return args[1]
+    except (IndexError, TypeError):
+        pass
+    return None                                # os.system, os.startfile, fork: not Python's
+
+
+def _is_python(program):
+    if not isinstance(program, (str, bytes, os.PathLike)):
+        return False
+    try:
+        return os.path.normcase(os.path.abspath(os.fsdecode(program))) ==             os.path.normcase(os.path.abspath(sys.executable))
+    except (TypeError, ValueError):
+        return False
+
+
+def _open_unguarded(path, mode):
+    """The record written where the guard put it: by the interpreter's own
+    open - it is the run's, in its runtime folder."""
+    import _io
+    return _io.open(path, mode, encoding="utf-8")
 
 
 def run_script(script: str, argv: list | None = None) -> None:

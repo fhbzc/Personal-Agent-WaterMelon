@@ -17,6 +17,7 @@ TASKS = {
     "reasons": "learning_reasons",
     "terms": "learning_terms",
     "plan": "learning_plan",
+    "split": "learning_split",
     "interests": "learning_interests",
 }
 

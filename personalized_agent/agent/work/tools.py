@@ -532,6 +532,9 @@ runpy.run_path({code!r}, run_name="__main__")
 #: The most files a granted folder is looked over for, before and after code
 #: runs, to see what it changed.
 MOST_FILES_WATCHED = 20000
+#: Folders of the work's that are never its work, watched or walked.
+WATCH_SKIPPED = (".agent_runtime", ".packages", ".versions", ".session", "node_modules",
+                 ".npm-cache", ".pip-cache")
 
 
 #: What a test run's copy leaves out: caches, the runtime's scratch, the
@@ -579,7 +582,10 @@ RUN = re.compile(r"^run_[0-9a-f]{{16}}$")
 
 def ignore(folder, names):
     return [one for one in names if one in SKIP
-            or (os.path.basename(folder) == "runs" and RUN.match(one))]
+            or (os.path.basename(folder) == "runs" and RUN.match(one))
+            or one in ("site-packages", "dist-packages")
+            or os.path.exists(os.path.join(folder, one, "pyvenv.cfg"))
+            or os.path.isdir(os.path.join(folder, one, "conda-meta"))]
 
 
 if os.path.exists(DST):
@@ -608,8 +614,9 @@ class TestRuns:
     @staticmethod
     def key(folder: Path, args: Sequence[str], packages: Optional[List[Path]]) -> str:
         """The folder's files by their content, each with its path in it;
-        the packages installed by what pip leaves of each (its path, size
-        and time - an install changes them); the arguments; the Python."""
+        the packages installed, as pip leaves them (reuse.packages_key - the
+        top of their folder, not every file in it); the arguments; the
+        Python."""
         import hashlib
         import platform
         digest = hashlib.sha256()
@@ -628,15 +635,11 @@ class TestRuns:
                 return ""
             digest.update(str(path.relative_to(folder)).replace("\\", "/").encode("utf-8")
                           + b"\0" + hashlib.sha256(data).digest())
-        for root in packages or []:
-            digest.update(b"\0PACKAGES\0" + str(root).encode("utf-8"))
-            for path in sorted(_files_under(Path(root))):
-                try:
-                    seen = path.stat()
-                except OSError:
-                    return ""
-                digest.update(f"{path.relative_to(root)}|{seen.st_size}|{seen.st_mtime_ns}"
-                              .encode("utf-8"))
+        from .reuse import packages_key
+        installed = packages_key(packages)
+        if installed is None:
+            return ""
+        digest.update(b"\0PACKAGES\0" + installed.encode("utf-8"))
         return digest.hexdigest()
 
     @staticmethod
@@ -657,10 +660,13 @@ class TestRuns:
             return json.loads(json.dumps(kept, default=str)) if kept else None
 
     def put(self, key: str, result: Dict[str, Any], by: str, seconds: float,
-            ran_with: Sequence[str] = ()) -> None:
+            ran_with: Sequence[str] = (), inputs: Optional[Dict[str, Any]] = None) -> None:
+        """Kept - with what the tests read, listed and wrote, wherever it was
+        (agent/work/reuse.py): given again only while all of it is as it was."""
         with self._lock:
             self._kept[key] = {"result": result, "by": by, "seconds": seconds,
-                               "ran_with": list(ran_with), "at": time.strftime("%H:%M:%S")}
+                               "ran_with": list(ran_with), "at": time.strftime("%H:%M:%S"),
+                               "inputs": inputs}
 
 
 def _a_runs_own(parent: str, name: str) -> bool:
@@ -708,10 +714,13 @@ def split_output_only(args: Sequence[str]) -> Tuple[List[str], List[str], List[s
 
 
 def _files_under(root: Path, skip: Sequence[str] = ()) -> List[Path]:
+    from .environments import is_environment
     out: List[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
+        # Never an installed environment (environments.py).
         dirnames[:] = [one for one in dirnames if one not in skip
-                       and not (skip and _a_runs_own(dirpath, one))]
+                       and not (skip and _a_runs_own(dirpath, one))
+                       and not is_environment(Path(dirpath) / one, one)]
         for name in filenames:
             if name.endswith((".pyc", ".pyo")):
                 continue
@@ -783,6 +792,10 @@ class WorkTools:
         #: TESTS THAT RAN, by exactly what they ran on (`run_tests`): shared
         #: by the work agent and the reviewer of one run (runner.py).
         self.test_runs = TestRuns()
+        # run_python's results, by what they ran on (reuse.py) - shared by
+        # the agents of a run as the tests' are.
+        from .reuse import PythonRuns
+        self.python_runs = PythonRuns()
         #: Who these tools are, in a result given again ("the work agent").
         self.label = ""
         self.handlers: Dict[str, Callable[[Dict[str, Any]], Any]] = {
@@ -986,10 +999,18 @@ class WorkTools:
                      "id at once - then wait for it with job_status, not with a sleep "
                      "in code. A folder it can only read is read-only to everything: "
                      "a SQLite database there in WAL mode cannot be opened even "
-                     "read-only - copy it into a folder you can write first.",
+                     "read-only - copy it into a folder you can write first. THE SAME "
+                     "CODE ON EXACTLY THE SAME INPUTS - every file it read and every "
+                     "script it imported, wherever they are, the folders it listed, the "
+                     "files it wrote still as it left them, the packages - is NOT RUN "
+                     "AGAIN: the earlier result comes back, saying so, what was checked "
+                     "and what could not be. When you judge it should run anew - you "
+                     "are not sure, or time, randomness or something it cannot see "
+                     "matters - call it with fresh=true.",
                      _schema({"code": {"type": "string"},
                               "timeout": {"type": "integer"},
-                              "background": {"type": "boolean"}}, ["code"])),
+                              "background": {"type": "boolean"},
+                              "fresh": {"type": "boolean"}}, ["code"])),
             ToolSpec("run_command", "Run a COMMAND in a shell - "
                      + ("cmd (Windows PowerShell and Git Bash do not work in this "
                         "sandbox; one line or several, as in a .cmd file)" if os.name == "nt"
@@ -1274,20 +1295,28 @@ class WorkTools:
         if self.halted():
             return {"error": "stopped: you were stopped - answer now, with the JSON "
                              "object, from what you have"}
+        began = time.time()
+        waited = 0.0
         try:
             with self.gate.hold(name):
+                waited = time.time() - began
                 said = handler(arguments or {})
         except SecurityViolation as exc:
             said = exc.to_dict()
         except Exception as exc:
             said = {"error": f"{type(exc).__name__}: {exc}"[:600]}
+        # WHERE ITS TIME WENT (the user, 2026-10-29): kept in the run's log,
+        # never told the agent - a part of it said by the tool (`_timing`).
+        parts = said.pop("_timing", None) if isinstance(said, dict) else None
+        timing = dict(parts or {}, total=round(time.time() - began, 2),
+                      waited_for_turn=round(waited, 2))
         # THE JOBS THAT ENDED meanwhile, told with whatever is called next -
         # nobody has to keep asking.
         ended = self.jobs_ended() if isinstance(said, dict) else []
         if ended:
             said = dict(said, jobs_ended=ended)
         with self._log_lock:
-            self.log(name, {"arguments": arguments, "result": said})
+            self.log(name, {"arguments": arguments, "result": said, "timing": timing})
         return said
 
     # -- reading ---------------------------------------------------------
@@ -1591,14 +1620,31 @@ class WorkTools:
         # with the whole report, whoever asked and however.
         pytest_args, left_out, failures_shown = split_output_only(asked)
         ran_with = TEST_REPORT + failures_shown + pytest_args
+        from .reuse import read_records, told, unchanged
+        mark = time.time()
+        timing: Dict[str, Any] = {}
+
+        def lap(name: str) -> None:
+            nonlocal mark
+            timing[name] = round(time.time() - mark, 2)
+            mark = time.time()
         key = self.test_runs.key(folder, pytest_args, self._packages())
+        lap("key")
         if key and not args.get("fresh"):
             kept = self.test_runs.get(key)
+            # And everything else they read, listed and wrote, as it was.
+            if kept is not None and not unchanged(kept.get("inputs")):
+                kept = None
             if kept is not None and TestRuns.fits(kept, failures_shown):
+                words, record = told("run_tests", kept["by"], kept["at"], kept["seconds"],
+                                     kept["inputs"], "the same tests, on exactly these files")
                 # Said first, before what the run printed: NOT A NEW RUN.
-                return {"not_a_new_run": NOT_A_NEW_RUN.format(
+                lap("reuse_check")
+                return {"_timing": dict(timing, reused=True),
+                        "not_a_new_run": words + " " + NOT_A_NEW_RUN.format(
                             by=kept["by"], at=kept["at"], seconds=kept["seconds"]),
                         **kept["result"], "files_changed": [], "reused": {
+                    **record,
                     "ran_at": kept["at"], "by": kept["by"], "seconds": kept["seconds"],
                     "ran_with": kept.get("ran_with") or [],
                     "why": "every file of the folder, the tests chosen, the packages and "
@@ -1611,25 +1657,41 @@ class WorkTools:
         code = TESTS_CODE.format(src=str(folder), dst=str(copy), args=repr(ran_with),
                                  skip=repr(TEST_COPY_SKIPPED))
         by = self.label or "an agent of this run"
+        recording = self._recording()
 
         def kept(said: Dict[str, Any], seconds: float) -> None:
-            # Only a run that ended by itself is kept: not one cut off.
+            # Only a run that ended by itself is kept: not one cut off - and
+            # one whose reading could not all be seen is not kept at all.
+            from .reuse import inputs_of
+            record = read_records(recording)
             if isinstance(said, dict):
                 said["ran_with"] = ran_with
                 if left_out:
                     said["printing_arguments_replaced"] = left_out
             if key and isinstance(said, dict) and not said.get("timed_out") \
                     and not said.get("violation") and said.get("returncode") is not None:
-                self.test_runs.put(key, said, by, seconds, ran_with)
+                inputs, _why = inputs_of(record, self._not_inputs())
+                if inputs is not None:
+                    self.test_runs.put(key, said, by, seconds, ran_with, inputs)
 
+        from ...runtime.guard import RECORD_ENV
         if args.get("background") and (self.only is None or "job_status" in self.only):
-            return self._start_job(code, args.get("timeout"), done=kept)
+            return self._start_job(code, args.get("timeout"), done=kept,
+                                   environment={RECORD_ENV: str(recording)})
         timeout = max(5, min(RUN_MOST_SECONDS, int(args.get("timeout") or RUN_MOST_SECONDS)))
+        lap("reuse_check")
         started = time.time()
-        before = self._look_over()
-        result = self.runtime.run_python_code(code, timeout=timeout, sys_path=self._packages())
+        before = self._changes_begin()
+        lap("look_before")
+        result = self.runtime.run_python_code(code, timeout=timeout, sys_path=self._packages(),
+                                              environment={RECORD_ENV: str(recording)})
+        lap("code")
         said = self._ran(result, before)
+        lap("look_after")
         kept(said, round(time.time() - started, 1))
+        lap("kept_for_reuse")
+        if isinstance(said, dict):
+            said["_timing"] = dict(timing, reused=False)
         return said
 
     def delete_file(self, args: Dict[str, Any]) -> Any:
@@ -1654,9 +1716,59 @@ class WorkTools:
         self.changed("deleted", gone, said)
         return said
 
+    def _changes_begin(self) -> Any:
+        """Before code runs: the folders it may write WATCHED (changes.py) -
+        or, where no watch can be made, every file in them as it is, to be
+        compared after (`_look_over`)."""
+        from .changes import Watch
+        try:
+            watch = Watch(self.writable, self._left_out)
+            if watch.start():
+                return watch
+        except Exception:                          # no watch: walked instead
+            pass
+        return self._look_over()
+
+    def _changes_end(self, before: Any) -> List[str]:
+        """What the code made, changed or removed, as heard - or as the
+        folders differ from how they were."""
+        from .changes import Watch
+        if isinstance(before, Watch):
+            heard = before.stop()
+            if heard is not None:
+                return sorted(heard)
+            before = {}
+        after = self._look_over()
+        return sorted(set(path for path in after if before.get(path) != after[path])
+                      | (set(before) - set(after)))
+
+    def _left_out(self, path: str) -> bool:
+        """Not the work's, of what a watch heard: the runtime's scratch, the
+        packages, the versions, the logs, caches - and any installed
+        environment."""
+        whole = Path(path)
+        roots = self.writable
+        work_root = Path(self.runtime.policy.write_root)
+        for root in roots:
+            try:
+                parts = whole.relative_to(root).parts
+            except ValueError:
+                continue
+            if any(part in WATCH_SKIPPED or part == "__pycache__" for part in parts[:-1]):
+                return True
+            if parts and parts[0] == LOGS_DIR and Path(root) == work_root:
+                return True
+            if not hasattr(self, "_environments_seen"):
+                from .environments import Seen
+                self._environments_seen = Seen()
+            return self._environments_seen(str(whole), roots)
+        return True
+
     def _look_over(self) -> Dict[str, tuple]:
         """Every file in the folders it may write, with when it changed and
-        how big it is - to see what code changed."""
+        how big it is - to see what code changed, where it cannot be heard
+        (`_changes_begin`)."""
+        from .environments import is_environment
         seen: Dict[str, tuple] = {}
         work_root = Path(self.runtime.policy.write_root)
         for root in self.writable:
@@ -1668,10 +1780,10 @@ class WorkTools:
                 # own - which the application, not the code, writes to while
                 # the code runs.
                 dirnames[:] = [d for d in dirnames
-                               if d not in (".agent_runtime", ".packages", ".versions",
-                                            ".session", "node_modules", ".npm-cache",
-                                            ".pip-cache")
-                               and not (d == LOGS_DIR and Path(dirpath) == work_root)]
+                               if d not in WATCH_SKIPPED
+                               and not (d == LOGS_DIR and Path(dirpath) == work_root)
+                               # Nor an installed environment (environments.py).
+                               and not is_environment(Path(dirpath) / d, d)]
                 for name in filenames:
                     whole = os.path.join(dirpath, name)
                     try:
@@ -1689,10 +1801,53 @@ class WorkTools:
         if args.get("background") and (self.only is None or "job_status" in self.only):
             return self._start_job(str(args.get("code") or ""), args.get("timeout"))
         timeout = max(5, min(RUN_MOST_SECONDS, int(args.get("timeout") or RUN_SECONDS)))
-        before = self._look_over()
-        result = self.runtime.run_python_code(str(args.get("code") or ""),
-                                              timeout=timeout, sys_path=self._packages())
-        return self._ran(result, before)
+        # THE SAME CODE ON EXACTLY THE SAME INPUTS (reuse.py): its result
+        # again, said to be so - the agent runs it anew with fresh=true.
+        from ...runtime.guard import RECORD_ENV
+        from .reuse import read_records
+        code = str(args.get("code") or "")
+        mark = time.time()
+        timing: Dict[str, Any] = {}
+
+        def lap(name: str) -> None:
+            nonlocal mark
+            timing[name] = round(time.time() - mark, 2)
+            mark = time.time()
+        key = self.python_runs.key(code, self._packages(), self.folder)
+        lap("key")
+        if not args.get("fresh"):
+            again = self.python_runs.again(key)
+            lap("reuse_check")
+            if again is not None:
+                return dict(again, _timing=dict(timing, reused=True))
+        recording = self._recording()
+        started = time.time()
+        before = self._changes_begin()
+        lap("look_before")
+        result = self.runtime.run_python_code(code, timeout=timeout, sys_path=self._packages(),
+                                              environment={RECORD_ENV: str(recording)})
+        lap("code")
+        said = self._ran(result, before)
+        lap("look_after")
+        why = self.python_runs.keep(key, read_records(recording), said,
+                                    self.label or "an agent of this run",
+                                    time.time() - started, self._not_inputs())
+        lap("kept_for_reuse")
+        if isinstance(said, dict):
+            said["_timing"] = dict(timing, reused=False, kept=not why,
+                                   **({"not_kept": why} if why else {}))
+        return said
+
+    def _recording(self) -> Path:
+        """Where the code's processes write what they read (guard.RECORD_ENV):
+        the run's own scratch - never counted an input."""
+        folder = self.folder / ".agent_runtime" / "records"
+        self.runtime.mkdir(folder)
+        return folder / uuid.uuid4().hex[:16]
+
+    def _not_inputs(self) -> List[str]:
+        from .reuse import skip_roots
+        return skip_roots(self._packages(), self.folder / ".agent_runtime")
 
     def run_command(self, args: Dict[str, Any]) -> Any:
         """A command in a shell, in the sandbox (`COMMAND_CODE`): its script
@@ -1745,7 +1900,7 @@ class WorkTools:
                 said["shell"] = shell
             return said
         timeout = max(5, min(RUN_MOST_SECONDS, int(args.get("timeout") or RUN_SECONDS)))
-        before = self._look_over()
+        before = self._changes_begin()
         result = self.runtime.run_python_code(code, timeout=timeout, readable=readable)
         said = self._ran(result, before)
         said["shell"] = shell
@@ -1755,12 +1910,10 @@ class WorkTools:
         return [self.packages_dir] if self.packages_dir is not None \
             and self.packages_dir.is_dir() else None
 
-    def _ran(self, result: Any, before: Dict[str, tuple]) -> Dict[str, Any]:
+    def _ran(self, result: Any, before: Any) -> Dict[str, Any]:
         """What code that ran comes back as: what it printed, what it
         changed - and what it left running, which was ended with it."""
-        after = self._look_over()
-        touched = sorted(set(path for path in after if before.get(path) != after[path])
-                         | (set(before) - set(after)))
+        touched = self._changes_end(before)
         self._claim(touched)
         said = result.to_dict() if hasattr(result, "to_dict") else dict(
             vars(result))
@@ -1795,7 +1948,8 @@ class WorkTools:
     # -- jobs: code that runs while the agent goes on ---------------------------------
     def _start_job(self, code: str, timeout: Any,
                    done: Optional[Callable[[Dict[str, Any], float], None]] = None,
-                   readable: Optional[List[Path]] = None) -> Dict[str, Any]:
+                   readable: Optional[List[Path]] = None,
+                   environment: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """A JOB: the code run as run_python runs it - the same process, the
         same sandbox, the same folders - on a thread of its own, the call
         returning its id at once. What it prints is kept in its log as it
@@ -1828,11 +1982,12 @@ class WorkTools:
                                        stop=str(folder / "stop"), code=str(folder / "code.py"))
 
         def run() -> None:
-            before = self._look_over()
+            before = self._changes_begin()
             try:
                 result = self.runtime.run_python_code(
                     launcher, timeout=seconds, sys_path=self._packages(),
-                    **({"readable": readable} if readable else {}))
+                    **({"readable": readable} if readable else {}),
+                    **({"environment": environment} if environment else {}))
                 said = self._ran(result, before)
             except Exception as exc:          # said, as a result is
                 said = {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:600]}

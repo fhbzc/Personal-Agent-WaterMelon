@@ -200,12 +200,14 @@ class TheExperienceDebuggerPanelTests(unittest.TestCase):
         result = _render(self.engine, stub, steps)
         self.assertEqual(result["err"], "", result["err"])
         out = result["out"]
-        self.assertEqual(out["label"], "Resume")
-        self.assertTrue(out["noStart"], "Resume where Start was")
+        # Continue - not Resume beside it (the user, 2026-10-28: one way to
+        # go on, from where it is chosen).
+        self.assertEqual(out["label"], "Continue")
+        self.assertTrue(out["noStart"], "Continue where Start was")
         # It did not stop cleanly: back to its last save point (2026-10-26).
         self.assertIn("it goes back to its last save point, Round 7", out["row"])
-        self.assertEqual(out["inRun"], "Resume")
-        self.assertEqual(out["said"], "Resuming\u2026")
+        self.assertEqual(out["inRun"], "Continue from here")
+        self.assertEqual(out["said"], "Starting\u2026")
         self.assertTrue(out["disabled"])
         self.assertEqual(out["continues"], [["run_cut", "noctx"]])
 
