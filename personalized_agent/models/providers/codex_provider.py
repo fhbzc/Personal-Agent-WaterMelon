@@ -264,6 +264,12 @@ class CodexProvider(ModelProvider):
         self._developer_refused = False
         self._status_cache: Optional[Dict[str, Any]] = None
         self._status_checked_at = 0.0
+        #: What was last said in the log of finding it, its sign-in, its
+        #: options and its calls - each said again only when it changes.
+        self._said: Dict[str, Any] = {}
+        #: Looked for next on the PATH as the system has it now first
+        #: (`forget`).
+        self._fresh = False
         #: The catalog the client gave on "Refresh models", and the cache
         #: file's stamp at that moment: it stands until Codex rewrites its
         #: cache, which is then newer than anything asked for here.
@@ -278,8 +284,15 @@ class CodexProvider(ModelProvider):
     def executable(self) -> Optional[str]:
         # Including a Codex installed after this application started, which
         # this process's own PATH does not show (platform_layer/programs.py).
-        from ...platform_layer.programs import find_program
-        found = find_program(CLI_NAME)
+        from ...platform_layer.programs import find_program_where, usual_places
+        found, how = find_program_where(CLI_NAME, fresh=getattr(self, "_fresh", False))
+        self._fresh = False
+        if self._changed("found", (found, how)):
+            if found:
+                log.info("Codex found: %s (on %s)", found, how)
+            else:
+                log.warning("Codex not found: not on this process's PATH, nor on the PATH as "
+                            "the system has it now, nor in %s", ", ".join(usual_places()))
         if found and sys.platform.startswith("win"):
             try:
                 return self._short(found) or found
@@ -318,6 +331,33 @@ class CodexProvider(ModelProvider):
         self._shortened[str(program)] = (stamp, short)
         return short
 
+    def _changed(self, what: str, value: Any) -> bool:
+        """Whether `what` is not what was last said of it - and it is kept as
+        said: the log says each change once, not each look."""
+        said = getattr(self, "_said", None)
+        if said is None:
+            said = self._said = {}
+        if said.get(what, object()) == value:
+            return False
+        said[what] = value
+        return True
+
+    def forget(self) -> None:
+        """EVERYTHING KEPT OF THE INSTALLED CODEX LET GO, AS A RESTART WOULD
+        (the user, 2026-10-29: after "Refresh models" Codex still could not
+        be reached, and quitting the agent brought it back): whether it is
+        signed in, the short place it is started from, which options it
+        takes, whether its reading is confined - and it is looked for again,
+        on the PATH as the system has it now before this process's own."""
+        self._status_cache = None
+        self._status_checked_at = 0.0
+        self._shortened = {}
+        self._confined = {}
+        self._help = None
+        self._said = {}
+        self._fresh = True
+        log.info("Codex: what was kept of it let go - looked for and asked again")
+
     @staticmethod
     def _model_cache_path() -> Path:
         home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
@@ -330,6 +370,24 @@ class CodexProvider(ModelProvider):
             return None
 
     def _ask_client(self, cli: Optional[str]) -> Dict[str, Any]:
+        """`codex login status`, asked now - and what it gave, and in how
+        long, said in the log when it is not what it gave before."""
+        started = time.monotonic()
+        said = self._login_status(cli)
+        seconds = time.monotonic() - started
+        if said.get("logged_in"):
+            if self._changed("sign-in", "signed in"):
+                log.info("Codex sign-in: signed in (%.1f s)", seconds)
+        elif said.get(UNREACHABLE):
+            if self._changed("sign-in", "unreachable"):
+                log.warning("Codex sign-in could not be checked after %.1f s: %s", seconds,
+                            said[UNREACHABLE])
+        elif said and self._changed("sign-in", "signed out"):
+            log.warning("Codex sign-in: not signed in (%.1f s): %s", seconds,
+                        str(said.get("detail") or "")[:200])
+        return said
+
+    def _login_status(self, cli: Optional[str]) -> Dict[str, Any]:
         if not cli:
             return {}
         try:
@@ -457,6 +515,8 @@ class CodexProvider(ModelProvider):
         failure part way - a timeout, an error, an exit, a list with nothing
         in it - leaves the last good catalog exactly as it was.
         """
+        # As a restart would: nothing kept of it stands (`forget`).
+        self.forget()
         cli = self.executable()
         if not cli:
             raise RuntimeError("Codex is not installed on this machine. Install "
@@ -877,8 +937,16 @@ class CodexProvider(ModelProvider):
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
                     if sys.platform.startswith("win") else 0)
                 said = (done.stdout or "") + (done.stderr or "")
-            except (OSError, subprocess.SubprocessError):
+            except (OSError, subprocess.SubprocessError) as exc:
                 said = ""
+                if self._changed("options", str(exc)):
+                    log.warning("Codex's options could not be read (codex exec --help): "
+                                "%s - kept until Refresh models or a restart", exc)
+            else:
+                if self._changed("options", "read" if said.strip() else "empty"):
+                    (log.info if said.strip() else log.warning)(
+                        "Codex's options %s (codex exec --help)",
+                        "read" if said.strip() else "came back empty")
             known = self._help = (key, said)
         return flag in known[1]
 
@@ -1103,7 +1171,12 @@ class CodexProvider(ModelProvider):
             return self._invoke(request, model, bridge)
         if completed.returncode != 0:
             verdict = self._translate(completed)
+            if self._changed("call", verdict.reason or "failed"):
+                log.warning("Codex call failed (exit code %s): %s", completed.returncode,
+                            str(verdict.reason or "")[:300])
             raise ModelInvocationError(verdict.reason or "Codex failed", verdict)
+        if self._changed("call", "answered"):
+            log.info("Codex calls answer")
 
         text, usage, stop_reason = self._parse_events(completed.stdout or "")
         if not text:

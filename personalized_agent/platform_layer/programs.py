@@ -17,7 +17,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
 
 def _windows_path() -> str:
@@ -85,19 +85,43 @@ def find_program(name: str, extra: Sequence[str] = ()) -> Optional[str]:
     """Where the program `name` is: on this process's PATH, else on the PATH
     as it is now - which this process then takes up, for what the program
     itself starts - else at one of `extra` (full paths to try)."""
+    return find_program_where(name, extra)[0]
+
+
+def find_program_where(name: str, extra: Sequence[str] = (),
+                       fresh: bool = False) -> Tuple[Optional[str], str]:
+    """`find_program`, and HOW it was found - "this process's PATH", "the
+    PATH as the system has it now", "where such programs are put" or "a
+    place given" - "" when it was not. `fresh`: the PATH as it is now
+    first, before this process's own (the user, 2026-10-29: a Codex the
+    process had found once was kept until the agent was restarted)."""
+    if fresh:
+        now = current_path()
+        found = shutil.which(name, path=now)
+        if found:
+            take_up_path(now)
+            return found, _how_now(found)
     found = shutil.which(name)
     if found:
-        return found
+        return found, "this process's PATH"
     now = current_path()
     found = shutil.which(name, path=now)
     if found:
         take_up_path(now)
-        return found
+        return found, _how_now(found)
     for candidate in extra:
         path = Path(candidate).expanduser()
         if path.is_file():
-            return str(path)
-    return None
+            return str(path), "a place given"
+    return None, ""
 
 
-__all__ = ["find_program", "current_path", "usual_places", "take_up_path"]
+def _how_now(found: str) -> str:
+    folder = os.path.normcase(str(Path(found).parent)).rstrip("\\/")
+    usual = {os.path.normcase(one).rstrip("\\/") for one in usual_places()}
+    return "where such programs are put" if folder in usual \
+        else "the PATH as the system has it now"
+
+
+__all__ = ["find_program", "find_program_where", "current_path", "usual_places",
+           "take_up_path"]

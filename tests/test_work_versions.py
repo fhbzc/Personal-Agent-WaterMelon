@@ -169,7 +169,9 @@ class VersionsAreSavedAtEachKeyPointTests(_RunsBase):
         kinds = [one["kind"] for one in self._versions(run["id"])["versions"]]
         self.assertEqual(kinds, ["contract", "full review", "finished"])
         self.assertEqual(self._versions(run["id"])["versions"][1]["round"], 3)
-        self.assertEqual(models.full_reviews, 1)
+        # The one asked for at the card done, and the final one - which
+        # keeps no version of its own: the run's last comes next.
+        self.assertEqual(models.full_reviews, 2)
         # A full review that does not pass keeps none, and the work goes on
         # - to the next one, which does.
         self.agent.cleanup()
@@ -178,7 +180,8 @@ class VersionsAreSavedAtEachKeyPointTests(_RunsBase):
         self.assertEqual(run["status"], "done", run["log"][-6:])
         versions = self._versions(run["id"])["versions"]
         self.assertEqual([one["kind"] for one in versions], ["contract", "full review", "finished"])
-        self.assertEqual([one["passed"] for one in run["plan"]["full_reviews"]], [False, True])
+        self.assertEqual([one["passed"] for one in run["plan"]["full_reviews"]],
+                         [False, True, True])
         self.assertEqual(versions[1]["round"], 2)
         # Paused at a limit: no version - it goes on from where it stopped,
         # its to-do list in its plan.
@@ -388,7 +391,7 @@ class GrantedFoldersOnRollbackTests(_RunsBase):
 
     def test_only_what_is_still_as_the_agent_left_it_is_put_back(self) -> None:
         run, _folder = self._run(_WritesGranted(self.granted, rounds_to_complete=2,
-                                                full_review="always"))
+                                                full_review="always", card_done_each=True))
         self.assertEqual(run["status"], "done", run["log"][-6:])
         self.assertEqual((self.granted / "out.txt").read_text(), "round 2")
         versions = self._versions(run["id"])["versions"]
@@ -490,8 +493,10 @@ class _Commits(_TwoAgents):
     answer with a commit saying what it changed (unless `commit` is off)."""
 
     def __init__(self, commit=True, **kwargs):
-        # A full review each round: each a checkpoint, a version.
-        super().__init__(rounds_to_complete=2, full_review="always", **kwargs)
+        # The card done and a full review each round: each a checkpoint, a
+        # version.
+        super().__init__(rounds_to_complete=2, full_review="always", card_done_each=True,
+                         **kwargs)
         self.commit = commit
 
     def _summary(self, first):

@@ -700,6 +700,21 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     def models(_request: Any) -> Any:
         return app.models.describe()
 
+    @route("POST", "/api/models/claude/recheck")
+    def recheck_claude(request: Any) -> Any:
+        """CHECK AGAIN, AS A RESTART WOULD (the user, 2026-10-29): what is
+        kept of a Claude client let go, looked for again, its sign-in asked
+        again - and its aliases asked which model each means, now."""
+        provider = app.models.provider(str(request.get("provider") or "claude_code"))
+        if provider is None or not hasattr(provider, "forget"):
+            raise ApiError("not a Claude client", 404)
+        provider.forget()
+        said = provider.models_by_alias(force=True)
+        app.models.invalidate()
+        return {"provider": provider.provider_id, **said,
+                "auth_status": provider.get_auth_status().to_dict(),
+                "models": [model.to_dict() for model in provider.list_models()]}
+
     @route("POST", "/api/models/codex/refresh")
     def refresh_codex_models(_request: Any) -> Any:
         """Ask the installed Codex for its model list, now.
@@ -714,6 +729,8 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         try:
             models = provider.refresh_models()
         except (OSError, RuntimeError) as exc:
+            # What Settings shows is asked again either way (`forget`).
+            app.models.invalidate()
             raise ApiError(str(exc), 502) from exc
         app.models.invalidate()
         return {"provider": "codex", "models": [model.to_dict() for model in models]}

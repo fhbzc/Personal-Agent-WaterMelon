@@ -59,7 +59,8 @@ class _Seen(_TwoAgents):
 class TheFullReviewTests(_Base):
 
     def test_hints_and_everything_since_the_last_checkpoint(self) -> None:
-        models = _Seen(rounds_to_complete=3, full_review="always")
+        # A full review only at a card done: the card done each round.
+        models = _Seen(rounds_to_complete=3, full_review="always", card_done_each=True)
         run = self._run(models)
         self.assertEqual(run["status"], "done", run["log"][-6:])
         rounds = [one for one in models.reviews if "REVIEW THIS ROUND" in one]
@@ -68,7 +69,10 @@ class TheFullReviewTests(_Base):
         self.assertIn("the last checkpoint: the contract approved", rounds[0])
         self.assertIn("the last checkpoint: the full review after round 1", rounds[1])
         full = [one for one in models.reviews if "DO THE FULL REVIEW NOW" in one]
-        self.assertEqual(len(full), 3)
+        # One at each card done, as asked - and the final one, at the end,
+        # on the tester's run.
+        self.assertEqual(len(full), 4)
+        self.assertIn("the final full review", full[3])
         # Each covers the rounds since the one before it - not all of them.
         self.assertIn("CHECKPOINT (the contract approved)", full[0])
         self.assertIn("  1. The notes", full[0])
@@ -77,7 +81,7 @@ class TheFullReviewTests(_Base):
         self.assertIn("notes.md", full[0], "the files changed since it")
         self.assertEqual(run["plan"]["checkpoint"]["label"], "the full review after round 3")
         self.assertEqual([one["passed"] for one in run["plan"]["full_reviews"]],
-                         [True, True, True])
+                         [True, True, True, True])
 
     def test_many_cards_an_answer_each_and_one_that_concludes(self) -> None:
         from personalized_agent.agent.work import runner

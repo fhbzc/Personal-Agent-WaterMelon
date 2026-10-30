@@ -30,6 +30,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -220,6 +221,24 @@ MODELS: List[ModelDescriptor] = [
 ALIASES = {"opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5",
            "haiku": "claude-haiku-5-5", "fable": "claude-fable-5-1"}
 
+#: THE NEWEST OF EACH FAMILY, ASKED OF THE CLIENT (the user, 2026-10-29): a
+#: model the client has and this list does not could not be chosen. The
+#: client lists none; asked by each alias - a call that says one word - it
+#: names the model it means by it, and one not on the list is added and
+#: kept. Asked ONLY on "Check again", and only when the client's version
+#: is not the one last asked of: each asking costs four small calls of the
+#: user's own, never spent by itself nor on a client already asked.
+DISCOVERY_ASK = "Reply with the single word OK."
+VERSION_LOOK_SECONDS = 600.0
+
+
+def _display_name(model_id: str) -> str:
+    """"claude-opus-5-6" as "Claude Opus 5.6"."""
+    parts = model_id.split("-")
+    words = [part.capitalize() for part in parts if not part.isdigit()]
+    numbers = [part for part in parts if part.isdigit()]
+    return " ".join(words) + (" " + ".".join(numbers) if numbers else "")
+
 #: Tools the client is denied by name. The real guarantee is that nothing runs
 #: with bypassPermissions, so under -p there is nobody to approve a tool; this
 #: list is the second layer.
@@ -397,11 +416,141 @@ class ClaudeCodeProvider(ModelProvider):
         self._status_cache: Optional[Dict[str, Any]] = None
         self._status_client: Optional[str] = None
         self._status_checked_at = 0.0
+        #: What was last said in the log of it - each said again only when
+        #: it changes - and whether it is looked for next on the PATH as the
+        #: system has it now first (`forget`).
+        self._said: Dict[str, Any] = {}
+        self._fresh = False
+        #: When the client's version was last looked at, of which client,
+        #: and what it was; one asking by aliases at a time.
+        self._version_seen: tuple = (0.0, None, "")
+        self._asking = threading.Lock()
 
     # -- availability -------------------------------------------------------
     def executable(self) -> Optional[str]:
         """The client that will actually answer, or None if there is none."""
-        return self._resolve()[1]
+        client, path, problem = self._resolve()
+        if self._changed("found", (client, path)):
+            if path:
+                log.info("%s found: %s (%s)", self.display_name, path, client)
+            else:
+                log.warning("%s not found: %s", self.display_name, problem or "not installed")
+        return path
+
+    def _changed(self, what: str, value: Any) -> bool:
+        """Whether `what` is not what was last said of it - and it is kept as
+        said: the log says each change once, not each look."""
+        said = getattr(self, "_said", None)
+        if said is None:
+            said = self._said = {}
+        if said.get(what, object()) == value:
+            return False
+        said[what] = value
+        return True
+
+    def forget(self) -> None:
+        """EVERYTHING KEPT OF THE CLIENT LET GO, AS A RESTART WOULD (the user,
+        2026-10-29): whether it is signed in, its version - and it is looked
+        for again, on the PATH as the system has it now first."""
+        self._status_cache = None
+        self._status_client = None
+        self._status_checked_at = 0.0
+        self._said = {}
+        self._fresh = True
+        self._version_seen = (0.0, None, "")
+        log.info("%s: what was kept of it let go - looked for and asked again",
+                 self.display_name)
+
+    # -- the models, as the client names them ---------------------------------
+    def _learned(self) -> List[Dict[str, Any]]:
+        """The models the client named by an alias that the list did not have."""
+        getter = getattr(self, "settings", None)
+        try:
+            said = getter.get(f"{self.provider_id}_learned_models") if getter else None
+        except Exception:                                   # pragma: no cover
+            said = None
+        return [one for one in said or [] if isinstance(one, dict)
+                and str(one.get("id") or "").startswith("claude-")]
+
+    def _keep(self, key: str, value: Any) -> None:
+        getter = getattr(self, "settings", None)
+        if getter is None:
+            return
+        try:
+            getter.set(f"{self.provider_id}_{key}", value, internal=True)
+        except Exception:                                   # pragma: no cover
+            log.debug("could not keep %s", key, exc_info=True)
+
+    def cli_version(self, cli: str) -> str:
+        """`<client> --version`: its first line, or "" when it says none."""
+        try:
+            done = children.run(
+                [cli, "--version"], capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=STATUS_TIMEOUT_SECONDS,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                if sys.platform.startswith("win") else 0)
+        except (OSError, subprocess.SubprocessError) as exc:
+            if self._changed("version", str(exc)):
+                log.warning("%s's version could not be read: %s", self.display_name, exc)
+            return ""
+        return ((done.stdout or "").strip().splitlines() or [""])[0][:80]
+
+    def models_by_alias(self, force: bool = False) -> Dict[str, Any]:
+        """The model each alias means, asked of the client - only when its
+        version is not the one last asked of (`force`: its version read
+        again, now): a call of one word by each. One it names that the list
+        does not have is added and kept."""
+        if not self._asking.acquire(blocking=force):
+            return {"checked": False, "why": "already being asked"}
+        try:
+            cli = self.executable()
+            if not cli:
+                return {"checked": False, "why": "not installed"}
+            now = time.time()
+            at, seen, version = self._version_seen
+            if force or seen != cli or now - at > VERSION_LOOK_SECONDS:
+                version = self.cli_version(cli)
+                self._version_seen = (now, cli, version)
+            getter = getattr(self, "settings", None)
+            asked_of = getter.get(f"{self.provider_id}_models_checked") if getter else None
+            if version and asked_of == version:
+                log.info("%s %s: the version already asked of - no model asked",
+                         self.display_name, version)
+                return {"checked": False, "why": "the same version", "version": version}
+            found: Dict[str, str] = {}
+            failed: Dict[str, str] = {}
+            for alias in ALIASES:
+                try:
+                    answer = self.invoke(ModelRequest(
+                        messages=[{"role": "user", "content": DISCOVERY_ASK}],
+                        max_tokens=16, task="model_check"), alias)
+                except Exception as exc:
+                    failed[alias] = str(exc)[:200]
+                    continue
+                if str(answer.model or "").startswith("claude-"):
+                    found[alias] = str(answer.model)
+            if not found:
+                log.warning("%s %s: no alias named its model - %s", self.display_name,
+                            version or "?", "; ".join(f"{a}: {w}" for a, w in failed.items()))
+                return {"checked": False, "why": "no alias answered", "failed": failed,
+                        "version": version}
+            learned = self._learned()
+            known = {one.id for one in MODELS} | {one["id"] for one in learned}
+            new = [model for model in dict.fromkeys(found.values()) if model not in known]
+            if new:
+                stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                learned = [{"id": model, "alias": next(a for a, m in found.items() if m == model),
+                            "found": stamp, "version": version} for model in new] + learned
+                self._keep("learned_models", learned[:20])
+            if version:
+                self._keep("models_checked", version)
+            log.info("%s %s: its aliases mean %s%s", self.display_name, version or "?",
+                     ", ".join(f"{a} -> {m}" for a, m in found.items()),
+                     f"; added to the list: {', '.join(new)}" if new else "")
+            return {"checked": True, "version": version, "found": found, "new": new,
+                    "failed": failed}
+        finally:
+            self._asking.release()
 
     def clients(self) -> List[Dict[str, Any]]:
         """Every kind of client, and whether it is actually here.
@@ -428,16 +577,17 @@ class ClaudeCodeProvider(ModelProvider):
         return rows
 
     @staticmethod
-    def _locate(client: str) -> Optional[str]:
-        """Where a particular kind of client is installed, if it is."""
+    def _locate(client: str, fresh: bool = False) -> Optional[str]:
+        """Where a particular kind of client is installed, if it is -
+        `fresh`: on the PATH as the system has it now first."""
         spec = CLIENTS.get(client)
         if not spec:
             return None
         if spec.get("search_path"):
             # Including one installed after this application started
             # (platform_layer/programs.py).
-            from ...platform_layer.programs import find_program
-            found = find_program(CLI_NAME)
+            from ...platform_layer.programs import find_program_where
+            found = find_program_where(CLI_NAME, fresh=fresh)[0]
             if found:
                 return found
         for candidate in spec["candidates"]:
@@ -460,7 +610,7 @@ class ClaudeCodeProvider(ModelProvider):
             return ""
 
     @staticmethod
-    def _resolve_choice(choice: str, explicit_path: str = "") -> tuple:
+    def _resolve_choice(choice: str, explicit_path: str = "", fresh: bool = False) -> tuple:
         """Which client answers, as (client key, path, why not).
 
         A choice the user made is honoured or reported - never quietly
@@ -473,7 +623,7 @@ class ClaudeCodeProvider(ModelProvider):
                 return "custom", str(path), None
             return "custom", None, f"the client set here is not at {explicit_path}"
         if choice in CLIENTS:
-            found = ClaudeCodeProvider._locate(choice)
+            found = ClaudeCodeProvider._locate(choice, fresh)
             if found:
                 return choice, found, None
             spec = CLIENTS[choice]
@@ -481,13 +631,14 @@ class ClaudeCodeProvider(ModelProvider):
                                   f"machine; install it from {spec['install_url']}, "
                                   f"or choose a different client")
         for key in CLIENT_ORDER:
-            found = ClaudeCodeProvider._locate(key)
+            found = ClaudeCodeProvider._locate(key, fresh)
             if found:
                 return key, found, None
         return "auto", None, "no Claude client is installed on this machine"
 
     def _resolve(self) -> tuple:
-        return self._resolve_choice(self._choice(), self._chosen_path())
+        fresh, self._fresh = getattr(self, "_fresh", False), False
+        return self._resolve_choice(self._choice(), self._chosen_path(), fresh)
 
     def _auth_status(self, force: bool = False) -> Dict[str, Any]:
         """Whether the client is signed in, asked at most once a minute.
@@ -510,7 +661,19 @@ class ClaudeCodeProvider(ModelProvider):
                 and self._status_client == cli
                 and now - self._status_checked_at < STATUS_CACHE_SECONDS):
             return self._status_cache
+        started = time.monotonic()
         status = self._ask_client(cli)
+        seconds = time.monotonic() - started
+        state = ("signed in" if status.get("loggedIn") else
+                 "unreachable" if status.get(UNREACHABLE) else "signed out")
+        if self._changed("sign-in", state):
+            if state == "signed in":
+                log.info("%s sign-in: signed in (%.1f s)", self.display_name, seconds)
+            elif state == "unreachable":
+                log.warning("%s sign-in could not be checked after %.1f s: %s",
+                            self.display_name, seconds, status.get(UNREACHABLE))
+            else:
+                log.warning("%s sign-in: not signed in (%.1f s)", self.display_name, seconds)
         self._status_cache = status
         self._status_client = cli
         self._status_checked_at = now
@@ -570,11 +733,17 @@ class ClaudeCodeProvider(ModelProvider):
         return parsed if isinstance(parsed, dict) else {}
 
     def list_models(self) -> List[ModelDescriptor]:
-        return list(MODELS)
+        # The ones the client named by an alias first: they are the newest.
+        known = {one.id for one in MODELS}
+        added = [ModelDescriptor(one["id"], _display_name(one["id"]), 1_000_000, 128_000,
+                                 reasoning_efforts=list(EFFORTS))
+                 for one in self._learned() if one["id"] not in known]
+        return added + list(MODELS)
 
     def accepts_model_id(self, model: str) -> bool:
-        # A name of the list, or an alias the client still takes.
-        return model in ALIASES or any(one.id == model for one in MODELS)
+        # A name of the list, one the client named, or an alias it still takes.
+        return (model in ALIASES or any(one.id == model for one in MODELS)
+                or any(one["id"] == model for one in self._learned()))
 
     def get_auth_methods(self) -> List[AuthMethod]:
         # The tool holds its own sign-in; this application stores nothing.
@@ -962,7 +1131,12 @@ class ClaudeCodeProvider(ModelProvider):
                 reason=message, failure_class=FailureClass.UNKNOWN))
         if payload.get("is_error"):
             verdict = self._translate(completed, payload)
+            if self._changed("call", verdict.reason or "failed"):
+                log.warning("%s call failed: %s", self.display_name,
+                            str(verdict.reason or "")[:300])
             raise ModelInvocationError(verdict.reason or "Claude Code failed", verdict)
+        if self._changed("call", "answered"):
+            log.info("%s calls answer", self.display_name)
 
         text = str(payload.get("result") or "")
         # Its tools were run during the call: none is left to run.

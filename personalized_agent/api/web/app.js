@@ -4452,6 +4452,9 @@ function xpContractBlock(c, heading, amended, key, notInForce) {
       c.scope.map(escapeHtml).join("; ")}</p>` : ""}
     ${(c.out_of_scope || []).length ? `<p class="xp-contract-line"><strong>Out of scope:</strong> ${
       c.out_of_scope.map(escapeHtml).join("; ")}</p>` : ""}
+    ${(c.already_there || []).length ? `<p class="xp-contract-line"><strong>Already there:</strong> ${
+      c.already_there.map((one) => escapeHtml(one.what || "")
+        + (one.where ? ` <span class="muted">(${escapeHtml(one.where)})</span>` : "")).join("; ")}</p>` : ""}
     ${words.length ? `<div class="xp-contract-words"><span class="xp-badge-instruction">your
       words for this branch</span>${words.map((one) => `<blockquote class="xp-amended-words">${
       escapeHtml(one)}</blockquote>`).join("")}
@@ -4492,7 +4495,7 @@ function xpContractBlock(c, heading, amended, key, notInForce) {
 
 const XP_VERSION_KIND = {
   contract: "contract approved", amended: "contract amended", round: "round advanced",
-  "full review": "full review",
+  "full review": "full review", card: "card done",
   "final review": "final review", deck: "deck made", finished: "finished",
   paused: "paused", stopped: "stopped", "limit reached": "limit reached", ended: "ended",
   turn: "turn",
@@ -9753,6 +9756,9 @@ function renderModelChain(models) {
         }">${one.sees_images ? "Sees pictures" : "Text only"}</button>
       ${one.provider === "codex" ? `<button type="button" class="small secondary"
         data-chain-refresh title="Ask Codex for its models now">Refresh models</button>` : ""}
+      ${one.provider === "claude_code" || one.provider === "claude_desktop" ? `<button
+        type="button" class="small secondary" data-chain-recheck="${escapeHtml(one.provider)}"
+        title="Look for it again, ask whether it is signed in, and ask which model each of its names means">Check again</button>` : ""}
       <button type="button" class="small secondary" data-chain-up="${i}"${
         i === 0 ? " disabled" : ""} aria-label="Up">↑</button>
       <button type="button" class="small secondary" data-chain-down="${i}"${
@@ -9844,6 +9850,23 @@ document.addEventListener("click", async (event) => {
   if (remove) {
     chain.splice(Number(remove.getAttribute("data-chain-remove")), 1);
     await saveModelChain(chain, "Removed from the list");
+    return;
+  }
+  const recheck = at("data-chain-recheck");
+  if (recheck) {
+    recheck.disabled = true;
+    recheck.textContent = "Checking…";
+    try {
+      const said = await api.post("/api/models/claude/recheck",
+        { provider: recheck.dataset.chainRecheck });
+      toast((said.new || []).length ? `New on the list: ${said.new.join(", ")}`
+        : said.checked ? "Checked: nothing new"
+        : said.why === "the same version" ? `Checked: still version ${said.version}`
+        : "Checked");
+    } catch (err) {
+      toast(err.message, "error");
+    }
+    await loadSettings();
     return;
   }
   if (at("data-chain-refresh")) {

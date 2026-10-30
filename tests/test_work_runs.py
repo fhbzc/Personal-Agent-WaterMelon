@@ -157,8 +157,12 @@ class _TwoAgents:
 
     def __init__(self, rounds_to_complete=1, gate_fail_first=False,
                  stall_always=False, blocked=False, queued_once=False,
-                 final_finding_once=False, full_review="milestone", full_fails=0):
+                 final_finding_once=False, full_review="milestone", full_fails=0,
+                 card_done_each=False):
         self.asked = []
+        #: The card found done in every round, not only the last: a version
+        #: each round (a card done is one).
+        self.card_done_each = card_done_each
         #: When the reviewer asks for a full review: "milestone" - when the
         #: card it reviewed is done; "always"; "never". The first
         #: `full_fails` of them do not pass.
@@ -192,7 +196,9 @@ class _TwoAgents:
     def _summary(self, first):
         import json as _json
         self.summaries += 1
-        card = self._card(first, "The notes")
+        # A card done is not listed open: the one worked on before, again.
+        card = self._card(first, "The notes") or getattr(self, "_last_card", "")
+        self._last_card = card
         if self.blocked:
             return {"card": card, "objective": "send the notes", "result": "cannot",
                     "claims": [], "blocked": {"card": card,
@@ -243,7 +249,8 @@ class _TwoAgents:
                 done = self.reviewed_rounds >= self.rounds_to_complete
                 full = self.full_review == "always" or (self.full_review == "milestone" and done)
                 return self._reply(_json.dumps({
-                    "findings": findings, "progress": "advanced", "card_done": done,
+                    "findings": findings, "progress": "advanced",
+                    "card_done": done or self.card_done_each,
                     "checked": ["notes.md"], "complete": done,
                     "full_review": {"now": full, "why": "the notes are done" if done
                                     else "a point to keep"},
@@ -505,11 +512,12 @@ class ARunIsTwoAgentsTests(unittest.TestCase):
         self.assertEqual([one["id"] for one in plan["contract"]["promises"]], ["P1"])
         tiers = sorted((one["tier"], one["promises"]) for one in plan["tiers"].values())
         self.assertEqual(tiers, [("core", ["P1"]), ("polish", [])])
-        # Polish first was sent back before the reviewer saw it.
+        # Polish first was sent back before the reviewer saw it: it waits
+        # for the core cards (the core promises are tried at the end).
         prompts = self._work_prompts(models)
-        self.assertTrue(any("is polish, and the core promises P1 do not hold yet" in one
+        self.assertTrue(any("is polish, and the core cards The notes are not done yet" in one
                             for one in prompts))
-        # Both agents are shown the promise; the reviewer is told to try it.
+        # Both agents are shown the promise.
         reviews = [one for one in models.asked if "You review a work agent" in one.system]
         self.assertTrue(any("CORE PROMISES" in _json.dumps(one.messages, default=str)
                             for one in reviews))

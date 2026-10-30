@@ -68,8 +68,10 @@ class CodexIsFoundWhenInstalledLaterTests(unittest.TestCase):
     def test_the_provider_finds_it(self) -> None:
         from personalized_agent.models.providers import codex_provider
         provider = codex_provider.CodexProvider.__new__(codex_provider.CodexProvider)
-        with mock.patch.object(programs, "find_program",
-                               lambda name, extra=(): "D:/later/codex.cmd" if name == "codex" else None):
+        with mock.patch.object(programs, "find_program_where",
+                               lambda name, extra=(), fresh=False: (
+                                   ("D:/later/codex.cmd", "the PATH as the system has it now")
+                                   if name == "codex" else (None, ""))):
             self.assertEqual(provider.executable(), "D:/later/codex.cmd")
 
 

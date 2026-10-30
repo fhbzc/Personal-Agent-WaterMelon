@@ -153,11 +153,54 @@ def sign_and_notarize(app: Path) -> None:
         "--entitlements", str(entitlements),
         "--sign", identity, str(app),
     ])
+    run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)])
     archive = dist_dir(TARGET) / "notarize.zip"
     run(["ditto", "-c", "-k", "--keepParent", str(app), str(archive)])
-    run(["xcrun", "notarytool", "submit", str(archive), "--keychain-profile", profile, "--wait"])
+    notarize(archive)
     run(["xcrun", "stapler", "staple", str(app)])
     archive.unlink(missing_ok=True)
+
+
+def _notary_args() -> list:
+    """How notarytool finds the credentials: the profile stored, and the
+    keychain it was stored in when that is not the user's own (CI's)."""
+    args = ["--keychain-profile", os.environ["MACOS_NOTARY_PROFILE"]]
+    keychain = os.environ.get("MACOS_NOTARY_KEYCHAIN")
+    return args + (["--keychain", keychain] if keychain else [])
+
+
+def notarize(path: Path) -> None:
+    """`path` sent to Apple's notary service and waited for. Not accepted,
+    what Apple found is printed - each file it refused, and why - and the
+    build fails: a release that would not open without a warning is not
+    made."""
+    import json
+    import subprocess
+    done = subprocess.run(
+        ["xcrun", "notarytool", "submit", str(path), *_notary_args(), "--wait",
+         "--output-format", "json"], capture_output=True, text=True)
+    print(done.stdout)
+    print(done.stderr, file=sys.stderr)
+    try:
+        said = json.loads(done.stdout or "{}")
+    except ValueError:
+        said = {}
+    if str(said.get("status") or "") != "Accepted":
+        if said.get("id"):
+            subprocess.run(["xcrun", "notarytool", "log", str(said["id"]), *_notary_args()])
+        raise SystemExit(f"notarization of {path.name} was not accepted: "
+                         f"{said.get('status') or done.returncode}")
+
+
+def notarized(path: Path) -> bool:
+    """The .dmg or .pkg notarized and its ticket stapled, when Apple's
+    Developer ID signs it (MACOS_NOTARY_PROFILE set): one opened from a
+    download is not stopped by Gatekeeper, with the network off too."""
+    if not os.environ.get("MACOS_NOTARY_PROFILE") or not path.exists():
+        return False
+    notarize(path)
+    run(["xcrun", "stapler", "staple", str(path)])
+    return True
 
 
 def build_dmg(app: Path) -> Path | None:
@@ -176,6 +219,10 @@ def build_dmg(app: Path) -> Path | None:
     ])
     if not dmg.exists():
         return None
+    identity = os.environ.get("MACOS_SIGN_IDENTITY")
+    if identity and os.environ.get("MACOS_NOTARY_PROFILE"):
+        run(["codesign", "--force", "--timestamp", "--sign", identity, str(dmg)])
+        notarized(dmg)
     published = publish_file(dmg, dist_dir(TARGET) / f"{FILE_NAME}.dmg")
     remove_tree(staging, description="staging directory")
     return published
@@ -248,10 +295,12 @@ def build_pkg(app: Path) -> Path | None:
                "--package-path", str(work), str(product)]
     identity = os.environ.get("MACOS_INSTALLER_IDENTITY")
     if identity:
-        command[1:1] = ["--sign", identity]
+        command[1:1] = ["--sign", identity, "--timestamp"]
     run(command)
     if not product.exists():
         return None
+    if identity:
+        notarized(product)
     published = publish_file(product, dist_dir(TARGET) / f"{FILE_NAME}.pkg")
     remove_tree(staging, description="staging directory")
     return published

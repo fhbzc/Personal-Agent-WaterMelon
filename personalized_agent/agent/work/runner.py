@@ -279,8 +279,13 @@ FULL_REVIEW_FILES_LISTED = 80
 STEP_BACK_AT = 2
 STALLS_TO_STOP = 3
 
-#: Rounds of fixes after the final review.
+#: ROUNDS OF FIXES AFTER THE FINAL REVIEW, COUNTED BY WHAT THEY MOVED (the
+#: user, 2026-10-29): with the core promises tried only at the end, what is
+#: found there is fixed there - a run stops after this many rounds of fixes
+#: in a row that left as many promises broken and as much to fix as before,
+#: and after FIX_ROUNDS_MOST in all.
 FIX_ROUNDS = 3
+FIX_ROUNDS_MOST = 10
 
 #: Cards given their criteria at the start of one round.
 CRITERIA_PER_ROUND = 3
@@ -324,7 +329,7 @@ a promise.
 TIERS: a "core" deliverable is one without which a promise cannot hold;
 "supporting" is what core ones need (setup, data, tests); "polish" is the
 rest - looks, extras, convenience. No polish is worked on until every core
-promise holds. Each deliverable names the promises it serves."""
+card is done. Each deliverable names the promises it serves."""
 
 TIERS = ("core", "supporting", "polish")
 
@@ -995,6 +1000,9 @@ ONLY this JSON object:
 {"goal": "what is true when the whole work is done - one or two sentences",
  "scope": ["what this work covers"],
  "out_of_scope": ["what it leaves alone"],
+ "already_there": [{"what": "a part of the work that already exists and does what it should, as far as you can tell",
+                    "where": "the files or folders it is in",
+                    "seen": "what you opened or ran that shows it"}],
  "core_promises": [{"id": "P1",
                     "promise": "what the user gets - a behaviour they would try themselves",
                     "from_words": "the user's own words it comes from",
@@ -1010,6 +1018,14 @@ ONLY this JSON object:
  "packages": ["the Python packages, by their PyPI names, the work will import - as far as can be told now; [] when none"]}
 
 CORE_PROMISES_RULES
+
+PLAN ONLY WHAT REMAINS: start from what the user handed over and what is
+already in the work's folders. What already exists and does what it should
+goes in "already_there" - where it is, and what showed it - and is used as
+it is: no deliverable makes it again, and none checks it again on its own -
+it is tried with the rest of the work at the end. The deliverables are the
+work that remains - what is missing, broken or not yet as the goal needs
+it - however little that is: a work almost done is a short plan.
 
 Once approved the goal is locked. Deliverables can be added later, by an
 amendment the reviewer approves - so plan the near ones in detail and leave
@@ -1086,9 +1102,10 @@ WORK_ROUND = """WORK ONE ROUND.
 
 Take ONE card - an open deliverable or part - and move it as far as you can:
 read, write, run, check. Meet its criteria; follow its approach notes.
-CORE FIRST: while a core promise does not hold, take a core card - or the
+CORE FIRST: while a core card is not done, take a core card - or the
 supporting work a core card needs. A polish card waits until every core
-promise holds; one taken before is sent back unreviewed. Then
+card is done; one taken before is sent back unreviewed. What the contract
+lists as already there is used as it is, not made again. Then
 stop calling tools and return ONLY this JSON object:
 {"card": "the id of the card you worked on",
  "kind": "plan|execution|evaluation|adjustment|delivery",
@@ -1536,7 +1553,10 @@ REVIEW_CONTRACT = """REVIEW THIS CONTRACT, drafted by the work agent before any 
 {contract}
 
 Is the goal what the user asked? Is the scope right, and are these the
-deliverables they would name? ARE THE CORE PROMISES EVERY REQUIREMENT IN THE
+deliverables they would name? DOES IT PLAN ONLY WHAT REMAINS? A deliverable
+that makes again what already exists - listed in "already_there", or in the
+work's folders as you find them - is sent back; so is something listed as
+already there that does not do what it should. ARE THE CORE PROMISES EVERY REQUIREMENT IN THE
 USER'S WORDS - none missing, none invented - each tried under a real
 condition, with the failures that matter to the user (money, limits, errors
 from other services, many users at once)? Is each deliverable's tier right,
@@ -1575,7 +1595,7 @@ above and from what they asked - each with what it rests on. Three kinds:
 charges nothing): it joins that core promise as a failure it must survive;
 "needed" - without it what they asked would not serve them as they work: a
 supporting deliverable, done with the core; "nice" - it would serve them
-better: polish, done once every core promise holds. None is a core promise
+better: polish, done once every core card is done. None is a core promise
 of its own - those are the user's words alone. Each is shown to the user as
 added, not theirs, and they can take it out. Only what bears on this work;
 none at all is a fine answer."""
@@ -1615,17 +1635,12 @@ REVIEW_ROUND = """REVIEW THIS ROUND. The work agent's summary - what it claims, 
 its evidence:
 {summary}
 {hints}
-FIRST, THE CORE PROMISES in the contract: try each one the way the user
-would - under its real condition and its failure cases. Run it: start what
-was built and use it, with real data and the real services where the work
-has them. Reading the code or the agent's claims is not trying it. Then open
-the evidence and check the claims against the card's criteria and the
-contract. Return ONLY this JSON object:
-{{"promises": [{{"id": "P1", "holds": "yes|no|untried|needs_user",
-                 "tried": "what you ran, as the user would",
-                 "failed": "what went wrong, when it did",
-                 "user_does": "for needs_user: what the user must do to check it"}}],
-  "for_user": [{{"do": "what the user must check or do", "why": "why the work cannot do it itself, and what you tried instead", "promise": "P1, or empty"}}],
+THIS CARD ONLY: open the evidence and check the claims against the card's
+criteria and the contract - run what this card built where its criteria
+call for running it, and no more. The work as a whole - every core promise
+under its real condition - is tried once, at the end: by a tester who runs
+it from scratch, and the final full review. Return ONLY this JSON object:
+{{"for_user": [{{"do": "what the user must check or do", "why": "why the work cannot do it itself, and what you tried instead", "promise": "P1, or empty"}}],
   "findings": [{{"say": "...", "type": "mainline|blocking|queued",
                  "because": ["ids, or own judgement"],
                  "blocks_because": "for blocking: why it stops the goal",
@@ -1653,21 +1668,17 @@ contract. Return ONLY this JSON object:
     added, not theirs; none is a core promise of its own.
   - "blocked_confirmed": the card really cannot move without what is
     missing.
-  - "promises": every core promise, each as you found it THIS review -
-    "untried" only when it cannot be tried yet (nothing to run). A promise
-    that does not hold is a "mainline" or "blocking" finding too.
-    {needs_user}
   - {for_user}
-  - "full_review": YOURS TO ASK FOR. "now": true at a MILESTONE - a
-    deliverable done, a core promise that now holds, the work's shape
-    changed (a large change, a part joined to the rest), a point worth
-    keeping to come back to - or when you doubt that work done before still
-    holds. It checks everything done since the last checkpoint, tries every
-    core promise again, and only a work that passes it is kept as a
-    version - the run cut off goes back to the last one. Not every round:
-    what the application sees is above; the call is yours.
-  - "complete": the whole goal is met - every deliverable's criteria, and
-    every core promise holds when you tried it."""
+  - "card_done": the card meets its criteria. A card done is kept as a
+    version of the work.
+  - "full_review": YOURS TO ASK FOR, and only with "card_done": "now": true
+    when the work's shape changed (a large change, a part joined to the
+    rest) or you doubt that work done before still holds. It checks
+    everything done since the last full review and tries every core promise
+    again. Most cards need none: the work is fully reviewed at the end in
+    any case - do not ask for one to see whether it is done.
+  - "complete": every deliverable is done to its criteria. The core promises
+    are then tried for real, once, at the end."""
 
 #: WHAT THE APPLICATION SEES of where the work stands, given the reviewer
 #: with each round: the milestones it can tell from the record. Hints - the
@@ -1732,6 +1743,25 @@ Return ONLY this JSON object:
   "reopen": false,
   "findings": [{{"say": "...", "type": "mainline|blocking",
                  "because": ["ids, or own judgement"]}}]}}"""
+
+#: THE FINAL FULL REVIEW ON THE TESTER'S RUN (the user, 2026-10-29): the
+#: whole work is run from scratch once, at the end, by the tester.
+TESTED_AT_THE_END = """THE CORE PROMISES WERE JUST TRIED FOR REAL by a tester who ran the work
+from scratch, as the user would, and never saw how it was built. What it
+found:
+{tested}
+Take those as tried: do NOT run the whole work again. Check each card
+against its criteria on what is there; run again only a part you have
+reason to doubt, or one the tester did not try."""
+
+#: The quality check, after the tester: its run stands; not made again.
+TESTED_FOR_QUALITY = """
+
+A TESTER RAN THE WORK FROM SCRATCH JUST NOW, as the user would - what it
+found:
+{tested}
+Do not run the whole work again: use what it found, and run only what you
+doubt or what it did not try."""
 
 #: After the cards, each checked in a call of its own (side by side): their
 #: answers, and the core promises tried and concluded upon.
@@ -2197,6 +2227,18 @@ def tier_of(said: Any) -> str:
     return said if said in TIERS else "supporting"
 
 
+def already_there_of(said: Any) -> List[Dict[str, str]]:
+    """What the contract found already there (the user, 2026-10-29): each
+    with where it is and what showed it - used as it is, not planned
+    again."""
+    kept = []
+    for one in said if isinstance(said, list) else []:
+        if isinstance(one, dict) and str(one.get("what") or "").strip():
+            kept.append({key: " ".join(str(one.get(key) or "").split())[:600]
+                         for key in ("what", "where", "seen")})
+    return kept[:30]
+
+
 def contract_lines(contract: Dict[str, Any]) -> List[str]:
     """The contract as its clauses, a line each - what an amendment is
     compared by: the goal, each line of scope, each deliverable, and the
@@ -2208,6 +2250,8 @@ def contract_lines(contract: Dict[str, Any]) -> List[str]:
     lines = [f"GOAL: {one_line(contract.get('goal'))}"] if contract.get("goal") else []
     lines += [f"IN SCOPE: {one_line(one)}" for one in contract.get("scope") or []]
     lines += [f"OUT OF SCOPE: {one_line(one)}" for one in contract.get("out_of_scope") or []]
+    lines += [f"ALREADY THERE: {one_line(one.get('what'))}"
+              for one in contract.get("already_there") or [] if isinstance(one, dict)]
     lines += [f"CORE PROMISE {one.get('id', '')}: {one_line(one.get('promise'))}"
               for one in contract.get("promises") or [] if isinstance(one, dict)]
     lines += [f"DELIVERABLE: {one_line(one.get('title'))} - {one_line(one.get('statement'))}"
@@ -2274,6 +2318,8 @@ def contract_shown(contract: Dict[str, Any], cards: Dict[str, Dict[str, Any]],
     return {"goal": contract.get("goal", ""), "scope": list(contract.get("scope") or []),
             "promises": promises, "for_user": list(plan.get("for_user") or []),
             "out_of_scope": list(contract.get("out_of_scope") or []),
+            "already_there": [one for one in contract.get("already_there") or []
+                              if isinstance(one, dict)],
             "instructions": list(contract.get("instructions") or []),
             "deliverables": listed,
             # WHAT WAS ADDED, NOT THE USER'S WORDS - by whom and on what; the
@@ -7543,6 +7589,12 @@ class Run:
             lines.append("IN SCOPE: " + "; ".join(contract["scope"]))
         if contract.get("out_of_scope"):
             lines.append("OUT OF SCOPE: " + "; ".join(contract["out_of_scope"]))
+        if contract.get("already_there"):
+            lines.append("ALREADY THERE - used as it is, not made again; tried with the rest "
+                         "at the end:")
+            lines += [f"  - {one['what']}" + (f" ({one['where']})" if one.get("where") else "")
+                      + (f" - seen by: {one['seen']}" if for_reviewer and one.get("seen") else "")
+                      for one in contract["already_there"] if isinstance(one, dict)]
         words = self._words_text()
         if words:
             lines.append(words)
@@ -7561,7 +7613,7 @@ class Run:
                                  f"{'; serves ' + one['serves'] if one.get('serves') else ''})")
                 else:
                     lines.append(f"    - {_plain(one['text'])}"
-                                 + (" (polish: after the core promises hold)"
+                                 + (" (polish: after the core cards are done)"
                                     if one.get("serves") == "polish" else ""))
             if checked.get("approach"):
                 approach = checked["approach"] if for_reviewer else _plain(checked["approach"])
@@ -8117,9 +8169,11 @@ class Run:
             listed.append({"card": card["id"], "title": card["title"],
                            "statement": card["statement"]})
         self._pick_references(list(refs.values()), review)
+        there = already_there_of(draft.get("already_there"))
         contract = {"goal": goal,
                     "scope": [str(one) for one in draft.get("scope") or []][:12],
                     "out_of_scope": [str(one) for one in draft.get("out_of_scope") or []][:12],
+                    **({"already_there": there} if there else {}),
                     **({"promises": promises} if promises else {}),
                     "deliverables": listed, "approved_at": _now()}
         # Words the user continued with before there was a contract: in it,
@@ -8222,6 +8276,15 @@ class Run:
 
     def _promises(self) -> List[Dict[str, Any]]:
         return list((self.plan.get("contract") or {}).get("promises") or [])
+
+    def _core_left(self) -> List[str]:
+        """The core deliverables not done yet, by title: what holds back
+        polish and the work's being complete - the core promises themselves
+        are tried at the end (`_final`). A part queued under one is the
+        reviewer's to weigh, as it was."""
+        root, cards = self._tree()
+        return [one["title"] for one in self._open(cards, root)
+                if one.get("parent_id") == root["id"] and self._tier_of(one, cards) == "core"]
 
     def _unmet(self) -> List[str]:
         """The core promises that did not hold - or were not tried - when the
@@ -8846,24 +8909,42 @@ class Run:
                    progress=judged.get("progress"),
                    findings=[f.get("say") for f in judged.get("findings") or []][:6])
         progress = str(judged.get("progress") or "").lower()
-        # THE FULL REVIEW, AT A MILESTONE THE REVIEWER SEES (no fixed
-        # interval): everything since the last checkpoint - and, passed,
-        # the next checkpoint, the only versions a run keeps of its rounds.
+        # A CARD DONE IS A VERSION (the user, 2026-10-29) - and the only
+        # place a full review is made before the end, as the reviewer asks:
+        # everything since the last one; passed, the version is its, and
+        # the next checkpoint. Asked without a card done, none is made; the
+        # work is fully reviewed at the end in any case (`_final`).
+        done_now = _yes(judged.get("card_done")) and card["id"] != root["id"]
         full: Optional[Dict[str, Any]] = None
-        if _yes(asked.get("now")) and self._going():
+        if done_now and _yes(asked.get("now")) and self._going():
             full = self._full_review(review, number, card, message,
                                      str(asked.get("why") or ""),
                                      newly_holding=holding_before - set(self._unmet()),
                                      progress=progress)
-        # A RESUME POINT after a round that advanced - not after one a full
-        # review just saved as a version (the user, 2026-10-24).
-        if progress == "advanced" and not (full is not None and full.get("passed")):
+        elif _yes(asked.get("now")):
+            self._note("full review not made", round=number,
+                       why="asked without a card done: a full review is made at a version")
+        # Checked by this round's review of it, not by a full review: the
+        # way back to each card, between the full reviews - not one the full
+        # review just opened again.
+        kept: Optional[Dict[str, Any]] = None
+        if done_now and not (full is not None and (
+                full.get("passed") or card.get("title") in (full.get("reopened") or []))):
+            kept = self._version("card", f"Round {number}: {card.get('title', '')} done",
+                                 message=message, round=number,
+                                 progress=progress or "advanced", card=card["id"])
+        # A RESUME POINT after a round that advanced - not after one just
+        # saved as a version (the user, 2026-10-24).
+        if progress == "advanced" and kept is None \
+                and not (full is not None and full.get("passed")):
             self._resume_point(number, card)
-        unmet = self._unmet()
-        if judged.get("complete") and unmet:
+        # COMPLETE WHEN THE CORE CARDS ARE DONE: the core promises are tried
+        # for real at the end, once (`_final`), not in each round.
+        left = self._core_left()
+        if judged.get("complete") and left:
             judged["complete"] = False
             self._note("not complete", round=number,
-                       why=f"the core promises {', '.join(unmet)} do not hold yet")
+                       why=f"core cards not done yet: {', '.join(left[:6])}")
         if full is not None and not full.get("passed"):
             judged["complete"] = False
         if full is not None and _yes(full.get("stop")):
@@ -9010,9 +9091,8 @@ class Run:
             lines.append("  - the work agent says the whole goal is met")
         elif not summary.get("open") and card.get("title"):
             lines.append(f"  - the work agent says nothing is left on {card['title']}")
-        unmet = self._unmet()
-        lines.append("  - core promises that did not hold before this round: "
-                     + (", ".join(unmet) if unmet else "none"))
+        left = self._core_left()
+        lines.append("  - core cards not done yet: " + ("; ".join(left[:8]) if left else "none"))
         root, cards = self._tree()
         touched = {str(one.get("card_id") or "") for one in rounds}
         done = [one["title"] for one in cards.values()
@@ -9025,7 +9105,8 @@ class Run:
     def _full_review(self, review: "Review", number: int, card: Dict[str, Any],
                      message: Dict[str, Any], why: str,
                      newly_holding: Optional[set] = None,
-                     progress: str = "") -> Dict[str, Any]:
+                     progress: str = "", final: Optional[Dict[str, Any]] = None
+                     ) -> Dict[str, Any]:
         """THE FULL REVIEW the reviewer asked for: every card touched since
         the last checkpoint against its criteria, every core promise tried
         again, done cards that no longer hold opened again - in one answer
@@ -9033,6 +9114,12 @@ class Run:
         card and one that concludes. Passed, it is the next checkpoint."""
         since = self._checkpoint()
         rounds = self._rounds_since()
+        again = self.plan.get("final_full_round") if final is not None else None
+        if again is not None:
+            # The end reached again after fixes: what was done since the last.
+            rounds = [one for one in self.plan.get("rounds") or []
+                      if isinstance(one, dict) and int(one.get("n") or 0) > int(again)]
+            since = dict(since, label=f"the final full review after round {again}")
         root, cards = self._tree()
         touched: List[str] = []
         for one in rounds:
@@ -9074,6 +9161,12 @@ class Run:
                                "criteria": [c.get("text") for c in checked.get("criteria") or []
                                             if isinstance(c, dict)]}, ensure_ascii=False)
 
+        if final is not None:
+            # THE WHOLE WORK RUN ONCE: the tester's run stands for the
+            # promises - none is run again whole.
+            head["why"] = head["why"] + "\n\n" + TESTED_AT_THE_END.format(
+                tested=json.dumps(final, ensure_ascii=False)[:8000] if final
+                else "(the contract makes no core promise)")
         if len(touched) <= FULL_REVIEW_CARDS_AT_ONCE:
             said = review.ask(FULL_REVIEW_ASK.format(**head, what=FULL_REVIEW_WHOLE.format()),
                               rounds=FULL_REVIEW_TOOL_ROUNDS)
@@ -9110,7 +9203,16 @@ class Run:
                                          if isinstance(one, dict)],
                         findings=findings + [f for f in said.get("findings") or []
                                              if isinstance(f, dict)])
-        self._judge_promises(said, number)
+        if final is None:
+            self._judge_promises(said, number)
+        else:
+            # At the end the tester's run stands for each promise it tried:
+            # the review's word only on one the tester did not.
+            tried = {str(one.get("id") or "") for one in final.get("promises") or []
+                     if isinstance(one, dict)}
+            self._judge_promises({"promises": [
+                one for one in said.get("promises") or []
+                if isinstance(one, dict) and str(one.get("id") or "") not in tried]}, number)
         reopened = []
         _root, cards = self._tree()
         for one in said.get("reopen") or []:
@@ -9141,9 +9243,13 @@ class Run:
             "newly_holding": sorted(newly_holding or []), "at": _now()})
         self._note("full review", round=number, passed=passed, cards=len(touched),
                    reopened=reopened, findings=[f.get("say") for f in findings][:6])
-        if passed:
-            # KEY POINT: a checkpoint - the only version a run keeps of its
-            # rounds: everything since the last one checked and holding.
+        if passed and final is not None:
+            # The final full review passed: no version of its own - the run's
+            # last one, the work done, comes next - and the checkpoint stays.
+            pass
+        elif passed:
+            # KEY POINT: a checkpoint - everything since the last one checked
+            # and holding.
             self._set_checkpoint(f"the full review after round {number}", None, number)
             made = self._version("full review",
                                  f"Round {number} (full review): {card.get('title', '')}"
@@ -9152,7 +9258,11 @@ class Run:
                                  progress=progress or "checked", full_review=True)
             self._set_checkpoint(f"the full review after round {number}", made, number)
         self.owner.save(self)
-        return {"passed": passed, "stop": said.get("stop"), "reopened": reopened}
+        if final is not None:
+            # A FIX AND THEN THE END AGAIN: only what was done since is checked.
+            self.plan["final_full_round"] = number
+        return {"passed": passed, "stop": said.get("stop"), "reopened": reopened,
+                "findings": findings}
 
     def _after_stall(self, number: int) -> str:
         self.plan["stalls"] = int(self.plan.get("stalls") or 0) + 1
@@ -9196,7 +9306,7 @@ class Run:
             problems.append(f"\"card\" must be the id of a card in the tree, not {name!r}")
         if blocked and not str(blocked.get("missing") or "").strip():
             problems.append("\"blocked\" must say what is missing")
-        unmet = self._unmet()
+        unmet = self._core_left()
         if unmet and (name in cards or name in made):
             if name in cards:
                 tier = self._tier_of(cards[name], cards)
@@ -9206,8 +9316,8 @@ class Run:
                 tier = (tier_of(entry["tier"]) if entry.get("tier") else
                         self._tier_of(cards.get(str(entry.get("parent") or "")), cards))
             if tier == "polish":
-                problems.append(f"card {name} is polish, and the core promises "
-                                f"{', '.join(unmet)} do not hold yet: work on a core "
+                problems.append(f"card {name} is polish, and the core cards "
+                                f"{'; '.join(unmet[:6])} are not done yet: work on a core "
                                 "card - or the supporting work one needs - first")
         claims = [one for one in summary.get("claims") or [] if isinstance(one, dict)]
         if not claims and not blocked:
@@ -9291,7 +9401,7 @@ class Run:
 
     def _apply_review(self, card: Dict[str, Any], number: int, summary: Dict[str, Any],
                       judged: Dict[str, Any], root: Dict[str, Any]) -> None:
-        if judged.get("card_done") and card["id"] != root["id"]:
+        if _yes(judged.get("card_done")) and card["id"] != root["id"]:
             self.store.update_card(card["id"], {"status": "done",
                                                 "status_why": "the reviewer accepted it"})
         elif card["id"] != root["id"] and card["status"] == "open":
@@ -9516,6 +9626,15 @@ class Run:
                                "text": root.get("statement", ""),
                                "tasks": self.project_tasks},
                         self._reviewer_context(None))
+        # THE FINAL FULL REVIEW (the user, 2026-10-29): every card against
+        # its criteria, on the tester's run - the whole work run once.
+        whole = self._full_review(
+            review, int(self.plan.get("round") or 0), root, commit_message(
+                None, "The final full review: every card checked, every core promise tried",
+                []), "the final full review: the last round's review found the work done",
+            progress="checked", final=tested or {})
+        if not self._going(work=False):
+            return "clean"
         judged = review.ask(REVIEW_FINAL.format(files=("\n".join(
             f"  {one}" for one in files[:200]) or "  (no files)")
             + self._environments_note()
@@ -9528,6 +9647,16 @@ class Run:
                   if isinstance(one, dict)]
         to_fix = [one for one in found
                   if str(one.get("severity") or "").lower() in ("high", "medium")]
+        # What the final full review found: each card it opened again, and
+        # what stops the goal or is a gap in a card's own work.
+        to_fix += [{"say": f"{one}: opened again by the final full review",
+                    "severity": "high", "by": "full review"}
+                   for one in whole.get("reopened") or []]
+        to_fix += [{"say": f.get("say", ""), "severity": "high" if f.get("type") == "blocking"
+                    else "medium", "by": "full review"}
+                   for f in whole.get("findings") or []
+                   if isinstance(f, dict) and f.get("type") in ("blocking", "mainline")
+                   and f.get("say")]
         # NOT DONE UNTIL EACH CORE PROMISE WAS TRIED AND HELD: one that did
         # not hold, or that nobody could try - the tester unable to open the
         # work - is a finding to fix, whatever the review found besides. It
@@ -9545,7 +9674,10 @@ class Run:
                         + (f" ({state['tried']})" if state.get("tried") else "")
                         + ": make it possible to try, and try it"),
                 "severity": "high", "by": "promise", "promise": one})
-        self.plan["final_review"] = dict(judged, to_fix=to_fix, at=_now())
+        earlier = self.plan.get("final_review") if isinstance(
+            self.plan.get("final_review"), dict) else None
+        unmet_now = self._unmet()
+        self.plan["final_review"] = dict(judged, to_fix=to_fix, unmet=unmet_now, at=_now())
         self._for_user(judged, "the final review")
         self._note("final review", findings=len(judged.get("findings") or []),
                    to_fix=len(to_fix))
@@ -9553,7 +9685,14 @@ class Run:
         # checkpoint - the run done - not one of its own.
         if not to_fix:
             return "clean"
-        if int(self.plan.get("fix_rounds") or 0) >= FIX_ROUNDS:
+        done = int(self.plan.get("fix_rounds") or 0)
+        if done and earlier is not None:
+            # MOVED: fewer core promises broken - or as few, and less to fix.
+            before = len(earlier.get("unmet") or []), len(earlier.get("to_fix") or [])
+            moved = len(unmet_now) < before[0] or (
+                len(unmet_now) <= before[0] and len(to_fix) < before[1])
+            self.plan["fix_stalls"] = 0 if moved else int(self.plan.get("fix_stalls") or 0) + 1
+        if int(self.plan.get("fix_stalls") or 0) >= FIX_ROUNDS or done >= FIX_ROUNDS_MOST:
             # NOT DONE WHILE A CORE PROMISE IS BROKEN: the fixes ran out with
             # the tester or the reviewer still finding one that does not
             # hold - the run ends unfinished, saying which, with its to-do.
@@ -9562,7 +9701,7 @@ class Run:
                 status = self.plan.get("promise_status") or {}
                 untried = [one for one in unmet
                            if (status.get(one) or {}).get("holds") != "no"]
-                self.stop_reason = (f"after {FIX_ROUNDS} rounds of fixes the core promises "
+                self.stop_reason = (f"after {done} rounds of fixes the core promises "
                                     f"{', '.join(unmet)} still do not hold"
                                     + (f" - {', '.join(untried)} never tried for real"
                                        if untried else ""))
@@ -9620,6 +9759,8 @@ class Run:
             return "fix", []
 
         environments = self._environments_note()
+        tested = self.plan.get("black_box") if isinstance(self.plan.get("black_box"), dict) \
+            else {}
 
         def check(kind: str, system: str) -> Callable[[], Dict[str, Any]]:
             # SIDE BY SIDE (the user, 2026-10-28): neither waits for the other.
@@ -9634,6 +9775,9 @@ class Run:
                     files=("\n".join(f"  {one}" for one in files[:200]) or "  (no files)")
                     + environments
                     + ("\n\n" + self._handed_text() if self._handed_text() else ""))
+                    + (TESTED_FOR_QUALITY.format(tested=json.dumps(
+                        {key: tested.get(key) for key in ("promises", "findings")},
+                        ensure_ascii=False)[:8000]) if kind == "quality" and tested else "")
                     + beside}],
                 self._testing_tools(), writing=False, work=False, who=kind)
         answers = self._at_once([check(kind, system) for kind, system in kinds])
@@ -9683,6 +9827,20 @@ class Run:
         promises = self._promises()
         if not promises:
             return {}
+        # AT THE END AGAIN, AFTER FIXES: only the promises that did not hold
+        # are tried again - those that did stand as tried (the user,
+        # 2026-10-29: the whole work run once).
+        earlier = self.plan.get("black_box") if isinstance(self.plan.get("black_box"), dict) \
+            else None
+        if earlier is not None:
+            # By what the tester itself found: a review's word between does
+            # not stand in for its run.
+            held = {str(one.get("id") or "") for one in earlier.get("promises") or []
+                    if isinstance(one, dict)
+                    and str(one.get("holds") or "") in ("yes", "needs_user")}
+            promises = [one for one in promises if one["id"] not in held]
+            if not promises:
+                return {"promises": earlier.get("promises")} if earlier.get("promises") else {}
         self._testing_tools()
         self._event("reviewer", "stage", "The tester uses the work as the user would")
         words = "\n".join([self.instruction or "", *self._branch_words()]).strip()
@@ -9702,6 +9860,14 @@ class Run:
         tested = {key: said.get(key) for key in ("promises", "findings") if said.get(key)}
         self._judge_promises(tested, int(self.plan.get("round") or 0))
         self._for_user(said, "the tester")
+        if earlier is not None:
+            # What it found before of the promises not tried again, kept.
+            again = {str(one.get("id") or "") for one in tested.get("promises") or []
+                     if isinstance(one, dict)}
+            tested = dict(tested, promises=[
+                *[one for one in earlier.get("promises") or []
+                  if isinstance(one, dict) and str(one.get("id") or "") not in again],
+                *(tested.get("promises") or [])])
         self.plan["black_box"] = dict(tested, at=_now())
         self._note("tested as the user would",
                    holds=[one.get("id") for one in tested.get("promises") or []

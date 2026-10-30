@@ -359,6 +359,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.2.12](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.12) | 2026-10-29 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.12) |
 | [v0.2.11](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.11) | 2026-10-29 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.11) |
 | [v0.2.10](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.10) | 2026-10-29 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.10) |
 | [v0.2.9](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.9) | 2026-10-28 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.9) |
@@ -430,9 +431,7 @@ for everything the agent learns and makes.
   the installer over it once). The program's own folder cannot be the data
   folder.
 - **Where your API keys are kept.** On Windows, in Windows' own credential
-  store. On macOS (the downloaded app is not signed by an Apple developer,
-  so macOS would ask again after every update) and on Linux without a
-  keyring, they are kept encrypted in the data folder, with the key that
+  store. On macOS and on Linux without a keyring, they are kept encrypted in the data folder, with the key that
   opens them beside them. So keep that folder out of iCloud Drive, Dropbox
   and other synced folders, and don't send it to anyone whole.
 - **One copy starts at sign-in.** If another copy of the program already
@@ -445,22 +444,26 @@ Neither contains the developer **Debugger** tabs; see
 
 ### First start: the "unknown publisher" warning
 
-The builds are **not code-signed**. Signing needs a paid certificate, and
-this is a free, open-source project, so your system will warn once:
+The Windows build is **not code-signed** (that needs a paid Windows
+certificate), so Windows warns once. The macOS build is signed by Apple:
 
 - **Windows.** SmartScreen shows *"Windows protected your PC"*. Click
   **More info → Run anyway**. Some antivirus programs are wary of unsigned
   Python applications; you can check the file as below.
-- **macOS.** *"Personal Agent WaterMelon can't be opened because Apple cannot check
-  it."* Right-click the app (or the `.pkg`) → **Open** → **Open**, or allow it
-  in **System Settings → Privacy & Security**. Then **Settings → Privacy →
+- **macOS.** From v0.2.12 the app, the `.dmg` and the `.pkg` are signed with
+  an Apple Developer ID and notarized by Apple: they open with no warning.
+  (Up to v0.2.11: *"Apple cannot check it"* - right-click the app or the
+  `.pkg` → **Open** → **Open**.) Then **Settings → Privacy →
   macOS permissions** lists what macOS needs you to allow, with a button to
   each; allow **Full Disk Access** first, and macOS will not ask about your
   Desktop, Documents and Downloads folders one by one. Up to v0.2.2 macOS
   forgot these permissions after each update, and the same page shows which
   to allow again. From v0.2.3 the app is signed with the project's own
   certificate, the same for every version, so they stay on after an update;
-  coming to v0.2.3 from an earlier version, allow them once more.
+  coming to v0.2.3 from an earlier version, allow them once more. From
+  v0.2.12 it is signed by Apple's Developer ID: coming from an earlier
+  version, macOS sees a new developer once - allow them one last time, and
+  they stay on through every update after.
 - **Linux.** No warning. For the AppImage, `chmod +x` it first.
 
 Nothing about the program depends on being signed. To know the file is the
@@ -614,6 +617,16 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.2.12](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.12) (2026-10-29, a pre-release)
+
+- **The Mac app is signed by Apple and notarized.** The app, the .dmg and the .pkg carry an Apple Developer ID and Apple's notarization: they open without the "Apple cannot check it" warning, and what macOS allows the agent - Accessibility, Screen Recording, Full Disk Access - stays allowed through every update. Coming from an earlier version, macOS sees a new developer once: allow those permissions one last time (Settings → Privacy → macOS permissions shows which).
+- **Work you hand over almost done is finished, not redone.** The plan starts from what is already there: what exists and works is listed as already there and used as it is, and only what remains is planned. A replication handed over nearly complete had been split into ten parts and nineteen rounds.
+- **Each round's review checks that round's part.** It no longer runs every promise of the whole work again each round. The whole work is run once, at the end, from scratch, by a tester who never saw how it was built - and the final full review and the quality check use that run instead of running it all again.
+- **Each finished part is a version** you can go back to. A full review in the middle is made only when the reviewer has a reason, never just to see whether the work is done.
+- **Fixes at the end go on while they help.** What the end finds is fixed in rounds that continue as long as each one leaves less broken - stopping after three rounds that change nothing, and after ten in all.
+- **Codex: "Refresh models" works like a restart.** Codex is looked for again (on the PATH as Windows has it now), and asked again whether it is signed in - quitting the app is no longer needed when it shows as not connected. Where it was found, whether it is signed in and in how long, and why a call failed are written to the log.
+- **Claude Code: "Check again".** The same for Claude Code and the Claude desktop app - and when the client has been updated, it is asked which model each of its names means, so new models appear in the list. That costs four tiny requests, only when the version changed and you click it; never by itself.
 
 ### [v0.2.11](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.11) (2026-10-29)
 
