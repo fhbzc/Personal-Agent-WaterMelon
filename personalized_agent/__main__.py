@@ -30,6 +30,30 @@ log = logging.getLogger(__name__)
 SCRIPT_RUNNER_FLAG = "--run-guarded-script"
 
 
+def _ended_by_itself(run) -> int:
+    """`run()`, its exception ENDED HERE: the traceback written to stderr, as
+    an interpreter writes it, and exit code 1. Left to rise, an exception
+    reached the windowed application's bootloader, which shows it in a
+    dialog and waits for someone to close it - in a run no one watches, so
+    every guarded script that failed (a refused write, an error in the
+    agent's code) waited out its whole timeout before it was seen to fail,
+    and a failing child held its parent the same (v0.2.14). SystemExit
+    passes as it is: the script chose its own end."""
+    try:
+        run()
+    except SystemExit:
+        raise
+    except BaseException:
+        import traceback
+        traceback.print_exc()
+        try:
+            sys.stderr.flush()
+        except Exception:                      # pragma: no cover - no stderr
+            pass
+        return 1
+    return 0
+
+
 def _run_guarded_script(argv: list[str]) -> int:
     """Script runner mode: install the guard, then execute the script."""
     from .runtime.guard import run_script
@@ -37,8 +61,7 @@ def _run_guarded_script(argv: list[str]) -> int:
     if not argv:
         print(f"usage: {SCRIPT_RUNNER_FLAG} <script.py> [args...]", file=sys.stderr)
         return 2
-    run_script(argv[0], argv[1:])
-    return 0
+    return _ended_by_itself(lambda: run_script(argv[0], argv[1:]))
 
 
 def _run_guarded_child(argv: list[str]) -> int:
@@ -51,9 +74,11 @@ def _run_guarded_child(argv: list[str]) -> int:
         print("usage: --run-guarded-child <mode> <safe> <target> [args...]", file=sys.stderr)
         return 2
     sys.argv = [sys.executable, *argv]
-    install()
-    run_child()
-    return 0
+
+    def run() -> None:
+        install()
+        run_child()
+    return _ended_by_itself(run)
 
 
 def _report_already_running(message: str, headless: bool) -> None:

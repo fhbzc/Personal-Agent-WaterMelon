@@ -175,6 +175,41 @@ class TheCommandIsRewrittenTests(_Rewrite):
         self.assertIn(f'args_in[0] == "{guard.CHILD_FLAG}"', Path(entry.__file__).read_text(
             encoding="utf-8"))
 
+    def test_a_guarded_script_or_child_that_raises_ends_at_once(self) -> None:
+        """v0.2.14: in the installed Windows application an exception reached
+        the windowed bootloader's dialog, and the run waited out its timeout.
+        Now it ends with its traceback on stderr and exit code 1; a script's
+        own exit stands."""
+        import contextlib
+        import io
+        from personalized_agent import __main__ as entry
+        from personalized_agent.runtime import guard as the_guard
+
+        def refused(*_args, **_kwargs):
+            raise the_guard.SandboxViolation("open: outside the agent's own directory")
+        err = io.StringIO()
+        with mock.patch.object(the_guard, "run_script", refused), \
+                contextlib.redirect_stderr(err):
+            self.assertEqual(entry._run_guarded_script(["x.py"]), 1)
+        self.assertIn("SandboxViolation: open: outside the agent's own directory",
+                      err.getvalue())
+        argv = list(sys.argv)
+        try:
+            with mock.patch.object(the_guard, "install", lambda: None), \
+                    mock.patch.object(the_guard, "run_child", refused), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(entry._run_guarded_child(["c", "0", "1"]), 1)
+            with mock.patch.object(the_guard, "install", lambda: None), \
+                    mock.patch.object(the_guard, "run_child", lambda: sys.exit(7)):
+                with self.assertRaises(SystemExit) as ended:
+                    entry._run_guarded_child(["c", "0", "1"])
+                self.assertEqual(ended.exception.code, 7)
+            with mock.patch.object(the_guard, "install", lambda: None), \
+                    mock.patch.object(the_guard, "run_child", lambda: None):
+                self.assertEqual(entry._run_guarded_child(["c", "0", "1"]), 0)
+        finally:
+            sys.argv = argv
+
     def test_no_child_in_a_process_that_may_reach_the_network(self) -> None:
         # The package installer (a list of places) and the chat agent's own
         # code (anywhere): no child, isolated or not - as before.
