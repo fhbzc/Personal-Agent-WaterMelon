@@ -359,7 +359,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
-| [v0.2.13](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.13) | 2026-10-29 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.13) |
+| [v0.2.14](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.14) | 2026-10-29 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.14) |
 | [v0.2.11](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.11) | 2026-10-29 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.11) |
 | [v0.2.10](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.10) | 2026-10-29 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.10) |
 | [v0.2.9](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.9) | 2026-10-28 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.9) |
@@ -450,7 +450,7 @@ certificate), so Windows warns once. The macOS build is signed by Apple:
 - **Windows.** SmartScreen shows *"Windows protected your PC"*. Click
   **More info → Run anyway**. Some antivirus programs are wary of unsigned
   Python applications; you can check the file as below.
-- **macOS.** From v0.2.13 the app, the `.dmg` and the `.pkg` are signed with
+- **macOS.** From v0.2.14 the app, the `.dmg` and the `.pkg` are signed with
   an Apple Developer ID and notarized by Apple: they open with no warning.
   (Up to v0.2.11: *"Apple cannot check it"* - right-click the app or the
   `.pkg` → **Open** → **Open**.) Then **Settings → Privacy →
@@ -461,7 +461,7 @@ certificate), so Windows warns once. The macOS build is signed by Apple:
   to allow again. From v0.2.3 the app is signed with the project's own
   certificate, the same for every version, so they stay on after an update;
   coming to v0.2.3 from an earlier version, allow them once more. From
-  v0.2.13 it is signed by Apple's Developer ID: coming from an earlier
+  v0.2.14 it is signed by Apple's Developer ID: coming from an earlier
   version, macOS sees a new developer once - allow them one last time, and
   they stay on through every update after.
 - **Linux.** No warning. For the AppImage, `chmod +x` it first.
@@ -618,7 +618,7 @@ has it.
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
 
-### [v0.2.13](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.13) (2026-10-29, a pre-release)
+### [v0.2.14](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.14) (2026-10-29, a pre-release)
 
 - **The Mac app is signed by Apple and notarized.** The app, the .dmg and the .pkg carry an Apple Developer ID and Apple's notarization: they open without the "Apple cannot check it" warning, and what macOS allows the agent - Accessibility, Screen Recording, Full Disk Access - stays allowed through every update. Coming from an earlier version, macOS sees a new developer once: allow those permissions one last time (Settings → Privacy → macOS permissions shows which).
 - **The installed app's work runs more than Python.** Commands - R, Stata, Node, git, a build, anything installed on your computer - run in the installed app too, as they did from the source, kept to the work's own folder by your system's sandbox. Python a piece of work starts runs under the same guard as the work itself.

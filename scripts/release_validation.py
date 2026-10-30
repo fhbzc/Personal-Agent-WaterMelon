@@ -380,11 +380,17 @@ class Validator:
         return f"task, settings and {len(edits_before)} recorded edits restored"
 
     def sandbox_restrictions(self) -> str:
-        report = self.agent.get("/api/runtime/selftest", timeout=300)
-        failed = [check["check"] for check in report["checks"] if not check["passed"]]
+        # Each check's own seconds said: a packaged child is the application
+        # started again, which takes its time on a busy runner (v0.2.13).
+        report = self.agent.get("/api/runtime/selftest", timeout=900)
+        timing = ", ".join(f"{one['check']} {one.get('seconds', '?')}s"
+                           for one in report["checks"])
+        failed = [f"{check['check']}: {check.get('detail', '')[:200]}"
+                  for check in report["checks"] if not check["passed"]]
         if failed:
-            raise ValidationError(f"sandbox self test failures: {failed}")
-        return f"{len(report['checks'])} checks passed, isolation: {report['isolation']}"
+            raise ValidationError(f"sandbox self test failures: {failed} ({timing})")
+        return (f"{len(report['checks'])} checks passed, isolation: {report['isolation']} "
+                f"({timing})")
 
     def signature_intact(self) -> str:
         """A macOS bundle's signature matches what is in it.

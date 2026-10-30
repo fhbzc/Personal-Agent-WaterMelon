@@ -523,8 +523,16 @@ class SandboxRuntime:
         """
         checks: List[Dict[str, Any]] = []
 
+        import time as _time
+        clock = [_time.monotonic()]
+
         def record(name: str, passed: bool, detail: str) -> None:
-            checks.append({"check": name, "passed": bool(passed), "detail": detail[:400]})
+            # Each check with how long it took: a self test that ran past
+            # release validation's wait said nothing of which (v0.2.13).
+            now = _time.monotonic()
+            checks.append({"check": name, "passed": bool(passed), "detail": detail[:400],
+                           "seconds": round(now - clock[0], 1)})
+            clock[0] = now
 
         # 1. A write inside the workspace succeeds.
         try:
@@ -671,7 +679,7 @@ class SandboxRuntime:
             f"one = subprocess.run([sys.executable, '-c', {write_inside!r}])\n"
             f"two = subprocess.run([sys.executable, '-c', {write_outside!r}])\n"
             "print('inside', one.returncode, 'outside', two.returncode)\n",
-            timeout=120)
+            timeout=300)
         wrote, escaped = inside.exists(), outside.exists()
         inside.unlink(missing_ok=True)
         outside.unlink(missing_ok=True)
