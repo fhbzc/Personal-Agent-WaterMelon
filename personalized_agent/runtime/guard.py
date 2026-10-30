@@ -589,6 +589,12 @@ CHILD_BOOTSTRAP = (
     "guard.run_child()"
 )
 
+#: A PACKAGED APPLICATION'S CHILD (the user, 2026-10-29): its executable is
+#: the application, which takes no -c - so a Python child is the application
+#: again, given this flag: it installs this guard and runs what the command
+#: asked for (`run_child`), as the bootstrap does for a development one.
+CHILD_FLAG = "--run-guarded-child"
+
 #: Interpreter options passed on to a child as they are: none of them changes
 #: where the interpreter finds its library or what it runs.
 _PASSED_FLAGS = frozenset("BuOqvbR")
@@ -649,10 +655,10 @@ def _children_allowed() -> bool:
     at all (NO_NETWORK_ENV): the work runs the decision was made for. The
     package installer, which reaches the package index, and code the user's
     own chat agent runs, which reaches anything, start no child, as before.
-    A packaged application has no interpreter to rewrite a command for -
-    its executable is the application - so none there either."""
-    return (_os_backend in _ISOLATING_BACKENDS and _offline
-            and not getattr(sys, "frozen", False))
+    In a packaged application too (the user, 2026-10-29): a Python child is
+    the application started again with CHILD_FLAG, and any other program is
+    confined by the system alone, as anywhere."""
+    return _os_backend in _ISOLATING_BACKENDS and _offline
 
 
 #: The backends that confine a process's files AND its network on their
@@ -666,9 +672,10 @@ def _native_allowed() -> bool:
     this process - its writes, its reads of sealed, closed and secret
     folders, and its network - and it may reach no network at all (not
     the package installer, which reaches the package index, and only this
-    guard keeps it there). Never in a packaged application."""
-    return (_os_backend in _NATIVE_BACKENDS and _offline
-            and not getattr(sys, "frozen", False))
+    guard keeps it there). In a packaged application as well (the user,
+    2026-10-29): what confines it is the system, which does not ask how the
+    process was built."""
+    return _os_backend in _NATIVE_BACKENDS and _offline
 
 
 def _no_child_reason() -> str:
@@ -867,6 +874,11 @@ def child_command(program, args, cwd=None) -> list:
         if rest[0].startswith("-") and not ended:
             refuse(f"the option {rest[0]} is not supported in a child here")
         mode, target, rest = "s", rest[0], rest[1:]
+    if getattr(sys, "frozen", False):
+        # The application again, this guard installed by it (CHILD_FLAG):
+        # its interpreter takes no options of its own; -W and -X are not
+        # passed on.
+        return [_interpreter, CHILD_FLAG, mode, "1" if safe else "0", target, *rest]
     bootstrap = CHILD_BOOTSTRAP.format(home=_guard_home)
     # UTF-8 throughout, as the run's own process (runtime/sandbox): -I
     # ignores PYTHONIOENCODING, and a child's output, piped, was written in

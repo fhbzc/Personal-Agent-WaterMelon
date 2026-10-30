@@ -17,7 +17,7 @@ import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..common.observability.tracing import NullTracer
 from ..common.paths import is_frozen
@@ -625,6 +625,14 @@ class SandboxRuntime:
         )
         spawn_target.unlink(missing_ok=True)
 
+        # 8. A CHILD WHERE ONE MAY START - a run that reaches no network,
+        # confined by the operating system - carries the guard: what it
+        # writes in the run's own folder is written, what it writes outside
+        # is refused. In a packaged application the child is the
+        # application again (guard.CHILD_FLAG), so this is checked where
+        # the artifact runs (the user, 2026-10-29).
+        record(*self._child_check())
+
         return {
             "passed": all(check["passed"] for check in checks),
             "isolation": self.isolation,
@@ -635,6 +643,49 @@ class SandboxRuntime:
             "protected_paths": [str(p) for p in self.policy.protected_paths],
             "checks": checks,
         }
+
+    def _child_check(self) -> Tuple[str, bool, str]:
+        """Self test 8: a child started by guarded code reaching no network
+        writes inside and is refused outside - or, where no child may start
+        (no system confinement, the sandbox off), nothing to check."""
+        from dataclasses import replace as replaced
+        name = "child_carries_the_guard"
+        try:
+            backend = isolation.isolation_status().get("backend")
+        except Exception:
+            backend = ""
+        if not self.sandbox_enabled or backend not in ("appcontainer", "seatbelt",
+                                                       "bubblewrap"):
+            return name, True, "no child may start here: nothing to check"
+        offline = SandboxRuntime(replaced(self.policy, network=False),
+                                 platform=self.platform, sandbox_enabled=True,
+                                 default_timeout=self.default_timeout)
+        inside = self.policy.temp_dir / "selftest-child.txt"
+        outside = Path(tempfile.gettempdir()) / "pa-child-escape.txt"
+        inside.unlink(missing_ok=True)
+        outside.unlink(missing_ok=True)
+        write_inside = f"open({str(inside)!r}, 'w').write('x')"
+        write_outside = f"open({str(outside)!r}, 'w').write('x')"
+        done = offline.run_python_code(
+            "import subprocess, sys\n"
+            f"one = subprocess.run([sys.executable, '-c', {write_inside!r}])\n"
+            f"two = subprocess.run([sys.executable, '-c', {write_outside!r}])\n"
+            "print('inside', one.returncode, 'outside', two.returncode)\n",
+            timeout=120)
+        wrote, escaped = inside.exists(), outside.exists()
+        inside.unlink(missing_ok=True)
+        outside.unlink(missing_ok=True)
+        # By each child's own exit: the parent's stderr carries the refused
+        # one's words, which is the point, not a failure of the check.
+        said = (done.stdout or "").split()
+        codes = dict(zip(said[0::2], said[1::2])) if len(said) >= 4 else {}
+        passed = (wrote and not escaped and codes.get("inside") == "0"
+                  and codes.get("outside") not in (None, "0"))
+        return name, passed, (
+            "a child wrote outside the run's folder" if escaped else
+            "a child could not write in the run's folder: "
+            + ((done.stdout or "") + (done.stderr or "")).strip()[-300:] if not wrote else
+            "a child wrote inside and was refused outside")
 
     def describe(self) -> Dict[str, Any]:
         return {

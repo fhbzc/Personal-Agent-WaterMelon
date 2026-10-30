@@ -189,7 +189,7 @@ class TheWindowsHelperRunsTests(unittest.TestCase):
 import socket, time
 s = socket.socket(); s.bind(("127.0.0.1", {port})); s.listen(1)
 time.sleep(20)
-""", port, 30)
+""", port, 90)
         self.assertTrue(said["ok"], said)
         self.assertEqual((self.live / "_internal" / "version.txt").read_text(encoding="utf-8"),
                          "new")

@@ -169,27 +169,71 @@ def _notary_args() -> list:
     return args + (["--keychain", keychain] if keychain else [])
 
 
-def notarize(path: Path) -> None:
-    """`path` sent to Apple's notary service and waited for. Not accepted,
-    what Apple found is printed - each file it refused, and why - and the
-    build fails: a release that would not open without a warning is not
-    made."""
+#: How long a submission is waited for, how often it is asked after, and
+#: how many asks in a row may fail on the network before it is given up.
+NOTARY_WAIT_SECONDS = 3 * 3600
+NOTARY_ASK_EVERY = 30
+NOTARY_FAILED_ASKS = 40
+
+
+def _notarytool(args: list):
+    """`xcrun notarytool <args> --output-format json`: what it said, parsed
+    ({} when it said nothing that reads), and the process."""
     import json
     import subprocess
-    done = subprocess.run(
-        ["xcrun", "notarytool", "submit", str(path), *_notary_args(), "--wait",
-         "--output-format", "json"], capture_output=True, text=True)
-    print(done.stdout)
-    print(done.stderr, file=sys.stderr)
+    done = subprocess.run(["xcrun", "notarytool", *args, *_notary_args(),
+                           "--output-format", "json"], capture_output=True, text=True)
     try:
         said = json.loads(done.stdout or "{}")
     except ValueError:
         said = {}
-    if str(said.get("status") or "") != "Accepted":
+    return (said if isinstance(said, dict) else {}), done
+
+
+def notarize(path: Path) -> None:
+    """`path` sent to Apple's notary service and waited for - PATIENTLY: the
+    submission sent again when the sending failed (three times), then its
+    status asked every NOTARY_ASK_EVERY seconds for up to NOTARY_WAIT_SECONDS,
+    an ask that fails on the network asked again (a submission's first
+    notarization can take an hour, and a moment offline broke the one long
+    wait before). Not accepted, what Apple found is printed - each file it
+    refused, and why - and the build fails: a release that would not open
+    without a warning is not made."""
+    import subprocess
+    import time
+    said, done = {}, None
+    for attempt in range(3):
+        said, done = _notarytool(["submit", str(path)])
         if said.get("id"):
-            subprocess.run(["xcrun", "notarytool", "log", str(said["id"]), *_notary_args()])
+            break
+        print(f"notarytool submit failed (try {attempt + 1}): {done.stderr.strip()[-500:]}",
+              file=sys.stderr)
+        time.sleep(30)
+    submission = str(said.get("id") or "")
+    if not submission:
+        raise SystemExit(f"{path.name} could not be sent for notarization")
+    print(f"{path.name}: submitted for notarization as {submission}", flush=True)
+    started, failed, status = time.monotonic(), 0, ""
+    while time.monotonic() - started < NOTARY_WAIT_SECONDS:
+        time.sleep(NOTARY_ASK_EVERY)
+        said, done = _notarytool(["info", submission])
+        status = str(said.get("status") or "")
+        if not status:
+            failed += 1
+            print(f"{path.name}: status not read ({failed} in a row): "
+                  f"{done.stderr.strip()[-300:]}", file=sys.stderr, flush=True)
+            if failed >= NOTARY_FAILED_ASKS:
+                break
+            continue
+        failed = 0
+        minutes = (time.monotonic() - started) / 60
+        print(f"{path.name}: {status} after {minutes:.0f} min", flush=True)
+        if status != "In Progress":
+            break
+    if status != "Accepted":
+        subprocess.run(["xcrun", "notarytool", "log", submission, *_notary_args()])
         raise SystemExit(f"notarization of {path.name} was not accepted: "
-                         f"{said.get('status') or done.returncode}")
+                         f"{status or 'its status could not be read'}")
 
 
 def notarized(path: Path) -> bool:

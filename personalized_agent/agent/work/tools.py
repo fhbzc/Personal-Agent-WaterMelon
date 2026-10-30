@@ -378,7 +378,9 @@ def commands_allowed(runtime: Any = None) -> bool:
     """Whether commands may run here: only where the operating system
     confines every program on its own - an AppContainer, Seatbelt or
     bubblewrap - as the guard lets them start (runtime/guard.py,
-    `other_program`); never with the sandbox off or in a packaged build."""
+    `other_program`); never with the sandbox off. In a packaged build too
+    (the user, 2026-10-29): the system confines a command however the
+    application was built."""
     if runtime is not None and not getattr(runtime, "sandbox_enabled", True):
         return False
     from ...runtime.isolation import isolation_status
@@ -387,8 +389,7 @@ def commands_allowed(runtime: Any = None) -> bool:
     except Exception:
         return False
     return (bool(status.get("isolated"))
-            and status.get("backend") in ("appcontainer", "seatbelt", "bubblewrap")
-            and not getattr(sys, "frozen", False))
+            and status.get("backend") in ("appcontainer", "seatbelt", "bubblewrap"))
 
 
 def shells() -> Dict[str, str]:

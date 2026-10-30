@@ -41,6 +41,21 @@ def _run_guarded_script(argv: list[str]) -> int:
     return 0
 
 
+def _run_guarded_child(argv: list[str]) -> int:
+    """A packaged application's child of guarded code: the guard
+    installed from the policy its parent passed on, then the script,
+    module or code the command asked for (`guard.run_child`)."""
+    from .runtime.guard import install, run_child
+
+    if len(argv) < 3:
+        print("usage: --run-guarded-child <mode> <safe> <target> [args...]", file=sys.stderr)
+        return 2
+    sys.argv = [sys.executable, *argv]
+    install()
+    run_child()
+    return 0
+
+
 def _report_already_running(message: str, headless: bool) -> None:
     """Tell the user, wherever they can see it (section 110.2)."""
     _report(f"{APP_NAME} is already running", message, headless)
@@ -349,6 +364,10 @@ def main(argv: list[str] | None = None) -> int:
     # Checked before anything else is imported or constructed.
     if args_in and args_in[0] == SCRIPT_RUNNER_FLAG:
         return _run_guarded_script(args_in[1:])
+    # A child of guarded code, in a packaged application (runtime/guard.py,
+    # CHILD_FLAG): the guard installed, then what it was asked to run.
+    if args_in and args_in[0] == "--run-guarded-child":
+        return _run_guarded_child(args_in[1:])
     # The hook a client runs around its own web tools: started for every
     # search and page, so before anything heavy (runtime/web_hook.py).
     if args_in and args_in[0] == "--web-hook":

@@ -54,6 +54,7 @@ from ..base import (
 )
 from ...common.agent_sessions import new_session_id
 from ...common import children
+from ...common.languages import in_english
 # The mechanics of tools through a transcript are shared with Codex; the
 # words the protocol is offered in (TOOL_PROTOCOL below) are this client's own.
 from .local_tools import as_written, describe_tools, leading_tool_call, tool_results
@@ -523,7 +524,8 @@ class ClaudeCodeProvider(ModelProvider):
                 try:
                     answer = self.invoke(ModelRequest(
                         messages=[{"role": "user", "content": DISCOVERY_ASK}],
-                        max_tokens=16, task="model_check"), alias)
+                        max_tokens=16, task="model_check",
+                        language=in_english("the one word")), alias)
                 except Exception as exc:
                     failed[alias] = str(exc)[:200]
                     continue

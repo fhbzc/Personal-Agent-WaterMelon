@@ -130,6 +130,9 @@ class StorageDomainTests(unittest.TestCase):
                 "user_material_not_writable",
                 # Section 31, as amended.
                 "process_creation_blocked",
+                # A child where one may start carries the guard - checked
+                # where the artifact runs, the packaged one too (2026-10-29).
+                "child_carries_the_guard",
             },
         )
         self.assertTrue(report["passed"], report)

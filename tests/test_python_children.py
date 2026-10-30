@@ -151,16 +151,29 @@ class TheCommandIsRewrittenTests(_Rewrite):
         if os.name == "nt":                         # names are one on Windows
             self.assertNotIn("agent_workspace", env)
 
-    def test_no_child_without_os_isolation_or_in_a_packaged_app(self) -> None:
+    def test_no_child_without_os_isolation(self) -> None:
         for backend in ("none", "", "APPCONTAINER-ish"):
             with self.subTest(backend=backend), mock.patch.object(guard, "_os_backend", backend):
                 with self.assertRaises(guard.SandboxViolation) as caught:
                     guard.child_command("python", ["-c", "1"])
                 self.assertIn("no child process can start in this run", str(caught.exception))
                 self.assertIn("pytest.main", str(caught.exception))
-        with mock.patch.object(sys, "frozen", True, create=True):
-            with self.assertRaises(guard.SandboxViolation):
-                guard.child_command("python", ["-c", "1"])
+
+    def test_in_a_packaged_app_the_child_is_the_application_again(self) -> None:
+        """The user, 2026-10-29: children in the installed application too -
+        its executable takes no -c, so it is started again with CHILD_FLAG,
+        which installs the guard and runs what was asked (`run_child`)."""
+        with mock.patch.object(sys, "frozen", True, create=True),                 mock.patch.object(guard, "_interpreter", "C:/Program/App.exe"):
+            command = guard.child_command("python", ["-W", "ignore", "-I", "-c", "print(1)", "a"])
+            self.assertEqual(command, ["C:/Program/App.exe", guard.CHILD_FLAG, "c", "1",
+                                       "print(1)", "a"])
+            # Still refused where nothing confines the child.
+            with mock.patch.object(guard, "_os_backend", "none"):
+                with self.assertRaises(guard.SandboxViolation):
+                    guard.child_command("python", ["-c", "1"])
+        from personalized_agent import __main__ as entry
+        self.assertIn(f'args_in[0] == "{guard.CHILD_FLAG}"', Path(entry.__file__).read_text(
+            encoding="utf-8"))
 
     def test_no_child_in_a_process_that_may_reach_the_network(self) -> None:
         # The package installer (a list of places) and the chat agent's own

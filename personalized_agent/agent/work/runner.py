@@ -786,8 +786,7 @@ def native_code_loads() -> bool:
     except Exception:
         return False
     return (bool(status.get("isolated"))
-            and status.get("backend") in ("appcontainer", "seatbelt", "bubblewrap")
-            and not getattr(sys, "frozen", False))
+            and status.get("backend") in ("appcontainer", "seatbelt", "bubblewrap"))
 
 
 def native_rule() -> str:
