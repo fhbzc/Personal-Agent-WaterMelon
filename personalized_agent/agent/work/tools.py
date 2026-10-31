@@ -102,95 +102,16 @@ from ...runtime.web_guard import (  # noqa: E402
     MOST_QUERY, SECRET_LIKE, URL_IN_TEXT, WebGuard, address_key)
 
 
-def _brave(query: str, key: str, limit: int, timeout: float) -> Dict[str, Any]:
-    """One search of Brave's Search API. A key it does not accept, or a
-    limit reached, said as what it is."""
-    import json as _json
-    with _brave_lock:
-        wait = BRAVE_SPACING - (time.time() - _brave_last[0])
-        if wait > 0:
-            time.sleep(wait)
-        _brave_last[0] = time.time()
-    address = BRAVE_ENDPOINT + "?" + urllib.parse.urlencode(
-        {"q": query, "count": max(1, min(20, int(limit)))})
-    request = urllib.request.Request(address, headers={
-        "Accept": "application/json", "X-Subscription-Token": key, "User-Agent": AGENT})
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            said = _json.loads(response.read(4_000_000).decode("utf-8", errors="replace"))
-    except urllib.error.HTTPError as exc:
-        if exc.code in (401, 403, 422):
-            return {"error": "the Brave Search key was not accepted - the user can check "
-                             "it in Settings > General > Web search", "unauthorized": True}
-        if exc.code == 429:
-            return {"error": "Brave Search's limit for this key is reached for now (too "
-                             "many searches at once, or the month's): no web search for "
-                             "a while - work from what you have"}
-        return {"error": f"could not search: Brave Search answered HTTP {exc.code}"}
-    except Exception as exc:
-        return {"error": f"could not search: {exc}"[:400]}
-    results = []
-    for one in ((said.get("web") or {}).get("results") or [])[:limit]:
-        if not isinstance(one, dict) or not one.get("url"):
-            continue
-        results.append({"title": _page_text(str(one.get("title") or "")),
-                        "url": str(one["url"]),
-                        "snippet": _page_text(str(one.get("description") or ""))})
-    return {"query": query, "results": results, "engine": "Brave Search"}
-
-
-#: THE WEB SEARCH: Brave's Search API, with the user's own key (Settings >
-#: General > Web search), kept in the credential store as the model keys are.
-#: Without one, DuckDuckGo's page - which may ask this computer to prove it
-#: is a person, and is then said to be unavailable.
-BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
-BRAVE_KEY = "brave_search.api_key"
-BRAVE_KEY_ENV = "BRAVE_SEARCH_API_KEY"
-BRAVE_KEY_PAGE = "https://brave.com/search/api/"
-#: Searches kept this far apart: a key's plan allows about one a second.
-BRAVE_SPACING = 1.1
+#: THE WEB SEARCH, for a model with none of its own: DuckDuckGo's page -
+#: which may ask this computer to prove it is a person, and is then said to
+#: be unavailable. A model with search of its own uses that (the user,
+#: 2026-10-30: nothing to set - the Brave Search key is gone).
 DUCKDUCKGO_ENDPOINT = "https://html.duckduckgo.com/html/"
 
-_search_keys: Any = None
-_brave_lock = threading.Lock()
-_brave_last = [0.0]
 
-
-def configure_search(credentials: Any) -> None:
-    """Where the web search's key is kept: the application's credential
-    store (`app.py`)."""
-    global _search_keys
-    _search_keys = credentials
-
-
-def search_key() -> str:
-    """The Brave Search key: the one stored, else one in the environment."""
-    stored = ""
-    if _search_keys is not None:
-        try:
-            stored = _search_keys.get(BRAVE_KEY) or ""
-        except Exception:        # pragma: no cover - as if none
-            stored = ""
-    return stored or os.environ.get(BRAVE_KEY_ENV, "")
-
-
-def search_status() -> Dict[str, Any]:
-    """Which search is used, and whether its key is set - never the key."""
-    stored = bool(_search_keys is not None and _search_keys.get(BRAVE_KEY))
-    from_env = bool(os.environ.get(BRAVE_KEY_ENV))
-    return {"engine": "brave" if (stored or from_env) else "duckduckgo",
-            "key_set": stored, "from_environment": from_env and not stored,
-            "key_page": BRAVE_KEY_PAGE}
-
-
-def search(query: str, limit: int = 8, timeout: float = 20.0,
-           key: Optional[str] = None) -> Dict[str, Any]:
-    """Web results for a query: title, address and snippet each - from
-    Brave's Search API where there is a key (`key`, else the one stored),
-    else from DuckDuckGo's page."""
-    key = key if key is not None else search_key()
-    if key:
-        return _brave(query, key, limit, timeout)
+def search(query: str, limit: int = 8, timeout: float = 20.0) -> Dict[str, Any]:
+    """Web results for a query, from DuckDuckGo's page: title, address and
+    snippet each."""
     address = (DUCKDUCKGO_ENDPOINT + "?" + urllib.parse.urlencode({"q": query}))
     request = urllib.request.Request(address, headers={"User-Agent": AGENT})
     try:
@@ -203,12 +124,9 @@ def search(query: str, limit: int = 8, timeout: float = 20.0,
         # A CHECK FOR A HUMAN, not results: said as what it is. Taken for no
         # results, it read as "nothing exists" - and an agent went on to put
         # addresses together from memory.
-        # And what mends it, for the user reading the log: a key of their own.
         return {"error": "the search engine took this computer for a robot and asked "
                          "for a human check: no web search is possible for now. Say so, "
-                         "and work from what you have and the pages you can open. "
-                         "(No Brave Search key is set: with one - Settings > General > "
-                         "Web search - search goes through Brave's API instead.)"}
+                         "and work from what you have and the pages you can open."}
     results = []
     for match in re.finditer(
             r'(?is)<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>'
@@ -413,7 +331,8 @@ def programs_to_read() -> List[Path]:
     would otherwise not open: those under where sign-ins are kept (AppData
     on Windows - node, say, installed per user), each named on its own, so
     that what is around it stays shut. Never WindowsApps: its programs are
-    links into installed apps."""
+    links into installed apps. And the libraries the user installed with
+    `pip install --user` (`user_site_folders`), the same way."""
     from ...runtime.filesystem import is_inside
     from ...runtime.isolation import credential_stores
     try:
@@ -432,7 +351,88 @@ def programs_to_read() -> List[Path]:
                 out.append(path)
         except (OSError, ValueError):
             continue
+    for path in user_site_folders():
+        try:
+            if any(is_inside(path, store) for store in stores) and path not in out:
+                out.append(path)
+        except (OSError, ValueError):
+            continue
     return out
+
+
+def user_site_folders(home: Optional[Path] = None) -> List[Path]:
+    """Where `pip install --user` keeps the computer's own Python's
+    libraries (the user, 2026-10-30: opened to commands): %APPDATA%\\Python
+    on Windows; ~/Library/Python on macOS; ~/.local/lib/python3.* and
+    ~/.local/bin. Only these, each by name - nothing else of AppData or
+    of ~/.local (keyrings live in ~/.local/share) is opened with them."""
+    home = Path(home or Path.home())
+    found: List[Path] = []
+    if os.name == "nt":
+        found.append(Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming") / "Python")
+    else:
+        if sys.platform == "darwin":
+            found.append(home / "Library" / "Python")
+        try:
+            found += sorted((home / ".local" / "lib").glob("python3*"))
+        except OSError:
+            pass
+        found.append(home / ".local" / "bin")
+    return [one for one in found if one.is_dir()]
+
+
+#: THE COMPUTER'S OWN PYTHON, as a command finds it, by its program file as
+#: it is: {"path", "version"} - asked with --version alone, no code of its
+#: own run (`user_python`).
+_user_pythons: Dict[str, Dict[str, str]] = {}
+
+
+def user_python() -> Dict[str, str]:
+    """This computer's own Python - the one `python` in a command is, found
+    on PATH as a command finds it: {"path", "version"}, or {} where there is
+    none. Never the Store's stand-in in WindowsApps, which runs no Python
+    and opens the Store. Its version asked once per program file."""
+    from ...common import children
+    names = ("python", "python3") if os.name == "nt" else ("python3", "python")
+    for name in names:
+        found = shutil.which(name)
+        if not found or "windowsapps" in found.lower():
+            continue
+        try:
+            stat = os.stat(found)
+        except OSError:
+            continue
+        key = f"{os.path.normcase(found)}|{stat.st_mtime_ns}|{stat.st_size}"
+        if key not in _user_pythons:
+            version = ""
+            try:
+                done = children.run([found, "--version"], capture_output=True, text=True,
+                                    timeout=15, short=True)
+                said = re.match(r"Python (\d+\.\d+(?:\.\d+)?)",
+                                ((done.stdout or "") + (done.stderr or "")).strip())
+                version = said.group(1) if said else ""
+            except Exception:
+                version = ""
+            _user_pythons[key] = {"path": found, "version": version}
+        if _user_pythons[key]["version"]:
+            return dict(_user_pythons[key])
+    return {}
+
+
+def user_base(python: Dict[str, str], home: Optional[Path] = None) -> str:
+    """PYTHONUSERBASE for a command: where that Python's `pip install
+    --user` libraries are - a command's home and APPDATA are its own, so
+    without this its Python would look for them there. '' where there are
+    none."""
+    home = Path(home or Path.home())
+    if os.name == "nt":
+        base = Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming") / "Python"
+    elif sys.platform == "darwin" and ".framework" in os.path.realpath(python.get("path") or ""):
+        base = home / "Library" / "Python" / ".".join(
+            (python.get("version") or "").split(".")[:2])
+    else:
+        base = home / ".local"
+    return str(base) if python and base.is_dir() else ""
 
 
 def command_environment(home: Path) -> Dict[str, str]:
@@ -456,6 +456,12 @@ def command_environment(home: Path) -> Dict[str, str]:
         env["LANG"] = os.environ.get("LANG") or "C.UTF-8"
         env["XDG_CONFIG_HOME"] = str(home / "config")
         env["XDG_CACHE_HOME"] = str(home / "cache")
+    try:
+        base = user_base(user_python())
+    except Exception:
+        base = ""
+    if base:
+        env["PYTHONUSERBASE"] = base
     return env
 
 

@@ -157,6 +157,81 @@ class RunCommandTests(_WithTools):
                            return_value=[store]):
             self.assertEqual(T.programs_to_read(), [store / "node"])
 
+    def test_pip_user_libraries_are_opened_by_name(self) -> None:
+        """The user, 2026-10-30: what `pip install --user` installed is read
+        by a command's Python - that folder alone, never what is beside it."""
+        home = Path(tempfile.mkdtemp(prefix="pa-home-")).resolve()
+        self.addCleanup(lambda: __import__("shutil").rmtree(home, ignore_errors=True))
+        if WINDOWS:
+            roaming = home / "AppData" / "Roaming"
+            wanted = [roaming / "Python"]
+            (roaming / "Microsoft" / "Credentials").mkdir(parents=True)
+            stores = [home / "AppData"]
+            environ = {"APPDATA": str(roaming), "PATH": ""}
+        else:
+            wanted = [home / ".local" / "lib" / "python3.12", home / ".local" / "bin"]
+            if sys.platform == "darwin":
+                wanted.insert(0, home / "Library" / "Python")
+            (home / ".local" / "share" / "keyrings").mkdir(parents=True)
+            stores = [home / ".local", home / "Library"]
+            environ = {"PATH": ""}
+        for one in wanted:
+            one.mkdir(parents=True)
+        with mock.patch.dict(os.environ, environ), \
+                mock.patch.object(Path, "home", return_value=home), \
+                mock.patch("personalized_agent.runtime.isolation.credential_stores",
+                           return_value=stores):
+            self.assertEqual(T.user_site_folders(), wanted)
+            self.assertEqual(T.programs_to_read(), wanted)
+            # A command's Python looks for them there, not in its own home.
+            with mock.patch.object(T, "user_python",
+                                   return_value={"path": "/x/python3", "version": "3.12.1"}):
+                base = T.command_environment(home / "run").get("PYTHONUSERBASE")
+            self.assertEqual(base, str(roaming / "Python") if WINDOWS
+                             else str(home / ".local"))
+            with mock.patch.object(T, "user_python", return_value={}):
+                self.assertNotIn("PYTHONUSERBASE", T.command_environment(home / "run"))
+
+    def test_the_computers_python_is_found_never_the_stores_stand_in(self) -> None:
+        stand_in = str(Path("C:/Users/u/AppData/Local/Microsoft/WindowsApps/python.exe"))
+        real = Path(tempfile.mkdtemp(prefix="pa-py-")).resolve() / "python3"
+        self.addCleanup(lambda: __import__("shutil").rmtree(real.parent, ignore_errors=True))
+        real.write_text("")
+        asked = []
+
+        def which(name):
+            return stand_in if name == "python" else str(real)
+
+        def run(command, **_kwargs):
+            asked.append(list(command))
+            return mock.Mock(stdout="Python 3.11.9\n", stderr="")
+        T._user_pythons.clear()
+        with mock.patch.object(T.shutil, "which", which), \
+                mock.patch("personalized_agent.common.children.run", run):
+            self.assertEqual(T.user_python(), {"path": str(real), "version": "3.11.9"})
+            self.assertEqual(T.user_python()["version"], "3.11.9")
+        self.assertEqual(asked, [[str(real), "--version"]], "asked once, --version alone")
+        T._user_pythons.clear()
+        with mock.patch.object(T.shutil, "which", return_value=None):
+            self.assertEqual(T.user_python(), {})
+
+    def test_the_agents_are_told_which_python_is_which(self) -> None:
+        from personalized_agent.agent.work import runner
+        with mock.patch.object(T, "user_python",
+                               return_value={"path": "/home/u/bin/python3", "version": "3.11.9"}):
+            said = runner.pythons_text()
+        self.assertIn("TWO PYTHONS", said)
+        self.assertIn("/home/u/bin/python3 (Python 3.11.9)", said)
+        self.assertIn("NOT what install_packages installed", said)
+        with mock.patch.object(T, "user_python", return_value={}):
+            self.assertIn("no Python of its own on PATH", runner.pythons_text())
+        with mock.patch.object(T, "user_python",
+                               return_value={"path": sys.executable, "version": "3"}):
+            self.assertIn("this same interpreter", runner.pythons_text())
+        with mock.patch.object(runner, "native_code_loads", return_value=True), \
+                mock.patch.object(T, "user_python", return_value={}):
+            self.assertIn("TWO PYTHONS", runner.environment_rules("C:/work", "x"))
+
     @unittest.skipUnless(WINDOWS, "PowerShell and Git Bash: Windows")
     def test_powershell_and_bash_are_refused_at_once_saying_why(self) -> None:
         ran = []

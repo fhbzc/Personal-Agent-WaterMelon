@@ -18,6 +18,7 @@ import io
 import logging
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from .window_text import WindowText, is_wechat_application
@@ -89,20 +90,36 @@ def wechat_in_front(activity: Any, allowed: Callable[[Any], bool]) -> Optional[W
     image = activity.front_window_image()
     if image is None:
         return None
-    out = io.BytesIO()
-    image.convert("RGB").save(out, format="PNG")
-    png = out.getvalue()
-    from .wechat_layout import parse_wechat_frame, prepare_wechat_ocr_cut, shift_layout
-    # Only where the words are is read: the name and the bubbles.
-    cut, offset = prepare_wechat_ocr_cut(png)
-    layout = shift_layout(read_layout(cut), offset)
-    capture = parse_wechat_frame(png, layout)
     # Still the same window in front, and still allowed: else thrown away.
     after = activity.get_active_window()
     if after is None or after.pid != front.pid or not allowed(after):
         return None
+    captured_at = datetime.now(timezone.utc).isoformat()
+    out = io.BytesIO()
+    image.convert("RGB").save(out, format="PNG")
+    png = out.getvalue()
+
+    def finish() -> Optional[WindowText]:
+        """ITS WORDS, LATER (listener/providers/deferred_ocr.py): the picture
+        taken above recognised - if WeChat is still allowed to be read."""
+        if not allowed(front):
+            return None
+        from .wechat_layout import parse_wechat_frame, prepare_wechat_ocr_cut, shift_layout
+        took = time.perf_counter()
+        # Only where the words are is read: the name and the bubbles.
+        cut, offset = prepare_wechat_ocr_cut(png)
+        layout = shift_layout(read_layout(cut), offset)
+        capture = parse_wechat_frame(png, layout)
+        return WindowText(application=front.application or "", title=front.title or "",
+                          text=layout["text"], how="linux_rapidocr",
+                          elements=len(layout["words"]),
+                          milliseconds=(time.perf_counter() - took) * 1000,
+                          handle=int(front.pid or 0), pid=int(front.pid or 0),
+                          capture_scope="visible_text_only", wechat_capture=capture,
+                          captured_at=captured_at)
     return WindowText(application=front.application or "", title=front.title or "",
-                      text=layout["text"], how="linux_rapidocr", elements=len(layout["words"]),
+                      text="", how="linux_rapidocr_waiting",
                       milliseconds=(time.perf_counter() - began) * 1000,
                       handle=int(front.pid or 0), pid=int(front.pid or 0),
-                      capture_scope="visible_text_only", wechat_capture=capture)
+                      capture_scope="visible_text_only", finish=finish,
+                      captured_at=captured_at)

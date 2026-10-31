@@ -78,7 +78,12 @@ class ReadingWeChatOnLinuxTests(unittest.TestCase):
                          ("小陈", [330, 26, 70, 16], 93.0))
 
     def test_the_messages_told_apart_as_on_a_mac(self):
-        got = linux_wechat.wechat_in_front(Activity(self.png), lambda front: True)
+        waiting = linux_wechat.wechat_in_front(Activity(self.png), lambda front: True)
+        # The picture now, its words later (the user, 2026-10-30).
+        self.assertEqual((waiting.how, waiting.text), ("linux_rapidocr_waiting", ""))
+        self.assertTrue(waiting.captured_at)
+        got = waiting.finish()
+        self.assertEqual(got.captured_at, waiting.captured_at)
         capture = got.wechat_capture
         self.assertEqual((got.how, got.application, got.capture_scope),
                          ("linux_rapidocr", "wechat", "visible_text_only"))
@@ -88,6 +93,12 @@ class ReadingWeChatOnLinuxTests(unittest.TestCase):
                          ["other", "self", "self", "other"])
         self.assertEqual(capture["unresolved_text"], "13:50")
         self.assertNotIn("draft", str(capture), "what is being typed is never a message")
+
+    def test_turned_away_before_its_words_are_read(self):
+        allowed = [True]
+        waiting = linux_wechat.wechat_in_front(Activity(self.png), lambda front: allowed[0])
+        allowed[0] = False
+        self.assertIsNone(waiting.finish())
 
     def test_another_window_is_not_read_nor_pictured(self):
         activity = Activity(self.png, application="firefox")

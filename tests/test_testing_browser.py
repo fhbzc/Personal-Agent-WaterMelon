@@ -190,6 +190,40 @@ class TheGuardStartsOnlyThatBrowserTests(unittest.TestCase):
             self.assertEqual(guard._browser_path, "")
 
 
+class TheInstalledApplicationTooTests(unittest.TestCase):
+    """The user, 2026-10-30: the testing browser in the installed
+    application as from source - it was kept off there only because no
+    child started in a packaged build."""
+
+    def test_a_packaged_run_is_given_the_browser(self) -> None:
+        from types import SimpleNamespace
+        from personalized_agent.runtime import sandbox
+        program = Path(tempfile.gettempdir()) / "shell"
+        offline = SimpleNamespace(policy=SimpleNamespace(network=False,
+                                                         protected_paths=["x"]))
+        with mock.patch.object(sandbox, "is_frozen", return_value=True), \
+                mock.patch.object(browser, "for_run", return_value=program):
+            self.assertEqual(sandbox.SandboxRuntime.browser(offline), program)
+            online = SimpleNamespace(policy=SimpleNamespace(network=True,
+                                                            protected_paths=["x"]))
+            self.assertIsNone(sandbox.SandboxRuntime.browser(online))
+
+    def test_the_helper_is_carried_in_the_bundle(self) -> None:
+        """Read from the resources - the bundle, when packaged - which the
+        build puts it in."""
+        from build.common import DATA_FILES
+        self.assertIn(("personalized_agent/runtime/agent_browser.py", "runtime"), DATA_FILES)
+        bundle = Path(tempfile.mkdtemp(prefix="pa-bundle-")).resolve()
+        data = Path(tempfile.mkdtemp(prefix="pa-br-")).resolve()
+        self.addCleanup(shutil.rmtree, bundle, True)
+        self.addCleanup(shutil.rmtree, data, True)
+        (bundle / "runtime").mkdir()
+        (bundle / "runtime" / "agent_browser.py").write_text("# as bundled\n")
+        with mock.patch.object(sys, "_MEIPASS", str(bundle), create=True):
+            folder = browser.ensure_helper(data)
+        self.assertEqual((folder / "agent_browser.py").read_text(), "# as bundled\n")
+
+
 class TheRunIsToldTests(unittest.TestCase):
 
     def test_the_prompt_tells_of_the_browser_only_when_there_is_one(self) -> None:

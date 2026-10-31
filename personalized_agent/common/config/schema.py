@@ -277,8 +277,8 @@ SETTINGS_SCHEMA: List[SettingField] = [
                  "a sign-in expired, a key refused, credit or a usage limit used up, "
                  "a client not installed.", hidden=True),
     # WHAT THE AGENTS SEARCH THE WEB WITH: the model's own search where the
-    # model has one (Claude Code), else the app's (Brave with a key, or
-    # DuckDuckGo's page). Set on the Web search card.
+    # model has one (Claude Code, Codex), else the app's (DuckDuckGo's page).
+    # Nothing to set.
     SettingField("interface_language", "Interface language", "choice", "en", "General",
                  "The language of this application's own screens. Follows the "
                  "display language now: Chinese screens for Chinese, English "

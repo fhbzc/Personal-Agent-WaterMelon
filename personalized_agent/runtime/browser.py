@@ -107,10 +107,13 @@ def helper_folder(data_dir: Path) -> Path:
 def ensure_helper(data_dir: Path) -> Path:
     """The helper runs import, copied beside the browser - outside the
     application's code, which a debugger run may not read - and put back
-    whenever it differs from the code's."""
+    whenever it differs from the code's. Read from the resources: in a
+    packaged application the code has no .py files, and the helper is
+    carried beside them (build/common.py, DATA_FILES)."""
+    from ..common.paths import resource_path
     folder = helper_folder(data_dir)
     folder.mkdir(parents=True, exist_ok=True)
-    source = Path(__file__).resolve().parent / HELPER
+    source = resource_path("runtime", HELPER)
     copy = folder / HELPER
     wanted = source.read_bytes()
     try:

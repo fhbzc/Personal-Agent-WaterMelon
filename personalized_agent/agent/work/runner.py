@@ -804,7 +804,8 @@ refused the same way.
     EXCEPT these, refused however it is tried (a listing leaves them out):
     this project's run logs (its run_logs folder: the record of what
     happened); the application's own settings and state; where sign-ins and
-    keys are kept (AppData, .ssh and the like){more_closed}.
+    keys are kept (AppData, .ssh and the like - but the libraries installed
+    with pip install --user, which a command's Python reads){more_closed}.
   WRITE: ONLY in {folders} - with write_file, edit_file, delete_file or
     code you run. To change part of a file that exists: edit_file, not the
     whole file written again, not a script that patches it.
@@ -868,12 +869,54 @@ CHILDREN_ANY = """COMMANDS: run_command runs one in a shell ({shells}) - git, no
     where you may, and reaches no network. So nothing is downloaded by a
     command: packages with install_packages, repositories with git_fetch,
     files with download. Nothing is typed into a command: one that waits for
-    input ends instead. No new process group or session."""
+    input ends instead. No new process group or session.
+  {pythons}"""
 CHILDREN_PYTHON = """CHILD PROCESSES: Python only - subprocess with the command as a list
     ([sys.executable, '-m', 'pytest', ...], a script, -c code); each runs
     under these same rules. No other program starts: no shell
     (shell=True), no git, node, npm, cmd or PowerShell; no new process group
     or session."""
+
+
+def pythons_text() -> str:
+    """TWO PYTHONS (the user, 2026-10-30): which Python run_python is,
+    which one `python` in a command is - this computer's own, where and
+    which version - and what each sees. A model that found pandas missing
+    from run_python did not think of the user's Python, which had it."""
+    import platform
+    import sys
+    from .tools import user_python
+    from ...common.paths import is_frozen
+    own = f"Python {platform.python_version()}"
+    if is_frozen():
+        own_said = (f"the application's own Python ({own}): what install_packages "
+                    f"installed, and the few libraries the application carries")
+    else:
+        own_said = (f"the Python the agent runs on ({sys.executable}, {own}): the "
+                    f"libraries installed in it, and what install_packages installed")
+    try:
+        theirs = user_python()
+    except Exception:
+        theirs = {}
+    head = f"TWO PYTHONS. run_python runs {own_said}."
+    if not theirs:
+        return head + (" This computer has no Python of its own on PATH: run_python is "
+                       "the only one.")
+    same = (os.path.normcase(os.path.realpath(theirs["path"]))
+            == os.path.normcase(os.path.realpath(sys.executable)))
+    if same:
+        return head + (f" `python` in run_command is this same interpreter ({theirs['path']}): "
+                       f"the libraries installed in it - but NOT what install_packages "
+                       f"installed, which only run_python sees.")
+    return head + (
+        f" This computer's own Python is another: {theirs['path']} (Python "
+        f"{theirs['version']}) - `python` in run_command (python script.py, python -m "
+        f"pytest, python -m <a tool>), with the libraries the user installed in it, "
+        f"pip install --user's too - but NOT what install_packages installed, and "
+        f"run_python sees none of its libraries. Use the computer's own when the work "
+        f"needs a library the user already has there, or the user's project is meant "
+        f"to run with their own Python; run_python otherwise. A library neither has: "
+        f"install_packages, then run_python.")
 
 
 def environment_rules(folders: str, network: str, debug: bool = False) -> str:
@@ -886,8 +929,8 @@ def environment_rules(folders: str, network: str, debug: bool = False) -> str:
     native = NATIVE_SHUT if not native_code_loads() else NATIVE_LOADS
     from .tools import SHELLS_POSIX, SHELLS_WINDOWS
     shells = SHELLS_WINDOWS if os.name == "nt" else SHELLS_POSIX
-    children = CHILDREN_ANY.format(shells=", ".join(shells)) if native_code_loads() \
-        else CHILDREN_PYTHON
+    children = CHILDREN_ANY.format(shells=", ".join(shells), pythons=pythons_text()) \
+        if native_code_loads() else CHILDREN_PYTHON
     return ENVIRONMENT_RULES.format(
         folders=folders, network=network, native=native, children=children,
         # NOT SAID WHY: a way that is told it is one of three in a debugger

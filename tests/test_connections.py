@@ -571,6 +571,37 @@ class TheRoundTests(_Base):
         self.assertFalse([one for one in models.asked if "Update the list." in
                           json.dumps(one.messages[0], ensure_ascii=False)])
 
+    def test_with_connections_off_an_issue_is_the_news_alone(self) -> None:
+        """The user, 2026-10-30: a classmate turned Connections off and the
+        issue still looked her contacts up. Now no one is looked up and
+        every call is the Newspaper's; on, the contacts' calls are named
+        Connections'."""
+        ana = self.store.add("Ana Ruiz", by="user", relationship="colleague", closeness=4,
+                             org="Acme", tags=["budget"])
+        self._a_state("The user drafted the Q4 budget")
+        searched = []
+        models = _Searcher(ana["id"])
+        round_ = ConnectionsRound(self.store, models, self.app.db,
+                                  search=lambda q: searched.append(q) or {"results": []},
+                                  fetch=lambda url: {"text": ""})
+        round_.people_on = lambda: False
+        round_.run()
+        self.assertEqual(searched, ["Osaka aquarium 2026"], "no contact looked up")
+        self.assertFalse(self.store.get(ana["id"], with_details=True)["role"])
+        self.assertTrue(models.asked)
+        self.assertEqual({one.task for one in models.asked}, {"newspaper"})
+        self.assertTrue(self.store.briefing()["items"], "the news still comes")
+        # On: the contacts' calls are Connections', the news' the Newspaper's.
+        models = _Searcher(ana["id"])
+        ConnectionsRound(self.store, models, self.app.db, search=lambda q: {"results": []},
+                         fetch=lambda url: {"text": ""}).run()
+        tasks = {one.task for one in models.asked}
+        self.assertEqual(tasks, {"connections", "newspaper"})
+        searching = [one for one in models.asked if "Search the web for it" in
+                     json.dumps(one.messages[0], ensure_ascii=False)]
+        self.assertTrue(searching)
+        self.assertTrue(all(one.task == "newspaper" for one in searching))
+
     def test_what_the_work_needs_to_know_is_found_written_and_ranked(self) -> None:
         ana = self.store.add("Ana Ruiz", by="user", relationship="colleague", closeness=4,
                              org="Acme", tags=["budget"])

@@ -18,6 +18,58 @@ class Backend:
         self.ocr = Mock(return_value="测试消息：我计划明天下午三点提交草稿。")
 
 
+class LaterBackend(Backend):
+    """A backend that takes WeChat's picture now and gives its words later."""
+
+    def __init__(self):
+        super().__init__()
+        self.recognised = 0
+
+        def recognise():
+            self.recognised += 1
+            return "测试消息：稍后识别的文字。", "macos_vision_ocr", {
+                "peer_name": "小陈", "messages": [], "layout_status": "recognized"}
+        self.ocr_later = Mock(return_value=("later", recognise, "2026-10-30T10:00:00+00:00"))
+
+
+class WeChatWordsLaterTests(unittest.TestCase):
+    """The user, 2026-10-30: WeChat's picture is taken when it is read, and
+    its words recognised later - the reading keeps its place."""
+
+    def setUp(self):
+        self.backend = LaterBackend()
+        self.reader = MacWindowTextReader(self.backend)
+
+    def test_the_picture_now_and_its_words_later(self):
+        waiting = self.reader.read(lambda front: True)
+        self.assertEqual((waiting.how, waiting.text), ("macos_vision_ocr_waiting", ""))
+        self.assertEqual(self.backend.recognised, 0, "nothing recognised yet")
+        self.backend.ocr.assert_not_called()
+        done = waiting.finish()
+        self.assertIn("稍后识别", done.text)
+        self.assertEqual(done.captured_at, "2026-10-30T10:00:00+00:00")
+        self.assertEqual(done.wechat_capture["peer_name"], "小陈")
+        self.assertEqual(self.reader.status()["ocr_readings"], 1)
+
+    def test_not_read_when_wechat_may_no_longer_be(self):
+        allowed = [True]
+        waiting = self.reader.read(lambda front: allowed[0])
+        allowed[0] = False
+        self.assertIsNone(waiting.finish())
+
+    def test_words_had_at_once_are_not_waited_for(self):
+        self.backend.ocr_later.return_value = ("read", "微信自己给出的消息列表里的文字内容。")
+        reading = self.reader.read(lambda front: True)
+        self.assertIsNone(reading.finish)
+        self.assertIn("消息列表", reading.text)
+
+    def test_another_application_is_read_at_once(self):
+        self.backend.window.application = "Notes"
+        reading = self.reader.read(lambda front: True)
+        self.assertIsNone(reading.finish)
+        self.backend.ocr_later.assert_not_called()
+
+
 class MacReadingTests(unittest.TestCase):
     def setUp(self):
         self.backend = Backend()

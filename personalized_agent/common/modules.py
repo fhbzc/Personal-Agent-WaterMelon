@@ -32,20 +32,19 @@ MODULES: List[Dict[str, str]] = [
             "added still ring. What waits for a time is no longer looked after."},
     {"key": "connections", "setting": "module_connections_enabled", "name": "Connections",
      "what": "The agent heartbeat finds the people in what is on your screen and adds or "
-             "updates them in your contacts; the connection lessons learned. (Looking your "
-             "contacts up on the web is Newspaper's.)",
-     "off": "Contacts are no longer added or updated from what is on your screen. Your "
-            "contacts are still looked up on the web while Newspaper is on - "
-            "turn it off too to stop that."},
+             "updates them in your contacts; with each issue of the Newspaper, your "
+             "contacts and you yourself looked up on the web, their public profiles filled "
+             "in and their news found; the connection lessons learned.",
+     "off": "Contacts are no longer added or updated, from your screen or from the web, "
+            "and no one is looked up: an issue carries the news alone."},
     {"key": "recommend", "setting": "module_recommend_enabled",
      "name": "Newspaper",
-     "what": "What you read kept as a log, and an issue at the times you chose: a page for "
-             "each project you are working on and for what you have been reading, each "
-             "searched on the web; and your contacts looked up on the web, their public "
-             "profiles filled in and their news found.",
-     "off": "No issue is made and nothing read is kept; your contacts are no longer looked "
-            "up on the web (from your screen they still are, while Connections is on). "
-            "\"Make an issue now\" still works."},
+     "what": "What you read kept as a log, and an issue at the times you chose: what your "
+             "work would want to know and a page for each project you are working on and "
+             "for what you have been reading, each searched on the web - and, while "
+             "Connections is on, what your contacts have been doing.",
+     "off": "No issue is made and nothing read is kept, so no one is looked up on the web "
+            "either. \"Make an issue now\" still works."},
     {"key": "experience", "setting": "module_experience_enabled", "name": "Work learning",
      "what": "Your work - your Work projects and the places you list in Work's Learning "
              "panel, with your coding agents' conversations - read into cases and the "
@@ -93,7 +92,11 @@ TASK_MODULE = {
     "experience_stages": "experience_manual",
     "experience_merge": "experience_manual",
     "state_heartbeat": "tasks",
-    "connections": "recommend",
+    # AN ISSUE'S TWO PARTS (the user, 2026-10-30): the contacts, which stop
+    # with Connections, and the news. Calls from before the two were named
+    # apart were most of them the contacts' search: Connections'.
+    "connections": "connections",
+    "newspaper": "recommend",
     "reading": "recommend",
     "experience": "experience",
     # THE LEARNING (learning/): its folders mapped, its units read, its

@@ -67,7 +67,13 @@ RECENT_HOURS = 48
 MOST_RECENT = 40
 #: At most this many of each kind of name are given to be tidied.
 MOST_NAMES = 120
+#: WHAT EACH CALL OF AN ISSUE IS FOR (the user, 2026-10-30): the contacts -
+#: searched, looked up on the web, the user's own profile, their names
+#: tidied, the changes to them summarised - are Connections', and stop with
+#: its switch; the news - what the user would want to know, the web searched
+#: for it, a page for each subject - is the Newspaper's.
 MODEL_TASK = "connections"
+NEWS_TASK = "newspaper"
 
 SYSTEM = """You help the user keep up with the people around them, for the work they
 are doing now. You are given what the user is working on, and tools to
@@ -542,23 +548,33 @@ class ConnectionsRound:
                                  finished_at=now())
 
     # -- the round ----------------------------------------------------------------
+    #: Whether Connections is on - the contacts' part of an issue (the app
+    #: sets it from the module's switch; on when nothing says).
+    people_on: Callable[[], bool] = staticmethod(lambda: True)
+
     def run(self, going: Callable[[], bool] = lambda: True,
             look_me_up: bool = False) -> Dict[str, Any]:
         used = {"calls": 0, "web": 0, "tokens_in": 0, "tokens_out": 0}
         from ...runtime.web_guard import WebGuard
         self.guard = WebGuard()
-        self._stage(0, "summarising the oldest of your changes to contacts")
-        self._fold_lessons(used)
-        if not going():
-            return {}
-        self._stage(1, "one spelling for each label and organisation")
-        tidied = self._tidy_names(used)
-        if not going():
-            return {}
-        self._stage(2, "looking you up on the public web")
-        me_said = self._look_me_up(used, going, look_me_up)
-        if not going():
-            return {}
+        # CONNECTIONS OFF: no one looked up - not a contact, not the user -
+        # nothing of the contacts tidied or summarised; the news only.
+        people = bool(self.people_on())
+        tidied: Dict[str, Any] = {"skipped": "Connections is off"}
+        me_said: Dict[str, Any] = {"skipped": "Connections is off"}
+        if people:
+            self._stage(0, "summarising the oldest of your changes to contacts")
+            self._fold_lessons(used)
+            if not going():
+                return {}
+            self._stage(1, "one spelling for each label and organisation")
+            tidied = self._tidy_names(used)
+            if not going():
+                return {}
+            self._stage(2, "looking you up on the public web")
+            me_said = self._look_me_up(used, going, look_me_up)
+            if not going():
+                return {}
         # WHAT THE USER WOULD WANT TO KNOW: from their work - and from what
         # they have been doing, part of a task or not (a video watched).
         self._stage(3, "working out what you would want to know")
@@ -573,8 +589,8 @@ class ConnectionsRound:
             for one in needs) or "Nothing in particular - what bears on their work now."
         # TWO SEARCHES AT ONCE: their contacts, step by step from what each
         # step finds; and the public web, directly.
-        self._stage(4, "searching your contacts and the web")
-        stale = self._stale()
+        self._stage(4, "searching your contacts and the web" if people else "searching the web")
+        stale = self._stale() if people else []
         known = "\n".join(f"- {title}" for title in self._recent_stories()) \
             or "Nothing yet."
         plan = PLAN.format(
@@ -586,8 +602,9 @@ class ConnectionsRound:
             orgs=", ".join(one["name"] for one in self.store.names_in_use("org")[:MOST_NAMES])
             or "None yet.", today=today, stale_days=STALE_DAYS, known=known)
         web_items: List[Any] = []
-        web_wanted = any(str(one.get("look") or "both").lower() in ("web", "both")
-                         for one in needs) or not needs
+        # Without the contacts, every need is looked for on the web.
+        web_wanted = not people or any(str(one.get("look") or "both").lower() in ("web", "both")
+                                       for one in needs) or not needs
         branch = None
         if web_wanted:
             branch = threading.Thread(
@@ -612,7 +629,8 @@ class ConnectionsRound:
         answer = self._loop(messages, used, going, system=SYSTEM,
                             language=in_display("the stories, and what you record of a "
                                                 "person")
-                            + in_english('their tags, and each story\'s "english"'))
+                            + in_english('their tags, and each story\'s "english"')) \
+            if people else ""
         if branch is not None:
             branch.join()
         if topics_branch is not None:
@@ -649,7 +667,7 @@ class ConnectionsRound:
         # no model, a few fetches each (avatars.py).
         self._stage(6, "pictures of your contacts")
         pictures = 0
-        if self.store.folder is not None and going():
+        if people and self.store.folder is not None and going():
             from . import avatars
             for person_id in avatars.wanting(self.store):
                 if not going():
@@ -731,7 +749,7 @@ class ConnectionsRound:
                     tools=[TOOLS[2], TOOLS[3]], handle=handle, room=lambda: self._room(used),
                     counted={"calls": 0}, system=TOPIC_SYSTEM,
                     language=in_display("the page's heading and its stories")
-                    + in_english('each story\'s "english"'))
+                    + in_english('each story\'s "english"'), task=NEWS_TASK)
             except Exception:
                 log.warning("the page %s could not be searched", page["title"], exc_info=True)
                 return out
@@ -852,7 +870,8 @@ class ConnectionsRound:
             work=work, today=today)}], used,
             # What each is for is shown above its stories.
             language=in_display('each need, and what it is for ("for") - the words to '
-                                'search with in whatever language the pages are written in'))
+                                'search with in whatever language the pages are written in'),
+            task=NEWS_TASK)
         said = _json_of(str(getattr(response, "text", "") or ""))
         return [{key: str(one.get(key) or "")[:300] for key in ("need", "for", "look", "search")}
                 for one in said.get("needs") or [] if isinstance(one, dict)
@@ -879,7 +898,8 @@ class ConnectionsRound:
                 english=self._english_field())}], used, going,
                 tools=[TOOLS[2], TOOLS[3]], handle=handle, room=room, counted=mine,
                 system=WEB_SYSTEM,
-                language=in_display("the stories") + in_english('each story\'s "english"'))
+                language=in_display("the stories") + in_english('each story\'s "english"'),
+                task=NEWS_TASK)
         except Exception:
             log.warning("the web search of the connections round failed", exc_info=True)
             return []
@@ -1044,10 +1064,11 @@ class ConnectionsRound:
         return used["calls"] < RUNAWAY_CALLS
 
     def _ask(self, messages: List[Dict[str, Any]], used: Dict[str, int], tools: Any = None,
-             runner: Any = None, system: str = SYSTEM, language: Any = None) -> Any:
+             runner: Any = None, system: str = SYSTEM, language: Any = None,
+             task: str = MODEL_TASK) -> Any:
         response = self.models.invoke(ModelRequest(
             messages=messages, system=system, tools=tools or [], max_tokens=6000,
-            task=MODEL_TASK, tool_runner=runner, language=language,
+            task=task, tool_runner=runner, language=language,
             web_guard=self.guard), role="primary")
         usage = getattr(response, "usage", None)
         with self._count_lock:
@@ -1062,7 +1083,7 @@ class ConnectionsRound:
     def _loop(self, messages: List[Dict[str, Any]], used: Dict[str, int],
               going: Callable[[], bool], tools: Any = None, handle: Any = None,
               room: Any = None, counted: Optional[Dict[str, int]] = None,
-              system: str = SYSTEM, language: Any = None) -> str:
+              system: str = SYSTEM, language: Any = None, task: str = MODEL_TASK) -> str:
         """The model, its tools run for it, until it answers - within the
         round's budget (or the step's, `room`); out of it, asked once more,
         without tools."""
@@ -1079,7 +1100,7 @@ class ConnectionsRound:
             call = ""
             try:
                 call = self.store.begin_call(
-                    "Newspaper: a contact looked up on the web",
+                    "Connections: a contact looked up on the web",
                     json.dumps(messages, ensure_ascii=False, default=str),
                     json.dumps(arguments, ensure_ascii=False, default=str),
                     window=str((arguments or {}).get("id") or ""))
@@ -1110,7 +1131,7 @@ class ConnectionsRound:
             if counted is not None:
                 counted["calls"] += 1
             response = self._ask(messages, used, tools, run, system=system,
-                                 language=language)
+                                 language=language, task=task)
             calls = getattr(response, "tool_calls", None) or []
             if not calls:
                 return str(getattr(response, "text", "") or "")
@@ -1126,8 +1147,8 @@ class ConnectionsRound:
             return ""
         messages.append({"role": "user", "content": "That is all the room for this "
                          "round: answer now, with the JSON object, from what you have."})
-        return str(getattr(self._ask(messages, used, system=system, language=language),
-                           "text", "") or "")
+        return str(getattr(self._ask(messages, used, system=system, language=language,
+                                     task=task), "text", "") or "")
 
     def _tool(self, name: str, args: Dict[str, Any], used: Dict[str, int]) -> Any:
         store = self.store
@@ -1334,7 +1355,7 @@ class ConnectionsRound:
             found=json.dumps(found, ensure_ascii=False, default=str)[:30000]
             or "Nothing new.", work=work[:4000], today=today, most=MOST_KNOW)}], used,
             system="You keep a short list up to date, changing only what needs it.",
-            language=in_display())
+            language=in_display(), task=NEWS_TASK)
         said = _json_of(str(getattr(response, "text", "") or ""))
         by_id = {one["id"]: one for one in current}
         order = [one["id"] for one in current]

@@ -64,6 +64,9 @@ PLATFORM_MODULES = {
 DATA_FILES = [
     ("personalized_agent/api/web", "api/web"),
     ("personalized_agent/resources", "resources"),
+    # The testing browser's helper, copied out for runs to import
+    # (runtime/browser.py, ensure_helper): a file, not compiled code.
+    ("personalized_agent/runtime/agent_browser.py", "runtime"),
 ]
 
 # Imported through the platform factory and the provider registry, so they are

@@ -89,17 +89,20 @@ def _callee(node: ast.Call) -> str:
 
 def _task_of(call: ast.Call, constants: Dict[str, str]) -> str:
     for keyword in call.keywords:
-        if keyword.arg != "task":
-            continue
-        value = keyword.value
-        text = _text(value)
-        if text is not None:
-            return text.split("{", 1)[0] + ("*" if "{" in text else "")
-        if isinstance(value, ast.Name):
-            return constants.get(value.id, value.id)
-        if isinstance(value, ast.Call) and _callee(value) == "model_task":
-            part = _text(value.args[1]) if len(value.args) > 1 else None
-            return f"experience_{part}" if part else "experience"
+        if keyword.arg == "task":
+            return _task_value(keyword.value, constants)
+    return ""
+
+
+def _task_value(value: ast.AST, constants: Dict[str, str]) -> str:
+    text = _text(value)
+    if text is not None:
+        return text.split("{", 1)[0] + ("*" if "{" in text else "")
+    if isinstance(value, ast.Name):
+        return constants.get(value.id, value.id)
+    if isinstance(value, ast.Call) and _callee(value) == "model_task":
+        part = _text(value.args[1]) if len(value.args) > 1 else None
+        return f"experience_{part}" if part else "experience"
     return ""
 
 
@@ -183,6 +186,9 @@ def read_code(root: Optional[Path] = None) -> Dict[str, Any]:
             for inner in ast.walk(node):
                 if isinstance(inner, ast.Call) and _callee(inner) == "ModelRequest":
                     task = _task_of(inner, module.strings)
+                    # `task=task`, the helper's own: its default when not given.
+                    if task in defaults:
+                        task = _task_value(defaults[task], module.strings)
             through[node.name] = (has_own, task)
         # A helper that passes it to another helper: the other's task.
         for _ in range(3):

@@ -181,9 +181,6 @@ class AgentApplication:
         from .api.access import ApiAccess, key_file_for
 
         self.api_access = ApiAccess(key_file_for(self.paths.credentials_dir))
-        # The web search's key, kept where the model keys are.
-        from .agent.work.tools import configure_search
-        configure_search(self.credentials)
         self.models = ModelManager(self.config, self.credentials, bus=self.bus,
                                    observability=self.observability,
                                    tracer=tracer("model_provider"))
@@ -361,6 +358,10 @@ class AgentApplication:
         self.connections = ConnectionsStore(self.db, self.paths.data_dir / "connections")
         self.connections.lessons = self.lessons
         self.connections_round = ConnectionsRound(self.connections, self.models, self.db)
+        # Its contacts' part only while Connections is on (the user,
+        # 2026-10-30): with it off, an issue is the news alone.
+        from .common.modules import enabled as module_on
+        self.connections_round.people_on = lambda: module_on(self.config, "connections")
         self.heartbeat.connections = self.connections
         self.state_heartbeat.connections_round = self.connections_round
         self.connections_round.state_heartbeat = self.state_heartbeat

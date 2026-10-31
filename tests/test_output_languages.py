@@ -63,7 +63,7 @@ class ReadOffTheSourceTests(unittest.TestCase):
         said = {one["task"]: one for one in langs.read_code()["said"]}
         self.assertEqual(said["heartbeat:step_state"]["rule"], langs.MIXED)
         self.assertEqual(said["reading"]["rule"], langs.INTERNAL)
-        pages = [one for one in langs.read_code()["said"] if one["task"] == "connections"
+        pages = [one for one in langs.read_code()["said"] if one["task"] == "newspaper"
                  and "heading" in json.dumps(one["rules"])]
         # What the user reads in theirs; each story's English copy in English.
         self.assertEqual(pages[0]["rule"], langs.MIXED)

@@ -27,7 +27,7 @@ APP_DIR_NAME = FILE_NAME
 FORMER_DIR_NAMES = ("PersonalizedAgent",)
 PUBLISHER = "Personal Agent WaterMelon Project"
 
-__version__ = "0.2.15"
+__version__ = "0.2.16"
 VERSION = __version__
 VERSION_TUPLE = tuple(int(part) for part in __version__.split("."))
 

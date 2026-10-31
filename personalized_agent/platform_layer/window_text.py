@@ -18,6 +18,21 @@ So documents are asked first and the walk is the fallback, capped. A file
 manager is the case that needs the walk: its file list is a hundred names and
 no text at all.
 
+A WINDOW HOLDING A LONG LIST OF THE OLD KIND IS READ WITHIN BOUNDS (the user,
+2026-10-30). A Win32 list - a file list, a list box, a tree - has no
+answers of its own: Windows asks it item by item, each question answered by
+the application's own interface thread. Bitvise's file browser, a list of
+794 files, was asked with FindAll and never answered: stopped after 45
+seconds, its window stood still for a whole minute (measured). So before a
+window is read its Win32 lists are counted, one message each
+(`has_a_long_list`); one of more than LONG_LIST items and the window is read
+by one walk, in the order it shows things, of at most WALK_AT_MOST elements
+for at most READ_SECONDS, each with what is asked of it fetched in the same
+call (a cache request), never going into a part not on the screen
+(`_ask_bounded`). Every other window is read as before: that walk, tried on
+all of them, found a fraction of what a page, Explorer or WeChat showed -
+each step a question of its own, where FindAll is answered in one.
+
 Nothing here decides what is worth recording or keeps anything. It reads, and
 hands back what it read.
 """
@@ -58,6 +73,12 @@ class WindowText:
     pid: int = 0
     capture_scope: str = ""
     wechat_capture: dict = field(default_factory=dict)
+    #: WECHAT'S WORDS TO COME (listener/providers/deferred_ocr.py): set on a
+    #: reading whose picture was taken and whose words are recognised later -
+    #: `finish()` gives the reading with them, or None. And when the picture
+    #: was taken, which is the reading's moment.
+    finish: Any = None
+    captured_at: str = ""
 
     def to_dict(self) -> dict:
         return {"application": self.application, "title": self.title,
@@ -92,6 +113,15 @@ _IS_PASSWORD_PROPERTY = 30019
 #: not what was asked for and not what anybody would expect.
 _IS_OFFSCREEN_PROPERTY = 30022
 
+#: What each element visited is asked, fetched with it in one call: its
+#: name, whether it has text or a value to give, and the value.
+_NAME_PROPERTY = 30005
+_HAS_TEXT_PATTERN = 30040
+_HAS_VALUE_PATTERN = 30043
+_VALUE_PROPERTY = 30045
+_CACHED = (_CONTROL_TYPE_PROPERTY, _NAME_PROPERTY, _IS_OFFSCREEN_PROPERTY,
+           _IS_PASSWORD_PROPERTY, _HAS_TEXT_PATTERN, _HAS_VALUE_PATTERN, _VALUE_PROPERTY)
+
 #: Stands in for an image or another embedded object. A busy page returns
 #: these by the hundred and not one of them is text.
 _PLACEHOLDER = "\ufffc"
@@ -108,11 +138,16 @@ class WindowTextReader:
     exposes nothing.
     """
 
-    #: How many elements the fallback walk will visit. A page with nine
-    #: thousand is not going to be read this way whatever the limit is; the
-    #: cap is there so that meeting one costs a fixed amount rather than two
-    #: seconds.
+    #: How many elements a reading visits, whatever the window holds. A page
+    #: with nine thousand is not going to be read this way whatever the
+    #: limit is; the cap is there so that meeting one costs a fixed amount -
+    #: and VISITED, not only read: a FindAll visited them all (module
+    #: docstring).
     WALK_AT_MOST = 400
+
+    #: And for how long, at most: an application slow to answer is asked
+    #: no more once this has passed - what was found by then is the reading.
+    READ_SECONDS = 0.5
 
     #: Enough text to have found the content, past which the cheaper route
     #: has clearly worked and the walk is not worth trying.
@@ -125,6 +160,7 @@ class WindowTextReader:
         self._ready = threading.Event()
         self._lock = threading.Lock()
         self._started = False
+        self._cache: Any = None
 
     # -- availability -------------------------------------------------------
     @property
@@ -184,7 +220,10 @@ class WindowTextReader:
         except Exception as exc:
             self.last_error = str(exc)[:200]
             return None
-        body, how, elements = self._ask_the_window(element)
+        # A window holding a long list of the old kind is walked within
+        # bounds; any other is asked as it always was (module docstring).
+        ask = self._ask_bounded if has_a_long_list(handle) else self._ask_the_window
+        body, how, elements = ask(element)
         got.text, got.how, got.elements = body, how, elements
         got.milliseconds = (time.perf_counter() - began) * 1000
         return got
@@ -319,6 +358,91 @@ class WindowTextReader:
                 continue
         return self._tidied(pieces), found.Length
 
+    def _ask_bounded(self, element: Any) -> tuple:
+        """The window's own text; else, from one bounded walk (`_visit`),
+        its documents, edits or texts - the first kind with enough - else
+        every name the walk met. A file manager is the case for the names:
+        its list of files is a hundred names and not one text pattern
+        between them."""
+        body = self._text_of(element)
+        if len(body.strip()) >= self.ENOUGH:
+            return body, "window", 1
+        visited = self._visit(element)
+        shown = [one for one in visited
+                 if not self._cached(one, _IS_PASSWORD_PROPERTY)
+                 and not self._cached(one, _IS_OFFSCREEN_PROPERTY)]
+        for control, label in ((_DOCUMENT, "document"), (_EDIT, "edit"),
+                               (_TEXT, "text")):
+            of_type = [one for one in shown
+                       if self._cached(one, _CONTROL_TYPE_PROPERTY) == control][:40]
+            found = self._tidied([self._cached_text(one) for one in of_type])
+            if len(found.strip()) > len(body.strip()):
+                body = found
+                if len(body.strip()) >= self.ENOUGH:
+                    return body, label, len(of_type)
+        walked = self._tidied([self._cached_text(one)
+                               or str(self._cached(one, _NAME_PROPERTY) or "")
+                               for one in shown])
+        if len(walked.strip()) > len(body.strip()):
+            return walked, "walk", len(visited)
+        return body, "pattern" if body.strip() else "nothing", 1
+
+    def _visit(self, root: Any) -> List[Any]:
+        """The elements under `root`, in the order the window shows them -
+        AT MOST WALK_AT_MOST, for at most READ_SECONDS - each fetched with
+        what is asked of it (`_CACHED`). A part not on the screen is not
+        gone into: a tab behind the one shown, rows scrolled away."""
+        try:
+            if self._cache is None:
+                cache = self._automation.CreateCacheRequest()
+                for one in _CACHED:
+                    cache.AddProperty(one)
+                self._cache = cache
+            walker = self._automation.ControlViewWalker
+            first = walker.GetFirstChildElementBuildCache(root, self._cache)
+        except Exception:
+            return []
+        deadline = time.monotonic() + self.READ_SECONDS
+        visited: List[Any] = []
+        waiting = [first] if first else []
+        while waiting and len(visited) < self.WALK_AT_MOST and time.monotonic() < deadline:
+            element = waiting.pop()
+            visited.append(element)
+            try:
+                after = walker.GetNextSiblingElementBuildCache(element, self._cache)
+            except Exception:
+                after = None
+            if after:
+                waiting.append(after)
+            if self._cached(element, _IS_OFFSCREEN_PROPERTY):
+                continue
+            try:
+                inside = walker.GetFirstChildElementBuildCache(element, self._cache)
+            except Exception:
+                inside = None
+            if inside:
+                waiting.append(inside)          # taken first: what is inside comes next
+        return visited
+
+    @staticmethod
+    def _cached(element: Any, which: int) -> Any:
+        """A property fetched with the element (`_CACHED`); None if not."""
+        try:
+            return element.GetCachedPropertyValue(which)
+        except Exception:
+            return None
+
+    def _cached_text(self, element: Any) -> str:
+        """Its text - asked only of an element that has a text to give - or
+        its value, fetched with it."""
+        if self._cached(element, _HAS_TEXT_PATTERN):
+            said = self._text_of(element)
+            if said:
+                return said
+        if self._cached(element, _HAS_VALUE_PATTERN):
+            return str(self._cached(element, _VALUE_PROPERTY) or "")
+        return ""
+
     def _text_of(self, element: Any) -> str:
         for pattern_id, interface in (
                 (10014, "IUIAutomationTextPattern"),
@@ -376,6 +500,49 @@ class WindowTextReader:
             return bool(element.GetCurrentPropertyValue(_IS_PASSWORD_PROPERTY))
         except Exception:
             return False
+
+
+#: Win32 lists, and the message that asks each how many items it holds.
+_LIST_COUNTS = (("SysListView32", 0x1004),      # LVM_GETITEMCOUNT
+                ("SysTreeView32", 0x1105),      # TVM_GETCOUNT
+                ("ListBox", 0x018B),            # LB_GETCOUNT
+                ("ComboLBox", 0x018B))
+#: More items than this in one of them, and the window is read within bounds.
+LONG_LIST = 300
+
+
+def has_a_long_list(handle: int) -> bool:
+    """Whether the window holds a Win32 list of more than LONG_LIST items
+    (module docstring) - each list asked once, and one that does not answer
+    at once taken as long."""
+    if sys.platform != "win32" or not handle:
+        return False
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    found = [False]
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(child, _param):
+        name = ctypes.create_unicode_buffer(128)
+        user32.GetClassNameW(child, name, 128)
+        for kind, message in _LIST_COUNTS:
+            if kind in name.value and user32.IsWindowVisible(child):
+                count = ctypes.c_size_t()
+                # SMTO_ABORTIFHUNG | SMTO_BLOCK, a fifth of a second at most.
+                # A list that does not answer one question in that time is
+                # taken as long: asked item by item it would be worse
+                # (measured on Bitvise's file browser, busy).
+                if not user32.SendMessageTimeoutW(child, message, 0, 0, 0x0003, 200,
+                                                  ctypes.byref(count)) \
+                        or int(count.value) > LONG_LIST:
+                    found[0] = True
+                    return False
+        return True
+    try:
+        user32.EnumChildWindows(wintypes.HWND(handle), each, 0)
+    except Exception:                                # pragma: no cover
+        return False
+    return found[0]
 
 
 # ---------------------------------------------------------------------------

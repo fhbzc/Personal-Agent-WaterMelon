@@ -31,6 +31,23 @@ class FrontWindow:
         return self.pid, self.handle, self.title, self.bounds
 
 
+#: The pictures' words are recognised one at a time - now, or later on the
+#: waiting room's thread - and what was recognised is kept for both.
+_ENGINE_LOCK = threading.Lock()
+_CACHE_LOCK = threading.Lock()
+
+
+def _autoreleased():
+    """Native objects let go of after each recognition on a thread of its
+    own, as the listener's reading does (macos.py)."""
+    try:
+        import objc
+        return objc.autorelease_pool()
+    except Exception:
+        import contextlib
+        return contextlib.nullcontext()
+
+
 class CaptureFocusChanged(RuntimeError):
     """The identified window was no longer in front while capturing it."""
 
@@ -61,7 +78,56 @@ class MacWindowTextReader:
             while len(self._application_reads) > 40:
                 self._application_reads.popitem(last=False)
 
-    def _result(self, front, status, *, method='', error='', reason=''):
+    def _waiting(self, front, recognise, captured_at, allowed, started):
+        """WECHAT'S PICTURE TAKEN, ITS WORDS TO COME (the user, 2026-10-30;
+        listener/providers/deferred_ocr.py): a reading that keeps its place,
+        `finish()` recognising the picture - verified in front when it was
+        taken - and giving the reading, or None when it could not be read or
+        WeChat may no longer be."""
+        if not allowed(front):
+            self._result(front, 'skipped', reason='focus_or_privacy_changed')
+            return None
+        self._result(front, 'waiting', reason='words_to_come')
+
+        def finish():
+            took = time.monotonic()
+            try:
+                with _autoreleased():
+                    text, method, capture = recognise()
+            except Exception as exc:
+                self.last_error = str(exc)[:250]
+                self._result(front, 'failed', error=self.last_error, reason='ocr_failed')
+                return None
+            if not allowed(front):
+                self._result(front, 'skipped', reason='privacy_changed')
+                return None
+            if not text.strip():
+                self._result(front, 'failed', error='This window exposed no readable text.',
+                             reason='no_readable_text')
+                return None
+            self.ocr_readings += 1
+            self._result(front, 'ok', method=method, layout=capture)
+            return WindowText(application=front.application, title=front.title,
+                              pid=front.pid, handle=front.handle, text=text[:16000],
+                              how=method, elements=0,
+                              milliseconds=(time.monotonic() - took) * 1000,
+                              capture_scope='visible_window',
+                              wechat_capture=copy.deepcopy(capture) or {
+                                  'schema_version': '1.0', 'source': 'wechat_screen_ocr',
+                                  'layout_status': 'unrecognized',
+                                  'layout_reason': 'ocr_failed_or_unavailable',
+                                  'peer_name': None, 'conversation_type': 'unknown',
+                                  'messages': [], 'unresolved_text': text[:16000],
+                                  'captured_at': captured_at},
+                              captured_at=captured_at)
+        return WindowText(application=front.application, title=front.title,
+                          pid=front.pid, handle=front.handle, text="",
+                          how='macos_vision_ocr_waiting',
+                          milliseconds=(time.monotonic() - started) * 1000,
+                          capture_scope='visible_window', finish=finish,
+                          captured_at=captured_at)
+
+    def _result(self, front, status, *, method='', error='', reason='', layout=None):
         with self._status_lock:
             item = self._application_reads[front.application]
             if status == 'skipped' and item['status'] in ('failed', 'degraded'):
@@ -72,7 +138,8 @@ class MacWindowTextReader:
                 ocr_status = getattr(self.backend, 'ocr_status', None)
                 if callable(ocr_status):
                     item['ocr'] = ocr_status()
-                layout = getattr(self.backend, 'ocr_wechat_capture', {})
+                if layout is None:
+                    layout = getattr(self.backend, 'ocr_wechat_capture', {})
                 if is_wechat_application(front.application) and layout:
                     item['wechat_layout'] = {'status':layout.get('layout_status'),
                         'reason':layout.get('layout_reason'),
@@ -126,7 +193,14 @@ class MacWindowTextReader:
                     self._result(front, 'skipped', reason='focus_or_privacy_changed')
                     return None
                 try:
-                    recognised = self.backend.ocr(front)
+                    later = getattr(self.backend, 'ocr_later', None)
+                    if is_wechat_application(front.application) and callable(later):
+                        got = later(front)
+                        if got[0] == 'later':
+                            return self._waiting(front, got[1], got[2], allowed, started)
+                        recognised = got[1]
+                    else:
+                        recognised = self.backend.ocr(front)
                 except CaptureFocusChanged:
                     self._result(front, 'skipped', reason='focus_changed_before_capture')
                     return None
@@ -311,6 +385,29 @@ class NativeReader:
         return "\n".join(lines), count, secure, not stack and not truncated
 
     def ocr(self, front):
+        """The window's words, read now: its picture taken (`_capture`) and
+        recognised (`_recognise`)."""
+        got = self._capture(front)
+        if got[0] == "read":
+            return got[1]
+        text, self.ocr_method, self.ocr_wechat_capture = self._recognise(front, *got[1:])
+        return text
+
+    def ocr_later(self, front):
+        """WECHAT'S PICTURE NOW, ITS WORDS LATER (the user, 2026-10-30;
+        listener/providers/deferred_ocr.py): ("read", text) when the words
+        are had at once - the same picture seen before, or WeChat's own
+        message list - else ("later", recognise, captured_at), recognise()
+        giving (text, method, capture) from the picture taken now."""
+        got = self._capture(front)
+        if got[0] == "read":
+            return got
+        png, captured_at, key = got[1:]
+        return ("later", lambda: self._recognise(front, png, captured_at, key), captured_at)
+
+    def _capture(self, front):
+        """The identified window's picture: ("read", text) when its words
+        are had without recognising it, else ("png", png, captured_at, key)."""
         self.ocr_snapshot_identity = None
         self.ocr_wechat_capture = {}
         if not self.q.CGPreflightScreenCaptureAccess():
@@ -340,18 +437,20 @@ class NativeReader:
             fingerprint = hashlib.blake2b(bytes(pixels), digest_size=16).digest()
         except (AttributeError, TypeError, ValueError):
             pass
-        cache = getattr(self, '_ocr_cache', None)
-        if cache is None:
-            cache = self._ocr_cache = OrderedDict()
-        key = (front.identity, fingerprint)
-        if fingerprint is not None and key in cache:
-            self.ocr_image_cache_hits = getattr(self, 'ocr_image_cache_hits', 0) + 1
-            text, self.ocr_method, metadata = cache[key]
-            self.ocr_wechat_capture = copy.deepcopy(metadata)
-            if self.ocr_wechat_capture:
-                self.ocr_wechat_capture['captured_at'] = captured_at
-            cache.move_to_end(key)
-            return text
+        key = (front.identity, fingerprint) if fingerprint is not None else None
+        if key is not None:
+            with _CACHE_LOCK:
+                cache = self._recognised_cache()
+                hit = cache.get(key)
+                if hit is not None:
+                    cache.move_to_end(key)
+            if hit is not None:
+                self.ocr_image_cache_hits = getattr(self, 'ocr_image_cache_hits', 0) + 1
+                text, self.ocr_method, metadata = hit
+                self.ocr_wechat_capture = copy.deepcopy(metadata)
+                if self.ocr_wechat_capture:
+                    self.ocr_wechat_capture['captured_at'] = captured_at
+                return ("read", text)
         # Serialize the identified window in memory; local OCR has a deadline.
         png = self._encode_png(picture)
         if is_wechat_application(front.application):
@@ -364,38 +463,55 @@ class NativeReader:
                 text, self.ocr_wechat_capture = found
                 self.ocr_wechat_capture['captured_at'] = captured_at
                 self.ocr_method = 'macos_wechat_messages'
-                if fingerprint is not None and text.strip():
-                    cache[key] = (text, self.ocr_method, copy.deepcopy(self.ocr_wechat_capture))
-                    while len(cache) > 4:
-                        cache.popitem(last=False)
-                return text
-        self.ocr_executions = getattr(self, 'ocr_executions', 0) + 1
-        if is_wechat_application(front.application):
-            from .wechat_layout import prepare_wechat_ocr_cut, shift_layout
-            # Only where the words are is read: the name and the bubbles.
-            cut, offset = prepare_wechat_ocr_cut(png)
-            result = shift_layout(self._ocr_engine.read_layout(cut), offset)
-            text = result['text']
-            try:
-                from .wechat_layout import parse_wechat_frame
-                self.ocr_wechat_capture = parse_wechat_frame(png, result)
-            except Exception:
-                self.ocr_wechat_capture = {'schema_version': '1.0', 'source': 'wechat_screen_ocr',
-                    'layout_status': 'unrecognized', 'layout_reason': 'layout_parse_failed',
-                    'messages': [], 'unresolved_text': text, 'peer_name': None,
-                    'frame_hash': hashlib.blake2b(png, digest_size=16).hexdigest()}
-            self.ocr_wechat_capture['captured_at'] = captured_at
-        else:
-            text = self._ocr_engine.read(png)
-        self.ocr_method = self._ocr_engine.method
-        if fingerprint is not None and text.strip():
-            # A blinking caret alternates between two identical frames.
-            # Remember a few fingerprints/texts, so it does not force OCR
-            # every second. The images themselves are never retained.
-            cache[key] = (text, self.ocr_method, copy.deepcopy(self.ocr_wechat_capture))
+                if key is not None and text.strip():
+                    self._remember(key, text, self.ocr_method, self.ocr_wechat_capture)
+                return ("read", text)
+        return ("png", png, captured_at, key)
+
+    def _recognise(self, front, png, captured_at, key):
+        """The picture's words: (text, method, WeChat's capture) - kept
+        against its fingerprint, so the same picture is not read twice.
+        One picture at a time: the engine is not asked from two threads."""
+        with _ENGINE_LOCK:
+            self.ocr_executions = getattr(self, 'ocr_executions', 0) + 1
+            capture = {}
+            if is_wechat_application(front.application):
+                from .wechat_layout import prepare_wechat_ocr_cut, shift_layout
+                # Only where the words are is read: the name and the bubbles.
+                cut, offset = prepare_wechat_ocr_cut(png)
+                result = shift_layout(self._ocr_engine.read_layout(cut), offset)
+                text = result['text']
+                try:
+                    from .wechat_layout import parse_wechat_frame
+                    capture = parse_wechat_frame(png, result)
+                except Exception:
+                    capture = {'schema_version': '1.0', 'source': 'wechat_screen_ocr',
+                        'layout_status': 'unrecognized', 'layout_reason': 'layout_parse_failed',
+                        'messages': [], 'unresolved_text': text, 'peer_name': None,
+                        'frame_hash': hashlib.blake2b(png, digest_size=16).hexdigest()}
+                capture['captured_at'] = captured_at
+            else:
+                text = self._ocr_engine.read(png)
+            method = self._ocr_engine.method
+        if key is not None and text.strip():
+            self._remember(key, text, method, capture)
+        return text, method, capture
+
+    def _recognised_cache(self):
+        cache = getattr(self, '_ocr_cache', None)
+        if cache is None:
+            cache = self._ocr_cache = OrderedDict()
+        return cache
+
+    def _remember(self, key, text, method, capture):
+        """A blinking caret alternates between two identical frames.
+        Remember a few fingerprints/texts, so it does not force OCR every
+        second. The images themselves are never retained."""
+        with _CACHE_LOCK:
+            cache = self._recognised_cache()
+            cache[key] = (text, method, copy.deepcopy(capture))
             while len(cache) > 4:
                 cache.popitem(last=False)
-        return text
 
     #: WeChat's message list and the labels of a Mac's WeChat window, by the
     #: identifiers its Accessibility gives them (the same as on Windows).

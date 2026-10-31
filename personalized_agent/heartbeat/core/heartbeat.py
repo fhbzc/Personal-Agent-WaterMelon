@@ -3713,6 +3713,16 @@ class AgentHeartbeat:
             return self._window_fixed
         now = utcnow()
         mark = self._summarised_until()
+        # NOT PAST A PICTURE OF WECHAT STILL WAITING FOR ITS WORDS (the
+        # user, 2026-10-30; listener/providers/deferred_ocr.py): its reading
+        # comes later, of the moment it was taken, and is read next time.
+        try:
+            from ...listener.providers.deferred_ocr import oldest_waiting
+            waiting = oldest_waiting()
+        except Exception:                  # pragma: no cover - no listener
+            waiting = None
+        if waiting is not None and waiting < now and (mark is None or waiting > mark):
+            now = waiting
         if mark is None:
             return now - timedelta(minutes=self._window_minutes()), now
         since = mark

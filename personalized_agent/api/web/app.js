@@ -9454,49 +9454,8 @@ async function loadSettings() {
   ]);
   renderModels(models, data.choices);
   renderSettings({ ...data, user_defaults: defaults.user_defaults || {} });
-  loadWebSearch();
   refreshSysPermissions();
 }
-
-/* THE WEB SEARCH: whether a Brave Search key is set - never the key. */
-function renderWebSearch(status) {
-  const line = $("#web-search-status");
-  if (!line || !status) return;
-  line.textContent = status.engine === "brave"
-    ? (status.from_environment ? "Brave Search, with the key set in the environment."
-      : "Brave Search, with your key.")
-    : "No key: DuckDuckGo's page is tried, and may refuse.";
-  const remove = $("#web-search-remove");
-  if (remove) remove.disabled = !status.key_set;
-}
-
-async function loadWebSearch() {
-  try { renderWebSearch(await api.get("/api/search")); } catch (err) { /* said later */ }
-}
-
-$("#web-search-form")?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const input = event.target.elements.api_key;
-  const key = input.value.trim();
-  if (!key) return;
-  try {
-    const said = await api.post("/api/search/key", { api_key: key });
-    input.value = "";
-    renderWebSearch(said);
-    toast("Brave Search key saved");
-  } catch (err) {
-    toast(err.message, "error");
-  }
-});
-
-$("#web-search-remove")?.addEventListener("click", async () => {
-  try {
-    renderWebSearch(await api.post("/api/search/key/remove", {}));
-    toast("Brave Search key removed");
-  } catch (err) {
-    toast(err.message, "error");
-  }
-});
 
 /* The models as last read: the list, and every provider (`renderModels`). */
 let modelsNow = null;

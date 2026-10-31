@@ -39,7 +39,7 @@ import time
 import types
 from typing import Any, Dict, List, Optional, Tuple
 
-from ...common.events.models import ListenerEvent, new_id
+from ...common.events.models import ListenerEvent, new_id, parse_iso
 from ...platform_layer import get_platform
 from ...platform_layer.window_text import is_wechat_application
 from ...version import APP_NAME, FORMER_NAMES
@@ -48,6 +48,13 @@ from ..core.manager import STOPPING_GRACE_SECONDS
 from . import fast_reading
 
 log = logging.getLogger(__name__)
+
+
+def _taken_at(reading: Any) -> Dict[str, Any]:
+    """A reading whose words came later is of the moment its picture was
+    taken (deferred_ocr.py); any other, of now."""
+    when = parse_iso(getattr(reading, "captured_at", "") or "")
+    return {"timestamp": when} if when is not None else {}
 
 
 class ScreenProvider(ListenerProvider):
@@ -113,6 +120,10 @@ class ScreenProvider(ListenerProvider):
         #: looked at, and whether it is read.
         self._pace = fast_reading.Pace(config)
         self._wechat_visit = None
+        #: WeChat's pictures waiting for their words (deferred_ocr.py), and
+        #: readings taken in one at a time.
+        self._later: Any = None
+        self._taking = threading.RLock()
         self._seen: "collections.OrderedDict[int, Tuple[float, set]]" = \
             collections.OrderedDict()
         #: What has been read in the window in front and not yet reported:
@@ -162,6 +173,10 @@ class ScreenProvider(ListenerProvider):
         if self._thread:
             self._thread.join(timeout=STOPPING_GRACE_SECONDS)
             self._thread = None
+        if self._later is not None:
+            # The pictures were never kept: what still waits goes with them.
+            self._later.stop()
+            self._later = None
         # Whatever was being gathered is what the user was reading when the
         # agent was closed, which is the part of their day most likely to
         # matter to them.
@@ -305,66 +320,104 @@ class ScreenProvider(ListenerProvider):
         if self._excluded(reading.application, reading.title):
             self._skipped += 1
             return
-        structured = getattr(reading, 'wechat_capture', None)
-        if is_wechat_application(reading.application) and structured:
-            peer_name = str(structured.get('peer_name') or '')
-            if self._excluded(reading.application, peer_name):
-                self._skipped += 1
+        if callable(getattr(reading, 'finish', None)):
+            # WECHAT'S PICTURE NOW, ITS WORDS LATER (deferred_ocr.py): taken
+            # in when they are recognised - the time spent reading is the
+            # picture's alone.
+            self._waiting_room().put(reading)
+            return
+        self._take(reading)
+
+    def _take(self, reading: Any) -> None:
+        """What a reading says, taken in: WeChat's messages written at once,
+        any other window gathered into its sitting. One at a time - a
+        reading whose words came later is taken in from another thread."""
+        with self._taking:
+            structured = getattr(reading, 'wechat_capture', None)
+            if is_wechat_application(reading.application) and structured:
+                peer_name = str(structured.get('peer_name') or '')
+                if self._excluded(reading.application, peer_name):
+                    self._skipped += 1
+                    return
+                self.flush_what_is_gathered()
+                if self._wechat_visit is None:
+                    self._wechat_visit = new_id('wechat_visit')
+                capture = copy.deepcopy(structured)
+                remaining = len(self._trimmed('x' * 16000))
+                kept = []
+                for message in reversed(capture.get('messages') or []):
+                    text = str(message.get('text') or '')
+                    if remaining <= 0:
+                        capture['content_truncated'] = True
+                        break
+                    if len(text) > remaining:
+                        message['text'] = text[-remaining:]
+                        message['text_truncated'] = True
+                        capture['content_truncated'] = True
+                    kept.append(message)
+                    remaining -= min(len(text),remaining)
+                capture['messages'] = list(reversed(kept))
+                unresolved = str(capture.get('unresolved_text') or '')
+                if len(unresolved) > remaining:
+                    capture['content_truncated'] = True
+                capture['unresolved_text'] = unresolved[-remaining:] if remaining else ''
+                capture['scope_id'] = f'{self._wechat_visit}:{reading.pid}:{reading.handle}'
+                self._recorded += 1
+                self.emit(ListenerEvent(event_type='screen.text', source=self.provider_id,
+                    application=reading.application, data={
+                        'application': reading.application, 'window_title': reading.title,
+                        'handle': int(reading.handle or 0), 'text': reading.text,
+                        'characters': len(reading.text), 'readings': 1, 'over_seconds': 0,
+                        'how': reading.how, 'milliseconds': round(reading.milliseconds, 1),
+                        'capture_scope': reading.capture_scope, 'wechat_capture': capture},
+                    metadata={'platform': getattr(self.platform, 'name', '')},
+                    **_taken_at(reading)))
                 return
-            self.flush_what_is_gathered()
-            if self._wechat_visit is None:
-                self._wechat_visit = new_id('wechat_visit')
-            capture = copy.deepcopy(structured)
-            remaining = len(self._trimmed('x' * 16000))
-            kept = []
-            for message in reversed(capture.get('messages') or []):
-                text = str(message.get('text') or '')
-                if remaining <= 0:
-                    capture['content_truncated'] = True
-                    break
-                if len(text) > remaining:
-                    message['text'] = text[-remaining:]
-                    message['text_truncated'] = True
-                    capture['content_truncated'] = True
-                kept.append(message)
-                remaining -= min(len(text),remaining)
-            capture['messages'] = list(reversed(kept))
-            unresolved = str(capture.get('unresolved_text') or '')
-            if len(unresolved) > remaining:
-                capture['content_truncated'] = True
-            capture['unresolved_text'] = unresolved[-remaining:] if remaining else ''
-            capture['scope_id'] = f'{self._wechat_visit}:{reading.pid}:{reading.handle}'
-            self._recorded += 1
-            self.emit(ListenerEvent(event_type='screen.text', source=self.provider_id,
-                application=reading.application, data={
-                    'application': reading.application, 'window_title': reading.title,
-                    'handle': int(reading.handle or 0), 'text': reading.text,
-                    'characters': len(reading.text), 'readings': 1, 'over_seconds': 0,
-                    'how': reading.how, 'milliseconds': round(reading.milliseconds, 1),
-                    'capture_scope': reading.capture_scope, 'wechat_capture': capture},
-                metadata={'platform': getattr(self.platform, 'name', '')}))
-            return
-        # How much of this window was text - the screenshot provider's
-        # measure of what reading it missed.
-        from .screenshot import note_text
-        note_text(reading.application or "", reading.title or "", sum(
-            len(line.strip()) for line in (reading.text or "").splitlines()
-            if len(line.strip()) >= self.WORTH_A_LINE))
-        fresh = self._without_the_furniture(reading, self._what_is_new(reading))
-        if not fresh:
-            self._unchanged += 1
-            # Still the same window: a sitting that has gone quiet but has
-            # not ended is reported once it has been held long enough.
-            self._report_if_it_is_time(reading)
-            return
-        self._gathered += 1
-        self._gather(reading, fresh)
-        if is_wechat_application(reading.application):
-            # Short chat visits cannot wait for the ordinary three-minute
-            # buffer. Deduplication still happens before immediate emission.
-            self.flush_what_is_gathered()
-        else:
-            self._report_if_it_is_time(reading)
+            # How much of this window was text - the screenshot provider's
+            # measure of what reading it missed.
+            from .screenshot import note_text
+            note_text(reading.application or "", reading.title or "", sum(
+                len(line.strip()) for line in (reading.text or "").splitlines()
+                if len(line.strip()) >= self.WORTH_A_LINE))
+            fresh = self._without_the_furniture(reading, self._what_is_new(reading))
+            if not fresh:
+                self._unchanged += 1
+                # Still the same window: a sitting that has gone quiet but has
+                # not ended is reported once it has been held long enough.
+                self._report_if_it_is_time(reading)
+                return
+            self._gathered += 1
+            self._gather(reading, fresh)
+            if is_wechat_application(reading.application):
+                # Short chat visits cannot wait for the ordinary three-minute
+                # buffer. Deduplication still happens before immediate emission.
+                self.flush_what_is_gathered()
+            else:
+                self._report_if_it_is_time(reading)
+
+    # -- WeChat's words, later (deferred_ocr.py) ------------------------------
+    def _waiting_room(self) -> Any:
+        if self._later is None:
+            from .deferred_ocr import DeferredOcr
+            self._later = DeferredOcr(self._recognised)
+        return self._later
+
+    def _recognised(self, done: Any, waiting: Any, dropped: bool) -> None:
+        """A picture's words come - or, let go for room, the reading said to
+        be unread rather than lost without a word."""
+        if done is None and dropped:
+            from ...platform_layer.window_text import WindowText
+            done = WindowText(
+                application=waiting.application, title=waiting.title, pid=waiting.pid,
+                handle=waiting.handle, text="", how=waiting.how,
+                capture_scope=waiting.capture_scope, captured_at=waiting.captured_at,
+                wechat_capture={'schema_version': '1.0', 'source': 'wechat_screen_ocr',
+                                'layout_status': 'unrecognized',
+                                'layout_reason': 'ocr_queue_full', 'peer_name': None,
+                                'conversation_type': 'unknown', 'messages': [],
+                                'unresolved_text': '', 'captured_at': waiting.captured_at})
+        if done is not None:
+            self._take(done)
 
     # -- gathering ---------------------------------------------------------
     def _gather(self, reading: Any, fresh: str) -> None:
@@ -673,6 +726,9 @@ class ScreenProvider(ListenerProvider):
             "fast": dict(self._pace.status(), in_front=self._was_fast,
                          typing=self._typing),
             "wechat_immediate_write": True,
+            # WeChat's pictures waiting for their words (deferred_ocr.py).
+            "wechat_words_later": (self._later.status() if self._later is not None
+                                   else {"waiting": 0}),
             "focus_check_seconds": self.FOCUS_CHECK_SECONDS,
             "last_error": self._why_not() or self.last_error,
             "reader": (self.platform.activity.window_text_status()

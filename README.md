@@ -244,7 +244,7 @@ passwords, one-time codes and keys (see below).
 | --- | --- | --- |
 | The text a step needs (a window of recent activity, your chat message, the files a piece of work uses), with passwords and codes already filtered out | **Only the model you chose**: nowhere, with a local model | When a step runs |
 | Pictures | Only to a model that can see pictures | A model that reads text only gets the words, read locally |
-| Web searches (the words come from your current tasks and the people in them) and the public pages they find | Brave Search (with your key) or DuckDuckGo, then the pages themselves, **with no cookies and no sign-in** | When Connections or Newspaper run (turn them off and they stop), or when a piece of work you started needs the web |
+| Web searches (the words come from your current tasks and the people in them) and the public pages they find | The model's own search (Claude Code, Codex), or DuckDuckGo for a model without one, then the pages themselves, **with no cookies and no sign-in** | When Connections or Newspaper run (turn them off and they stop), or when a piece of work you started needs the web |
 | One-time downloads | Hugging Face (the embedding model, once), Google (the testing browser), PyPI (packages a piece of work needs) | Only the first time, or **only when you click Install / Approve** |
 
 ### You choose what it watches
@@ -359,6 +359,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.2.16](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) | 2026-10-30 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) |
 | [v0.2.15](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.15) | 2026-10-29 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.15) |
 | [v0.2.11](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.11) | 2026-10-29 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.11/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.11/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.11/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.11) |
 | [v0.2.10](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.10) | 2026-10-29 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.10) |
@@ -617,6 +618,15 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.2.16](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) (2026-10-30, a pre-release)
+
+- **Other programs no longer freeze while the agent reads your screen.** Reading the window in front asked a program with a long list of the old Windows kind - Bitvise SSH Client's file browser, with hundreds of files - about every item, and the program stood still for ten to thirty seconds at a time. Now such a window is read within bounds (a few hundred items, half a second); every other window is read exactly as before.
+- **Connections off means no one is looked up.** Looking your contacts up on the web now belongs to Connections: turned off, an issue of the Newspaper carries the news alone, and no contact - nor you - is looked up. In the Overview's token usage the two are named apart: `connections` for your contacts, `newspaper` for the news.
+- **WeChat on a Mac and on Linux: the picture now, its words a moment later.** Recognising the words of a WeChat window held up the reading; now the picture is taken at once and its words recognised right after, in order and of the moment it was taken - nothing is skipped by the summaries meanwhile.
+- **Web search needs nothing set.** A model with search of its own uses it; one without is given the app's (DuckDuckGo). The Brave Search key in Settings is gone.
+- **Work tells the two Pythons apart.** `run_python` is the agent's own Python; `python` in a command is your computer's, with the libraries you installed - those installed with `pip install --user` included - and the work is told which to use when.
+- **The testing browser works in the installed app** too, as from the source: a piece of work can open what it built in a clean browser of its own and check it.
 
 ### [v0.2.15](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.15) (2026-10-29)
 

@@ -735,33 +735,6 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         app.models.invalidate()
         return {"provider": "codex", "models": [model.to_dict() for model in models]}
 
-    # ------------------------------------------------------------ web search
-    @route("GET", "/api/search")
-    def web_search_status(_request: Any) -> Any:
-        """Which web search the agents use, and whether its key is set."""
-        from ..agent.work.tools import search_status
-        return search_status()
-
-    @route("POST", "/api/search/key")
-    def web_search_key(request: Any) -> Any:
-        """A Brave Search key: tried with one search first, and kept only if
-        Brave accepts it - in the credential store, never shown again."""
-        from ..agent.work.tools import BRAVE_KEY, search, search_status
-        key = str(request.require("api_key")).strip()
-        if not key:
-            raise ApiError("give the key", 400)
-        tried = search("weather", limit=1, key=key)
-        if tried.get("unauthorized"):
-            raise ApiError("Brave did not accept this key", 400)
-        app.credentials.set(BRAVE_KEY, key)
-        return {**search_status(), "tried": tried.get("error") or "it answered"}
-
-    @route("POST", "/api/search/key/remove")
-    def web_search_key_remove(_request: Any) -> Any:
-        from ..agent.work.tools import BRAVE_KEY, search_status
-        app.credentials.delete(BRAVE_KEY)
-        return search_status()
-
     @route("GET", "/api/modules")
     def modules_list(request: Any) -> Any:
         """Each module that runs by itself: on or off, what it does, what
@@ -2982,7 +2955,8 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         started = app.connections_round.start(look_me_up=bool(request.get("me")))
         if started:
             # An issue made with the button: its calls the user's while it is made.
-            while_running(("connections", "reading"), app.connections_round.running)
+            while_running(("connections", "newspaper", "reading"),
+                          app.connections_round.running)
         return {"started": started, "progress": dict(app.connections_round.progress)}
 
     # ------------------------------------------------------ testing browser

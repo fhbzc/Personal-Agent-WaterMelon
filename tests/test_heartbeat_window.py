@@ -66,6 +66,20 @@ class TheWindowStartsWhereTheSummariesGotToTests(unittest.TestCase):
         since, until = self.beat._window_bounds()
         return (until - since).total_seconds() / 60
 
+    def test_not_past_a_picture_of_wechat_still_waiting(self) -> None:
+        """The user, 2026-10-30: WeChat's words come after its picture; the
+        summaries stop where the oldest picture still waiting was taken."""
+        from personalized_agent.listener.providers import deferred_ocr
+        self._mark(20)
+        self.beat._began_at = utcnow() - timedelta(minutes=30)
+        taken = utcnow() - timedelta(minutes=3)
+        with mock.patch.object(deferred_ocr, "oldest_waiting", return_value=taken):
+            since, until = self.beat._window_bounds()
+        self.assertEqual(until, taken)
+        self.assertAlmostEqual((until - since).total_seconds() / 60, 17, delta=0.1)
+        with mock.patch.object(deferred_ocr, "oldest_waiting", return_value=None):
+            self.assertGreater(self.beat._window_bounds()[1], taken)
+
     def test_with_nothing_kept_it_is_the_interval(self) -> None:
         self.beat._began_at = utcnow()
         self.assertAlmostEqual(self._span(), 15, delta=0.1)

@@ -8,9 +8,12 @@ import shutil
 import tempfile
 import threading
 import os
+import sys
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from support import TemporaryAgent, keyed
 
@@ -2202,6 +2205,62 @@ class ReadingEachDesktopsRecordTests(unittest.TestCase):
             self.assertIn("files_the_user_opened", vars(provider), provider.__name__)
 
 
+class _Element:
+    """A made-up UI Automation element: what a cache request fetched."""
+
+    def __init__(self, tree, name, control=50007, offscreen=False, children=()):
+        self.tree, self.name, self.control, self.offscreen = tree, name, control, offscreen
+        self.children = list(children)
+        self.parent = None
+        for one in self.children:
+            one.parent = self
+
+    def GetCachedPropertyValue(self, which):
+        from personalized_agent.platform_layer import window_text as wt
+        return {wt._CONTROL_TYPE_PROPERTY: self.control, wt._NAME_PROPERTY: self.name,
+                wt._IS_OFFSCREEN_PROPERTY: self.offscreen}.get(which, False)
+
+    def GetCurrentPattern(self, _which):
+        return None
+
+    def FindAll(self, *_args):
+        self.tree.found_all += 1
+        raise AssertionError("FindAll over the descendants")
+
+
+class _Tree:
+    """A window holding a list of `items` files - and, behind the shown tab,
+    one of `hidden_tab` - answering as UI Automation's walker does."""
+
+    def __init__(self, items, each_call=0.0, hidden_tab=0):
+        self.calls, self.found_all, self.each_call = 0, 0, each_call
+        files = [_Element(self, f"file {index:04d}.txt") for index in range(items)]
+        parts = [_Element(self, "Files", 50008, children=files)]
+        if hidden_tab:
+            parts.append(_Element(self, "Tab", 50033, offscreen=True, children=[
+                _Element(self, f"behind {index}") for index in range(hidden_tab)]))
+        self.root = _Element(self, "Window", 50032, children=parts)
+        self.ControlViewWalker = self
+
+    def CreateCacheRequest(self):
+        return SimpleNamespace(AddProperty=lambda _which: None)
+
+    def _ask(self):
+        self.calls += 1
+        if self.each_call:
+            time.sleep(self.each_call)
+
+    def GetFirstChildElementBuildCache(self, element, _cache):
+        self._ask()
+        return element.children[0] if element.children else None
+
+    def GetNextSiblingElementBuildCache(self, element, _cache):
+        self._ask()
+        siblings = element.parent.children if element.parent else []
+        at = siblings.index(element) + 1 if element in siblings else len(siblings)
+        return siblings[at] if at < len(siblings) else None
+
+
 class _Showing:
     """A platform that has a window in front and will say what is in it."""
 
@@ -2611,6 +2670,85 @@ class ReadingAWindowsAccessibilityTreeTests(unittest.TestCase):
 
         self.assertFalse(reader._is_a_password(Silent))
         self.assertFalse(reader._is_hidden(Silent))
+
+    def test_a_window_of_thousands_is_read_at_a_bounded_cost(self) -> None:
+        """The user, 2026-10-30: Bitvise's file browser, a list of
+        thousands, stood still for half a minute at a time while it was
+        read - every element was visited, however few were read. Now at
+        most WALK_AT_MOST are, each asked once, and the names are read."""
+        from personalized_agent.platform_layer import window_text as wt
+
+        tree = _Tree(5000)
+        reader = self._reader()
+        reader._automation = tree
+        text, how, visited = reader._ask_bounded(tree.root)
+        self.assertEqual(how, "walk")
+        self.assertLessEqual(visited, reader.WALK_AT_MOST)
+        self.assertIn("file 0001.txt", text)
+        # Each element visited cost at most its two walker calls.
+        self.assertLessEqual(tree.calls, 2 * reader.WALK_AT_MOST + 2)
+        self.assertEqual(tree.found_all, 0, "nothing asked of every descendant")
+        # An application slow to answer is asked no more after READ_SECONDS.
+        slow = _Tree(5000, each_call=0.01)
+        reader = self._reader()
+        reader._automation = slow
+        began = time.monotonic()
+        reader._ask_bounded(slow.root)
+        self.assertLess(time.monotonic() - began, reader.READ_SECONDS + 0.5)
+        self.assertLess(slow.calls, 2 * reader.WALK_AT_MOST)
+        self.assertEqual(wt._HAS_TEXT_PATTERN, 30040)
+
+    def test_a_part_not_on_the_screen_is_not_gone_into(self) -> None:
+        tree = _Tree(3, hidden_tab=200)
+        reader = self._reader()
+        reader._automation = tree
+        text, _how, visited = reader._ask_bounded(tree.root)
+        self.assertNotIn("behind", text)
+        self.assertLess(visited, 10)
+
+    def test_only_a_window_holding_a_long_list_is_read_within_bounds(self) -> None:
+        """Every other window is asked as it always was: the bounded walk,
+        tried on all, found a fraction of a page, Explorer or WeChat."""
+        from personalized_agent.platform_layer import window_text as wt
+        reader = self._reader()
+        reader._started = True
+        reader._ready.set()
+        reader._automation = SimpleNamespace(ElementFromHandle=lambda handle: "window")
+        asked = []
+        reader._ask_bounded = lambda element: asked.append("bounded") or ("", "walk", 1)
+        reader._ask_the_window = lambda element: asked.append("whole") or ("", "walk", 1)
+        with mock.patch.object(wt.sys, "platform", "win32"):
+            with mock.patch.object(wt, "has_a_long_list", return_value=True):
+                reader.read(7)
+            with mock.patch.object(wt, "has_a_long_list", return_value=False):
+                reader.read(7)
+        self.assertEqual(asked, ["bounded", "whole"])
+
+    @unittest.skipUnless(sys.platform == "win32", "Win32 lists: Windows")
+    def test_a_long_win32_list_is_counted_with_one_message(self) -> None:
+        import ctypes
+        from personalized_agent.platform_layer import window_text as wt
+        user32 = ctypes.windll.user32
+        user32.CreateWindowExW.restype = ctypes.c_void_p
+        user32.CreateWindowExW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                                           ctypes.c_uint, ctypes.c_int, ctypes.c_int,
+                                           ctypes.c_int, ctypes.c_int, ctypes.c_void_p,
+                                           ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+        user32.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t,
+                                        ctypes.c_wchar_p]
+        user32.DestroyWindow.argtypes = [ctypes.c_void_p]
+        # Shown, but far off the screen: a list in a hidden window is not counted.
+        parent = user32.CreateWindowExW(0x80, "STATIC", "pa-test", 0x90000000, -32000, -32000,
+                                        200, 200,
+                                        None, None, None, None)
+        self.addCleanup(user32.DestroyWindow, parent)
+        listed = user32.CreateWindowExW(0, "LISTBOX", "", 0x50000000, 0, 0, 100, 100,
+                                        parent, None, None, None)
+        for index in range(wt.LONG_LIST):
+            user32.SendMessageW(listed, 0x0180, 0, f"file {index}")    # LB_ADDSTRING
+        self.assertFalse(wt.has_a_long_list(parent))
+        user32.SendMessageW(listed, 0x0180, 0, "one more")
+        self.assertTrue(wt.has_a_long_list(parent))
 
     def test_nothing_is_read_on_a_platform_without_it(self) -> None:
         from personalized_agent.platform_layer.base import PlatformActivityProvider

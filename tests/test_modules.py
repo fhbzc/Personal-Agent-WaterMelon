@@ -21,7 +21,9 @@ class WhichModuleTests(unittest.TestCase):
         self.assertEqual(modules.module_of("heartbeat_trigger"), "calendar")
         self.assertEqual(modules.module_of("heartbeat:step_todo"), "tasks")
         self.assertEqual(modules.module_of("state_heartbeat"), "tasks")
-        self.assertEqual(modules.module_of("connections"), "recommend")
+        # An issue's two parts: the contacts, Connections'; the news, its own.
+        self.assertEqual(modules.module_of("connections"), "connections")
+        self.assertEqual(modules.module_of("newspaper"), "recommend")
         self.assertEqual(modules.module_of("reading"), "recommend")
         self.assertEqual(modules.module_of("lessons_work"), "experience")
         # Natures grouped beside a round run by themselves; a task learned
@@ -58,7 +60,7 @@ class WhichModuleTests(unittest.TestCase):
         self.assertEqual(modules.module_name("manual_chat"), "Started by you: Chat")
 
     def test_a_function_run_with_a_button_is_apart(self) -> None:
-        self.assertEqual(modules.module_of("connections", by_user=True), "recommend:by_you")
+        self.assertEqual(modules.module_of("newspaper", by_user=True), "recommend:by_you")
         self.assertTrue(modules.is_manual("recommend:by_you"))
         self.assertEqual(modules.module_name("recommend:by_you"),
                          "Newspaper (started by you)")
@@ -68,11 +70,12 @@ class WhichModuleTests(unittest.TestCase):
     def test_each_says_what_turning_it_off_means(self) -> None:
         for one in modules.MODULES:
             self.assertTrue(one["what"] and one["off"], one["key"])
-        # Passive and active looking after contacts, said apart.
+        # The contacts are Connections', from the screen and from the web;
+        # with it off an issue is the news alone (the user, 2026-10-30).
         self.assertIn("on your screen", modules.BY_KEY["connections"]["what"])
-        self.assertIn("on the web is Newspaper's", modules.BY_KEY["connections"]["what"])
-        self.assertIn("contacts looked up on the web", modules.BY_KEY["recommend"]["what"])
-        self.assertIn("turn it off too", modules.BY_KEY["connections"]["off"])
+        self.assertIn("looked up on the web", modules.BY_KEY["connections"]["what"])
+        self.assertIn("the news alone", modules.BY_KEY["connections"]["off"])
+        self.assertIn("while Connections is on", modules.BY_KEY["recommend"]["what"])
 
 
 class TurnedOffTests(unittest.TestCase):
@@ -215,14 +218,14 @@ class ByTheUserTests(unittest.TestCase):
 
     def test_the_call_records_it_and_the_share_leaves_it_out(self) -> None:
         from personalized_agent.models.base import ModelRequest
-        with self.started.now(("connections",)):
+        with self.started.now(("newspaper",)):
             try:
                 self.app.models.invoke(ModelRequest(messages=[{"role": "user",
                                                                "content": "hi"}],
-                                                    task="connections"), role="primary")
+                                                    task="newspaper"), role="primary")
             except Exception:
                 self.skipTest("no model to call here")
-        row = self.app.db.query_one("SELECT by_user FROM model_calls WHERE task = 'connections'")
+        row = self.app.db.query_one("SELECT by_user FROM model_calls WHERE task = 'newspaper'")
         self.assertEqual(int(row["by_user"]), 1)
         spent = modules.shares(self.app.db, 72)
         self.assertIn("recommend:by_you", spent)

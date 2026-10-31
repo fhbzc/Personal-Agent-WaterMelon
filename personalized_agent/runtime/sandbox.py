@@ -330,8 +330,10 @@ class SandboxRuntime:
         """The testing browser this runtime's code may start, or None: one
         is installed (in the protected state - runtime/browser.py), the
         code may reach no network, and the system gives the run a loopback
-        of its own. Never in a packaged application, where no child starts."""
-        if is_frozen() or getattr(self.policy, "network", True):
+        of its own. In a packaged application too (the user, 2026-10-30):
+        children start there since v0.2.15, and what keeps the browser to
+        the run's loopback is the system."""
+        if getattr(self.policy, "network", True):
             return None
         protected = list(getattr(self.policy, "protected_paths", None) or [])
         if not protected:
