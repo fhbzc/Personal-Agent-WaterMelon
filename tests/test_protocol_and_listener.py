@@ -2587,6 +2587,23 @@ class WhatTheWindowInFrontWasShowingTests(unittest.TestCase):
         self.assertGreaterEqual(provider._interval(), 2.0)
 
 
+class _Answering:
+    """A window's watch that says it always answered."""
+
+    def __init__(self, handle):
+        import threading
+        self.still = threading.Event()
+
+    def answers(self):
+        return True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return None
+
+
 class ReadingAWindowsAccessibilityTreeTests(unittest.TestCase):
     """Section 19.2: the parts of the reading that are not COM.
 
@@ -2716,13 +2733,141 @@ class ReadingAWindowsAccessibilityTreeTests(unittest.TestCase):
         reader._automation = SimpleNamespace(ElementFromHandle=lambda handle: "window")
         asked = []
         reader._ask_bounded = lambda element: asked.append("bounded") or ("", "walk", 1)
-        reader._ask_the_window = lambda element: asked.append("whole") or ("", "walk", 1)
-        with mock.patch.object(wt.sys, "platform", "win32"):
+        reader._ask_the_window = lambda element, still: asked.append("whole") or ("", "walk", 1)
+        with mock.patch.object(wt.sys, "platform", "win32"), \
+                mock.patch.object(wt, "_Watch", _Answering):
             with mock.patch.object(wt, "has_a_long_list", return_value=True):
                 reader.read(7)
             with mock.patch.object(wt, "has_a_long_list", return_value=False):
                 reader.read(7)
         self.assertEqual(asked, ["bounded", "whole"])
+
+    def _watched(self, still_in=(), answers=True):
+        """A reader whose window's watch says it stood still in the readings
+        numbered in `still_in` (from 1), and what each reading did."""
+        from personalized_agent.platform_layer import window_text as wt
+        reader = self._reader()
+        reader._started = True
+        reader._ready.set()
+        reader._automation = SimpleNamespace(ElementFromHandle=lambda handle: "window")
+        asked, readings = [], [0]
+
+        class Watch(_Answering):
+            def __init__(self, handle):
+                super().__init__(handle)
+                readings[0] += 1
+                if readings[0] in still_in:
+                    self.still.set()
+
+            def answers(self):
+                return answers
+
+        def whole(element, still):
+            asked.append("whole, then bounded" if still() else "whole")
+            return "", "walk", 1
+        reader._ask_bounded = lambda element: asked.append("bounded") or ("", "walk", 1)
+        reader._ask_the_window = whole
+        patches = [mock.patch.object(wt.sys, "platform", "win32"),
+                   mock.patch.object(wt, "_Watch", Watch),
+                   mock.patch.object(wt, "has_a_long_list", return_value=False)]
+        for one in patches:
+            one.start()
+            self.addCleanup(one.stop)
+        return reader, asked
+
+    def test_a_program_seen_standing_still_is_read_within_bounds_from_then_on(self) -> None:
+        """The user, 2026-11-01: Bitvise still stood still now and then - its
+        file browser with short lists took 14-22 s to read, standing still
+        2-4 s at a time. Seen so in two readings, read within bounds after."""
+        from personalized_agent.platform_layer import window_text as wt
+        reader, asked = self._watched(still_in=(1, 2))
+        reader.read(7, "BvSsh.exe")
+        self.assertEqual(reader.stands_still, set(), "once may be a program busy of its own")
+        reader.read(7, "BvSsh.exe")
+        self.assertEqual(reader.stands_still, {"bvssh.exe"})
+        reader.read(7, "BvSsh.exe")
+        self.assertEqual(asked, ["whole, then bounded", "whole, then bounded", "bounded"])
+        self.assertEqual(wt.STILL_READINGS, 2)
+
+    def test_only_in_a_row(self) -> None:
+        """A browser busy with a heavy page now and then is never taken for
+        one: an ordinary reading between and the count starts again."""
+        reader, asked = self._watched(still_in=(1, 3, 5))
+        for _ in range(6):
+            reader.read(7, "firefox.exe")
+        self.assertEqual(reader.stands_still, set())
+        self.assertEqual(asked.count("whole"), 3)
+
+    def test_a_program_that_answers_is_read_as_always(self) -> None:
+        reader, asked = self._watched()
+        for _ in range(3):
+            reader.read(7, "firefox.exe")
+        self.assertEqual(asked, ["whole"] * 3)
+        self.assertEqual(reader.stands_still, set())
+
+    def test_a_window_busy_before_it_is_read_is_read_within_bounds_and_not_counted(self) -> None:
+        reader, asked = self._watched(answers=False)
+        for _ in range(3):
+            reader.read(7, "firefox.exe")
+        self.assertEqual(asked, ["bounded"] * 3)
+        self.assertEqual(reader.stands_still, set())
+
+    def test_the_rest_of_a_reading_is_within_bounds_once_it_stood_still(self) -> None:
+        reader = self._reader()
+        bounded = []
+        reader._text_of = lambda element: ""
+        reader._of_type = lambda element, control, still: ("", 0)
+        reader._walk = lambda element, still: self.fail("the whole walk after standing still")
+        reader._ask_bounded = lambda element: bounded.append(element) or ("names", "walk", 3)
+        calls = iter([False, True])
+        self.assertEqual(reader._ask_the_window("window", lambda: next(calls, True)),
+                         ("names", "walk", 3))
+        self.assertEqual(bounded, ["window"])
+
+    def test_kept_in_the_agents_own_folder(self) -> None:
+        from personalized_agent.platform_layer import window_text as wt
+        with tempfile.TemporaryDirectory() as folder:
+            kept = Path(folder) / "cache" / "stands_still_when_read.json"
+            reader, _asked = self._watched(still_in=(1, 2))
+            reader.remember_in(kept)
+            reader.read(7, "BvSsh.exe")
+            reader.read(7, "BvSsh.exe")
+            self.assertIn("bvssh.exe", json.loads(kept.read_text(encoding="utf-8"))["programs"])
+            again = wt.WindowTextReader()
+            again.remember_in(kept)
+            self.assertEqual(again.stands_still, {"bvssh.exe"})
+            wt.WindowTextReader().remember_in(Path(folder) / "none.json")   # nothing kept yet
+            # Asked again after STILL_DAYS: one taken wrongly is not taken for good.
+            kept.write_text(json.dumps({"programs": {
+                "bvssh.exe": (dt.datetime.now(dt.timezone.utc)
+                              - dt.timedelta(days=wt.STILL_DAYS + 1)).isoformat(),
+                "oldapp.exe": "not a time"}}), encoding="utf-8")
+            later = wt.WindowTextReader()
+            later.remember_in(kept)
+            self.assertEqual(later.stands_still, set())
+
+    def test_it_lapses_while_the_agent_runs(self) -> None:
+        """Not only when the agent starts: one running a month and more asks again."""
+        from personalized_agent.platform_layer import window_text as wt
+        reader, asked = self._watched(still_in=(1, 2))
+        reader.read(7, "BvSsh.exe")
+        reader.read(7, "BvSsh.exe")
+        self.assertEqual(reader.stands_still, {"bvssh.exe"})
+        reader._still_since["bvssh.exe"] -= dt.timedelta(days=wt.STILL_DAYS, seconds=1)
+        self.assertEqual(reader.stands_still, set())
+        reader.read(7, "BvSsh.exe")
+        self.assertEqual(asked[-1], "whole", "asked the ordinary way again")
+
+    @unittest.skipUnless(sys.platform == "win32", "a window's thread: Windows")
+    def test_a_window_that_answers_is_not_taken_as_standing_still(self) -> None:
+        import ctypes
+        from personalized_agent.platform_layer import window_text as wt
+        handle = ctypes.windll.user32.GetDesktopWindow()
+        watch = wt._Watch(handle)
+        self.assertTrue(watch.answers())
+        with watch:
+            time.sleep(0.2)
+        self.assertFalse(watch.still.is_set())
 
     @unittest.skipUnless(sys.platform == "win32", "Win32 lists: Windows")
     def test_a_long_win32_list_is_counted_with_one_message(self) -> None:

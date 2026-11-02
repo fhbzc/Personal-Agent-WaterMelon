@@ -119,16 +119,21 @@ def _crc_of(path: Path) -> int:
 
 
 def unpack_beside(archive: Path, live: Path, target: Path,
-                  stop: Optional[Callable[[], bool]] = None) -> Dict[str, int]:
+                  stop: Optional[Callable[[], bool]] = None,
+                  told: Optional[Callable[[int, int], None]] = None) -> Dict[str, int]:
     """The portable folder unpacked into `target`: a file the same as the
     running one's (its size, then its CRC) is a hard link to it - nothing
-    written - and the rest is written. What was linked and written."""
+    written - and the rest is written. What was linked and written.
+    `told(done, total)`: how many of its files are done, as it goes."""
     if target.exists():
         shutil.rmtree(target, ignore_errors=True)
     target.mkdir(parents=True)
     linked = written = 0
     with zipfile.ZipFile(archive) as packed:
-        for info in packed.infolist():
+        listed = packed.infolist()
+        for at, info in enumerate(listed):
+            if told is not None:
+                told(at, len(listed))
             if stop is not None and stop():
                 raise RuntimeError("stopped while making the update ready")
             name = info.filename.replace("\\", "/")
@@ -151,6 +156,8 @@ def unpack_beside(archive: Path, live: Path, target: Path,
             with packed.open(info) as source, open(out, "wb") as sink:
                 shutil.copyfileobj(source, sink, 1 << 20)
             written += 1
+        if told is not None:
+            told(len(listed), len(listed))
     return {"linked": linked, "written": written}
 
 

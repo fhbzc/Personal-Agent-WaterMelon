@@ -255,7 +255,7 @@ class NotUnderTheUsersTypingTests(_PanelBase):
                 "/api/work/tree": {"cards": [], "stages": [], "edges": []},
                 "/api/work/live": _live(state="ended", events=[], last=0)}
         steps = (
-            "experienceState.unit='task-live';await xpLoadRuns(true);await wait();"
+            "experienceState.unit='task-live';await xpLoadRuns(true);await wait();document.querySelectorAll('.xp-run').forEach(d=>d.open=true);await xpLoadRuns(true);await wait(400);"
             "const box=document.querySelector('[data-xp-continue-instruction=\"run_1\"]');box.__mine=1;"
             "box.focus();box.value='Make it shorter, please';"
             "box.dispatchEvent(new Event('input',{bubbles:true}));box.setSelectionRange(5,10);"
@@ -331,7 +331,7 @@ class TheChartOfTheModelCallsTests(_PanelBase):
 
     def test_drawn_hovered_tabled_and_drawn_on(self) -> None:
         steps = (
-            "experienceState.unit='task-live';await xpLoadRuns();await wait(400);"
+            "experienceState.unit='task-live';await xpLoadRuns();await wait(400);document.querySelectorAll('.xp-run').forEach(d=>d.open=true);await xpLoadRuns(true);await wait(400);"
             "const box=document.querySelector('[data-xp-calls-chart=\"run_1\"]');"
             "const svg=box.querySelector('svg');"
             "out.panels=[...svg.querySelectorAll('.xp-calls-panel')].map(text);"
@@ -504,7 +504,7 @@ class LimitsApartAndASoundTests(_PanelBase):
                                             "deliverables": ["README.md"]}}},
                 "/api/work/drafts/start": {"run": "run_2", "unit": "task-live"}}
         steps = (
-            "experienceState.unit='task-live';await xpLoadRuns(true);await wait();"
+            "experienceState.unit='task-live';await xpLoadRuns(true);await wait();document.querySelectorAll('.xp-run').forEach(d=>d.open=true);await xpLoadRuns(true);await wait(400);"
             "out.labels=text(document.querySelector('.xp-limits'));"
             "out.values=['minutes','tokens_in','tokens_out','calls'].map(n=>document.querySelector('#xp-limit-'+n).value);"
             "out.oldField=Boolean(document.querySelector('#xp-limit-tokens'));"
@@ -524,7 +524,7 @@ class LimitsApartAndASoundTests(_PanelBase):
             "out.beforeStart=window.__posts.filter(p=>p.p==='/api/work/drafts/start').length;"
             "click(document.querySelector('#delegate-start'));await wait(300);"
             "out.closed=!document.querySelector('#delegate').open;"
-            "experienceState.unit='task-live';await xpLoadRuns(true);await wait();"
+            "experienceState.unit='task-live';await xpLoadRuns(true);await wait();document.querySelectorAll('.xp-run').forEach(d=>d.open=true);await xpLoadRuns(true);await wait(400);"
             "document.querySelector('#xp-limit-tokens_in').value='2000000';"
             "document.querySelector('#xp-limit-tokens_out').value='50000';"
             # Continue: its own box, unticked until ticked.
@@ -767,7 +767,7 @@ class TheVersionTreeTests(_PanelBase):
 
     def test_walked_shown_continued_and_kept(self) -> None:
         steps = (
-            "experienceState.unit='task-ver';await xpLoadRuns();await wait();"
+            "experienceState.unit='task-ver';await xpLoadRuns();await wait();document.querySelectorAll('.xp-run').forEach(d=>d.open=true);await xpLoadRuns(true);await wait(400);"
             "const q=(s)=>document.querySelector(s);"
             "const graph=q('[data-xp-version-graph=\"run_2\"]');"
             "out.rows=[...graph.querySelectorAll('.xp-vrow')].map(li=>li.dataset.xpVersionNode);"

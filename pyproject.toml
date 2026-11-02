@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personalized-agent"
-version = "0.2.16"
+version = "0.2.17"
 description = "Cross-platform desktop AI agent with activity awareness, a knowledge graph and a scheduler"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -64,6 +64,7 @@ include = ["personalized_agent*"]
     "api/web/lang/*",
     "resources/characters/*/manifest.json",
     "resources/characters/*/*/*.png",
+    "resources/browser_extension/*",
 ]
 
 [tool.pytest.ini_options]

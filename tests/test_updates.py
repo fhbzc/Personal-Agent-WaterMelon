@@ -213,7 +213,7 @@ class CheckedBeforeItRunsTests(unittest.TestCase):
     def _serve(self, sums_hash):
         name = up.ASSET["windows"]
 
-        def get(url, timeout=30.0):
+        def get(url, timeout=30.0, start=0):
             if url.endswith(up.SUMS):
                 return _Answer(f"{sums_hash}  {name}\n".encode())
             return _Answer(self.payload)

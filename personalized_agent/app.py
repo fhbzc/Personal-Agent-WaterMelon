@@ -79,6 +79,12 @@ class AgentApplication:
         self.traces = self.observability_service.traces
         self.ui_attached = False
         self.platform = get_platform()
+        if sys.platform == "win32":
+            # Programs seen standing still while their windows are read, kept
+            # in the agent's own folder (platform_layer/window_text.py).
+            from .platform_layer.window_text import reader as window_reader
+
+            window_reader().remember_in(self.paths.cache_dir / "stands_still_when_read.json")
         log.info("%s %s starting", APP_NAME, __version__)
         log.info("platform: %s", self.platform.describe())
         log.info("agent root: %s", self.root)
@@ -161,7 +167,11 @@ class AgentApplication:
         # is kept for a while and then let go, by age.
         from .data_manage.storage.housekeeping import RawHousekeeping
 
-        self.housekeeping = RawHousekeeping(self.config, self.raw_store)
+        from .agent.work import mail_pages
+        self.housekeeping = RawHousekeeping(
+            self.config, self.raw_store,
+            # The mail pages the user opened, kept longer, before the records go.
+            before=lambda: mail_pages.keep(self.db))
         self.recorder = RawEditRecorder(self.raw_store, bus=self.bus,
                                         observability=self.observability)
         tracer = self.observability_service.tracer_for
@@ -430,6 +440,8 @@ class AgentApplication:
         # (agent/work/child.py, governor.py).
         from .agent.work.governor import Governor
         self.work.paths = self.paths
+        # Its settings: where the user's mail and calendar are (agent/work/handed.py).
+        self.work.app_config = self.config
         self.work.in_subprocess = bool(self.config.get("work_in_subprocess", True))
         self.work.governor = Governor(self.work)
         # ONE POOL FOR EVERYTHING SIDE BY SIDE (common/pool.py): the state
@@ -445,6 +457,13 @@ class AgentApplication:
         # the user checks, then the run (agent/work/delegate.py).
         from .agent.work.delegate import Drafts
         self.drafts = Drafts(self)
+
+        # SOCIETY (society/service.py): the agent among other people's
+        # agents - its identity, its inbox, its drafts; only the user sends.
+        from .society.service import SocietyService
+        self.society = SocietyService(self)
+        from .society.tools import add_tools as _society_tools
+        _society_tools(self.agent.tools, self.society)
 
         # UPDATES from the project's published releases (platform_layer/
         # updater.py): never while a piece of work runs. `quit` is set by
@@ -748,6 +767,19 @@ class AgentApplication:
         return explorer_menu.follow(True, command, icon if icon.exists() else None,
                                     display_language(self.config))
 
+    def follow_system_menus(self) -> list:
+        """DELEGATE WORK ON THE SYSTEM'S OWN MENUS beyond Explorer's
+        (platform_layer/system_menus.py): macOS's Services - selected text
+        in any program, files in Finder - and the Linux file managers'. Put
+        in place again at each start, in the display language's words."""
+        from .platform_layer import system_menus
+        if not system_menus.available():
+            return []
+        from .common.languages import display_language
+        from .platform_layer.autostart import launch_command
+        command = getattr(self, "launch_command", None) or launch_command(self.root)
+        return system_menus.follow(self.data_dir, command, display_language(self.config))
+
     def avatar_name(self) -> str:
         """What the avatar, and so the agent, is called: the name the user gave
         it, or the avatar's own."""
@@ -929,7 +961,8 @@ class AgentApplication:
                                 ("Learning", self.learning.begin),
                                 ("Triggers", self.triggers.start),
                                 ("WorkGovernor", self.work.governor.start),
-                                ("LocalIndex", self.local_index.begin)):
+                                ("LocalIndex", self.local_index.begin),
+                                ("Society", self.society.begin)):
                 began = _time.perf_counter()
                 begin()
                 spent[name] = round(_time.perf_counter() - began, 3)
@@ -1189,6 +1222,10 @@ class AgentApplication:
             if not self._started:
                 return
             log.info("stopping the personalized agent")
+            try:
+                self.society.stop()
+            except Exception:                    # pragma: no cover - never in the way
+                pass
             # EACH PHASE TIMES ITSELF. Shutdown was eight seconds and the
             # log said only when each component finished, which is not the
             # same as how long it took - and one of them, the listener,

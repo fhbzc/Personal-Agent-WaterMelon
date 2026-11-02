@@ -18,7 +18,7 @@ from unittest import mock
 from support import TemporaryAgent
 from test_delegate import PLAN, _Models
 
-from personalized_agent.agent.work.delegate import runs_as_program
+from personalized_agent.agent.work.delegate import asked_of, runs_as_program
 from personalized_agent.heartbeat.experience.service import is_leisure
 
 
@@ -61,7 +61,7 @@ class WhatCameOfATodoTests(unittest.TestCase):
         draft = drafts.create(text="Repot the fern", source="todo",
                               options={"todo": "todo_fern"}, collect=False)
         self.assertEqual(drafts.of_todos(), {"todo_fern": {"versions": [
-            {"draft": draft["id"], "version": 1, "state": "drafting"}]}})
+            {"draft": draft["id"], "version": 1, "state": "drafting"}], "next": 1}})
         drafts.collect_and_plan(draft["id"])
         unit = drafts.start(draft["id"], folders=[str(self.folder)])["unit"]
         self.assertEqual(self._v()["state"], "ongoing")
@@ -88,9 +88,11 @@ class WhatCameOfATodoTests(unittest.TestCase):
         # What it is, before it is opened.
         self.assertEqual((said["result_kind"], said["result_name"]), ("file", "fern-plan.md"))
 
-    def test_handed_over_again_each_time_a_version(self) -> None:
+    def test_handed_over_again_each_time_a_try_of_the_same_work(self) -> None:
         drafts = self.app.drafts
-        names = []
+        units, started = [], []
+        self.app.work.start = lambda unit, instruction, **kw: (
+            started.append(kw) or {"run": f"run_{len(started)}"})
         for n in range(3):
             draft = drafts.create(text="Repot the fern", source="todo",
                                   options={"todo": "todo_fern"}, collect=False)
@@ -98,16 +100,173 @@ class WhatCameOfATodoTests(unittest.TestCase):
             if n == 1:
                 drafts.cancel(draft["id"])      # not a version: as never handed over
                 continue
-            unit = drafts.start(draft["id"], folders=[])["unit"]
-            names.append(self.app.state_heartbeat.experience.unit(unit)["name"])
+            units.append(drafts.start(draft["id"], folders=[])["unit"])
         # One more, its plan not started yet: the next version.
         draft = drafts.create(text="Repot the fern", source="todo",
                               options={"todo": "todo_fern"}, collect=False)
         versions = drafts.of_todos()["todo_fern"]["versions"]
         self.assertEqual([(one["version"], one["state"]) for one in versions],
                          [(1, "ongoing"), (2, "ongoing"), (3, "drafting")])
-        self.assertFalse(names[0].endswith(")"))
-        self.assertTrue(names[1].endswith("(V2)"), names)
+        # ONE PROJECT (the user, 2026-10-31): the second a try of the first's
+        # work - its name unchanged - in a folder and a tree of its own.
+        self.assertEqual(units[0], units[1])
+        name = self.app.state_heartbeat.experience.unit(units[0])["name"]
+        self.assertFalse(name.endswith(")"), name)
+        self.assertEqual(started[0].get("attempt"), 1)
+        self.assertNotIn("folder", started[0], "the first try: the work's own folder")
+        self.assertEqual((started[1]["attempt"], started[1]["tree"]), (2, "v2"))
+        self.assertEqual(Path(started[1]["folder"]).name, f"{name} V2")
+
+    def test_a_try_opens_with_the_words_and_context_of_the_one_before(self) -> None:
+        drafts = self.app.drafts
+        first = drafts.create(text="Repot the fern", source="todo",
+                              options={"todo": "todo_fern",
+                                       "instruction": "Find a bigger pot"}, collect=False)
+        drafts.collect_and_plan(first["id"])
+        drafts.start(first["id"], folders=[str(self.folder)])
+        kept = drafts.get(first["id"])["context"]
+        second = drafts.create(text="Repot the fern", source="todo",
+                               options={"todo": "todo_fern"}, collect=False, write_first=True)
+        self.assertEqual(second["options"]["instruction"], "Find a bigger pot",
+                         "the box opens with the try before's words")
+        self.assertEqual(second["folders"], [str(self.folder)])
+        # Drafted here, not on a thread of its own beside this test's own call.
+        with mock.patch.object(drafts, "_collect_apart"):
+            drafts.compose(second["id"], "Find a clay pot instead")
+        # WHAT WAS HANDED OVER IS TAKEN AS IT WAS; THE USER'S RECORDS ARE
+        # SEARCHED AGAIN (the user, 2026-10-31: to see what happened since),
+        # by this try's own words.
+        searched = []
+
+        def found(draft, context):
+            searched.append(asked_of(draft))
+            return dict(context, query={"keywords": ["clay"]},
+                        found=[{"kind": "state", "title": "The fern was repotted on Friday"}])
+        with mock.patch.object(drafts, "collect", side_effect=AssertionError("collected again")), \
+                mock.patch.object(drafts, "_found", side_effect=found):
+            drafts.collect_and_plan(second["id"])
+        again = drafts.get(second["id"])
+        self.assertEqual(searched, ["Find a clay pot instead"])
+        anew = ("query", "found", "summary", "tries", "people", "me")
+        self.assertEqual({k: v for k, v in again["context"].items() if k not in anew},
+                         {k: v for k, v in kept.items() if k not in anew},
+                         "what was handed over, as it was collected")
+        self.assertEqual([one["title"] for one in again["context"]["found"]],
+                         ["The fern was repotted on Friday"], "found again")
+        self.assertEqual(again["status"], "ready")
+
+    def test_each_try_says_where_its_own_run_stands(self) -> None:
+        drafts = self.app.drafts
+        ids = iter(["run_v1", "run_v2"])
+        self.app.work.start = lambda unit, instruction, **kw: {"run": next(ids)}
+        for _ in range(2):
+            draft = drafts.create(text="Repot the fern", source="todo",
+                                  options={"todo": "todo_fern"}, collect=False)
+            drafts.collect_and_plan(draft["id"])
+            unit = drafts.start(draft["id"], folders=[str(self.folder)])["unit"]
+        _run(self.app, "run_v1", unit, self.folder, "done", "2026-10-31T10:00:00+00:00")
+        _run(self.app, "run_v2", unit, self.folder / "v2", "not finished",
+             "2026-10-31T11:00:00+00:00")
+        self.app.db.execute("UPDATE work_runs SET plan = ? WHERE id = 'run_v2'",
+                            (json.dumps({"tree": "v2", "attempt": 2}),))
+        self.app.work._running["run_v2"] = _Alive()
+        self.assertEqual(self._v(0)["state"], "finished", "the first, finished")
+        self.assertEqual(self._v(1)["state"], "ongoing", "the second, going")
+        self.assertEqual((self._v(0)["run"], self._v(1)["run"]), ("run_v1", "run_v2"))
+
+    def test_a_new_try_is_told_what_the_tries_before_made(self) -> None:
+        drafts = self.app.drafts
+        told, ids = [], iter(["run_v1", "run_v2", "run_v3"])
+        self.app.work.start = lambda unit, instruction, **kw: (
+            told.append(instruction) or {"run": next(ids)})
+        first = drafts.create(text="Repot the fern", source="todo",
+                              options={"todo": "todo_fern", "instruction": "Find a bigger pot"},
+                              collect=False)
+        drafts.collect_and_plan(first["id"])
+        unit = drafts.start(first["id"], folders=[str(self.folder)])["unit"]
+        _run(self.app, "run_v1", unit, self.folder, "done", "2026-10-31T10:00:00+00:00")
+        self.app.db.execute("UPDATE work_runs SET final = ? WHERE id = 'run_v1'",
+                            (json.dumps({"answer": "The fern needs a 20 cm clay pot."}),))
+        self.assertNotIn("TRIED BEFORE", told[0], "the first try: none before it")
+        second = drafts.create(text="Repot the fern", source="todo",
+                               options={"todo": "todo_fern"}, collect=False, write_first=True)
+        # Drafted here, not on a thread of its own beside this test's own call.
+        with mock.patch.object(drafts, "_collect_apart"):
+            drafts.compose(second["id"], "Order the pot")
+        drafts.collect_and_plan(second["id"])
+        # The plan starts from them too.
+        self.assertEqual([one["version"] for one in drafts.get(second["id"])["context"]["tries"]],
+                         [1])
+        drafts.start(second["id"], folders=[str(self.folder)])
+        self.assertIn("THIS WORK WAS TRIED BEFORE", told[1])
+        self.assertIn("V1 (finished", told[1])
+        self.assertIn("asked: Find a bigger pot", told[1])
+        self.assertIn("it reported: The fern needs a 20 cm clay pot.", told[1])
+        self.assertIn(f"its folder: {self.folder}", told[1])
+        self.assertIn("this try follows its own instruction", told[1])
+        # Unless the user said not: the tries apart.
+        third = drafts.create(text="Repot the fern", source="todo",
+                              options={"todo": "todo_fern"}, collect=False, write_first=True)
+        # Drafted here, not on a thread of its own beside this test's own call.
+        with mock.patch.object(drafts, "_collect_apart"):
+            drafts.compose(third["id"], "Try a hanging basket")
+        drafts.collect_and_plan(third["id"])
+        drafts.start(third["id"], folders=[str(self.folder)], options={"see_tries": False})
+        self.assertNotIn("TRIED BEFORE", told[2])
+
+    def test_a_try_removed_still_gives_the_next_its_words(self) -> None:
+        drafts = self.app.drafts
+        ids = iter(["run_v1", "run_v2", "run_v3", "run_v4"])
+        started = []
+        self.app.work.start = lambda unit, instruction, **kw: (
+            started.append(unit["id"]) or {"run": next(ids)})
+        made = []
+        for words in ("Find a bigger pot", "Order the clay pot"):
+            draft = drafts.create(text="Repot the fern", source="todo",
+                                  options={"todo": "todo_fern", "instruction": words},
+                                  collect=False)
+            drafts.collect_and_plan(draft["id"])
+            made.append(draft["id"])
+            unit = drafts.start(draft["id"], folders=[])["unit"]
+        _run(self.app, "run_v1", unit, self.folder, "done", "2026-10-31T10:00:00+00:00")
+        _run(self.app, "run_v2", unit, self.folder, "done", "2026-10-31T11:00:00+00:00")
+        # The second removed: the next still opens with ITS words.
+        self.assertEqual(drafts.remove(made[1]), {"removed": made[1]})
+        third = drafts.create(text="Repot the fern", source="todo",
+                              options={"todo": "todo_fern"}, collect=False, write_first=True)
+        self.assertEqual(third["options"]["instruction"], "Order the clay pot")
+        # Every try removed, and with the last its project: the words still,
+        # in a project of its own - never one the user no longer sees.
+        self.assertEqual(drafts.remove(made[0]), {"removed": made[0]})
+        fourth = drafts.create(text="Repot the fern", source="todo",
+                               options={"todo": "todo_fern"}, collect=False, write_first=True)
+        self.assertEqual(fourth["options"]["instruction"], "Order the clay pot")
+        with mock.patch.object(drafts, "_collect_apart"):
+            drafts.compose(fourth["id"], "Order the clay pot")
+        drafts.collect_and_plan(fourth["id"])
+        drafts.start(fourth["id"], folders=[])
+        self.assertNotEqual(started[-1], unit, "a project of its own")
+
+    def test_one_try_removed_its_work_stays_for_the_other(self) -> None:
+        drafts = self.app.drafts
+        ids = iter(["run_v1", "run_v2"])
+        self.app.work.start = lambda unit, instruction, **kw: {"run": next(ids)}
+        made = []
+        for _ in range(2):
+            draft = drafts.create(text="Repot the fern", source="todo",
+                                  options={"todo": "todo_fern"}, collect=False)
+            drafts.collect_and_plan(draft["id"])
+            made.append(draft["id"])
+            unit = drafts.start(draft["id"], folders=[str(self.folder)])["unit"]
+        _run(self.app, "run_v1", unit, self.folder, "done", "2026-10-31T10:00:00+00:00")
+        _run(self.app, "run_v2", unit, self.folder, "done", "2026-10-31T11:00:00+00:00")
+        self.assertEqual(drafts.remove(made[0]), {"removed": made[0]})
+        self.assertIn(unit, [one["id"] for one in self.app.state_heartbeat.experience.units()],
+                      "the work stays for the other try")
+        self.assertEqual([one["id"] for one in self.app.work.runs(unit)], ["run_v2"],
+                         "the removed try's run is not listed")
+        self.assertEqual([one["version"] for one in drafts.of_todos()["todo_fern"]["versions"]],
+                         [2])
 
     def test_a_result_removed_is_not_shown_and_its_files_are_kept(self) -> None:
         drafts = self.app.drafts

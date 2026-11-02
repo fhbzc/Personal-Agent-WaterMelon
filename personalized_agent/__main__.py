@@ -21,6 +21,7 @@ import logging
 import signal
 import sys
 import threading
+from typing import Any
 from pathlib import Path
 
 from .version import APP_NAME, __version__
@@ -189,6 +190,10 @@ def _follow_autostart(application, root: Path | None, headless: bool) -> None:
     except Exception:                        # pragma: no cover - the system's own
         log.warning("Explorer's Delegate work could not be set", exc_info=True)
     try:
+        application.follow_system_menus()
+    except Exception:                        # pragma: no cover - the system's own
+        log.warning("the system's Delegate work could not be set", exc_info=True)
+    try:
         application.autostart = Autostart(launch_command(root, headless))
         application.autostart.follow(bool(application.config.get("start_at_login", True)))
     except Exception:                        # pragma: no cover - the system's own
@@ -276,6 +281,177 @@ def _delegate(root: Path | None, path: str) -> int:
     return 0
 
 
+def _root_of(args_before: list) -> Path | None:
+    """`--root` or `--data-dir`, as the launcher gave it."""
+    for flag in ("--root", "--data-dir"):
+        if flag in args_before and args_before.index(flag) + 1 < len(args_before):
+            return Path(args_before[args_before.index(flag) + 1])
+    return None
+
+
+def _native_host(args_before: list) -> int:
+    """`--native-host`: the browser extension's messages answered
+    (platform_layer/native_host.py) - a Delegate work kept, and its box
+    opened by a process apart."""
+    from .common.paths import AppPaths, resolve_root
+    from .platform_layer.native_host import open_apart, serve
+    root = _root_of(args_before)
+    paths = AppPaths.create(resolve_root(root))
+
+    def command() -> list:
+        # Only when the box is opened apart: its import is a third of a
+        # second of the host's start, every right-click.
+        from .platform_layer.autostart import launch_command
+        return launch_command(root)
+
+    def opener(ident: str, which: str, give: bool = False) -> str:
+        # BY THE AGENT RUNNING, outside the browser's job - else apart.
+        # `give`: the extension opens the window, in the browser it was
+        # right-clicked in - only the box's address asked (the user,
+        # 2026-11-02: the box "弹出来要卡一下").
+        fragment = (f"/?solo=learn&learn_inbox={ident}" if which == "learn"
+                    else f"/?solo=delegate&delegate_inbox={ident}")
+        if give:
+            url = _ask_agent_to_open(paths, fragment, give=True)
+            if isinstance(url, str) and url:
+                return url
+        if not _ask_agent_to_open(paths, fragment):
+            open_apart(command(), ident, which)
+        return ""
+    return serve(paths.data_dir, [], opener=opener)
+
+
+def _ask_agent_to_open(paths: Any, fragment: str, give: bool = False) -> Any:
+    """The running agent asked, over its own API, to open a box: whether it
+    did - or, `give`, the box's address signed in, for the browser's own
+    window ("" when it cannot be had). Its key read from its credentials,
+    as its own clients do."""
+    # http.client, not urllib: urllib's opener makes an HTTPS context too -
+    # half a second of reading the system's certificates, every right-click.
+    import http.client
+    from .api.access import ApiAccess, key_file_for
+    try:
+        values = json.loads(paths.settings_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        values = {}
+    values = values if isinstance(values, dict) else {}
+    try:
+        headers = dict(ApiAccess(key_file_for(paths.credentials_dir)).headers(),
+                       **{"Content-Type": "application/json"})
+        connection = http.client.HTTPConnection(str(values.get("api_host") or "127.0.0.1"),
+                                                int(values.get("api_port") or 8756), timeout=5)
+        try:
+            connection.request("POST", "/api/open_box", headers=headers,
+                               body=json.dumps({"fragment": fragment, "give": give}).encode())
+            answer = connection.getresponse()
+            said = answer.read()
+        finally:
+            connection.close()
+        if give:
+            return str(json.loads(said.decode("utf-8")).get("url") or "") \
+                if answer.status == 200 else ""
+        return answer.status == 200
+    except Exception:
+        return "" if give else False
+
+
+def _delegate_note(root: Path | None, ident: str) -> int:
+    """`--delegate-note ID`: the Delegate work box opened on a note kept in
+    the inbox (by the browser extension's host)."""
+    if not ident.isalnum():
+        return 2
+    return _open_solo(root, f"/?solo=delegate&delegate_inbox={ident}")
+
+
+def _delegate_picked(root: Path | None, where: str) -> int:
+    """`--delegate-picked FILE` (or `-`, the standard input): what was
+    right-clicked in an editor, an Office program or the Services menu, as
+    JSON (agent/work/picked.py) - kept in the inbox, and the Delegate work
+    box opened on it."""
+    from .agent.work.handover import hand_over_picked
+    from .common.paths import AppPaths, resolve_root
+    try:
+        if where == "-":
+            stdin = getattr(sys.stdin, "buffer", None)
+            text = stdin.read().decode("utf-8", "replace") if stdin is not None else ""
+        else:
+            text = Path(where).read_text(encoding="utf-8")
+        said = json.loads(text or "{}")
+    except (OSError, ValueError) as exc:
+        print(f"{APP_NAME}: what was right-clicked could not be read: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(said, dict):
+        return 2
+    paths = AppPaths.create(resolve_root(root))
+    ident = hand_over_picked(paths.data_dir, said)
+    return _open_solo(root, f"/?solo=delegate&delegate_inbox={ident}")
+
+
+def _learn_note(root: Path | None, ident: str) -> int:
+    """`--learn-note ID`: the Learn box opened on a note kept in the inbox
+    (by the browser extension's host)."""
+    if not ident.isalnum():
+        return 2
+    return _open_solo(root, f"/?solo=learn&learn_inbox={ident}")
+
+
+def _learn_picked(root: Path | None, where: str) -> int:
+    """`--learn-picked FILE` (or `-`): text picked in an editor by its icon's
+    menu, as JSON (agent/work/picked.py) - handed to the learning."""
+    from .agent.work.handover import hand_over_picked
+    from .common.paths import AppPaths, resolve_root
+    try:
+        stdin = getattr(sys.stdin, "buffer", None)
+        if where == "-":
+            text = stdin.read().decode("utf-8", "replace") if stdin is not None else ""
+        else:
+            text = Path(where).read_text(encoding="utf-8")
+        said = json.loads(text or "{}")
+    except (OSError, ValueError):
+        return 2
+    if not isinstance(said, dict):
+        return 2
+    paths = AppPaths.create(resolve_root(root))
+    ident = hand_over_picked(paths.data_dir, said)
+    return _open_solo(root, f"/?solo=learn&learn_inbox={ident}")
+
+
+def _delegate_file(root: Path | None, args: Any) -> int:
+    """`--delegate-file FILE [--at-app NAME --at-lines A B --at-columns C D]`:
+    right-clicked in an editor that names only where (JetBrains' External
+    Tools) - the selection read off the file (agent/work/picked.py)."""
+    from .agent.work.handover import hand_over_picked
+    from .agent.work.picked import from_file
+    from .common.paths import AppPaths, resolve_root
+    paths = AppPaths.create(resolve_root(root))
+    ident = hand_over_picked(paths.data_dir, from_file(
+        args.delegate_file, args.at_app or "", args.at_lines, args.at_columns))
+    return _open_solo(root, f"/?solo=delegate&delegate_inbox={ident}")
+
+
+def _delegate_text(root: Path | None, where: str) -> int:
+    """`--delegate-text FILE` (or `-`): text selected in any program, from
+    macOS's Services menu (platform_layer/system_menus.py) - the window it
+    was in found as the listener last read it."""
+    from .agent.work.handover import hand_over_picked
+    from .common.paths import AppPaths, resolve_root
+    try:
+        if where == "-":
+            stdin = getattr(sys.stdin, "buffer", None)
+            text = stdin.read().decode("utf-8", "replace") if stdin is not None else ""
+        else:
+            text = Path(where).read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"{APP_NAME}: the selected text could not be read: {exc}", file=sys.stderr)
+        return 2
+    if not text.strip():
+        return 2
+    paths = AppPaths.create(resolve_root(root))
+    ident = hand_over_picked(paths.data_dir, {"where": "services", "kind": "selection",
+                                              "text": text})
+    return _open_solo(root, f"/?solo=delegate&delegate_inbox={ident}")
+
+
 def _learn(root: Path | None, path: str) -> int:
     """`--learn PATH`: what was right-clicked in Explorer, handed to the
     agent's learning (learning/plan.py) - started first if it is not running
@@ -337,12 +513,24 @@ def _open_solo(root: Path | None, fragment: str) -> int:
 def _set_explorer_menu(root: Path | None, on: bool) -> int:
     """`--explorer-menu on|off`: Explorer's "Delegate work" put in place or
     taken out (the uninstaller takes it out)."""
-    from .platform_layer import explorer_menu
+    from .common.paths import AppPaths, resolve_root
+    from .platform_layer import browser_extension, explorer_menu, system_menus
     from .platform_layer.autostart import launch_command
+    paths = AppPaths.create(resolve_root(root))
     if on:
-        explorer_menu.install(launch_command(root), None)
+        if explorer_menu.available():
+            explorer_menu.install(launch_command(root), None)
+        system_menus.follow(paths.data_dir, launch_command(root))
     else:
-        explorer_menu.remove()
+        # And the rest of the right-click entries: macOS's Services, the
+        # file managers', the browsers' host (the uninstaller, 2026-11-01).
+        if explorer_menu.available():
+            explorer_menu.remove()
+        for take_out in (system_menus.remove, browser_extension.remove):
+            try:
+                take_out(paths.data_dir)
+            except Exception:              # pragma: no cover - the system's own
+                log.warning("a right-click entry could not be taken out", exc_info=True)
     return 0
 
 
@@ -398,6 +586,11 @@ def main(argv: list[str] | None = None) -> int:
     if args_in and args_in[0] == "--web-hook":
         from .runtime.web_hook import hook_main
         return hook_main(args_in[1:])
+    # THE BROWSER EXTENSION's host (platform_layer/native_host.py): started
+    # by the browser with its own arguments after the flag - and its standard
+    # output is the browser's, so nothing else may be written there.
+    if "--native-host" in args_in:
+        return _native_host(args_in[:args_in.index("--native-host")])
     # A run of the user's work, in a process of its own (agent/work/child.py).
     from .agent.work.child import CHILD_FLAG
     if args_in and args_in[0] == CHILD_FLAG:
@@ -459,6 +652,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--delegate", metavar="PATH", default=None,
                         help="hand a file or folder to the agent as a piece of work "
                              "(Explorer's \"Delegate work\"): it opens on its plan")
+    parser.add_argument("--delegate-picked", metavar="FILE", default=None,
+                        dest="delegate_picked",
+                        help="hand what was right-clicked in another program to the agent, "
+                             "as JSON in FILE (or - for the standard input): it opens on it")
+    parser.add_argument("--delegate-note", metavar="ID", default=None, dest="delegate_note",
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--learn-note", metavar="ID", default=None, dest="learn_note",
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--learn-picked", metavar="FILE", default=None, dest="learn_picked",
+                        help="hand text picked in another program to the learning, as JSON "
+                             "in FILE (or - for the standard input)")
+    parser.add_argument("--delegate-file", metavar="FILE", default=None, dest="delegate_file",
+                        help="hand a file open in an editor to the agent - with where the "
+                             "selection is in it (--at-lines, --at-columns)")
+    parser.add_argument("--at-app", default=None, dest="at_app", help=argparse.SUPPRESS)
+    parser.add_argument("--at-lines", nargs=2, default=None, dest="at_lines",
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--at-columns", nargs=2, default=None, dest="at_columns",
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--delegate-text", metavar="FILE", default=None, dest="delegate_text",
+                        help="hand text selected in any program to the agent (macOS's "
+                             "Services menu): FILE, or - for the standard input")
     parser.add_argument("--explorer-menu", choices=("on", "off"), default=None,
                         dest="explorer_menu",
                         help="put \"Delegate work\" in Explorer's right-click menu, or "
@@ -479,6 +694,18 @@ def main(argv: list[str] | None = None) -> int:
         return _delegate(args.root or args.data_dir, args.delegate)
     if args.learn is not None:
         return _learn(args.root or args.data_dir, args.learn)
+    if args.delegate_picked is not None:
+        return _delegate_picked(args.root or args.data_dir, args.delegate_picked)
+    if args.delegate_note is not None:
+        return _delegate_note(args.root or args.data_dir, args.delegate_note)
+    if args.learn_note is not None:
+        return _learn_note(args.root or args.data_dir, args.learn_note)
+    if args.learn_picked is not None:
+        return _learn_picked(args.root or args.data_dir, args.learn_picked)
+    if args.delegate_file is not None:
+        return _delegate_file(args.root or args.data_dir, args)
+    if args.delegate_text is not None:
+        return _delegate_text(args.root or args.data_dir, args.delegate_text)
     if args.explorer_menu:
         return _set_explorer_menu(args.root or args.data_dir, args.explorer_menu == "on")
 

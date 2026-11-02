@@ -57,7 +57,14 @@ class OverviewTodoScrollTests(unittest.TestCase):
             "list().scrollTop=list().scrollHeight;out.bottom=list().scrollTop;"
             "const first=list();ovPlaceTodos();ovPlaceTodos();"
             "out.same=list()===first;out.unchanged=list().scrollTop;"
+            "const r=e=>e.getBoundingClientRect();"
+            "const head=document.querySelector('.ov-todo-heading h3'),"
+            "add=document.querySelector('[data-todo-add-open]');"
+            "out.addBesideHeading=Math.abs((r(add).top+r(add).bottom)/2-(r(head).top+r(head).bottom)/2)<6"
+            "&&r(add).left>r(head).right;"
+            "document.querySelector('[data-todo-add-text]').value='half typed';"
             "ovTodos=ovTodos.slice(1);ovPlaceTodos();"
+            "out.typed=document.querySelector('[data-todo-add-text]').value;"
             "out.rewritten=list()!==first;out.changed=list().scrollTop;"
             "out.items=list().children.length;"
             "const pre=document.createElement('pre');pre.id='out';"
@@ -74,6 +81,10 @@ class OverviewTodoScrollTests(unittest.TestCase):
         out = json.loads(found.group(1).replace("&quot;", '"'))
         self.assertTrue(out["scrolls"], out)
         self.assertGreater(out["bottom"], 0, out)
+        # The box to add one of the user's own stays as it is, what is typed in it too.
+        self.assertEqual(out["typed"], "half typed", out)
+        # "+ Add a to-do" on the heading's line, at its right (the user, 2026-11-01).
+        self.assertTrue(out["addBesideHeading"], out)
         # The same to-dos: the list is left as it is, scrolled to its end.
         self.assertTrue(out["same"], out)
         self.assertEqual(out["unchanged"], out["bottom"], out)
@@ -119,7 +130,7 @@ class ATodosWorkIsTrackedTests(unittest.TestCase):
             + "const XP_HANDED_KIND={email:'Email',event:'Event',text:'Text to paste',"
               "file:'File',folder:'Folder',answer:'Answer'};"
             + "".join(_function(source, name) for name in (
-                "ovTodoVersions", "ovTodoControls", "ovTodoWhere", "ovTodoWork", "ovTodoMade",
+                "ovTodoVersions", "ovTodoGoing", "ovTodoControls", "ovTodoWhere", "ovTodoWork", "ovTodoMade",
                 "ovTodoTracked", "ovTodoBox",
                 "ovPlaceTodos"))
             + "window.addEventListener('load',()=>{const out={};ovPlaceTodos();"

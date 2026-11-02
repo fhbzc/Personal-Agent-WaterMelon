@@ -55,6 +55,21 @@ new version, until it is closed (`just_updated`, `seen`).
 A download that does not match its checksum is deleted and never run.
 Downloads are kept in the data folder (internal/updates), and only the
 newest is kept.
+
+A DOWNLOAD THAT BREAKS OFF CARRIES ON WHERE IT STOPPED (the user,
+2026-10-30, a slow connection to GitHub): asked again from the byte it got
+to, a few times, waiting longer each time; still stopped, it carries on by
+itself a few minutes later - and after the agent is opened again. The page
+says it is downloading, how much of how much, how fast and about how long
+is left - never "looking for newer versions" meanwhile. And a download
+under way is finished and taken up first: a version newer still is had
+the time after.
+
+EACH STEP SAID, WITH ITS VERSION (the user, 2026-10-31): `now` in the
+status - downloading, making ready (how many of its files), installing,
+waiting for work to finish, starting - and the version it is for; the page
+says each in a sentence of its own, in the display language, and asks
+again while any of them runs.
 """
 
 from __future__ import annotations
@@ -68,6 +83,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -90,6 +106,15 @@ NOTES_KEPT = 20000
 MARKER = "updated.json"
 #: The download's share done is said at most this often.
 PROGRESS_EVERY = 0.5
+#: Its speed: over this many seconds just gone.
+RATE_OVER = 20.0
+#: Broken off, it is asked again after these pauses; this many times with
+#: nothing more come down, and it stops - to carry on by itself after
+#: CARRY_ON_AFTER, or when the agent is opened again.
+RETRY_PAUSES = (5, 15, 30, 60, 120)
+CARRY_ON_AFTER = 300
+#: Beside a download under way: which version, which file.
+UNDER_WAY = "downloading.json"
 #: The Windows installer's helper says it is there in this file, and within
 #: this long, before the agent quits for it (`_after_quit_windows`).
 HELPER_READY = "helper-ready.txt"
@@ -148,11 +173,26 @@ def how_installed() -> str:
     return ""
 
 
-def _get(url: str, timeout: float = 30.0) -> Any:
-    request = urllib.request.Request(url, headers={
-        "User-Agent": f"{APP_NAME.replace(' ', '-')}/{__version__}",
-        "Accept": "application/vnd.github+json"})
-    return urllib.request.urlopen(request, timeout=timeout)
+def _get(url: str, timeout: float = 30.0, start: int = 0) -> Any:
+    """`start`: from that byte on - a download carried on."""
+    headers = {"User-Agent": f"{APP_NAME.replace(' ', '-')}/{__version__}",
+               "Accept": "application/vnd.github+json"}
+    if start:
+        headers["Range"] = f"bytes={start}-"
+    return urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout)
+
+
+class DownloadStopped(RuntimeError):
+    """Broken off again and again: kept as far as it got, to be carried on."""
+
+
+def _hashed(path: Path) -> Tuple[Any, int]:
+    digest, size = hashlib.sha256(), 0
+    with open(path, "rb") as kept:
+        for chunk in iter(lambda: kept.read(1 << 20), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    return digest, size
 
 
 def _release_of(release: Dict[str, Any]) -> Dict[str, Any]:
@@ -213,7 +253,8 @@ class Updater:
                                       "versions": [],
                                       "latest": "", "newer": False, "page": "",
                                       "doing": "", "error": "", "can_install": False,
-                                      "step": "", "progress": None, "updating_to": ""}
+                                      "step": "", "progress": None, "updating_to": "",
+                                      "download": None, "now": None}
         #: A look the user asked for (Check now): what it finds is shown
         #: on the page, not told in a notice.
         self._for_you = False
@@ -238,6 +279,9 @@ class Updater:
                     "progress": self.state.get("progress"), "from": __version__}
 
     def _set(self, **values: Any) -> None:
+        # Nothing under way, or only looking: no step to say.
+        if values.get("doing") in ("", "checking") and "now" not in values:
+            values["now"] = None
         with self._lock:
             self.state.update(values)
 
@@ -247,6 +291,7 @@ class Updater:
             return
         self._said_updated()
         self._said_taken_back()
+        self._said_under_way()
         self._thread = threading.Thread(target=self._loop, name="updates", daemon=True)
         self._thread.start()
 
@@ -258,7 +303,9 @@ class Updater:
         """The user's "Check now": looked at at once - on the loop's thread,
         or, run from source where no loop looks by itself, on one of its own
         (it only looks: such a copy cannot replace itself)."""
-        self._set(doing="checking", error="")
+        if not self._downloading():
+            # Downloading, it is said to be - not "looking for newer versions".
+            self._set(doing="checking", error="")
         self._for_you = True
         if self._thread is not None and self._thread.is_alive():
             self._wake.set()
@@ -279,18 +326,21 @@ class Updater:
         self._wake.clear()
         looked_at = 0.0
         while not self._stop.is_set():
-            if time.monotonic() - looked_at >= CHECK_EVERY_SECONDS or self._wake.is_set() \
+            # A download stopped part way: carried on a few minutes later.
+            every = CARRY_ON_AFTER if self._under_way() else CHECK_EVERY_SECONDS
+            if time.monotonic() - looked_at >= every or self._wake.is_set() \
                     or not looked_at:
                 self._wake.clear()
                 looked_at = time.monotonic()
                 self._look()
+                every = CARRY_ON_AFTER if self._under_way() else CHECK_EVERY_SECONDS
             # MADE READY: taken up when the user is away and no work runs.
             if self._ready() is not None:
                 self._take_up_when_away()
                 self._wake.wait(AWAY_LOOK_EVERY)
             else:
                 self._wake.wait(WAIT_FOR_WORK if self.state.get("waiting_for_work")
-                                else CHECK_EVERY_SECONDS)
+                                else every)
 
     def _look(self) -> None:
         """One look at a time: one asked for while another runs is that one."""
@@ -298,6 +348,10 @@ class Updater:
             return
         try:
             self.once()
+        except DownloadStopped as exc:
+            # Not a failure: kept, and carried on by itself (the page says so).
+            log.info("%s", exc)
+            self._set(doing="")
         except Exception as exc:  # never the agent's
             log.info("could not look for an update: %s", exc)
             self._set(error=str(exc)[:300], doing="")
@@ -320,6 +374,11 @@ class Updater:
             return bool(kind and ASSET.get(kind) in release["files"]
                         and SUMS in release["files"] and self.quit is not None)
         newest = newer[0] if newer else None
+        # A download under way is finished first (the user, 2026-10-30): a
+        # version newer still is had the time after.
+        under_way = self._under_way()
+        carried_on = next((one for one in newer if under_way and one["tag"] == under_way["tag"]
+                           and installable(one)), None)
         self._set(checked_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                   latest=(newest or (releases[0] if releases else {})).get("tag", ""),
                   newer=bool(newer), page=newest["page"] if newest else "", doing="",
@@ -331,8 +390,11 @@ class Updater:
         if not newest:
             return self.status()
         asked = self.state.get("asked_to_install")
-        if self.mode() == "install":
-            chosen: Optional[Dict[str, Any]] = newest
+        if carried_on is not None and not (asked and asked is not True
+                                           and asked != carried_on["tag"]):
+            chosen: Optional[Dict[str, Any]] = carried_on
+        elif self.mode() == "install":
+            chosen = newest
         elif asked:
             chosen = newest if asked is True else next(
                 (one for one in newer if one["tag"] == asked), None)
@@ -353,12 +415,17 @@ class Updater:
             # it changes nothing yet - and taken up at the next start, when
             # the user is away, or now when they asked for it.
             ready = self._ready()
+            if ready is not None and ready.get("tag") != chosen["tag"] and not asked \
+                    and is_newer(str(ready.get("tag") or "")):
+                # One made ready already is taken up first; this one after.
+                return self.status()
             if ready is None or ready.get("tag") != chosen["tag"]:
                 self.make_ready(chosen, kind)
             self._set(asked_to_install=None)
             return self.status()
         if self.working():
-            self._set(waiting_for_work=True, doing="waiting for work to finish")
+            self._set(waiting_for_work=True, doing="waiting for work to finish",
+                      now={"what": "waiting_for_work", "tag": chosen["tag"]})
             return self.status()
         self._set(waiting_for_work=False, asked_to_install=None)
         try:
@@ -397,9 +464,10 @@ class Updater:
         size = int((release["files"].get(name) or {}).get("size") or 0)
         if shown:
             self._set(doing=f"downloading {tag}", step="downloading", updating_to=tag,
-                      progress={"done": 0, "total": size})
+                      progress={"done": 0, "total": size}, now={"what": "downloading", "tag": tag})
         else:
-            self._set(doing=f"getting {tag} ready in the background")
+            self._set(doing=f"getting {tag} ready in the background",
+                      now={"what": "downloading", "tag": tag})
         with _get(release["files"][SUMS]["url"]) as response:
             expected = _sums(response.read().decode("utf-8", "replace")).get(name)
         if not expected:
@@ -411,34 +479,133 @@ class Updater:
                 if old.is_dir() and old.name != tag:
                     shutil.rmtree(old, ignore_errors=True)
         here.mkdir(parents=True, exist_ok=True)
+        (here / UNDER_WAY).write_text(json.dumps({"tag": tag, "name": name}), encoding="utf-8")
         target = here / name
         partial = here / (name + ".part")
-        digest = hashlib.sha256()
-        done, said_at = 0, 0.0
-        with _get(release["files"][name]["url"], timeout=60) as response, open(partial, "wb") as out:
+        # What came down before - this time, or before the agent was opened
+        # again - is kept and carried on from.
+        digest, done = hashlib.sha256(), 0
+        if partial.exists():
+            digest, done = _hashed(partial)
+            if size and done > size:
+                partial.unlink()
+                digest, done = hashlib.sha256(), 0
+        said: Dict[str, Any] = {"tag": tag, "done": done, "total": size, "per_second": None,
+                                "left_seconds": None, "carried_on_from": done, "waiting": 0,
+                                "stopped": False}
+        self._set(download=dict(said))
+        # The speed, over the last seconds: (when, how much) as it came.
+        seen: List[Tuple[float, int]] = [(time.monotonic(), done)]
+        said_at, tries = 0.0, 0
+
+        def tell(**values: Any) -> None:
+            said.update(values)
+            now = time.monotonic()
+            seen.append((now, said["done"]))
+            while len(seen) > 2 and now - seen[0][0] > RATE_OVER:
+                seen.pop(0)
+            took = now - seen[0][0]
+            if took >= 1.0 and said["done"] > seen[0][1]:
+                said["per_second"] = (said["done"] - seen[0][1]) / took
+                left = max(0, (said["total"] or 0) - said["done"])
+                said["left_seconds"] = left / said["per_second"] if said["total"] else None
+            self._set(download=dict(said))
+            if shown:
+                self._set(progress={"done": said["done"], "total": said["total"] or said["done"]})
+
+        while not (size and done >= size):
+            before = done
             try:
-                size = int(response.headers.get("Content-Length") or 0) or size
-            except (AttributeError, TypeError, ValueError):
-                pass
-            while True:
-                chunk = response.read(1 << 20)
-                if not chunk:
-                    break
-                digest.update(chunk)
-                out.write(chunk)
-                done += len(chunk)
-                if shown and time.monotonic() - said_at >= PROGRESS_EVERY:
-                    said_at = time.monotonic()
-                    self._set(progress={"done": done, "total": size})
-                if self._stop.is_set():
-                    raise RuntimeError("stopped while downloading")
+                with _get(release["files"][name]["url"], timeout=60, start=done) as response:
+                    if done and int(getattr(response, "status", 0) or 0) != 206:
+                        # Asked from part way, it sent the whole: from the start.
+                        digest, done = hashlib.sha256(), 0
+                    try:
+                        length = int(response.headers.get("Content-Length") or 0)
+                    except (AttributeError, TypeError, ValueError):
+                        length = 0
+                    size = done + length if length else size
+                    said["total"] = size
+                    with open(partial, "ab" if done else "wb") as out:
+                        while True:
+                            chunk = response.read(1 << 20)
+                            if not chunk:
+                                break
+                            digest.update(chunk)
+                            out.write(chunk)
+                            done += len(chunk)
+                            if time.monotonic() - said_at >= PROGRESS_EVERY:
+                                said_at = time.monotonic()
+                                tell(done=done, waiting=0)
+                            if self._stop.is_set():
+                                raise RuntimeError("stopped while downloading")
+                tell(done=done, waiting=0)
+                if not size:
+                    break       # nothing said of its size: what came is all of it
+            except RuntimeError:
+                raise
+            except urllib.error.HTTPError as exc:
+                if 400 <= exc.code < 500 and exc.code not in (408, 429):
+                    # Not there, or refused: not a connection that broke off.
+                    self._set(download=None)
+                    (here / UNDER_WAY).unlink(missing_ok=True)
+                    raise RuntimeError(f"{name} of {tag} could not be downloaded: {exc}")
+                log.info("the download of %s broke off at %s bytes: %s", tag, done, exc)
+            except Exception as exc:  # broken off: carried on from where it got
+                log.info("the download of %s broke off at %s bytes: %s", tag, done, exc)
+            if size and done >= size:
+                break
+            # Broken off - or ended short of its size, which Python's reader
+            # does not say: asked again from where it got.
+            tries = 0 if done > before else tries + 1
+            if tries >= len(RETRY_PAUSES):
+                tell(done=done, waiting=0, stopped=True)
+                raise DownloadStopped(f"the download of {tag} stopped at {done} of {size} "
+                                      f"bytes; carried on from there by itself")
+            pause = RETRY_PAUSES[tries]
+            tell(done=done, waiting=pause)
+            if self._stop.wait(pause):
+                raise RuntimeError("stopped while downloading")
         if shown:
             self._set(step="checking", progress={"done": done, "total": size or done})
+        self._set(download=None)
+        (here / UNDER_WAY).unlink(missing_ok=True)
         if digest.hexdigest() != expected:
             partial.unlink(missing_ok=True)
             raise RuntimeError(f"{name} of {tag} does not match its checksum; deleted")
         os.replace(partial, target)
         return target
+
+    def _under_way(self) -> Optional[Dict[str, Any]]:
+        """A download stopped part way, of a version still newer than this
+        one: {"tag", "name"} - None when there is none."""
+        try:
+            for one in sorted(self.folder.glob(f"*/{UNDER_WAY}")):
+                said = json.loads(one.read_text(encoding="utf-8"))
+                if isinstance(said, dict) and is_newer(str(said.get("tag") or "")):
+                    return said
+        except (OSError, ValueError):
+            pass
+        return None
+
+    def _downloading(self) -> bool:
+        said = self.state.get("download") or {}
+        return bool(said.get("tag")) and not said.get("stopped")
+
+    def _said_under_way(self) -> None:
+        """Opened again with a download stopped part way: the page says how
+        far it got, and that it carries on by itself."""
+        under_way = self._under_way()
+        if under_way is None:
+            return
+        partial = self.folder / under_way["tag"] / (str(under_way.get("name") or "") + ".part")
+        try:
+            done = partial.stat().st_size
+        except OSError:
+            done = 0
+        self._set(download={"tag": under_way["tag"], "done": done, "total": 0,
+                            "per_second": None, "left_seconds": None,
+                            "carried_on_from": done, "waiting": 0, "stopped": True})
 
     # -- made ready, and taken up (quiet_update.py) --------------------------------
     def _ready(self) -> Optional[Dict[str, Any]]:
@@ -452,8 +619,16 @@ class Updater:
         from . import quiet_update as quiet
         tag = release["tag"]
         archive = self.download(release, kind, name=quiet.QUIET_ASSET[kind], shown=shown)
+        self._set(doing=f"making {tag} ready", now={"what": "making_ready", "tag": tag})
         if shown:
-            self._set(step="installing", doing=f"making {tag} ready")
+            self._set(step="installing")
+        said_at = [0.0]
+
+        def told(done: int, total: int) -> None:
+            if done < total and time.monotonic() - said_at[0] < PROGRESS_EVERY:
+                return
+            said_at[0] = time.monotonic()
+            self._set(now={"what": "making_ready", "tag": tag, "done": done, "total": total})
         live = quiet.live_root(kind)
         where = quiet.place(kind)
         if live is None or where is None:
@@ -461,7 +636,8 @@ class Updater:
         quiet.forget_staged(self.folder)
         target = where / tag
         if kind == "windows":
-            said = quiet.unpack_beside(archive, live, target, stop=self._stop.is_set)
+            said = quiet.unpack_beside(archive, live, target, stop=self._stop.is_set,
+                                       told=told)
             parts = sorted(target.iterdir())
             live_parts = [live / one.name for one in parts]
             log.info("%s made ready: %s files unchanged (linked), %s written",
@@ -491,7 +667,8 @@ class Updater:
         if said is None:
             raise RuntimeError("no update is ready")
         tag = said["tag"]
-        self._set(step="restarting", updating_to=tag, doing=f"starting {tag}")
+        self._set(step="restarting", updating_to=tag, doing=f"starting {tag}",
+                  now={"what": "starting", "tag": tag})
         try:
             quiet.mark_taking_up(self.folder, said)
             port = 0 if self.config.get("api_enabled", True) is False else \
@@ -555,7 +732,8 @@ class Updater:
     # -- install ------------------------------------------------------------------
     def install(self, target: Path, kind: str, tag: str,
                 release: Optional[Dict[str, Any]] = None) -> None:
-        self._set(doing=f"installing {tag}", step="installing", updating_to=tag)
+        self._set(doing=f"installing {tag}", step="installing", updating_to=tag,
+                  now={"what": "installing", "tag": tag})
         # What the new version says it is, for the window it opens with.
         (self.folder / MARKER).write_text(json.dumps({
             "from": __version__, "to": tag,

@@ -105,6 +105,9 @@ class TemporaryAgent:
         # THE TWO FINAL CHECKS are the tests' of them (test_final_checks):
         # the other runs' models are not asked them.
         self.app.work.final_checks = False
+        # THE THOROUGH WAY, switched off for the user for now (runner.THOROUGH_OPEN):
+        # open here, for the tests of it; test_work_quick_alone tests it off.
+        self.app.work.thorough_open = True
         self.app.executor.runtime = self.app.runtime
         # The work runner reads its boundary from here too. Left as built, it
         # would be the real one - the user's whole home readable - and its

@@ -456,6 +456,11 @@ class WechatStore:
         if updates: body+='\n'+ '\n'.join(f"[消息修订 {m['message_id']}] {m['text']}" for m in updates)
         if not valid: body='[界面未完成结构识别，不作本人发言证据]\n'+str(capture.get('unresolved_text') or '')[:16000]
         event.data={k:v for k,v in event.data.items() if k!='wechat_capture'}
+        # THE CHAT'S NAME KEPT (the user, 2026-10-31): the user's own name for
+        # who is in it - what the heartbeat names them by.
+        if valid:
+            event.data.update(wechat_chat=str(capture.get('peer_name') or '').strip()[:200],
+                              wechat_chat_kind=capture.get('conversation_type') or 'unknown')
         event.data.update(text=body,characters=len(body),schema_version='2.0',wechat_conversation_id=conversation,
                           wechat_segment_id=segment['id'] if segment else None,wechat_observation_id=observation_id,
                           wechat_capture_id=capture_id,wechat_messages=new_messages,wechat_message_updates=updates,

@@ -2300,6 +2300,10 @@ class AgentStateTests(unittest.TestCase):
                 self._dragged = False
 
             def open_chat(self):
+                self.opened.append("chat page")
+
+            def open_chat_bubble(self):
+                # A single click: the conversation in a bubble (2026-11-01).
                 self.opened.append("chat")
 
             def open_url(self, url):
@@ -4277,18 +4281,19 @@ class TokenUsageChartTests(unittest.TestCase):
         self.assertIn("heartbeat7k", result["more"]["tip"].replace(" ", ""))
         self.assertIn("42 calls", result["note"])
 
-    def test_every_kind_that_runs_its_own_and_only_past_fourteen_other(self) -> None:
-        # Fourteen of their own - seven colours, then the same seven striped
-        # - and a part removed from the application is Other, unnamed.
+    def test_every_kind_that_runs_its_own_and_only_past_twenty_eight_other(self) -> None:
+        # Twenty-eight of their own - seven colours, then the same seven
+        # striped, dotted and crossed (the user, 2026-10-31: more kinds
+        # shown) - and a part removed from the application is Other, unnamed.
         calls = [{"timestamp": f"2026-10-01T10:{i:02d}:00+00:00", "task": f"k{i}",
                   "total_tokens": 100 * (i + 1), "input_tokens": 1,
-                  "output_tokens": 1, "estimated_cost": 0} for i in range(16)]
+                  "output_tokens": 1, "estimated_cost": 0} for i in range(30)]
         calls.append({"timestamp": "2026-10-01T11:00:00+00:00", "task": "data_heartbeat",
                       "module": "other", "total_tokens": 5000, "input_tokens": 1,
                       "output_tokens": 1, "estimated_cost": 0})
-        ranking = {f"k{i}": {"total": 16 - i} for i in range(16)}
+        ranking = {f"k{i}": {"total": 30 - i} for i in range(30)}
         result = self._run(calls=calls, by_task=ranking)
-        self.assertEqual(result["labels"], [f"k{i}" for i in range(14)] + ["other"])
+        self.assertEqual(result["labels"], [f"k{i}" for i in range(28)] + ["other"])
         self.assertIn("Other (2)", result["legendText"])
         self.assertNotIn("data_heartbeat", result["legendText"])
 
@@ -4455,8 +4460,9 @@ class ADayWithTooMuchOnItOpensTests(unittest.TestCase):
             '<link rel="stylesheet" href="/styles.css">',
             "<style>" + (web / "styles.css").read_text(encoding="utf-8") + "</style>",
             1)
-        # All on one day, inside whatever month the page opens on.
-        when = datetime.now(timezone.utc).replace(
+        # All on one day, inside whatever month the page opens on - the
+        # local month, which near midnight is not the UTC one.
+        when = datetime.now().astimezone().replace(
             day=15, hour=9, minute=0, second=0, microsecond=0)
         tasks = [{"id": f"task_{i}", "title": f"Thing {i}",
                   "description": "", "scheduled_at": when.isoformat(),

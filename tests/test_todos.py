@@ -70,6 +70,22 @@ class AddToTodoTests(unittest.TestCase):
         self.assertFalse(hasattr(self.app.heartbeat, "_tick_todos"))
         self.assertEqual(self.app.todos.get(one["id"])["done_at"], "")
 
+    def test_the_next_version_counts_the_removed(self) -> None:
+        """The user, 2026-11-01: V4 and V5 listed, V1-V3 removed - "Delegate
+        work" said V3; the next is V6."""
+        import json as _json
+        for n, (version, removed) in enumerate([(1, True), (2, True), (3, True), (4, False),
+                                                 (5, False)]):
+            self.app.db.execute(
+                "INSERT INTO work_drafts (id, created_at, updated_at, source, status, options) "
+                "VALUES (?, ?, ?, 'todo', 'started', ?)",
+                (f"draft_{n}", f"2026-10-2{n}T09:00:00", f"2026-10-2{n}T09:00:00",
+                 _json.dumps({"todo": "todo_fern", "version": version, "removed": removed})))
+        came = self.app.drafts.of_todos()["todo_fern"]
+        self.assertEqual([one["version"] for one in came["versions"]], [4, 5])
+        self.assertEqual(came["next"], 6)
+        self.assertEqual(self.app.drafts._next_version("todo_fern"), 6, "the same the server starts")
+
     def test_the_routes(self) -> None:
         from personalized_agent.api.routes import build_routes
 
@@ -93,6 +109,16 @@ class AddToTodoTests(unittest.TestCase):
         self.assertTrue(self.app.todos.get(said["todo"]["id"])["done_at"])
         routes[("POST", "/api/todos/delete")](_Ask(id=said["todo"]["id"]))
         self.assertEqual(routes[("GET", "/api/todos")](_Ask())["todos"], [])
+        # One of the user's own, added by hand (the user, 2026-11-01).
+        mine = routes[("POST", "/api/todos/add")](_Ask(text="  Water the ferns ",
+                                                       detail="the big pot too"))["todo"]
+        self.assertEqual((mine["text"], mine["detail"], mine["notification_id"]),
+                         ("Water the ferns", "the big pot too", ""))
+        self.assertEqual([one["id"] for one in routes[("GET", "/api/todos")](_Ask())["todos"]],
+                         [mine["id"]])
+        from personalized_agent.api.errors import ApiError
+        with self.assertRaises(ApiError):
+            routes[("POST", "/api/todos/add")](_Ask(text="   "))
         self.assertEqual(routes[("GET", "/api/notifications")](_Ask())["remind_later_minutes"],
                          30)
 

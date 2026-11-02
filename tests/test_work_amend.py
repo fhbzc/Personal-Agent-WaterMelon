@@ -557,7 +557,7 @@ class ThePanelTests(unittest.TestCase):
             "activeTab='experience';"
             "document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.id==='experience'));"
             "document.body.style.minHeight='5000px';"
-            "experienceState.unit='task-amend';await xpLoadRuns();await wait();"
+            "experienceState.unit='task-amend';await xpLoadRuns();await wait();document.querySelectorAll('.xp-run').forEach(d=>d.open=true);await xpLoadRuns(true);await wait(400);"
             "const shown=(el)=>!!el&&el.checkVisibility()&&!el.closest('details:not([open]) > :not(summary)');"
             "const text=(el)=>el?el.textContent.replace(/\\s+/g,' ').trim():'';"
             "const block=document.querySelector('.xp-run .xp-contract-now');"

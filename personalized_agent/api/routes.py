@@ -276,6 +276,258 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                 raise ApiError(str(exc), 409)
         return shortcuts(request)
 
+    # -- THE BROWSER EXTENSION (platform_layer/browser_extension.py) ------------------------
+    def _extension_icon() -> Any:
+        try:
+            from ..ui.tray import icon_image
+            return icon_image(app.characters, str(app.config.get("character", "watermelon")),
+                              128)
+        except Exception:
+            return None
+
+    @route("GET", "/api/extension")
+    def extension_state(_request: Any) -> Any:
+        """SETTINGS > GENERAL: whether the extension is made, where its
+        folders are, and which browsers know its host."""
+        from ..platform_layer import browser_extension
+        return browser_extension.status(app.data_dir)
+
+    @route("POST", "/api/extension/install")
+    def extension_install(_request: Any) -> Any:
+        """On the user's word: its folders made, and its host made known to
+        the browsers on this computer."""
+        from ..platform_layer import browser_extension
+        from ..platform_layer.autostart import launch_command
+        from ..version import __version__
+        command = getattr(app, "launch_command", None) or launch_command(app.root)
+        try:
+            return browser_extension.install(app.data_dir, command, __version__,
+                                             _extension_icon())
+        except OSError as exc:
+            raise ApiError(f"the extension could not be made: {exc}", 500)
+
+    @route("POST", "/api/extension/remove")
+    def extension_remove(_request: Any) -> Any:
+        from ..platform_layer import browser_extension
+        browser_extension.remove(app.data_dir)
+        return browser_extension.status(app.data_dir)
+
+    @route("POST", "/api/extension/open")
+    def extension_open(request: Any) -> Any:
+        """The browser opened on its extensions page - or the extension's
+        folder shown, to pick in Load unpacked - or its path copied."""
+        from ..platform_layer import browser_extension
+        said = browser_extension.status(app.data_dir)
+        what = str(request.get("what") or "")
+        flavor = "firefox" if str(request.get("browser") or "") == "firefox" else "chromium"
+        path = (said.get("folders") or {}).get(flavor) or ""
+        if what == "page":
+            return {"opened": browser_extension.open_extensions_page(
+                str(request.get("browser") or ""))}
+        if what == "folder":
+            return {"opened": browser_extension.reveal(path)}
+        if what == "copy":
+            from ..platform_layer import clipboard
+            return {"copied": bool(path) and clipboard.copy(path)}
+        raise ApiError("open the page, the folder, or copy its path", 400)
+
+    # -- DELEGATE WORK IN THE USER'S EDITORS (platform_layer/editor_menus.py) -------------
+    @route("GET", "/api/editor_menus")
+    def editor_menus_state(_request: Any) -> Any:
+        """SETTINGS > GENERAL: the editors on this computer - VS Code and its
+        kin, Sublime Text, the JetBrains IDEs - and whether Delegate work is
+        in each."""
+        from ..platform_layer import editor_menus
+        return {"programs": editor_menus.programs()}
+
+    @route("POST", "/api/editor_menus/install")
+    def editor_menus_install(request: Any) -> Any:
+        from ..platform_layer import editor_menus
+        from ..platform_layer.autostart import launch_command
+        from ..version import __version__
+        command = getattr(app, "launch_command", None) or launch_command(app.root)
+        from ..common.languages import display_language
+        from ..platform_layer.browser_extension import WORDS
+        words = WORDS.get(display_language(app.config), WORDS["en"])
+        said = editor_menus.install(str(request.require("key")), app.data_dir, command,
+                                    __version__, icon=_extension_icon(),
+                                    words={"delegate": words["delegate"],
+                                           "learn": words["learn"]})
+        if said.get("error"):
+            raise ApiError(said["error"], 409)
+        return dict(said, programs=editor_menus.programs())
+
+    @route("POST", "/api/editor_menus/remove")
+    def editor_menus_remove(request: Any) -> Any:
+        from ..platform_layer import editor_menus
+        said = editor_menus.remove(str(request.require("key")))
+        if said.get("error"):
+            raise ApiError(said["error"], 409)
+        return dict(said, programs=editor_menus.programs())
+
+    # -- SOCIETY (society/service.py): the agent among other people's agents ------------
+    def _society(call: Any) -> Any:
+        from ..society.client import SocietyError
+        try:
+            return call()
+        except SocietyError as exc:
+            raise ApiError(str(exc) or "the society server did not answer",
+                           exc.status if 400 <= exc.status < 500 else 502)
+        except ValueError as exc:
+            raise ApiError(str(exc), 409)
+
+    @route("GET", "/api/society")
+    def society_status(_request: Any) -> Any:
+        """The agent's id, whether it is registered and listed, the user's own
+        profile as Connections holds it, and how many messages are unread."""
+        return _society(app.society.status)
+
+    @route("POST", "/api/society/publish")
+    def society_publish(request: Any) -> Any:
+        """The user's own profile put on the server - listed among the people
+        only when they say."""
+        return _society(lambda: app.society.publish(bool(request.get("listed"))))
+
+    @route("POST", "/api/society/groups")
+    def society_groups(request: Any) -> Any:
+        """A person - or a kind of person - put in a group: who gets what
+        answer, the user's to say."""
+        return _society(lambda: app.society.put_in_group(
+            str(request.get("group") or ""), peer=str(request.get("peer") or ""),
+            kind=str(request.get("kind") or "")))
+
+    @route("POST", "/api/society/reach_out")
+    def society_reach_out(request: Any) -> Any:
+        """Whether the agent may write to new agents of its own accord."""
+        return _society(lambda: app.society.set_reach_out(str(request.require("level"))))
+
+    @route("POST", "/api/society/commands")
+    def society_commands(request: Any) -> Any:
+        """The user's commands for how their agent answers - above everything."""
+        return _society(lambda: app.society.set_commands(str(request.get("text") or "")))
+
+    @route("POST", "/api/society/link")
+    def society_link(request: Any) -> Any:
+        """Who an agent is, as the user says: a person in their Connections."""
+        return {"contact": _society(lambda: app.society.link(
+            str(request.require("peer")), str(request.get("person_id") or "")))}
+
+    @route("GET", "/api/society/conversations")
+    def society_conversations(_request: Any) -> Any:
+        return {"conversations": app.society.conversations()}
+
+    @route("GET", "/api/society/conversation")
+    def society_conversation(request: Any) -> Any:
+        peer = str(request.require("peer"))
+        if request.get("read"):
+            app.society.read_all(peer)
+        return {"messages": app.society.conversation(peer),
+                "contact": app.society.contact(peer) or {"peer_id": peer},
+                "group": app.society.group_of(peer), "kind": app.society.kind_of(peer)}
+
+    @route("GET", "/api/society/connections")
+    def society_connections(request: Any) -> Any:
+        """People in the user's Connections, to say who an agent is."""
+        found = app.connections.search(str(request.get("q") or ""), most=12)
+        return {"people": [{"id": one["id"], "name": one.get("name") or "",
+                            "relationship": one.get("relationship") or "",
+                            "org": one.get("org") or ""} for one in found]}
+
+    @route("POST", "/api/open_box")
+    def open_box(request: Any) -> Any:
+        """A box opened by the agent itself, in a window of its own - asked by
+        the browser extension's host, which the browser would end with all
+        it starts (platform_layer/native_host.py). Only a note's box."""
+        import re as _re
+        import threading as _threading
+        fragment = str(request.require("fragment"))
+        if not _re.fullmatch(r"/\?solo=(delegate&delegate|learn&learn)_inbox=[A-Za-z0-9]{1,40}",
+                             fragment):
+            raise ApiError("not a box that can be opened so", 400)
+        if request.get("give"):
+            # THE BROWSER RIGHT-CLICKED IN OPENS IT (the user, 2026-11-02: the
+            # box "弹出来要卡一下" - a browser started cold for it): only its
+            # address, signed in, said back.
+            return {"url": app.sign_in_url(fragment)}
+        from ..platform_layer import app_window
+        _threading.Thread(target=lambda: app_window.open_page(
+            app.sign_in_url(fragment), app.paths.data_dir / app_window.PROFILE),
+            name="open-box", daemon=True).start()
+        return {"opened": True}
+
+    @route("POST", "/api/society/refresh")
+    def society_refresh(_request: Any) -> Any:
+        return _society(app.society.refresh)
+
+    @route("POST", "/api/society/email/start")
+    def society_email_start(request: Any) -> Any:
+        return _society(lambda: app.society.email_start(str(request.require("email"))))
+
+    @route("POST", "/api/society/email/confirm")
+    def society_email_confirm(request: Any) -> Any:
+        return _society(lambda: app.society.email_confirm(str(request.require("code"))))
+
+    @route("GET", "/api/society/people")
+    def society_people(request: Any) -> Any:
+        return _society(lambda: app.society.people(str(request.get("q") or "")))
+
+    @route("GET", "/api/society/suggest")
+    def society_suggest(request: Any) -> Any:
+        return _society(lambda: app.society.suggest(str(request.get("q") or "")))
+
+    @route("GET", "/api/society/messages")
+    def society_messages(request: Any) -> Any:
+        return {"messages": app.society.messages(str(request.get("which") or "")),
+                "contacts": app.society.contacts()}
+
+    @route("POST", "/api/society/collect")
+    def society_collect(_request: Any) -> Any:
+        return _society(app.society.collect)
+
+    @route("POST", "/api/society/read")
+    def society_read(request: Any) -> Any:
+        app.society.mark_read(str(request.require("id")))
+        return {"ok": True}
+
+    @route("POST", "/api/society/drafts/save")
+    def society_draft_save(request: Any) -> Any:
+        """A draft the user wrote or changed - a draft still."""
+        return {"draft": _society(lambda: app.society.write_draft(
+            str(request.require("to")), str(request.get("text") or ""),
+            str(request.get("subject") or ""), written_by="user",
+            reply_to=str(request.get("reply_to") or ""), draft_id=str(request.get("id") or "")))}
+
+    @route("POST", "/api/society/drafts/remove")
+    def society_draft_remove(request: Any) -> Any:
+        app.society.remove_draft(str(request.require("id")))
+        return {"ok": True}
+
+    @route("POST", "/api/society/send")
+    def society_send(request: Any) -> Any:
+        """THE USER'S SEND - the one door a message leaves by: the draft, as
+        the user saw it (its content hash), sealed and left for its agent."""
+        return {"sent": _society(lambda: app.society.send_draft(
+            str(request.require("id")), str(request.require("hash"))))}
+
+    @route("POST", "/api/society/backup")
+    def society_backup(request: Any) -> Any:
+        """A backup of the agent's key - its id alone, or with its private
+        keys, sealed with the user's passphrase."""
+        with_key = bool(request.get("with_key"))
+        return {"backup": _society(lambda: app.society.backup(
+            with_key, str(request.get("passphrase") or "")))}
+
+    @route("POST", "/api/society/restore")
+    def society_restore(request: Any) -> Any:
+        backup = request.get("backup")
+        if isinstance(backup, str):
+            try:
+                backup = json.loads(backup)
+            except ValueError:
+                raise ApiError("this is not a backup of an agent's key", 400)
+        return _society(lambda: app.society.restore(backup or {},
+                                                    str(request.get("passphrase") or "")))
+
     @route("GET", "/api/record_log")
     def record_log(request: Any) -> Any:
         """THE RECORD LOG: the latest things recorded, from every source,
@@ -449,6 +701,23 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         said = take(app.data_dir, str(request.require("id")))
         if said is None:
             raise ApiError("nothing was handed over under that id", 404)
+        if said.get("picked"):
+            # TEXT PICKED BY THE ICON'S MENU in a page or an editor
+            # (agent/work/picked.py): learned with the page it was on.
+            from ..agent.work.picked import picked
+            one = picked(said["picked"])
+            window = {k: one.get(k) for k in ("title", "app", "url") if one.get(k)}
+            if one.get("text"):
+                return {"draft": app.learning.planner.start(
+                    {"kind": "text", "text": one["text"], "window": window, "auto": True}),
+                    "more": 0}
+            source = one.get("file") or one.get("url") or ""
+            if not source:
+                raise ApiError("nothing was handed over under that id", 404)
+            return {"draft": app.learning.planner.start(
+                {"kind": "folder" if one.get("kind") == "folder" else
+                 "file" if one.get("file") else "url", "source": source, "auto": True}),
+                "more": 0}
         folders, files = list(said.get("folders") or []), list(said.get("files") or [])
         if not folders and not files:
             raise ApiError("nothing was handed over under that id", 404)
@@ -1705,9 +1974,16 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         """What Explorer's "Delegate work" handed over (a note of paths, left
         by `--delegate`): taken, and made a piece of work."""
         from ..agent.work.handover import take
-        said = take(app.data_dir, str(request.require("id")))
+        # The browser's box opens as the right-click's note is written: it
+        # is waited for, a few seconds.
+        said = take(app.data_dir, str(request.require("id")), wait=10.0)
         if said is None:
             raise ApiError("nothing was handed over under that id", 404)
+        if said.get("picked"):
+            # RIGHT-CLICKED in another program (agent/work/picked.py).
+            from ..agent.work.picked import as_draft, picked
+            return {"draft": app.drafts.create(**as_draft(picked(said["picked"])),
+                                               write_first=True)}
         return {"draft": app.drafts.create(folders=said["folders"], files=said["files"],
                                            source="explorer", write_first=True)}
 
@@ -1819,7 +2095,11 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         # Zero or less is no limit. Tokens in and out are limited apart -
         # what went in counted whole, its cached part too; a caller that
         # sends one "tokens" limit, on both together, still has it honoured.
+        # The ways open to the user's own work: the quick alone while the
+        # thorough way is switched off (runner.THOROUGH_OPEN).
         return {"defaults": DEFAULT_LIMITS, "none": 0,
+                "ways": ["quick", "full"] if getattr(app.work, "thorough_open", True)
+                else ["quick"],
                 "names": {"minutes": "minutes", "tokens_in": "input tokens",
                           "tokens_out": "output tokens", "calls": "model calls"}}
 
@@ -1849,7 +2129,8 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         unit = app.state_heartbeat.experience.unit(str(request.require("unit")))
         if unit is None:
             raise ApiError("no such project or task", 404)
-        return app.work.tree(unit)
+        # A try's own tree (the user, 2026-10-31), when one is asked for.
+        return app.work.tree(unit, str(request.get("tree") or ""))
 
     @route("POST", "/api/work/stop")
     def work_stop(request: Any) -> Any:
@@ -1946,6 +2227,36 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         if said.get("error"):
             raise ApiError(said["error"], 409)
         return said
+
+    @route("GET", "/api/work/clear")
+    def work_clear_preview(request: Any) -> Any:
+        """What Clear would move to the Recycle Bin, asked before it is."""
+        unit = app.state_heartbeat.experience.unit(str(request.require("unit")))
+        if unit is None:
+            raise ApiError("no such project or task", 404)
+        return app.work.clear_preview(unit)
+
+    @route("POST", "/api/work/clear")
+    def work_clear(request: Any) -> Any:
+        """CLEAR, as the user confirmed: what the project's work made, in its
+        own work folders, moved to the Recycle Bin; nothing else changes."""
+        unit = app.state_heartbeat.experience.unit(str(request.require("unit")))
+        if unit is None:
+            raise ApiError("no such project or task", 404)
+        said = app.work.clear(unit)
+        if said.get("error"):
+            raise ApiError(said["error"], 409)
+        return said
+
+    @route("POST", "/api/work/runs/remove")
+    def work_run_remove(request: Any) -> Any:
+        """A TRY REMOVED, as the user confirmed: not listed in its work again,
+        nor its to-do's version; its files are kept."""
+        run = str(request.require("run"))
+        if not app.work.hide_run(run):
+            raise ApiError("it is going, or there is no such run", 409)
+        app.drafts.forget_run(run)
+        return {"removed": run}
 
     @route("POST", "/api/work/thorough")
     def work_thorough(request: Any) -> Any:
@@ -2123,13 +2434,17 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         runs = app.work.runs(str(request.get("unit") or ""))
         # WHAT EACH HANDS TO THE USER, with how it is opened for them - in
         # their mail, their calendar, their own browser (handed.py).
-        from ..agent.work import handed
+        from ..agent.work import handed, mail_pages
+
+        def history() -> list:
+            return mail_pages.from_history(app.platform, app.paths.cache_dir)
         place = None
         for run in runs:
             items = (run.get("plan") or {}).get("handed") or []
             if items and place is None:
                 place = handed.where(app.config, app.db)
-            run["handed"] = [dict(one, actions=handed.actions(one, place)) for one in items]
+            run["handed"] = [dict(one, actions=handed.actions(one, place, app.db, history))
+                             for one in items]
         return {"runs": runs}
 
     @route("POST", "/api/work/folders/held")
@@ -2149,8 +2464,12 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         """WHAT A RUN HANDED TO THE USER, opened for them: an email or an
         event as a page filled in, in their own browser - where they are
         signed in - or their mail or calendar program; a file in the program
-        it opens with, a folder. Only what that run handed over, and nothing
-        sent, saved or submitted."""
+        it opens with, a folder. A REPLY IS OPENED IN THE THREAD IT ANSWERS
+        wherever it is opened from (the user, 2026-11-01: the to-do's "Open
+        the result" opened it as a new message) - its words handed back to
+        be copied - unless a new message is asked for ("how": "new").
+        Only what that run handed over, and nothing sent, saved or
+        submitted."""
         import os
         import subprocess
         import sys
@@ -2165,19 +2484,92 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         if not 0 <= at < len(items):
             raise ApiError("it handed over no such thing", 404)
         item = items[at]
-        acts = handed.actions(item, handed.where(app.config, app.db))
+        # OPENED ONCE THE WORK IS DONE (the user, 2026-11-01): not while it
+        # works - on it still, or carried on.
+        if app.work.run_going(run["id"]) and not item.get("ready"):
+            raise ApiError("it is still working - what it hands over opens once it is done", 409)
+        from ..agent.work import mail_pages
+        acts = handed.actions(item, handed.where(app.config, app.db), app.db,
+                              lambda: mail_pages.from_history(app.platform, app.paths.cache_dir))
 
         def start(target: str) -> None:
             if sys.platform.startswith("win"):
                 os.startfile(target)                        # type: ignore[attr-defined]
             else:
                 subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", target])
+        how = str(request.get("how") or "")
+        reply = acts.get("reply") or {}
+        replying = how == "reply" or (not how and bool(reply.get("url")))
+        if replying and not reply.get("url"):
+            raise ApiError("it answers no email that can be found", 404)
+        # A REPLY'S WORDS ON THE CLIPBOARD, put there by the application before
+        # anything is opened - a page behind the browser it opens may not
+        # (platform_layer/clipboard.py) - and said to be there only if they are.
+        copied = False
+        from ..platform_layer import clipboard
+        if (replying or item["kind"] in ("message", "form")) and acts.get("copy"):
+            copied = clipboard.copy(acts["copy"])
+        from ..common import interface_words
+
+        def say(text: str) -> str:
+            return interface_words.shown(text, app.config)
+        # A MESSAGE: the chat with them opened where they talk (destinations.py)
+        # - in WeChat without a key pressed - the message copied; never sent.
+        chat: Dict[str, Any] = {}
+        first: List[str] = []
+        if item["kind"] == "message":
+            from ..agent.work import destinations
+            store = getattr(app, "connections", None)
+            handle = item.get("handle") or destinations.handle_for(
+                store, item.get("app", ""), item.get("to", ""))
+            chat = destinations.chat_link(item.get("app", ""), handle, item.get("text", ""))
+            name = chat["name"]
+            if chat["how"] == "wechat":
+                # Brought forward - nothing done in it: the user finds the
+                # chat (the user, 2026-11-01: clicking is theirs).
+                from ..platform_layer.wechat_open import bring_forward
+                result = bring_forward()
+                chat.update(result)
+                who = handle or item.get("to", "")
+                first.append(say(f"In WeChat, search {who} (Ctrl+F), open the chat, paste it (Ctrl+V) and send it yourself")
+                             if result.get("opened") else
+                             say(f"Open WeChat, search {who}, open the chat, paste it (Ctrl+V) and send it yourself"))
+            elif chat["how"] == "link":
+                if not (chat["url"].startswith("http") and webbrowser.open(chat["url"])):
+                    start(chat["url"])
+                first.append(say(f"The message is filled in, in {name} - read it, then send it yourself")
+                             if chat["fills"] else
+                             say(f"{name} shows the chat with {item.get('to', '')} - paste it there and send it yourself"))
+            elif chat["how"] == "app":
+                start(chat["url"])
+                first.append(say(f"{name} is open - open the chat with {item.get('to', '')}, paste it and send it yourself"))
+            else:
+                first.append(say(f"Open the chat with {item.get('to', '')} in {name} - the message is on your clipboard"))
+        elif item["kind"] == "form":
+            parts = item.get("parts") or []
+            if parts:
+                first.append(say(f"The page opens in your browser - paste each part into its box, starting with {parts[0].get('field', '')}"))
+        # WHAT IT IS, HOW IT IS USED AND WHAT TO CHECK, on the desktop beside it.
+        told = handed.note(item, acts, say, copied=copied)
+        told["check"] = first + list(told.get("check") or [])
+        app.bus.publish("work.handed_opened", dict(told, run=run["id"], n=at))
+        if item["kind"] == "message":
+            return {"opened": "message", "copied": copied, "in": chat.get("name", ""),
+                    "how": chat.get("how", ""), "chat": {key: chat.get(key) for key in
+                                                         ("opened", "why", "fills")}}
+        if replying:
+            # In their own browser, where they are signed in: they reply there.
+            if not webbrowser.open(reply["url"]):
+                start(reply["url"])
+            return {"opened": "reply", "found": reply.get("found", ""),
+                    "copy": acts.get("copy", ""), "copied": copied}
         if acts.get("open"):
             # The user's own browser (or mail program, for mailto:) - not
             # this application's window, where they are signed in nowhere.
             if not webbrowser.open(acts["open"]):
                 start(acts["open"])
-            return {"opened": item["kind"], "whole": acts.get("whole", True)}
+            return {"opened": item["kind"], "whole": acts.get("whole", True),
+                    **({"copied": copied} if item["kind"] == "form" else {})}
         if acts.get("ics"):
             folder = app.paths.data_dir / "handed"
             folder.mkdir(parents=True, exist_ok=True)
@@ -2813,6 +3205,13 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             raise ApiError("no such person", 404)
         return person
 
+    @route("POST", "/api/connections/writing/forget")
+    def connections_writing_forget(request: Any) -> Any:
+        """One of the user's own messages kept with a contact, let go."""
+        if not app.connections.forget_writing(str(request.require("id"))):
+            raise ApiError("no such message", 404)
+        return {"forgotten": str(request.require("id"))}
+
     @route("GET", "/api/connections/merge_preview")
     def connections_merge_preview(request: Any) -> Any:
         """What merging `other` into `id` would bring over - shown before the
@@ -3060,6 +3459,25 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             came = {}
         return {"todos": [dict(one, work=came[one["id"]]) if one.get("id") in came else one
                           for one in app.todos.shown()]}
+
+    @route("GET", "/api/work/assigned")
+    def work_assigned(_request: Any) -> Any:
+        """WORK ASSIGNED, on the Overview left of To do: the work delegated
+        not from a to-do, each with where it stands."""
+        try:
+            return {"assigned": app.drafts.assigned()}
+        except Exception:        # pragma: no cover - the panel shows without it
+            log.debug("the work assigned could not be read", exc_info=True)
+            return {"assigned": []}
+
+    @route("POST", "/api/todos/add")
+    def todos_add(request: Any) -> Any:
+        """A TO-DO OF THE USER'S OWN (the user, 2026-11-01): added by hand on
+        the Overview, with no notification behind it."""
+        text = str(request.get("text") or "").strip()
+        if not text:
+            raise ApiError("a to-do needs its words", 400)
+        return {"ok": True, "todo": app.todos.add(text, str(request.get("detail") or ""))}
 
     @route("POST", "/api/todos/tick")
     def todos_tick(request: Any) -> Any:

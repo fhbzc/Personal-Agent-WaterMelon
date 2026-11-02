@@ -124,7 +124,7 @@ class EachStepIsSaidTests(unittest.TestCase):
                     seen.append((updater.state.get("step"),
                                  dict(updater.state.get("progress") or {})))
 
-            def get(url, timeout=30.0):
+            def get(url, timeout=30.0, start=0):
                 if url.endswith(up.SUMS):
                     return _Answer(f"{hashlib.sha256(payload).hexdigest()}  "
                                    f"{up.ASSET['windows']}\n".encode())

@@ -100,7 +100,16 @@ was opened for, a chat after the person in it, a document after its file.
 What the user is doing is in the text read from the window and in its
 keywords. Where the two disagree, the text is right and the title is old -
 and an entry that says its title has been the same for hours is telling
-you exactly that.
+you exactly that. A WeChat chat's name ("wechat chat") is not such a title:
+it is the user's own name for the person or group in it, and holds.
+
+NAME PEOPLE AS THE USER'S CONTACTS NAME THEM. Where the window, or the
+user's own words in it, call someone by how they stand to the user (学姐,
+师兄, "my advisor", "the junior students") or by a nickname, and WHO IS IN
+THIS WINDOW says who that is - the contact a WeChat chat is with, or one
+known by that other name - write their name, the user's word beside it
+where it helps: "Reply to Wang Fang (学姐) about the draft". Where you
+cannot tell who it is, keep the user's word; never guess a name.
 
 THE PERIOD YOU CAN SEE IS THIS WINDOW. You are looking at a few minutes,
 not at a week. A state you write begins and ends inside the window in front
@@ -568,7 +577,9 @@ deadline still to meet: that is one notification, not a series. Leave
 
 Write it for the user. The title is what they see first and the message is
 one or two plain sentences. Your evidence and reasoning go in "why", which
-is shown only if they ask.
+is shown only if they ask. A person in it is named as the user's contacts
+name them (WHO IS IN THIS WINDOW) - not 学姐 or "the junior students" when
+it says who that is; where it cannot be told, the user's own word.
 
 EVERY NOTIFICATION YOU ADD SAYS WHY - what in the activity or the states
 called for it, and why it is worth interrupting for at that moment. One with
@@ -896,11 +907,18 @@ def _stable_title(title: str) -> str:
     return " ".join(text.split())
 
 
+def _title_of(data: Dict[str, Any]) -> str:
+    """A window's title as it is told apart - A WECHAT CHAT BY ITS NAME
+    (2026-10-31): every chat had the one window's title, "微信"."""
+    if data.get("wechat_chat"):
+        return f"WeChat chat {data['wechat_chat']}"
+    return _stable_title(data.get("window_title") or data.get("title"))
+
+
 def _window_of(event: Dict[str, Any]) -> tuple:
     """Which window an event is about, whatever kind of event it is."""
     data = event.get("data") or {}
-    return (str(event.get("application") or ""),
-            _stable_title(data.get("window_title") or data.get("title")))
+    return (str(event.get("application") or ""), _title_of(data))
 
 
 #: How far back the pages an event's keywords are weighed against go. A
@@ -1028,8 +1046,7 @@ def _signature(event: Dict[str, Any]) -> tuple:
     # an hour read as two entries of bare titles and one of text, and the
     # model had to work out they were the same sitting.
     if str(event.get("event_type") or "") in WINDOW_KINDS:
-        return ("window", str(event.get("application") or ""),
-                _stable_title(data.get("window_title") or data.get("title")))
+        return ("window", str(event.get("application") or ""), _title_of(data))
     path = (data.get("path") or data.get("destination_path")
             or data.get("source_path") or "")
     about = (str(path) or str(data.get("url") or "")
@@ -1270,6 +1287,10 @@ class StateFloor:
         #: The people already known and the user's changes to their
         #: contacts, for step 2 (connections/people.py). None for the rest.
         self.people: Optional[str] = None
+        #: WHO IS IN THIS WINDOW - each WeChat chat's contact and the contacts
+        #: named in it - for the steps that write states and notifications
+        #: (people.named). None where there is no one, or no contacts.
+        self.people_named: Optional[str] = None
         #: How often the heartbeat runs, said at the top of every step's
         #: context. 0 when not known, and then not said.
         self.every_minutes: float = 0.0
@@ -1376,6 +1397,14 @@ class StateFloor:
                 "",
                 "\n".join(self.pending) or "None.",
             ])
+        if self.people_named:
+            sections.append([
+                "WHO IS IN THIS WINDOW",
+                "As the user's contacts have them: the contact each WeChat chat "
+                "here is with, and the contacts named here - to name people by.",
+                "",
+                self.people_named,
+            ])
         if self.people is not None:
             sections.append([
                 "THE USER'S CONTACTS",
@@ -1475,6 +1504,10 @@ class StateFloor:
                 lines.append("    ids: " + ", ".join(ids[:IDS_PER_LINE])
                              + (f" and {len(ids) - IDS_PER_LINE} more"
                                 if len(ids) > IDS_PER_LINE else ""))
+            if data.get("wechat_chat"):
+                lines.append(f"    wechat chat: {str(data['wechat_chat'])[:200]}"
+                             + (" (a group)" if data.get("wechat_chat_kind") == "group" else
+                                " (the user's own name for the person in it)"))
             for label in ("window_title", "title", "url", "path",
                           "source_path", "destination_path"):
                 if data.get(label):
@@ -2361,6 +2394,17 @@ class AgentHeartbeat:
                                 except Exception:
                                     log.warning("the calendar nature could "
                                                 "not be read", exc_info=True)
+                        if item.id in ("step_state", "step_notify"):
+                            # WHO IS IN THIS WINDOW, to name people by.
+                            keeper = getattr(self, "connections", None)
+                            if keeper is not None:
+                                try:
+                                    found.people_named = _people.named(
+                                        keeper, found.events, json.dumps(
+                                            found.events, ensure_ascii=False, default=str)) or None
+                                except Exception:
+                                    log.warning("who is in the window could not be read",
+                                                exc_info=True)
                         if item.id == "step_people":
                             # The people already known - those named in
                             # this window first - and the user's own
@@ -2534,6 +2578,12 @@ class AgentHeartbeat:
                                         exc_info=True)
                 if written_people:
                     report["people_written"] = written_people
+                try:
+                    linked = _people.link_wechat(keeper)
+                    if any(linked.values()):
+                        report["wechat_linked"] = linked
+                except Exception:          # pragma: no cover - the round goes on
+                    log.warning("could not link the WeChat chats", exc_info=True)
 
             # Step 3: the notifications, onto the calendar.
             self._notify_writer = writers.get("step_notify") or {}

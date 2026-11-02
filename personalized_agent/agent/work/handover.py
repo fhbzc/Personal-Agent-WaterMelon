@@ -87,6 +87,25 @@ def hand_over(data_dir: Path, path: str) -> Tuple[str, bool]:
         return ident, True
 
 
+def hand_over_picked(data_dir: Path, picked: Dict[str, Any], ident: str = "") -> str:
+    """WHAT WAS RIGHT-CLICKED in another program (agent/work/picked.py) - a
+    page, selected text, a file open in an editor - kept in a note of its
+    own, complete at once: one thing, never gathered with others. Its id -
+    `ident` when the browser's extension named it (letters and digits, 8 to
+    40): its box opened already, on that note, while the note is written."""
+    from .picked import picked as checked
+    folder = inbox(data_dir)
+    folder.mkdir(parents=True, exist_ok=True)
+    ident = str(ident or "")
+    if not (8 <= len(ident) <= 40 and ident.isascii() and ident.isalnum()):
+        ident = uuid.uuid4().hex[:16]
+    with _Lock(folder):
+        (folder / f"{ident}.json").write_text(json.dumps(
+            {"id": ident, "at": time.time(), "gathering": False, "paths": [],
+             "picked": checked(picked)}, ensure_ascii=False), encoding="utf-8")
+    return ident
+
+
 def gathered(data_dir: Path, ident: str) -> None:
     """The moment for the rest passed: the note is complete."""
     folder = inbox(data_dir)
@@ -100,12 +119,19 @@ def gathered(data_dir: Path, ident: str) -> None:
         note.write_text(json.dumps(said, ensure_ascii=False), encoding="utf-8")
 
 
-def take(data_dir: Path, ident: str) -> Optional[Dict[str, List[str]]]:
-    """The note read and removed: its folders and its files. None for no
-    such note."""
+def take(data_dir: Path, ident: str, wait: float = 0.0) -> Optional[Dict[str, Any]]:
+    """The note read and removed: its folders and its files - and what was
+    right-clicked, when it was that (`hand_over_picked`). None for no such
+    note - waited for up to `wait` seconds: the browser's box opens as the
+    note is being written (the user, 2026-11-02: the box "弹出来要卡一下")."""
     folder = inbox(data_dir)
     if not ident or not all(ch.isalnum() for ch in ident):
         return None
+    until = time.monotonic() + max(0.0, float(wait))
+    while not (folder / f"{ident}.json").exists() and time.monotonic() < until:
+        time.sleep(0.05)
+    if not folder.is_dir():
+        return None                          # nothing handed over here yet
     with _Lock(folder):
         note = folder / f"{ident}.json"
         try:
@@ -116,7 +142,10 @@ def take(data_dir: Path, ident: str) -> Optional[Dict[str, List[str]]]:
     folders, files = [], []
     for one in said.get("paths") or []:
         (folders if Path(one).is_dir() else files).append(one)
-    return {"folders": folders, "files": files}
+    taken: Dict[str, Any] = {"folders": folders, "files": files}
+    if isinstance(said.get("picked"), dict):
+        taken["picked"] = said["picked"]
+    return taken
 
 
-__all__ = ["hand_over", "gathered", "take", "inbox", "GATHER_SECONDS"]
+__all__ = ["hand_over", "hand_over_picked", "gathered", "take", "inbox", "GATHER_SECONDS"]

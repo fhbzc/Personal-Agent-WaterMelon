@@ -35,6 +35,10 @@ from typing import Any, Callable, Dict, Optional
 log = logging.getLogger(__name__)
 
 VK_LBUTTON = 0x01
+#: RIGHT-CLICKED ON SELECTED TEXT (the user, 2026-11-01: "在记事本里选中右键没有
+#: delegate"): a program's own menu cannot be added to from outside on
+#: Windows - the button comes beside it, to its left.
+VK_RBUTTON = 0x02
 #: A drag at least this long, in pixels, or two clicks this close in time.
 DRAG_PIXELS = 6
 DOUBLE_SECONDS = 0.45
@@ -84,7 +88,12 @@ class SelectionWatch:
             return
         user32 = ctypes.windll.user32
         pressed, down_at, down_xy, last_click = False, 0.0, (0, 0), 0.0
+        right = False
         while not self._stop.wait(POLL_SECONDS):
+            now_right = bool(user32.GetAsyncKeyState(VK_RBUTTON) & 0x8000)
+            if right and not now_right and self.wanted():
+                self._right_clicked(automation, uia)
+            right = now_right
             now_pressed = bool(user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000)
             if now_pressed and not pressed:
                 down_xy, down_at = _cursor(), time.monotonic()
@@ -102,6 +111,16 @@ class SelectionWatch:
                         said.update(x=up_xy[0], y=up_xy[1])
                         self.on_selection(said)
             pressed = now_pressed
+
+    def _right_clicked(self, automation: Any, uia: Any) -> None:
+        """A right-click ended: on selected text, the button beside the
+        program's own menu."""
+        at = _cursor()
+        time.sleep(0.08)                          # the program's menu, first
+        said = self._selected(automation, uia)
+        if said and said["text"].strip():
+            said.update(x=at[0], y=at[1], right=True)
+            self.on_selection(said)
 
     @staticmethod
     def _selected(automation: Any, uia: Any) -> Optional[Dict[str, Any]]:

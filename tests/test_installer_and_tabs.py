@@ -46,7 +46,8 @@ class TheTabsTests(unittest.TestCase):
         # Learning: the user's own tab after Work (2026-10-24), not a debugger's.
         self.assertEqual(result["out"]["tabs"], ["Overview", "Newspaper",
                                                  "Calendar", "Connections", "Work",
-                                                 "Learning", "Chat", "Settings", "Record log"])
+                                                 "Learning", "Society", "Chat", "Settings",
+                                                 "Record log"])
 
     def test_nor_the_debuggers_record_of_computer_usage(self) -> None:
         """Section 8, as amended 2026-10-16: what the computer was used for -

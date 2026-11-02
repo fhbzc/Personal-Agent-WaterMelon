@@ -414,12 +414,14 @@ CALLS_BATCH = 600
 #: Who made a call, as the chart names them: the work agent is the builder;
 #: the Experience debugger's first way, the single model.
 CALL_WHO = {"worker": "builder", "reviewer": "reviewer", "learned": "what was learned",
-            "quality": "quality check", "privacy": "privacy check"}
+            "quality": "quality check", "privacy": "privacy check", "monitor": "monitor"}
 
 #: THE TWO FINAL CHECKS, each a kind of its own in the token charts: the
 #: run's chart by who made the call (CALL_WHO), and the application's by
 #: what it was for (the call's task).
-CHECK_TASKS = {"quality": "work_quality_check", "privacy": "work_privacy_check"}
+CHECK_TASKS = {"quality": "work_quality_check", "privacy": "work_privacy_check",
+               # The quick way's monitor: a kind of its own in the charts too.
+               "monitor": "work_monitor"}
 CHECK_LABELS = {"quality": "quality check", "privacy": "privacy check"}
 #: Rounds of fixes each check is given before the run ends failing it.
 CHECK_FIXES = 3
@@ -689,15 +691,47 @@ WAY_NAMES = {FULL: "the thorough way", QUICK: "the quick way", SINGLE: "one mode
              NO_CONTEXT: "a builder and a reviewer, without your context"}
 #: The ways of the user's own work.
 WAYS = (QUICK, FULL)
+#: THE THOROUGH WAY, A BUILDER AND A REVIEWER, IS SWITCHED OFF FOR NOW (the
+#: user, 2026-10-31: "先停用reviewer-builder模式"): the user's own work is
+#: done the quick way alone - no way to choose, nothing said of one being
+#: too big for it, no "Continue thoroughly". A run of before goes on the way
+#: it began. On a WorkRuns as `thorough_open`; the tests switch it on.
+THOROUGH_OPEN = False
+
+#: THE QUICK WAY'S MONITOR (the user, 2026-10-31): beside the agent, it
+#: looks again - when the agent writes, runs or ends a turn - at what it is
+#: doing, looks up what bears on it, and reminds it where it differs from
+#: the user; it never stops it. At most one look this often, this many in
+#: a session, each with this many rounds of its own tools.
+MONITOR_EVERY = 90.0
+MONITOR_MOST = 30
+MONITOR_ROUNDS = 6
+#: What sets it looking: a file written or deleted, something run.
+MONITOR_ON = ("write_file", "edit_file", "edit_notebook", "delete_file",
+              "run_command", "run_python", "run_tests", "install_packages")
+#: Its tools: looking things up and reading, nothing else.
+MONITOR_TOOLS = ("list_dir", "read_file", "find_files", "find_in_files",
+                 "search_records", "search_files", "open_case", "open_reason",
+                 "search_people", "open_person")
+#: What it is shown of the agent's tools since it last looked, at most.
+MONITOR_SEEN = 16
 
 #: Where a single model's conversation is started again - from the task and
 #: its own reports so far - rather than grow past what a model can read.
 ALONE_CONTEXT_CHARS = 400_000
 
 
-def work_scope(unit_id: str) -> str:
-    """Where a piece of work's own tree is kept, apart from the user's."""
-    return f"work:{unit_id}"
+def work_scope(unit_id: str, tree: str = "") -> str:
+    """Where a piece of work's own tree is kept, apart from the user's - a
+    TRY of a to-do handed over again (`tree`, "v2"...) its own tree beside
+    the first's (the user, 2026-10-31)."""
+    return f"work:{unit_id}" + (f":{tree}" if tree else "")
+
+
+def tree_of(row: Dict[str, Any]) -> str:
+    """Which of its work's trees a run's is: "" the work's own, else its
+    try's (`work_scope`)."""
+    return str((row.get("plan") or {}).get("tree") or "")
 
 
 #: What code a run runs may reach, as the prompts say it (`network_rules`).
@@ -1929,6 +1963,15 @@ Check it, then return ONLY this JSON object:
   "checked": ["each thing you opened or ran"],
   "problems": [{{"say": "what is wrong, and what it should become", "severity": "high|medium|low", "file": "..."}}]}}"""
 
+#: Said to the checks of one way as soon as it is handed over (the user,
+#: 2026-11-01): it opens for the user - who may send it - once they pass.
+WAY_CHECKED = """THIS IS ONE WAY OF A THING THE USER ASKED FOR, handed over now. It opens for
+them as soon as you pass it - they may paste it, send it or post it while
+the work goes on - so check it as the finished thing. Its words are all
+there is to it: there is nothing else to open or run.
+
+"""
+
 ALONE_CHECKS_FAILED = """INDEPENDENT CHECKS LOOKED AT YOUR FINISHED WORK - {which} - AND IT HAS NOT
 PASSED YET:
 {findings}
@@ -2018,8 +2061,11 @@ NO_CONTEXT_WORDS = (
 
 # -- one model on its own: the Experience debugger's first way ----------------------------
 ALONE_SYSTEM = """You are doing a piece of work for the user, on your own: there
-is no reviewer and no plan you must follow - how you go about it is yours to
-decide.
+is no reviewer and no contract - how you go about it is yours to decide. A
+PLAN THE USER APPROVED, where the task has one, is theirs: follow it; where
+you find it does not match the facts - something happened since it was
+drafted, or it is wrong - you may change it, and say in your report what you
+changed and why.
 
 YOU MAY OPEN THE REFERENCES. Every file and folder the task points to - and
 any file or folder under the user's home - can be listed and read with your
@@ -2049,17 +2095,95 @@ QUICK_RULES = """THIS IS THE USER'S OWN WORK, done the quick way: you on your ow
 everything at the start. Do it as THEY would - what was learned of how
 they work on things like it is given with the task; take what holds here.
 Look further when the work needs it: search_files (their own files),
-search_records (what they did), open_case and open_reason (their past work
-and their reasons, by the ids given), the web.
+search_records (what they did), search_people and open_person (their
+contacts - who anyone the work involves is, what they are to the user, how
+the user writes to them), open_case and open_reason (their past work and
+their reasons, by the ids given), the web.
 
-TOO BIG FOR THE QUICK WAY? If the work turns out to need much more than a
+{too_big}WHAT YOU MAKE FOR SOMEONE - an email, a message, a reply, a letter - IS
+WRITTEN AS THE USER WRITES TO THAT PERSON: the greeting, the register, the
+length, the sign-off and the attitude of the user's own messages to them
+(WHO IT IS FOR, in the task; search_records by their name for more). With
+none to them, as the user writes to people of their standing. Where things
+stand is the latest of what passed between them - not what the task said
+when it was drafted.
+
+A README.md only when you made more than one file.
+
+A MONITOR WATCHES YOUR WORK: as you write, run and end a turn, it looks up
+what bears on what you are doing - the user's records, their files, what
+was learned of their past work - and, where you differ from what they
+asked or how they do it, reminds you, with its evidence: with a tool's
+result ("monitor") or with the next message. It never stops you. Weigh each
+reminder: where it holds, change course; where it does not, go on, and say
+why in your report."""
+
+#: QUICK, while the thorough way is open: when to say the work needs it.
+QUICK_TOO_BIG = """TOO BIG FOR THE QUICK WAY? If the work turns out to need much more than a
 quick piece of work - several deliverables that depend on each other, code
 that must be built and tested, a long piece of work worth an independent
 review - stop and say so: "done": false and "thorough": "why it needs the
 thorough way (a builder and a reviewer)". The user may carry it on that way
 from what you made.
 
-A README.md only when you made more than one file."""
+"""
+
+#: THE MONITOR: what it is told, once a look.
+MONITOR_SYSTEM = """You watch a work agent doing a piece of work for the user on its own
+(the quick way). You do not do the work and you change nothing. Your one
+job: catch where what it is doing NOW differs from what the user asked, or
+from how the user does such things - and say it to the agent, briefly,
+with the evidence.
+
+LOOK THINGS UP BEFORE YOU JUDGE, with your tools: search_records (what the
+user did), search_files (the user's own files), search_people and
+open_person (the user's contacts - who someone is, what they are to the
+user, how the user writes to them), open_case and open_reason
+(what was learned of their past work and the reasons behind how they judge
+it, by the ids given below), read_file, list_dir, find_files and
+find_in_files (the work's files). Search by what the agent is doing now -
+the files, the commands, the libraries, the choices it made - not by the
+task's name alone.
+
+SAY ONLY A REAL DIFFERENCE, WITH EVIDENCE: what the user's instruction or
+their words say otherwise; a choice their past work or their reasons show
+they make otherwise; a fact in their records or files the agent has wrong -
+or that things stand otherwise now than the agent takes them to.
+
+WHAT IT WRITES TO SOMEONE - an email, a message, a reply, a letter - IS
+WRITTEN AS THE USER WRITES TO THAT PERSON. Look up the user's own words to
+them, and theirs to the user (search_records by the person's name; the
+latest first), and compare the draft with how the user writes to them: the
+greeting, the register, the length, the sign-off, the attitude - the user
+modest and courteous where the draft is curt, transactional or talks down
+("As a reminder"). Where they differ, that is a difference to say, with the
+user's own words as the evidence.
+Not a matter of taste, not "it could be better", not what the agent says it
+will do next anyway, and nothing you said before (listed below). When
+nothing differs, say so - that is the usual answer.
+
+Return ONLY this JSON object:
+{"differs": false}
+or
+{"differs": true,
+ "about": "what the agent is doing that differs, in a few words",
+ "remind": "one to three sentences to the agent: what differs, and what the user would do instead",
+ "evidence": ["where each piece of it is from: the instruction, a record, a file's path, a case or reason id"]}"""
+
+MONITOR_LOOK = """THE WORK:
+{work}
+
+WHAT THE AGENT DID SINCE YOU LAST LOOKED:
+{did}
+{turn}
+WHAT YOU REMINDED IT OF BEFORE (not again):
+{said}"""
+
+#: Said done with a reminder not yet given: given before it ends.
+MONITOR_BEFORE_DONE = """BEFORE YOU FINISH - YOUR MONITOR REMINDS YOU:
+{notes}
+Where it holds, fix it, then say done again. Where it does not, say done
+again, and why, in your report."""
 
 #: QUICK, before it starts: what it must know of the user to do the work as
 #: they would - asked once, answered by what was learned of their work.
@@ -2865,6 +2989,14 @@ def _exchanges_text(response: Any) -> str:
     return "\n".join(lines) + "\n\n"
 
 
+class _NoConfig:
+    """Settings not at hand: every one its default."""
+
+    @staticmethod
+    def get(_key: str, default: Any = None) -> Any:
+        return default
+
+
 class WorkRuns:
     """Starts runs, one at a time, continues them, and reports on them."""
 
@@ -2892,6 +3024,9 @@ class WorkRuns:
         #: off only where the tests drive runs with models of their own that
         #: are not about them (tests/support.py).
         self.final_checks = True
+        #: THE THOROUGH WAY OPEN (THOROUGH_OPEN): off, the user's own work is
+        #: done the quick way alone - the tests switch it on (tests/support.py).
+        self.thorough_open = THOROUGH_OPEN
         #: THE USER'S OWN FILES, searchable by their words (index/service.py)
         #: - set by the application; None: no index to search.
         self.local_index: Any = None
@@ -3080,6 +3215,9 @@ class WorkRuns:
                 held = {}
         output = str(((held.get("summary") or {}) if isinstance(held.get("summary"), dict)
                       else {}).get("output_folder") or "")
+        # A later try has a folder of its own: the first try's is not its result.
+        if int(plan.get("attempt") or 0) > 1:
+            output = ""
         places += [output, str(row.get("folder") or "")]
         out: List[Dict[str, Any]] = []
         seen = set()
@@ -3315,13 +3453,19 @@ class WorkRuns:
     def start(self, unit: Dict[str, Any], instruction: str = "",
               limits: Any = None, packages: Any = None,
               sound: Any = False, given_room: bool = False,
-              unconfined: Any = False, way: Any = FULL) -> Dict[str, Any]:
+              unconfined: Any = False, way: Any = FULL,
+              folder: str = "", tree: str = "", attempt: int = 0) -> Dict[str, Any]:
         """Start a run. `packages` is "ask" - the user approves each install,
         the default - or "auto". `sound`: a sound is played when this
         session ends (see `Run._ring`). `given_room`: started from the
         queue, its turn come (`start_waiting`). `way`: QUICK or FULL - the
-        user's own work only; a debugger way is its own."""
+        user's own work only; a debugger way is its own. A TRY of a to-do
+        handed over again (the user, 2026-10-31): `attempt` its number,
+        `folder` and `tree` its own - beside the work's, never in them."""
         way = str(way or FULL) if str(way or FULL) in WAYS else FULL
+        # THE THOROUGH WAY SWITCHED OFF: the user's own work, the quick way.
+        if not self.thorough_open and not unit.get("debug"):
+            way = QUICK
         # WITHOUT THE SANDBOX: the user's own work only, never a debugger way.
         unconfined = bool(unconfined) and not unit.get("debug")
         apart = self._way_apart("start", unit, given_room, {
@@ -3342,13 +3486,16 @@ class WorkRuns:
                 if waits:
                     return waits
             if self.in_subprocess:
+                tried = {k: v for k, v in (("folder", folder), ("tree", tree),
+                                           ("attempt", attempt)) if v}
                 return self._apart("start", unit, instruction=instruction,
                                    limits=limits, packages=packages, sound=sound,
-                                   unconfined=unconfined, way=way)
-            folder = self.folder_of(unit)
+                                   unconfined=unconfined, way=way, **tried)
+            folder = Path(folder) if folder else self.folder_of(unit)
             run = Run(self, unit, instruction, self._runtime(unit, folder),
                       limits_of(limits), packages=mode_of(packages) if packages not in (None, "") else None,
-                      sound=wants_sound(sound), unconfined=unconfined, way=way)
+                      sound=wants_sound(sound), unconfined=unconfined, way=way,
+                      tree=str(tree or ""), attempt=int(attempt or 0))
             self._running[run.id] = run
             run.start()
             return {"run": run.id, "folder": str(folder), "limits": run.limits,
@@ -3362,6 +3509,8 @@ class WorkRuns:
         way - a run of its own, in the same folder, from what the quick one
         made: told what was asked, what it reported and why it was too big
         for the quick way, if it said so."""
+        if not self.thorough_open:
+            return {"error": "the thorough way is switched off for now"}
         row = self.run(run_id)
         if row is None:
             return {"error": "no such run"}
@@ -3381,8 +3530,12 @@ class WorkRuns:
             "look at what it made before you plan.",
             f"WHY IT NEEDS THE THOROUGH WAY: {plan['thorough']}" if plan.get("thorough") else "",
             f"WHAT IT REPORTED LAST:\n{report[:8000]}" if report else ""]))
+        # A try carried on thoroughly stays that try: its folder, its tree.
+        tried = {"folder": str(row.get("folder") or ""), "tree": tree_of(row),
+                 "attempt": int(plan.get("attempt") or 0)} if plan.get("attempt") else {}
         return self.start(unit, instruction, limits=limits,
-                          packages=packages, sound=sound, unconfined=unconfined, way=FULL)
+                          packages=packages, sound=sound, unconfined=unconfined, way=FULL,
+                          **tried)
 
     def continue_run(self, run_id: str, unit: Dict[str, Any],
                      limits: Any = None, packages: Any = None,
@@ -3724,7 +3877,8 @@ class WorkRuns:
         files = restore_files(store, manifest, Path(row["folder"]), row["id"], policy,
                               progress=getattr(self, "on_progress", None))
         granted = restore_granted(store, manifest, agents, policy)
-        restore_tree(store, self.db, work_scope(row["unit_id"]), state.get("tree") or {})
+        restore_tree(store, self.db, work_scope(row["unit_id"], tree_of(row)),
+                     state.get("tree") or {})
         for path in granted["restored"]:
             agents[path] = sha_of_file(Path(path))
         plan = dict(state["plan"])
@@ -3805,7 +3959,7 @@ class WorkRuns:
             if entry is None or entry.get("taken_out"):
                 return {"error": "nothing added by that name to take out"}
             if entry.get("card"):
-                ExperienceStore(self.db, work_scope(row["unit_id"])).update_card(
+                ExperienceStore(self.db, work_scope(row["unit_id"], tree_of(row))).update_card(
                     entry["card"], {"status": "set_aside",
                                     "status_why": "taken out by you: it was added, "
                                                   "not your words"})
@@ -3849,7 +4003,7 @@ class WorkRuns:
         # older run's cards there may stand where another run left them.
         if latest:
             try:
-                store = ExperienceStore(self.db, work_scope(row["unit_id"]))
+                store = ExperienceStore(self.db, work_scope(row["unit_id"], tree_of(row)))
                 cards = {one["id"]: one for one in store.cards()}
                 root = store.root(row["unit_id"])
                 root_id = root["id"] if root else ""
@@ -4073,9 +4227,10 @@ class WorkRuns:
         head = next((one for one in index["versions"] if one["id"] == index["head"]), None)
         summary = (head or {}).get("summary") or {}
         state = LIVE_INTERRUPTED if row["status"] == INTERRUPTED else LIVE_ENDED
-        latest = [one["id"] for one in self.db.query(
-            "SELECT id FROM work_runs WHERE unit_id = ? ORDER BY started_at DESC LIMIT 1",
-            (row["unit_id"],))] == [run_id]
+        # The latest of its own tree - a try's beside the work's.
+        latest = next((one["id"] for one in (self._row(each) for each in self.db.query(
+            "SELECT * FROM work_runs WHERE unit_id = ? ORDER BY started_at DESC LIMIT 30",
+            (row["unit_id"],))) if tree_of(one) == tree_of(row)), "") == run_id
         in_force = self.contract_in_force(row, index, latest) if row.get("folder") else None
         return {"run": run_id, "events": events[-SESSION_BATCH:],
                 "last": max([since, *[int(one["seq"]) for one in events]]),
@@ -4189,9 +4344,15 @@ class WorkRuns:
         out = []
         for row in rows:
             entry = self._row(row)
+            # A try the user removed (the to-do's Remove): its files are kept.
+            if (entry.get("plan") or {}).get("hidden"):
+                continue
             live = self._running.get(entry["id"])
             entry["alive"] = bool(live and live.alive())
             entry["stopping"] = bool(live and live.alive() and live.stopping)
+            # WHICH TRY OF A TO-DO IT IS (V1, V2...), and whose tree it has.
+            entry["attempt"] = int((entry.get("plan") or {}).get("attempt") or 0)
+            entry["tree"] = tree_of(entry)
             if entry["alive"]:
                 # As it is this moment - paused the moment it was asked, not
                 # when the run next saves itself.
@@ -4220,7 +4381,8 @@ class WorkRuns:
                                   if head else None)
             # The contract in force, with where each deliverable stands - the
             # work's tree is its latest run's, the first listed of its work.
-            latest = not any(one["unit_id"] == entry["unit_id"] for one in out)
+            latest = not any(one["unit_id"] == entry["unit_id"]
+                             and one["tree"] == entry["tree"] for one in out)
             entry["contract_in_force"] = self.contract_in_force(entry, index, latest)
             # WHAT IT MADE, to open (the user, 2026-10-27: not the logs alone).
             entry["results"] = self.results_of(entry)
@@ -4249,6 +4411,126 @@ class WorkRuns:
         rows = self.db.query("SELECT * FROM work_runs WHERE id = ?", (run_id,))
         return self._row(rows[0]) if rows else None
 
+    def work_folders(self, unit: Dict[str, Any]) -> List[Path]:
+        """WHAT THIS PROJECT'S WORK MADE ITS OWN (the user, 2026-10-31): its
+        folder in agent_work and each try's - only folders inside agent_work,
+        never one of the user's that the work was given."""
+        root = (Path(self.app_policy.workspace_root) / WORK_DIR).resolve()
+        found = [self.folder_of(unit)] + [Path(str(row["folder"])) for row in self.db.query(
+            "SELECT DISTINCT folder FROM work_runs WHERE unit_id = ? AND folder != ''",
+            (unit["id"],))]
+        out: List[Path] = []
+        for one in found:
+            try:
+                one = one.resolve()
+            except OSError:
+                continue
+            if one != root and root in one.parents and one not in out:
+                out.append(one)
+        return out
+
+    def clear_preview(self, unit: Dict[str, Any]) -> Dict[str, Any]:
+        """What Clear would move to the Recycle Bin: each folder, its files and
+        their size - and whether it may be cleared now."""
+        folders = []
+        for one in self.work_folders(unit):
+            files = size = 0
+            if one.is_dir():
+                for _base, _dirs, names in os.walk(one):
+                    for name in names:
+                        files += 1
+                        try:
+                            size += (Path(_base) / name).stat().st_size
+                        except OSError:
+                            pass
+            folders.append({"path": str(one), "files": files, "bytes": size})
+        return {"folders": [one for one in folders if one["files"]],
+                "busy": self._clear_busy(unit)}
+
+    def _clear_busy(self, unit: Dict[str, Any]) -> str:
+        """Why the work's folders may not be cleared now - "" when they may."""
+        for row in self.db.query("SELECT id FROM work_runs WHERE unit_id = ?", (unit["id"],)):
+            live = self._running.get(row["id"])
+            if live is not None and live.alive():
+                return "its work is going - stop it first"
+        if self.waiting_of(unit["id"]) or unit["id"] in self.coming:
+            return "its work is about to start - cancel it first"
+        return ""
+
+    def clear(self, unit: Dict[str, Any]) -> Dict[str, Any]:
+        """CLEAR (the user, 2026-10-31): everything in the project's own work
+        folders moved to the Recycle Bin - the project, its runs and every
+        record of them stay; the folders are left there, empty. Not while its
+        work goes."""
+        from ...platform_layer.trash import move_to_trash
+        busy = self._clear_busy(unit)
+        if busy:
+            return {"error": busy}
+        cleared, failed = [], []
+        for one in self.work_folders(unit):
+            if not one.is_dir():
+                continue
+            for child in sorted(one.iterdir()):
+                try:
+                    move_to_trash(child)
+                except Exception as exc:
+                    failed.append({"path": str(child), "error": str(exc)[:200]})
+            cleared.append(str(one))
+        return {"cleared": cleared, **({"failed": failed} if failed else {})}
+
+    def run_going(self, run_id: str) -> bool:
+        """Whether that run is working this moment."""
+        live = self._running.get(run_id)
+        return live is not None and live.alive()
+
+    def save_handed(self, run_id: str, n: int, words: Any) -> Optional[Dict[str, Any]]:
+        """WHAT WAS HANDED OVER, AS THE USER CHANGED IT (the user, 2026-11-01:
+        Save in the note on the desktop): its words - an email's body, an
+        event's details, the text - in place of the work's, marked theirs
+        (`edited_at`); opened again from anywhere, it is this, and the work
+        carried on goes on from it (handed.users_version). None when the
+        run, the item or words to change are not there; {"error"} while the
+        run works again - nothing is saved over what it is changing (the
+        user: a result is opened, and saved, once the work is done)."""
+        row = self.run(run_id)
+        if row is None:
+            return None
+        plan = dict(row.get("plan") or {})
+        items = list(plan.get("handed") or [])
+        if not 0 <= int(n) < len(items):
+            return None
+        if self.run_going(run_id) and not items[n].get("ready"):
+            # A way handed over is done (`Run._hand_over`): theirs to change.
+            return {"error": "going"}
+        key = handed.WORDS_OF.get(str(items[n].get("kind") or ""))
+        if not key:
+            return None
+        if key == "parts":
+            # A form's parts, each its words as the user changed them.
+            given = list(words) if isinstance(words, (list, tuple)) else [str(words or "")]
+            parts = [dict(one, text=str(given[at])[:handed.PART_MOST]) if at < len(given)
+                     else dict(one) for at, one in enumerate(items[n].get("parts") or [])]
+            items[n] = dict(items[n], parts=parts, edited_at=_now())
+        else:
+            items[n] = dict(items[n], **{key: str(words or "")[:handed.LONG]}, edited_at=_now())
+        plan["handed"] = items
+        self.db.execute("UPDATE work_runs SET plan = ? WHERE id = ?",
+                        (json.dumps(plan, ensure_ascii=False), run_id))
+        return items[n]
+
+    def hide_run(self, run_id: str) -> bool:
+        """A TRY REMOVED by the user (the to-do's Remove, 2026-10-31): not
+        listed in its work again. Nothing is deleted - its files stay. Not
+        while it goes."""
+        row = self.run(run_id)
+        live = self._running.get(run_id)
+        if row is None or (live is not None and live.alive()):
+            return False
+        plan = dict(row.get("plan") or {}, hidden=True)
+        self.db.execute("UPDATE work_runs SET plan = ? WHERE id = ?",
+                        (json.dumps(plan, ensure_ascii=False), run_id))
+        return True
+
     def latest_of(self, unit_id: str) -> Optional[Dict[str, Any]]:
         """A work's latest run - continued, its last session's - with whether
         it is going this moment (`alive`) and, going, its status as it is."""
@@ -4263,12 +4545,13 @@ class WorkRuns:
             entry["status"] = live.status
         return entry
 
-    def tree(self, unit: Dict[str, Any]) -> Dict[str, Any]:
+    def tree(self, unit: Dict[str, Any], tree: str = "") -> Dict[str, Any]:
         """The work's own tree, as the page draws it: its cards in order,
-        every stage with its summaries and reviews, and the edges."""
+        every stage with its summaries and reviews, and the edges. `tree`:
+        a try's own instead (`work_scope`)."""
         from ...heartbeat.experience.stages import StageWriter, level_of
         from ...heartbeat.experience.store import ExperienceStore
-        scope = work_scope(unit["id"])
+        scope = work_scope(unit["id"], tree)
         store = ExperienceStore(self.db, scope)
         if store.root(unit["id"]) is None:
             return {"unit": unit, "cards": [], "stages": [], "edges": []}
@@ -4448,6 +4731,168 @@ def _work_unit(unit: Dict[str, Any], instruction: str) -> Dict[str, Any]:
 NO_SLIDES_FOR = ("contract", "amended")
 
 
+#: What the agent wrote, as the monitor is shown it whole: a file written or
+#: changed, a thing handed to the user (an email, a message), at most this long.
+MONITOR_DRAFT = 3000
+MONITOR_DRAFT_TOOLS = {"write_file": ("content",), "edit_file": ("new_text", "new", "content"),
+                       "hand_over": ("subject", "to", "body", "text", "content")}
+
+
+def _monitor_draft(entry: Dict[str, Any]) -> str:
+    """A tool that writes: what it wrote, for the monitor to read whole."""
+    names = MONITOR_DRAFT_TOOLS.get(str(entry.get("tool") or ""))
+    args = entry.get("arguments") if isinstance(entry.get("arguments"), dict) else {}
+    if not names or not args:
+        return ""
+    parts = [f"{name}: {args[name]}" for name in names if str(args.get(name) or "").strip()]
+    if not parts:
+        return ""
+    return "\n    WHAT IT WROTE:\n    " + _clip("\n".join(parts), MONITOR_DRAFT).replace(
+        "\n", "\n    ")
+
+
+class _Monitor:
+    """THE QUICK WAY'S MONITOR (the user, 2026-10-31: "类似Claude CLI 的
+    monitor"): on a thread of its own, beside the agent. When the agent
+    writes a file, runs something or ends a turn, it looks - at most once
+    every MONITOR_EVERY seconds - at what the agent did since it last
+    looked, looks up with its own tools (the user's records and files, what
+    was learned of their work, the work's files) what bears on it, and, where
+    the agent differs from the user, REMINDS it: the reminder goes with the
+    agent's next tool result, or its next message. It never stops nor
+    pauses it (the user: "只提醒，不暂停"), and is the same model as the
+    agent's (the user: "同一个"). THE AGENT NEVER WAITS FOR IT (the user:
+    "要明确worker不用等监察者"): telling it something is a flag set, and a
+    reminder is taken only when it is there - at the end too; the run ended,
+    a look under way is let go. Every look and reminder is in the live
+    session; what it spends is the run's, under "monitor"."""
+
+    def __init__(self, run: "Run") -> None:
+        self.run = run
+        self._lock = threading.Lock()
+        self._looking = threading.Lock()
+        self._wake = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        #: Where in the run's log it last looked up to.
+        self._from = len(run.log)
+        #: Something happened since it last looked; a turn's report, if one ended.
+        self._due = False
+        self._turn: Optional[Dict[str, str]] = None
+        self._last = 0.0
+        self.looks = 0
+        #: Reminders not yet given the agent; and every one it gave.
+        self.pending: List[str] = []
+        self.said: List[str] = []
+        self.stopped = False
+        self.tools = WorkTools(run._checking_runtime(),
+                               log=lambda name, said: run._tool_used(name, said, who="monitor"),
+                               cards=None, find=None, stages=None)
+        self.tools.only = MONITOR_TOOLS
+        self.tools.records_db = run.tools.records_db
+        self.tools.files_index = run.tools.files_index
+        self.tools.as_of = run.tools.as_of
+        self.tools.leave_out = run.tools.leave_out
+        self.tools.learned = run.tools.learned
+        self.tools.people = run.tools.people
+        self.tools.know_addresses(run.instruction)
+        # The run ended or stopped: a look under way ends at its next tool.
+        self.tools.stopped = lambda: self.stopped or run.stop_now or run.stopping
+
+    def seen(self, tool: str = "", turn: Optional[Dict[str, str]] = None) -> None:
+        """Something to look at: a tool of the agent's that writes or runs,
+        or a turn ended (`turn`: its report and what is next)."""
+        if self.stopped or (tool and tool not in MONITOR_ON):
+            return
+        with self._lock:
+            self._due = True
+            if turn is not None:
+                self._turn = turn
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._loop, daemon=True,
+                                                name=f"monitor-{self.run.id}")
+                self._thread.start()
+        self._wake.set()
+
+    def _loop(self) -> None:
+        while not self.stopped:
+            self._wake.wait(5.0)
+            self._wake.clear()
+            if self.stopped:
+                return
+            if time.monotonic() - self._last < MONITOR_EVERY:
+                continue
+            if self._looking.acquire(blocking=False):
+                try:
+                    self.look()
+                finally:
+                    self._looking.release()
+
+    def look(self) -> None:
+        """One look: what the agent did since the last, looked up and judged
+        - a reminder kept for the agent where it differs."""
+        run = self.run
+        with self._lock:
+            if not self._due or self.looks >= MONITOR_MOST or self.stopped:
+                return
+            if run.stop_now or run.stopping or not run._unpaused.is_set():
+                return
+            self._due = False
+            turn, self._turn = self._turn, None
+            start, self._from = self._from, len(run.log)
+            self.looks += 1
+        try:
+            did = [one for one in run.log[start:] if one.get("what") == "tool"][-MONITOR_SEEN:]
+            lines = [f"  {one.get('tool')}({_short_args(str(one.get('tool')), one.get('arguments'))})"
+                     f" -> {_clip(str(one.get('result') or ''), 300)}"
+                     + _monitor_draft(one) for one in did]
+            changed = [str(one) for one in (run.plan.get("changed_files") or [])[-20:]]
+            content = MONITOR_LOOK.format(
+                work=run._monitor_brief(),
+                did="\n".join(lines) or "  (no tool since)",
+                turn=("" if not changed else "FILES IT HAS CHANGED: " + ", ".join(changed) + "\n")
+                + (f"\nITS TURN ENDED. IT REPORTED: {_clip(turn.get('report', ''), 3000)}\n"
+                   f"IT SAYS IT DOES NEXT: {_clip(turn.get('next', ''), 800)}\n" if turn else ""),
+                said="\n".join(f"  - {one}" for one in self.said) or "  (nothing yet)")
+            run._event("monitor", "stage", "The monitor looks at what the agent did")
+            said = run._ask(MONITOR_SYSTEM, [{"role": "user", "content": content}], self.tools,
+                            writing=False, rounds=MONITOR_ROUNDS, work=False, who="monitor",
+                            quiet=True,
+                            language=in_english("the reminder, as the work agent reads it"))
+            if self.stopped:
+                return              # the run ended meanwhile: nothing to remind
+            evidence = [str(one) for one in (said or {}).get("evidence") or [] if str(one).strip()]
+            remind = str((said or {}).get("remind") or "").strip()
+            about = str((said or {}).get("about") or "").strip()
+            if (said or {}).get("differs") is True and remind and evidence:
+                note = f"{_clip(remind, 800)} (evidence: {_clip('; '.join(evidence), 600)})"
+                with self._lock:
+                    self.pending.append(note)
+                    self.said.append(about or _clip(remind, 160))
+                run._event("monitor", "milestone", f"The monitor reminds the agent: "
+                           f"{_clip(remind, 200)}", full=note)
+            else:
+                run._event("monitor", "stage", "The monitor found nothing that differs")
+        except Exception:                 # pragma: no cover - the work goes on without it
+            log.warning("the monitor could not look", exc_info=True)
+        finally:
+            self._last = time.monotonic()
+
+    def take(self) -> List[str]:
+        """The reminders not yet given - given now, once."""
+        with self._lock:
+            out, self.pending = self.pending, []
+        return out
+
+    def before_done(self) -> List[str]:
+        """Said done: the reminders it found and has not given yet - taken
+        at once. Nothing is waited for: a look under way is not."""
+        return self.take()
+
+    def stop(self) -> None:
+        self.stopped = True
+        self._wake.set()
+
+
 class _SlidesBehind:
     """THE VERSIONS' SLIDES, DRAWN BEHIND THE WORK: each saved version's,
     one at a time and in order - each deck builds on the one before - on a
@@ -4516,7 +4961,7 @@ class Run:
                  resumed: Optional[Dict[str, Any]] = None,
                  packages: Optional[str] = None, amend: str = "",
                  sound: bool = False, unconfined: bool = False,
-                 way: str = FULL) -> None:
+                 way: str = FULL, tree: str = "", attempt: int = 0) -> None:
         from ...heartbeat.experience.stages import StageWriter
         from ...heartbeat.experience.store import ExperienceStore, LIVE
         self.owner = owner
@@ -4593,6 +5038,10 @@ class Run:
         self._model_waiting_since = 0.0
         #: THE VERSIONS' SLIDES, drawn behind the work (`_SlidesBehind`).
         self._behind = _SlidesBehind(self)
+        #: THE QUICK WAY'S MONITOR - made once its tools are (`_alone`) - and
+        #: how often an end said was held for its reminders.
+        self.monitor: Optional[_Monitor] = None
+        self._held_for_monitor = 0
         #: WHAT WAS LEARNED FOR THE NEXT CARDS' CRITERIA, looked up while the
         #: reviewer reviews a round (`_criteria_ahead`).
         self._ahead: Optional[threading.Thread] = None
@@ -4632,7 +5081,11 @@ class Run:
         #: display language, as set when the run started.
         self.language = owner.experience.language() \
             if hasattr(owner.experience, "language") else "English"
-        self.scope = work_scope(unit["id"])
+        # A try's own tree (the user, 2026-10-31) - continued, the one it had.
+        self.tree = tree_of(resumed) if resumed else str(tree or "")
+        self.attempt = int(((resumed or {}).get("plan") or {}).get("attempt") or 0) \
+            if resumed else int(attempt or 0)
+        self.scope = work_scope(unit["id"], self.tree)
         self.store = ExperienceStore(owner.db, self.scope)
         self.writer = StageWriter(owner.db, None, None, scope=self.scope)
         self.work_unit = _work_unit(unit, self.instruction)
@@ -4665,6 +5118,10 @@ class Run:
             "changed_files": [], "sessions": [],
             "total": {"calls": 0, "tokens_in": 0, "tokens_out": 0}}
         self.plan["limits"] = limits
+        if self.tree:
+            self.plan["tree"] = self.tree
+        if self.attempt:
+            self.plan["attempt"] = self.attempt
         if not self.debug:
             self.plan["way"] = self.variant
         self.plan["granted"] = [str(one) for one in runtime.policy.extra_writable]
@@ -4734,6 +5191,9 @@ class Run:
         # agent's own, or those the user named (debug "leave_out").
         self.tools.leave_out = _left_out(unit) if local else None
         self.tools.files_index = getattr(owner, "local_index", None) if local else None
+        # THE USER'S CONTACTS, to look people up in (the user, 2026-10-31) -
+        # their own work only, never a way of the Work debugger.
+        self.tools.people = self._contacts() if local and not self.debug else None
         #: Its versions, kept in its own folder - written through the work's
         #: policy, like everything else it writes.
         self.versions = VersionStore(self.run_dir, runtime.policy)
@@ -5159,6 +5619,9 @@ class Run:
                         args=args, result=outcome, ok=ok,
                         full=_tool_in_full(name, said.get("arguments"), said.get("result")),
                         **({"timing": timing} if timing else {}))
+        # THE QUICK WAY'S MONITOR: told of each tool that writes or runs.
+        if who == "worker" and self.monitor is not None:
+            self.monitor.seen(tool=name)
         # A tool of the work agent's finished, in a round: a progress point,
         # when the last is ten minutes of work behind.
         if (who == "worker" and self._round_log_from is not None
@@ -6333,6 +6796,18 @@ class Run:
                 return str(said["text"])
         return ""
 
+    def _contacts(self) -> Any:
+        """The user's contacts, from their database - None where it cannot be had."""
+        db = getattr(self.owner, "db", None)
+        if db is None:
+            return None
+        try:
+            from ...heartbeat.connections.store import ConnectionsStore
+            return ConnectionsStore(db)
+        except Exception:                # pragma: no cover - the work goes on without them
+            log.debug("the contacts could not be opened for the work", exc_info=True)
+            return None
+
     def _user_db(self) -> Any:
         """WHERE THE USER'S RECORDS AND WHAT WAS LEARNED OF THEIR WORK ARE
         READ FROM: as they are now - or, for a way of the Work debugger, any
@@ -7280,9 +7755,32 @@ class Run:
         return system.replace("{environment}", self._environment_text()).replace(
             "{packages}", packages) \
             + "\n\n" + handed.HAND_OVER_RULES \
-            + ("\n\n" + QUICK_RULES if self.variant == QUICK else "") \
+            + self._what_they_use() \
+            + ("\n\n" + QUICK_RULES.replace(
+                "{too_big}", QUICK_TOO_BIG if getattr(self.owner, "thorough_open", True) else "")
+               if self.variant == QUICK else "") \
             + ("\n\n" + UNCONFINED_RULES if self.unconfined else "") \
             + "\n\n" + zone_rule()
+
+    def _what_they_use(self) -> str:
+        """WHAT THE USER USES - their mail, calendar, chats, documents... -
+        found from what they had open (destinations.py), for the work to hand
+        things over in; "" when nothing is known."""
+        db = getattr(self.owner, "db", None)
+        if db is None or self.debug:
+            return ""
+        try:
+            from .destinations import uses_text
+            place = handed.where(getattr(self.owner, "app_config", None) or _NoConfig(), db)
+            mail = {"gmail": "Gmail" + (f" ({place['account']})" if place.get("account") else ""),
+                    "outlook": "Outlook"}.get(place.get("mail", ""), "")
+            calendar = {"google": "Google Calendar", "outlook": "Outlook"}.get(
+                place.get("calendar", ""), "")
+            said = uses_text(db, mail, calendar)
+        except Exception:                                # pragma: no cover - without it then
+            log.debug("what the user uses could not be found", exc_info=True)
+            return ""
+        return "\n\n" + said if said else ""
 
     def _environment_text(self) -> str:
         """THE ENVIRONMENT, as every agent of this run is told it."""
@@ -7912,12 +8410,38 @@ class Run:
         if learned:
             parts.append("\n" + learned)
         parts.append("\nYOU MAY WRITE IN: " + str(self.folder))
+        # WHAT THE USER CHANGED of what it handed over: gone on from (handed.py).
+        changed = handed.users_version(list(plan.get("handed") or []))
+        if changed:
+            parts.append("\n" + changed)
         if self.resumed and plan.get("last_report"):
             parts.append("\n" + ALONE_RESUMED.format(
                 folder=str(self.folder), last=str(plan.get("last_report"))[:12000],
                 next=f"WHAT YOU SAID YOU WOULD DO NEXT: {plan['next']}"
                 if plan.get("next") else ""))
         return "\n".join(filter(None, parts))
+
+    def _monitor_brief(self) -> str:
+        """What the monitor is told of the work: the task, the user's
+        instruction and words, and what was learned of how they work."""
+        words = [str(one) for one in self.plan.get("words") or []]
+        learned = str((self.experience_given("quick") or {}).get("text") or "")
+        return "\n".join(filter(None, [
+            f"THE TASK: {self.unit.get('name', '')}", self._description_text(),
+            f"WHAT THE USER ASKED: {_clip(self.instruction or 'carry the work forward', 8000)}",
+            ("THE USER'S WORDS SINCE:\n" + "\n".join(f"  - {_clip(one, 1500)}" for one in words))
+            if words else "",
+            ("WHAT WAS LEARNED OF HOW THEY WORK:\n" + _clip(learned, 6000)) if learned else "",
+            f"IT WRITES IN: {self.folder}"]))
+
+    def _monitored(self, text: str) -> str:
+        """The next message to the agent, with the monitor's reminders not
+        yet given."""
+        notes = self.monitor.take() if self.monitor is not None else []
+        if not notes:
+            return text
+        return ("YOUR MONITOR REMINDS YOU:\n" + "\n".join(f"  - {one}" for one in notes)
+                + "\n\n" + text)
 
     def _quick_learned(self) -> str:
         """QUICK: WHAT WAS LEARNED OF THE USER'S WORK, for this job - its
@@ -7989,6 +8513,17 @@ class Run:
                     "One model on its own: no contract, no reviewer, no "
                     "stages - it works until it says it is done")
         messages: List[Dict[str, Any]] = [{"role": "user", "content": self._alone_brief()}]
+        if self.variant == QUICK and self.monitor is None:
+            self.monitor = _Monitor(self)
+            # Its reminders go with the agent's next tool result.
+            self.tools.notes = self.monitor.take
+        try:
+            return self._alone_turns(messages)
+        finally:
+            if self.monitor is not None:
+                self.monitor.stop()
+
+    def _alone_turns(self, messages: List[Dict[str, Any]]) -> str:
         quiet = 0
         while True:
             # SAFE POINT: between turns.
@@ -8019,6 +8554,8 @@ class Run:
             self._event("worker", "milestone", f"Turn {number}: {progress} - "
                         f"{_clip(report, 200)}", full=report)
             self.owner.save(self)
+            if self.monitor is not None and not done:
+                self.monitor.seen(turn={"report": report, "next": self.plan["next"]})
             if interrupted:
                 return "paused"
             thorough = str(said.get("thorough") or "").strip() \
@@ -8030,6 +8567,16 @@ class Run:
                               message=commit_message(said, f"Turn {number}"),
                               round=number, progress=progress)
                 return "thorough"
+            if done and self.monitor is not None and self._held_for_monitor < 2:
+                # Said done: a reminder the monitor found and has not given
+                # yet, given first - at most twice; NOTHING IS WAITED FOR.
+                notes = self.monitor.before_done()
+                if notes and self._going():
+                    self._held_for_monitor += 1
+                    messages.append({"role": "user", "content": MONITOR_BEFORE_DONE.format(
+                        notes="\n".join(f"  - {one}" for one in notes))})
+                    quiet = 0
+                    continue
             if done:
                 if not self._checks_on():
                     return "complete"
@@ -8069,7 +8616,7 @@ class Run:
                                 + ALONE_RESTARTED.format(reports=reports)
                                 + "\n\n" + ALONE_GO_ON}]
             else:
-                messages.append({"role": "user", "content": ALONE_GO_ON})
+                messages.append({"role": "user", "content": self._monitored(ALONE_GO_ON)})
 
     def _wrap_up_alone(self, ended: str) -> None:
         """The single model's end: how it ended, what is next if it is not
@@ -10232,13 +10779,102 @@ class Run:
                                 if t.startswith("env:") and not t.startswith("env:medium:")],
                 "tasks": self.project_tasks, "text": text}
 
-    def _hand_over(self, item: Dict[str, Any]) -> None:
+    def _hand_over(self, item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """A result handed to the user (handed.py): kept - in place of the
-        one of the same kind and title - and said in the live session."""
-        self.plan["handed"] = handed.kept(list(self.plan.get("handed") or []),
-                                          dict(item, at=_now()))
+        one of the same kind and title - and said in the live session.
+        ONE WAY OF ONE THING (the user, 2026-11-01): at most WAYS_MOST ways
+        of it; each READY when handed over - opened by the user while the
+        next is made, so kept at once and never changed once they changed it."""
+        items = list(self.plan.get("handed") or [])
+        same = [one for one in items if (one.get("kind"), one.get("title"))
+                == (item.get("kind"), item.get("title"))]
+        if same and same[0].get("edited_at"):
+            return {"error": "the user has changed this one - leave it, or hand over "
+                             "another under a title of its own"}
+        if item.get("choice"):
+            ways = {(one.get("kind"), one.get("title")) for one in items
+                    if one.get("choice") == item["choice"]}
+            ways.discard((item.get("kind"), item.get("title")))
+            if len(ways) >= handed.WAYS_MOST:
+                return {"error": f"at most {handed.WAYS_MOST} ways of one thing - this one "
+                                 "has them: hand one of them over again to change it"}
+            # CHECKED AS SOON AS IT IS DONE (the user, 2026-11-01: "隐私检查
+            # 什么的是每个方案做好就检查"): the final checks, on this way
+            # alone, before it opens - not at the end, when it may be sent.
+            passed, findings = self._way_checks(item)
+            item = dict(item, ready=passed, way_checked=passed)
+            if not passed:
+                self.plan["handed"] = handed.kept(items, dict(item, at=_now()))
+                self._event("worker", "milestone",
+                            f"Handed to you, not yet to open: {item['kind']} - "
+                            f"{_clip(item.get('title'), 160)} ({item.get('way')})")
+                return {"error": "kept, but not opened for the user yet - the checks of this "
+                                 "way found:\n" + "\n".join(f"  - {one}" for one in findings)
+                                 + "\nFix it and hand this way over again."}
+        self.plan["handed"] = handed.kept(items, dict(item, at=_now()))
         self._event("worker", "milestone",
-                    f"Handed to you: {item['kind']} - {_clip(item.get('title'), 160)}")
+                    f"Handed to you: {item['kind']} - {_clip(item.get('title'), 160)}"
+                    + (f" ({item['way']})" if item.get("way") else ""))
+        if item.get("ready"):
+            try:
+                self.owner.save(self)                    # to open while the next is made
+            except Exception:                            # pragma: no cover - saved at the end
+                log.debug("a way handed over was not saved at once", exc_info=True)
+        return None
+
+    def _way_checks(self, item: Dict[str, Any]) -> Tuple[bool, List[str]]:
+        """THE FINAL CHECKS ON ONE WAY, as soon as it is handed over (the
+        user, 2026-11-01): the user may open it, and send it, while the next
+        is made - so it is checked before, as the run's end checks it: the
+        privacy check, and the quality check but for a quick run, each by a
+        context that never saw how it was made. (True, []) when each passes;
+        else False and what they found. Not made where the checks are off."""
+        if not self._checks_on():
+            return True, []
+        if not self._going(work=False):
+            return False, ["the run is stopping - it opens once the run is done"]
+        label = f"{item.get('title') or item.get('kind')} ({item.get('way')})"
+        # Said, not a stage of its own: the round it is made in goes on.
+        self._event("reviewer", "stage", f"Checking one way before it opens: {_clip(label, 120)}")
+        words = "\n".join([self.instruction or "",
+                           *[str(one) for one in self.plan.get("words") or []],
+                           *self._branch_words()]).strip()
+        contract = self.plan.get("contract") or {}
+        goal = str(contract.get("goal") or "").strip()
+        kinds = ((("privacy", PRIVACY_SYSTEM),) if self.variant == QUICK
+                 else (("quality", QUALITY_SYSTEM), ("privacy", PRIVACY_SYSTEM)))
+        work = ("  (no files: only this one way, handed over now)\n\n" + WAY_CHECKED
+                + handed.shown(item)[:12000])
+
+        def check(kind: str, system: str) -> Callable[[], Dict[str, Any]]:
+            beside = ("\n\n" + BESIDE.format(folder=self.checks_folder / f"way-{kind}")
+                      if len(kinds) > 1 else "")
+            return lambda: self._ask(
+                system.replace("{checks}", str(self.checks_folder)) + "\n\n" + zone_rule()
+                + native_rule(),
+                [{"role": "user", "content": CHECK_ASK.format(
+                    words=words or "(carry the work forward)",
+                    goal=goal or words or "(as the user asked)", files=work) + beside}],
+                self._testing_tools(), writing=False, work=False, who=kind)
+        found: List[str] = []
+        for (kind, _system), said in zip(kinds, self._at_once(
+                [check(kind, system) for kind, system in kinds])):
+            said = said if isinstance(said, dict) else {}
+            serious = [one for one in said.get("problems") or [] if isinstance(one, dict)
+                       and str(one.get("severity") or "").lower() in ("high", "medium")]
+            checked = [one for one in said.get("checked") or [] if str(one).strip()]
+            passed = said.get("passed") is True and bool(checked) and not serious
+            if not passed and not serious:
+                serious = [{"say": f"the {CHECK_LABELS[kind]} could not be made"}]
+            self._event("reviewer", "verdict", f"The {CHECK_LABELS[kind]} of {_clip(label, 80)}: "
+                        + ("passed" if passed else
+                           f"not passed - {_clip(serious[0].get('say'), 160)}"),
+                        verdict="passed" if passed else "not passed", problems=len(serious))
+            self._note("way check", check=kind, way=item.get("way"), passed=passed,
+                       problems=[one.get("say") for one in serious][:6])
+            if not passed:
+                found += [f"[{CHECK_LABELS[kind]}] {one.get('say', '')}" for one in serious]
+        return not found, found
 
     def _handed_text(self) -> str:
         """What is handed to the user, as the checks and the reviewer read

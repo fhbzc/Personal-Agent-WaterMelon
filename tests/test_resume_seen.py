@@ -127,7 +127,7 @@ class ThePageShowsItTests(unittest.TestCase):
         source = (WEB / "app.js").read_text(encoding="utf-8")
         script = ("function escapeHtml(s) { return String(s); }"
                   "const workGoing = { byUnit: { w: { run: 'run_1', state: 'starting' } } };"
-                  + _function(source, "ovTodoControls")
+                  + _function(source, "ovTodoGoing") + _function(source, "ovTodoControls")
                   + "process.stdout.write(JSON.stringify(ovTodoControls({ unit: 'w' })));")
         done = subprocess.run([node, "-e", script], capture_output=True, text=True,
                               encoding="utf-8", timeout=60)

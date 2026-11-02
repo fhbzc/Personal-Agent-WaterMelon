@@ -64,6 +64,21 @@ class TheRowTests(unittest.TestCase):
         self.assertIn('data-xp-handed-open="run_1:0"', row)
         self.assertIn('data-xp-result-path="C:/w/report.pdf"', row)
 
+    def test_a_reply_replies(self) -> None:
+        row = self._row({"id": "run_1", "handed": [
+            {"kind": "email", "title": "Reply to Ada", "actions": {"reply": {
+                "url": "https://mail.google.com/mail/u/0/#inbox/x", "found": "thread"}}}]})
+        self.assertIn("Reply to the email", row)
+        self.assertIn('data-xp-handed-reply="run_1:0"', row)
+        self.assertNotIn("Open the email", row)
+
+    def test_while_it_works_nothing_opens(self) -> None:
+        row = self._row({"id": "run_1", "alive": True, "handed": [
+            {"kind": "email", "title": "Reply to Ada"},
+            {"kind": "email", "title": "Reply to Bo", "actions": {"reply": {"url": "x"}}}]})
+        self.assertEqual(row.count(" disabled"), 2, "each greyed until the work is done")
+        self.assertIn("It opens once the work is done", row)
+
     def test_nothing_to_open_no_row(self) -> None:
         self.assertEqual(self._row({"id": "run_1"}), "")
 

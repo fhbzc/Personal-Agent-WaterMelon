@@ -13,6 +13,7 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List
@@ -276,6 +277,31 @@ class AnUnchangedHistoryIsNotCopiedTests(unittest.TestCase):
         self.assertEqual(len(new_copies), 2, "copied although nothing had changed")
         self.assertEqual(len(old_copies), 8)
         self.assertEqual(new.get_status()["browsers"], {"Chrome": "ok"})
+
+    def test_copied_into_the_agents_own_folder_never_the_browsers(self) -> None:
+        """The user, 2026-11-01: the copy was written beside the history, in
+        the browser's own profile. Now in the agent's cache, and removed."""
+        own = self.dir / "agent-internal"
+        config = _Config()
+        config.data_dir = own
+        from personalized_agent.listener.providers.browser import BrowserProvider
+        provider = BrowserProvider(config, self.platform)
+        provider.bind(lambda event: None)
+        self._visit("https://a.example/", 2)
+        made = []
+        real_copy = shutil.copy2
+
+        def watched(source, target, *args, **kwargs):
+            made.append(Path(target))
+            return real_copy(source, target, *args, **kwargs)
+        with mock.patch("shutil.copy2", watched):
+            provider.poll()
+        self.assertEqual([one.parent for one in made], [own / "cache" / "browser_history"])
+        self.assertEqual(sorted(one.name for one in self.dir.iterdir()),
+                         ["History", "agent-internal"], "nothing beside the history")
+        self.assertEqual(list((own / "cache" / "browser_history").iterdir()), [],
+                         "the copy removed, and nothing beside it")
+        self.assertEqual(provider.get_status()["browsers"], {"Chrome": "ok"})
 
     def test_a_copy_that_failed_is_tried_again(self) -> None:
         provider = self.make()

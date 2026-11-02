@@ -51,6 +51,68 @@ def _render(engine, tasks, steps):
     return json.loads(html.unescape(found[-1]))
 
 
+def _at(wall: datetime) -> str:
+    """A time on this computer's clock as the calendar is given it - by the
+    scheduler's own rules for that date (scheduler/core/zones.py)."""
+    from personalized_agent.scheduler.core import zones
+    return zones.moment_of(wall, zones.LOCAL)[0].isoformat()
+
+
+def _task(n: int, wall: datetime, minutes: int = 30) -> dict:
+    return {"id": f"task_{n}", "title": f"Thing {n}", "status": "pending",
+            "scheduled_at": _at(wall), "execution_type": "notification", "runs": 0,
+            "task_payload": {"notify_user": True, "duration_minutes": minutes},
+            "metadata": {}}
+
+
+class WhereTheClocksChangeTests(unittest.TestCase):
+    """THE DAYS THE CLOCKS CHANGE (2026-11-01, 25 hours; 2027-03-14, 23): a
+    day reckoned as 24 hours on put November's grid a day behind - the 1st
+    shown twice - and the day view's events an hour out. Each day is now a
+    day on the calendar, each event at its time on the clock. Where this
+    computer's zone has no daylight saving, these hold all the same."""
+
+    def setUp(self) -> None:
+        self.kind, self.engine = _javascript_engine()
+        if self.kind != "chrome":
+            self.skipTest("no browser available to render the page")
+
+    def _seen(self, tasks, day):
+        steps = (
+            "click(document.querySelector('#tabs button[data-tab=\"calendar\"]'));await wait();"
+            f"calendarState.view='day';calendarState.selected=new Date({day});"
+            f"calendarState.anchor=new Date({day});await loadCalendar();await wait(200);"
+            "out.blocks=[...document.querySelectorAll('.cal-event')].map(b=>b.style.top);"
+            "out.labels=[...document.querySelectorAll('.cal-slot-time')].map(e=>e.textContent);"
+            "calendarState.view='month';await loadCalendar();await wait(200);"
+            "out.dates=[...document.querySelectorAll('.cal-day .cal-date')].map(e=>e.textContent);"
+            "out.chips=[...document.querySelectorAll('.cal-day')].map(c=>"
+            "c.querySelectorAll('.cal-chip').length);")
+        result = _render(self.engine, tasks, steps)
+        self.assertEqual(result["err"], "", result["err"])
+        return result["out"]
+
+    def test_the_day_the_clocks_go_back(self) -> None:
+        out = self._seen([_task(1, datetime(2026, 11, 1, 10, 0)),
+                          _task(2, datetime(2026, 11, 1, 23, 30)),
+                          _task(3, datetime(2026, 11, 2, 9, 0))], "2026,10,1")
+        self.assertEqual(out["blocks"], ["440px", "1034px"],
+                         "10:00 and 23:30 at their rows - the last half hour there too")
+        self.assertEqual(len(out["labels"]), 24, "each hour once")
+        # The month: October 26 to December 6, each day once, in order.
+        self.assertEqual(out["dates"][:9], ["26", "27", "28", "29", "30", "31", "1", "2", "3"])
+        self.assertEqual(out["dates"][-7:], ["30", "1", "2", "3", "4", "5", "6"])
+        self.assertEqual(out["chips"][6:8], [2, 1], "the 1st's two, the 2nd's one - each once")
+
+    def test_the_day_the_clocks_go_forward(self) -> None:
+        out = self._seen([_task(1, datetime(2027, 3, 14, 10, 0)),
+                          _task(2, datetime(2027, 3, 14, 1, 30))], "2027,2,14")
+        self.assertEqual(sorted(out["blocks"], key=lambda top: float(top[:-2])),
+                         ["66px", "440px"], "1:30 and 10:00 at their rows")
+        self.assertIn("14", out["dates"])
+        self.assertEqual(out["dates"].count("14"), 1 if out["dates"][0] != "14" else 2)
+
+
 class TheDayViewTests(unittest.TestCase):
 
     def setUp(self) -> None:

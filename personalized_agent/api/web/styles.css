@@ -23,6 +23,7 @@
   --xp-call-quality: #eda100;
   --xp-call-privacy: #e87ba4;
   --xp-call-helper: #7c5cd6;
+  --xp-call-monitor: #008300;
   /* A heading meant to stand out: the darkest ink here, white in the dark. */
   --heading-bright: #0f1420;
 }
@@ -42,6 +43,7 @@
     --xp-call-quality: #c98500;
     --xp-call-privacy: #d55181;
     --xp-call-helper: #9077e6;
+    --xp-call-monitor: #2a9d3a;
     --heading-bright: #ffffff;
   }
 }
@@ -2421,8 +2423,12 @@ main:has(> #xdebug.active) { max-width: none; }
 .avatar-moods .active { border-color: var(--accent); color: var(--accent); }
 /* Summary task and To do side by side, their headings level; To do under
    it when narrow. */
-.ov-tasks-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 1fr);
+.ov-tasks-top { display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(260px, 1fr) minmax(260px, 1fr);
   gap: 24px; align-items: start; }
+/* Work assigned beside To do; under Projects when there is less room. */
+@media (max-width: 1200px) { .ov-tasks-top { grid-template-columns: 1fr 1fr; }
+  .ov-tasks-intro { grid-column: 1 / -1; } }
 @media (max-width: 760px) { .ov-tasks-top { grid-template-columns: 1fr; } }
 .ov-tasks-intro { min-width: 0; }
 .ov-tasks-intro .sb-progress-bars { max-width: 560px; margin-top: 8px; }
@@ -2438,6 +2444,17 @@ main:has(> #xdebug.active) { max-width: none; }
    from under it - its first to-do hidden, only its button showing. */
 /* Room above and below the list, and between its to-dos (the user,
    2026-10-26): they ran into one another and the box's edges. */
+/* + Add a to-do, under the list: a to-do of the user's own. */
+/* "+ Add a to-do" on the heading's line, at its right; the box under it. */
+.ov-todo-headrow { display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin: 0 0 6px; }
+#ov-tasks-card .ov-todo-headrow .ov-head { margin: 0; }
+.ov-todo-add-open { width: auto; flex: none; }
+.ov-todo-add { margin: 0 0 8px; }
+.ov-todo-add button { width: auto; }
+.ov-todo-add-form { display: grid; gap: 6px; }
+.ov-todo-add-form[hidden], .ov-todo-add-open[hidden] { display: none; }
+.ov-todo-add-buttons { display: flex; gap: 6px; }
 .ov-todo-list { list-style: none; margin: 0; padding: 6px 4px 6px 0; display: grid; gap: 10px;
   max-height: min(320px, 45vh); overflow-y: auto; }
 .ov-todo-item { display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 6px;
@@ -2650,6 +2667,8 @@ main:has(> #xdebug.active) { max-width: none; }
 .xp-live-who { display: inline-block; min-width: 5.5em; font-weight: 600; }
 .xp-live-who-worker .xp-live-who { color: var(--accent); }
 .xp-live-who-reviewer .xp-live-who { color: #8e6bd8; }
+/* The quick way's monitor: its looks and reminders. */
+.xp-live-who-monitor .xp-live-who { color: var(--xp-call-monitor); }
 .xp-live-who-you .xp-live-who { color: var(--warn); }
 .xp-live-who-run .xp-live-who { color: var(--muted); }
 .xp-live-kind-milestone, .xp-live-kind-version, .xp-live-kind-end { font-weight: 600; }
@@ -3598,10 +3617,6 @@ body.chat-window .chat-only { height: 100vh; height: 100dvh; padding: 12px; box-
    Overview, where it is read every day. */
 #overview .sb-click-hint { display: none; }
 
-/* The Web search card says what it is for and how the model searches. */
-.web-search-explained p { margin: 4px 0; }
-.web-search-explained ul { margin: 2px 0 6px; padding-left: 18px; }
-
 /* WHAT YOU NEED TO KNOW, as a newspaper's front page. One family - the
    Times' own, with Georgia after it - and the page's own ink, paper and
    rules, so it reads the same in the dark. The masthead and the lead
@@ -4044,13 +4059,37 @@ button.danger-text:not(:disabled) { color: var(--danger-ink); }
 .delegate-way-why { margin: 0 0 0 22px; }
 .xp-way { display: inline-block; font-size: .72rem; padding: 0 6px; border-radius: 999px;
   border: 1px solid var(--line); color: var(--muted); margin-left: 6px; }
+/* Which try of a to-do handed over again a run is (V1, V2...). */
+.xp-try { display: inline-block; font-size: .72rem; font-weight: 600; padding: 0 6px;
+  border-radius: 4px; background: var(--accent); color: var(--bg, #fff); }
+.xp-tree-try { margin: 2px 0 6px; }
+/* Clear and Remove (2026-10-31): what would go, listed; the also-clear box. */
+.xp-clear-list { margin: 4px 0; padding-left: 18px; font-size: .85rem; }
+.xp-clear-list code { word-break: break-all; }
+.xp-unit-also { display: block; margin: 4px 0; font-size: .85rem; }
+.xp-run-remove { margin: 2px 0 6px; text-align: right; font-size: .85rem; }
+/* How the user writes to a contact: their own words, each to let go. */
+.cx-writing-text { white-space: pre-wrap; display: block; margin: 2px 0; }
 .xp-way-quick { border-color: var(--accent); color: var(--accent); }
 /* In the box that starts work, the sound's checkbox under the sandbox's. */
 .delegate-settings label.xp-sound { margin-left: 0; }
+/* And under it, whether the tries before are told - its box beside its words,
+   not the full width an input takes in this box. */
+label.delegate-see-tries { display: flex; flex-direction: row; align-items: center; gap: 4px;
+  margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+label.delegate-see-tries input { width: auto; margin: 3px 3px 3px 4px; flex: none; }
 /* What the user gets: each result as it will be opened, with its buttons. */
 .xp-handed-item { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
   margin: 6px 0; }
 .xp-handed-head { margin: 0 0 4px; }
+.xp-handed-how { margin: 6px 0 2px; }
+.xp-reply-check { margin: 6px 0 10px; padding: 8px 12px; border: 1px solid var(--warn);
+  border-radius: 8px; }
+.xp-reply-check p { margin: 4px 0; }
+.xp-reply-list { margin: 4px 0 6px 18px; padding: 0; }
+.xp-reply-list li { margin: 2px 0; }
+.xp-reply-warn { color: var(--warn); }
+.xp-reply-ok { color: var(--ok); }
 .xp-handed-head .xp-way { margin: 0 6px 0 0; }
 .xp-handed-mail { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px;
   margin: 4px 0; font-size: .86rem; }
@@ -4236,3 +4275,156 @@ button.danger-text:not(:disabled) { color: var(--danger-ink); }
 .learn-split-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .learn-split-skipped { margin: 6px 0; padding-left: 18px; }
 .xp-source > .xp-lessons { margin-left: 14px; }
+
+/* ONE THING, MORE THAN ONE WAY (the user, 2026-11-01): its ways together. */
+.xp-handed-ways { border-left: 3px solid var(--accent, #5b6cff); padding-left: 10px; margin: 6px 0 10px; }
+.xp-handed-choice { margin: 4px 0 6px; }
+.xp-handed-or { margin: 4px 0; font-style: italic; }
+.xp-handed-wayname { font-size: 0.85em; padding: 1px 7px; border-radius: 9px;
+                     background: var(--soft, rgba(91, 108, 255, 0.12)); }
+
+/* WHAT YOU RIGHT-CLICKED, in the Delegate work box (the user, 2026-11-01). */
+.delegate-picked { border-left: 3px solid var(--accent, #5b6cff); padding: 2px 0 2px 10px; margin: 4px 0 10px; }
+.delegate-picked p { margin: 3px 0; }
+.delegate-picked-head { margin-bottom: 6px; }
+.delegate-picked-text { margin: 6px 0; font-size: 1.02em; white-space: pre-wrap; }
+/* Installing the browser extension: its steps. */
+.extension-box { max-width: 640px; }
+.extension-steps { padding-left: 1.3em; }
+.extension-steps li { margin: 6px 0; }
+.extension-folder code { word-break: break-all; }
+
+/* Right-click in the user's editors: each found here. */
+.editor-menus { list-style: none; padding: 0; margin: 6px 0 0; }
+.editor-menus li { display: flex; align-items: center; gap: 8px; padding: 4px 0; flex-wrap: wrap; }
+.editor-menus-name { font-weight: 600; }
+.editor-menus li button { margin-left: auto; }
+
+/* SOCIETY: the agent among other people's agents - two views, its
+   conversations (as a chat program lays them out) and its settings (as
+   Settings lays its rows out); the page's own colours throughout. */
+.society-views { display: flex; gap: 6px; margin: 0 0 12px; }
+.society-view-button { background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+  display: inline-flex; align-items: center; gap: 6px; }
+.society-view-button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.society-count { font-size: 11px; line-height: 16px; min-width: 16px; padding: 0 5px; text-align: center;
+  border-radius: 8px; background: var(--accent); color: #fff; font-weight: 600; }
+.society-view-button.on .society-count { background: #fff; color: var(--accent); }
+.society-count[hidden] { display: none; }
+
+/* -- settings: cards of rows -- */
+#society-me .card { max-width: 980px; }
+#society-me .setting-row { grid-template-columns: 260px minmax(0, 1fr); align-items: center; }
+#society-me .setting-row > div:first-child { padding-top: 0; }
+#society-me .setting-row .desc { margin-top: 2px; }
+#society-me .setting-row:last-of-type { border-bottom: 0; }
+.society-control { min-width: 0; }
+.society-control select, .society-control input[type="email"],
+.society-control input[type="password"], .society-control input[type="file"] { max-width: 420px; }
+.society-control input[type="checkbox"] { width: 18px; height: 18px; padding: 0; margin: 0;
+  accent-color: var(--accent); cursor: pointer; }
+.society-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.society-inline input { flex: 1 1 220px; max-width: 320px; }
+.society-inline input.society-code { flex: 0 0 110px; letter-spacing: .2em; }
+.society-id { font-size: 14px; }
+.society-ok { color: var(--ok); }
+.society-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.society-sub { margin-top: 10px; padding: 4px 12px 10px; background: var(--bg); border-radius: 10px; }
+.society-h4 { margin: 14px 0 4px; font-size: 13px; }
+.society-profile { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 8px; }
+.society-profile-text { min-width: 0; overflow-wrap: anywhere; }
+.society-about { white-space: pre-wrap; margin: 6px 0 0; }
+#society-commands { min-height: 90px; resize: vertical; }
+.society-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.society-group { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.society-group p { margin: 4px 0 8px; line-height: 1.45; }
+.society-members { display: flex; flex-wrap: wrap; gap: 6px; }
+.society-kind { font-size: 12px; padding: 2px 9px; border-radius: 10px; background: var(--bg);
+  border: 1px solid var(--line); }
+
+/* -- faces -- */
+.society-face { flex: none; border-radius: 50%; object-fit: cover; display: inline-flex;
+  align-items: center; justify-content: center; color: #fff; font-weight: 700; background: var(--accent); }
+.society-face.small { width: 40px; height: 40px; font-size: 14px; }
+.society-face.large { width: 64px; height: 64px; font-size: 20px; }
+
+/* -- conversations: the list on the left, one conversation on the right -- */
+.society-chat { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  height: calc(100vh - var(--header-h, 92px) - 110px); min-height: 460px;
+  border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); }
+.society-side { border-right: 1px solid var(--line); display: flex; flex-direction: column;
+  min-width: 0; min-height: 0; background: var(--bg); }
+.society-search { position: relative; padding: 10px; }
+.society-offers { position: absolute; left: 10px; right: 10px; top: calc(100% - 6px); z-index: 5; margin: 0;
+  padding: 4px 0; list-style: none; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, .15); }
+.society-offers li { padding: 6px 10px; cursor: pointer; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.society-offers li.on, .society-offers li:hover { background: var(--bg); }
+#society-found .society-people { margin: 0 10px 8px; }
+.society-side-head { display: flex; justify-content: space-between; align-items: center;
+  padding: 2px 10px 6px; }
+.society-chats { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0; }
+.society-chat-row { display: flex; gap: 10px; align-items: center; padding: 10px; cursor: pointer;
+  border-top: 1px solid var(--line); }
+.society-chat-row:hover { background: var(--panel); }
+.society-chat-row.on { background: var(--panel); box-shadow: inset 3px 0 0 var(--accent); }
+.society-chat-text { flex: 1; min-width: 0; }
+.society-chat-top { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.society-chat-top strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.society-chat-top .muted { font-size: 11px; white-space: nowrap; flex: none; }
+.society-chat-last { margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.society-chat-none { padding: 12px; }
+.society-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.society-pick { margin: auto; padding: 40px 16px; text-align: center; }
+.society-main-head { display: flex; gap: 12px; align-items: flex-start; padding: 12px 16px;
+  border-bottom: 1px solid var(--line); }
+.society-main-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px;
+  overflow-wrap: anywhere; }
+.society-main-who .society-inline code { font-size: 12px; }
+.society-in-group { flex-direction: row; align-items: center; gap: 8px; font-size: 12px; }
+.society-in-group select { width: auto; padding: 3px 6px; }
+.society-link { max-width: 360px; }
+.society-link-found { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 4px; }
+.society-bubbles { list-style: none; margin: 0; padding: 16px; flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px; background: var(--bg); }
+.society-bubble { max-width: min(560px, 78%); padding: 9px 12px; border-radius: 12px;
+  overflow-wrap: anywhere; line-height: 1.45; }
+.society-bubble.theirs { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); }
+.society-bubble.mine { align-self: flex-end; background: color-mix(in srgb, var(--accent) 16%, var(--panel)); }
+.society-bubble.draft { background: var(--panel); border: 1px dashed var(--accent); width: min(560px, 90%); }
+.society-bubble.draft input, .society-bubble.draft textarea { margin: 4px 0; }
+.society-bubble-head { font-size: 12px; color: var(--accent); }
+.society-bubble-foot { margin-top: 4px; text-align: right; display: flex; gap: 6px; justify-content: flex-end;
+  align-items: center; }
+.society-subject { font-weight: 600; margin-bottom: 2px; }
+.society-text { white-space: pre-wrap; }
+.society-note { align-self: center; max-width: 85%; font-size: 12px; padding: 6px 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--warn) 18%, var(--panel)); }
+.society-note > span:first-child { font-weight: 600; }
+.society-compose { border-top: 1px solid var(--line); padding: 10px 16px; display: flex;
+  flex-direction: column; gap: 6px; background: var(--panel); }
+.society-compose textarea { resize: vertical; min-height: 64px; }
+.society-compose .ov-lp-buttons { display: flex; gap: 8px; justify-content: flex-end; }
+.society-people { list-style: none; padding: 0; margin: 8px 0 0; }
+.society-people li { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.society-person { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.society-person code { font-size: 11px; }
+.society-by { font-size: 11px; padding: 1px 8px; border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel)); color: var(--accent); }
+@media (max-width: 760px) {
+  .society-chat { grid-template-columns: 1fr; height: auto; }
+  .society-side { border-right: 0; border-bottom: 1px solid var(--line); max-height: 320px; }
+  .society-bubbles { max-height: 60vh; }
+  #society-me .setting-row { grid-template-columns: 1fr; }
+}
+
+/* THE THREE HEADINGS LEVEL - Projects, Work assigned, To do: each heading's
+   row the height of To do's, whose "+ Add a to-do" is beside it. */
+#ov-tasks-card .ov-tasks-top > .ov-todo { padding-top: 0; }
+#ov-tasks-card .ov-todo-headrow { min-height: 30px; }
+#ov-tasks-card .ov-tasks-intro > .ov-head { min-height: 30px; display: flex; align-items: center;
+  margin: 0 0 6px; }
+
+/* A delegated work that did not start: said in red, its plan to open. */
+.ov-todo-version-failed .ov-todo-where { color: var(--err); }

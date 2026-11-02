@@ -22,6 +22,7 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
     <button data-tab="connections">Connections</button>
     <button data-tab="experience">Work</button>
     <button data-tab="learning">Learning</button>
+    <button data-tab="society">Society</button>
     <button data-tab="chat">Chat</button>
     <button data-tab="settings">Settings</button>
     <!-- What was recorded, by which Privacy switch: the user's, in every build. -->
@@ -74,6 +75,9 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
             read it.</div>
           <div class="ov-strip-slot"></div>
         </div>
+        <!-- WORK ASSIGNED (the user, 2026-11-02): the work delegated not from
+             a to-do, left of To do, as To do lays its to-dos out. -->
+        <aside id="ov-assigned" class="ov-todo ov-assigned"></aside>
         <aside id="ov-todo" class="ov-todo"></aside>
       </div>
       <div id="ov-tasks">
@@ -600,6 +604,40 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
     <div class="card xp-learn" id="xp-learn"></div>
   </section>
 
+  <!-- SOCIETY (society/service.py): the agent among other people's agents -
+       its id, its email confirmed, the user's profile published; people;
+       the inbox; drafts - which only the user sends. -->
+  <section id="society" class="tab">
+    <!-- TWO VIEWS (the user, 2026-11-02: "一个view是society的setting, 一个view是
+         conversation (default是conversation)"). -->
+    <nav class="society-views" aria-label="Society">
+      <button type="button" class="society-view-button on" data-society-view="chats">Conversations
+        <span class="society-count" id="society-unread" hidden></span></button>
+      <button type="button" class="society-view-button" data-society-view="settings">Settings</button>
+    </nav>
+    <div id="society-view-chats" class="society-view">
+      <div class="society-chat">
+        <aside class="society-side">
+          <div class="society-search">
+            <input id="society-q" type="search" autocomplete="off"
+              placeholder="Search a name, or an agent id" aria-label="Search a name, or an agent id">
+            <ul id="society-offers" class="society-offers" hidden></ul>
+          </div>
+          <div id="society-found"></div>
+          <div class="society-side-head"><span class="muted">Conversations</span>
+            <button type="button" class="small secondary" id="society-collect">Check now</button></div>
+          <ul id="society-list" class="society-chats"></ul>
+        </aside>
+        <section class="society-main" id="society-main">
+          <p class="muted society-pick">Pick a conversation - or search for someone, and Write.</p>
+        </section>
+      </div>
+    </div>
+    <div id="society-view-settings" class="society-view" hidden>
+      <div id="society-me"></div>
+    </div>
+  </section>
+
   <section id="statebeat" class="tab">
     <!-- NOT THIS WORK: what the summary and status calls said is about
          something else - taken out to the pile once switched on; until
@@ -835,51 +873,35 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
         <button type="button" id="updates-check" class="secondary">Check now</button>
       </div>
     </div>
+    <!-- THE BROWSER EXTENSION (platform_layer/browser_extension.py): under
+         Updates (the user, 2026-11-01); Install opens its install page. -->
+    <div class="card" id="extension-card">
+      <h3>Browser extension</h3>
+      <p class="panel-note">Right-click any web page, selected text, a link or a picture and
+        pick Delegate work: the agent gets the page's address and the text you selected.
+        One extension for Chrome, Edge, Brave and Firefox - more of the agent's parts will
+        come in it.</p>
+      <p id="extension-status" class="muted"></p>
+      <div class="ov-lp-buttons">
+        <button type="button" id="extension-install">Install the browser extension</button>
+        <button type="button" id="extension-remove" class="secondary" hidden>Remove</button>
+      </div>
+    </div>
+    <!-- DELEGATE WORK IN THE USER'S EDITORS (platform_layer/editor_menus.py):
+         each found on this computer, its own right-click entry to put in. -->
+    <div class="card" id="editor-menus-card">
+      <h3>Right-click in your editors</h3>
+      <p class="panel-note">Delegate work on the right-click menu of the file, or the text you
+        selected in it. Where the system's own menu reaches - Explorer and the file managers,
+        and on a Mac the Services menu of every program - it is there already.</p>
+      <ul id="editor-menus-list" class="editor-menus"></ul>
+    </div>
     <div class="card" id="heartbeat-settings-card">
       <h3>Heartbeats</h3>
       <p class="panel-note">How often each runs, in minutes. The agent heartbeat reads
         what you have been doing and writes it down; the state heartbeat groups
         that into your tasks and projects.</p>
       <div id="settings-form-heartbeats"></div>
-    </div>
-    <div class="card" id="web-search-card">
-      <h3>Web search</h3>
-      <div class="panel-note web-search-explained">
-        <p><strong>What it is for.</strong> When an agent needs something from
-          the public web, it searches and reads public pages:</p>
-        <ul>
-          <li>a work run looking up documentation, data or facts for the work;</li>
-          <li>Connections, looking for your contacts' public news and your own
-            public profile;</li>
-          <li>the web part of <em>What you need to know</em>.</li>
-        </ul>
-        <p><strong>How the model goes about it.</strong> The model decides what
-          to search, opens the pages worth reading, searches again from what it
-          finds, and stops when it has what it needs. Only public pages: it never
-          signs in to anything, and never posts or sends anything. A Connections
-          round runs with every state heartbeat, so it has a guard set far past
-          what a round needs: 200 model calls or 100 lookups.</p>
-        <p><strong>Which search.</strong> A model that has search of its own
-          (Claude Code, Codex) always uses its own, and those searches count toward
-          your plan with it; it is never given the app's beside it. A model
-          without one, such as an API like DeepSeek, uses the app's search: the
-          model asks and the app searches DuckDuckGo for it, which may now and
-          then refuse an application. There is nothing to set.</p>
-        <p><strong>What may be searched and opened.</strong> Whichever search is
-          used, a search may not carry anything that looks like a key or a
-          password, and a page is opened only when nothing of yours can travel in
-          its address: an address found in a search, on a page read, or in your
-          instruction, files or records; any page of a site you named, or of a
-          documentation, package, code or reference site; a known address made
-          shorter; or, on any other site, a short address with no query, nothing
-          like a key, and none of your own words in it - a few on each new site,
-          and a few new sites in all, so nothing can be spelled out an address at
-          a time. A site made to collect what is sent to it is opened only at an
-          address that already exists there. Claude Code's own search is held to
-          this by a check before and after each search and page. Codex's own
-          search reads only the copy of the web OpenAI keeps; the sites it
-          finds count as found, and live pages it reads with the app's tools.</p>
-      </div>
     </div>
     </div>
     <div class="settings-pane" data-settings-pane="display" hidden>
@@ -1398,6 +1420,18 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
       <button type="button" class="secondary" id="delegate-cancel">Cancel</button>
       <button type="button" class="secondary" id="delegate-save">Save as draft</button>
       <button type="button" id="delegate-start" disabled>Start</button>
+    </div>
+  </form>
+</dialog>
+<!-- INSTALLING THE BROWSER EXTENSION: what to do in each browser, step by
+     step - the agent opens the page and shows the folder; the clicks in the
+     browser are the user's. -->
+<dialog id="extension-box" class="delegate extension-box" aria-labelledby="extension-title">
+  <form method="dialog" class="delegate-form">
+    <h3 id="extension-title">Install the browser extension</h3>
+    <div id="extension-body"></div>
+    <div class="delegate-actions">
+      <button type="button" id="extension-done">Done</button>
     </div>
   </form>
 </dialog>

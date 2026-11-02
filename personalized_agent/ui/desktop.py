@@ -111,6 +111,20 @@ QUIET_BUBBLE = {"bg": "#20242e", "fg": "#e7eaf2", "edge": "#20242e",
 EMPHATIC_BUBBLE = {"bg": "#2b2519", "fg": "#f4e6cf", "edge": "#eba55a",
                    "accent": "#eba55a", "on_accent": "#2b2519"}
 
+#: HOW A BUBBLE LOOKS (the user, 2026-11-01: "nicer, today's look"): a dark
+#: card with a thin outline, rounded where Windows rounds windows; a line at
+#: its top saying what it is, and how many wait behind it; its title in bold
+#: over its words; its buttons flat and rounded - the one to press filled -
+#: and "a bad one" a quiet link. The agent's own word keeps its warm amber.
+BUBBLE_LOOK = {
+    False: {"outline": "#3a4152", "bg": "#1d212b", "ink": "#e9ecf3", "muted": "#9aa3b5",
+            "dot": "#7c9cff", "button": "#2a303d", "button_hover": "#353c4c",
+            "primary": "#5b7cfa", "primary_hover": "#7190ff", "on_primary": "#ffffff"},
+    True: {"outline": "#eba55a", "bg": "#2a2418", "ink": "#f6ead6", "muted": "#c9b391",
+           "dot": "#eba55a", "button": "#3a3122", "button_hover": "#4a3f2c",
+           "primary": "#eba55a", "primary_hover": "#f3b874", "on_primary": "#2a2418"},
+}
+
 #: There is no timeout, and that is the point. A bubble stays until it is
 #: answered. One that erased itself after a few seconds was a notification the
 #: user had to happen to be looking at - and when it carried a question, the
@@ -180,6 +194,15 @@ def _watch_the_window_at_start(ui: Any) -> None:
             time.sleep(0.25)
 
     threading.Thread(target=watch, name="window-watch", daemon=True).start()
+
+
+def _extension_browsers(app: Any) -> set:
+    """The browsers the agent's extension said it is in (their programs)."""
+    try:
+        from ..platform_layer.browser_extension import seen_processes
+        return seen_processes(app.data_dir)
+    except Exception:
+        return set()
 
 
 class DesktopAgent:
@@ -268,6 +291,7 @@ class DesktopAgent:
         self.app.bus.subscribe("notification.created", self._on_notification)
         self.app.bus.subscribe("agent.proactive_message", self._on_proactive)
         self.app.bus.subscribe("character.changed", self._on_character_changed)
+        self.app.bus.subscribe("work.handed_opened", self._on_handed_opened)
         self.root.after(120, self._drain_queue)
         self.root.after(400, self._animate)
         self.root.after(1500, self._log_avatar_window)
@@ -677,7 +701,7 @@ class DesktopAgent:
         if getattr(self, "_dragged", False):
             self._dragged = False
             return
-        self.open_chat()
+        self.open_chat_bubble()
 
     def _on_double_click(self, _event: Any = None) -> None:
         if self._click_job is not None:
@@ -694,7 +718,7 @@ class DesktopAgent:
         # Not Delegate work (the user's choice): work is handed over from the
         # page, Explorer's menu or the selection's button, not from here.
         say = self._words
-        menu.add_command(label=say("Chat"), command=self.open_chat)
+        menu.add_command(label=say("Chat"), command=self.open_chat_bubble)
         menu.add_command(label=say("Overview"), command=lambda: self.open_url("/#overview"))
         # Hidden, it comes back from the tray's menu: offered only with one.
         if getattr(getattr(self, "tray", None), "icon", None) is not None:
@@ -707,20 +731,23 @@ class DesktopAgent:
             menu.grab_release()
 
     # -- delegate work -----------------------------------------------------------------------
-    def _delegate_face(self) -> Any:
-        """The avatar's face, small, beside each Delegate work."""
-        held = getattr(self, "_face_small", None)
-        if held is not None and getattr(self, "_face_for", "") == self.config.get("character"):
-            return held
+    def _delegate_face(self, size: int = 16) -> Any:
+        """The avatar's face, small - beside each Delegate work, and the icon
+        beside selected text."""
+        faces = getattr(self, "_faces_small", None)
+        if faces is None or getattr(self, "_face_for", "") != self.config.get("character"):
+            faces = self._faces_small = {}
+            self._face_for = self.config.get("character")
+        if size in faces:
+            return faces[size]
         try:
             from .tray import icon_image
             image = icon_image(self.app.characters, str(self.config.get("character",
-                                                                         "watermelon")), 16)
-            self._face_small = ImageTk.PhotoImage(image) if image is not None else None
-            self._face_for = self.config.get("character")
+                                                                         "watermelon")), size)
+            faces[size] = ImageTk.PhotoImage(image) if image is not None else None
         except Exception:
-            self._face_small = None
-        return self._face_small
+            faces[size] = None
+        return faces[size]
 
     def _start_selection_watch(self) -> None:
         """Delegate work beside selected text (ui/selection.py) - Windows."""
@@ -759,35 +786,83 @@ class DesktopAgent:
                                         lambda fn: self.queue.put(("call", fn)))
         self._quick.show()
 
+    #: THE ICON BESIDE SELECTED TEXT (the user, 2026-11-01: "像搜狗输入法, 选择
+    #: 一段文字弹出来...用一个西瓜图标，然后点击弹出delegate work菜单"): the
+    #: avatar's face alone, this big, for this long - clicked, its menu, for
+    #: longer.
+    ICON_SIZE, ICON_SECONDS, MENU_SECONDS = 24, 6, 12
+
     def _show_delegate_button(self, said: Dict[str, Any]) -> None:
-        """A small "Delegate work" beside the selection, for a few seconds -
-        it does not take the focus from the program the user is in."""
+        """The avatar's face, small, beside the selection, for a few seconds
+        - it does not take the focus from the program the user is in, nor
+        cover what they read. Clicked, it opens into its menu: Delegate work,
+        Learn (`_open_selection_menu`)."""
         self._hide_delegate_button()
+        # A BROWSER WITH THE AGENT'S EXTENSION shows its own icon in its pages
+        # (resources/browser_extension/content.js) - one icon, not two.
+        app = getattr(self, "app", None)
+        if app is not None and str(said.get("app") or "").lower() in _extension_browsers(app):
+            return
         button_window = tk.Toplevel(self.root)
         button_window.overrideredirect(True)
         button_window.attributes("-topmost", True)
+        face = self._delegate_face(self.ICON_SIZE)
         font = self._popup_font()
-        face = self._delegate_face()
-        tk.Button(button_window, text=self._words("Delegate work"),
-                  font=(font[0], max(8, font[1] - 1)),
-                  relief="flat", padx=8, pady=2, bg="#1c2028", fg="#e6e9f0",
-                  activebackground="#3d6be5", activeforeground="#ffffff",
-                  command=lambda: self._delegate_selection(said),
-                  **({"image": face, "compound": "right"} if face else {})).pack(side="left")
-        # LEARN, beside it (learning/plan.py): the text - and the page it was
-        # selected on - put in the learning list, its plan to check first.
-        tk.Button(button_window, text=self._words("Learn"),
-                  font=(font[0], max(8, font[1] - 1)),
-                  relief="flat", padx=8, pady=2, bg="#1c2028", fg="#e6e9f0",
-                  activebackground="#3d6be5", activeforeground="#ffffff",
-                  command=lambda: self._learn_selection(said)).pack(side="left", padx=(1, 0))
-        button_window.geometry(f"+{int(said.get('x', 0)) + 14}+{int(said.get('y', 0)) + 18}")
-        button_window.update_idletasks()
-        from .selection import no_activate
-        no_activate(button_window)
+        icon = tk.Button(button_window, relief="flat", bd=0, padx=3, pady=3, bg="#1c2028",
+                         activebackground="#3d6be5", cursor="hand2",
+                         command=lambda: self._open_selection_menu(said),
+                         **({"image": face} if face else
+                            {"text": self._words("Delegate work"), "fg": "#e6e9f0",
+                             "font": (font[0], max(8, font[1] - 1))}))
+        icon.pack()
         self._delegate_button = button_window
         self._delegate_held = said
-        self._delegate_job = self.root.after(6000, self._hide_delegate_button)
+        self._place_beside_selection(button_window, said)
+        from .selection import no_activate
+        no_activate(button_window)
+        self._delegate_job = self.root.after(self.ICON_SECONDS * 1000, self._hide_delegate_button)
+
+    def _place_beside_selection(self, window: Any, said: Dict[str, Any]) -> None:
+        """Below and right of where the selection ended - or, RIGHT-CLICKED,
+        left of the program's own menu, which opens to the right and below."""
+        window.update_idletasks()
+        x, y = int(said.get("x", 0)), int(said.get("y", 0))
+        if said.get("right"):
+            window.geometry(f"+{max(0, x - window.winfo_reqwidth() - 12)}+{max(0, y - 4)}")
+        else:
+            window.geometry(f"+{x + 14}+{y + 18}")
+        window.update_idletasks()
+
+    def _open_selection_menu(self, said: Dict[str, Any]) -> None:
+        """The icon clicked: its menu, in its place - still not taking the
+        focus from the program the user is in."""
+        window = getattr(self, "_delegate_button", None)
+        if window is None:
+            return
+        for child in list(window.winfo_children()):
+            child.destroy()
+        font = self._popup_font()
+        face = self._delegate_face()
+        style = {"font": (font[0], max(8, font[1] - 1)), "relief": "flat", "anchor": "w",
+                 "padx": 10, "pady": 4, "bg": "#1c2028", "fg": "#e6e9f0",
+                 "activebackground": "#3d6be5", "activeforeground": "#ffffff", "bd": 0}
+        tk.Button(window, text=self._words("Delegate work"),
+                  command=lambda: self._delegate_selection(said),
+                  **({"image": face, "compound": "right"} if face else {}),
+                  **style).pack(fill="x")
+        # LEARN (learning/plan.py): the text - and the page it was selected
+        # on - put in the learning list.
+        tk.Button(window, text=self._words("Learn"),
+                  command=lambda: self._learn_selection(said), **style).pack(fill="x")
+        self._place_beside_selection(window, said)
+        job = getattr(self, "_delegate_job", None)
+        if job is not None:
+            try:
+                self.root.after_cancel(job)
+            except Exception:
+                pass
+        self._delegate_job = self.root.after(self.MENU_SECONDS * 1000,
+                                             self._hide_delegate_button)
 
     def _hide_delegate_button(self) -> None:
         window = getattr(self, "_delegate_button", None)
@@ -976,6 +1051,50 @@ class DesktopAgent:
             self.app.sign_in_url(fragment), self.app.paths.data_dir / app_window.PROFILE))
 
     # -- conversation -------------------------------------------------------
+    def open_chat_bubble(self) -> None:
+        """A CONVERSATION IN A BUBBLE BESIDE IT (the user, 2026-11-01: a single
+        click is not the chat page - a bubble to type in; ui/chat_bubble.py),
+        on the same conversation the page has. Open already: written in again."""
+        from .chat_bubble import ChatBubble
+        bubble = getattr(self, "_chat_bubble", None)
+        if bubble is not None and bubble.is_open:
+            bubble.show()
+            return
+        font = self._popup_font()
+
+        def full(conversation: Optional[str]) -> None:
+            if conversation:
+                self._conversation_id = conversation
+            self.open_chat()
+        # ITS SIZE as the user left it last (the user, 2026-11-01).
+        try:
+            kept = [int(one) for one in self.config.get("chat_bubble_size", []) or []]
+        except (TypeError, ValueError):
+            kept = []
+
+        def sized(size: tuple) -> None:
+            try:
+                self.config.set("chat_bubble_size", [int(size[0]), int(size[1])], internal=True)
+            except Exception:                    # pragma: no cover - this one keeps it
+                log.debug("the chat bubble's size could not be kept", exc_info=True)
+        self._chat_bubble = ChatBubble(
+            self.root, name=self.app.avatar_name(), family=font[0], size=font[1],
+            send=lambda text, conversation: self.app.agent.handle_message(text, conversation),
+            post=lambda fn: self.queue.put(("call", fn)), open_full=full, words=self._words,
+            conversation_id=self._conversation_id,
+            on_conversation=lambda conversation: setattr(self, "_conversation_id", conversation),
+            kept_size=kept or None, on_size=sized)
+        self._chat_bubble.show(near=self._avatar_box())
+
+    def _avatar_box(self) -> tuple:
+        """Where the avatar is on the screen: (x, y, width, height)."""
+        window = self.agent_window
+        try:
+            return (window.winfo_x(), window.winfo_y(),
+                    max(1, window.winfo_width()), max(1, window.winfo_height()))
+        except Exception:                        # pragma: no cover - a sketch of one
+            return (window.winfo_x(), window.winfo_y(), 1, 1)
+
     def open_chat(self, initial_message: Optional[str] = None) -> None:
         """Open the conversation interface (section 7.1, as amended).
 
@@ -1197,63 +1316,77 @@ class DesktopAgent:
         due = getattr(self, "_drain_due", now)
         chooser.late(now - due)
         self._drain_due = now + 0.15
+        # ONE THING THAT FAILS IS SKIPPED, NOT EVERYTHING AFTER IT: a handler
+        # that raised used to end this loop - it was never asked again, and
+        # every bubble and note after it was silently lost until a restart.
         try:
             while True:
                 kind, payload = self.queue.get_nowait()
-                if kind == "call":
-                    # Work from another thread - the tray's menu - run here,
-                    # on the thread that owns the windows.
-                    payload()
-                elif kind == "selection":
-                    self._show_delegate_button(payload)
-                elif kind == "selection_press":
-                    self._pressed_elsewhere(*payload)
-                elif kind == "character":
-                    # The HTTP API runs off Tk's main thread. Queue the reload
-                    # so PhotoImage objects are still created by Tk itself.
-                    self._frames.clear()
-                    self._frame_index = 0
-                    self._load_character()
-                    self._enable_native_avatar()
-                    # Its name, which the avatar's may have changed with it.
-                    for window in (self.root, self.agent_window):
-                        window.title(self.app.avatar_name())
-                    tray = getattr(self, "tray", None)
-                    if tray is not None:
-                        tray.refresh()
-                elif kind == "hover":
-                    self._hover_reading = False
-                    if payload:
-                        self._hover_said = payload
-                    self._show_hover(getattr(self, "_hover_said", None))
-                elif kind == "answer":
-                    self.set_state("talking")
-                    self.root.after(2500, lambda: self.set_state("idle"))
-                elif kind == "notification":
-                    self.set_state("notification")
-                    if isinstance(payload, dict):
-                        self.notify_bubble(payload["text"],
-                                           question_id=payload["question_id"],
-                                           notification_id=payload.get(
-                                               "notification_id", ""),
-                                           template=payload.get("template", ""))
-                    else:                       # a plain string, from elsewhere
-                        self.notify_bubble(str(payload))
-                    self.root.after(4000, lambda: self.set_state("idle"))
-                elif kind == "proactive":
-                    # Section 7.4: the agent may raise something on its own.
-                    # It may not take the screen to do it - see notify_bubble.
-                    #
-                    # Switched off, the message is not lost: it was recorded as
-                    # a notification before it reached here, and is in the list
-                    # with the others. What the setting buys is silence now.
-                    if bool(self.config.get("proactive_conversation_enabled", True)):
-                        self.set_state("talking")
-                        self.notify_bubble(payload, emphasis=True)
-                        self.root.after(3000, lambda: self.set_state("idle"))
+                try:
+                    self._handle(kind, payload)
+                except Exception:
+                    log.warning("the desktop could not show a %s; going on with the rest",
+                                kind, exc_info=True)
         except queue.Empty:
             pass
-        self.root.after(150, self._drain_queue)
+        finally:
+            self.root.after(150, self._drain_queue)
+
+    def _handle(self, kind: str, payload: Any) -> None:
+        """One thing from the queue, on the thread that owns the windows."""
+        if kind == "call":
+            # Work from another thread - the tray's menu - run here,
+            # on the thread that owns the windows.
+            payload()
+        elif kind == "selection":
+            self._show_delegate_button(payload)
+        elif kind == "selection_press":
+            self._pressed_elsewhere(*payload)
+        elif kind == "character":
+            # The HTTP API runs off Tk's main thread. Queue the reload
+            # so PhotoImage objects are still created by Tk itself.
+            self._frames.clear()
+            self._frame_index = 0
+            self._load_character()
+            self._enable_native_avatar()
+            # Its name, which the avatar's may have changed with it.
+            for window in (self.root, self.agent_window):
+                window.title(self.app.avatar_name())
+            tray = getattr(self, "tray", None)
+            if tray is not None:
+                tray.refresh()
+        elif kind == "hover":
+            self._hover_reading = False
+            if payload:
+                self._hover_said = payload
+            self._show_hover(getattr(self, "_hover_said", None))
+        elif kind == "handed_note":
+            self._show_handed_note(payload)
+        elif kind == "answer":
+            self.set_state("talking")
+            self.root.after(2500, lambda: self.set_state("idle"))
+        elif kind == "notification":
+            self.set_state("notification")
+            if isinstance(payload, dict):
+                self.notify_bubble(payload["text"],
+                                   question_id=payload["question_id"],
+                                   notification_id=payload.get(
+                                       "notification_id", ""),
+                                   template=payload.get("template", ""))
+            else:                       # a plain string, from elsewhere
+                self.notify_bubble(str(payload))
+            self.root.after(4000, lambda: self.set_state("idle"))
+        elif kind == "proactive":
+            # Section 7.4: the agent may raise something on its own.
+            # It may not take the screen to do it - see notify_bubble.
+            #
+            # Switched off, the message is not lost: it was recorded as
+            # a notification before it reached here, and is in the list
+            # with the others. What the setting buys is silence now.
+            if bool(self.config.get("proactive_conversation_enabled", True)):
+                self.set_state("talking")
+                self.notify_bubble(payload, emphasis=True)
+                self.root.after(3000, lambda: self.set_state("idle"))
 
     # -- bus subscriptions --------------------------------------------------
     def _on_notification(self, _topic: str, payload: Any) -> None:
@@ -1272,6 +1405,10 @@ class DesktopAgent:
 
     def _on_character_changed(self, _topic: str, _payload: Any) -> None:
         self.queue.put(("character", None))
+
+    def _on_handed_opened(self, _topic: str, payload: Any) -> None:
+        if isinstance(payload, dict):
+            self.queue.put(("handed_note", payload))
 
     def notify_bubble(self, text: str, emphasis: bool = False,
                       question_id: str = "", notification_id: str = "",
@@ -1341,106 +1478,204 @@ class DesktopAgent:
                 return True
         return False
 
+    def _show_handed_note(self, note: Dict[str, Any]) -> None:
+        """WHAT WAS HANDED OVER, HOW IT IS USED AND WHAT TO CHECK (the user,
+        2026-11-01; agent/work/handed.py) - beside what was just opened, a
+        card of its own on top until it is closed (ui/handed_note.py). A
+        newer one takes its place; its zoom is kept for the next."""
+        from .handed_note import SIDES, ZOOM_START, HandedNote
+        old = getattr(self, "_handed_note", None)
+        if old is not None:
+            old.close()
+        font = self._popup_font()
+        # Each side's zoom its own, kept for the next note.
+        zooms = {}
+        for side in SIDES:
+            try:
+                zooms[side] = int(self.config.get(f"handed_note_zoom_{side}", ZOOM_START))
+            except (TypeError, ValueError):
+                zooms[side] = ZOOM_START
+
+        def kept(side: str, step: int) -> None:
+            try:
+                self.config.set(f"handed_note_zoom_{side}", step, internal=True)
+            except Exception:                    # pragma: no cover - this note keeps it
+                log.debug("the note's zoom could not be kept", exc_info=True)
+        def save(words: str) -> Any:
+            """Saved where the work keeps it (WorkRuns.save_handed) - True,
+            else why not, in words."""
+            try:
+                said = self.app.work.save_handed(str(note.get("run") or ""),
+                                                 int(note.get("n") or 0), words)
+            except Exception:                    # pragma: no cover - said not saved
+                log.warning("what was handed over could not be saved", exc_info=True)
+                return False
+            if isinstance(said, dict) and said.get("error") == "going":
+                return "It is working on it again - save once it is done; copy it so it is not lost"
+            return said is not None
+        # ITS SIZE AND ITS SIDES' SHARE as the user left the last note's.
+        try:
+            size = [int(one) for one in self.config.get("handed_note_size", []) or []]
+        except (TypeError, ValueError):
+            size = []
+        try:
+            split = self.config.get("handed_note_split", None)
+            split = float(split) if split not in (None, "") else None
+        except (TypeError, ValueError):
+            split = None
+
+        def laid_out(size: tuple, split: Any) -> None:
+            try:
+                self.config.set("handed_note_size", [int(size[0]), int(size[1])], internal=True)
+                if split is not None:
+                    self.config.set("handed_note_split", round(float(split), 4), internal=True)
+            except Exception:                    # pragma: no cover - this note keeps it
+                log.debug("the note's size could not be kept", exc_info=True)
+        self._handed_note = HandedNote(self.root, note, self._words, font[0], font[1],
+                                       zoom=zooms, on_zoom=kept,
+                                       on_save=save if note.get("run") else None,
+                                       kept_size=size or None, split=split, on_layout=laid_out)
+        self._handed_note.show()
+
     def _show_next_bubble(self) -> None:
         """Draw the next bubble, if the last one has been dealt with."""
         if self._bubble is not None or not self._bubble_queue:
             return
         item = self._bubble_queue.popleft()
         self._showing = item
-        palette = EMPHATIC_BUBBLE if item["emphasis"] else QUIET_BUBBLE
+        look = BUBBLE_LOOK[bool(item["emphasis"])]
         options = self._options_for(item["question_id"])
 
         bubble = tk.Toplevel(self.root)
         bubble.overrideredirect(True)
         bubble.attributes("-topmost", True)
+        bubble.configure(bg=look["outline"])
         font = self._popup_font()
+        family, points = font[0], font[1]
         # The bubble is sized from the text, not fixed: a larger font in a
         # fixed window just cuts the message off, which defeats setting it.
-        width = 300 + (font[1] - 9) * 18
-        # The border is a frame behind the frame: tk draws no outline on an
+        width = 340 + (points - 9) * 20
+        # The outline is the window behind the card: tk draws no outline on an
         # overrideredirect window, so the edge has to be something with a size.
-        edge = tk.Frame(bubble, bg=palette["edge"], padx=1, pady=1)
-        edge.pack(fill="both", expand=True)
-        frame = tk.Frame(edge, bg=palette["bg"], padx=10, pady=8)
-        frame.pack(fill="both", expand=True)
-        tk.Label(frame, text=item["text"][:400], bg=palette["bg"], fg=palette["fg"],
-                 wraplength=width - 30, justify="left", font=font).pack(anchor="w")
+        frame = tk.Frame(bubble, bg=look["bg"], padx=16, pady=12)
+        frame.pack(fill="both", expand=True, padx=1, pady=1)
 
+        # What it is, and how many wait behind it.
+        head = tk.Frame(frame, bg=look["bg"])
+        head.pack(fill="x")
+        dot = tk.Canvas(head, width=10, height=10, bg=look["bg"], highlightthickness=0, bd=0)
+        dot.create_oval(1, 1, 9, 9, fill=look["dot"], outline="")
+        dot.pack(side="left", padx=(0, 7))
+        kind = "Question" if item["question_id"] else \
+            "Notification" if item.get("notification_id") else "From your agent"
+        tk.Label(head, text=self._words(kind), bg=look["bg"], fg=look["muted"],
+                 font=(family, max(7, points - 2), "bold")).pack(side="left")
         # How many are behind this one. Without it, answering reads as having
         # done nothing when the next bubble appears in the same place. The
         # label is made even when the count is zero, because more may arrive
         # while this one is still waiting to be answered.
-        self._bubble_count = tk.Label(
-            frame, text="", bg=palette["bg"], fg=palette["edge"],
-            font=(font[0], max(7, font[1] - 2)))
-        self._bubble_count.pack(anchor="w", pady=(6, 0))
+        self._bubble_count = tk.Label(head, text="", bg=look["bg"], fg=look["muted"],
+                                      font=(family, max(7, points - 2)))
+        self._bubble_count.pack(side="right")
         self._refresh_bubble_count()
 
-        buttons = tk.Frame(frame, bg=palette["bg"])
-        buttons.pack(anchor="e", pady=(8, 0))
+        # Its title in bold over its words - a notification is "title: words".
+        text = item["text"][:400]
+        title, words = "", text
+        if item.get("notification_id") and ": " in text:
+            title, words = text.split(": ", 1)
+        if title:
+            tk.Label(frame, text=title, bg=look["bg"], fg=look["ink"],
+                     font=(family, points + 1, "bold"), wraplength=width - 34,
+                     justify="left", anchor="w").pack(fill="x", pady=(8, 0))
+        tk.Label(frame, text=words, bg=look["bg"], fg=look["ink"] if not title else look["muted"],
+                 font=(family, points), wraplength=width - 34, justify="left",
+                 anchor="w").pack(fill="x", pady=(4 if title else 8, 0))
+
+        buttons = tk.Frame(frame, bg=look["bg"])
+        buttons.pack(fill="x", pady=(12, 0))
         # A NOTIFICATION'S BUTTONS EACH SAY WHAT HAPPENS - and are long for
-        # it, so one to a line.
-        side = "top" if item.get("notification_id") else "left"
+        # it, so one to a line, each as wide as the card.
+        stacked = bool(item.get("notification_id"))
         if item.get("notification_id") and not item.get("question_id"):
             from ..agent.feedback.templates import GOT_IT
             options = [dict(one, label=GOT_IT) if not one.get("key") else one
                        for one in options]
+
+        def button(words: str, act: Any, primary: bool = False) -> None:
+            fill, hover = ((look["primary"], look["primary_hover"]) if primary
+                           else (look["button"], look["button_hover"]))
+            face = tk.Label(buttons, text=words, bg=fill,
+                            fg=look["on_primary"] if primary else look["ink"],
+                            font=(family, max(8, points - 1), "bold" if primary else "normal"),
+                            padx=12, pady=5, cursor="hand2",
+                            anchor="w" if stacked else "center",
+                            wraplength=width - 60 if stacked else 0, justify="left")
+            face.bind("<Enter>", lambda _e: face.configure(bg=hover))
+            face.bind("<Leave>", lambda _e: face.configure(bg=fill))
+            face.bind("<Button-1>", lambda _e: act())
+            if stacked:
+                face.pack(side="top", fill="x", pady=(0, 6))
+            else:
+                face.pack(side="right", padx=(6, 0))
         for option in options:
-            primary = bool(option.get("primary"))
             # A button with no words on it is not a button. Whatever the
             # option carries, something legible goes on the face of it.
-            label = self._words(str(option.get("label") or option.get("key") or "OK"))
-            tk.Button(
-                buttons, text=label, font=(font[0], max(8, font[1] - 1)),
-                bg=palette["accent"] if primary else palette["bg"],
-                fg=palette["on_accent"] if primary else palette["fg"],
-                activebackground=palette["accent"], relief="flat", padx=8, pady=2,
-                command=lambda key=option.get("key", ""): self._bubble_answered(
-                    item["question_id"], key, item["emphasis"],
-                    item.get("notification_id", "")),
-            ).pack(side=side, anchor="e", padx=(6, 0), pady=(0, 2))
-        # EVERY NOTIFICATION CAN BE CALLED A BAD ONE. Saying so dismisses it
-        # and is kept as a lesson - the notification and the event it came
-        # from, whole - which the agent heartbeat reads before it schedules
-        # the next (heartbeat/core/calendar_nature.py).
+            button(self._words(str(option.get("label") or option.get("key") or "OK")),
+                   lambda key=option.get("key", ""): self._bubble_answered(
+                       item["question_id"], key, item["emphasis"],
+                       item.get("notification_id", "")),
+                   primary=bool(option.get("primary")) or len(options) == 1)
         # REMIND ME LATER, on a reminder: the same one again in half an hour.
         if item.get("notification_id") and item.get("template") != "passive" \
                 and not item.get("question_id"):
             from ..agent.feedback.templates import delay_label
-            tk.Button(
-                buttons, text=self._words(delay_label(self.app.REMIND_LATER_MINUTES * 60)),
-                font=(font[0], max(8, font[1] - 1)),
-                bg=palette["bg"], fg=palette["fg"],
-                activebackground=palette["accent"], relief="flat", padx=8, pady=2,
-                command=lambda: self._bubble_later(item["notification_id"]),
-            ).pack(side=side, anchor="e", padx=(6, 0), pady=(0, 2))
+            button(self._words(delay_label(self.app.REMIND_LATER_MINUTES * 60)),
+                   lambda: self._bubble_later(item["notification_id"]))
         # ADD TO TO-DO, on every notification: no more notifications about
         # it, and listed in To do on the Overview. A question offers it
         # among its own options.
         if item.get("notification_id") and not item.get("question_id"):
             from ..agent.feedback.templates import TO_TODO_LABEL
-            tk.Button(
-                buttons, text=self._words(TO_TODO_LABEL),
-                font=(font[0], max(8, font[1] - 1)),
-                bg=palette["bg"], fg=palette["fg"],
-                activebackground=palette["accent"], relief="flat", padx=8, pady=2,
-                command=lambda: self._bubble_todo(item["notification_id"]),
-            ).pack(side=side, anchor="e", padx=(6, 0), pady=(0, 2))
+            button(self._words(TO_TODO_LABEL), lambda: self._bubble_todo(item["notification_id"]))
+        # EVERY NOTIFICATION CAN BE CALLED A BAD ONE - a quiet link under the
+        # rest. Saying so dismisses it and is kept as a lesson - the
+        # notification and the event it came from, whole - which the agent
+        # heartbeat reads before it schedules the next
+        # (heartbeat/core/calendar_nature.py).
         if item.get("notification_id"):
             from ..agent.feedback.templates import BAD_LABEL
-            tk.Button(
-                buttons, text=self._words(BAD_LABEL),
-                font=(font[0], max(8, font[1] - 1)),
-                bg=palette["bg"], fg=palette["fg"],
-                activebackground=palette["accent"], relief="flat", padx=8, pady=2,
-                command=lambda: self._bubble_bad(item["notification_id"]),
-            ).pack(side=side, anchor="e", padx=(6, 0), pady=(0, 2))
+            bad = tk.Label(frame, text=self._words(BAD_LABEL), bg=look["bg"], fg=look["muted"],
+                           font=(family, max(7, points - 2), "underline"), cursor="hand2",
+                           wraplength=width - 34, justify="left", anchor="w")
+            bad.bind("<Enter>", lambda _e: bad.configure(fg=look["ink"]))
+            bad.bind("<Leave>", lambda _e: bad.configure(fg=look["muted"]))
+            bad.bind("<Button-1>", lambda _e: self._bubble_bad(item["notification_id"]))
+            bad.pack(fill="x", pady=(4, 0))
+        bubble.update_idletasks()
+        # Rounded where Windows rounds windows (11 and later).
+        if sys.platform.startswith("win"):
+            try:
+                import ctypes
+                handle = ctypes.windll.user32.GetParent(bubble.winfo_id()) or bubble.winfo_id()
+                prefer = ctypes.c_int(2)                 # DWMWCP_ROUND
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(handle, 33, ctypes.byref(prefer),
+                                                           ctypes.sizeof(prefer))
+            except Exception:                            # pragma: no cover - square, then
+                pass
+        bubble.configure(width=width)
 
         bubble.update_idletasks()
-        x = self.agent_window.winfo_x() - bubble.winfo_reqwidth() + 40
-        y = self.agent_window.winfo_y() - bubble.winfo_reqheight() + 20
-        bubble.geometry(f"+{max(10, x)}+{max(10, y)}")
+        # BESIDE THE AVATAR (the user, 2026-11-01): at its left, level with
+        # its middle - at its right where the left has no room.
+        from .chat_bubble import beside
+        x, y = beside(self._avatar_box(), (bubble.winfo_reqwidth(), bubble.winfo_reqheight()),
+                      (bubble.winfo_screenwidth(), bubble.winfo_screenheight()))
+        bubble.geometry(f"+{x}+{y}")
         self._bubble = bubble
+        # Counted now it is the one shown: before, it was not yet, and the
+        # count stayed empty until another arrived.
+        self._refresh_bubble_count()
         # Deliberately no timer. A bubble that erases itself is one the user
         # can miss entirely, and if it carries a question, the question's
         # moment goes with it.

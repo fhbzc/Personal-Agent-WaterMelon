@@ -1,8 +1,10 @@
-"""The user's to-do list: what they took off a notification to do later.
+"""The user's to-do list: what they took off a notification to do later,
+and what they added to it by hand (the user, 2026-11-01).
 
 "Add to to-do" on a notification stops it - no more notifications about it -
 and keeps the thing here, shown beside the progress bars of the Overview's
-Summary task until the user removes it. ONLY THE USER REMOVES ONE, by hand,
+Summary task until the user removes it. "+ Add a to-do" under the list adds
+one of their own, with no notification behind it. ONLY THE USER REMOVES ONE, by hand,
 after a Yes: the agent never marks one done.
 """
 

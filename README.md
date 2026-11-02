@@ -65,8 +65,15 @@ your computer, as plain files you can open, and sent only to the model you
 choose ([Your privacy](#your-privacy)).
 
 **An Overview of your work.** Your projects as bars over time, with how
-long you worked on each, and a **To do** list you keep yourself, each with a
-**Delegate work** button.
+long you worked on each, a **To do** list you keep yourself, each with a
+**Delegate work** button, and **Work assigned**: everything you delegated,
+with where it stands.
+
+**Right-click "Delegate work" almost anywhere.** A web page, selected text, a
+link or a picture (the agent's extension for Chrome, Edge and Firefox), a
+file in VS Code, Sublime Text or a JetBrains IDE, a file or folder in your
+file manager - or select text in any program and click the small watermelon
+beside it. The box says exactly what you picked.
 
 <p align="center">
   <img src="docs/images/overview.png" width="100%" alt="The Overview: work and leisure projects over the last week, ordered by time worked, one opened, and To do"><br>
@@ -359,6 +366,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.2.17](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.17) | 2026-11-02 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.17) |
 | [v0.2.16](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) | 2026-10-30 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) |
 | [v0.2.15](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.15) | 2026-10-29 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.15/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.15/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.15/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.15) |
 | [v0.2.11](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.11) | 2026-10-29 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.11/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.11/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.11/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.11) |
@@ -618,6 +626,20 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.2.17](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.17) (2026-11-02, a pre-release)
+
+- **Right-click "Delegate work" almost everywhere.** In a web page - on the page, selected text, a link or a picture - through the agent's own browser extension for Chrome, Edge and Firefox (install it from Settings > General); in VS Code, Cursor, VSCodium, Windsurf, Sublime Text and JetBrains IDEs (Settings); on files and folders in Windows Explorer, in macOS Finder and other apps (Services), and in the Linux file managers. The box says exactly what you right-clicked. In the browser the box opens at once, in the browser you are in: its context is collected after you press Start.
+- **Selected text gets a small watermelon.** Select text in any program and the agent's face appears beside it for a few seconds - click it for Delegate work or Learn.
+- **Work assigned, on the Overview.** Left of To do: every piece of work you delegated outside a to-do, with where it stands - live while it runs, with Pause, Stop and Continue, and what it made to open. Pressing Start closes the box at once; a start that fails is never silent - it is listed in red with why, and you get a notification.
+- **Up to three ways for one piece of work.** When there is a real choice, the agent can hand over up to three versions - each checked for privacy and quality on its own before you can open it.
+- **Replies in your own voice, and in their thread.** A message, an email or a form is written the way you write to that person or place; a reply opens its Gmail thread with the text copied, and a note beside it says what to check before you send. The agent never sends an email or a message for you.
+- **Try a to-do again.** A to-do delegated once more becomes V2, V3 - each try with its own folder, on what the first one collected.
+- **Talk to your agent in a bubble.** A single click on the avatar opens a small chat beside it.
+- **Agents of people (first version).** Your agent has an ID of its own; confirm your email to list it, and other people's agents can write to yours. You choose, group by group, who gets an instant answer, a direct reply, a draft for you to send, or nothing - and nothing anyone else's agent says can change your things, beyond adding to your calendar for the people you allow.
+- **Updates carry on where they stopped.** A slow or broken download resumes instead of starting over, and Settings shows its progress.
+- **No more stalls from programs that stand still while read.** A program that stops answering while its window is read is read within bounds from then on, for a week.
+- Also: work folders can be cleared to the Recycle Bin; the agent knows who a piece of work is for, and how you write to them; the Web search card is gone from Settings.
 
 ### [v0.2.16](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) (2026-10-30)
 

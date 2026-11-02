@@ -22,6 +22,14 @@ anything is done:
 
 Delegated work becomes a project of its own, under "Delegated work" in
 Experience; work started from a project or task goes on that one.
+
+A TO-DO HANDED OVER AGAIN IS A TRY OF THE SAME WORK (the user, 2026-10-31):
+not a project of its own but another run of the first try's, V2, V3... -
+its context the first's, not collected again, and its instruction box
+opened with the try before's words, to change. What differs is its own:
+the instruction, the plan drafted from it, its run, its tree, and its
+folder - the first try's name with its own ("Title V2"), so no try's files,
+nor going back to one's save point, touch another's.
 """
 
 from __future__ import annotations
@@ -37,6 +45,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...common.languages import in_display
+from .picked import told as picked_told
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +67,12 @@ PLAN_PARTS = ("title", "understanding", "goal", "steps", "deliverables", "out_of
 WAYS = ("quick", "full")
 #: How much is read of each thing collected.
 PAGE_CHARS, SCREEN_CHARS, README_CHARS, MOST_ENTRIES = 8000, 6000, 3000, 60
+#: Of each try before, what it reported last, read this far.
+TRY_REPORT = 2500
+#: WHO IT IS FOR (the user, 2026-10-31): at most this many people, and of
+#: each, what passed between them and the user - the latest this many, each
+#: read this far.
+MOST_PEOPLE, MOST_EXCHANGES, EXCHANGE_CHARS = 4, 14, 1500
 
 PLAN_PROMPT = """THE USER IS HANDING YOU A PIECE OF WORK. Before any of it is done, say
 how you understand it, as a short HIGH-LEVEL PLAN they will check and may
@@ -93,6 +108,9 @@ Return ONLY this JSON object:
                    saying how to check and use what was made"],
  "out_of_scope": ["what you will not do, where it could be mistaken for part
                    of it"],
+ "people": ["each person the work is addressed to or is about, by the name
+             the records give them, with their email address where it is
+             known: "Name <address>" - none when it is for no one"],
  "questions": ["only what you cannot settle from the context and would change
                 the plan - often none"],
  "way": "quick or full",
@@ -106,6 +124,16 @@ what each deliverable must meet, checked round by round - work with several
 deliverables that depend on each other, code to build and test, anything
 long, or where a mistake is costly. When you are not sure, "full".
 With "quick", a README.md only when it makes more than one file."""
+
+#: THE PLAN WHILE THE THOROUGH WAY IS SWITCHED OFF (the user, 2026-10-31):
+#: the same one call, with nothing of a way to choose - every piece of work
+#: is done the quick way.
+PLAN_PROMPT_QUICK = PLAN_PROMPT.replace(
+    'With "full", always a README.md\n                   saying how to check and use what was made"],',
+    'With more than one file, a README.md\n                   saying how to check and use what was made"],'
+).replace(""",
+ "way": "quick or full",
+ "way_why": "one sentence: why that way, from what the work is"}""", "}").split("\n\nTHE WAY:")[0]
 
 
 def _now() -> str:
@@ -153,6 +181,27 @@ class Drafts:
         # to-do, Add work, a folder) came from no window.
         if source == "selection" and window.get("title") and not window.get("text"):
             window.update(self._screen_now(window))
+        # RIGHT-CLICKED IN macOS's SERVICES MENU (picked.py): the text alone
+        # comes - the window it was in, as the listener last read it.
+        if source == "picked" and (window.get("picked") or {}).get("where") == "services" \
+                and not window.get("text") and not window.get("url"):
+            now = self._screen_now({})
+            window.update({k: v for k, v in now.items() if k != "page_title"
+                           and (k != "title" or not window.get("title"))})
+        # A TO-DO HANDED OVER AGAIN: opened with the try before's words, its
+        # context taken as it was (`collect_and_plan`), its folders given.
+        options = dict(options or {})
+        before = self._try_before(str(options.get("todo") or "")) \
+            if source == "todo" and options.get("todo") else None
+        if before is not None:
+            options.setdefault("instruction", asked_of(before))
+            options["context_from"] = before["id"]
+            # Where it works: the folders its work was given, as the box lists them.
+            if not folders:
+                try:
+                    folders = list(self.app.work.folders(before["unit_id"]))                         or list(before.get("folders") or [])
+                except Exception:
+                    folders = list(before.get("folders") or [])
         row = {"id": "draft_" + uuid.uuid4().hex[:12], "created_at": _now(),
                "updated_at": _now(), "source": source, "text": str(text or "")[:20000],
                "folders": folders[:12], "files": files[:24], "window": window,
@@ -172,6 +221,213 @@ class Drafts:
         if collect and not write_first:
             self._collect_apart(row["id"])
         return self.get(row["id"]) or row
+
+    def _person(self, name: str, addresses: Optional[List[str]] = None) -> Dict[str, Any]:
+        """WHO IT IS FOR (the user, 2026-10-31: "我怎么给这个人写邮件，他是什么
+        人，我是什么人，我之前是怎么写的"): a person the work is for or about -
+        who they are, as the contacts have them, and WHAT PASSED BETWEEN THEM
+        AND THE USER: every record that names them, the latest kept, in the
+        order they happened, each with its words whole as far as it goes."""
+        addresses = [one.lower() for one in addresses or []]
+        said: Dict[str, Any] = {"name": name, "contact": self._contact_of(name, addresses),
+                                "exchanges": []}
+        contact = said["contact"] or {}
+        addresses = list(dict.fromkeys(addresses + list(contact.get("addresses") or [])))
+        said["addresses"] = addresses
+        # HOW EACH RECORD WAS FOUND (the user, 2026-10-31: "标出怎么匹配上的"):
+        # by an address - one person's alone - else by a name.
+        by = {one: "email address" for one in addresses}
+        known = [str(one) for one in contact.get("names") or []]
+        for kind, names in (("name", [name, *known[:1]]), ("alias", known[1:])):
+            for given in names:
+                for one in _names_said([str(given)]):
+                    by.setdefault(one, kind if one == " ".join(str(given).split())
+                                  else "family name")
+        words = list(by)
+        if not words:
+            return said
+        where = " OR ".join("(title LIKE ? OR detail LIKE ?)" for _ in words)
+        params: List[Any] = []
+        for one in words:
+            params += [f"%{one}%", f"%{one}%"]
+        try:
+            # What the agent did itself is not what passed between them.
+            rows = self.db.query(
+                f"SELECT title, detail, starts_at, ends_at FROM states WHERE ({where}) "
+                "AND NOT (source = 'agent' AND about = 'agent') "
+                "ORDER BY COALESCE(ends_at, starts_at) DESC LIMIT ?",
+                (*params, MOST_EXCHANGES * 6))
+        except Exception:              # pragma: no cover - the work goes on without it
+            rows = []
+        # A name said as a word of its own: "Quill", never the "quill" of "Quillon".
+        named = re.compile("|".join(
+            (rf"(?<![^\W\d_]){re.escape(one)}(?![^\W\d_])" if one.isascii() else re.escape(one))
+            for one in words), re.IGNORECASE)
+        rows = [row for row in rows if named.search(f"{row['title'] or ''} {row['detail'] or ''}")]
+
+        def matched(row: Any) -> str:
+            text = f"{row['title'] or ''} {row['detail'] or ''}"
+            for word, kind in by.items():
+                if re.search((rf"(?<![^\W\d_]){re.escape(word)}(?![^\W\d_])" if word.isascii()
+                              else re.escape(word)), text, re.IGNORECASE):
+                    return f"{kind} {word}"
+            return ""
+        # Where their own words are quoted first - how the user writes to them -
+        # then the latest; told in the order they happened.
+        quoted = [row for row in rows if QUOTED.search(str(row["detail"] or ""))]
+        kept = {id(row) for row in quoted[:MOST_EXCHANGES // 2]}
+        for row in rows:
+            if len(kept) >= MOST_EXCHANGES:
+                break
+            kept.add(id(row))
+        said["exchanges"] = [{"at": str(row["ends_at"] or row["starts_at"] or ""),
+                              "title": str(row["title"] or ""),
+                              "detail": str(row["detail"] or "")[:EXCHANGE_CHARS],
+                              "matched": matched(row)}
+                             for row in reversed(rows) if id(row) in kept]
+        return said
+
+    def _contacts_named(self, draft: Dict[str, Any]) -> List[str]:
+        """The contacts what was handed over, or the instruction, names - by a
+        name of theirs, as the heartbeat finds them in a window."""
+        store = getattr(self.app, "connections", None)
+        if store is None:
+            return []
+        try:
+            from ...heartbeat.connections.people import _named_in
+            from ...heartbeat.connections.store import name_key
+            hay = name_key(" ".join([asked_of(draft), str(draft.get("text") or ""),
+                                     str((draft.get("window") or {}).get("title") or "")]))
+            return [one["name"] for one in store.people() if _named_in(one, hay)][:MOST_PEOPLE]
+        except Exception:                # pragma: no cover - the work goes on without it
+            return []
+
+    def _contact_of(self, name: str,
+                    addresses: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+        """WHO THEY ARE, as the user's contacts have them (heartbeat/
+        connections/store.py) - their public profiles: the contact an email
+        address is (the user, 2026-10-31: "按email地址match") - one person's
+        alone - else the one the name or an alias is, else the one contact
+        every word of it fits; None when none does."""
+        store = getattr(self.app, "connections", None)
+        if store is None:
+            return None
+        try:
+            person = store.find("", accounts=[{"platform": "email", "handle": one}
+                                              for one in addresses or []],
+                                include_deleted=False) if addresses else None
+            if person is None:
+                # By a name: only one contact's - two of the same name are not
+                # told apart by guessing.
+                from ...heartbeat.connections.people import standing_word
+                from ...heartbeat.connections.store import name_key
+                key = name_key(name)
+                # A word for how they stand to the user (学姐) names no one.
+                same = [] if standing_word(name) else [
+                    one for one in store.people() if key and key in {
+                        name_key(one["name"]), *[name_key(alias) for alias in one["aliases"]
+                                                 if not standing_word(alias)]}]
+                if len(same) > 1:
+                    return {"names": [name], "who": "", "relation": "", "addresses": [],
+                            "several": len(same)}
+                person = same[0] if same else None
+            if person is None:
+                found = store.search(name, most=2)
+                person = found[0] if len(found) == 1 else None
+        except Exception:                # pragma: no cover - the work goes on without it
+            return None
+        if not person:
+            return None
+        said = _who(person)
+        try:
+            # HOW THE USER WRITES TO THEM: their own words kept, the latest last.
+            said["how_written"] = [{"at": str(one.get("at") or "")[:16],
+                                    "channel": str(one.get("channel") or ""),
+                                    "text": str(one.get("text") or "")}
+                                   for one in store.writing(person["id"])]
+        except Exception:                # pragma: no cover - the work goes on without it
+            said["how_written"] = []
+        try:
+            said["addresses"] = [str(one["handle"]).lower() for one in store.accounts(person["id"])
+                                 if str(one.get("platform") or "").lower() == "email"
+                                 and "@" in str(one.get("handle") or "")]
+        except Exception:                # pragma: no cover - the work goes on without it
+            said["addresses"] = []
+        return said
+
+    def _me(self) -> Optional[Dict[str, Any]]:
+        """WHO THE USER IS, as their own profile has them - read, never made
+        here (the contacts make it)."""
+        store = getattr(self.app, "connections", None)
+        if store is None:
+            return None
+        try:
+            row = self.db.query_one("SELECT id FROM connection_people WHERE is_self = 1 "
+                                    "ORDER BY created_at LIMIT 1")
+            person = store.get(row["id"]) if row else None
+        except Exception:                # pragma: no cover - the work goes on without it
+            return None
+        said = _who(person) if person else None
+        return said if said and (said.get("who") or said.get("names")) else None
+
+    def _thorough(self) -> bool:
+        """Whether the thorough way is open (runner.THOROUGH_OPEN)."""
+        return bool(getattr(self.app.work, "thorough_open", True))
+
+    def _tries(self, todo: str, besides: str = "",
+               removed_too: bool = False) -> List[Dict[str, Any]]:
+        """A to-do's tries started and not removed (`removed_too`: those the
+        user removed as well), the first first."""
+        out = []
+        for row in self.db.query("SELECT id FROM work_drafts WHERE source = 'todo' "
+                                 "AND status IN (?, ?) AND id != ? ORDER BY created_at",
+                                 (STARTED, STARTING, besides)):
+            draft = self.get(row["id"])
+            options = (draft or {}).get("options") or {}
+            if draft is not None and str(options.get("todo") or "") == todo \
+                    and (removed_too or not options.get("removed")):
+                out.append(draft)
+        return out
+
+    def _tries_said(self, todo: str, besides: str = "") -> List[Dict[str, Any]]:
+        """THE TRIES BEFORE (the user, 2026-10-31: a new try knows them):
+        each started try of the to-do, the first first - what it was asked,
+        where it stands, what it reported last, what it handed over and the
+        folder its result is in."""
+        out: List[Dict[str, Any]] = []
+        work = self.app.work
+        for draft in self._tries(todo, besides=besides):
+            if draft.get("status") != STARTED or not draft.get("run_id"):
+                continue
+            came = self._came_of(str(draft.get("unit_id") or ""), str(draft["run_id"]))
+            run = work.run(str(came.get("run") or draft["run_id"])) or {}
+            plan, final = run.get("plan") or {}, run.get("final") or {}
+            out.append({
+                "version": int((draft.get("options") or {}).get("version") or len(out) + 1),
+                "asked": asked_of(draft), "state": str(came.get("state") or ""),
+                "ended": str(came.get("ended") or run.get("ended_at") or "")[:16],
+                "report": str(final.get("answer") or plan.get("last_report") or "")[:TRY_REPORT],
+                "folder": str(run.get("folder") or ""),
+                "handed": [f"{one.get('kind')}: {one.get('title')}"
+                           for one in plan.get("handed") or [] if isinstance(one, dict)][:6]})
+        return out
+
+    def _try_before(self, todo: str, for_work: bool = False) -> Optional[Dict[str, Any]]:
+        """The latest try of a to-do - the one a new try is opened from, its
+        words and what was handed over - or None. ONE THE USER REMOVED COUNTS
+        TOO (the user, 2026-10-31: removing a try does not change what the
+        next one opens with): removed is not listed, not unsaid. `for_work`:
+        the latest whose project is still there and shown - the one a new try
+        is started in."""
+        experience = self.app.state_heartbeat.experience
+        hidden = experience.removed() if for_work and hasattr(experience, "removed") else {}
+        for draft in reversed(self._tries(todo, removed_too=True)):
+            unit = str(draft.get("unit_id") or "")
+            if not for_work:
+                return draft
+            if unit and unit not in hidden and experience.unit(unit) is not None:
+                return draft
+        return None
 
     def _screen_now(self, window: Dict[str, Any]) -> Dict[str, Any]:
         """The window in front, as the listener last read it off the screen
@@ -279,16 +535,17 @@ class Drafts:
             return {"error": "it was started already"}
         kept = dict(draft.get("options") or {})
         kept.update({k: v for k, v in (options or {}).items()
-                     if k in ("limits", "packages", "sound", "unconfined", "way")})
+                     if k in ("limits", "packages", "sound", "unconfined", "way", "see_tries")})
         kept["saved"] = True
         values: Dict[str, Any] = {"options": kept}
         if folders is not None:
             values["folders"] = [str(one) for one in folders if str(one).strip()][:12]
         if isinstance(plan, dict) and draft["status"] in (READY, FAILED) \
                 and any(plan.get(part) for part in PLAN_PARTS):
-            approved = plan_of(plan, fallback=asked_of(draft) or draft.get("text") or "")
+            approved = plan_of(plan, fallback=asked_of(draft) or draft.get("text") or "",
+                               thorough=self._thorough())
             values["plan"] = approved
-            if approved != plan_of(draft.get("plan") or {}):
+            if approved != plan_of(draft.get("plan") or {}, thorough=self._thorough()):
                 values["plan_by"] = "user"
         self._set(draft_id, **values)
         if draft["status"] == WRITING and (str(instruction or "").strip() or draft.get("text")
@@ -307,13 +564,18 @@ class Drafts:
         else its folder) or ended otherwise (`stopped`). A cancelled one is
         as if it had never been."""
         out: Dict[str, Dict[str, Any]] = {}
-        for row in self.db.query("SELECT id, status, options, unit_id FROM work_drafts "
+        # THE NEXT VERSION, removed ones counted (the user, 2026-11-01: V4 and
+        # V5 listed, V1-V3 removed - "Delegate work" said V3; the next is V6).
+        most: Dict[str, int] = {}
+        for row in self.db.query("SELECT id, status, options, unit_id, run_id FROM work_drafts "
                                  "WHERE source = 'todo' ORDER BY created_at"):
             try:
                 options = json.loads(row["options"] or "{}") or {}
             except (TypeError, ValueError):
                 options = {}
             todo = str(options.get("todo") or "")
+            if todo and row["status"] in (STARTED, STARTING):
+                most[todo] = max(most.get(todo, 0), int(options.get("version") or 1))
             if not todo or row["status"] == CANCELLED or options.get("removed"):
                 continue
             versions = out.setdefault(todo, {"versions": []})["versions"]
@@ -322,11 +584,90 @@ class Drafts:
                     "state": "ongoing" if row["status"] == STARTING
                     or options.get("start_when_ready") else "drafting"}
             if row["status"] == STARTED and row["unit_id"]:
-                said.update(self._came_of(row["unit_id"]))
+                said.update(self._came_of(row["unit_id"], str(row["run_id"] or "")))
             elif (options.get("start_when_ready") or {}).get("held"):
                 said["held"] = options["start_when_ready"]["held"]
+            if options.get("start_failed") and row["status"] != STARTED:
+                said.update(state="drafting",
+                            failed=str(options["start_failed"].get("error") or ""))
             versions.append(said)
+        for todo, came in out.items():
+            came["next"] = most.get(todo, 0) + 1
         return out
+
+    def assigned(self, most: int = 60) -> List[Dict[str, Any]]:
+        """WORK ASSIGNED - EVERY PIECE OF WORK DELEGATED NOT FROM A TO-DO (the
+        user, 2026-11-02: "overview在to do左边加个panel, 是works assigned ...
+        delegate work (不是通过to do的) 都会放在这里"): right-clicked in a
+        program or a page, selected text, Explorer, Add work - each started,
+        or being started, the newest first, with where it stands as a to-do's
+        work says it (`of_todos`' versions). One removed is not listed again."""
+        out: List[Dict[str, Any]] = []
+        for row in self.db.query(
+                "SELECT * FROM work_drafts WHERE source != 'todo' AND status IN (?, ?, ?, ?, ?, ?) "
+                "ORDER BY created_at DESC LIMIT ?",
+                (STARTED, STARTING, COLLECTING, DRAFTING, READY, FAILED, int(most) * 3)):
+            draft = self.get(row["id"])
+            if not draft:
+                continue
+            options = draft.get("options") or {}
+            if options.get("removed"):
+                continue
+            # By what was asked of it (the row): a start the application's
+            # closing cut off is listed too, its plan to start again.
+            failed = options.get("start_failed") or {}
+            if row["status"] in (COLLECTING, DRAFTING, READY, FAILED) \
+                    and not options.get("start_when_ready") and not failed:
+                continue                     # a draft kept - Work lists those
+            said: Dict[str, Any] = {"draft": draft["id"], "version": 1,
+                                    "state": "ongoing" if draft["status"] == STARTING
+                                    or options.get("start_when_ready") else "drafting"}
+            if draft["status"] == READY and draft.get("error"):
+                said["held"] = draft["error"]
+            if failed and draft["status"] != STARTED:
+                # IT DID NOT START - said, never left silent: its plan to
+                # open, change and start again.
+                said.update(state="drafting", failed=str(failed.get("error") or ""))
+            if draft["status"] == STARTED and draft.get("unit_id"):
+                said.update(self._came_of(draft["unit_id"], str(draft.get("run_id") or "")))
+            elif (options.get("start_when_ready") or {}).get("held"):
+                said["held"] = options["start_when_ready"]["held"]
+            out.append({"id": draft["id"], "text": self._title_of(draft),
+                        "detail": self._from_where(draft), "at": draft["created_at"],
+                        "source": draft["source"], "work": {"versions": [said], "next": 2}})
+            if len(out) >= most:
+                break
+        return out
+
+    @staticmethod
+    def _title_of(draft: Dict[str, Any]) -> str:
+        """What a piece of work is called: its plan's title, else what the
+        user asked, else what they handed over."""
+        options = draft.get("options") or {}
+        for one in ((draft.get("plan") or {}).get("title"), options.get("title"),
+                    asked_of(draft), draft.get("text")):
+            line = " ".join(str(one or "").split())
+            if line:
+                return line[:160]
+        return "Delegated work"
+
+    @staticmethod
+    def _from_where(draft: Dict[str, Any]) -> str:
+        """Where it was handed over from, in a few words."""
+        window = draft.get("window") or {}
+        picked = window.get("picked") or {}
+        if picked:
+            where = picked.get("title") or picked.get("file") or picked.get("url") or ""
+            app = picked.get("app") or ""
+            return " - ".join(part for part in (app, str(where)[:120]) if part)
+        files = list(draft.get("files") or []) + [one for one in draft.get("folders") or []
+                                                  if one not in (draft.get("files") or [])]
+        if files:
+            names = [Path(one).name or one for one in files[:3]]
+            return ", ".join(names) + (f" +{len(files) - 3}" if len(files) > 3 else "")
+        if window.get("title"):
+            return " - ".join(part for part in (window.get("app") or "", window["title"]) if part)
+        return ""
 
     def _next_version(self, todo: str, besides: str = "") -> int:
         """The version a to-do's work started now is: one more than the
@@ -343,10 +684,25 @@ class Drafts:
                 most = max(most, int(options.get("version") or 1))
         return most + 1
 
-    def _came_of(self, unit_id: str) -> Dict[str, Any]:
-        from .runner import DONE
+    def _came_of(self, unit_id: str, run_id: str = "") -> Dict[str, Any]:
+        """Where a try stands - several tries share a work: the latest run
+        of its own line (its tree: carried on thoroughly, a run of its own
+        in the same try) - else the work's latest."""
+        from .runner import DONE, tree_of
         work = self.app.work
-        run = work.latest_of(unit_id)
+        first = work.run(run_id) if run_id else None
+        run = None
+        if first is not None:
+            line = [row for row in (work.run(one["id"]) for one in self.db.query(
+                "SELECT id FROM work_runs WHERE unit_id = ? ORDER BY started_at DESC LIMIT 30",
+                (unit_id,))) if row is not None and tree_of(row) == tree_of(first)]
+            run = line[0] if line else first
+            live = work._running.get(run["id"]) if hasattr(work, "_running") else None
+            run["alive"] = bool(live is not None and live.alive())
+            if run["alive"]:
+                run["status"] = live.status
+        else:
+            run = work.latest_of(unit_id)
         if run is None:
             return {"state": "ongoing"}
         said: Dict[str, Any] = {"run": run["id"], "unit": unit_id,
@@ -389,6 +745,8 @@ class Drafts:
                 if isinstance(one, dict)]
         output = ((self.app.state_heartbeat.experience.store.workspace(unit_id) or {})
                   .get("summary") or {}).get("output_folder") or ""
+        if int((run.get("plan") or {}).get("attempt") or 0) > 1:
+            output = ""          # a later try's result is in its own folder
         for one in made + [output, str(run.get("folder") or "")]:
             found = work.readable_by(run["id"], one) if one else None
             if found is not None:
@@ -410,7 +768,18 @@ class Drafts:
         if draft is None or draft["status"] not in (COLLECTING, FAILED):
             return draft
         try:
-            context = self.collect(draft)
+            # A try of work handed over before: its context, not collected again.
+            # A TRY OF WORK HANDED OVER BEFORE: what was handed over, as it was
+            # collected - its window, its page, its folders and files - and
+            # the user's records searched again, for what happened since.
+            before = self.get(str((draft.get("options") or {}).get("context_from") or ""))
+            kept = {k: v for k, v in ((before or {}).get("context") or {}).items()
+                    if k not in ("query", "found", "summary", "tries", "people", "me")}
+            context = self._found(draft, kept) if kept else self.collect(draft)
+            if before is not None:
+                # What the tries before made, for the plan to start from.
+                context["tries"] = self._tries_said(
+                    str((draft.get("options") or {}).get("todo") or ""), besides=draft_id)
             self._set(draft_id, status=DRAFTING, context=context)
             plan = self.plan(draft, context)
             # The user's own title, where they gave one.
@@ -434,6 +803,10 @@ class Drafts:
                                  if window.get(k)}
             if window.get("text"):
                 context["window"]["text"] = str(window["text"])[:SCREEN_CHARS]
+            # WHAT WAS RIGHT-CLICKED (picked.py): as it was clicked.
+            if window.get("picked"):
+                context["picked"] = {k: v for k, v in window["picked"].items()
+                                     if k not in ("page", "around")}
         url = str(window.get("url") or "")
         if url.lower().startswith(("http://", "https://")):
             context["page"] = self._page(url)
@@ -444,8 +817,14 @@ class Drafts:
             context["work"] = {"name": unit.get("name"), "kind": unit.get("kind"),
                                "about": str(unit.get("description") or unit.get("why")
                                             or "")[:1500]}
-        # FOUND BY ITS WORDS: what was handed over, in English search words
-        # (one model call), matched against every state, task and stage.
+        return self._found(draft, context)
+
+    def _found(self, draft: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """FOUND BY ITS WORDS: what was handed over, in English search words
+        (one model call), matched against every state, task and stage - for
+        each try of the same work again (the user, 2026-10-31: so it sees
+        what happened since), by its own instruction."""
+        window = draft.get("window") or {}
         from .context_search import Index, english_words, records
         handed = {"text": "\n".join(one for one in (asked_of(draft), draft.get("text") or "")
                                     if one),
@@ -525,20 +904,41 @@ class Drafts:
         from ...models.base import ModelRequest
         handed = {"their instruction": asked_of(draft) or "(none - go by what they handed over)",
                   "what they handed over": draft.get("text") or "(nothing typed or selected)",
+                  # RIGHT-CLICKED (picked.py): the selected text above all.
+                  **({"what they right-clicked": "\n".join(picked_told(
+                      (draft.get("window") or {}).get("picked") or {}))}
+                     if (draft.get("window") or {}).get("picked") else {}),
                   "folders they gave": draft.get("folders") or [],
                   "files they gave": draft.get("files") or [], "context": context}
         response = self.app.models.invoke(ModelRequest(
             messages=[{"role": "user", "content": json.dumps(handed, ensure_ascii=False,
                                                              indent=1)[:60000]}],
-            system=PLAN_PROMPT, max_tokens=2000, task="work_draft",
+            system=PLAN_PROMPT if self._thorough() else PLAN_PROMPT_QUICK,
+            max_tokens=2000, task="work_draft",
             language=in_display("every field of the plan and the context summary - names of "
                                 "files, people, products and code keep their own wording")),
             role="primary")
         from ...heartbeat.states.heartbeat import _as_json
         said = _as_json(getattr(response, "text", "") or "") or {}
         context["summary"] = str(said.get("context_summary") or "")[:1500]
+        # WHO IT IS FOR, as the plan names them: what passed between them
+        # and the user, found in the records - of this try, as it stands now.
+        named = [" ".join(str(one).split())[:160] for one in said.get("people") or []
+                 if isinstance(one, str) and str(one).strip()][:MOST_PEOPLE]
+        # BY DEFAULT TOO (the user, 2026-10-31): every contact what was handed
+        # over or asked names, whether the plan named them or not.
+        for one in self._contacts_named(draft):
+            if len(named) >= MOST_PEOPLE:
+                break
+            if not any(_name_and_addresses(given)[0].lower() == one.lower() for given in named):
+                named.append(one)
+        people = [self._person(*_name_and_addresses(one)) for one in named]
+        context["people"] = [one for one in people if one.get("exchanges") or one.get("contact")]
+        if context["people"]:
+            context["me"] = self._me()
         self._set(draft["id"], context=context)
-        return plan_of(said, fallback=asked_of(draft) or draft.get("text") or "")
+        return plan_of(said, fallback=asked_of(draft) or draft.get("text") or "",
+                       thorough=self._thorough())
 
     # -- the user's side ------------------------------------------------------------------------
     def start_apart(self, draft_id: str, plan: Optional[Dict[str, Any]] = None,
@@ -562,7 +962,7 @@ class Drafts:
             way = str((plan or {}).get("way") or "auto")
             kept = dict(draft.get("options") or {},
                         **{k: v for k, v in (options or {}).items()
-                           if k in ("limits", "packages", "sound", "unconfined")},
+                           if k in ("limits", "packages", "sound", "unconfined", "see_tries")},
                         start_when_ready={"way": way, "at": _now(),
                                           # where it works, as the box said it
                                           **({"folders": [str(one) for one in folders]}
@@ -584,6 +984,9 @@ class Drafts:
                 said = {"error": f"{type(exc).__name__}: {exc}"[:600]}
             if said.get("error"):
                 self._set(draft_id, status=before, error=str(said["error"])[:600])
+                self._did_not_start(draft_id, str(said["error"]))
+            else:
+                self._started_after_all(draft_id)
             with self._lock:
                 self._started[draft_id] = {k: v for k, v in said.items()
                                            if isinstance(v, (str, int, float, bool, type(None)))}
@@ -591,6 +994,34 @@ class Drafts:
 
         threading.Thread(target=go, name=f"work-start-{draft_id}", daemon=True).start()
         return {"starting": True, "draft": draft_id}
+
+    def _did_not_start(self, draft_id: str, why: str) -> None:
+        """A START THAT FAILED, NEVER SILENTLY (the user, 2026-11-02: the box
+        closes at Start - "委托启动失败可能悄悄发生"): kept on the draft, so
+        Work assigned lists it - "did not start", its plan to open and start
+        again - and said to the user in a notification."""
+        draft = self.get(draft_id) or {}
+        options = dict(draft.get("options") or {},
+                       start_failed={"error": str(why)[:600], "at": _now()})
+        self._set(draft_id, options=options)
+        notifications = getattr(self.app, "notifications", None)
+        if notifications is None:
+            return
+        try:
+            notifications.notify("Delegated work did not start",
+                                 f"{self._title_of(draft)}: {str(why)[:300]}",
+                                 kind="warning", dedupe_key=f"work-start-failed-{draft_id}",
+                                 action_hint="Open it under Work assigned on the Overview, "
+                                             "change it, and start it again.")
+        except Exception:                        # pragma: no cover - listed anyway
+            log.debug("the failed start was not notified", exc_info=True)
+
+    def _started_after_all(self, draft_id: str) -> None:
+        """Started now: a failed start before is no longer said."""
+        draft = self.get(draft_id) or {}
+        if (draft.get("options") or {}).get("start_failed"):
+            self._set(draft_id, options={k: v for k, v in draft["options"].items()
+                                         if k != "start_failed"})
 
     def _wait_then_start(self, draft_id: str) -> None:
         with self._lock:
@@ -641,7 +1072,11 @@ class Drafts:
                                      folders=wanted.get("folders", draft.get("folders")))
                     return
                 time.sleep(every)
-            self._set(draft_id, error="its plan was not drafted in time - start it again")
+            why = "its plan was not drafted in time - start it again"
+            draft = self.get(draft_id) or {}
+            self._set(draft_id, error=why, options={
+                k: v for k, v in (draft.get("options") or {}).items() if k != "start_when_ready"})
+            self._did_not_start(draft_id, why)
         finally:
             with self._lock:
                 self._waiting.discard(draft_id)
@@ -671,8 +1106,10 @@ class Drafts:
         if draft["status"] in (WRITING, COLLECTING, DRAFTING):
             return {"error": "its plan is not drafted yet - Create it first"}
         approved = plan_of(plan if isinstance(plan, dict) else draft.get("plan") or {},
-                           fallback=asked_of(draft) or draft.get("text") or "")
-        edited = isinstance(plan, dict) and plan_of(plan) != plan_of(draft.get("plan") or {})
+                           fallback=asked_of(draft) or draft.get("text") or "",
+                           thorough=self._thorough())
+        edited = isinstance(plan, dict) and plan_of(plan, thorough=self._thorough()) \
+            != plan_of(draft.get("plan") or {}, thorough=self._thorough())
         folders = [str(one) for one in (folders if folders is not None
                                         else draft.get("folders") or []) if str(one).strip()]
         experience = self.app.state_heartbeat.experience
@@ -683,20 +1120,34 @@ class Drafts:
         # The box's settings as the user left them, over what it opened with.
         options = dict(draft.get("options") or {},
                        **{k: v for k, v in (options or {}).items()
-                          if k in ("limits", "packages", "sound", "unconfined")})
-        if draft.get("unit_id"):
+                          if k in ("limits", "packages", "sound", "unconfined", "see_tries")})
+        tried: Dict[str, Any] = {}
+        if not draft.get("unit_id") and draft.get("source") == "todo" and options.get("todo"):
+            options["version"] = self._next_version(str(options["todo"]), draft_id)
+            tried["attempt"] = options["version"]
+            before = self._try_before(str(options["todo"]), for_work=True) \
+                if options["version"] > 1 else None
+            if before is not None:
+                # A TRY OF THE SAME WORK (the user, 2026-10-31): its project
+                # the first try's; its folder that one's name with its own -
+                # "Title V2" - and its tree its own.
+                unit = experience.unit(before["unit_id"])
+                from .runner import WORK_DIR
+                tried.update(tree=f"v{options['version']}", folder=str(output_folder_for(
+                    Path(work.app_policy.workspace_root) / WORK_DIR,
+                    f"{unit['name']} V{options['version']}")))
+        if tried.get("folder"):
+            made = None
+        elif draft.get("unit_id"):
             unit = experience.unit(draft["unit_id"])
             if unit is None:
                 return {"error": "its project or task is gone"}
             made = None
         else:
             name = approved["title"] or "Delegated work"
-            # A TO-DO HANDED OVER AGAIN: a version of its own, named so -
-            # "(V2)" - its folder too.
-            if draft.get("source") == "todo" and options.get("todo"):
-                options["version"] = self._next_version(str(options["todo"]), draft_id)
-                if options["version"] > 1:
-                    name = f"{name} (V{options['version']})"
+            # Its earlier tries' work gone: a project of its own, named so.
+            if tried.get("attempt", 0) > 1:
+                name = f"{name} (V{tried['attempt']})"
             made = experience.store.create_work_project(name)
             # GIVEN NO FOLDER: what it makes goes in agent_work, where all the
             # agents' work is, in a folder named after it - a second of the
@@ -713,14 +1164,19 @@ class Drafts:
                 if made is not None:
                     experience.store.drop_workspace(unit["id"])
                 return {"error": said["error"]}
-        said = work.start(unit, instruction_of(draft, approved, folders),
+        # THE TRIES BEFORE, as they stand now - unless the user said not.
+        earlier = self._tries_said(str(options.get("todo") or ""), besides=draft_id) \
+            if tried.get("attempt", 0) > 1 and options.get("see_tries", True) is not False \
+            else []
+        said = work.start(unit, instruction_of(draft, approved, folders, earlier=earlier),
                           limits=options.get("limits") or {},
                           # Auto unless the user chose Ask (2026-10-27); where the
                           # system does not confine installs, asked all the same.
                           packages=options.get("packages") or "auto",
                           sound=options.get("sound"),
                           way=approved["way"],
-                          **({"unconfined": True} if options.get("unconfined") else {}))
+                          **({"unconfined": True} if options.get("unconfined") else {}),
+                          **tried)
         if said.get("error"):
             if made is not None:
                 experience.store.drop_workspace(unit["id"])
@@ -764,10 +1220,19 @@ class Drafts:
         if draft is None:
             return {"error": "no such piece of work"}
         if draft["status"] == STARTING or (draft["status"] == STARTED and draft.get("unit_id")
-                                           and self._came_of(draft["unit_id"])["state"]
-                                           == "ongoing"):
+                                           and self._came_of(draft["unit_id"],
+                                                             str(draft.get("run_id") or ""))
+                                           ["state"] == "ongoing"):
             return {"error": "it is going - stop it first"}
-        if draft["status"] == STARTED and draft.get("unit_id"):
+        todo = str((draft.get("options") or {}).get("todo") or "")
+        others = [one for one in self._tries(todo, besides=draft_id)
+                  if one.get("unit_id") == draft.get("unit_id")] if todo else []
+        if draft["status"] == STARTED and draft.get("unit_id") and others:
+            # ONE TRY of work others share (2026-10-31): that try's run alone
+            # is not listed in it again.
+            if draft.get("run_id"):
+                self.app.work.hide_run(str(draft["run_id"]))
+        elif draft["status"] == STARTED and draft.get("unit_id"):
             said = self.app.state_heartbeat.experience.remove_unit(draft["unit_id"])
             if said.get("error") and said["error"] != "no such project":
                 return said
@@ -776,6 +1241,18 @@ class Drafts:
         options["removed"] = True
         self._set(draft_id, options=options)
         return {"removed": draft_id}
+
+    def forget_run(self, run_id: str) -> None:
+        """A TRY REMOVED IN WORK (the user, 2026-10-31): the to-do's version
+        that started it is not shown either - the project stays."""
+        for row in self.db.query("SELECT id, options FROM work_drafts WHERE run_id = ?",
+                                 (run_id,)):
+            try:
+                options = json.loads(row["options"] or "{}") or {}
+            except (TypeError, ValueError):
+                options = {}
+            options["removed"] = True
+            self._set(row["id"], options=options)
 
     def discard(self, draft_id: str) -> bool:
         """A saved draft thrown away: as one cancelled."""
@@ -830,8 +1307,10 @@ def output_folder_for(workspace: Path, name: str,
     return folder
 
 
-def plan_of(said: Any, fallback: str = "") -> Dict[str, Any]:
-    """A plan as kept: each part there, lists as lists of short lines."""
+def plan_of(said: Any, fallback: str = "", thorough: bool = True) -> Dict[str, Any]:
+    """A plan as kept: each part there, lists as lists of short lines.
+    `thorough`: false while the thorough way is switched off - the quick
+    way, whatever was said."""
     said = said if isinstance(said, dict) else {}
     out: Dict[str, Any] = {}
     for part in PLAN_PARTS:
@@ -847,12 +1326,64 @@ def plan_of(said: Any, fallback: str = "") -> Dict[str, Any]:
     # The way, as the planner suggested it or the user chose: thorough when
     # nothing says otherwise.
     way = str(said.get("way") or "").strip().lower()
-    out["way"] = way if way in WAYS else "full"
-    out["way_why"] = str(said.get("way_why") or "").strip()[:400]
+    out["way"] = (way if way in WAYS else "full") if thorough else "quick"
+    out["way_why"] = str(said.get("way_why") or "").strip()[:400] if thorough else ""
     if out["way"] == "full" and not any("readme" in one.lower() for one in out["deliverables"]):
         out["deliverables"].append("README.md - what was made, where it is, how to check "
                                    "it and how to use it")
     return out
+
+
+#: Words quoted in a record, in double quotes (an apostrophe is a "Theo's"),
+#: twenty letters or more: someone's own.
+QUOTED = re.compile(r"[\"“]([^\"”]{20,})[\"”]")
+
+
+#: An email address, in a name the plan gives ("Name <address>").
+ADDRESS = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def _name_and_addresses(said: str) -> tuple:
+    """A person as the plan names them: their name, and their addresses."""
+    addresses = ADDRESS.findall(said)
+    name = " ".join(ADDRESS.sub(" ", said).replace("<", " ").replace(">", " ").split())
+    return (name or (addresses[0] if addresses else said)), addresses
+
+
+def _names_said(names: List[str]) -> List[str]:
+    """How a person may be named in the records: each of their names whole,
+    and - written in letters - its last part, the family name ("Quillfeather";
+    a first name alone is too many people's); a name in characters (曾安)
+    only whole."""
+    out: List[str] = []
+    for one in names:
+        one = " ".join(str(one or "").split())
+        if len(one) >= 2:
+            out.append(one)
+        parts = [part for part in re.split(r"[\s,]+", one) if part]
+        if one.isascii() and len(parts) > 1 and len(parts[-1].strip(".")) >= 3:
+            out.append(parts[-1].strip("."))
+    return list(dict.fromkeys(out))
+
+
+def _who(person: Dict[str, Any]) -> Dict[str, Any]:
+    """A contact, as the work is told it: their names, who they are, and
+    what they are to the user."""
+    places = [" ".join(filter(None, [str(one.get("role") or ""), str(one.get("org") or "")]))
+              for one in person.get("affiliations") or [] if isinstance(one, dict)]
+    who = "; ".join(filter(None, [
+        ", ".join(one for one in places if one.strip()),
+        ", ".join(str(one) for one in person.get("professions") or []),
+        ", ".join(str(one) for one in person.get("locations") or []),
+        str(person.get("summary") or "")[:600]]))
+    from ...heartbeat.connections.people import standing_word
+    # Their names - never a word for how they stand to the user (学姐): another
+    # 学姐's records are not theirs.
+    return {"names": [str(person.get("name") or "")] + [
+                str(one) for one in person.get("aliases") or [] if not standing_word(one)],
+            "who": who, "relation": ", ".join(str(one) for one in
+                                               person.get("relationships") or []),
+            **({"called": [str(one) for one in person["called"]]} if person.get("called") else {})}
 
 
 def asked_of(draft: Dict[str, Any]) -> str:
@@ -861,14 +1392,19 @@ def asked_of(draft: Dict[str, Any]) -> str:
 
 
 def instruction_of(draft: Dict[str, Any], plan: Dict[str, Any],
-                   folders: Optional[List[str]] = None) -> str:
+                   folders: Optional[List[str]] = None,
+                   earlier: Optional[List[Dict[str, Any]]] = None) -> str:
     """What the run is told: the user's instruction and what they handed
     over, WHERE IT WORKS, and the plan they approved - theirs, word for word.
     `folders`: the ones the user gave it, as they left them in the box."""
     lines = []
     if asked_of(draft):
         lines += ["THE USER'S INSTRUCTION:", asked_of(draft), ""]
-    if str(draft.get("text") or "").strip():
+    picked_lines = picked_told((draft.get("window") or {}).get("picked") or {})
+    if picked_lines:
+        # RIGHT-CLICKED (picked.py): what, where - the selected text first.
+        lines += picked_lines + [""]
+    elif str(draft.get("text") or "").strip():
         lines += ["WHAT THE USER HANDED OVER:", str(draft["text"]).strip(), ""]
     for path in draft.get("files") or []:
         lines.append(f"FILE THEY HANDED OVER: {path}")
@@ -878,6 +1414,56 @@ def instruction_of(draft: Dict[str, Any], plan: Dict[str, Any],
     if window.get("title") or window.get("url"):
         lines += [f"IT CAME FROM: {window.get('title') or ''} {window.get('url') or ''}".strip(),
                   ""]
+    # THE TRIES BEFORE (the user, 2026-10-31): what they found and made.
+    if earlier:
+        lines.append("THIS WORK WAS TRIED BEFORE - each try, the first first. What they found "
+                     "and made is yours to use or carry on from - read their reports and their "
+                     "folders - but this try follows its own instruction and its own plan:")
+        for one in earlier:
+            lines.append(f"  V{one.get('version')} ({one.get('state') or 'started'}"
+                         + (f", {one['ended']}" if one.get("ended") else "") + ")"
+                         + (f" - asked: {one['asked']}" if one.get("asked") else ""))
+            if one.get("folder"):
+                lines.append(f"    its folder: {one['folder']}")
+            if one.get("handed"):
+                lines.append("    it handed over: " + "; ".join(one["handed"]))
+            if one.get("report"):
+                lines.append("    it reported: " + " ".join(str(one["report"]).split()))
+        lines.append("")
+    # WHO IT IS FOR, and what passed between them and the user - and who
+    # the user is, to write as them.
+    me = (draft.get("context") or {}).get("me") or {}
+    if me.get("who") and (draft.get("context") or {}).get("people"):
+        lines += [f"WHO THE USER IS: {me['who']}", ""]
+    for person in (draft.get("context") or {}).get("people") or []:
+        lines.append(f"WHO IT IS FOR: {person.get('name')}"
+                     + (f" <{', '.join(person['addresses'])}>" if person.get("addresses") else ""))
+        contact = person.get("contact") or {}
+        if contact.get("several"):
+            lines.append(f"  {contact['several']} of the user's contacts are called this: find "
+                         "which one from what passed between them, below, before you write")
+        elif not contact:
+            lines.append("  not among the user's contacts: before you write, find who they "
+                         "are from public pages - by their name and address - and say so")
+        for key, label in (("who", "who they are"), ("relation", "to the user")):
+            if contact.get(key):
+                lines.append(f"  {label}: {contact[key]}")
+        if contact.get("called"):
+            lines.append("  the user calls them: " + ", ".join(contact["called"]))
+        if contact.get("how_written"):
+            lines.append("  HOW THE USER WRITES TO THEM - their own words, kept from their "
+                         "messages to them, the latest last; write as these are written:")
+            lines += [f"  - ({one.get('at')}, {one.get('channel') or 'a message'}) "
+                      f"{' '.join(str(one.get('text') or '').split())}"
+                      for one in contact["how_written"]]
+        if person.get("exchanges"):
+            lines.append("  WHAT PASSED BETWEEN THEM AND THE USER, the latest last - the "
+                         "user's own words, where quoted, are how they write to them:")
+            lines.append("  (each found by the name or address in brackets - one found by a "
+                         "family name alone may be someone else of that name)")
+            lines += [f"  - ({str(one.get('at') or '')[:16]}) [{one.get('matched') or 'name'}] "
+                      f"{one.get('title')}: {one.get('detail')}" for one in person["exchanges"]]
+        lines.append("")
     found = (draft.get("context") or {}).get("found") or []
     if found:
         lines.append("REFERENCES FROM THE USER'S OWN RECORDS - found by the work's words, "

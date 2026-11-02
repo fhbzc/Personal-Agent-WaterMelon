@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from .store import ConnectionsStore, name_key
+from .store import RELATIONSHIPS, ConnectionsStore, name_key
 
 log = logging.getLogger(__name__)
 
@@ -56,7 +56,12 @@ doubt, leave them out. Not the user themselves.
 FOR EACH PERSON, only what the window shows:
   - who they are: their name as written, other names (an English name, a
     nickname, a handle), and any account or profile address seen (a LinkedIn
-    page, a GitHub profile, an email address);
+    page, a GitHub profile, an email address). A WeChat chat's name (its
+    "wechat chat" line) is the user's own name for the person in it - one of
+    their names: put it among their other names. A WORD THE USER CALLS THEM
+    BY THAT IS NOT A NAME - how they stand to the user: 学姐, 师兄, 老师,
+    "my advisor" - is never one of their names (the user may have several
+    学姐): put it in "called", once you can tell whom it means;
   - what they are to the user, when the window shows it - ONE OR MORE (a
     colleague who is a friend too), THE MAIN ONE FIRST: family, partner,
     friend, colleague, manager, report, mentor, student, classmate,
@@ -140,16 +145,44 @@ RETURNS = """{
                    "what": "what they did, said or what happened to them, in a line",
                    "evidence": ["the ids of the events that show it"]}],
      "evidence": ["the ids of the events this person rests on"],
+     "called": ["a word the user calls them by that is not a name - 学姐, 师兄, \"my advisor\" - never among their aliases"],
+     "user_wrote": ["what THE USER wrote to them, word for word as the window shows it - a WeChat message the window marks as the user's (本人), an email or a reply they wrote - never what the person wrote; none when the window shows none"],
      "add_back_because": "ONLY for a person the user deleted: the strong, newer evidence that they matter now"}
   ]
 }"""
 
 
+#: WORDS FOR HOW SOMEONE STANDS TO THE USER, NOT NAMES (the user, 2026-10-31:
+#: the user may have several 学姐) - never matched as a name, kept as how the
+#: user calls them.
+STANDING_WORDS = frozenset("""
+学姐 学长 师姐 师兄 师妹 师弟 学妹 学弟 老师 导师 老板 同学 室友 舍友 同事 领导 教授 师傅 师父
+姐姐 哥哥 妹妹 弟弟 姐 哥 妹 弟 阿姨 叔叔 宝贝 亲爱的 老公 老婆 爸爸 妈妈 爸 妈
+advisor adviser supervisor boss professor prof teacher mentor senior junior roommate
+classmate colleague manager dear honey babe mom dad
+""".split())
+
+
+def standing_word(text: Any) -> bool:
+    """Whether a "name" is a word for how they stand to the user (学姐, "my
+    advisor", "the junior students") rather than a name of theirs."""
+    word = " ".join(str(text or "").lower().split()).strip(" .")
+    for lead in ("my ", "our ", "the ", "我的", "我们的", "我"):
+        if word.startswith(lead):
+            word = word[len(lead):].strip()
+    word = word.rstrip("s") if word.endswith(("ors", "ers", "ents", "ates")) else word
+    for tail in (" students", " student"):
+        if word.endswith(tail):
+            word = word[: -len(tail)].strip() or word
+    return word in STANDING_WORDS or word in RELATIONSHIPS
+
+
 def _named_in(person: Dict[str, Any], hay: str) -> bool:
     """Whether a person's name, or one of their other names, is in the
     window - a name of two Chinese, Japanese or Korean characters too, which
-    is a whole name there (谭梅), as three letters are elsewhere."""
-    for name in [person["name"], *person["aliases"]]:
+    is a whole name there (谭梅), as three letters are elsewhere. A word for
+    how they stand to the user (学姐) is not a name of theirs."""
+    for name in [person["name"], *[one for one in person["aliases"] if not standing_word(one)]]:
         key = name_key(name)
         if key and (len(key) >= 3 or (len(key) >= 2 and _wide(key))) and key in hay:
             return True
@@ -208,6 +241,109 @@ def _person_text(store: ConnectionsStore, person: Dict[str, Any], whole: bool) -
         lines.append(f"    [{one['id']}] {str(one.get('at') or '')[:10] or 'undated'}: "
                      f"{one['what']}")
     return "\n".join(lines)
+
+
+def chats_in(events: Any) -> List[str]:
+    """The WeChat chats a window's events are of - their names, as the user
+    named them (wechat_store: `wechat_chat`)."""
+    out: List[str] = []
+    for event in events or []:
+        data = (event or {}).get("data") if isinstance(event, dict) else None
+        name = str((data or {}).get("wechat_chat") or "").strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def contact_of_chat(store: ConnectionsStore, chat: str) -> Optional[Dict[str, Any]]:
+    """The one contact a WeChat chat is with: by a WeChat account of that
+    name, else by their name or another name - one contact's alone, never a
+    guess between two."""
+    key = name_key(chat)
+    if not key:
+        return None
+    by_account = {row["person_id"] for row in store.db.query(
+        "SELECT person_id, handle FROM connection_accounts WHERE LOWER(platform) = 'wechat'")
+        if name_key(row["handle"]) == key}
+    if len(by_account) == 1:
+        person = store.get(next(iter(by_account)))
+        if person and not person["deleted"]:
+            return person
+    same = [one for one in store.people() if key in {
+        name_key(one["name"]), *[name_key(alias) for alias in one["aliases"]
+                                 if not standing_word(alias)]}]
+    return same[0] if len(same) == 1 else None
+
+
+def named(store: ConnectionsStore, events: Any, activity_text: str) -> str:
+    """WHO IS IN THIS WINDOW (the user, 2026-10-31: a notification said 学姐
+    where the chat's own name said who): the contact each WeChat chat in it
+    is with, and every contact named in it - a line each, with their other
+    names and what they are to the user - for the steps that write states
+    and notifications to name people as the user's contacts name them."""
+    hay = name_key(activity_text)
+    lines, seen = [], set()
+    for chat in chats_in(events):
+        person = contact_of_chat(store, chat)
+        if person is not None:
+            seen.add(person["id"])
+            lines.append(f"  the WeChat chat \"{chat}\" is with: {_line(person)}")
+    for person in store.people():
+        if person["id"] not in seen and _named_in(person, hay):
+            seen.add(person["id"])
+            lines.append(f"  named in it: {_line(person)}")
+    return "\n".join(lines[:MOST_NAMED])
+
+
+def _line(person: Dict[str, Any]) -> str:
+    said = [f"[{person['id']}] {person['name']}"]
+    if person["aliases"]:
+        said.append("also " + ", ".join(person["aliases"][:12]))
+    if person["relationships"]:
+        said.append("to the user: " + " / ".join(person["relationships"]))
+    if person.get("called"):
+        said.append("the user calls them " + ", ".join(person["called"][:6]))
+    if person.get("org"):
+        said.append(person["org"])
+    return " · ".join(said)
+
+
+#: At most this many people said to be in one window.
+MOST_NAMED = 20
+
+
+def link_wechat(store: ConnectionsStore) -> Dict[str, int]:
+    """EACH WECHAT CHAT WITH ITS CONTACT, AND THE USER'S OWN WORDS IN IT KEPT
+    (the user, 2026-10-31): a one-to-one chat not linked yet is linked to the
+    one contact it is with (`contact_of_chat`); and of every linked chat, the
+    messages WeChat's window marks as the user's own are kept with the
+    contact - read before the raw screen's eight days let them go."""
+    linked = kept = 0
+    try:
+        chats = store.db.query("SELECT id, peer_name, person_id FROM "
+                               "listener_wechat_conversations WHERE kind != 'group'")
+    except Exception:                  # pragma: no cover - no WeChat read here
+        return {"linked": 0, "kept": 0}
+    for chat in chats:
+        person_id = str(chat["person_id"] or "")
+        if not person_id:
+            person = contact_of_chat(store, str(chat["peer_name"] or ""))
+            if person is None:
+                continue
+            person_id = person["id"]
+            store.db.execute("UPDATE listener_wechat_conversations SET person_id = ? WHERE id = ?",
+                             (person_id, chat["id"]))
+            linked += 1
+        for message in store.db.query(
+                "SELECT m.id, m.text, m.first_seen_at FROM listener_wechat_messages m "
+                "WHERE m.conversation_id = ? AND m.sender_role = 'self' AND NOT EXISTS ("
+                "SELECT 1 FROM listener_wechat_message_aliases a WHERE a.id = m.id) "
+                "ORDER BY m.first_seen_at DESC LIMIT ?", (chat["id"], store.MOST_WRITING)):
+            if store.add_writing(person_id, str(message["text"] or ""), channel="WeChat",
+                                 at=str(message["first_seen_at"] or ""),
+                                 source=f"wechat:{message['id']}"):
+                kept += 1
+    return {"linked": linked, "kept": kept}
 
 
 def context(store: ConnectionsStore, activity_text: str) -> str:
@@ -310,6 +446,10 @@ def apply(store: ConnectionsStore, people: Any, evidence_known: Optional[set] = 
                 fields.pop("role", None)
             tags = [str(one) for one in entry.get("tags") or [] if str(one).strip()]
             aliases = [str(one) for one in entry.get("aliases") or [] if str(one).strip()]
+            # A word for how they stand to the user is not a name of theirs.
+            called = [one for one in aliases if standing_word(one)] + [
+                str(one) for one in entry.get("called") or [] if str(one).strip()]
+            aliases = [one for one in aliases if not standing_word(one)]
             if person is not None and person["deleted"]:
                 because = str(entry.get("add_back_because") or "").strip()
                 if not because:
@@ -341,6 +481,17 @@ def apply(store: ConnectionsStore, people: Any, evidence_known: Optional[set] = 
                 store.add_account(person["id"], str(account.get("platform") or ""),
                                   str(account.get("handle") or ""), str(account.get("url") or ""),
                                   source="the user's activity", found_at=found_at)
+            if called:
+                store.add_called(person["id"], called)
+            # HOW THE USER WRITES TO THEM (2026-10-31): their own words, verbatim.
+            wrote = 0
+            for words in entry.get("user_wrote") or []:
+                if isinstance(words, str) and store.add_writing(
+                        person["id"], words, channel="screen", at=found_at,
+                        source="the user's activity"):
+                    wrote += 1
+            if wrote:
+                row["user_wrote"] = wrote
             added = 0
             for item in entry.get("activity") or []:
                 if not isinstance(item, dict):

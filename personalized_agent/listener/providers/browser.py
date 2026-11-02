@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import sqlite3
 import threading
@@ -127,17 +128,32 @@ class BrowserProvider(ListenerProvider):
             self._last_read[browser] = (str(path), shape, time.monotonic(), list(parsed))
         return parsed or []
 
+    def _copies(self) -> Path:
+        """WHERE THE COPIES GO: the agent's own folder (the user, 2026-11-01) -
+        never beside the browser's history, in the browser's own profile.
+        Without one (a test's settings), the system's temporary folder."""
+        data_dir = getattr(self.config, "data_dir", None)
+        if data_dir:
+            folder = Path(data_dir) / "cache" / "browser_history"
+        else:
+            import tempfile
+            folder = Path(tempfile.gettempdir()) / "personal-agent-browser-history"
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder
+
     def _copy_and_query(self, browser: str,
                         path: Path) -> Optional[List[Tuple[str, str, datetime]]]:
         """The rows of a fresh copy, or None when it could not be read."""
-        temp = Path(str(path) + f".agentcopy-{browser}")
         try:
+            temp = self._copies() / f"{re.sub(r'[^A-Za-z0-9]+', '-', browser)}.sqlite"
             shutil.copy2(path, temp)
         except (OSError, PermissionError) as exc:
             self._sources[browser] = f"unreadable: {exc}"
             return None
         try:
-            conn = sqlite3.connect(f"file:{temp}?mode=ro", uri=True, timeout=5)
+            # Immutable: read as it is, nothing written beside it (no -wal, no -shm).
+            conn = sqlite3.connect(f"file:{temp.as_posix()}?mode=ro&immutable=1", uri=True,
+                                   timeout=5)
             try:
                 if browser.lower() == "firefox":
                     rows = conn.execute(
@@ -159,10 +175,11 @@ class BrowserProvider(ListenerProvider):
             self._sources[browser] = f"query failed: {exc}"
             return None
         finally:
-            try:
-                temp.unlink()
-            except OSError:
-                pass
+            for one in (temp, *(Path(str(temp) + tail) for tail in ("-wal", "-shm", "-journal"))):
+                try:
+                    one.unlink()
+                except OSError:
+                    pass
 
     def poll(self) -> int:
         emitted = 0

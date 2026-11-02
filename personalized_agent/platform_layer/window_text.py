@@ -33,6 +33,23 @@ call (a cache request), never going into a part not on the screen
 all of them, found a fraction of what a page, Explorer or WeChat showed -
 each step a question of its own, where FindAll is answered in one.
 
+A PROGRAM SEEN STANDING STILL WHILE IT IS READ IS READ WITHIN BOUNDS FROM
+THEN ON (the user, 2026-11-01: Bitvise still stood still now and then).
+Bitvise's file browser with lists of 73 and 10 items - no long list - still
+took 14 to 22 seconds to read, each pass over its 625 elements holding its
+window still for two to nearly four seconds (measured). So while a window is
+read the ordinary way it is watched (`_Watch`): its thread is asked to
+answer (WM_NULL, which does nothing) every 50 ms from a thread of its own.
+One that does not answer within STILL_SECONDS has the rest of that reading
+done within bounds, and a program seen so in STILL_READINGS readings in a
+row is read within bounds for STILL_DAYS from then on, remembered in the
+agent's own folder (`remember_in`) - in a row, and for a while, so that a
+browser busy with a heavy page now and then is never taken for one: one
+ordinary reading between and the count starts again, and a program taken
+wrongly is asked again within a week (the user, 2026-11-01). A window
+already not answering before it is read is busy of its own accord: read
+within bounds that once, and not counted. Every other program is read exactly as before.
+
 Nothing here decides what is worth recording or keeps anything. It reads, and
 hands back what it read.
 """
@@ -45,7 +62,9 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Set
 
 log = logging.getLogger(__name__)
 
@@ -126,6 +145,56 @@ _CACHED = (_CONTROL_TYPE_PROPERTY, _NAME_PROPERTY, _IS_OFFSCREEN_PROPERTY,
 #: these by the hundred and not one of them is text.
 _PLACEHOLDER = "\ufffc"
 
+#: How long a window may take to answer while it is read (module docstring);
+#: in how many readings IN A ROW a program must have been seen standing still
+#: before it is read within bounds - two, so that a page busy once with its
+#: own work does not lose its reading - and for how many days after.
+STILL_SECONDS = 0.3
+STILL_READINGS = 2
+STILL_DAYS = 7
+
+
+class _Watch:
+    """Whether a window stands still while it is read: its thread asked to
+    answer (WM_NULL) every EVERY seconds, from a thread of its own, for as
+    long as the reading goes on."""
+
+    EVERY = 0.05
+
+    def __init__(self, handle: int) -> None:
+        self.handle = int(handle)
+        self.still = threading.Event()
+        self._done = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def answers(self) -> bool:
+        """Whether the window answers within STILL_SECONDS now."""
+        if sys.platform != "win32":
+            return True
+        result = ctypes.c_size_t()
+        began = time.perf_counter()
+        # SMTO_ABORTIFHUNG: a window Windows already takes as hung is not waited on.
+        said = ctypes.windll.user32.SendMessageTimeoutW(
+            ctypes.c_void_p(self.handle), 0, 0, 0, 0x0002, int(STILL_SECONDS * 1000),
+            ctypes.byref(result))
+        return bool(said) and time.perf_counter() - began <= STILL_SECONDS
+
+    def __enter__(self) -> "_Watch":
+        self._thread = threading.Thread(target=self._loop, name="window-watch", daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self._done.set()
+
+    def _loop(self) -> None:
+        while not self._done.is_set():
+            if not self.answers():
+                if not self._done.is_set():
+                    self.still.set()
+                return
+            self._done.wait(self.EVERY)
+
 
 class WindowTextReader:
     """A UI Automation client, kept alive between readings.
@@ -161,6 +230,75 @@ class WindowTextReader:
         self._lock = threading.Lock()
         self._started = False
         self._cache: Any = None
+        #: Programs seen standing still while read (module docstring): how
+        #: many readings saw it, and those read within bounds from then on.
+        self._seen_still: Dict[str, int] = {}
+        #: Each with when it was seen so - over STILL_DAYS ago and it is
+        #: asked again, the agent running all that time or not.
+        self._still_since: Dict[str, datetime] = {}
+        self._remembered_in: Optional[Path] = None
+
+    @property
+    def stands_still(self) -> Set[str]:
+        """The programs read within bounds now: seen standing still in the
+        last STILL_DAYS."""
+        since = datetime.now(timezone.utc) - timedelta(days=STILL_DAYS)
+        return {program for program, when in self._still_since.items() if when >= since}
+
+    # -- programs that stand still while read ---------------------------------
+    def remember_in(self, path: Path) -> None:
+        """Keep the programs that stand still while read in `path` - the
+        agent's own folder - and take back those kept there before."""
+        import json
+
+        self._remembered_in = Path(path)
+        try:
+            kept = json.loads(self._remembered_in.read_text(encoding="utf-8"))
+            for program, when in dict(kept.get("programs") or {}).items():
+                try:
+                    seen = datetime.fromisoformat(str(when))
+                except (TypeError, ValueError):
+                    continue
+                if seen.tzinfo is None:
+                    seen = seen.replace(tzinfo=timezone.utc)
+                self._still_since[str(program).lower()] = seen
+        except (OSError, ValueError, AttributeError, TypeError):
+            pass
+
+    def _answered(self, program: str) -> None:
+        """A reading of `program` in which its window answered throughout:
+        the count of readings in a row that saw it stand still starts again."""
+        self._seen_still.pop((program or "").lower(), None)
+
+    def _stood_still(self, program: str) -> None:
+        """A reading of `program` saw its window stand still."""
+        program = (program or "").lower()
+        if not program or program in self.stands_still:
+            return
+        self._seen_still[program] = self._seen_still.get(program, 0) + 1
+        if self._seen_still[program] < STILL_READINGS:
+            return
+        now = datetime.now(timezone.utc)
+        self._still_since[program] = now
+        self._seen_still.pop(program, None)
+        log.info("%s stands still while its windows are read: read within bounds for %d days",
+                 program, STILL_DAYS)
+        if self._remembered_in is None:
+            return
+        import json
+
+        try:
+            try:
+                kept = json.loads(self._remembered_in.read_text(encoding="utf-8"))
+                programs = dict(kept.get("programs") or {})
+            except (OSError, ValueError, AttributeError):
+                programs = {}
+            programs[program] = now.isoformat(timespec="seconds")
+            self._remembered_in.parent.mkdir(parents=True, exist_ok=True)
+            self._remembered_in.write_text(json.dumps({"programs": programs}, indent=1),
+                                           encoding="utf-8")
+        except OSError:                              # pragma: no cover - kept for this run
+            log.debug("could not keep the programs that stand still", exc_info=True)
 
     # -- availability -------------------------------------------------------
     @property
@@ -209,8 +347,10 @@ class WindowTextReader:
             time.sleep(3600)
 
     # -- reading ------------------------------------------------------------
-    def read(self, handle: int) -> Optional[WindowText]:
-        """Everything that window will say about what it is showing."""
+    def read(self, handle: int, program: str = "") -> Optional[WindowText]:
+        """Everything that window will say about what it is showing.
+        `program` - its executable's name - is what is remembered when it
+        stands still while read (module docstring)."""
         if not self.available or not handle:
             return None
         began = time.perf_counter()
@@ -220,10 +360,22 @@ class WindowTextReader:
         except Exception as exc:
             self.last_error = str(exc)[:200]
             return None
-        # A window holding a long list of the old kind is walked within
-        # bounds; any other is asked as it always was (module docstring).
-        ask = self._ask_bounded if has_a_long_list(handle) else self._ask_the_window
-        body, how, elements = ask(element)
+        # A window holding a long list of the old kind, or of a program seen
+        # standing still while read, is walked within bounds; any other is
+        # asked as it always was, watched (module docstring).
+        if (program or "").lower() in self.stands_still or has_a_long_list(handle):
+            body, how, elements = self._ask_bounded(element)
+        else:
+            watch = _Watch(handle)
+            if not watch.answers():
+                body, how, elements = self._ask_bounded(element)   # busy of its own accord
+            else:
+                with watch:
+                    body, how, elements = self._ask_the_window(element, watch.still.is_set)
+                if watch.still.is_set():
+                    self._stood_still(program)
+                else:
+                    self._answered(program)
         got.text, got.how, got.elements = body, how, elements
         got.milliseconds = (time.perf_counter() - began) * 1000
         return got
@@ -299,25 +451,40 @@ class WindowTextReader:
         text = "\n".join(item["text"].strip() for item in items if item["text"].strip())
         return text, capture, len(items)
 
-    def _ask_the_window(self, element: Any) -> tuple:
+    def _ask_the_window(self, element: Any,
+                        still: Callable[[], bool] = lambda: False) -> tuple:
+        """The window asked the ordinary way; once `still` says it has stood
+        still, the rest within bounds (module docstring)."""
         body = self._text_of(element)
         if len(body.strip()) >= self.ENOUGH:
             return body, "window", 1
         for control, label in ((_DOCUMENT, "document"), (_EDIT, "edit"),
                                (_TEXT, "text")):
-            found, count = self._of_type(element, control)
+            if still():
+                return self._rest_bounded(element, body)
+            found, count = self._of_type(element, control, still)
             if len(found.strip()) > len(body.strip()):
                 body, how, elements = found, f"{label}", count
                 if len(body.strip()) >= self.ENOUGH:
                     return body, how, elements
         if len(body.strip()) >= self.ENOUGH:
             return body, "pattern", 1
-        walked, count = self._walk(element)
+        if still():
+            return self._rest_bounded(element, body)
+        walked, count = self._walk(element, still)
         if len(walked.strip()) > len(body.strip()):
             return walked, "walk", count
         return body, "pattern" if body.strip() else "nothing", 1
 
-    def _of_type(self, element: Any, control: int) -> tuple:
+    def _rest_bounded(self, element: Any, body: str) -> tuple:
+        """The rest of a reading within bounds - what was found before, if it is more."""
+        bounded = self._ask_bounded(element)
+        if len(bounded[0].strip()) >= len(body.strip()):
+            return bounded
+        return body, "pattern" if body.strip() else "nothing", 1
+
+    def _of_type(self, element: Any, control: int,
+                 still: Callable[[], bool] = lambda: False) -> tuple:
         """The text of every document-shaped element inside this window."""
         try:
             condition = self._automation.CreatePropertyCondition(
@@ -327,6 +494,8 @@ class WindowTextReader:
             return "", 0
         pieces: List[str] = []
         for index in range(min(found.Length, 40)):
+            if still():
+                break
             try:
                 child = found.GetElement(index)
                 if self._is_a_password(child) or self._is_hidden(child):
@@ -336,7 +505,7 @@ class WindowTextReader:
                 continue
         return self._tidied(pieces), found.Length
 
-    def _walk(self, element: Any) -> tuple:
+    def _walk(self, element: Any, still: Callable[[], bool] = lambda: False) -> tuple:
         """Every descendant's name, for windows that expose no text at all.
 
         A file manager is the case: its list of files is a hundred names and
@@ -349,6 +518,8 @@ class WindowTextReader:
             return "", 0
         pieces: List[str] = []
         for index in range(min(found.Length, self.WALK_AT_MOST)):
+            if still():
+                break
             try:
                 child = found.GetElement(index)
                 if self._is_a_password(child) or self._is_hidden(child):
@@ -600,7 +771,7 @@ def text_in_front() -> Optional[WindowText]:
                              wechat_capture=capture,
                              milliseconds=(time.perf_counter() - began) * 1000)
     if got is None:
-        got = reader().read(handle)
+        got = reader().read(handle, application)
     if got is None:
         return None
     got.title = title

@@ -24,7 +24,8 @@ from .governor import BUSY_CPU, SHORT_MEMORY, _psutil
 #: The tools that only read: run side by side with one another.
 READ_ONLY = frozenset({"list_dir", "read_file", "find_files", "find_in_files", "search_files",
                        "search_records", "search_stages", "open_card", "open_stage",
-                       "open_case", "open_reason"})
+                       "open_case", "open_reason", "search_people", "open_person",
+                       "how_the_user_writes"})
 #: The tools that only WAIT - on a job, on a moment, on a helper agent: they
 #: take no place at all, so that nothing waits behind a wait (a helper's
 #: tools, a job's end being looked at).

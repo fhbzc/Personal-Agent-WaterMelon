@@ -141,6 +141,77 @@ def search(query: str, limit: int = 8, timeout: float = 20.0) -> Dict[str, Any]:
     return {"query": query, "results": results}
 
 
+#: IN THE USER'S OWN VOICE (the user, 2026-11-01: "这个有学我的语气吗" - in a
+#: group, on Slack, on Facebook too): the kinds of result the user sends or
+#: posts as their own words - looked up first (`how_the_user_writes`), or
+#: hand_over refuses them.
+IN_THEIR_VOICE = ("email", "message", "text", "form")
+#: How many of the user's own lines are given - there, and in general.
+VOICE_THERE, VOICE_ELSEWHERE = 30, 20
+#: Words a chat's name says nothing by.
+_CHAT_WORDS = {"group", "chat", "the", "channel", "dm", "群", "群聊", "聊天"}
+
+
+def _name_words(name: str) -> List[str]:
+    import unicodedata
+    text = unicodedata.normalize("NFKC", str(name or "")).casefold()
+    return [one for one in re.findall(r"[a-z0-9]+|[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]+",
+                                      text) if one not in _CHAT_WORDS]
+
+
+#: Where words go, by how they are written there: a chat (and a post among
+#: friends), an email, else a page or a document - formal.
+CHAT_PLACES = ("wechat", "weixin", "微信", "slack", "facebook", "messenger", "whatsapp",
+               "teams", "telegram", "discord", "qq", "line", "signal", "skype", "sms",
+               "imessage", "instagram", "wecom", "企业微信", "钉钉", "dingtalk", "飞书", "lark")
+EMAIL_PLACES = ("email", "e-mail", "mail", "gmail", "outlook", "邮件", "邮箱")
+
+
+def voice_register(where: str) -> str:
+    """"chat", "email" or "formal" - by where the words go."""
+    words = set(_name_words(where)) | {str(where or "").strip().casefold()}
+    if words & set(CHAT_PLACES):
+        return "chat"
+    if words & set(EMAIL_PLACES):
+        return "email"
+    return "formal"
+
+
+def _latest_once(lines: List[Dict[str, Any]], most: int) -> List[Dict[str, Any]]:
+    """Each line once, the latest `most` of them, the latest last."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for one in sorted(lines, key=lambda one: one.get("at") or "", reverse=True):
+        text = " ".join(str(one.get("text") or "").split())
+        if text and text not in out:
+            out[text] = dict(one, text=text[:600])
+    return list(reversed(list(out.values())[:most]))
+
+
+def same_chat(asked: str, name: str) -> bool:
+    """Whether a chat's name is the one asked for - every word of its name in
+    what was asked, a word the start of the other's ("personal" and
+    "personalized"): "personal agent developing group" asks for the chat
+    named "personalized agent"."""
+    wanted, its = _name_words(asked), _name_words(name)
+    if not wanted or not its:
+        return False
+    if "".join(wanted) == "".join(its):
+        return True
+
+    def found(word: str) -> bool:
+        for one in wanted:
+            if word == one:
+                return True
+            if word.isascii() and one.isascii():
+                if min(len(word), len(one)) >= 4 and (word.startswith(one)
+                                                       or one.startswith(word)):
+                    return True
+            elif word in one or one in word:
+                return True
+        return False
+    return all(found(word) for word in its)
+
+
 #: The tools that change something - offered only while a stage is being
 #: carried out. A job is code running: its tools go with run_python.
 WRITING_TOOLS = ("write_file", "edit_file", "edit_notebook", "delete_file", "run_python",
@@ -859,6 +930,9 @@ class WorkTools:
         #: drawn with a few (runner.SLIDES_TOOLS). One not among them is
         #: neither offered nor run.
         self.only: Optional[tuple] = None
+        #: The quick way's monitor's reminders not yet given (runner._Monitor):
+        #: each tool's result carries them, once.
+        self.notes: Optional[Callable[[], List[str]]] = None
         #: Tools of the writing kind given even where nothing is written
         #: with tools: a reviewer that tries what was built runs code.
         self.runs_code: tuple = ()
@@ -914,6 +988,8 @@ class WorkTools:
             "search_files": self.search_files,
             "open_case": self.open_case, "open_reason": self.open_reason,
             "hand_over": self.give_to_user,
+            "search_people": self.search_people, "open_person": self.open_person,
+            "how_the_user_writes": self.how_the_user_writes,
         }
         #: WHAT THE USER GETS (handed.py): `on_hand_over(item)` keeps an item
         #: the work hands over - set by the run whose work it is; None where
@@ -926,7 +1002,14 @@ class WorkTools:
         #: The user's own records to search (context_search.py): set by the
         #: run that has them - the database they are in.
         self.records_db: Any = None
+        #: THE USER'S CONTACTS (heartbeat/connections/store.py), to look people
+        #: up in - who they are, what they are to the user, how the user writes
+        #: to them (the user, 2026-10-31). None where the work is given none.
+        self.people: Any = None
         self._records_index: Any = None
+        #: Where the user's own way of writing was looked at (`how_the_user_writes`)
+        #: - words handed over as theirs wait for it.
+        self._voice_looked: List[str] = []
         #: THE USER'S OWN FILES, searched by their words (index/service.py) -
         #: set by the run that may: none for the single model, or for the
         #: way with no context.
@@ -983,7 +1066,9 @@ class WorkTools:
                 and (one.name != "search_records" or self.records_db is not None)
                 and (one.name != "search_files" or self.files_index is not None)
                 and (one.name != "open_stage" or self.stages is not None)
-                and (one.name not in ("open_case", "open_reason") or self.learned is not None)]
+                and (one.name not in ("open_case", "open_reason") or self.learned is not None)
+                and (one.name not in ("search_people", "open_person") or self.people is not None)
+                and (one.name != "how_the_user_writes" or self._voice_known())]
 
     def _specs(self) -> List[ToolSpec]:
         from .parallel import READ_ONLY
@@ -1326,6 +1411,39 @@ class WorkTools:
                      "why it was found.",
                      _schema({"query": {"type": "string"},
                               "kind": {"type": "string"}}, ["query"])),
+            ToolSpec("search_people", "Search the user's contacts by any words - a name or "
+                     "another name they go by, what they are to the user (classmate, mentor, "
+                     "student...), an organisation, a role, a place, what they have been doing. "
+                     "Each with its id, for open_person.",
+                     _schema({"query": {"type": "string"},
+                              "relationship": {"type": "string",
+                                               "description": "what they are to the user, to "
+                                               "find only those"}}, [])),
+            ToolSpec("open_person", "One of the user's contacts whole: who they are, their "
+                     "accounts and public profiles, what they have been doing, dated - and how "
+                     "the user writes to them, in their own words.",
+                     _schema({"id": {"type": "string"}}, ["id"])),
+            ToolSpec("how_the_user_writes", "HOW THE USER WRITES - before you write words "
+                     "they will send or post as their own (an email, a message, a post, a "
+                     "review, a comment, a form's words). HOW THEY WRITE IT DEPENDS ON TWO "
+                     "THINGS: WHERE it goes (a chat, an email, a formal page) and WHAT it "
+                     "says. Given both, it returns their own words: to the same people or in "
+                     "the same chat (\"there\"), their own writing on the same matter or "
+                     "of the same kind (\"like_this\"), and - for a chat alone - how they "
+                     "chat in general (\"elsewhere\"). Follow them in that order: length, "
+                     "language and how it is mixed, how they open and close, punctuation, "
+                     "how formal.",
+                     _schema({"where": {"type": "string", "description":
+                                        "where it goes: Email, WeChat, Slack, Facebook, "
+                                        "Messenger, WhatsApp, Teams, a journal's review form, "
+                                        "a web page, a document, ..."},
+                              "what": {"type": "string", "description":
+                                       "what it is and says, in a few words: \"an update on "
+                                       "the new version for the developers' group\", \"a "
+                                       "review of a paper on graph learning\""},
+                              "to": {"type": "string", "description":
+                                     "who or which chat or group, if anyone: a name or an "
+                                     "address"}}, ["where", "what"])),
             ToolSpec("search_records", "Search the user's own records - what they "
                      "did (their activity), their tasks and projects, and the stages "
                      "of their past work - by words IN ENGLISH, as the records are "
@@ -1365,26 +1483,89 @@ class WorkTools:
                 "for what they will do with it - every result, at the end (again "
                 "when it changes; the same kind and title replaces it). KINDS: "
                 "\"email\" (to, cc, bcc, subject, body) - opened in their own mail as a "
-                "new message, filled in, for them to send; \"event\" (title, start, end "
+                "new message, filled in, for them to send; a reply to an email they got "
+                "also reply_to (the email it answers: from, its subject exactly as it is, "
+                "date) - opened in that email's thread; \"event\" (title, start, end "
                 "- ISO times, or a date for all day - where, details) - opened in their "
                 "calendar, filled in; \"text\" (text) - words to paste elsewhere, "
-                "copied; \"file\" or \"folder\" (path) - one this work made, opened; "
-                "\"answer\" (text) - shown. NOTHING IS SENT, SAVED OR SUBMITTED: it is "
+                "copied; \"message\" (to, app, handle, text) - the chat with them opened "
+                "and the message copied; \"form\" (url, parts) - the page opened in their "
+                "browser, each part to paste in its box; "
+                "\"file\" or \"folder\" (path) - one this work made, opened; "
+                "\"answer\" (text) - shown. WORDS THE USER SENDS OR POSTS AS THEIR OWN "
+                "(email, message, text, form) are written as they write: look first with "
+                "how_the_user_writes. ONE THING, MORE THAN ONE WAY (a message by Slack "
+                "or by email): up to 3, each complete, with the same choice and its own "
+                "way - made one at a time, each handed over when done. WITH EVERY ONE: how (a few lines, step by step, "
+                "how the user uses it) and check (the few things to check before they do - "
+                "what they may miss, what you are unsure of): they come up on the user's "
+                "desktop when they open it. NOTHING IS SENT, SAVED OR SUBMITTED: it is "
                 "opened for the user, and what is done with it is theirs.",
                 _schema({"kind": {"type": "string",
                                   "enum": ["email", "event", "text", "file", "folder",
-                                           "answer"]},
+                                           "answer", "message", "form"]},
                          "title": {"type": "string",
                                    "description": "what it is, in a few words"},
                          "to": {"type": "array", "items": {"type": "string"}},
                          "cc": {"type": "array", "items": {"type": "string"}},
                          "bcc": {"type": "array", "items": {"type": "string"}},
                          "subject": {"type": "string"}, "body": {"type": "string"},
+                         "reply_to": {"type": "object", "description":
+                                      "a reply's: the email it answers",
+                                      "properties": {"from": {"type": "string"},
+                                                     "subject": {"type": "string"},
+                                                     "date": {"type": "string"}}},
                          "start": {"type": "string"}, "end": {"type": "string"},
                          "where": {"type": "string"}, "details": {"type": "string"},
-                         "text": {"type": "string"}, "path": {"type": "string"}},
-                        ["kind", "title"])),
+                         "text": {"type": "string"}, "path": {"type": "string"},
+                         "app": {"type": "string", "description":
+                                 "a message's chat app: WeChat, WhatsApp, Teams, Slack, "
+                                 "Telegram, Discord, QQ, LINE, Signal, Skype, Messenger, SMS"},
+                         "handle": {"type": "string", "description":
+                                    "a message's: their phone, user name or email in that app"},
+                         "url": {"type": "string", "description": "a form's page"},
+                         "parts": {"type": "array", "description":
+                                   "a form's: each box's label and words, in the page's order",
+                                   "items": {"type": "object", "properties": {
+                                       "field": {"type": "string"},
+                                       "text": {"type": "string"}}}},
+                         "choice": {"type": "string", "description":
+                                    "one of up to 3 ways of one thing: that thing, in a few "
+                                    "words - the same for each of its ways"},
+                         "way": {"type": "string", "description":
+                                 "that way, in a few words: \"By Slack\", \"By email\""},
+                         "how": {"type": "string", "description":
+                                 "a few lines, step by step: how the user uses it"},
+                         "check": {"type": "array", "items": {"type": "string"},
+                                   "description": "the few things to check before using it, "
+                                   "a line each"}},
+                        ["kind", "title", "how", "check"])),
         ]
+
+    def search_people(self, args: Dict[str, Any]) -> Any:
+        """THE USER'S CONTACTS, by any words - each in brief, with its id."""
+        if self.people is None:
+            return {"error": "no contacts here"}
+        found = self.people.search(str(args.get("query") or ""),
+                                   str(args.get("relationship") or ""), most=20)
+        return {"people": [{
+            "id": one["id"], "name": one["name"], "also": one["aliases"][:8],
+            "to_the_user": one["relationships"],
+            "at": "; ".join(" at ".join(filter(None, [a.get("role"), a.get("org")]))
+                            for a in one["affiliations"][:3] if isinstance(a, dict)),
+            "last_news": str(one.get("last_activity_at") or "")[:10]} for one in found]}
+
+    def open_person(self, args: Dict[str, Any]) -> Any:
+        """One contact whole: who they are, their accounts and public profiles,
+        what they have been doing, and HOW THE USER WRITES TO THEM."""
+        if self.people is None:
+            return {"error": "no contacts here"}
+        person = self.people.get(str(args.get("id") or ""), with_details=True)
+        if person is None or person.get("deleted") or person.get("is_self"):
+            return {"error": "no such contact"}
+        person.pop("actions", None)
+        person["activity"] = (person.get("activity") or [])[:20]
+        return person
 
     def give_to_user(self, args: Dict[str, Any]) -> Any:
         """A result handed to the user (handed.py): kept by the run, and
@@ -1410,7 +1591,19 @@ class WorkTools:
         item = handed.checked(args, resolve)
         if item.get("error"):
             return item
-        self.on_hand_over(item)
+        missing = handed.told_how(item)
+        if missing:
+            return {"error": missing}
+        if item.get("kind") in IN_THEIR_VOICE and self._voice_known() \
+                and not self._voice_looked:
+            # IN THE USER'S OWN VOICE (the user, 2026-11-01), held in the code.
+            return {"error": "these are words the user sends or posts as their own: look "
+                             "first at how they write such a thing there - how_the_user_writes, "
+                             "with where it goes and what it says (and to whom) - write it as "
+                             "they would, and hand it over again"}
+        kept = self.on_hand_over(item)
+        if isinstance(kept, dict) and kept.get("error"):
+            return kept
         return {"handed": item["kind"], "title": item["title"],
                 "note": "the user opens it - nothing was sent or saved for them"}
 
@@ -1441,6 +1634,10 @@ class WorkTools:
         ended = self.jobs_ended() if isinstance(said, dict) else []
         if ended:
             said = dict(said, jobs_ended=ended)
+        # THE MONITOR'S REMINDERS (runner._Monitor), given with the next result.
+        notes = self.notes() if self.notes is not None and isinstance(said, dict) else []
+        if notes:
+            said = dict(said, monitor=notes)
         with self._log_lock:
             self.log(name, {"arguments": arguments, "result": said, "timing": timing})
         return said
@@ -2699,6 +2896,120 @@ class WorkTools:
         said = self.learned.open_reason(str(args.get("id") or ""), page)
         self.know_addresses(said)
         return {"reason": said}
+
+    def _voice_known(self) -> bool:
+        """Whether there is anything to tell how the user writes from."""
+        return self.records_db is not None or self.people is not None
+
+    def how_the_user_writes(self, args: Dict[str, Any]) -> Any:
+        """THE USER'S OWN WORDS, CHOSEN BY THE CONTEXT (the user, 2026-11-01:
+        "语气一个是看发布的场合，一个是看内容"): where it goes and what it says.
+        THERE: to that person - a contact's kept words, from any app - or in
+        that chat or group (WeChat's, read message by message: a chat seen in
+        several pieces taken whole by its name). LIKE THIS: their own files on
+        the same matter or of the same kind (the local index). ELSEWHERE, for a
+        chat alone: how they chat in general - never given for an email or a
+        formal page, which a chat's way is no model for. Nothing is changed."""
+        where = " ".join(str(args.get("where") or args.get("app") or "").split())[:80]
+        what = " ".join(str(args.get("what") or "").split())[:300]
+        to = " ".join(str(args.get("to") or "").split())[:200]
+        if not where or not what:
+            return {"error": "say where it goes (the app or the page) and what it says"}
+        if not self._voice_known():
+            return {"error": "nothing here tells how the user writes"}
+        register = voice_register(where)
+        wechat = register == "chat" and where.casefold() in ("wechat", "weixin", "微信")
+        there: List[Dict[str, Any]] = []
+        whose = ""
+        if self.people is not None and to:
+            try:
+                found = self.people.search(to, most=2)
+                if len(found) == 1:
+                    whose = found[0]["name"]
+                    there += [{"at": str(one.get("at") or "")[:16],
+                               "where": str(one.get("channel") or ""),
+                               "text": str(one.get("text") or "")}
+                              for one in self.people.writing(found[0]["id"])]
+            except Exception:                    # pragma: no cover - the rest is still told
+                pass
+        chats: List[str] = []
+        db = self.records_db
+        if db is not None and to and wechat:
+            try:
+                rows = db.query("SELECT id, peer_name FROM listener_wechat_conversations")
+                ids = [row["id"] for row in rows if same_chat(to, row["peer_name"] or "")]
+                chats = sorted({str(row["peer_name"]) for row in rows if row["id"] in ids})
+                if ids:
+                    marks = ",".join("?" * len(ids))
+                    there += [{"at": str(row["at"] or "")[:16], "where": "WeChat: "
+                               + str(row["peer_name"] or ""), "text": str(row["text"] or "")}
+                              for row in db.query(
+                                  "SELECT m.text, COALESCE(m.message_time, m.first_seen_at) AS at, "
+                                  "c.peer_name FROM listener_wechat_messages m JOIN "
+                                  "listener_wechat_conversations c ON c.id = m.conversation_id "
+                                  f"WHERE m.conversation_id IN ({marks}) AND m.sender_role = 'self' "
+                                  "ORDER BY at DESC LIMIT ?", (*ids, VOICE_THERE * 2))]
+            except Exception:                    # no WeChat kept here
+                chats = []
+        there = _latest_once(there, VOICE_THERE)
+        # LIKE THIS: what they wrote on the same matter, or of the same kind.
+        like_this: List[Dict[str, Any]] = []
+        if self.files_index is not None:
+            try:
+                for one in self.files_index.search(what, allowed=self._may_read, limit=4) or []:
+                    like_this.append({"file": one.get("file") or one.get("path") or "",
+                                      "changed": str(one.get("modified") or one.get("changed")
+                                                     or "")[:10],
+                                      "text": str(one.get("text") or "")[:1200]})
+            except Exception:                    # pragma: no cover - the rest is still told
+                pass
+        elsewhere: List[Dict[str, Any]] = []
+        if register == "chat" and len(there) < 8:
+            try:
+                if db is not None:
+                    elsewhere += [{"at": str(row["at"] or "")[:16], "where": "WeChat",
+                                   "text": str(row["text"] or "")} for row in db.query(
+                        "SELECT text, COALESCE(message_time, first_seen_at) AS at FROM "
+                        "listener_wechat_messages WHERE sender_role = 'self' "
+                        "AND length(text) >= 6 ORDER BY at DESC LIMIT ?", (VOICE_ELSEWHERE * 2,))]
+            except Exception:
+                pass
+            try:
+                if db is not None:
+                    elsewhere += [{"at": str(row["at"] or "")[:16],
+                                   "where": str(row["channel"] or ""),
+                                   "text": str(row["text"] or "")} for row in db.query(
+                        "SELECT at, channel, text FROM connection_writing ORDER BY at DESC "
+                        "LIMIT ?", (VOICE_ELSEWHERE,))]
+            except Exception:
+                pass
+            seen = {one["text"] for one in there}
+            elsewhere = _latest_once([one for one in elsewhere if one["text"] not in seen],
+                                     VOICE_ELSEWHERE)
+        self._voice_looked.append(f"{where}: {what}")
+        said: Dict[str, Any] = {"where": where, "what": what, "register": register,
+                                "there": there}
+        if whose:
+            said["contact"] = whose
+        if chats:
+            said["chats"] = chats
+        if like_this:
+            said["like_this"] = like_this
+        if elsewhere:
+            said["elsewhere"] = elsewhere
+        said["said"] = (
+            f"Write it as the user would write THIS ({what}) THERE ({where}): follow 'there' "
+            "most - their words to the same people or place - then 'like_this', their own "
+            "writing on the same matter or of the same kind"
+            + (", then 'elsewhere', how they chat in general." if register == "chat" else
+               ". " + ("An email is written as an email: no chat's way is a model for it."
+                       if register == "email" else
+                       "This is formal writing: a chat's or a message's way is no model for "
+                       "it - write it as such a piece is written, as they write such pieces."))
+            + ("" if there or like_this or elsewhere else
+               " Nothing of theirs was found for this: write it as such a piece is "
+               "written there, plainly."))
+        return said
 
     def search_records(self, args: Dict[str, Any]) -> Any:
         """The user's records, by their English words (context_search.py)."""

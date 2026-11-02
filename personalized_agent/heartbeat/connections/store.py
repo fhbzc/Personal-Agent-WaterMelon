@@ -126,6 +126,19 @@ CREATE TABLE IF NOT EXISTS connection_activity (
     created_at  TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_connection_activity_person ON connection_activity(person_id, at);
+-- HOW THE USER WRITES TO THEM (the user, 2026-10-31): their own words to a
+-- contact, as they were on the screen - a WeChat message of theirs, an email
+-- they wrote - the latest few kept, beyond the raw screen's eight days.
+CREATE TABLE IF NOT EXISTS connection_writing (
+    id          TEXT PRIMARY KEY,
+    person_id   TEXT NOT NULL,
+    at          TEXT NOT NULL DEFAULT '',
+    channel     TEXT NOT NULL DEFAULT '',
+    text        TEXT NOT NULL,
+    source      TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_connection_writing_person ON connection_writing(person_id, at);
 CREATE TABLE IF NOT EXISTS connection_actions (
     id          TEXT PRIMARY KEY,
     at          TEXT NOT NULL,
@@ -264,7 +277,7 @@ class ConnectionsStore:
     #: Columns added since the tables were first made, with their default.
     ADDED = {"connection_people": ("avatar", "avatar_from", "avatar_tried_at", "profession",
                                    "relationships", "affiliations", "professions",
-                                   "locations"),
+                                   "locations", "called"),
              "connection_accounts": ("found_at", "created_at"),
              "connection_activity": ("found_at", "created_at"),
              # Which model call a change came from (connection_calls).
@@ -716,7 +729,7 @@ class ConnectionsStore:
         if person["is_self"]:
             person["relationship"], person["relationships"] = MYSELF, [MYSELF]
         for name in ("aliases", "tags", "user_set", "relationships", "affiliations",
-                     "professions", "locations"):
+                     "professions", "locations", "called"):
             person[name] = _loads(person.get(name), [])
         # From before the lists were kept: the one there was.
         for single, many in LISTED:
@@ -738,6 +751,7 @@ class ConnectionsStore:
             "SELECT * FROM connection_people WHERE id = ?", (str(person_id),)))
         if person is not None and with_details:
             person["accounts"] = self.accounts(person["id"])
+            person["writing"] = self.writing(person["id"])
             person["activity"] = self.activity(person["id"], 50)
             person["actions"] = [self._action(row) for row in self.db.query(
                 "SELECT * FROM connection_actions WHERE person_id = ? ORDER BY at DESC, rowid DESC "
@@ -760,6 +774,71 @@ class ConnectionsStore:
         for person in out:
             person["last_activity_at"] = last.get(person["id"], "")
         return out
+
+    def add_called(self, person_id: str, words: Iterable[str]) -> List[str]:
+        """HOW THE USER CALLS THEM (the user, 2026-10-31) - 学姐, "my advisor":
+        kept apart from their names, never matched as one (another 学姐 is
+        not this one)."""
+        with self._lock:
+            person = self.get(person_id)
+            if person is None:
+                return []
+            called = list(person.get("called") or [])
+            for one in words:
+                one = " ".join(str(one or "").split())[:40]
+                if one and name_key(one) not in {name_key(had) for had in called}:
+                    called.append(one)
+            called = called[-8:]
+            self.db.execute("UPDATE connection_people SET called = ? WHERE id = ?",
+                            (json.dumps(called, ensure_ascii=False), person_id))
+            return called
+
+    #: How many of the user's own messages to one person are kept, and how long each.
+    MOST_WRITING = 8
+    WRITING_CHARS = 2000
+
+    def add_writing(self, person_id: str, text: str, channel: str = "", at: str = "",
+                    source: str = "") -> Optional[Dict[str, Any]]:
+        """THE USER'S OWN WORDS TO THEM, verbatim - once each (by `source`, or
+        the same words again); only the latest MOST_WRITING kept."""
+        text = str(text or "").strip()[:self.WRITING_CHARS]
+        if not text or not person_id:
+            return None
+        with self._lock:
+            if self.db.query_one(
+                    "SELECT id FROM connection_writing WHERE person_id = ? AND "
+                    "((source != '' AND source = ?) OR text = ?)",
+                    (person_id, str(source or ""), text)):
+                return None
+            row = {"id": new_id("writing"), "person_id": person_id, "at": str(at or now()),
+                   "channel": _text(channel, 40), "text": text, "source": str(source or "")[:200],
+                   "created_at": now()}
+            self.db.execute(
+                "INSERT INTO connection_writing (id, person_id, at, channel, text, source, "
+                "created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (row["id"], row["person_id"], row["at"], row["channel"], row["text"],
+                 row["source"], row["created_at"]))
+            kept = [one["id"] for one in self.db.query(
+                "SELECT id FROM connection_writing WHERE person_id = ? ORDER BY at DESC, "
+                "created_at DESC", (person_id,))]
+            for gone in kept[self.MOST_WRITING:]:
+                self.db.execute("DELETE FROM connection_writing WHERE id = ?", (gone,))
+            return row
+
+    def writing(self, person_id: str) -> List[Dict[str, Any]]:
+        """How the user writes to them: their own words kept, the latest last."""
+        return [dict(row) for row in self.db.query(
+            "SELECT * FROM connection_writing WHERE person_id = ? ORDER BY at, created_at",
+            (person_id,))]
+
+    def forget_writing(self, writing_id: str) -> bool:
+        """One of the user's own messages kept, let go - as they asked."""
+        with self._lock:
+            had = self.db.query_one("SELECT id FROM connection_writing WHERE id = ?",
+                                    (writing_id,))
+            if had:
+                self.db.execute("DELETE FROM connection_writing WHERE id = ?", (writing_id,))
+            return bool(had)
 
     def accounts(self, person_id: str) -> List[Dict[str, Any]]:
         return [dict(row) for row in self.db.query(

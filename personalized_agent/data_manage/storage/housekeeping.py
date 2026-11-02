@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from ...common.file_noise import rules_from
 
@@ -29,9 +29,13 @@ FIRST_AFTER_SECONDS = 300
 
 
 class RawHousekeeping:
-    def __init__(self, config: Any, raw_store: Any) -> None:
+    def __init__(self, config: Any, raw_store: Any,
+                 before: Optional[Callable[[], Any]] = None) -> None:
         self.config = config
         self.raw_store = raw_store
+        #: Done before anything is let go - what is kept longer taken out of
+        #: the records first (agent/work/mail_pages.py).
+        self.before = before
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.last: Dict[str, Any] = {}
@@ -63,7 +67,13 @@ class RawHousekeeping:
     def run_once(self) -> Dict[str, Any]:
         """Activity older than the keeping window removed, and the noise."""
         keep_days = int(self.config.get("raw_activity_keep_days", 8) or 0)
-        said: Dict[str, Any] = {"pruned": self.raw_store.prune_older_than(keep_days)}
+        said: Dict[str, Any] = {}
+        if self.before is not None:
+            try:
+                said["kept_first"] = self.before()
+            except Exception:            # pragma: no cover - the records still go
+                log.warning("what is kept longer could not be taken first", exc_info=True)
+        said["pruned"] = self.raw_store.prune_older_than(keep_days)
         swept = self.raw_store.prune_noise(**rules_from(self.config))
         if swept.get("removed"):
             said["swept"] = swept

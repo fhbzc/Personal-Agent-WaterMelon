@@ -108,6 +108,20 @@ def _moment_key(text: str) -> float:
         when = when.replace(tzinfo=timezone.utc)
     return when.timestamp()
 
+def _made_again(unit: Dict[str, Any], removed: Dict[str, Dict[str, Any]]) -> bool:
+    """A project of tasks, more than half of them a removed project's: the
+    one the user removed, made again by the activity."""
+    from .stages import unit_task_ids
+    mine = {one for one in unit_task_ids(unit) if one != unit.get("id")}
+    if not mine:
+        return False
+    for said in removed.values():
+        theirs = set(said.get("tasks") or [])
+        if theirs and len(mine & theirs) * 2 > len(mine):
+            return True
+    return False
+
+
 class Experience:
     """Stage graphs, patterns and principles, and the search across them."""
 
@@ -310,11 +324,12 @@ class Experience:
         found = list(writer.units(live, projects))
         for unit in found:
             unit["active"] = True
-        # A project the user removed is not shown again.
+        # A project the user removed is not shown again - nor one made again of
+        # mostly the same tasks.
         removed = self.removed()
-        units = [unit for unit in found + self.directory_units() + self.work_units()
-                 if unit["id"] not in removed]
         from .stages import unit_task_ids
+        units = [unit for unit in found + self.directory_units() + self.work_units()
+                 if unit["id"] not in removed and not _made_again(unit, removed)]
         seen = {unit["id"] for unit in units} | set(removed)
         covered = {one for unit in units for one in unit_task_ids(unit)}
         learned = [row["unit_id"] for row in self.db.query(
@@ -1116,8 +1131,13 @@ class Experience:
         if unit is None:
             return {"error": "no such project"}
         removed = self.removed()
+        from .stages import unit_task_ids
+        # ITS TASKS REMEMBERED (the user, 2026-10-31): a project the activity
+        # makes again of mostly the same tasks is the one removed, not shown.
+        tasks = [one for one in unit_task_ids(unit) if one != unit_id]
         removed[unit_id] = {"name": unit.get("name", ""), "kind": unit.get("kind", ""),
-                            "at": datetime.now(timezone.utc).isoformat()}
+                            "at": datetime.now(timezone.utc).isoformat(),
+                            **({"tasks": tasks} if tasks else {})}
         self.config.set(self.REMOVED_KEY, removed, internal=True)
         return {"removed": unit_id}
 

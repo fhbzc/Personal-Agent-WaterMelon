@@ -11,8 +11,40 @@
    all there is to do here is say so when the browser is not signed in: the
    page was opened from a bookmark after the browser was closed, say. */
 let signInNoticeShown = false;
+/* OPENED BY THE BROWSER'S EXTENSION, AT ONCE (the user, 2026-11-02: the
+   Delegate work box "弹出来要卡一下"): the box opened on its right-click's note
+   before the agent was told - and, not signed in yet, it asks the extension
+   for its sign-in (the agent gives it, once it has the note) and signs in
+   from here: from this page, the agent's own. */
+const FROM_EXTENSION = (() => {
+  const params = new URLSearchParams(location.search);
+  const ext = params.get("ext") || "", note = params.get("delegate_inbox") || "";
+  return /^[a-p]{32}$/.test(ext) && /^[A-Za-z0-9]{8,40}$/.test(note) ? { ext, note } : null;
+})();
+let signInAsked = false;
+function signInByExtension() {
+  if (signInAsked) return true;
+  const runtime = (globalThis.chrome || {}).runtime;
+  if (!FROM_EXTENSION || !runtime || !runtime.sendMessage) return false;
+  signInAsked = true;
+  try {
+    runtime.sendMessage(FROM_EXTENSION.ext, { type: "sign-in", id: FROM_EXTENSION.note }, (said) => {
+      if (said && said.url && /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?\/api\/access\/sign-in\?/.test(said.url)) {
+        location.replace(said.url);
+      } else {
+        signInAsked = false;
+        FROM_EXTENSION.failed = true;
+        signInNeeded({ status: 401 });
+      }
+    });
+  } catch (_err) {
+    return false;
+  }
+  return true;
+}
 function signInNeeded(response) {
   if (response.status !== 401 || signInNoticeShown) return;
+  if (FROM_EXTENSION && !FROM_EXTENSION.failed && signInByExtension()) return;
   signInNoticeShown = true;
   const notice = document.createElement("div");
   notice.setAttribute("role", "alert");
@@ -1628,6 +1660,44 @@ document.addEventListener("click", async (event) => {
 
 /* The list of projects and tasks - not while a description in it is being
    written: then once that is left. */
+/* CLEAR A PROJECT'S WORK (the user, 2026-10-31): asked in its row, with what
+   would go - each of its work folders, how many files and how much - all of
+   it moved to the Recycle Bin; the project and its records stay. */
+function xpClearAsk(unitId) {
+  const seen = (experienceState.clearSeen || {})[unitId];
+  const kb = (n) => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.ceil(n / 1024)} KB`;
+  const what = !seen ? `<span class="muted">Looking at its work folders…</span>`
+    : seen.error ? `<span class="muted">${escapeHtml(seen.error)}</span>`
+    : !(seen.folders || []).length ? `<span class="muted">Its work folders are empty already.</span>`
+    : `<ul class="xp-clear-list">${seen.folders.map((one) => `<li><code>${escapeHtml(one.path)}</code>
+        <span class="muted">${escapeHtml(`${one.files} files, ${kb(one.bytes)}`)}</span></li>`).join("")}</ul>`;
+  const can = seen && !seen.error && !seen.busy && (seen.folders || []).length;
+  return `<div class="xp-unit-ask" role="alert">
+    <span>Clear this project's work? What its work made is moved to the Recycle Bin;
+    the project and its records stay, but its runs can no longer go back to their
+    versions. Your own folders are not touched.</span>
+    ${what}${seen && seen.busy ? `<span class="muted">${escapeHtml(seen.busy)}</span>` : ""}
+    ${can ? `<button type="button" class="small danger" data-xp-clear-yes="${escapeHtml(unitId)}">Clear</button>` : ""}
+    <button type="button" class="small secondary" data-xp-clear-no="${escapeHtml(unitId)}">Keep it</button>
+  </div>`;
+}
+
+async function xpClearPreview(unitId) {
+  experienceState.clearSeen = experienceState.clearSeen || {};
+  try {
+    experienceState.clearSeen[unitId] = await api.get(`/api/work/clear?unit=${encodeURIComponent(unitId)}`);
+  } catch (err) {
+    experienceState.clearSeen[unitId] = { error: err.message };
+  }
+  if (experienceState.clearing === unitId) xpDrawUnits();
+}
+
+async function xpClear(unitId) {
+  const said = await api.post("/api/work/clear", { unit: unitId });
+  if ((said.failed || []).length) toast(`${said.failed.length} could not be moved to the Recycle Bin`);
+  return said;
+}
+
 function xpDrawUnits() {
   if (xpEditing("#xp-units")) { xpDefer("#xp-units", xpDrawUnits); return; }
   // DELEGATED WORK AMONG THE REST, by when it last moved - work just handed
@@ -1641,10 +1711,15 @@ function xpDrawUnits() {
       ${experienceState.removing === unit.id ? `<div class="xp-unit-ask" role="alert">
         Remove this project? It leaves this list, and its folders are no longer
         read for learning. What was already learned from it stays.
+        <label class="xp-unit-also"><input type="checkbox" data-xp-remove-clear> Also clear
+          its work folders - what its work made, moved to the Recycle Bin</label>
         <button type="button" class="small danger" data-xp-remove-yes="${escapeHtml(unit.id)}">Remove</button>
         <button type="button" class="small secondary" data-xp-remove-no="${escapeHtml(unit.id)}">Keep it</button>
-      </div>` : `<button type="button" class="xp-unit-remove link" data-xp-remove="${
-        escapeHtml(unit.id)}" title="Remove this project from Work">Remove</button>`}
+      </div>` : experienceState.clearing === unit.id ? xpClearAsk(unit.id)
+      : `<button type="button" class="xp-unit-remove link" data-xp-remove="${
+        escapeHtml(unit.id)}" title="Remove this project from Work">Remove</button>
+        <button type="button" class="xp-unit-remove link" data-xp-clear="${
+        escapeHtml(unit.id)}" title="Move what its work made to the Recycle Bin - the project stays">Clear</button>`}
       <div class="xp-unit-open" data-xp-unit="${escapeHtml(unit.id)}" role="button"
         tabindex="0">
         ${escapeHtml(xpName(unit.name))}
@@ -2656,7 +2731,37 @@ const XP_KIND_SAID = {
 /* ONE RUN OF THE AGENTS: its results first - the slides and where each
    deliverable is - then what is left, the contract, the decisions made for
    you, the final review, and the rounds. */
-function xpRun(run, idle, first) {
+/* A RUN'S LINE SAYS WHAT THE USER ASKED, IN SHORT (the user, 2026-10-31):
+   work handed over is told much more - what was handed over, the records
+   found, the plan approved - so only the user's own instruction is said
+   (else what they handed over), and a long one by its beginning and its end. */
+const XP_RUN_WORDS_HEAD = 70;
+const XP_RUN_WORDS_TAIL = 40;
+
+function xpRunAsked(text) {
+  const all = String(text || "").trim();
+  if (!all) return "carry it forward";
+  // The heads of what the run was told (delegate.instruction_of) - not words
+  // of the page's own, so not strings to put in the display language.
+  for (const head of [/^THE USER'S INSTRUCTION:/, /^WHAT THE USER HANDED OVER:/]) {
+    const found = all.match(head);
+    if (found) {
+      return all.slice(found[0].length).split(/\n\s*\n/)[0].replace(/\s+/g, " ").trim()
+        || "carry it forward";
+    }
+  }
+  return all.replace(/\s+/g, " ");
+}
+
+function xpRunWords(text) {
+  const asked = xpRunAsked(text);
+  if (asked.length <= XP_RUN_WORDS_HEAD + XP_RUN_WORDS_TAIL + 3) return asked;
+  return `${asked.slice(0, XP_RUN_WORDS_HEAD).trimEnd()} … ${asked.slice(-XP_RUN_WORDS_TAIL).trimStart()}`;
+}
+
+/* `removable`: a try of the user's own work, to remove from its project -
+   never a way of the Experience debugger. */
+function xpRun(run, idle, first, removable = true) {
   const plan = run.plan || {};
   const contract = plan.contract || {};
   const deck = plan.deck || null;
@@ -2698,14 +2803,18 @@ function xpRun(run, idle, first) {
         ? `, since ${escapeHtml(inForce.since)}` : ""}</span></h4>`, inForce.amended,
       run.id, false) : "";
   const deckOpen = Boolean(kept.decks[run.id]);
+  // EACH RUN FOLDED (the user, 2026-10-31): opened by the user - or the one
+  // a to-do's "See it in Work" asked for - never by itself.
   return `<details class="xp-run" data-xp-run-box="${id}" data-xp-keep="run:${id}"${
-      run.alive || first ? " open" : ""}>
-    <summary>${plan.way ? `<span class="xp-way xp-way-${escapeHtml(plan.way)}">${
+      run.id === experienceState.openRun ? " open" : ""}>
+    <summary>${run.attempt ? `<span class="xp-try">V${escapeHtml(String(run.attempt))}</span> ` : ""}${
+      plan.way ? `<span class="xp-way xp-way-${escapeHtml(plan.way)}">${
         plan.way === "quick" ? "Quick" : "Thorough"}</span> ` : ""}<strong>${
         escapeHtml(run.status)}${run.alive && run.paused
         && run.status !== "paused" ? " · paused" : ""}</strong> ·
       ${escapeHtml(localStamp(run.started_at))} ·
-      ${escapeHtml(run.instruction || "carry it forward")}</summary>
+      <span class="xp-run-words" title="${escapeHtml(xpRunAsked(run.instruction))}">${
+        escapeHtml(xpRunWords(run.instruction))}</span></summary>
     ${seen ? `<p class="xp-version-showing" data-xp-keep="showing:${id}">Showing
       <strong>${escapeHtml(seen.id || "")}</strong> - ${escapeHtml(
         xpVersionMessage(xpVersionWithMessage(run.id, seen)).title || seen.label || "")}
@@ -2738,7 +2847,9 @@ function xpRun(run, idle, first) {
     ${xpCallsSection(run)}
     ${xpLiveSection(run)}
     ${xpAnswer(run)}
-    ${plan.way === "quick" && idle && !run.alive ? `<p class="xp-continue-row">
+    ${plan.way === "quick" && idle && !run.alive
+      && ((experienceState.limits || {}).ways || ["quick", "full"]).includes("full")
+      ? `<p class="xp-continue-row">
       <button type="button" class="small" data-xp-thorough="${id}">Continue thoroughly</button>
       <span class="muted">${(run.final || {}).thorough ? `It said: ${escapeHtml(
         run.final.thorough)} · ` : ""}a builder and a reviewer carry it on from what it
@@ -2805,6 +2916,13 @@ function xpRun(run, idle, first) {
     <details class="xp-steps"><summary class="muted">What it did, step by step</summary>
       <ol class="xp-log" data-xp-run-log="${id}" data-xp-keep="steps:${id}">${xpRunLog(run)}</ol>
     </details>
+    ${run.alive || !removable ? "" : experienceState.removingRun === run.id
+      ? `<p class="xp-run-remove" role="alert">Remove this from the project? It is no longer
+          listed here, nor in its to-do; its files are kept.
+          <button type="button" class="small danger" data-xp-run-remove-yes="${id}">Remove</button>
+          <button type="button" class="small secondary" data-xp-run-remove-no="${id}">Keep it</button></p>`
+      : `<p class="xp-run-remove"><button type="button" class="link" data-xp-run-remove="${id}"
+          title="Remove this from the project - its files are kept">Remove</button></p>`}
   </details>`;
 }
 
@@ -2857,7 +2975,8 @@ function xpAnswerParts(run) {
    saved for them. */
 const xpHandedItems = {};               // "run:n" -> the item, for its buttons
 const XP_HANDED_KIND = { email: "Email", event: "Event", text: "Text to paste",
-                         file: "File", folder: "Folder", answer: "Answer" };
+                         file: "File", folder: "Folder", answer: "Answer",
+                         message: "Message", form: "Form to fill" };
 
 /* THE RESULT, TO OPEN (the user, 2026-10-27: not the log folder alone) -
    whatever it is: what the work handed over (an email opened in your mail,
@@ -2865,19 +2984,30 @@ const XP_HANDED_KIND = { email: "Email", event: "Event", text: "Text to paste",
    made - the deliverables its deck lists, else the folder it worked in. */
 function xpResultsRow(run) {
   const id = escapeHtml(run.id);
+  // Opened once the work is done (the user, 2026-11-01) - a way, once handed over.
   const handed = (run.handed || []).map((one, n) => {
     const key = `${run.id}:${n}`;
     xpHandedItems[key] = one;
     const at = escapeHtml(key);
-    const title = escapeHtml(one.title || XP_HANDED_KIND[one.kind] || one.kind || "");
+    // A WAY OF ONE THING (the user, 2026-11-01): opened once it is handed over.
+    const going = run.alive && !one.ready
+      ? ` disabled title="${escapeHtml("It opens once the work is done")}"` : "";
+    const title = escapeHtml([one.title || XP_HANDED_KIND[one.kind] || one.kind || "",
+                              one.way || ""].filter(Boolean).join(" - "));
     if (one.kind === "text" || one.kind === "answer") {
       return `<button type="button" class="small secondary" data-xp-handed-copy="${at}"
         title="${title}">${one.kind === "answer" ? "Copy the answer" : "Copy the text"}</button>`;
     }
+    if (one.kind === "email" && (one.actions || {}).reply) {
+      return `<button type="button" class="small" data-xp-handed-reply="${at}"
+        title="${title}"${going}>Reply to the email</button>`;
+    }
     const words = one.kind === "email" ? "Open the email" : one.kind === "event"
-      ? "Add the event" : one.kind === "folder" ? "Open the folder" : "Open the file";
+      ? "Add the event" : one.kind === "folder" ? "Open the folder"
+      : one.kind === "message" ? "Open the chat" : one.kind === "form" ? "Open the page"
+      : "Open the file";
     return `<button type="button" class="small" data-xp-handed-open="${at}"
-      title="${title}">${words}</button>`;
+      title="${title}"${going}>${words}${one.way ? ` (${escapeHtml(one.way)})` : ""}</button>`;
   });
   const made = (run.results || []).map((one) => `<button type="button" class="small${
       handed.length ? " secondary" : ""}" data-xp-open-result="${id}"
@@ -2904,13 +3034,35 @@ function xpHanded(run) {
   const items = run.handed || [];
   if (!items.length) return "";
   const id = escapeHtml(run.id);
+  // ONE THING, MORE THAN ONE WAY (the user, 2026-11-01): its ways together,
+  // in the order made; each opened as soon as it is handed over.
+  const ways = {};
+  items.forEach((one, n) => { if (one.choice) (ways[one.choice] = ways[one.choice] || []).push(n); });
+  const drawn = new Set();
+  const html = items.map((one, n) => {
+    if (drawn.has(n)) return "";
+    if (!one.choice) return xpHandedItem(run, one, n);
+    const all = ways[one.choice];
+    all.forEach((k) => drawn.add(k));
+    return `<div class="xp-handed-ways"><p class="xp-handed-choice"><strong>${escapeHtml(
+      "One thing, more than one way:")}</strong> ${escapeHtml(one.choice)} <span class="muted">${
+      escapeHtml("- pick the one you use")}</span></p>${all.map((k) => xpHandedItem(run, items[k], k))
+      .join(`<p class="xp-handed-or muted">${escapeHtml("Or this way:")}</p>`)}</div>`;
+  }).join("");
   return `<div class="xp-results xp-handed" data-xp-keep="handed:${id}">
-    <h4>What you get</h4>${items.map((one, n) => {
+    <h4>What you get</h4>${html}</div>`;
+}
+
+function xpHandedItem(run, one, n) {
+      // OPENED ONCE THE WORK IS DONE (the user, 2026-11-01): not while it
+      // works - but a way handed over, at once.
+      const going = Boolean(run.alive) && !one.ready;
       const key = `${run.id}:${n}`;
       xpHandedItems[key] = one;
       const acts = one.actions || {};
       const at = escapeHtml(key);
-      const open = (words) => `<button type="button" class="small" data-xp-handed-open="${at}">${
+      const open = (words) => `<button type="button" class="small" data-xp-handed-open="${at}"${
+        going ? ` disabled title="${escapeHtml("It opens once the work is done")}"` : ""}>${
         escapeHtml(words)}</button>`;
       const copy = acts.copy ? `<button type="button" class="small secondary"
         data-xp-handed-copy="${at}">Copy the text</button>` : "";
@@ -2922,7 +3074,21 @@ function xpHanded(run) {
           escapeHtml(one.cc.join(", "))}</dd>` : ""}<dt>Subject</dt><dd>${
           escapeHtml(one.subject || "")}</dd></dl><pre class="xp-handed-text">${
           escapeHtml(one.body || "")}</pre>`;
-        buttons = open(`Open in ${acts.in || "your mail"}`) + copy + (acts.whole === false
+        const reply = acts.reply || null;
+        if (one.reply_to) {
+          body = `<p class="muted xp-handed-answers">In reply to ${escapeHtml([
+            one.reply_to.from, one.reply_to.subject, one.reply_to.date].filter(Boolean)
+            .join(" · "))}</p>` + body;
+        }
+        buttons = reply
+          ? `<button type="button" class="small" data-xp-handed-reply="${at}"${
+              going ? ` disabled title="${escapeHtml("It opens once the work is done")}"` : ""}>${
+              escapeHtml(`Reply in ${reply.in || acts.in || "your mail"}`)}</button>${
+              copy}<button type="button" class="small secondary" data-xp-handed-open="${at}"
+              data-xp-how="new"${going ? " disabled" : ""}>As a new message</button><span class="muted">${reply.found === "thread"
+              ? "<span>opens the email it answers, once you have checked it, and copies the reply - you send it</span>"
+              : "<span>opens a search for the email it answers, once you have checked it, and copies the reply - you send it</span>"}</span>`
+          : open(`Open in ${acts.in || "your mail"}`) + copy + (acts.whole === false
           ? `<span class="muted">too long for the link: copy the text, then paste it into
             the message</span>` : `<span class="muted">a new message, filled in - you send it</span>`);
       } else if (one.kind === "event") {
@@ -2935,19 +3101,133 @@ function xpHanded(run) {
       } else if (one.kind === "text" || one.kind === "answer") {
         body = `<pre class="xp-handed-text">${escapeHtml(one.text || "")}</pre>`;
         buttons = copy;
+      } else if (one.kind === "message") {
+        // A MESSAGE (the user, 2026-11-01): the chat with them opened, the
+        // message copied - or filled in where the app takes it; they send it.
+        body = `<dl class="xp-handed-mail"><dt>To</dt><dd>${escapeHtml(one.to || "")}</dd>
+          <dt>In</dt><dd>${escapeHtml(acts.in || one.app || "")}</dd></dl>
+          <pre class="xp-handed-text">${escapeHtml(one.text || "")}</pre>`;
+        buttons = open(`Open the chat in ${acts.in || "the app"}`) + copy
+          + `<span class="muted">the chat opens and the message is copied - you send it</span>`;
+      } else if (one.kind === "form") {
+        // A FORM: the page opened in your own browser, each part to paste
+        // into its box - the first copied already.
+        body = `<p class="muted"><code>${escapeHtml(one.url || "")}</code></p>${(one.parts || [])
+          .map((part, k) => `<p class="xp-handed-how"><strong>${escapeHtml(
+            `${k + 1}. ${part.field || ""}`)}</strong></p><pre class="xp-handed-text">${
+            escapeHtml(part.text || "")}</pre>`).join("")}`;
+        buttons = open("Open the page")
+          + `<span class="muted">it opens in your browser, the first part copied - the rest from the note on your desktop</span>`;
       } else {
         body = `<p><code>${escapeHtml(one.path || "")}</code></p>`;
         buttons = open(one.kind === "folder" ? "Open the folder" : "Open it");
       }
+      const told = (one.how ? `<p class="xp-handed-how"><strong>How to use it:</strong> ${
+        escapeHtml(one.how)}</p>` : "") + ((one.check || []).length
+        ? `<p class="xp-handed-how"><strong>Check before you use it:</strong></p><ul class="xp-reply-list">${
+          one.check.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : "");
       return `<div class="xp-handed-item"><p class="xp-handed-head"><span class="xp-way">${
         escapeHtml(XP_HANDED_KIND[one.kind] || one.kind)}</span> <strong>${
-        escapeHtml(one.title || "")}</strong></p>${body}
+        escapeHtml(one.title || "")}</strong>${one.way ? ` <span class="xp-handed-wayname">${
+        escapeHtml(one.way)}</span>` : ""}${run.alive && one.ready ? ` <span class="muted">${
+        escapeHtml("Ready - the work goes on with the next way")}</span>` : ""}</p>${body}${told}
         <p class="xp-handed-buttons">${buttons}</p></div>`;
-    }).join("")}</div>`;
+}
+
+/* BEFORE A REPLY IS OPENED (the user, 2026-11-01: two emails may share a
+   subject, and Reply answers whoever is in the thread opened): which email
+   it answers, which one opens and how sure that is, what is easy to miss -
+   read first; then opened, the reply copied. */
+function xpReplyCheck(one, key) {
+  const acts = one.actions || {};
+  const reply = acts.reply || {};
+  const at = escapeHtml(key);
+  const to = [...(one.to || []), ...(one.cc || [])];
+  const answers = one.reply_to
+    ? [one.reply_to.from, one.reply_to.subject, one.reply_to.date].filter(Boolean).join(" · ")
+    : reply.answers || "";
+  const lines = [];
+  if (reply.found === "search") {
+    lines.push(`<p class="xp-reply-warn"><span>${reply.differs
+      ? "The email of that subject you opened shows none of the people it is for - a search for its subject opens instead. Open the one from the sender above."
+      : "The email itself was not found among the mail you opened lately - a search for its subject opens. Open the one from the sender above."}</span></p>`);
+  } else {
+    lines.push(`<p>${escapeHtml(`It opens “${reply.title || ""}”, which you opened ${
+      localStamp(reply.at) || reply.at || ""}`)}</p>`);
+    lines.push(reply.check === "matched"
+      ? `<p class="xp-reply-ok">${escapeHtml(`Checked: ${reply.matched} is on that page`)}</p>`
+      : `<p class="xp-reply-warn"><span>Not checked: nothing was read from that page while you had it open - look at who wrote it.</span></p>`);
+  }
+  if ((reply.same_subject || 0) > 1) {
+    lines.push(`<p class="xp-reply-warn">${escapeHtml(
+      `${reply.same_subject} emails you opened have this subject - make sure it is the one above.`)}</p>`);
+  }
+  const list = [
+    `<li><span>The right email: its sender and date are the ones above - and you reply to the right message in the thread (Reply answers the last one).</span></li>`,
+    to.length
+      ? `<li>${escapeHtml(`Who it goes to: Reply sends to the sender alone; this reply is for ${
+          to.join(", ")} - use Reply all, or add them.`)}</li>`
+      : `<li><span>Who it goes to: look at the To and Cc lines once you press Reply.</span></li>`,
+    reply.account
+      ? `<li>${escapeHtml(`From your account ${reply.account}.`)}</li>`
+      : `<li><span>From the right account, if you have more than one.</span></li>`,
+    `<li><span>Pasted as plain text (Ctrl+Shift+V), and signed once - your mail may add your signature below the one in the reply.</span></li>`,
+  ];
+  for (const line of (one.check || []).slice().reverse()) {
+    list.unshift(`<li>${escapeHtml(line)}</li>`);
+  }
+  if (/attach|enclos|附件|附上/i.test(one.body || "")) {
+    list.push(`<li><span>The attachment the reply mentions - the agent cannot attach it.</span></li>`);
+  }
+  return `<div class="xp-reply-check" data-xp-reply-check="${at}">
+    <p><strong>This reply answers:</strong> ${escapeHtml(answers)}</p>
+    ${lines.join("")}
+    <p class="muted"><span>Press Reply (or Reply all), paste the reply (Ctrl+V), go through this list, then send it yourself.</span></p>
+    <p><strong>Before you send:</strong></p>
+    <ul class="xp-reply-list">${list.join("")}</ul>
+    <p class="xp-handed-buttons"><button type="button" class="small" data-xp-handed-reply-go="${at}">${
+      escapeHtml(`Open it in ${reply.in || "your mail"} and copy the reply`)}</button>
+      <button type="button" class="small secondary" data-xp-reply-cancel="${at}">Cancel</button></p>
+  </div>`;
 }
 
 document.addEventListener("click", async (event) => {
   if (!event.target.closest) return;
+  const askAt = event.target.closest("[data-xp-handed-reply]");
+  if (askAt) {
+    const key = askAt.dataset.xpHandedReply;
+    const open = document.querySelector(`[data-xp-reply-check="${CSS.escape(key)}"]`);
+    if (open) { open.remove(); return; }
+    (askAt.closest("p") || askAt).insertAdjacentHTML("afterend",
+      xpReplyCheck(xpHandedItems[key] || {}, key));
+    return;
+  }
+  const cancelAt = event.target.closest("[data-xp-reply-cancel]");
+  if (cancelAt) {
+    const box = cancelAt.closest(".xp-reply-check");
+    if (box) box.remove();
+    return;
+  }
+  const replyAt = event.target.closest("[data-xp-handed-reply-go]");
+  if (replyAt) {
+    const key = replyAt.dataset.xpHandedReplyGo;
+    const one = xpHandedItems[key] || {};
+    const at = key.lastIndexOf(":");
+    let copied = true;
+    try {
+      await navigator.clipboard.writeText((one.actions || {}).copy || "");
+    } catch (err) { copied = false; }
+    try {
+      // In your own browser, where you are signed in: you reply and send there.
+      await api.post("/api/work/handed/open", { run: key.slice(0, at),
+                                                n: Number(key.slice(at + 1)), how: "reply" });
+      toast(copied ? "The reply is copied: press Reply, then paste it"
+        : "Opened - copy the reply with Copy the text, then paste it", copied ? "info" : "error");
+      const box = replyAt.closest(".xp-reply-check");
+      if (box) box.remove();
+    } catch (err) { toast(err.message, "error"); }
+    return;
+  }
   const openAt = event.target.closest("[data-xp-handed-open]");
   const copyAt = event.target.closest("[data-xp-handed-copy]");
   if (!openAt && !copyAt) return;
@@ -2964,7 +3244,8 @@ document.addEventListener("click", async (event) => {
   try {
     // Opened by the agent in your own browser - where you are signed in -
     // not in this window.
-    await api.post("/api/work/handed/open", { run: key.slice(0, at), n: Number(key.slice(at + 1)) });
+    await api.post("/api/work/handed/open", { run: key.slice(0, at), n: Number(key.slice(at + 1)),
+                                              how: openAt.dataset.xpHow || "" });
   } catch (err) { toast(err.message, "error"); }
 });
 
@@ -3102,6 +3383,8 @@ const XP_CALLS_WHO = [
   // The two final checks: each a kind of its own (runner.CALL_WHO).
   { who: "quality check", label: "quality check", colour: "var(--xp-call-quality)" },
   { who: "privacy check", label: "privacy check", colour: "var(--xp-call-privacy)" },
+  // The quick way's monitor (runner._Monitor).
+  { who: "monitor", label: "monitor", colour: "var(--xp-call-monitor)" },
 ];
 // All of them together: a line of their own, in the page's ink - not a hue.
 const XP_CALLS_TOTAL = { who: "", label: "total", colour: "var(--ink)" };
@@ -3782,7 +4065,8 @@ window.addEventListener("resize", () => {
 const XP_LIVE_EVERY = 1000;        // ms between looks while it is followed
 const XP_LIVE_KEEP = 2000;         // events held on the page
 const XP_LIVE_SHOWN = 600;         // lines drawn; older ones are in the run's log
-const XP_LIVE_WHO = { worker: "worker", reviewer: "reviewer", run: "run", you: "you" };
+const XP_LIVE_WHO = { worker: "worker", reviewer: "reviewer", run: "run", you: "you",
+                      monitor: "monitor" };
 const XP_LIVE_STATE = { going: "going", paused: "paused", waiting_for_you: "waiting for you",
                         ended: "ended", interrupted: "interrupted", starting: "starting" };
 
@@ -5341,6 +5625,15 @@ function xpDrawTitleRun(going) {
   }
 }
 
+/* The tree of another try chosen (the user, 2026-10-31): drawn in its place. */
+document.addEventListener("change", (event) => {
+  if (!event.target || event.target.id !== "xp-tree-try") return;
+  experienceState.workTreeKey = event.target.value;
+  experienceState.workStage = null;
+  experienceState.workCard = null;
+  xpLoadRuns(true);
+});
+
 async function xpLoadRuns(force = false) {
   const unit = experienceState.unit;
   const panel = $("#xp-work");
@@ -5357,8 +5650,13 @@ async function xpLoadRuns(force = false) {
     experienceState.limits = limits;
   } catch (err) { /* the panel goes on without them */ }
   runs = runs || [];
+  // A TRY'S OWN TREE (the user, 2026-10-31): each try of a to-do handed over
+  // again has its own - the newest try's shown, or the one chosen.
+  const trees = [...new Set(runs.map((run) => run.tree || ""))];
+  if (!trees.includes(experienceState.workTreeKey)) experienceState.workTreeKey = trees[0] || "";
   try {
-    experienceState.workTree = await api.get(`/api/work/tree?unit=${encodeURIComponent(unit)}`);
+    experienceState.workTree = await api.get(`/api/work/tree?unit=${encodeURIComponent(unit)}${
+      experienceState.workTreeKey ? `&tree=${encodeURIComponent(experienceState.workTreeKey)}` : ""}`);
   } catch (err) { experienceState.workTree = null; }
   // Another piece of work chosen while this one was asked for: its own
   // drawing wins.
@@ -5496,7 +5794,13 @@ async function xpLoadRuns(force = false) {
           name, above.</span>`
       : `<button type="button" class="small" id="xp-start">Start working on this</button>
         ${xpSoundBox('id="xp-sound"', experienceState.startSound)}`}
-    ${(tree.cards || []).length ? `<h3>The agents' work on it</h3>
+    ${(tree.cards || []).length || trees.length > 1 ? `<h3>The agents' work on it</h3>
+      ${trees.length > 1 ? `<p class="xp-tree-try"><label>The tree of
+        <select id="xp-tree-try">${trees.map((key) => {
+          const one = runs.find((run) => (run.tree || "") === key) || {};
+          return `<option value="${escapeHtml(key)}"${key === experienceState.workTreeKey
+            ? " selected" : ""}>V${escapeHtml(String(one.attempt || 1))}</option>`;
+        }).join("")}</select></label></p>` : ""}
       <div id="xp-work-tree">${xpGraphSvg(tree, "work")}</div>
       <div id="xp-work-stage"></div>` : ""}
     ${runs.map((run, i) => xpRun(run, !going, i === 0)).join("")}`;
@@ -5530,6 +5834,14 @@ async function xpLoadRuns(force = false) {
   // And the view as it was: the window, every box, every fold, the text
   // selected.
   xpViewPut(panel, view);
+  if (experienceState.openRun) {
+    const asked = panel.querySelector(`[data-xp-run-box="${CSS.escape(experienceState.openRun)}"]`);
+    if (asked) {
+      asked.open = true;
+      asked.scrollIntoView({ block: "start" });
+    }
+    experienceState.openRun = "";
+  }
   xpRunsTimer(going);
   if (typed && typed.key) {
     const again = $(`#xp-work ${typed.key}`);
@@ -5610,6 +5922,53 @@ $("#experience")?.addEventListener("click", async (event) => {
     }
     return;
   }
+  // CLEAR A PROJECT'S WORK: asked first, in its row, with what would go.
+  const clearAt = event.target.closest("[data-xp-clear], [data-xp-clear-yes], [data-xp-clear-no]");
+  if (clearAt) {
+    event.stopPropagation();
+    if (clearAt.dataset.xpClear) {
+      experienceState.clearing = clearAt.dataset.xpClear;
+      experienceState.removing = null;
+      (experienceState.clearSeen || {})[clearAt.dataset.xpClear] = undefined;
+      xpClearPreview(clearAt.dataset.xpClear);
+    } else if (clearAt.dataset.xpClearNo) {
+      experienceState.clearing = null;
+    } else {
+      const unit = clearAt.dataset.xpClearYes;
+      experienceState.clearing = null;
+      try {
+        await xpClear(unit);
+        toast("Cleared - in the Recycle Bin");
+      } catch (err) {
+        toast(err.message);
+      }
+      await loadExperience(false);
+      return;
+    }
+    xpDrawUnits();
+    return;
+  }
+  // REMOVE A TRY: asked first, in its own panel.
+  const runRemoveAt = event.target.closest("[data-xp-run-remove], [data-xp-run-remove-yes], [data-xp-run-remove-no]");
+  if (runRemoveAt) {
+    event.stopPropagation();
+    if (runRemoveAt.dataset.xpRunRemove) {
+      experienceState.removingRun = runRemoveAt.dataset.xpRunRemove;
+    } else if (runRemoveAt.dataset.xpRunRemoveNo) {
+      experienceState.removingRun = null;
+    } else {
+      const run = runRemoveAt.dataset.xpRunRemoveYes;
+      experienceState.removingRun = null;
+      try {
+        await api.post("/api/work/runs/remove", { run });
+        toast("Removed");
+      } catch (err) {
+        toast(err.message);
+      }
+    }
+    await xpLoadRuns(true);
+    return;
+  }
   // REMOVE A PROJECT: asked first, in its row.
   const removeAt = event.target.closest("[data-xp-remove], [data-xp-remove-yes], [data-xp-remove-no]");
   if (removeAt) {
@@ -5620,8 +5979,12 @@ $("#experience")?.addEventListener("click", async (event) => {
       experienceState.removing = null;
     } else {
       const unit = removeAt.dataset.xpRemoveYes;
+      // Cleared too, when the user ticked it - first, while it is still listed.
+      const alsoClear = Boolean((removeAt.closest(".xp-unit-ask")
+        .querySelector("[data-xp-remove-clear]") || {}).checked);
       experienceState.removing = null;
       try {
+        if (alsoClear) await xpClear(unit);
         const said = await api.post("/api/experience/remove", { unit });
         if (said.error) toast(said.error);
         else {
@@ -6126,6 +6489,7 @@ $$("#tabs button").forEach((button) => {
     if (activeTab === "connections") loadConnections();
     if (activeTab === "experience") loadExperience(true);
     if (activeTab === "learning") loadLearning();
+    if (activeTab === "society") loadSociety();
     if (activeTab === "resourcedebug") rdTick();
     if (activeTab === "overview") ovCentreTheCurrent();
     refresh();
@@ -7458,6 +7822,20 @@ function startOfDay(date) {
   return copy;
 }
 
+/* THE DAY n DAYS ON, ON THE CALENDAR, at its own midnight. A day is not
+   24 hours where the clocks change - 2026-11-01 had 25, 2027-03-14 has 23 -
+   and a day reckoned as 24 hours on landed on the evening before: November's
+   grid showed the 1st twice and every day after it a day behind. */
+function dayAfter(date, days = 1) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+}
+
+/* Where a moment is on its day's clock, in minutes from midnight - not the
+   time since midnight, which an hour gone back or skipped puts an hour out. */
+function clockMinutes(date) {
+  return date.getHours() * 60 + date.getMinutes() + date.getSeconds() / 60;
+}
+
 /* -------------------------------------------------------------- calendar
    Section 10, as amended. The calendar is a dated grid drawn from the date,
    not from the data: an empty month still shows its days.
@@ -7501,12 +7879,12 @@ function startOfWeek(date) {
 function periodBounds() {
   if (calendarState.view === "day") {
     const from = startOfDay(calendarState.selected);
-    return { from, to: new Date(from.getTime() + DAY_MS), monthStart: from };
+    return { from, to: dayAfter(from), monthStart: from };
   }
   const monthStart = new Date(calendarState.anchor.getFullYear(),
                               calendarState.anchor.getMonth(), 1);
   const from = startOfWeek(monthStart);
-  const to = new Date(from.getTime() + 42 * DAY_MS);
+  const to = dayAfter(from, 42);
   return { from, to, monthStart };
 }
 
@@ -7528,8 +7906,8 @@ async function loadCalendar() {
   // the Debugger rather than in the user's own diary.
   // Fetch a little either side so tasks near the edges still appear.
   const data = await api.get(
-    `/api/tasks?limit=500&expand=1&start=${encodeURIComponent(new Date(from.getTime() - DAY_MS).toISOString())}`
-    + `&end=${encodeURIComponent(new Date(to.getTime() + DAY_MS).toISOString())}`);
+    `/api/tasks?limit=500&expand=1&start=${encodeURIComponent(dayAfter(from, -1).toISOString())}`
+    + `&end=${encodeURIComponent(dayAfter(to, 1).toISOString())}`);
   calendarState.tasks = data.tasks || [];
   renderCalendar();
 }
@@ -7848,19 +8226,22 @@ function eventMinutes(task) {
 function renderDayView() {
   const day = startOfDay(calendarState.selected);
   const rows = [];
+  // THE DAY BY ITS CLOCK: each row a half hour as the clock shows it - an
+  // hour the clocks go back over is one row, its events side by side; an
+  // hour they skip is a row with no moment of its own.
   for (let slot = 0; slot < 48; slot += 1) {
-    const at = new Date(day.getTime() + slot * 30 * 60000);
+    const at = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, slot * 30);
+    const shown = new Date(2000, 0, 1, 0, slot * 30).toLocaleTimeString(undefined,
+      { hour: "2-digit", minute: "2-digit" });
     const hour = slot % 2 === 0;
     rows.push(`<div class="cal-slot${hour ? " hour" : ""}" data-cal-slot="${at.getTime()}"
-      title="Add an event at ${escapeHtml(at.toLocaleTimeString(undefined,
-        { hour: "2-digit", minute: "2-digit" }))}">${hour ? `<span class="cal-slot-time">${
-        escapeHtml(at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }))
-        }</span>` : ""}</div>`);
+      title="Add an event at ${escapeHtml(shown)}">${hour ? `<span class="cal-slot-time">${
+        escapeHtml(shown)}</span>` : ""}</div>`);
   }
   // Side by side where they overlap: each in the first lane free at its start.
   const items = tasksOn(day).map((task) => {
     const start = new Date(task.scheduled_at);
-    const from = (start - day) / 60000;
+    const from = clockMinutes(start);
     return { task, from, to: from + eventMinutes(task) };
   });
   const laneEnds = [];
@@ -7878,7 +8259,7 @@ function renderDayView() {
     taskChip(item.task)}</div>`).join("");
   const now = new Date();
   const line = sameDay(now, day) ? `<div class="cal-now" style="top:${
-    ((now - day) / 60000 / 30) * CAL_ROW_PX}px" aria-hidden="true"></div>` : "";
+    (clockMinutes(now) / 30) * CAL_ROW_PX}px" aria-hidden="true"></div>` : "";
   $("#calendar-surface").innerHTML = `
     <div class="cal-dayview" id="cal-dayview">
       <div class="cal-slots">${rows.join("")}</div>
@@ -7961,7 +8342,7 @@ function renderMonth() {
   for (let week = 0; week < 6; week += 1) {
     const days = [];
     for (let day = 0; day < 7; day += 1) {
-      const date = new Date(from.getTime() + (week * 7 + day) * DAY_MS);
+      const date = dayAfter(from, week * 7 + day);
       const outside = date.getMonth() !== monthStart.getMonth();
       const dayTasks = tasksOn(date);
       const key = String(startOfDay(date).getTime());
@@ -10973,16 +11354,67 @@ const UPDATE_CHOICES = {
   off: "Don't look for updates",
 };
 
+/* A DOWNLOAD UNDER WAY (the user, 2026-10-30): how much of how much, how
+   fast and about how long is left - or, broken off, that it carries on by
+   itself. Said while it runs, never "looking for newer versions". */
+function downloadWords(d) {
+  const mb = (n) => (Number(n || 0) / 1048576).toFixed(1);
+  if (d.stopped) {
+    return [d.total
+      ? `The download of ${d.tag} stopped at ${mb(d.done)} of ${mb(d.total)} MB: it carries on from there by itself.`
+      : `The download of ${d.tag} stopped at ${mb(d.done)} MB: it carries on from there by itself.`];
+  }
+  const words = [d.total
+    ? `Downloading ${d.tag}: ${mb(d.done)} of ${mb(d.total)} MB (${Math.floor((100 * d.done) / d.total)}%).`
+    : `Downloading ${d.tag}: ${mb(d.done)} MB.`];
+  if (d.waiting) {
+    words.push(`The connection broke off: it carries on in ${d.waiting} s.`);
+  } else if (d.per_second) {
+    const speed = (d.per_second / 1048576).toFixed(2);
+    const left = d.left_seconds;
+    if (left === null || left === undefined) words.push(`${speed} MB/s.`);
+    else if (left < 60) words.push(`${speed} MB/s, less than a minute left.`);
+    else if (left < 3600) words.push(`${speed} MB/s, about ${Math.round(left / 60)} min left.`);
+    else {
+      words.push(`${speed} MB/s, about ${Math.floor(left / 3600)} h ${Math.floor((left % 3600) / 60)} min left.`);
+    }
+  }
+  if (d.carried_on_from) words.push(`Carried on from ${mb(d.carried_on_from)} MB, where it had got to.`);
+  return words;
+}
+
+/* EACH STEP, WITH ITS VERSION (the user, 2026-10-31): making ready with
+   how many of its files, installing, waiting for work, starting - a
+   sentence each, so each is put in the display language. */
+function nowWords(said) {
+  const now = said.now || {};
+  if (now.what === "making_ready") {
+    return now.total
+      ? `Making ${now.tag} ready: ${now.done} of ${now.total} files (${Math.floor((100 * now.done) / now.total)}%).`
+      : `Making ${now.tag} ready…`;
+  }
+  if (now.what === "installing") return `Installing ${now.tag}…`;
+  if (now.what === "waiting_for_work") return `${now.tag} is installed once the work running now has finished.`;
+  if (now.what === "starting") return `Starting ${now.tag}…`;
+  return `Now: ${said.doing}.`;
+}
+
+// While anything is under way and Settings is shown: asked again every 2 seconds.
+let updatesFollowing = null;
+
 function renderUpdates(said) {
   const line = $("#updates-status");
   if (!line || !said) return;
   const parts = [`This is version ${said.current}.`];
+  const download = said.download || null;
   if (said.mode === "off") {
     parts.push("Updates are not looked for.");
+  } else if (download && !download.stopped) {
+    parts.push(...downloadWords(download));
   } else if (said.doing === "checking") {
     parts.push("Looking for newer versions…");
   } else if (said.doing) {
-    parts.push(`Now: ${said.doing}.`);
+    parts.push(nowWords(said));
   } else if (said.ready) {
     parts.push(`Version ${said.ready} is ready: it is used from the next start, `
       + "or when you have been away a while.");
@@ -10994,8 +11426,22 @@ function renderUpdates(said) {
   } else if (said.checked_at) {
     parts.push("It is the latest.");
   }
+  if (download && download.stopped && said.mode !== "off") parts.push(...downloadWords(download));
   if (said.error) parts.push(`The last look failed: ${said.error}`);
-  line.textContent = parts.join(" ");
+  // A sentence each, so each is put in the display language.
+  line.innerHTML = "";
+  parts.forEach((words, at) => {
+    if (at) line.appendChild(document.createTextNode(" "));
+    const one = document.createElement("span");
+    one.textContent = words;
+    line.appendChild(one);
+  });
+  if (((download && !download.stopped) || said.doing) && said.mode !== "off" && !updatesFollowing) {
+    updatesFollowing = setTimeout(() => {
+      updatesFollowing = null;
+      if (line.isConnected && line.offsetParent !== null) refreshUpdates();
+    }, 2000);
+  }
   renderUpdateRestart(said);
   renderUpdateVersions(said);
   showWhatIsNew(said.just_updated);
@@ -11140,6 +11586,150 @@ async function refreshUpdates() {
   try { renderUpdates(await api.get("/api/updates")); }
   catch (err) { console.warn("updates", err); }
 }
+
+/* THE BROWSER EXTENSION (Settings > General, under Updates; the user,
+   2026-11-01): whether it is made and which browsers know it - and Install,
+   which makes it and opens its install page: what to do in each browser. */
+const extensionState = { said: null };
+
+function renderExtension(said) {
+  extensionState.said = said || null;
+  const line = $("#extension-status");
+  if (!line || !said) return;
+  const known = said.connected || [];
+  line.textContent = said.prepared && known.length
+    ? `Made, and known to: ${known.join(", ")}. Add it to your browser from its install page.`
+    : "Not installed yet.";
+  const remove = $("#extension-remove");
+  if (remove) remove.hidden = !said.prepared;
+  const install = $("#extension-install");
+  if (install) install.textContent = said.prepared ? "Open its install page"
+    : "Install the browser extension";
+}
+
+async function refreshExtension() {
+  try { renderExtension(await api.get("/api/extension")); }
+  catch (err) { console.warn("extension", err); }
+  refreshEditorMenus();
+}
+
+/* RIGHT-CLICK IN THE USER'S EDITORS (Settings > General): each found here -
+   VS Code and its kin, Sublime Text, the JetBrains IDEs - with Install, or
+   Remove once it is in. */
+const EDITOR_KIND = { vscode: "", sublime: "", jetbrains: "JetBrains" };
+
+function renderEditorMenus(programs, said) {
+  const list = $("#editor-menus-list");
+  if (!list) return;
+  if (!(programs || []).length) {
+    list.innerHTML = `<li class="muted">No editor of these was found here: VS Code, Cursor,
+      VSCodium, Windsurf, Sublime Text, a JetBrains IDE.</li>`;
+    return;
+  }
+  list.innerHTML = programs.map((one) => `<li><span class="editor-menus-name">${
+      escapeHtml(one.name)}</span>${EDITOR_KIND[one.kind] ? ` <span class="muted">${
+      escapeHtml(EDITOR_KIND[one.kind])}</span>` : ""} <span class="muted">${one.installed
+      ? escapeHtml("In it") : ""}</span> <button type="button" class="small${
+      one.installed ? " secondary" : ""}" data-editor-menu="${escapeHtml(one.key)}" data-editor-in="${
+      one.installed ? "1" : ""}">${escapeHtml(one.installed ? "Remove" : "Install")}</button></li>`)
+    .join("") + (said && said.restart ? `<li class="muted">${escapeHtml(said.restart)}</li>` : "");
+}
+
+async function refreshEditorMenus() {
+  try { renderEditorMenus((await api.get("/api/editor_menus")).programs); }
+  catch (err) { console.warn("editor_menus", err); }
+}
+
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest && event.target.closest("[data-editor-menu]");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const said = await api.post(button.dataset.editorIn ? "/api/editor_menus/remove"
+      : "/api/editor_menus/install", { key: button.dataset.editorMenu });
+    renderEditorMenus(said.programs, said);
+  } catch (err) {
+    toast(err.message, "error");
+    button.disabled = false;
+  }
+});
+
+function extensionSteps(said) {
+  const folders = said.folders || {};
+  const where = (flavor) => `<p class="extension-folder"><code>${escapeHtml(folders[flavor] || "")}</code></p>
+    <p class="ov-lp-buttons"><button type="button" class="small secondary" data-extension-folder="${flavor}">
+      Show the folder</button> <button type="button" class="small secondary" data-extension-copy="${flavor}">
+      Copy its path</button></p>`;
+  const open = (browser, name) => `<button type="button" class="small" data-extension-page="${browser}">${
+    escapeHtml(`Open in ${name}`)}</button>`;
+  return `<p class="muted">The extension is made, and this computer's browsers know the agent${
+      (said.connected || []).length ? `: ${escapeHtml(said.connected.join(", "))}` : ""}.
+      Now add it to your browser - the clicks there are yours.</p>
+    <h4>Chrome, Edge, Brave, Vivaldi</h4>
+    <ol class="extension-steps">
+      <li>Open the extensions page: ${open("chrome", "Chrome")} ${open("edge", "Edge")} ${
+        open("brave", "Brave")} <span class="muted">- or type chrome://extensions in the address bar</span></li>
+      <li>Turn on Developer mode, at its top right.</li>
+      <li>Press Load unpacked, and choose this folder:${where("chromium")}</li>
+    </ol>
+    <h4>Firefox</h4>
+    <ol class="extension-steps">
+      <li>${open("firefox", "Firefox")} <span class="muted">- or type about:debugging in the address bar,
+        then This Firefox</span></li>
+      <li>Press Load Temporary Add-on, and choose manifest.json in this folder:${where("firefox")}</li>
+      <li class="muted">Firefox keeps it until it restarts - until the extension is in Firefox's store.</li>
+    </ol>
+    <h4>Try it</h4>
+    <p>Right-click any page - or text you selected on it - and pick Delegate work.</p>`;
+}
+
+async function openExtensionBox() {
+  const box = $("#extension-box");
+  if (!box) return;
+  $("#extension-body").innerHTML = `<p class="muted delegate-wait"><span class="sb-spin" aria-hidden="true"></span>
+    Making the extension, and connecting it to your browsers&hellip;</p>`;
+  if (!box.open) box.showModal();
+  try {
+    const said = await api.post("/api/extension/install", {});
+    renderExtension(said);
+    $("#extension-body").innerHTML = extensionSteps(said);
+  } catch (err) {
+    $("#extension-body").innerHTML = `<p class="delegate-error">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+document.addEventListener("click", async (event) => {
+  if (!event.target.closest) return;
+  if (event.target.closest("#extension-install")) { openExtensionBox(); return; }
+  if (event.target.closest("#extension-done")) { $("#extension-box").close(); return; }
+  if (event.target.closest("#extension-remove")) {
+    try { renderExtension(await api.post("/api/extension/remove", {})); }
+    catch (err) { toast(err.message, "error"); }
+    return;
+  }
+  const page = event.target.closest("[data-extension-page]");
+  const folder = event.target.closest("[data-extension-folder]");
+  const copy = event.target.closest("[data-extension-copy]");
+  if (!(page || folder || copy)) return;
+  try {
+    if (page) {
+      const said = await api.post("/api/extension/open", { what: "page",
+        browser: page.dataset.extensionPage });
+      if (!said.opened) toast("That browser was not found here - type its extensions page's address in it");
+    } else if (folder) {
+      await api.post("/api/extension/open", { what: "folder", browser:
+        folder.dataset.extensionFolder === "firefox" ? "firefox" : "chrome" });
+    } else {
+      const said = await api.post("/api/extension/open", { what: "copy", browser:
+        copy.dataset.extensionCopy === "firefox" ? "firefox" : "chrome" });
+      if (said.copied) {
+        const was = copy.textContent;
+        copy.textContent = "Copied";
+        setTimeout(() => { copy.textContent = was; }, 1500);
+      }
+    }
+  } catch (err) { toast(err.message, "error"); }
+});
 
 /* Asked for, a version is made ready in the background: Settings says how
    far, and offers Restart now once it is ready. */
@@ -11886,6 +12476,7 @@ function renderSettings(data) {
   const updatesHost = $("#settings-form-updates") || container;
   if (updatesHost !== container) updatesHost.innerHTML = "";
   if (typeof refreshUpdates === "function") refreshUpdates();
+  if (typeof refreshExtension === "function") refreshExtension();
   container.innerHTML = "";
   if (display !== container) display.innerHTML = "";
   if (avatarHost) avatarHost.innerHTML = "";
@@ -13047,6 +13638,15 @@ function renderCxPerson(person) {
     <h4>What happened</h4>
     ${activity ? `<ul class="cx-list-plain">${activity}</ul>`
       : `<p class="muted">No news yet.</p>`}
+    ${(person.writing || []).length ? `<h4>How you write to them</h4>
+      <p class="muted">Your own words to them, kept from your messages - the latest few - so
+        what the agent writes for you to them is written as you write.</p>
+      <ul class="cx-list-plain cx-writing">${person.writing.map((one) => `<li>
+        <span class="muted">${escapeHtml(one.at ? cxWhen(one.at) : "")}${
+          one.channel ? ` · ${escapeHtml(one.channel)}` : ""}</span>
+        <span class="cx-writing-text">${escapeHtml(one.text)}</span>
+        <button type="button" class="link x-remove" data-cx-writing-forget="${escapeHtml(one.id)}"
+          title="Let this one go">&times;</button></li>`).join("")}</ul>` : ""}
     <h4>Changes to this person</h4>
     ${actions ? `<ul class="cx-list-plain cx-actions">${actions}</ul>`
       : `<p class="muted">No changes yet.</p>`}`;
@@ -13458,6 +14058,16 @@ $("#connections").addEventListener("click", async (event) => {
     getPicture.disabled = true;
     await cxGetPicture(person.id);
     getPicture.disabled = false;
+    return;
+  }
+  const forget = event.target.closest("[data-cx-writing-forget]");
+  if (forget && person) {
+    try {
+      await api.post("/api/connections/writing/forget", { id: forget.dataset.cxWritingForget });
+    } catch (err) {
+      toast(err.message);
+    }
+    await openCxPerson(person.id);
     return;
   }
   const moveAsk = event.target.closest("[data-cx-move-ask]");
@@ -19146,14 +19756,58 @@ function drawWhatIsRunning(whole) {
    open ones are shown. */
 let ovTodos = [];
 let ovTodoDrawn = "";                     // what the box was last written with
+/* WORK ASSIGNED (the user, 2026-11-02: "overview在to do左边加个panel, 是works
+   assigned, 形式和to do差不多，但是delegate work (不是通过to do的) 都会放在这里"):
+   each piece of work delegated not from a to-do, with where it stands - its
+   work status opened out, as a to-do's is. */
+let ovAssigned = [];
+let ovAssignedDrawn = "";
 
 async function loadTodos() {
   try {
-    ovTodos = (await api.get("/api/todos")).todos || [];
+    const [todos, assigned] = await Promise.all([
+      api.get("/api/todos"), api.get("/api/work/assigned").catch(() => null)]);
+    ovTodos = todos.todos || [];
+    if (assigned) {
+      ovAssigned = assigned.assigned || [];
+      // Opened out from the start - its work status is what it is listed for.
+      for (const one of ovAssigned) {
+        if (!delegateState.collapsed.has(one.id)) delegateState.tracking.add(one.id);
+      }
+    }
   } catch (_err) {
-    return;                               // the list stays as it was
+    return;                               // the lists stay as they were
   }
   ovPlaceTodos();
+}
+
+function ovAssignedBox() {
+  const items = ovAssigned.map((one) => {
+    const open = delegateState.tracking.has(one.id);
+    return `<li class="ov-todo-item" data-todo="${escapeHtml(one.id)}">
+      <span class="ov-todo-text">${escapeHtml(one.text)}</span>${
+        one.detail ? `<span class="muted ov-todo-detail">${escapeHtml(one.detail)}</span>` : ""}
+      <span class="ov-todo-actions"><button type="button" class="small ov-todo-track"
+        aria-expanded="${open}" title="Where it stands now">${open ? "&#9662;" : "&#9656;"}
+        Work status</button></span>${ovTodoTracked(one)}</li>`;
+  }).join("");
+  return `<div class="ov-todo-headrow"><div class="ov-todo-heading"><h3 class="ov-head">Work assigned${
+    ovAssigned.length ? ` <span class="ov-head-count">(${ovAssigned.length})</span>` : ""}</h3></div></div>${
+    ovAssigned.length ? `<ul class="ov-todo-list">${items}</ul>`
+      : `<p class="muted">Nothing yet. Work you delegate - from a right-click, selected text or Add work - is listed here, with where it stands.</p>`}`;
+}
+
+function ovPlaceAssigned() {
+  const box = $("#ov-assigned");
+  if (!box) return;
+  const html = ovAssignedBox();
+  if (ovAssignedDrawn === html && box.firstChild) return;
+  const list = box.querySelector(".ov-todo-list");
+  const scrolled = list ? list.scrollTop : 0;
+  box.innerHTML = html;
+  ovAssignedDrawn = html;
+  const again = box.querySelector(".ov-todo-list");
+  if (again) again.scrollTop = scrolled;
 }
 
 /* WHAT CAME OF A TO-DO HANDED OVER - EVERY TIME IT WAS (/api/todos, `work`,
@@ -19172,8 +19826,16 @@ function ovTodoVersions(one) {
 
 /* AN ONGOING VERSION RUN FROM ITS ROW (the user, 2026-10-26): Pause or
    Resume, and Stop - then Stop now while it wraps up - as in Work. */
-function ovTodoControls(version) {
+/* What is going of a version's work - its own run's, not another try's of
+   the same work (the user, 2026-10-31). */
+function ovTodoGoing(version) {
   const going = version.unit ? workGoing.byUnit[version.unit] : null;
+  if (going && version.run && going.run && going.run !== version.run) return null;
+  return going;
+}
+
+function ovTodoControls(version) {
+  const going = ovTodoGoing(version);
   // Being started, it has nothing to pause or stop yet.
   if (!going || !going.run || going.state === "starting") return "";
   const id = escapeHtml(going.run);
@@ -19192,6 +19854,8 @@ function ovTodoControls(version) {
 
 /* Where one version stands, in a few words - live while it goes. */
 function ovTodoWhere(version) {
+  // A START THAT FAILED, said (the user, 2026-11-02): never silently.
+  if (version.failed) return `did not start - ${version.failed}`;
   if (version.state === "drafting") return "its plan, for you to check";
   if (version.state === "finished") {
     return `finished${version.ended ? ` ${localStamp(version.ended)}` : ""}`;
@@ -19202,7 +19866,7 @@ function ovTodoWhere(version) {
       ? `did not stop cleanly - ${XP_GOES_BACK[version.status]}`
       : `stopped: ${version.status || ""}`;
   }
-  const going = version.unit ? workGoing.byUnit[version.unit] : null;
+  const going = ovTodoGoing(version);
   if (!going) return version.held || "starting";
   const state = OV_TODO_STATE[going.state] || going.state;
   return going.activity ? `${state} - ${going.activity}` : state;
@@ -19210,11 +19874,12 @@ function ovTodoWhere(version) {
 
 function ovTodoWork(one) {
   const versions = ovTodoVersions(one);
-  const next = versions.length + 1;
+  // The server's: removed versions counted, so the next is never one taken.
+  const next = (one.work || {}).next || versions.length + 1;
   const delegate = `<button type="button" class="small secondary ov-todo-delegate"
     title="${versions.length ? "Hand it over again: a new version, beside the others"
       : "Hand this to the agent: it collects the context and drafts a plan for you to check"}">
-    ${delegateLabel()}${versions.length ? ` <span class="muted">V${next}</span>` : ""}</button>`;
+    ${delegateLabel()}${next > 1 ? ` <span class="muted">V${next}</span>` : ""}</button>`;
   if (!versions.length) return delegate;
   // WORK STATUS: where each version stands is in it, opened out.
   const open = delegateState.tracking.has(one.id);
@@ -19269,7 +19934,7 @@ function ovTodoTracked(one) {
   return `<ol class="ov-todo-versions">${versions.slice().reverse().map((version) => {
     const v = `V${version.version}`;
     if (version.state === "drafting") {
-      return row("drafting", v, ovTodoWhere(version), `<button type="button"
+      return row(version.failed ? "failed" : "drafting", v, ovTodoWhere(version), `<button type="button"
         class="small secondary ov-todo-ongoing" data-todo-draft="${escapeHtml(version.draft)}">Open the plan</button>`,
         version);
     }
@@ -19279,7 +19944,8 @@ function ovTodoTracked(one) {
       return made.map((thing, at) => row("finished", at ? "" : v,
         at ? thing.what : `${when} - ${thing.what}`,
         thing.shown ? `<button type="button" class="small secondary ov-todo-ongoing"
-          data-todo-unit="${escapeHtml(version.unit || "")}">See it in Work</button>`
+          data-todo-unit="${escapeHtml(version.unit || "")}" data-todo-open-run="${
+          escapeHtml(version.run || "")}">See it in Work</button>`
           : `<button type="button" class="small ov-todo-result" data-todo-run="${
           escapeHtml(version.run)}"${thing.open}>${escapeHtml(thing.words)}</button>`,
         at ? null : version)).join("");
@@ -19295,7 +19961,8 @@ function ovTodoTracked(one) {
           "Continue"}</button></span>` : "";
     return row(version.state, v, ovTodoWhere(version), version.unit ? `${
       version.state === "ongoing" ? ovTodoControls(version) : goOn}<button type="button"
-      class="small secondary ov-todo-ongoing" data-todo-unit="${escapeHtml(version.unit)}">${
+      class="small secondary ov-todo-ongoing" data-todo-unit="${escapeHtml(version.unit)}"
+      data-todo-open-run="${escapeHtml(version.run || "")}">${
       version.state === "ongoing" ? "Follow it in Work" : "See it in Work"}</button>` : "",
       version);
   }).join("")}</ol>`;
@@ -19318,7 +19985,7 @@ function ovTodoBox() {
   return `<h3 class="ov-head">To do${open.length ? ` <span class="ov-head-count">(${
     open.length})</span>` : ""}</h3>${
     open.length ? `<ul class="ov-todo-list">${items}</ul>`
-      : `<p class="muted">Nothing yet. "Add to to-do" on a notification puts it here.</p>`}`;
+      : `<p class="muted">Nothing yet. Add one below, or press "Add to to-do" on a notification.</p>`}`;
 }
 
 /* To do, level with Summary task at the top of the card; the round's bars
@@ -19337,15 +20004,37 @@ function ovPlaceTodos() {
   // is redrawn whenever a round moves - every fifteen seconds while work
   // runs - and each time the list was made anew, back at its top: what was
   // below its first few could not be scrolled to.
+  // Work assigned beside it, drawn with it (where it is on the page).
+  if (typeof ovPlaceAssigned === "function") ovPlaceAssigned();
   const box = card.querySelector("#ov-todo");
   if (!box) return;
+  // A TO-DO OF THE USER'S OWN (the user, 2026-11-01): "+ Add a to-do" on the
+  // line of the heading, at its right, and the box to add one under it - both
+  // written once and left as they are while the heading and the list are
+  // written anew: what is being typed stays.
+  let main = box.querySelector(".ov-todo-main");
+  if (!main) {
+    box.innerHTML = `<div class="ov-todo-headrow"><div class="ov-todo-heading"></div>
+      <button type="button" class="small secondary ov-todo-add-open" data-todo-add-open>+ Add a to-do</button></div>
+      <div class="ov-todo-add">
+      <form class="ov-todo-add-form" data-todo-add-form hidden>
+        <input type="text" data-todo-add-text maxlength="300" placeholder="What to do">
+        <input type="text" data-todo-add-detail maxlength="1000" placeholder="Details (optional)">
+        <span class="ov-todo-add-buttons"><button type="submit" class="small">Add</button>
+          <button type="button" class="small secondary" data-todo-add-cancel>Cancel</button></span>
+      </form></div><div class="ov-todo-main"></div>`;
+    main = box.querySelector(".ov-todo-main");
+  }
   const html = ovTodoBox();
-  if (ovTodoDrawn === html && box.firstChild) return;
-  const list = box.querySelector(".ov-todo-list");
+  if (ovTodoDrawn === html && main.firstChild) return;
+  const list = main.querySelector(".ov-todo-list");
   const scrolled = list ? list.scrollTop : 0;
-  box.innerHTML = html;
+  // The heading on its line, beside the button; the rest under the box.
+  const cut = html.indexOf("</h3>") + 5;
+  box.querySelector(".ov-todo-heading").innerHTML = cut > 4 ? html.slice(0, cut) : "";
+  main.innerHTML = cut > 4 ? html.slice(cut) : html;
   ovTodoDrawn = html;
-  const again = box.querySelector(".ov-todo-list");
+  const again = main.querySelector(".ov-todo-list");
   if (again) again.scrollTop = scrolled;
 }
 
@@ -19375,6 +20064,43 @@ document.addEventListener("click", async (event) => {
     toast(err.message);
   }
   await watchWorkGoing();
+});
+
+/* + ADD A TO-DO: the box opened, closed - and what was written in it added,
+   a to-do of the user's own. */
+document.addEventListener("click", (event) => {
+  if (!event.target.closest) return;
+  const open = event.target.closest("[data-todo-add-open]");
+  const cancel = event.target.closest("[data-todo-add-cancel]");
+  if (!open && !cancel) return;
+  const area = (open || cancel).closest("#ov-todo") || document;
+  const form = area.querySelector("[data-todo-add-form]");
+  form.hidden = !open;
+  area.querySelector("[data-todo-add-open]").hidden = Boolean(open);
+  if (open) form.querySelector("[data-todo-add-text]").focus();
+  else form.reset();
+});
+
+document.addEventListener("submit", async (event) => {
+  const form = event.target.closest && event.target.closest("[data-todo-add-form]");
+  if (!form) return;
+  event.preventDefault();
+  const text = form.querySelector("[data-todo-add-text]").value.trim();
+  if (!text) {
+    form.querySelector("[data-todo-add-text]").focus();
+    return;
+  }
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await api.post("/api/todos/add", {
+      text, detail: form.querySelector("[data-todo-add-detail]").value.trim() });
+    form.reset();
+    form.hidden = true;
+    (form.closest("#ov-todo") || document).querySelector("[data-todo-add-open]").hidden = false;
+    await loadTodos();
+  } catch (err) { toast(err.message, "error"); }
+  button.disabled = false;
 });
 
 document.addEventListener("click", (event) => {
@@ -19407,8 +20133,13 @@ document.addEventListener("click", (event) => {
   const track = event.target.closest && event.target.closest(".ov-todo-track");
   if (!track) return;
   const id = track.closest("[data-todo]").dataset.todo;
-  if (delegateState.tracking.has(id)) delegateState.tracking.delete(id);
-  else delegateState.tracking.add(id);
+  if (delegateState.tracking.has(id)) {
+    delegateState.tracking.delete(id);
+    delegateState.collapsed.add(id);          // closed by the user: kept closed
+  } else {
+    delegateState.tracking.add(id);
+    delegateState.collapsed.delete(id);
+  }
   ovPlaceTodos();
 });
 
@@ -19418,6 +20149,8 @@ document.addEventListener("click", async (event) => {
     openDelegateDraft(going.dataset.todoDraft);
   } else if (going) {
     if (going.dataset.todoUnit) experienceState.unit = going.dataset.todoUnit;
+    // That version's own try opened in its work.
+    experienceState.openRun = going.dataset.todoOpenRun || "";
     const tab = $('nav button[data-tab="experience"]');
     if (tab) tab.click();
   }
@@ -19425,8 +20158,23 @@ document.addEventListener("click", async (event) => {
   if (result) {
     try {
       if (result.dataset.todoHanded !== undefined) {
-        await api.post("/api/work/handed/open", { run: result.dataset.todoRun,
-                                                  n: Number(result.dataset.todoHanded) });
+        const said = await api.post("/api/work/handed/open", { run: result.dataset.todoRun,
+                                                               n: Number(result.dataset.todoHanded) });
+        // A reply: opened in its thread, its words put on the clipboard by
+        // the application before it opened - this page, behind the browser,
+        // may not write it.
+        if (said && said.opened === "reply" && said.copy) {
+          if (said.copied) {
+            toast("The reply is copied: press Reply, then paste it");
+          } else {
+            try {
+              await navigator.clipboard.writeText(said.copy);
+              toast("The reply is copied: press Reply, then paste it");
+            } catch (_err) {
+              toast("Opened - copy the reply with Copy the text, then paste it", "error");
+            }
+          }
+        }
       } else {
         await api.post("/api/work/reveal", { run: result.dataset.todoRun,
                                              path: result.dataset.todoResult, open: true });
@@ -19440,7 +20188,7 @@ document.addEventListener("click", async (event) => {
    high-level plan, which the user reads, changes as they like, and starts -
    or cancels. Nothing runs before Start. */
 const delegateState = { draft: null, timer: null, icon: "", folders: [],
-                        tracking: new Set() };     // the to-dos whose work is opened out
+                        tracking: new Set(), collapsed: new Set() };     // the to-dos whose work is opened out
 
 /* SOLO: the box alone, in a window of its own (platform_layer/app_window.py) -
    opened from Explorer, the selection button or the avatar. Nothing else of
@@ -19567,7 +20315,8 @@ document.addEventListener("click", async (event) => {
       instruction: draft.status === "writing" ? ($("#delegate-instruction") || {}).value || "" : null,
       plan: ready ? delegatePlan() : null, folders: delegateState.folders,
       options: { limits: settings.limits, packages: settings.packages, way: settings.way,
-                 sound: Boolean(settings.sound), unconfined: Boolean(settings.unconfined) } });
+                 sound: Boolean(settings.sound), unconfined: Boolean(settings.unconfined),
+                 see_tries: settings.seeTries !== false } });
     clearTimeout(delegateState.timer);
     $("#delegate").close();
     toast("Saved - open it again from Work, under Drafts");
@@ -19701,9 +20450,41 @@ async function delegateFollow(id) {
   if (first) delegateDraw(draft);
 }
 
+/* WHAT YOU RIGHT-CLICKED (the user, 2026-11-01: "跳出来的delegate panel要显示
+   当前点击的context"): the sentence, the page, the link, the picture or the
+   file - as it was clicked, and where. */
+const PICKED_KIND = { page: "The page", selection: "Selected text", link: "A link",
+                      image: "A picture", file: "The file", folder: "The folder" };
+
+function delegatePicked(one) {
+  if (!one || !one.kind) return "";
+  const rows = [];
+  if (one.text) {
+    rows.push(`<blockquote class="delegate-picked-text">${escapeHtml(one.text.slice(0, 1200))}${
+      one.text.length > 1200 ? "&hellip;" : ""}</blockquote>`);
+  }
+  if (one.link) rows.push(`<p><span class="muted">${escapeHtml("Link:")}</span> <span class="delegate-url">${
+    escapeHtml(one.link)}</span>${one.link_text ? ` <span class="muted">(${escapeHtml(one.link_text)})</span>` : ""}</p>`);
+  if (one.src) rows.push(`<p><span class="muted">${escapeHtml("Picture:")}</span> <span class="delegate-url">${
+    escapeHtml(one.src)}</span></p>`);
+  if (one.file) rows.push(`<p><span class="muted">${escapeHtml("File:")}</span> <code>${escapeHtml(one.file)}</code>${
+    one.line ? ` <span class="muted">${escapeHtml("line")} ${Number(one.line)}</span>` : ""}</p>`);
+  if (one.title || one.url) rows.push(`<p><span class="muted">${escapeHtml(one.text ? "On:" : "Page:")}</span> ${
+    escapeHtml(one.title || "")}${one.url ? ` <span class="delegate-url">${escapeHtml(one.url)}</span>` : ""}</p>`);
+  return `<div class="delegate-picked"><p class="delegate-picked-head"><strong>${
+    escapeHtml("You right-clicked")}</strong> <span class="delegate-kind">${
+    escapeHtml(PICKED_KIND[one.kind] || one.kind)}</span>${one.app ? ` <span class="muted">${
+    escapeHtml("in")} ${escapeHtml(one.app)}</span>` : ""}</p>${rows.join("")}</div>`;
+}
+
 function delegateHanded(draft) {
   const where = draft.window || {};
   const asked = draft.status !== "writing" ? (draft.options || {}).instruction || "" : "";
+  if (where.picked) {
+    return `<div class="delegate-handed">${asked ? `<p class="delegate-asked"><strong>Your instruction:</strong> ${
+      escapeHtml(asked.slice(0, 600))}${asked.length > 600 ? "&hellip;" : ""}</p>` : ""}${
+      delegatePicked(where.picked)}</div>`;
+  }
   return `<div class="delegate-handed">${asked ? `<p class="delegate-asked"><strong>Your instruction:</strong> ${
       escapeHtml(asked.slice(0, 600))}${asked.length > 600 ? "&hellip;" : ""}</p>` : ""}${
     draft.text ? `<blockquote>${escapeHtml(
@@ -19829,16 +20610,21 @@ async function delegateSettings(draft) {
     // anyway where the system does not confine what is installed.
     packages: options.packages === "ask" ? "ask" : "auto",
     sound: Boolean(options.sound), unconfined: Boolean(options.unconfined),
+    // THE TRIES BEFORE, told it - unless the user says not (2026-10-31).
+    seeTries: options.see_tries !== false,
   };
   const limit = (name) => escapeHtml(String(settings.limits[name] ?? ""));
-  box.innerHTML = `<div class="delegate-way"><strong>How it is done</strong>
+  // THE THOROUGH WAY SWITCHED OFF (the user, 2026-10-31): nothing to choose.
+  const thoroughOpen = ((experienceState.limits || {}).ways || ["quick", "full"]).includes("full");
+  if (!thoroughOpen) settings.way = "quick";
+  box.innerHTML = `${thoroughOpen ? `<div class="delegate-way"><strong>How it is done</strong>
       ${WAYS_SHOWN.map((way) => `<label><input type="radio" name="delegate-way" value="${way}"${
         settings.way === way ? " checked" : ""}> ${escapeHtml(DELEGATE_WAYS[way])}${
         way === "auto" ? ` <span class="muted" id="delegate-way-suggested">${plan.way
           ? escapeHtml(`now: ${plan.way === "quick" ? "Quick" : "Thorough"}${
             plan.way_why ? ` - ${plan.way_why}` : ""}`) : "not drafted yet"}</span>` : ""}</label>`)
         .join("")}
-    </div>
+    </div>` : ""}
     <div class="xp-limits"><strong>Limits:</strong>
       <label>minutes <input type="number" data-delegate-limit="minutes" value="${limit("minutes")}"></label>
       <label title="${escapeHtml(XP_INPUT_TOKENS_ABOUT)}">input tokens <input type="number"
@@ -19855,6 +20641,9 @@ async function delegateSettings(draft) {
     <div class="xp-unconfined-mode">${xpUnconfinedBox(
       `data-delegate-unconfined${settings.unconfined ? " checked" : ""}`)}</div>
     ${xpSoundBox("data-delegate-sound", settings.sound)}
+    ${options.context_from ? `<label class="delegate-see-tries"><input type="checkbox"
+      data-delegate-see-tries${settings.seeTries ? " checked" : ""}>
+      Tell it what the tries before found and made</label>` : ""}
     ${draft.unit_id && draft.source !== "delegate" ? ""
       : `<div class="delegate-folders" id="delegate-folders"></div>`}`;
   delegateState.settings = Object.assign({ draft: draft.id }, settings);
@@ -19933,6 +20722,7 @@ function delegateReadSettings() {
     packages: (box.querySelector('input[name="delegate-packages"]:checked') || {}).value || "auto",
     sound: Boolean((box.querySelector("[data-delegate-sound]") || {}).checked),
     unconfined: Boolean((box.querySelector("[data-delegate-unconfined]") || {}).checked),
+    seeTries: (box.querySelector("[data-delegate-see-tries]") || { checked: true }).checked,
   };
   delegateState.settings = settings;
   return settings;
@@ -20021,26 +20811,16 @@ document.addEventListener("click", async (event) => {
       await api.post("/api/work/drafts/start", { id: draft.id,
         plan, folders: delegateState.folders,
         options: { limits: settings.limits, packages: settings.packages,
-                   sound: Boolean(settings.sound), unconfined: Boolean(settings.unconfined) } });
+                   sound: Boolean(settings.sound), unconfined: Boolean(settings.unconfined),
+                   see_tries: settings.seeTries !== false } });
       $("#delegate-head").innerHTML = "";
       $("#delegate-settings").innerHTML = "";
       if (DELEGATE_SOLO) {
-        // Said in the box, which closes with its window once it is known.
-        $("#delegate-body").innerHTML = `<p class="delegate-started">${ready ? "Starting&hellip;"
-          : "Collecting its context - it starts once its plan is drafted&hellip;"}</p>`;
-        $(".delegate-actions").hidden = true;
-        const said = await delegateHowItStarted(draft.id);
-        if (said.error) {
-          $("#delegate-body").innerHTML = `<p class="delegate-error">It did not start: ${
-            escapeHtml(said.error)}</p>`;
-          $(".delegate-actions").hidden = false;
-          $("#delegate-start").disabled = false;
-          return;
-        }
-        $("#delegate-body").innerHTML = `<p class="delegate-started">${said.waiting
-          ? `Waiting to start: ${escapeHtml(said.why || "")}`
-          : "Started. Follow it in Work."}</p>`;
-        setTimeout(() => $("#delegate").close(), 1800);
+        // CLOSED AT ONCE, AS A TO-DO'S DELEGATE IS (the user, 2026-11-02:
+        // "和to do的assign一样，不用等到plan出来"): its context collected, its
+        // plan drafted and its start go on without the box - where it stands
+        // is on the Overview, under Work assigned.
+        $("#delegate").close();
         return;
       }
       $("#delegate").close();
@@ -22807,7 +23587,7 @@ async function loadDebuggerStates() {
 
 function stateBeatOn(date) {
   const dayStart = startOfDay(date);
-  const dayEnd = new Date(dayStart.getTime() + DAY_MS - 1);
+  const dayEnd = new Date(dayAfter(dayStart).getTime() - 1);   // its own length, 23 to 25 hours
   return stateBeat.states.filter((state) => {
     const from = state.starts_at ? new Date(state.starts_at) : null;
     const to = state.ends_at ? new Date(state.ends_at) : null;
@@ -23371,10 +24151,11 @@ function tokenGrouped(rows) {
    readers included - on this panel's own backgrounds, and a set for each
    theme. The seven kinds that spent the most over the whole history
    (`order`) take the first seven; the next seven take the same seven
-   STRIPED (dashed, as a line) - so every kind that runs has its own, the
-   user's choice - and only past that, or a part removed from the
-   application, is "Other", in the eighth. In either view a kind is the same
-   colour whichever is shown. */
+   STRIPED (dashed, as a line), the seven after them DOTTED, and the seven
+   after those CROSSED (MORE KINDS SHOWN, the user, 2026-10-31: past
+   fourteen, a kind as new as the Newspaper's own was Other) - and only past
+   that, or a part removed from the application, is "Other", in the eighth.
+   In either view a kind is the same colour whichever is shown. */
 const TOKEN_COLOURS = {
   light: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300",
           "#4a3aa7", "#e34948"],
@@ -23382,56 +24163,81 @@ const TOKEN_COLOURS = {
          "#9085e9", "#e66767"],
 };
 const TOKEN_OWN_COLOURS = 7;
-const TOKEN_STRIPED = 7;
+// Each colour plain, then striped, dotted and crossed: 28 kinds of their own.
+const TOKEN_LOOKS = ["plain", "striped", "dotted", "crossed"];
+const TOKEN_KINDS = TOKEN_OWN_COLOURS * TOKEN_LOOKS.length;
+// A line of each look, in the chart over time.
+const TOKEN_DASHES = { plain: [], striped: [6, 4], dotted: [2, 3], crossed: [8, 3, 2, 3] };
 
 function tokenKind(task) {
   const name = task || "general";
   if (name === "other") return "other";
   const at = dbgTokens.order.indexOf(name);
-  return at >= 0 && at < TOKEN_OWN_COLOURS + TOKEN_STRIPED ? name : "other";
+  return at >= 0 && at < TOKEN_KINDS ? name : "other";
 }
 
-/* A kind's colour, and whether it is the striped one of it. */
+/* A kind's colour, and which look of it: plain, striped, dotted or crossed. */
 function tokenLook(kind) {
   const dark = window.matchMedia
     && window.matchMedia("(prefers-color-scheme: dark)").matches;
   const set = dark ? TOKEN_COLOURS.dark : TOKEN_COLOURS.light;
   const at = kind === "other" ? -1 : dbgTokens.order.indexOf(kind);
-  if (at < 0 || at >= TOKEN_OWN_COLOURS + TOKEN_STRIPED) {
-    return { colour: set[TOKEN_OWN_COLOURS], striped: false };
+  if (at < 0 || at >= TOKEN_KINDS) {
+    return { colour: set[TOKEN_OWN_COLOURS], striped: false, look: "plain" };
   }
-  return { colour: set[at % TOKEN_OWN_COLOURS], striped: at >= TOKEN_OWN_COLOURS };
+  const look = TOKEN_LOOKS[Math.floor(at / TOKEN_OWN_COLOURS)];
+  return { colour: set[at % TOKEN_OWN_COLOURS], striped: look !== "plain", look };
 }
 
 function tokenColour(kind) {
   return tokenLook(kind).colour;
 }
 
-/* How a bar of it is filled: its colour, or its colour striped with the
-   panel's own. */
+/* How a bar of it is filled: its colour - or that colour striped, dotted
+   or crossed with the panel's own. */
 function tokenFill(ctx, kind, panel) {
-  const { colour, striped } = tokenLook(kind);
-  if (!striped || typeof document === "undefined") return colour;
+  const { colour, look } = tokenLook(kind);
+  if (look === "plain" || typeof document === "undefined") return colour;
   const tile = document.createElement("canvas");
   tile.width = tile.height = 6;
   const t = tile.getContext("2d");
   t.fillStyle = colour;
   t.fillRect(0, 0, 6, 6);
-  t.strokeStyle = panel || "#ffffff";
+  t.strokeStyle = t.fillStyle = panel || "#ffffff";
   t.lineWidth = 1.6;
-  t.beginPath();
-  t.moveTo(-1, 7); t.lineTo(7, -1);
-  t.moveTo(5, 7); t.lineTo(7, 5);
-  t.moveTo(-1, 1); t.lineTo(1, -1);
-  t.stroke();
+  if (look === "dotted") {
+    t.beginPath();
+    t.arc(3, 3, 1.3, 0, 2 * Math.PI);
+    t.fill();
+  } else {
+    t.beginPath();
+    t.moveTo(-1, 7); t.lineTo(7, -1);
+    t.moveTo(5, 7); t.lineTo(7, 5);
+    t.moveTo(-1, 1); t.lineTo(1, -1);
+    if (look === "crossed") {
+      t.moveTo(-1, -1); t.lineTo(7, 7);
+      t.moveTo(5, -1); t.lineTo(7, 1);
+      t.moveTo(-1, 5); t.lineTo(1, 7);
+    }
+    t.stroke();
+  }
   return ctx.createPattern(tile, "repeat") || colour;
 }
 
-/* Its key in the legend and the tip: dashed when it is the striped one. */
+/* Its key in the legend and the tip: dashed, dotted or crossed as its look. */
 function tokenSwatch(kind) {
-  const { colour, striped } = tokenLook(kind);
-  return striped ? `repeating-linear-gradient(90deg, ${colour} 0 3px, transparent 3px 5px)`
-    : colour;
+  const { colour, look } = tokenLook(kind);
+  if (look === "striped") {
+    return `repeating-linear-gradient(90deg, ${colour} 0 3px, transparent 3px 5px)`;
+  }
+  if (look === "dotted") {
+    return `radial-gradient(circle, ${colour} 0 1.4px, transparent 1.6px) 0 0 / 4px 4px`;
+  }
+  if (look === "crossed") {
+    return `repeating-linear-gradient(45deg, ${colour} 0 1.5px, transparent 1.5px 4px), `
+      + `repeating-linear-gradient(-45deg, ${colour} 0 1.5px, transparent 1.5px 4px)`;
+  }
+  return colour;
 }
 
 /* Kinds the whole history did not rank (none yet, or new since) are ranked
@@ -23648,8 +24454,8 @@ function drawTokenCalls(ctx, plot, look, note) {
     ctx.strokeStyle = tokenColour(task);
     ctx.lineWidth = 2;
     ctx.lineJoin = "round";
-    // The striped one of a colour, dashed.
-    ctx.setLineDash(tokenLook(task).striped ? [6, 4] : []);
+    // The striped one of a colour dashed, the dotted dotted, the crossed dash-dotted.
+    ctx.setLineDash(TOKEN_DASHES[tokenLook(task).look] || []);
     ctx.beginPath();
     series[task].forEach((point, index) => {
       const px = x(point.x);
@@ -24352,7 +25158,7 @@ function xdVariant(project, v, shown) {
     placeholder="no limit" value="${escapeHtml(String(xdDraft(key(name))))}"></label>`;
   const id = escapeHtml(v.variant);
   // Its runs' links into the tree lead to this way's own tree.
-  const drawn = runs.map((run, i) => xpRun(run, !going, i === 0)).join("")
+  const drawn = runs.map((run, i) => xpRun(run, !going, i === 0, false)).join("")
     .split('data-xp-where="work"').join(`data-xp-where="xd-${id}"`);
   return `<section class="xd-variant" data-xd-variant="${id}" role="tabpanel"
       id="xd-way-${id}" aria-labelledby="xd-tab-${id}"${shown ? "" : " hidden"}>
@@ -25085,7 +25891,8 @@ setInterval(pollNotifications, 20000);
     history.replaceState(null, "", location.pathname);
     api.post("/api/work/drafts/inbox", { id })
       .then((said) => openDelegateDraft(said.draft.id))
-      .catch((err) => toast(err.message, "error"));
+      // Signing in by the extension: opened again, signed in, on the same note.
+      .catch((err) => { if (!signInAsked) toast(err.message, "error"); });
     return;
   }
   // A piece of work handed over from outside the page: its plan, to check -
@@ -25104,3 +25911,564 @@ setInterval(pollNotifications, 20000);
     tab.click();
   }
 })();
+
+
+/* ============================================================== SOCIETY
+   The agent among other people's agents (society/service.py; the user,
+   2026-11-01/02). On top, the agent: its id; its email confirmed - until
+   then it is shown to no one; the user's own profile from Connections
+   published, listed only when they say; what the agent may do; interactive;
+   the user's commands, above everything; the key's backup. Below, as a chat
+   program lays it out ("类似微信桌面版"): the conversations on the left, one
+   conversation on the right - other agents' words shown as text, never as
+   markup; drafts, sent by the user; what the agent sent by itself, marked. */
+const societyState = { status: null, chats: [], peer: "", messages: [], contact: null,
+                       emailSent: false, backupOpen: false, restoreOpen: false,
+                       asking: "", offers: [], offerAt: -1, timer: null, asked: "",
+                       linking: false, follow: null };
+
+/* WHO GETS WHAT ANSWER - THE GROUPS, the user's to set (the user,
+   2026-11-02): each group holds people, and kinds of people; a person put in
+   a group is in it whatever their kind. Held by the code, not the model. */
+const SOCIETY_GROUPS = [
+  ["instant", "Instant", "Answered at once - what they ask is done as if you asked it: answers, and events on your calendar. Nothing else of yours is changed."],
+  ["reply", "Your agent replies", "Answered by your agent in a while - or not, when no answer is wanted; it says why."],
+  ["draft", "Drafts for you", "Your agent drafts a reply in a while; you send it."],
+  ["read", "Read only", "Kept, for you to read. Nothing is written."]];
+const SOCIETY_KINDS = {
+  replied: "People you have written to",
+  connections: "Others in your Connections",
+  everyone: "Everyone else"};
+const SOCIETY_REACH = [
+  ["no", "Never write to anyone outside these groups"],
+  ["draft", "Draft messages to new agents, for you to send"],
+  ["send", "Write to new agents and send by itself"]];
+
+async function loadSociety() {
+  try {
+    societyState.status = await api.get("/api/society");
+  } catch (err) {
+    $("#society-me").innerHTML = `<p class="delegate-error">${escapeHtml(err.message)}</p>`;
+    return;
+  }
+  renderSocietyMe();
+  // CONVERSATIONS FIRST; until the agent is registered, its settings.
+  if (!societyState.view) societyView(societyState.status.registered ? "chats" : "settings");
+  await loadSocietyChats();
+  if (societyState.peer) openSocietyChat(societyState.peer, false);
+  clearInterval(societyState.follow);
+  // FOLLOWED WHILE IT IS OPEN: a conversation an agent answers by itself goes
+  // on - the list and the open conversation read again now and then.
+  societyState.follow = setInterval(() => {
+    if (activeTab !== "society" || document.hidden) return;
+    loadSocietyChats();
+    if (societyState.peer && !societyState.asking && !societyHasTyping()) {
+      openSocietyChat(societyState.peer, false);
+    }
+  }, 15000);
+}
+
+function societyHasTyping() {
+  const box = $("#society-compose-text");
+  return Boolean(box && box.value.trim()) || Boolean(document.querySelector(
+    "#society-main [data-draft-text]:focus"));
+}
+
+function societyFace(one, size) {
+  if (one.picture) return `<img class="society-face ${size}" src="${escapeHtml(one.picture)}" alt="">`;
+  const words = String(one.name || "?").trim().split(/\s+/).filter(Boolean);
+  const letters = words.length > 1 ? words[0][0] + words[words.length - 1][0]
+    : (words[0] || "?").slice(0, 2);
+  return `<span class="society-face ${size} initials" aria-hidden="true">${escapeHtml(letters.toUpperCase())}</span>`;
+}
+
+function societyPage(id) {
+  const s = societyState.status || {};
+  return `${s.server || ""}/a/${encodeURIComponent(id)}`;
+}
+
+/* A setting's row, as Settings lays its rows out: its name, its control,
+   what it means beneath. */
+function societyRow(name, control, said = "") {
+  return `<div class="setting-row"><div>${escapeHtml(name)}</div><div class="society-control">${control}</div>${
+    said ? `<div class="desc muted">${escapeHtml(said)}</div>` : ""}</div>`;
+}
+
+function renderSocietyMe() {
+  const s = societyState.status;
+  if (!s) return;
+  const profile = s.profile || {};
+  const unread = $("#society-unread");
+  if (unread) { unread.textContent = s.unread || ""; unread.hidden = !s.unread; }
+  const registered = s.registered
+    ? `<span class="society-ok">&#10003; ${escapeHtml("Registered - other agents can find it by its id")}${
+        s.listed ? `, ${escapeHtml("and you are in the public list of people")}` : ""}.</span>`
+    : `<span class="muted">${escapeHtml("Not shown to anyone yet: confirm an email address of yours. The address is never shown.")}</span>`;
+  const email = s.registered ? "" : societyRow("Your email address",
+    `<div class="society-inline"><input id="society-email" type="email" autocomplete="email">
+       <button type="button" id="society-email-send">${escapeHtml("Send the confirmation email")}</button></div>`)
+    + (societyState.emailSent || s.email_waiting ? societyRow("Code",
+      `<div class="society-inline"><input id="society-code" class="society-code" inputmode="numeric" maxlength="6"
+         autocomplete="one-time-code">
+       <button type="button" id="society-code-confirm">${escapeHtml("Confirm")}</button>
+       <button type="button" class="secondary" id="society-clicked">${escapeHtml("I clicked the link")}</button></div>`,
+      "Click the link in the email - or type its code here. It lasts two hours.") : "");
+  const groups = SOCIETY_GROUPS.map(([group, title, said]) => {
+    const held = (s.groups || {})[group] || { people: [], kinds: [] };
+    return `<div class="society-group"><strong>${escapeHtml(title)}</strong>
+      <p class="muted">${escapeHtml(said)}</p>
+      <div class="society-members">${held.kinds.map((kind) => `<span class="society-kind">${
+        escapeHtml(SOCIETY_KINDS[kind] || kind)}</span>`).join("")}${held.people.map((one) =>
+        `<button type="button" class="small secondary" data-society-open="${escapeHtml(one.id)}">${
+        escapeHtml(one.name || one.id)}</button>`).join("")}${!held.kinds.length && !held.people.length
+        ? `<span class="muted">${escapeHtml("No one")}</span>` : ""}</div></div>`;
+  }).join("");
+  const kinds = Object.keys(SOCIETY_KINDS).map((kind) => {
+    const now = SOCIETY_GROUPS.find(([group]) => (((s.groups || {})[group] || {}).kinds || []).includes(kind));
+    return societyRow(SOCIETY_KINDS[kind], `<select data-society-kind="${kind}">${SOCIETY_GROUPS.map(([group, title]) =>
+      `<option value="${group}"${now && now[0] === group ? " selected" : ""}>${escapeHtml(title)}</option>`).join("")}</select>`);
+  }).join("");
+  const backup = societyState.backupOpen ? `<div class="society-sub">
+      ${societyRow("Include the private key", `<input type="checkbox" id="society-with-key">`,
+        "Then the backup is the agent itself, and needs a passphrase.")}
+      <div id="society-pass-row" hidden>
+        ${societyRow("Passphrase", `<input type="password" id="society-pass" autocomplete="new-password">`)}
+        ${societyRow("Again", `<input type="password" id="society-pass-2" autocomplete="new-password">`,
+          "Forget it, and the key in this backup is lost: no one can open it.")}
+      </div>
+      <div class="society-actions"><button type="button" id="society-backup-save">${escapeHtml("Save the backup")}</button></div>
+    </div>` : "";
+  const restore = societyState.restoreOpen ? `<div class="society-sub">
+      ${societyRow("The backup file", `<input type="file" id="society-restore-file" accept=".json,application/json">`)}
+      ${societyRow("Its passphrase", `<input type="password" id="society-restore-pass">`,
+        "This agent's identity is replaced by the backup's.")}
+      <div class="society-actions"><button type="button" id="society-restore-go">${escapeHtml("Restore")}</button></div>
+    </div>` : "";
+  $("#society-me").innerHTML = `
+    <div class="card"><h3>${escapeHtml("Your agent")}</h3>
+      ${societyRow("Agent id", `<div class="society-inline"><code class="society-id">${escapeHtml(s.id)}</code>
+        <button type="button" class="small secondary" data-society-copy="${escapeHtml(s.id)}">${escapeHtml("Copy")}</button>
+        ${s.registered ? `<a href="${escapeHtml(s.page)}" target="_blank" rel="noopener noreferrer">${
+          escapeHtml("Your page")}</a>` : ""}</div>`)}
+      ${societyRow("Status", registered)}${email}
+    </div>
+    <div class="card"><h3>${escapeHtml("Your profile")}</h3>
+      <p class="panel-note">${escapeHtml("As you set it in Connections - change it there.")}</p>
+      <div class="society-profile">${societyFace({ name: profile.name }, "large")}<div class="society-profile-text">
+        <strong>${escapeHtml(profile.name || "Your name is not set in Connections")}</strong>
+        ${profile.headline ? `<div>${escapeHtml(profile.headline)}</div>` : ""}
+        ${profile.location ? `<div class="muted">${escapeHtml(profile.location)}</div>` : ""}
+        ${profile.about ? `<p class="society-about">${escapeHtml(profile.about)}</p>` : ""}</div></div>
+      ${societyRow("Show me in the public list of people", `<input type="checkbox" id="society-listed"${s.listed ? " checked" : ""}>`,
+        "Ticked: anyone who opens the AGENTS of people website sees your card - your picture, name, headline and where you are - and can find you by your name. Not ticked: only people who know your agent id can find you.")}
+      <div class="society-actions"><button type="button" id="society-publish">${escapeHtml(s.published_at ? "Publish again" : "Publish")}</button></div>
+    </div>
+    <div class="card"><h3>${escapeHtml("Who gets what answer")}</h3>
+      <div class="society-groups">${groups}</div>
+      <h4 class="society-h4">${escapeHtml("Where kinds of people go")}</h4>
+      ${kinds}
+      ${societyRow("Writing to new agents", `<select id="society-reach">${SOCIETY_REACH.map(([level, words]) =>
+        `<option value="${level}"${s.reach_out === level ? " selected" : ""}>${escapeHtml(words)}</option>`).join("")}</select>`)}
+      <p class="panel-note">${escapeHtml("Put one person in a group from their conversation. Your agent answers each as your agent - by who is asking and how they are related to you - and judges how much to say, in the language they wrote in.")}</p>
+    </div>
+    <div class="card"><h3>${escapeHtml("Your commands to your agent")}</h3>
+      <p class="panel-note">${escapeHtml("Above everything else - whatever another agent says.")}</p>
+      <textarea id="society-commands" rows="4" placeholder="${escapeHtml(
+        "For example: You may tell Ada more - she is on my team. Never discuss salary with recruiters. Answer in English.")}">${escapeHtml(s.commands || "")}</textarea>
+      <div class="society-actions"><button type="button" id="society-commands-save">${escapeHtml("Save")}</button></div>
+    </div>
+    <div class="card"><h3>${escapeHtml("Your agent's key")}</h3>
+      <p class="panel-note">${escapeHtml("Kept in the agent's data folder; it stays when the program is uninstalled.")}</p>
+      <div class="society-actions">
+        <button type="button" class="secondary" id="society-backup-open">${escapeHtml("Back up the key")}</button>
+        <button type="button" class="secondary" id="society-restore-open">${escapeHtml("Restore from a backup")}</button>
+      </div>${backup}${restore}
+    </div>`;
+}
+
+function societyView(which) {
+  $$("[data-society-view]").forEach((one) => one.classList.toggle("on", one.dataset.societyView === which));
+  $("#society-view-chats").hidden = which !== "chats";
+  $("#society-view-settings").hidden = which !== "settings";
+  societyState.view = which;
+}
+
+/* -- the conversations, on the left ---------------------------------------------------- */
+async function loadSocietyChats() {
+  try {
+    societyState.chats = (await api.get("/api/society/conversations")).conversations || [];
+  } catch (_err) { societyState.chats = []; }
+  renderSocietyChats();
+}
+
+function renderSocietyChats() {
+  const list = $("#society-list");
+  if (!list) return;
+  const chats = societyState.chats;
+  list.innerHTML = chats.length ? chats.map((one) => {
+    const name = one.person_name || one.name || one.peer_id;
+    const last = one.last || {};
+    const lead = last.status === "draft" ? `${escapeHtml("Draft")}: `
+      : last.direction === "out" ? (last.sent_by === "agent" ? `${escapeHtml("Your agent")}: ` : `${escapeHtml("You")}: `) : "";
+    return `<li class="society-chat-row${one.peer_id === societyState.peer ? " on" : ""}" data-society-open="${escapeHtml(one.peer_id)}">
+      ${societyFace({ name }, "small")}
+      <div class="society-chat-text"><div class="society-chat-top"><strong>${escapeHtml(name)}</strong>
+        <span class="muted">${escapeHtml(localStamp(one.last_at))}</span></div>
+        <div class="society-chat-last muted">${lead}${escapeHtml(last.text || "")}</div></div>
+      ${one.unread ? `<span class="society-count">${one.unread}</span>` : ""}</li>`;
+  }).join("") : `<li class="muted society-chat-none">${escapeHtml("No conversations yet. Search for someone above.")}</li>`;
+}
+
+/* -- one conversation, on the right ----------------------------------------------------- */
+async function openSocietyChat(peer, read = true) {
+  societyState.peer = peer;
+  try {
+    const said = await api.get(`/api/society/conversation?peer=${encodeURIComponent(peer)}${read ? "&read=1" : ""}`);
+    societyState.messages = said.messages || [];
+    societyState.contact = said.contact || { peer_id: peer };
+    societyState.group = said.group || "read";
+  } catch (err) {
+    $("#society-main").innerHTML = `<p class="delegate-error">${escapeHtml(err.message)}</p>`;
+    return;
+  }
+  renderSocietyChat();
+  if (read) loadSocietyChats();
+}
+
+function societyBubble(one) {
+  const at = escapeHtml(localStamp(one.sent_at || one.created_at));
+  if (one.status === "note") {
+    return `<li class="society-note"><span>${escapeHtml("For you, from your agent")}:</span> ${escapeHtml(one.text)}
+      <span class="muted">${at}</span></li>`;
+  }
+  if (one.status === "draft") {
+    const asking = societyState.asking === one.id;
+    return `<li class="society-bubble mine draft" data-society-draft="${escapeHtml(one.id)}">
+      <div class="society-bubble-head">${escapeHtml(one.written_by === "agent" ? "Draft by your agent" : "Your draft")}</div>
+      <input data-draft-subject value="${escapeHtml(one.subject)}" placeholder="${escapeHtml("Subject")}">
+      <textarea data-draft-text rows="3">${escapeHtml(one.text)}</textarea>
+      <div class="ov-lp-buttons">${asking ? `<span>${escapeHtml("Send it?")}</span>
+        <button type="button" class="small" data-society-send-yes="${escapeHtml(one.id)}" data-hash="${escapeHtml(one.hash)}">${escapeHtml("Yes, send it")}</button>
+        <button type="button" class="small secondary" data-society-send-no="1">${escapeHtml("No")}</button>`
+        : `<button type="button" class="small" data-society-send="${escapeHtml(one.id)}">${escapeHtml("Send")}</button>
+        <button type="button" class="small secondary" data-society-save="${escapeHtml(one.id)}">${escapeHtml("Save")}</button>
+        <button type="button" class="small secondary" data-society-drop="${escapeHtml(one.id)}">${escapeHtml("Remove")}</button>`}</div></li>`;
+  }
+  const mine = one.direction === "out";
+  const who = mine ? (one.sent_by === "agent" ? `<span class="society-by">${escapeHtml("Sent by your agent")}</span>` : "") : "";
+  const body = one.status === "unreadable"
+    ? `<p class="delegate-error">${escapeHtml("A message that could not be opened")}: ${escapeHtml(one.error)}</p>`
+    : `${one.subject ? `<div class="society-subject">${escapeHtml(one.subject)}</div>` : ""}<div class="society-text">${escapeHtml(one.text)}</div>`;
+  return `<li class="society-bubble ${mine ? "mine" : "theirs"}">${body}
+    <div class="society-bubble-foot muted">${who} ${at}</div></li>`;
+}
+
+function renderSocietyChat() {
+  const main = $("#society-main");
+  if (!main) return;
+  const contact = societyState.contact || {};
+  const peer = societyState.peer;
+  const chat = societyState.chats.find((one) => one.peer_id === peer) || {};
+  const name = chat.person_name || contact.name || peer;
+  const linked = chat.person_name
+    ? `${escapeHtml("This is")} <strong>${escapeHtml(chat.person_name)}</strong> ${escapeHtml("in your Connections")}
+       <button type="button" class="small secondary" data-society-link-open="1">${escapeHtml("Change")}</button>`
+    : `<span class="muted">${escapeHtml(contact.name ? "Their name is their own claim." : "")}</span>
+       <button type="button" class="small secondary" data-society-link-open="1">${escapeHtml("Who is this?")}</button>`;
+  const linking = societyState.linking ? `<div class="society-link">
+      <input id="society-link-q" placeholder="${escapeHtml("Search your Connections")}" autocomplete="off">
+      <ul id="society-link-found" class="society-link-found"></ul>
+      ${chat.person_id ? `<button type="button" class="small secondary" data-society-link-to="">${escapeHtml("Not anyone I know")}</button>` : ""}
+    </div>` : "";
+  main.innerHTML = `<header class="society-main-head">${societyFace({ name }, "small")}
+      <div class="society-main-who"><strong>${escapeHtml(name)}</strong>
+        ${contact.headline ? `<span class="muted">${escapeHtml(contact.headline)}</span>` : ""}
+        <div><code>${escapeHtml(peer)}</code>
+          <button type="button" class="small secondary" data-society-copy="${escapeHtml(peer)}">${escapeHtml("Copy")}</button>
+          <a href="${escapeHtml(societyPage(peer))}" target="_blank" rel="noopener noreferrer">${escapeHtml("Their page")}</a></div>
+        <div class="society-linked">${linked}</div>${linking}
+        <label class="society-in-group">${escapeHtml("Group")}
+          <select id="society-peer-group">${SOCIETY_GROUPS.map(([group, title]) =>
+            `<option value="${group}"${societyState.group === group ? " selected" : ""}>${escapeHtml(title)}</option>`).join("")}
+          </select></label></div></header>
+    <ul class="society-bubbles">${societyState.messages.map(societyBubble).join("")
+      || `<li class="muted">${escapeHtml("Nothing yet. Write the first message below.")}</li>`}</ul>
+    <div class="society-compose">
+      <input id="society-compose-subject" placeholder="${escapeHtml("Subject")}">
+      <textarea id="society-compose-text" rows="3" placeholder="${escapeHtml("Write a message")}"></textarea>
+      <div class="ov-lp-buttons"><button type="button" id="society-compose-send">${escapeHtml("Send")}</button>
+        <button type="button" class="secondary" id="society-compose-draft">${escapeHtml("Save as draft")}</button></div></div>`;
+  const list = main.querySelector(".society-bubbles");
+  if (list) list.scrollTop = list.scrollHeight;
+}
+
+/* -- searching people ---------------------------------------------------------------------- */
+function societyPeople(people, words) {
+  $("#society-found").innerHTML = people.length ? `<ul class="society-people">${people.map((one) => `<li>
+      ${societyFace(one, "small")}<div class="society-person"><strong>${escapeHtml(one.name || one.id)}</strong>
+      <div>${escapeHtml(one.headline)}</div><div class="muted">${escapeHtml(one.location)}</div>
+      <code class="muted">${escapeHtml(one.id)}</code></div>
+      <button type="button" class="small" data-society-open="${escapeHtml(one.id)}">${escapeHtml("Write")}</button></li>`).join("")}</ul>`
+    : `<p class="muted">${escapeHtml(words ? "No one matches that." : "No one is listed yet.")}</p>`;
+}
+
+async function societySearch(words) {
+  try {
+    const said = /^\s*pa[-\s]?[0-9a-z]{4}/i.test(words) && words.replace(/[^0-9a-z]/gi, "").length >= 18
+      ? { people: (await api.get(`/api/society/suggest?q=${encodeURIComponent(words)}`)).suggestions }
+      : await api.get(`/api/society/people?q=${encodeURIComponent(words)}`);
+    societyPeople(said.people || [], words);
+  } catch (err) {
+    $("#society-found").innerHTML = `<p class="delegate-error">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function societyDrawOffers(found) {
+  const list = $("#society-offers");
+  societyState.offers = found;
+  societyState.offerAt = -1;
+  list.textContent = "";
+  if (!found.length) { list.hidden = true; return; }
+  for (const one of found) {
+    const li = document.createElement("li");
+    const name = document.createElement("strong");
+    name.textContent = one.name || one.id;
+    const line = document.createElement("span");
+    line.className = "muted";
+    line.textContent = " " + (one.headline || one.id);
+    li.append(name, line);
+    li.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      list.hidden = true;
+      societyPeople([one], one.id);
+    });
+    list.append(li);
+  }
+  list.hidden = false;
+}
+
+async function societyLinkSearch(words) {
+  const list = $("#society-link-found");
+  if (!list) return;
+  let people = [];
+  try { people = (await api.get(`/api/society/connections?q=${encodeURIComponent(words)}`)).people || []; }
+  catch (_err) { people = []; }
+  list.innerHTML = people.map((one) => `<li><button type="button" class="small secondary" data-society-link-to="${
+    escapeHtml(one.id)}">${escapeHtml(one.name)}</button> <span class="muted">${escapeHtml(
+    [one.relationship, one.org].filter(Boolean).join(" · "))}</span></li>`).join("");
+}
+
+document.addEventListener("input", (event) => {
+  if (event.target.id === "society-q") {
+    clearTimeout(societyState.timer);
+    societyState.timer = setTimeout(async () => {
+      const words = $("#society-q").value.trim();
+      if (words === societyState.asked) return;
+      societyState.asked = words;
+      if (words.length < 2) { societyDrawOffers([]); $("#society-found").innerHTML = ""; return; }
+      try {
+        const said = await api.get(`/api/society/suggest?q=${encodeURIComponent(words)}`);
+        if ($("#society-q").value.trim() === words) societyDrawOffers(said.suggestions || []);
+      } catch (_err) { societyDrawOffers([]); }
+    }, 150);
+  }
+  if (event.target.id === "society-link-q") {
+    clearTimeout(societyState.timer);
+    const words = event.target.value.trim();
+    societyState.timer = setTimeout(() => societyLinkSearch(words), 200);
+  }
+  if (event.target.id === "society-with-key") {
+    $("#society-pass-row").hidden = !event.target.checked;
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.target.id !== "society-q") return;
+  const list = $("#society-offers");
+  if (event.key === "Enter") {
+    event.preventDefault();
+    if (!list.hidden && societyState.offerAt >= 0) {
+      const one = societyState.offers[societyState.offerAt];
+      list.hidden = true;
+      societyPeople([one], one.id);
+      return;
+    }
+    list.hidden = true;
+    societySearch(event.target.value.trim());
+  } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !list.hidden) {
+    event.preventDefault();
+    const n = societyState.offers.length;
+    societyState.offerAt = (societyState.offerAt + (event.key === "ArrowDown" ? 1 : -1) + n) % n;
+    [...list.children].forEach((li, at) => li.classList.toggle("on", at === societyState.offerAt));
+  } else if (event.key === "Escape") {
+    list.hidden = true;
+  }
+});
+
+document.addEventListener("change", async (event) => {
+  const target = event.target;
+  let call = null;
+  if (target.id === "society-reach") {
+    call = () => api.post("/api/society/reach_out", { level: target.value });
+  } else if (target.dataset && target.dataset.societyKind) {
+    call = () => api.post("/api/society/groups", { group: target.value, kind: target.dataset.societyKind });
+  } else if (target.id === "society-peer-group") {
+    call = () => api.post("/api/society/groups", { group: target.value, peer: societyState.peer });
+  }
+  if (!call) return;
+  try {
+    societyState.status = await call();
+    renderSocietyMe();
+    if (target.id === "society-peer-group") {
+      societyState.group = target.value;
+      renderSocietyChat();
+    }
+    toast("Saved");
+  } catch (err) {
+    toast(err.message, "error");
+    renderSocietyMe();
+  }
+});
+
+
+function societySaveFile(name, value) {
+  const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  setTimeout(() => { URL.revokeObjectURL(link.href); link.remove(); }, 1000);
+}
+
+function societyDraftOf(id) {
+  const item = document.querySelector(`[data-society-draft="${CSS.escape(id)}"]`);
+  return { id, subject: item.querySelector("[data-draft-subject]").value,
+           text: item.querySelector("[data-draft-text]").value };
+}
+
+function societyReplyTo() {
+  const theirs = societyState.messages.filter((one) => one.direction === "in" && one.status === "received");
+  return theirs.length ? theirs[theirs.length - 1].id : "";
+}
+
+document.addEventListener("click", async (event) => {
+  const at = event.target.closest && event.target.closest(
+    "#society button, #society [data-society-open]");
+  if (!at) return;
+  const run = async (call) => {
+    try { return await call(); } catch (err) { toast(err.message, "error"); return null; }
+  };
+  if (at.dataset.societyView) {
+    societyView(at.dataset.societyView);
+  } else if (at.dataset.societyCopy) {
+    try { await navigator.clipboard.writeText(at.dataset.societyCopy); toast("Copied"); }
+    catch (_err) { toast("Select the id and copy it", "error"); }
+  } else if (at.dataset.societyOpen) {
+    societyView("chats");
+    societyState.asking = "";
+    societyState.linking = false;
+    $("#society-found").innerHTML = "";
+    openSocietyChat(at.dataset.societyOpen);
+  } else if (at.id === "society-publish") {
+    const said = await run(() => api.post("/api/society/publish",
+      { listed: $("#society-listed").checked }));
+    if (said) { societyState.status = said; renderSocietyMe(); toast("Published"); }
+  } else if (at.id === "society-email-send") {
+    const said = await run(() => api.post("/api/society/email/start",
+      { email: $("#society-email").value.trim() }));
+    if (said) {
+      societyState.emailSent = true;
+      societyState.status = said.status;
+      renderSocietyMe();
+      toast("Sent - look in your mailbox");
+    }
+  } else if (at.id === "society-code-confirm") {
+    const said = await run(() => api.post("/api/society/email/confirm",
+      { code: $("#society-code").value.trim() }));
+    if (said) { societyState.status = said; renderSocietyMe(); }
+  } else if (at.id === "society-clicked") {
+    const said = await run(() => api.post("/api/society/refresh", {}));
+    if (said) {
+      societyState.status = said;
+      renderSocietyMe();
+      if (!said.registered) toast("Not confirmed yet: press Confirm on the email's page", "error");
+    }
+  } else if (at.id === "society-commands-save") {
+    const said = await run(() => api.post("/api/society/commands",
+      { text: $("#society-commands").value }));
+    if (said) { societyState.status = said; toast("Saved"); }
+  } else if (at.id === "society-backup-open") {
+    societyState.backupOpen = !societyState.backupOpen;
+    societyState.restoreOpen = false;
+    renderSocietyMe();
+  } else if (at.id === "society-restore-open") {
+    societyState.restoreOpen = !societyState.restoreOpen;
+    societyState.backupOpen = false;
+    renderSocietyMe();
+  } else if (at.id === "society-backup-save") {
+    const withKey = $("#society-with-key").checked;
+    const pass = withKey ? $("#society-pass").value : "";
+    if (withKey && pass !== $("#society-pass-2").value) { toast("The two passphrases differ", "error"); return; }
+    const said = await run(() => api.post("/api/society/backup", { with_key: withKey, passphrase: pass }));
+    if (said) {
+      societySaveFile(`agent-${societyState.status.id}${withKey ? "-key" : ""}.json`, said.backup);
+      societyState.backupOpen = false;
+      renderSocietyMe();
+    }
+  } else if (at.id === "society-restore-go") {
+    const file = $("#society-restore-file").files[0];
+    if (!file) { toast("Choose the backup file", "error"); return; }
+    const said = await run(async () => api.post("/api/society/restore",
+      { backup: await file.text(), passphrase: $("#society-restore-pass").value }));
+    if (said) { societyState.status = said; societyState.restoreOpen = false; renderSocietyMe(); toast("Restored"); }
+  } else if (at.id === "society-collect") {
+    if (await run(() => api.post("/api/society/collect", {}))) loadSocietyChats();
+  } else if (at.dataset.societyLinkOpen) {
+    societyState.linking = !societyState.linking;
+    renderSocietyChat();
+    if (societyState.linking) { $("#society-link-q")?.focus(); societyLinkSearch(""); }
+  } else if (at.dataset.societyLinkTo !== undefined) {
+    const said = await run(() => api.post("/api/society/link",
+      { peer: societyState.peer, person_id: at.dataset.societyLinkTo }));
+    if (said) { societyState.linking = false; await loadSocietyChats(); renderSocietyChat(); }
+  } else if (at.id === "society-compose-draft" || at.id === "society-compose-send") {
+    const text = $("#society-compose-text").value;
+    if (!text.trim()) { $("#society-compose-text").focus(); return; }
+    // SAVED FIRST - as a draft; then, to send, asked: what is sent is
+    // what the user sees now.
+    const said = await run(() => api.post("/api/society/drafts/save", {
+      to: societyState.peer, subject: $("#society-compose-subject").value, text,
+      reply_to: societyReplyTo() }));
+    if (!said) return;
+    societyState.asking = at.id === "society-compose-send" ? said.draft.id : "";
+    await openSocietyChat(societyState.peer, false);
+    loadSocietyChats();
+  } else if (at.dataset.societySave) {
+    const one = societyDraftOf(at.dataset.societySave);
+    const said = await run(() => api.post("/api/society/drafts/save",
+      { id: one.id, to: societyState.peer, subject: one.subject, text: one.text }));
+    if (said) { toast("Saved"); openSocietyChat(societyState.peer, false); }
+  } else if (at.dataset.societyDrop) {
+    await run(() => api.post("/api/society/drafts/remove", { id: at.dataset.societyDrop }));
+    openSocietyChat(societyState.peer, false);
+    loadSocietyChats();
+  } else if (at.dataset.societySend) {
+    const one = societyDraftOf(at.dataset.societySend);
+    const said = await run(() => api.post("/api/society/drafts/save",
+      { id: one.id, to: societyState.peer, subject: one.subject, text: one.text }));
+    if (!said) return;
+    societyState.asking = said.draft.id;
+    openSocietyChat(societyState.peer, false);
+  } else if (at.dataset.societySendNo) {
+    societyState.asking = "";
+    renderSocietyChat();
+  } else if (at.dataset.societySendYes) {
+    const said = await run(() => api.post("/api/society/send",
+      { id: at.dataset.societySendYes, hash: at.dataset.hash }));
+    societyState.asking = "";
+    if (said) toast("Sent");
+    await openSocietyChat(societyState.peer, false);
+    loadSocietyChats();
+  }
+});
