@@ -2184,7 +2184,8 @@ class WorkTools:
         compared after (`_look_over`)."""
         from .changes import Watch
         try:
-            watch = Watch(self.writable, self._left_out)
+            watch = Watch(self.writable, self._left_out,
+                          flush_in=self.folder / ".agent_runtime")
             if watch.start():
                 return watch
         except Exception:                          # no watch: walked instead

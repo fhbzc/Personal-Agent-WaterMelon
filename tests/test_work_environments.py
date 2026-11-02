@@ -150,6 +150,23 @@ class WhatCodeChangedTests(_Folder):
         names = sorted(Path(one).relative_to(self.folder).as_posix() for one in touched)
         self.assertEqual(names, ["analysis.py", "result.csv"])
 
+    @unittest.skipUnless(WATCHING, "watchdog is not installed")
+    def test_heard_to_the_end_not_waited_a_while_for(self) -> None:
+        """2026-11-02: on a busy build machine a file a command had just
+        written was told after the fixed wait, and missed. The end is a mark
+        in the work's own runtime folder, heard back - quickly, and never
+        among what changed."""
+        watch = Watch([self.folder], flush_in=self.folder / ".agent_runtime")
+        self.assertTrue(watch.start())
+        time.sleep(0.3)
+        (self.folder / "made.txt").write_text("x", encoding="utf-8")
+        began = time.monotonic()
+        heard = watch.stop()
+        self.assertLess(time.monotonic() - began, 3.0, "heard back, not waited out")
+        self.assertEqual([Path(one).name for one in heard], ["made.txt"])
+        self.assertEqual(list((self.folder / ".agent_runtime").iterdir()), [],
+                         "the mark taken away")
+
     def test_without_a_watch_walked_environments_left_out(self) -> None:
         tools = self._tools()
         with mock.patch("personalized_agent.agent.work.changes.WATCHING", False):
