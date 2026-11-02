@@ -135,6 +135,9 @@ class WhatCodeChangedTests(_Folder):
         tools = self._tools()
         before = tools._changes_begin()
         self.assertIsInstance(before, Watch, "watched, not walked")
+        # The watcher's thread started (Linux's inotify on a busy CI machine
+        # took longer than the 0.2 s this test once gave it).
+        time.sleep(0.5)
         with mock.patch.object(tools, "_look_over", side_effect=AssertionError("walked")):
             (self.folder / "result.csv").write_text("a,b\n", encoding="utf-8")
             (self.folder / "analysis.py").unlink()
@@ -142,7 +145,7 @@ class WhatCodeChangedTests(_Folder):
             (venv / "six" / "m0.py").write_text("x = 2\n", encoding="utf-8")
             (self.folder / ".agent_runtime").mkdir()
             (self.folder / ".agent_runtime" / "scratch.txt").write_text("s", encoding="utf-8")
-            time.sleep(0.2)
+            time.sleep(1.5)
             touched = tools._changes_end(before)
         names = sorted(Path(one).relative_to(self.folder).as_posix() for one in touched)
         self.assertEqual(names, ["analysis.py", "result.csv"])

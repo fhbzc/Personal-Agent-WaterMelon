@@ -26,6 +26,21 @@ from personalized_agent.society.seal import Unreadable, open_sealed, seal  # noq
 from personalized_agent.society.service import SocietyService, content_hash  # noqa: E402
 
 
+def _server_here() -> bool:
+    """The real server is in the development checkout only: the public
+    release carries the agent's side, not agent_society_server_end/."""
+    try:
+        import fastapi.testclient  # noqa: F401
+        import society.app  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+SERVER_HERE = _server_here()
+NO_SERVER = "the Society server (agent_society_server_end/, with FastAPI) is not here"
+
+
 class IdentityTests(unittest.TestCase):
 
     def test_made_once_kept_in_the_data_folder_never_in_the_clear(self) -> None:
@@ -37,6 +52,7 @@ class IdentityTests(unittest.TestCase):
             kept = (Path(folder) / keys.FILE).read_text("utf-8")
             self.assertNotIn(made._private()["sign"], kept)
 
+    @unittest.skipUnless(SERVER_HERE, NO_SERVER)
     def test_the_same_id_as_the_server_makes(self) -> None:
         from society import ids as server_ids
         made = keys.Identity.new()
@@ -129,6 +145,7 @@ def _service(folder: Path, transport, me) -> SocietyService:
     return SocietyService(app, transport)
 
 
+@unittest.skipUnless(SERVER_HERE, NO_SERVER)
 class SocietyTests(unittest.TestCase):
 
     def setUp(self) -> None:
@@ -207,6 +224,7 @@ class SocietyTests(unittest.TestCase):
         self.assertEqual(keys.load(self.mira.folder).id, was)
 
 
+@unittest.skipUnless(SERVER_HERE, NO_SERVER)
 class GroupsTests(unittest.TestCase):
     """The user, 2026-11-02: who gets what answer is a group - instant, reply,
     draft, read - each holding people and kinds of people; by default those
@@ -299,6 +317,7 @@ class _Model:
         return SimpleNamespace(text=json.dumps({"keywords": ["garden"]}))
 
 
+@unittest.skipUnless(SERVER_HERE, NO_SERVER)
 class AnsweringTests(unittest.TestCase):
     """Each group answered as the user set it: instant at once - what they ask
     done, the calendar the one thing changed; reply and draft in a while;

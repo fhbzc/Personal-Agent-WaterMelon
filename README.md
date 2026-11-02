@@ -366,7 +366,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
-| [v0.2.17](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.17) | 2026-11-02 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.17) |
+| [v0.2.18](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.18) | 2026-11-02 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.18) |
 | [v0.2.16](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) | 2026-10-30 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) |
 | [v0.2.15](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.15) | 2026-10-29 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.15/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.15/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.15/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.15) |
 | [v0.2.11](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.11) | 2026-10-29 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.11/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.11/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.11/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.11) |
@@ -627,7 +627,7 @@ has it.
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
 
-### [v0.2.17](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.17) (2026-11-02, a pre-release)
+### [v0.2.18](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.18) (2026-11-02, a pre-release)
 
 - **Right-click "Delegate work" almost everywhere.** In a web page - on the page, selected text, a link or a picture - through the agent's own browser extension for Chrome, Edge and Firefox (install it from Settings > General); in VS Code, Cursor, VSCodium, Windsurf, Sublime Text and JetBrains IDEs (Settings); on files and folders in Windows Explorer, in macOS Finder and other apps (Services), and in the Linux file managers. The box says exactly what you right-clicked. In the browser the box opens at once, in the browser you are in: its context is collected after you press Start.
 - **Selected text gets a small watermelon.** Select text in any program and the agent's face appears beside it for a few seconds - click it for Delegate work or Learn.
