@@ -12,7 +12,7 @@ way you would want it done. All on your own computer.
 </p>
 
 <p align="center">
-<b>Download v0.2.16:</b> <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-Setup-windows-x64.exe"><b>Windows</b></a> ·
+<b>Download v0.2.20:</b> <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-Setup-windows-x64.exe"><b>Windows</b></a> ·
 <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-macos.dmg"><b>macOS</b></a> ·
 <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-linux-x86_64.deb"><b>Linux</b></a>
 <sub>(<a href="#install">other formats</a> · <a href="#versions">every version</a>)</sub>
@@ -350,7 +350,7 @@ on it. What you start yourself (chat, a piece of work) is counted apart.
 
 ## Install
 
-The newest version is **[v0.2.16](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16)**:
+The newest version is **[v0.2.20](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20)**:
 
 > **On Windows, with 0.2.7 or earlier: install this version yourself, once.** Updating from inside the program quit it and never came back - the installer was never started. Run the installer below over your copy: your data and settings stay. From 0.2.8 on, updates are quiet: made ready in the background, used at the next start.
 
@@ -367,9 +367,9 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
-| [v0.2.20](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) | 2026-11-03 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) |
+| [v0.2.20](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) | 2026-11-03 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) |
 | [v0.2.19](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.19) | 2026-11-02 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.19) |
-| [v0.2.16](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) | 2026-10-30 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) |
+| [v0.2.16](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) | 2026-10-30 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.16/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.16/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.16/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) |
 | [v0.2.15](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.15) | 2026-10-29 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.15/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.15/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.15/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.15) |
 | [v0.2.11](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.11) | 2026-10-29 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.11/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.11/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.11/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.11) |
 | [v0.2.10](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.10) | 2026-10-29 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.10) |
@@ -629,7 +629,7 @@ has it.
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
 
-### [v0.2.20](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) (2026-11-03, being built)
+### [v0.2.20](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) (2026-11-03)
 
 - **The browser extension, from the stores.** Settings > General lists Chrome and Firefox, each with whether the extension is installed; Install opens its page in the Chrome Web Store or Firefox Add-ons, and Refresh looks again. Only the store's extension counts. If it goes quiet - paused by the browser after an update, or removed - Settings says so and opens the browser's extensions page to turn it back on. The extension updates itself from its store. (Edge is no longer offered.)
 - **Delegate work in Firefox opens its box.** Firefox treats a page an extension opens as coming from another site, and the agent refused to sign it in; it no longer does, for its own extension.
