@@ -8,10 +8,50 @@ to own the window's placement and mouse events.
 from __future__ import annotations
 
 import io
-from typing import Any
+import logging
+from typing import Any, Callable, Optional
 
 import AppKit
 from Foundation import NSData
+
+log = logging.getLogger(__name__)
+
+
+def right_clicks_while_away(window: Any, size: int,
+                            on_right: Callable[[int, int], None]) -> Optional[Any]:
+    """THE RIGHT BUTTON ON THE AVATAR WHILE ANOTHER PROGRAM IS IN FRONT (the
+    user, 2026-11-02, on the lab's Mac: "右键logo没有东西弹出来", no way to
+    quit): Tk on a Mac drops a right click on a window of a program not in
+    front - measured: none reached its bindings, though the click reached
+    the program. Heard here before Tk drops it: the program brought to the
+    front and `on_right(x, y)` told where, in Tk's screen coordinates (from
+    the top). In front already, Tk hears it itself and this lets it be.
+    The monitor is returned - kept by the caller as long as it listens."""
+    app = AppKit.NSApplication.sharedApplication()
+    window.update_idletasks()
+    native = next((one for one in app.windows()
+                   if str(one.title()) == window.title()
+                   and int(one.contentView().bounds().size.width) == size
+                   and int(one.contentView().bounds().size.height) == size), None)
+    if native is None:
+        return None
+    # By number: two Python handles on one window are not the same object.
+    number = native.windowNumber()
+
+    def heard(event: Any) -> Any:
+        try:
+            if event.windowNumber() == number and not app.isActive():
+                app.activateIgnoringOtherApps_(True)
+                where = AppKit.NSEvent.mouseLocation()
+                top = AppKit.NSScreen.screens()[0].frame().size.height
+                on_right(int(where.x), int(top - where.y))
+                return None                              # told once, not to Tk too
+        except Exception:                                # pragma: no cover - Tk's, then
+            log.debug("the avatar's right click could not be told", exc_info=True)
+        return event
+
+    return AppKit.NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+        AppKit.NSEventMaskRightMouseDown, heard)
 
 
 class _AvatarImageView(AppKit.NSImageView):

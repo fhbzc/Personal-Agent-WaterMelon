@@ -67,7 +67,7 @@ def write_message(stream: BinaryIO, said: Dict[str, Any]) -> None:
 
 
 def answer(message: Dict[str, Any], data_dir: Path,
-           open_note: Callable[..., Any]) -> Dict[str, Any]:
+           open_note: Callable[..., Any], caller: str = "") -> Dict[str, Any]:
     """What one message is answered: a delegate - or a learn - kept, and
     its box opened (`open_note(ident, which)`) - or, when the extension opens
     the box's window itself ("opens", the user, 2026-11-02: no browser
@@ -78,16 +78,17 @@ def answer(message: Dict[str, Any], data_dir: Path,
         from ..version import __version__
         return {"ok": True, "version": __version__}
     if kind == "here":
-        from .browser_extension import mark_seen
-        mark_seen(data_dir, str(message.get("browser") or ""))
+        from .browser_extension import from_store, mark_seen
+        mark_seen(data_dir, str(message.get("browser") or ""),
+                  store=from_store(caller, str(message.get("install") or "")))
         return {"ok": True}
     if kind in ("delegate", "learn"):
         picked = message.get("picked")
         if not isinstance(picked, dict):
             return {"ok": False, "error": "nothing was picked"}
         from ..agent.work.handover import hand_over_picked
-        from .browser_extension import mark_seen
-        mark_seen(data_dir, str(picked.get("app") or ""))
+        from .browser_extension import from_store, mark_seen
+        mark_seen(data_dir, str(picked.get("app") or ""), store=from_store(caller))
         # Named by the extension when it opened the box already, on it.
         ident = hand_over_picked(data_dir, picked, str(message.get("id") or ""))
         if message.get("opens"):
@@ -142,7 +143,7 @@ def streams() -> Tuple[BinaryIO, BinaryIO]:
 
 def serve(data_dir: Path, command: List[str],
           inbound: Optional[BinaryIO] = None, outbound: Optional[BinaryIO] = None,
-          opener: Optional[Callable[..., Any]] = None) -> int:
+          opener: Optional[Callable[..., Any]] = None, caller: str = "") -> int:
     """Answer the browser's messages until it closes the input. `opener(ident,
     which)` opens a note's box - by default, a process apart."""
     opener = opener or (lambda ident, which, give=False: open_apart(command, ident, which))
@@ -157,7 +158,7 @@ def serve(data_dir: Path, command: List[str],
         if message is None:
             return 0
         try:
-            said = answer(message, data_dir, opener)
+            said = answer(message, data_dir, opener, caller)
         except Exception as exc:                 # said back, not left hanging
             log.exception("the browser's message could not be answered")
             said = {"ok": False, "error": str(exc)[:200]}

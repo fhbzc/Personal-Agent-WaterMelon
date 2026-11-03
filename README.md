@@ -70,7 +70,8 @@ long you worked on each, a **To do** list you keep yourself, each with a
 with where it stands.
 
 **Right-click "Delegate work" almost anywhere.** A web page, selected text, a
-link or a picture (the agent's extension for Chrome, Edge and Firefox), a
+link or a picture (the agent's extension, from the Chrome Web Store and
+Firefox Add-ons - Settings > General links to it), a
 file in VS Code, Sublime Text or a JetBrains IDE, a file or folder in your
 file manager - or select text in any program and click the small watermelon
 beside it. The box says exactly what you picked.
@@ -366,6 +367,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.2.20](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) | 2026-11-03 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) |
 | [v0.2.19](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.19) | 2026-11-02 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.19) |
 | [v0.2.16](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) | 2026-10-30 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) |
 | [v0.2.15](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.15) | 2026-10-29 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.15/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.15/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.15/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.15) |
@@ -626,6 +628,18 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.2.20](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) (2026-11-03, being built)
+
+- **The browser extension, from the stores.** Settings > General lists Chrome and Firefox, each with whether the extension is installed; Install opens its page in the Chrome Web Store or Firefox Add-ons, and Refresh looks again. Only the store's extension counts. If it goes quiet - paused by the browser after an update, or removed - Settings says so and opens the browser's extensions page to turn it back on. The extension updates itself from its store. (Edge is no longer offered.)
+- **Delegate work in Firefox opens its box.** Firefox treats a page an extension opens as coming from another site, and the agent refused to sign it in; it no longer does, for its own extension.
+- **What you selected, plain to see.** In the Delegate work box the text you selected is larger, and the page's address is kept short.
+- **Messages written with the whole exchange in mind.** The agent reads the thread as the person it is writing to would: it does not say again what was already said, follows the tone the exchange has, and writes the way you write - not in stock courtesies.
+- **Pre-releases in Check now.** Settings > Updates lists pre-releases and beta versions too, to install if you choose; they are never installed by themselves and never announced.
+- **Token usage by the part of the agent that spent it.** One line per module - each one a switch in Settings - so it is clear what to turn off.
+- **On a Mac:** the avatar's right-click menu works while another program is in front; the note, bubbles and selection icon stay on top; you can type in the chat bubble and the note, and zoom the bubble; Delegate work opens in a panel of its own.
+- **Work assigned:** work delegated from the browser, Explorer or the selection icon shows up at once; what a work handed over opens from its row. The note beside it folds to its bar and is headed by the work's name.
+- Also: buttons give a pressed feel and act when let go; notifications stay on the screen and can be dragged; a document you right-click is read into the work; the newspaper does not repeat a story within 30 days; a dark-mode browser add-on no longer recolours the agent's pages; the agents' society lives at agentssociety.org; the editors' card is gone from Settings (menus already added keep working).
 
 ### [v0.2.19](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.19) (2026-11-02, a pre-release)
 

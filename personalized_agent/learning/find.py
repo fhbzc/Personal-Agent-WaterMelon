@@ -635,11 +635,24 @@ class Finder:
         made = [case["id"] for case in detailed] + [case["id"] for case in index[:4]]
         said_of = getattr(self, "case_verdicts", {}) or {}
 
+        def answering(n: int) -> List[str]:
+            """The cases said to help answer question n."""
+            return [cid for cid in [case["id"] for case in detailed + index]
+                    if (said_of.get(cid) or {}).get("answers", {}).get(n, 0) >= ANSWERS_AT_LEAST]
+
         def made_for(n: int) -> List[str]:
             """The cases said to help answer question n - else the closest."""
-            mine = [cid for cid in [case["id"] for case in detailed + index]
-                    if (said_of.get(cid) or {}).get("answers", {}).get(n, 0) >= ANSWERS_AT_LEAST]
-            return mine or made
+            return answering(n) or made
+
+        # ANSWERED BY THE USER'S OWN WORK, NOT "NOTHING LEARNED" (the user,
+        # 2026-11-02: a summary asked for in two words came out long - asked
+        # "how long", the run was told nothing was learned, though their own
+        # notes, judged to answer it, were the cases it was given): a question
+        # no reason answers, of any kind, points to the cases judged to.
+        titled = {case["id"]: str(case.get("title") or "") for case in detailed + index}
+        shows_it = ("  No reason learned answers this outright - but the user's own work "
+                    "answers it: {} - see below what each looks like and how it was made, "
+                    "and go by it.")
 
         pointer = ("  No reason learned answers this outright. What the user used and did before is in "
                    "the cases below - what each looks like and how it was made ({}); "
@@ -704,6 +717,10 @@ class Finder:
                     out.append((pointer if first_pointer else pointed).format(
                         ", ".join(made_for(n))))
                     first_pointer = False
+                elif not mine and answering(n):
+                    out.append(shows_it.format(", ".join(
+                        f"{cid} ({titled[cid]})" if titled.get(cid) else cid
+                        for cid in answering(n))))
                 elif not mine:
                     out.append("  (nothing learned bears on this)")
             unasked = [rid for rid in expected if rid in texts]

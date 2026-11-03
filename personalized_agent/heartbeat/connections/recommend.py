@@ -79,8 +79,15 @@ FRONT = 6
 CLOSE_AT = 0.42
 #: A story this close to something already read is the same story.
 SEEN_CLOSENESS = 0.78
-#: And this close to one shown in a recent issue.
+#: NOT THE SAME STORY AGAIN (the user, 2026-11-02: "之前推送过的东西不要重复
+#: 推送"): a story this close to one shown in the last `SHOWN_DAYS` - or to
+#: another of the same issue - is left out. Measured on the user's own 32
+#: issues (367 stories, this machine's model): 0.85 and up, the same story
+#: said again - one shown 6 and 21 issues before, let through when only the
+#: last three issues were looked at; 0.75-0.85, the same event's follow-ups
+#: and other games of one team - kept (the user: "还是不要去重改严了").
 SHOWN_ALIKE = 0.85
+SHOWN_DAYS = 30
 #: A reading topic goes with a task when their centres are this close.
 FOLD_AT = 0.5
 #: AN INTEREST, NOT A GLANCE. A 12-second look at a product page, a 46-second
@@ -155,7 +162,8 @@ WHAT THEY ALREADY KNOW - do not recommend these again, or what only repeats
 them:
 {known}
 
-SHOWN IN RECENT ISSUES - not again:
+SHOWN IN THE LAST MONTH'S ISSUES - not again (what is new in one since is
+news):
 {shown}
 
 THEY ASKED FOR MORE LIKE THESE - the kind of find they value here; look for
@@ -821,6 +829,7 @@ def lay_out(stories: List[Dict[str, Any]], pages: List[Dict[str, Any]], embedder
     people = {"key": "people", "title": "People you know", "anchors": [], "topic_ids": []}
     by_key = {page["key"]: page for page in pages}
     placed: Dict[str, List[Dict[str, Any]]] = {page["key"]: [] for page in pages}
+    this_issue: List[List[float]] = []
     for n, one in enumerate(stories):
         if any(url_key(source) in seen for source in one.get("sources") or []):
             continue
@@ -831,6 +840,12 @@ def lay_out(stories: List[Dict[str, Any]], pages: List[Dict[str, Any]], embedder
         if vector and max((cosine(vector, shown) for shown in shown_vectors), default=0.0) \
                 >= SHOWN_ALIKE:
             continue
+        # Nor twice in this issue: the first of two about one thing stays.
+        if vector and max((cosine(vector, kept) for kept in this_issue), default=0.0) \
+                >= SHOWN_ALIKE:
+            continue
+        if vector:
+            this_issue.append(vector)
 
         def near(page: Dict[str, Any]) -> float:
             return max((cosine(vector, anchor) for anchor in page["anchors"]), default=0.0)

@@ -32,6 +32,7 @@ import webbrowser
 from typing import Any, Dict, List, Optional
 
 from ..common import chooser, interface_words
+from .on_top import on_release
 
 log = logging.getLogger(__name__)
 
@@ -288,6 +289,7 @@ class DesktopAgent:
         self._load_character()
         self._enable_native_avatar()
         self._bind_events()
+        self._own_panel_for_the_box()
         self.app.bus.subscribe("notification.created", self._on_notification)
         self.app.bus.subscribe("agent.proactive_message", self._on_proactive)
         self.app.bus.subscribe("character.changed", self._on_character_changed)
@@ -352,6 +354,30 @@ class DesktopAgent:
         self.agent_window.geometry(f"{self.size}x{self.size}+{x}+{y}")
 
     # -- character ----------------------------------------------------------
+    def _own_panel_for_the_box(self) -> None:
+        """ON A MAC, THE DELEGATE WORK BOX IN A PANEL OF THE AGENT'S OWN (the
+        user, 2026-11-02; ui/mac_panel.py) - made on this, the main, thread
+        (through the queue: asked from the API's thread too), and opened in
+        the browser should it fail."""
+        if sys.platform != "darwin":
+            return
+        try:
+            from ..platform_layer import app_window
+            from .mac_panel import available, open_panel
+            if not available():
+                return
+
+            def opener(url: str, size: tuple) -> bool:
+                def made() -> None:
+                    if not open_panel(url, size):
+                        import webbrowser
+                        webbrowser.open(url)
+                self.queue.put(("call", made))
+                return True
+            app_window.set_native_opener(opener)
+        except Exception:                          # pragma: no cover - the browser, then
+            log.debug("no panel of its own for the box", exc_info=True)
+
     def _enable_native_avatar(self) -> None:
         """ON A MAC, the avatar drawn by a native image view over a clear
         window (PR #5, ui/macos_avatar.py). Where it cannot be: Tk's own
@@ -609,6 +635,19 @@ class DesktopAgent:
             # clicks with Control held.
             self.canvas.bind("<Button-2>", self._on_right_click)
             self.canvas.bind("<Control-Button-1>", self._on_right_click)
+            # And while another program is in front - which Tk drops there.
+            try:
+                from types import SimpleNamespace
+                from .macos_avatar import right_clicks_while_away
+                # Told through the queue, never to Tk from there: AppKit
+                # calls it inside Tk's own wait for events, and a call into
+                # Tk from it ended the process (measured on the lab's Mac).
+                self._right_monitor = right_clicks_while_away(
+                    self.agent_window, self.size,
+                    lambda x, y: self.queue.put(("call", lambda: self._on_right_click(
+                        SimpleNamespace(x_root=x, y_root=y)))))
+            except Exception:                      # pragma: no cover - Tk's alone, then
+                log.debug("the avatar's right click is Tk's alone", exc_info=True)
         self.canvas.bind("<B1-Motion>", self._on_drag)
         self.canvas.bind("<ButtonPress-1>", self._start_drag, add="+")
         self.canvas.bind("<ButtonRelease-1>", self._end_drag, add="+")
@@ -725,8 +764,23 @@ class DesktopAgent:
             menu.add_command(label=say("Hide avatar"), command=self.toggle_character)
         menu.add_separator()
         menu.add_command(label=say("Quit"), command=self.quit)
+        x, y = int(event.x_root), int(event.y_root)
+        if sys.platform == "darwin":
+            # ALL OF IT ABOVE THE DOCK (on the lab's Mac, 2026-11-02: opened
+            # down from the avatar low on the right, a Mac cut it at the Dock
+            # and Quit was behind its scroll arrow): opened up where down it
+            # does not fit.
+            try:
+                menu.update_idletasks()
+                high = max(menu.winfo_reqheight(), 24 * menu.index("end") + 24)
+                from .chat_bubble import work_area
+                bottom = (work_area(menu) or (0, 0, 0, menu.winfo_screenheight() - 90))[3]
+                if y + high > bottom:
+                    y = max(0, y - high)
+            except Exception:                      # where it was asked, then
+                pass
         try:
-            menu.tk_popup(event.x_root, event.y_root)
+            menu.tk_popup(x, y)
         finally:
             menu.grab_release()
 
@@ -831,7 +885,8 @@ class DesktopAgent:
             window.geometry(f"+{max(0, x - window.winfo_reqwidth() - 12)}+{max(0, y - 4)}")
         else:
             window.geometry(f"+{x + 14}+{y + 18}")
-        window.update_idletasks()
+        from .on_top import stay_on_top
+        stay_on_top(window)                  # on a Mac, asked before it was laid out: lost
 
     def _open_selection_menu(self, said: Dict[str, Any]) -> None:
         """The icon clicked: its menu, in its place - still not taking the
@@ -1077,13 +1132,26 @@ class DesktopAgent:
                 self.config.set("chat_bubble_size", [int(size[0]), int(size[1])], internal=True)
             except Exception:                    # pragma: no cover - this one keeps it
                 log.debug("the chat bubble's size could not be kept", exc_info=True)
+        # ITS ZOOM (Ctrl + / Ctrl -), as the user left it last - a hidden
+        # setting (the user, 2026-11-02: kept, not shown in Settings).
+        from .chat_bubble import ZOOM_START
+        try:
+            zoom = int(self.config.get("chat_bubble_zoom", ZOOM_START))
+        except (TypeError, ValueError):
+            zoom = ZOOM_START
+
+        def zoomed(step: int) -> None:
+            try:
+                self.config.set("chat_bubble_zoom", int(step), internal=True)
+            except Exception:                    # pragma: no cover - this one keeps it
+                log.debug("the chat bubble's zoom could not be kept", exc_info=True)
         self._chat_bubble = ChatBubble(
             self.root, name=self.app.avatar_name(), family=font[0], size=font[1],
             send=lambda text, conversation: self.app.agent.handle_message(text, conversation),
             post=lambda fn: self.queue.put(("call", fn)), open_full=full, words=self._words,
             conversation_id=self._conversation_id,
             on_conversation=lambda conversation: setattr(self, "_conversation_id", conversation),
-            kept_size=kept or None, on_size=sized)
+            kept_size=kept or None, on_size=sized, zoom=zoom, on_zoom=zoomed)
         self._chat_bubble.show(near=self._avatar_box())
 
     def _avatar_box(self) -> tuple:
@@ -1170,6 +1238,8 @@ class DesktopAgent:
         self._hover = window
         self._hover_label = label
         self._refresh_hover()
+        from .on_top import stay_on_top
+        stay_on_top(window)                  # on a Mac, asked before it was laid out: lost
 
     def _on_hover_leave(self, _event: Any = None) -> None:
         # A leave while the pointer is still on it is the see-through
@@ -1613,7 +1683,7 @@ class DesktopAgent:
                             wraplength=width - 60 if stacked else 0, justify="left")
             face.bind("<Enter>", lambda _e: face.configure(bg=hover))
             face.bind("<Leave>", lambda _e: face.configure(bg=fill))
-            face.bind("<Button-1>", lambda _e: act())
+            on_release(face, act)                # done when let go over it
             if stacked:
                 face.pack(side="top", fill="x", pady=(0, 6))
             else:
@@ -1650,7 +1720,7 @@ class DesktopAgent:
                            wraplength=width - 34, justify="left", anchor="w")
             bad.bind("<Enter>", lambda _e: bad.configure(fg=look["ink"]))
             bad.bind("<Leave>", lambda _e: bad.configure(fg=look["muted"]))
-            bad.bind("<Button-1>", lambda _e: self._bubble_bad(item["notification_id"]))
+            on_release(bad, lambda: self._bubble_bad(item["notification_id"]))
             bad.pack(fill="x", pady=(4, 0))
         bubble.update_idletasks()
         # Rounded where Windows rounds windows (11 and later).
@@ -1668,10 +1738,29 @@ class DesktopAgent:
         bubble.update_idletasks()
         # BESIDE THE AVATAR (the user, 2026-11-01): at its left, level with
         # its middle - at its right where the left has no room.
-        from .chat_bubble import beside
-        x, y = beside(self._avatar_box(), (bubble.winfo_reqwidth(), bubble.winfo_reqheight()),
-                      (bubble.winfo_screenwidth(), bubble.winfo_screenheight()))
+        # ALL OF IT ON THE SCREEN, ITS BUTTONS ABOVE THE TASKBAR (the user,
+        # 2026-11-02: "notification是不是太靠下了，我都不能点击button了"): its
+        # size is its card's - the window's own, asked before it is shown,
+        # was 1 pixel tall, and a bubble put level with the avatar's middle
+        # ran past the bottom of the screen (measured: to 1204 of 1080) -
+        # and it is placed again by its size once shown.
+        from .chat_bubble import beside, work_area
+        area = work_area(bubble)
+        screen = (bubble.winfo_screenwidth(), bubble.winfo_screenheight())
+        size = (max(bubble.winfo_reqwidth(), frame.winfo_reqwidth() + 2),
+                max(bubble.winfo_reqheight(), frame.winfo_reqheight() + 2))
+        x, y = beside(self._avatar_box(), size, screen, area)
         bubble.geometry(f"+{x}+{y}")
+        bubble.update_idletasks()
+        shown = (bubble.winfo_width(), bubble.winfo_height())
+        if shown[1] > size[1] or shown[0] > size[0]:
+            x, y = beside(self._avatar_box(), shown, screen, area)
+            bubble.geometry(f"+{x}+{y}")
+        # MOVED BY HAND (the user: "notification无法移动"): dragged by any of
+        # it but its buttons - each press of those stays a press.
+        self._draggable_bubble(bubble, frame)
+        from .on_top import stay_on_top
+        stay_on_top(bubble)                  # on a Mac, asked before it was laid out: lost
         self._bubble = bubble
         # Counted now it is the one shown: before, it was not yet, and the
         # count stayed empty until another arrived.
@@ -1679,6 +1768,36 @@ class DesktopAgent:
         # Deliberately no timer. A bubble that erases itself is one the user
         # can miss entirely, and if it carries a question, the question's
         # moment goes with it.
+
+    @staticmethod
+    def _draggable_bubble(bubble: Any, frame: Any) -> None:
+        """The bubble dragged by its card and its words - never by a button
+        (a label that answers a press, by its hand cursor)."""
+        grabbed = {"at": None}
+
+        def grab(event: Any) -> None:
+            grabbed["at"] = (event.x_root - bubble.winfo_x(), event.y_root - bubble.winfo_y())
+
+        def move(event: Any) -> None:
+            if grabbed["at"] is None:
+                return
+            dx, dy = grabbed["at"]
+            try:
+                bubble.geometry(f"+{event.x_root - dx}+{event.y_root - dy}")
+            except tk.TclError:                          # pragma: no cover - answered meanwhile
+                pass
+
+        def every(widget: Any) -> None:
+            try:
+                if str(widget.cget("cursor")) == "hand2":
+                    return                               # a button: a press, not a drag
+            except tk.TclError:
+                pass
+            widget.bind("<ButtonPress-1>", grab, add="+")
+            widget.bind("<B1-Motion>", move, add="+")
+            for child in widget.winfo_children():
+                every(child)
+        every(frame)
 
     def _refresh_bubble_count(self) -> None:
         """Keep "N more waiting" true while the bubble is on screen."""

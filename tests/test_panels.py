@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import html
 import re
+import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1909,7 +1910,10 @@ class WatchScopeTests(unittest.TestCase):
 
         excluded = [line.lower() for line in default_directory_exclusions().splitlines()]
         joined = " ".join(excluded)
-        for expected in ("windows", "program files", "temp"):
+        # Each system's own churn.
+        for expected in (("windows", "program files", "temp") if sys.platform == "win32"
+                         else ("/system", "library/caches", "/tmp")
+                         if sys.platform == "darwin" else ("/proc", "/tmp")):
             self.assertIn(expected, joined, f"{expected} would drown everything else")
 
     def test_noise_is_excluded_out_of_the_box(self) -> None:
@@ -4140,6 +4144,15 @@ class TokenUsageChartTests(unittest.TestCase):
         if self.kind != "chrome":
             self.skipTest("no browser available to render the page")
 
+    # Each kind's module, as the agent says it (common/modules.py): the
+    # data heartbeat a part removed, so Other.
+    MODULES = {"heartbeat": ("core", "Activity and states"),
+               "data_heartbeat": ("other", "Other"),
+               "user_instruction": ("manual", "Started by you"),
+               "scheduled_task": ("tasks", "Task organisation"),
+               "verification": ("experience", "Work learning"),
+               "chat": ("manual", "Started by you")}
+
     def _calls(self):
         """A spread across task kinds, weighted the way a real run is."""
         out, stamp = [], datetime(2026, 9, 16, 9, 0)
@@ -4150,17 +4163,20 @@ class TokenUsageChartTests(unittest.TestCase):
         for index, task in enumerate(plan * 3):
             stamp = stamp + timedelta(minutes=5)
             base = size[task]
+            module, name = self.MODULES[task]
             out.append({"timestamp": stamp.isoformat(), "task": task,
+                        "module": module, "module_name": name,
                         "model": "claude-opus-5",
                         "input_tokens": base, "output_tokens": base // 8,
                         "total_tokens": base + base // 8,
                         "estimated_cost": round(base / 1e6 * 15, 6)})
         return out
 
-    @staticmethod
-    def _days() -> dict:
+    @classmethod
+    def _days(cls) -> dict:
         days = [f"2026-10-0{i}" for i in range(1, 8)]
-        rows = [{"day": day, "task": task, "calls": 3, "input_tokens": n,
+        rows = [{"day": day, "task": task, "module": cls.MODULES[task][0],
+                 "module_name": cls.MODULES[task][1], "calls": 3, "input_tokens": n,
                  "output_tokens": 0, "total_tokens": n, "estimated_cost": n / 1e6}
                 for i, day in enumerate(days)
                 for task, n in (("heartbeat", 1000 * (i + 1)), ("chat", 300))]
@@ -4229,12 +4245,13 @@ class TokenUsageChartTests(unittest.TestCase):
         self.assertEqual(result["err"], "")
         return result
 
-    # -- one line per kind of work ------------------------------------------
-    def test_there_is_a_line_for_each_kind_of_work(self) -> None:
+    # -- one line per module (the user, 2026-11-02: "token usage 只有by
+    # module" - what can be turned off in Settings) -------------------------
+    def test_there_is_a_line_for_each_module(self) -> None:
         result = self._run()
         self.assertEqual(sorted(result["labels"]),
-                         ["data_heartbeat", "heartbeat", "scheduled_task",
-                          "user_instruction", "verification"])
+                         ["Activity and states", "Started by you",
+                          "Task organisation", "Work learning", "other"])
 
     def test_something_is_actually_drawn(self) -> None:
         # The legend can be right while the canvas is blank.
@@ -4244,16 +4261,16 @@ class TokenUsageChartTests(unittest.TestCase):
         # A legend that only names the lines makes the reader measure the
         # chart by eye to answer "which cost most".
         text = self._run()["legendText"]
-        self.assertIn("heartbeat", text)
+        self.assertIn("Activity and states", text)
         self.assertRegex(text, r"\d")
 
     # -- the lines can be put away ------------------------------------------
     def test_a_line_can_be_hidden_and_brought_back(self) -> None:
-        hide = ("document.querySelector('[data-task=\\'heartbeat\\']').click();"
+        hide = ("document.querySelector('[data-task=\\'Activity and states\\']').click();"
                 "await wait();")
         self.assertEqual(self._run(hide)["off"], 1)
 
-        both = hide + ("document.querySelector('[data-task=\\'heartbeat\\']').click();"
+        both = hide + ("document.querySelector('[data-task=\\'Activity and states\\']').click();"
                        "await wait();")
         self.assertEqual(self._run(both)["off"], 0,
                          "a hidden line must be findable to bring back")
@@ -4276,25 +4293,28 @@ class TokenUsageChartTests(unittest.TestCase):
         self.assertTrue(result["more"]["daysShown"])
         self.assertRegex(result["more"]["asked"][0], r"days=30&east=-?\d+")
         self.assertIn("over the last 7 days", result["note"])
-        # The last day: heartbeat 7000 and chat 300, by name.
-        self.assertIn("heartbeat", result["more"]["tip"])
-        self.assertIn("heartbeat7k", result["more"]["tip"].replace(" ", ""))
+        # The last day: heartbeat 7000 and chat 300, by their modules' names.
+        self.assertIn("Activity and states", result["more"]["tip"])
+        self.assertIn("Activityandstates7k", result["more"]["tip"].replace(" ", ""))
         self.assertIn("42 calls", result["note"])
 
     def test_every_kind_that_runs_its_own_and_only_past_twenty_eight_other(self) -> None:
         # Twenty-eight of their own - seven colours, then the same seven
         # striped, dotted and crossed (the user, 2026-10-31: more kinds
         # shown) - and a part removed from the application is Other, unnamed.
-        calls = [{"timestamp": f"2026-10-01T10:{i:02d}:00+00:00", "task": f"k{i}",
-                  "total_tokens": 100 * (i + 1), "input_tokens": 1,
+        calls = [{"timestamp": f"2026-10-01T10:{i:02d}:00+00:00", "task": f"t{i}",
+                  "module": f"m{i}", "module_name": f"k{i}",
+                  "total_tokens": 100 * (30 - i), "input_tokens": 1,
                   "output_tokens": 1, "estimated_cost": 0} for i in range(30)]
         calls.append({"timestamp": "2026-10-01T11:00:00+00:00", "task": "data_heartbeat",
                       "module": "other", "total_tokens": 5000, "input_tokens": 1,
                       "output_tokens": 1, "estimated_cost": 0})
         ranking = {f"k{i}": {"total": 30 - i} for i in range(30)}
         result = self._run(calls=calls, by_task=ranking)
-        self.assertEqual(result["labels"], [f"k{i}" for i in range(28)] + ["other"])
-        self.assertIn("Other (2)", result["legendText"])
+        # Two of the twenty-eight are the modules the per-day view, opened
+        # first, already drew: a module keeps its colour in either view.
+        self.assertEqual(result["labels"], [f"k{i}" for i in range(26)] + ["other"])
+        self.assertIn("Other (4)", result["legendText"])
         self.assertNotIn("data_heartbeat", result["legendText"])
 
     # -- the metric can be changed ------------------------------------------
@@ -4333,7 +4353,7 @@ class TokenUsageChartTests(unittest.TestCase):
                                    "total_tokens": 100, "input_tokens": 90,
                                    "output_tokens": 10, "estimated_cost": 0.001,
                                    "model": "m"}])
-        self.assertEqual(result["labels"], ["general"],
+        self.assertEqual(result["labels"], ["other"],
                          "a call with no task should not vanish from the chart")
 
 

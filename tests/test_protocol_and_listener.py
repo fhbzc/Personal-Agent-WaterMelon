@@ -739,6 +739,7 @@ class TheAgentDoesNotListenToItselfTests(unittest.TestCase):
         time.sleep(0.05)
         self.assertFalse(registry.claims("C:\\p\\a.md"))
 
+    @unittest.skipUnless(sys.platform == "win32", "a path spelled as Windows spells it - a drive, its case")
     def test_it_is_the_same_file_however_it_is_spelled(self) -> None:
         from personalized_agent.common.agent_writes import (mark_written,
                                                             was_written_by_agent)
@@ -1874,6 +1875,7 @@ class TheDesktopKnowsWhatItsUserOpenedTests(unittest.TestCase):
 
         self.asking = WhatTheUserOpened(Desktop)
 
+    @unittest.skipUnless(sys.platform == "win32", "a path spelled as Windows spells it - a drive, its case")
     def test_a_file_the_user_opened_is_recognised_by_its_path(self) -> None:
         self.assertTrue(self.asking.opened_by_the_user(r"C:/work/report.md", self.now))
 
@@ -1969,6 +1971,7 @@ class WhoseDoingItWasTests(unittest.TestCase):
         self.assertFalse(self.privacy.the_user_did_this(
             "C:/project/store.py", {}, an_hour_ago))
 
+    @unittest.skipUnless(sys.platform == "win32", "a path spelled as Windows spells it - a drive, its case")
     def test_and_by_what_the_desktop_says_they_opened(self) -> None:
         opened = {os.path.normcase("C:/project/store.py"): self.now}
 

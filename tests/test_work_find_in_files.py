@@ -9,6 +9,7 @@ so the fresh call reads only those."""
 
 from __future__ import annotations
 
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -270,7 +271,8 @@ class FindingFilesLeavesTheSameOutTests(_Base):
 
     def test_all_the_way_down_but_not_into_what_is_left_out(self) -> None:
         self.assertEqual(self.files("**/*.py"), ["runs/try_one/copy.py", "src/model.py"])
-        self.assertEqual(self.files("**/*.PY"), ["runs/try_one/copy.py", "src/model.py"])
+        if sys.platform == "win32":                  # names told apart by case elsewhere
+            self.assertEqual(self.files("**/*.PY"), ["runs/try_one/copy.py", "src/model.py"])
 
     def test_a_pattern_means_what_a_glob_means(self) -> None:
         (self.folder / "top.py").write_text("y = 2\n", encoding="utf-8")

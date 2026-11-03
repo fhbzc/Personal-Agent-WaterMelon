@@ -23,6 +23,7 @@ import sys
 import threading
 import tkinter as tk
 from typing import Any, Callable, Dict, Optional
+from .on_top import on_release
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +35,11 @@ LOOK = {"outline": "#3a4152", "bg": "#1d212b", "ink": "#e9ecf3", "muted": "#9aa3
 #: How wide it is at the popups' first size, and how tall what was said may
 #: grow before it scrolls.
 WIDTH, SAID_TALLEST = 380, 340
+
+#: The sizes its words can be zoomed to (as the note beside what was handed
+#: over), and the one it starts at.
+ZOOMS = (0.8, 0.9, 1.0, 1.1, 1.25, 1.4, 1.6, 1.8, 2.0, 2.25)
+ZOOM_START = 2
 
 #: The smallest it is dragged to; its rim, where its edges are taken; and the
 #: pointer over each edge and corner.
@@ -47,21 +53,59 @@ EDGES = {"w": "sb_h_double_arrow", "e": "sb_h_double_arrow", "n": "sb_v_double_a
 GAP, MARGIN = 8, 10
 
 
-def beside(avatar: tuple, size: tuple, screen: tuple) -> tuple:
+def beside(avatar: tuple, size: tuple, screen: tuple,
+           area: Optional[tuple] = None) -> tuple:
     """WHERE A BUBBLE GOES: beside the avatar (the user, 2026-11-01: "beside
     the logo") - at its left, level with its middle; at its right where the
     left has no room - and on the screen, whatever. `avatar` is (x, y,
-    width, height); `size` the bubble's; `screen` the screen's."""
+    width, height); `size` the bubble's; `screen` the screen's; `area` the
+    part of it windows may use (left, top, right, bottom - `work_area`):
+    above the taskbar, wherever and however tall it is - else the screen
+    less a taskbar's guessed room."""
     ax, ay, aw, ah = avatar
     width, height = size
     sw, sh = screen
+    left, top, right, bottom = area or (0, 0, sw, sh - 40)
     x = ax - width - GAP
-    if x < MARGIN:
+    if x < left + MARGIN:
         x = ax + aw + GAP                            # no room at its left
-    x = max(MARGIN, min(x, sw - width - MARGIN))
+    x = max(left + MARGIN, min(x, right - width - MARGIN))
     y = ay + ah // 2 - height // 2
-    y = max(MARGIN, min(y, sh - height - MARGIN - 40))   # the taskbar's room
+    y = max(top + MARGIN, min(y, bottom - height - MARGIN))
     return int(x), int(y)
+
+
+def work_area(widget: Any) -> Optional[tuple]:
+    """The part of the screen windows may use - (left, top, right, bottom),
+    the taskbar's room left out - where the system says it (Windows; on a
+    Mac the menu bar's and the Dock's, 2026-11-02); None elsewhere, and
+    `beside` guesses."""
+    if sys.platform == "darwin":
+        try:
+            import AppKit
+            screen = AppKit.NSScreen.screens()[0]
+            whole, seen = screen.frame(), screen.visibleFrame()
+            # The system counts from the bottom; Tk from the top.
+            top = int(whole.size.height - (seen.origin.y + seen.size.height))
+            bottom = int(whole.size.height - seen.origin.y)
+            left, right = int(seen.origin.x), int(seen.origin.x + seen.size.width)
+            if right > left and bottom > top:
+                return (left, top, right, bottom)
+        except Exception:                                # pragma: no cover - guessed then
+            pass
+        return None
+    if not sys.platform.startswith("win"):
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        rect = wintypes.RECT()
+        if ctypes.windll.user32.SystemParametersInfoW(0x30, 0, ctypes.byref(rect), 0):  # SPI_GETWORKAREA
+            if rect.right > rect.left and rect.bottom > rect.top:
+                return (rect.left, rect.top, rect.right, rect.bottom)
+    except Exception:                                    # pragma: no cover - guessed then
+        pass
+    return None
 
 
 class ChatBubble:
@@ -78,9 +122,21 @@ class ChatBubble:
                  conversation_id: Optional[str] = None,
                  on_conversation: Optional[Callable[[str], None]] = None,
                  kept_size: Any = None,
-                 on_size: Optional[Callable[[tuple], None]] = None) -> None:
+                 on_size: Optional[Callable[[tuple], None]] = None,
+                 zoom: Any = ZOOM_START,
+                 on_zoom: Optional[Callable[[int], None]] = None) -> None:
         self.root, self.name = root, name
         self.family, self.size = family, max(8, int(size or 10))
+        #: ZOOMED BY CTRL + AND CTRL - (the user, 2026-11-02: "chat bubble 也要
+        #: 支持ctrl + - 缩放，并且作为setting记录"): the step it is at, kept by
+        #: `on_zoom` for the next time it opens. Its fonts are named in Tk - a
+        #: zoom sizes them; nothing is made again.
+        try:
+            self.zoom = min(max(int(zoom), 0), len(ZOOMS) - 1)
+        except (TypeError, ValueError):
+            self.zoom = ZOOM_START
+        self.on_zoom = on_zoom
+        self._fonts: Dict[str, tuple] = {}
         self.send, self.post, self.open_full, self.words = send, post, open_full, words
         self.conversation_id = conversation_id
         self.on_conversation = on_conversation
@@ -103,8 +159,45 @@ class ChatBubble:
         except tk.TclError:
             return False
 
-    def _font(self, more: int = 0, weight: str = "normal") -> tuple:
-        return (self.family, max(7, self.size + more), weight)
+    def _points(self, more: int) -> int:
+        return max(7, int(round((self.size + more) * ZOOMS[self.zoom])))
+
+    def _font(self, more: int = 0, weight: str = "normal", underline: bool = False) -> str:
+        """A font of it, named in Tk, at its zoom - a zoom sizes it."""
+        name = f"chatbubble{id(self)}_{more}_{weight}_{int(underline)}"
+        if name not in self._fonts:
+            self.root.tk.call("font", "create", name, "-family", self.family,
+                              "-size", self._points(more), "-weight", weight,
+                              "-underline", int(underline))
+            self._fonts[name] = (more,)
+        return name
+
+    def zoom_by(self, step: int) -> None:
+        self.zoom_to(self.zoom + step)
+
+    def zoom_to(self, zoom: int) -> None:
+        """Its words at another size - the box, what was said, its line -
+        kept for the next time (`on_zoom`)."""
+        zoom = min(max(int(zoom), 0), len(ZOOMS) - 1)
+        if zoom == self.zoom or not self.is_open:
+            return
+        self.zoom = zoom
+        for name, (more,) in self._fonts.items():
+            try:
+                self.root.tk.call("font", "configure", name, "-size", self._points(more))
+            except tk.TclError:
+                continue
+        if self.on_zoom is not None:
+            self.on_zoom(zoom)
+        self._fit()
+
+    def _forget_fonts(self) -> None:
+        for name in self._fonts:
+            try:
+                self.root.tk.call("font", "delete", name)
+            except tk.TclError:
+                pass
+        self._fonts = {}
 
     # -- the window --------------------------------------------------------------------------
     def show(self, near: Optional[tuple] = None) -> None:
@@ -117,7 +210,8 @@ class ChatBubble:
         width = self._size[0] if self._size else WIDTH + (self.size - 9) * 20
         window = tk.Toplevel(self.root)
         self.window = window
-        window.overrideredirect(True)
+        from .on_top import borderless
+        borderless(window)                   # written in, on a Mac too
         window.attributes("-topmost", True)
         window.configure(bg=LOOK["outline"])
         # Its outline, its rim - where its edges are taken - then the card.
@@ -137,11 +231,11 @@ class ChatBubble:
         close = tk.Label(head, text="✕", bg=LOOK["bg"], fg=LOOK["muted"], font=self._font(1),
                          cursor="hand2", padx=4)
         close.pack(side="right")
-        close.bind("<Button-1>", lambda _e: self.close())
+        on_release(close, self.close)
         full = tk.Label(head, text=self.words("Open the full chat"), bg=LOOK["bg"],
-                        fg=LOOK["muted"], font=self._font(-2, "underline"), cursor="hand2")
+                        fg=LOOK["muted"], font=self._font(-2, underline=True), cursor="hand2")
         full.pack(side="right", padx=(0, 10))
-        full.bind("<Button-1>", lambda _e: self._open_full())
+        on_release(full, self._open_full)
         for one in (head, dot, title):
             one.bind("<ButtonPress-1>", self._grab)
             one.bind("<B1-Motion>", self._move)
@@ -178,10 +272,17 @@ class ChatBubble:
         self.button.pack(side="right", padx=(8, 0), anchor="s")
         self.button.bind("<Enter>", lambda _e: self.button.configure(bg=LOOK["primary_hover"]))
         self.button.bind("<Leave>", lambda _e: self.button.configure(bg=LOOK["primary"]))
-        self.button.bind("<Button-1>", lambda _e: self.submit())
+        on_release(self.button, self.submit)
         self.box.bind("<Return>", self._enter)
         self.box.bind("<KP_Enter>", self._enter)
         window.bind("<Escape>", lambda _e: self.close())
+        # Ctrl + / Ctrl - / Ctrl 0 (Command on a Mac): its words zoomed.
+        modifier = "Command" if sys.platform == "darwin" else "Control"
+        for keys, step in ((("plus", "equal", "KP_Add"), 1), (("minus", "KP_Subtract"), -1)):
+            for key in keys:
+                window.bind(f"<{modifier}-{key}>", lambda _e, s=step: (self.zoom_by(s), "break")[1])
+        for key in ("0", "KP_0"):
+            window.bind(f"<{modifier}-{key}>", lambda _e: (self.zoom_to(ZOOM_START), "break")[1])
         self._edges(rim)
         window.update_idletasks()
         self.width = width
@@ -195,6 +296,8 @@ class ChatBubble:
             window.geometry(f"{width}x{window.winfo_reqheight()}")
         self._place(near)
         self._rounded()
+        from .on_top import stay_on_top
+        stay_on_top(window)                  # on a Mac, asked before it was laid out: lost
         self._focus()
 
     def close(self) -> None:
@@ -204,6 +307,7 @@ class ChatBubble:
             except tk.TclError:
                 pass
             self.window = None
+            self._forget_fonts()
 
     def _focus(self) -> None:
         try:
@@ -222,7 +326,7 @@ class ChatBubble:
         if near and len(near) == 2:
             near = (near[0], near[1], 0, 0)
         avatar = near or (screen[0] - 140, screen[1] - 240, 100, 100)
-        x, y = beside(avatar, (width, height), screen)
+        x, y = beside(avatar, (width, height), screen, work_area(window))
         window.geometry(f"+{x}+{y}")
         # Its bottom where it was put: grown, it grows upwards.
         self._bottom = y + height

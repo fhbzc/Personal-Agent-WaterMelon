@@ -873,6 +873,26 @@ class AgentApplication:
         from .agent.work.child import children_dir
         return [str(self.paths.guard_dir), str(children_dir(self.paths))]
 
+    def keep_extension_current(self) -> None:
+        """THE BROWSER EXTENSION, INSTALLED ALREADY, KEPT AS THIS VERSION HAS IT
+        (platform_layer/browser_extension.py, `keep_current`): its host names
+        the stores' extensions too, and its folders are this version's -
+        nothing where it was never installed."""
+        try:
+            from .platform_layer import browser_extension
+            from .platform_layer.autostart import launch_command
+            from .version import __version__
+            try:
+                from .ui.tray import icon_image
+                icon = icon_image(self.characters, str(self.config.get("character", "watermelon")),
+                                  128)
+            except Exception:
+                icon = None
+            command = getattr(self, "launch_command", None) or launch_command(self.root)
+            browser_extension.keep_current(Path(self.paths.data_dir), command, __version__, icon)
+        except Exception:     # pragma: no cover - as it was; installed again from Settings
+            log.info("could not keep the browser extension current", exc_info=True)
+
     def end_leftovers(self) -> int:
         try:
             from .common.children import end_leftovers
@@ -950,6 +970,9 @@ class AgentApplication:
             # left going - its job or watcher could not end it - is ended
             # (common/children.py), behind the start.
             threading.Thread(target=self.end_leftovers, name="leftovers",
+                             daemon=True).start()
+            # THE BROWSER EXTENSION, as this version has it - behind the start.
+            threading.Thread(target=self.keep_extension_current, name="extension",
                              daemon=True).start()
             spent = {}
             for name, begin in (("ListenerManager", self.listener.start),
@@ -1324,13 +1347,15 @@ class AgentApplication:
     def api_base_url(self) -> str:
         return f"http://{self.config.get('api_host')}:{self.config.get('api_port')}"
 
-    def sign_in_url(self, path: str = "/", seconds: Optional[int] = None) -> str:
+    def sign_in_url(self, path: str = "/", seconds: Optional[int] = None,
+                    for_extension: bool = False) -> str:
         """A link that opens ``path`` of the page with the browser signed in:
-        what the desktop opens, never the bare address (api/access.py)."""
+        what the desktop opens, never the bare address (api/access.py).
+        `for_extension`: for the browser extension's own window alone."""
         from .api.access import TICKET_SECONDS
 
         return self.api_access.sign_in_url(self.api_base_url, path,
-                                           seconds or TICKET_SECONDS)
+                                           seconds or TICKET_SECONDS, for_extension)
 
     def agent_state(self) -> Dict[str, Any]:
         """A compact picture of what the agent is doing (section 7.5).

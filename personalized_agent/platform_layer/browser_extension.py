@@ -2,27 +2,31 @@
 之后可能会bundle很多功能; settings里有install extension的位置 (general里,
 update下面), 点击之后跳转install界面").
 
-One extension, for Chrome, Edge, Brave, Vivaldi, Chromium and Firefox, on
-Windows, macOS and Linux - its sources in resources/browser_extension. Today
-it puts DELEGATE WORK on the right-click menu of every page (background.js);
-it is the place for more of the agent's parts in the browser later.
+One extension, for Chrome (and Brave, Vivaldi, Chromium) and Firefox, on
+Windows, macOS and Linux - not Edge (the user, 2026-11-02). Today it puts
+DELEGATE WORK on the right-click menu of every page (background.js); it is
+the place for more of the agent's parts in the browser later.
 
 It reaches the agent by the browser's NATIVE MESSAGING: the browser starts
 this program (`--native-host`, platform_layer/native_host.py) and hands it
 what was right-clicked on its standard input - no network, no port, and only
-this extension may (its id is fixed by KEY, and the host names it).
+this extension may (the host names its ids: the unpacked one's, fixed by
+KEY, and each store's, STORE_IDS; Firefox's FIREFOX_ID).
 
-Installed from Settings > General, on the user's word (`install`):
+FROM THE STORES (the user, 2026-11-02: "install调用的是注册好的链接，而不是本地
+链接 ... 用户不需要看extension的源代码"): the users get it from the Chrome Web
+Store and Firefox Add-ons (STORES). Its sources, resources/browser_extension,
+are in the private repository alone - the public one has none - and made
+into the stores' packages there (`package`, scripts/package_extension.py,
+its own version EXTENSION_VERSION).
 
-* THE EXTENSION'S FOLDERS made in the agent's data folder - one for the
-  Chromium browsers, one for Firefox - each with its manifest, its words in
-  the display languages, and the avatar's face as its icon. Until it is in
-  the browsers' stores, the user loads the folder: "Load unpacked" in
-  Chrome, Edge and Brave; "Load Temporary Add-on" in Firefox.
-* THE HOST made known to each browser: a manifest naming the launcher and
-  the extension, in the browser's own place for it - on Windows the user's
-  part of the registry (HKCU), elsewhere the browser's NativeMessagingHosts
-  folder, for each browser found on this computer.
+Installed from Settings > General, on the user's word (`install`): THE HOST
+made known to each browser - a manifest naming the launcher and the
+extension, in the browser's own place for it: on Windows the user's part of
+the registry (HKCU), elsewhere the browser's NativeMessagingHosts folder, for
+each browser found on this computer. Then the store's page is opened
+(`open_store`), and the user adds it there. Kept as the version has it at
+each start (`keep_current`).
 
 `remove` takes out exactly what `install` put in.
 """
@@ -55,20 +59,43 @@ KEY = ("MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAw4kTN1eE784znTzDPtGtEdq0YB2f
        "eS+dolTAs2lb5OYAGuoR6dzO3unX0dQrKKCtpDM8lc2DiNwIDAQAB")
 #: Its id in Firefox.
 FIREFOX_ID = "delegate@personal-agent-watermelon"
-#: The stores' pages, once it is in them - none yet: loaded from its folder.
-STORES: Dict[str, str] = {}
+#: THE STORES' PAGES - where Install sends the user (the user, 2026-11-02: "那个
+#: install调用的是注册好的链接，而不是本地链接 ... 用户不需要看extension的源代码").
+#: Chrome's for every Chromium browser here (Brave, Vivaldi, Chromium take it
+#: too); Firefox's by the extension's own id, whatever the listing is called.
+#: Not in Edge's store (the user, 2026-11-02).
+STORES: Dict[str, str] = {
+    "chrome": "https://chromewebstore.google.com/detail/ikdgdhidoljaomoicjlfdchckaklbcbh",
+    "firefox": "https://addons.mozilla.org/firefox/addon/delegate@personal-agent-watermelon/",
+}
+#: ITS IDS IN THE STORES (the user, 2026-11-02: "在chrome和firefox上都release
+#: 这个extension"). A store gives a Chromium extension an id of its own - the
+#: KEY's is the unpacked one's alone (a store takes no `key`) - and the host
+#: answers only the ids it names: each store's goes here once it is known
+#: (shown in its dashboard after the first upload). Firefox keeps its id
+#: (FIREFOX_ID) in its store too.
+STORE_IDS: Tuple[str, ...] = (
+    "ikdgdhidoljaomoicjlfdchckaklbcbh",      # the Chrome Web Store (2026-11-02)
+)
+#: THE EXTENSION'S OWN VERSION (the user, 2026-11-02) - not the agent's: raised
+#: only when the extension itself changes (its files, its manifest, its words),
+#: and only then uploaded to the stores again, which take a higher one each
+#: time. The agent's updates leave it as it is.
+EXTENSION_VERSION = "0.0.2"    # 0.0.2: says how it was installed ("here"),
+                               # and says "here" every six hours (alarms)
 #: The files of the extension, as they are in resources/browser_extension.
 FILES = ("background.js", "help.html", "help.js", "opening.html", "opening.js")
 FLAVORS = ("chromium", "firefox")
 ICON_SIZES = (16, 32, 48, 128)
 
-#: Its words, in each display language.
+#: Its words, in each display language. Its "description" is the stores' summary:
+#: the extension is the agent's place in the browser - Delegate work its first part
+#: (the user, 2026-11-02: "之后要支持别的功能，所以delegate work 只是一个example").
 WORDS: Dict[str, Dict[str, str]] = {
     "en": {"opening": "Opening…",
            "delegate": "Delegate work",
            "learn": "Learn",
-           "description": "Right-click any page, selected text, a link or a picture - "
-                          "and hand it to your agent as a piece of work.",
+           "description": "Your Personal Agent WaterMelon in the browser - hand it pages, text, links and pictures from the right-click menu.",
            "help_head": "The agent is not connected to this browser yet",
            "help_do": "Open Personal Agent WaterMelon, go to Settings, then General, and press "
                       "\"Install the browser extension\". It connects this browser to the agent "
@@ -77,7 +104,7 @@ WORDS: Dict[str, Dict[str, str]] = {
     "zh": {"opening": "正在打开…",
            "delegate": "委托工作",
            "learn": "学习",
-           "description": "在任何网页、选中的文字、链接或图片上右键，把它作为一项工作交给你的 agent。",
+           "description": "浏览器里的 Personal Agent WaterMelon：从右键菜单把网页、文字、链接和图片交给你的 agent。",
            "help_head": "agent 还没有连接到这个浏览器",
            "help_do": "打开 Personal Agent WaterMelon，进入 设置 > 通用，点“安装浏览器扩展”。"
                       "它会把这个浏览器连接到这台电脑上的 agent。",
@@ -85,7 +112,7 @@ WORDS: Dict[str, Dict[str, str]] = {
     "ja": {"opening": "開いています…",
            "delegate": "作業を任せる",
            "learn": "学習",
-           "description": "ページ、選択したテキスト、リンク、画像を右クリックして、作業としてエージェントに任せます。",
+           "description": "ブラウザーの中の Personal Agent WaterMelon。右クリックメニューから、ページ、テキスト、リンク、画像をエージェントに渡せます。",
            "help_head": "エージェントはまだこのブラウザーにつながっていません",
            "help_do": "Personal Agent WaterMelon を開き、設定 > 全般 で「ブラウザー拡張機能をインストール」を"
                       "押してください。このブラウザーがこのコンピューターのエージェントにつながります。",
@@ -93,7 +120,7 @@ WORDS: Dict[str, Dict[str, str]] = {
     "ko": {"opening": "여는 중…",
            "delegate": "작업 맡기기",
            "learn": "학습",
-           "description": "페이지, 선택한 텍스트, 링크, 그림을 오른쪽 클릭해 작업으로 에이전트에게 맡깁니다.",
+           "description": "브라우저 속 Personal Agent WaterMelon - 오른쪽 클릭 메뉴에서 페이지, 텍스트, 링크, 그림을 에이전트에게 건넵니다.",
            "help_head": "에이전트가 아직 이 브라우저에 연결되지 않았습니다",
            "help_do": "Personal Agent WaterMelon을 열고 설정 > 일반에서 \"브라우저 확장 프로그램 설치\"를 "
                       "누르세요. 이 브라우저가 이 컴퓨터의 에이전트에 연결됩니다.",
@@ -101,8 +128,7 @@ WORDS: Dict[str, Dict[str, str]] = {
     "de": {"opening": "Wird geöffnet…",
            "delegate": "Arbeit delegieren",
            "learn": "Lernen",
-           "description": "Rechtsklick auf eine Seite, markierten Text, einen Link oder ein Bild - "
-                          "und Ihr Agent bekommt es als Aufgabe.",
+           "description": "Ihr Personal Agent WaterMelon im Browser - geben Sie ihm Seiten, Texte, Links und Bilder über das Kontextmenü.",
            "help_head": "Der Agent ist noch nicht mit diesem Browser verbunden",
            "help_do": "Öffnen Sie Personal Agent WaterMelon, dann Einstellungen > Allgemein, und "
                       "drücken Sie \"Browser-Erweiterung installieren\". Das verbindet diesen "
@@ -111,8 +137,7 @@ WORDS: Dict[str, Dict[str, str]] = {
     "fr": {"opening": "Ouverture…",
            "delegate": "Déléguer une tâche",
            "learn": "Apprendre",
-           "description": "Clic droit sur une page, un texte sélectionné, un lien ou une image - "
-                          "et votre agent le reçoit comme une tâche.",
+           "description": "Votre Personal Agent WaterMelon dans le navigateur : confiez-lui pages, textes, liens et images depuis le menu du clic droit.",
            "help_head": "L'agent n'est pas encore relié à ce navigateur",
            "help_do": "Ouvrez Personal Agent WaterMelon, puis Paramètres > Général, et appuyez sur "
                       "« Installer l'extension du navigateur ». Elle relie ce navigateur à l'agent "
@@ -121,8 +146,7 @@ WORDS: Dict[str, Dict[str, str]] = {
     "es": {"opening": "Abriendo…",
            "delegate": "Delegar trabajo",
            "learn": "Aprender",
-           "description": "Haz clic derecho en una página, un texto seleccionado, un enlace o una "
-                          "imagen, y pásaselo a tu agente como un trabajo.",
+           "description": "Tu Personal Agent WaterMelon en el navegador: pásale páginas, textos, enlaces e imágenes desde el menú del clic derecho.",
            "help_head": "El agente aún no está conectado a este navegador",
            "help_do": "Abre Personal Agent WaterMelon, ve a Ajustes > General y pulsa \"Instalar la "
                       "extensión del navegador\". Conecta este navegador con el agente de este equipo.",
@@ -130,8 +154,7 @@ WORDS: Dict[str, Dict[str, str]] = {
     "it": {"opening": "Apertura…",
            "delegate": "Delega un lavoro",
            "learn": "Impara",
-           "description": "Clic destro su una pagina, un testo selezionato, un link o un'immagine - "
-                          "e il tuo agente lo riceve come un lavoro.",
+           "description": "Il tuo Personal Agent WaterMelon nel browser: affidagli pagine, testi, link e immagini dal menu del clic destro.",
            "help_head": "L'agente non è ancora collegato a questo browser",
            "help_do": "Apri Personal Agent WaterMelon, vai su Impostazioni > Generale e premi "
                       "\"Installa l'estensione del browser\". Collega questo browser all'agente su "
@@ -140,8 +163,7 @@ WORDS: Dict[str, Dict[str, str]] = {
     "ru": {"opening": "Открывается…",
            "delegate": "Поручить работу",
            "learn": "Изучить",
-           "description": "Щёлкните правой кнопкой по странице, выделенному тексту, ссылке или "
-                          "картинке - и агент получит это как задачу.",
+           "description": "Ваш Personal Agent WaterMelon в браузере: передавайте ему страницы, текст, ссылки и картинки из контекстного меню.",
            "help_head": "Агент ещё не подключён к этому браузеру",
            "help_do": "Откройте Personal Agent WaterMelon, затем Настройки > Общие, и нажмите "
                       "«Установить расширение браузера». Оно подключит этот браузер к агенту на "
@@ -168,7 +190,7 @@ def folder(data_dir: Path) -> Path:
     return Path(data_dir) / "browser_extension"
 
 
-def manifest(flavor: str, version: str) -> Dict[str, Any]:
+def manifest(flavor: str, version: str = EXTENSION_VERSION) -> Dict[str, Any]:
     """The extension's manifest - Manifest V3 for both; Firefox's background
     is a script, the Chromium browsers' a service worker."""
     said: Dict[str, Any] = {
@@ -177,7 +199,10 @@ def manifest(flavor: str, version: str) -> Dict[str, Any]:
         "description": "__MSG_description__", "default_locale": "en",
         # "storage": where the agent's page is (its port), kept between
         # right-clicks - no warning is shown for it.
-        "permissions": ["contextMenus", "nativeMessaging", "activeTab", "scripting", "storage"],
+        # "alarms" (0.0.2): its word to the agent every six hours - a permission
+        # the browser shows no one, so the update adding it is not paused.
+        "permissions": ["contextMenus", "nativeMessaging", "activeTab", "scripting", "storage",
+                        "alarms"],
         # NO SCRIPT IN EVERY PAGE, NO ACCESS TO EVERY SITE (the user,
         # 2026-11-01: selected text in a page is the right-click's too): the
         # page right-clicked is read once Delegate work is picked (activeTab).
@@ -185,8 +210,12 @@ def manifest(flavor: str, version: str) -> Dict[str, Any]:
     }
     if flavor == "firefox":
         said["background"] = {"scripts": ["background.js"]}
-        said["browser_specific_settings"] = {"gecko": {"id": FIREFOX_ID,
-                                                       "strict_min_version": "115.0"}}
+        # NOTHING COLLECTED - asked of every new extension by Firefox's store:
+        # what is right-clicked goes to the user's own agent, on this
+        # computer (native messaging), and nowhere else.
+        said["browser_specific_settings"] = {"gecko": {
+            "id": FIREFOX_ID, "strict_min_version": "115.0",
+            "data_collection_permissions": {"required": ["none"]}}}
     else:
         said["background"] = {"service_worker": "background.js"}
         said["key"] = KEY
@@ -218,7 +247,7 @@ def prepare(data_dir: Path, version: str, icon: Any = None) -> Dict[str, str]:
         where.mkdir(parents=True)
         for name in FILES:
             shutil.copyfile(source() / name, where / name)
-        said = manifest(flavor, version)
+        said = manifest(flavor, EXTENSION_VERSION)
         if icon is not None:
             (where / "icons").mkdir()
             for size in ICON_SIZES:
@@ -233,6 +262,30 @@ def prepare(data_dir: Path, version: str, icon: Any = None) -> Dict[str, str]:
         _write_json(where / "manifest.json", said)
         out[flavor] = str(where)
     return out
+
+
+def package(out_dir: Path, version: str, icon: Any = None) -> Dict[str, str]:
+    """THE STORES' PACKAGES: each flavor's folder as a zip to upload - the
+    Chromium one without its `key` (a store refuses one, and gives its own
+    id). Made in `out_dir`, from a fresh copy of the folders beside it."""
+    import zipfile
+    out_dir = Path(out_dir)
+    made = prepare(out_dir / "staging", version, icon)
+    zips: Dict[str, str] = {}
+    for flavor, where in made.items():
+        root = Path(where)
+        said = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        said.pop("key", None)
+        _write_json(root / "manifest.json", said)
+        name = {"chromium": "chrome-edge", "firefox": "firefox"}[flavor]
+        target = out_dir / f"personal-agent-watermelon-{name}-{EXTENSION_VERSION}.zip"
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as box:
+            for path in sorted(root.rglob("*")):
+                if path.is_file():
+                    box.write(path, path.relative_to(root).as_posix())
+        zips[flavor] = str(target)
+    shutil.rmtree(out_dir / "staging", ignore_errors=True)
+    return zips
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -265,7 +318,8 @@ def host_manifest(flavor: str, path: Path) -> Dict[str, Any]:
     if flavor == "firefox":
         said["allowed_extensions"] = [FIREFOX_ID]
     else:
-        said["allowed_origins"] = [f"chrome-extension://{CHROMIUM_ID}/"]
+        said["allowed_origins"] = [f"chrome-extension://{one}/"
+                                   for one in (CHROMIUM_ID,) + tuple(STORE_IDS)]
     return said
 
 
@@ -274,7 +328,6 @@ def host_manifest(flavor: str, path: Path) -> Dict[str, Any]:
 #: browser's own folder must be there: it is on this computer).
 WINDOWS_KEYS: Tuple[Tuple[str, str, str], ...] = (
     ("Google Chrome", "chromium", r"Software\Google\Chrome\NativeMessagingHosts"),
-    ("Microsoft Edge", "chromium", r"Software\Microsoft\Edge\NativeMessagingHosts"),
     ("Brave", "chromium", r"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts"),
     ("Vivaldi", "chromium", r"Software\Vivaldi\NativeMessagingHosts"),
     ("Chromium", "chromium", r"Software\Chromium\NativeMessagingHosts"),
@@ -282,7 +335,6 @@ WINDOWS_KEYS: Tuple[Tuple[str, str, str], ...] = (
 MAC_FOLDERS: Tuple[Tuple[str, str, str], ...] = (
     ("Google Chrome", "chromium", "Library/Application Support/Google/Chrome"),
     ("Google Chrome Beta", "chromium", "Library/Application Support/Google/Chrome Beta"),
-    ("Microsoft Edge", "chromium", "Library/Application Support/Microsoft Edge"),
     ("Brave", "chromium", "Library/Application Support/BraveSoftware/Brave-Browser"),
     ("Vivaldi", "chromium", "Library/Application Support/Vivaldi"),
     ("Chromium", "chromium", "Library/Application Support/Chromium"),
@@ -290,11 +342,17 @@ MAC_FOLDERS: Tuple[Tuple[str, str, str], ...] = (
 LINUX_FOLDERS: Tuple[Tuple[str, str, str], ...] = (
     ("Google Chrome", "chromium", ".config/google-chrome"),
     ("Google Chrome Beta", "chromium", ".config/google-chrome-beta"),
-    ("Microsoft Edge", "chromium", ".config/microsoft-edge"),
     ("Brave", "chromium", ".config/BraveSoftware/Brave-Browser"),
     ("Vivaldi", "chromium", ".config/vivaldi"),
     ("Chromium", "chromium", ".config/chromium"),
     ("Firefox", "firefox", ".mozilla"))
+
+
+#: EDGE NO LONGER (the user, 2026-11-02): where an earlier version made the host
+#: known to it - taken out by `remove`, never written again.
+LEGACY_EDGE = {"win32": r"Software\Microsoft\Edge\NativeMessagingHosts",
+               "darwin": "Library/Application Support/Microsoft Edge",
+               "linux": ".config/microsoft-edge"}
 
 
 def _host_folder(flavor: str, base: Path) -> Path:
@@ -372,25 +430,83 @@ def remove(data_dir: Path, platform: str = sys.platform, home: Optional[Path] = 
     the host - only those naming this one - and the agent's own folder."""
     if platform == "win32":
         registry = registry or Registry()
-        for _name, _flavor, key in WINDOWS_KEYS:
+        for key in [key for _name, _flavor, key in WINDOWS_KEYS] + [LEGACY_EDGE["win32"]]:
             if registry.get(f"{key}\\{HOST}"):
                 registry.delete(f"{key}\\{HOST}")
     else:
         home = Path(home or Path.home())
-        for _name, flavor, base in (MAC_FOLDERS if platform == "darwin" else LINUX_FOLDERS):
+        legacy = LEGACY_EDGE["darwin" if platform == "darwin" else "linux"]
+        for _name, flavor, base in [*(MAC_FOLDERS if platform == "darwin" else LINUX_FOLDERS),
+                                    ("Microsoft Edge", "chromium", legacy)]:
             (_host_folder(flavor, home / base) / f"{HOST}.json").unlink(missing_ok=True)
     if folder(data_dir).exists():
         shutil.rmtree(folder(data_dir))
 
 
+def keep_current(data_dir: Path, command: List[str], version: str, icon: Any = None,
+                 platform: str = sys.platform, home: Optional[Path] = None,
+                 registry: Any = None) -> List[str]:
+    """INSTALLED ALREADY, KEPT AS THIS VERSION HAS IT - at each start (the
+    store's id, 2026-11-02: a host made known before it did not name it,
+    and the store's extension was refused until the user installed again).
+    Only what `install` wrote is written again, where it is: the host's
+    manifests (on Windows the files the registry names - the registry itself
+    untouched; elsewhere only those already in a browser's folder) and the
+    extension's folders. Never installed: nothing. The browsers it is known
+    to, as it stands."""
+    if not folder(data_dir).exists():
+        return []
+    known = connected(data_dir, platform, home, registry)
+    if not known:
+        return []
+    path = launcher(data_dir, command, platform)
+    if platform == "win32":
+        for flavor in FLAVORS:
+            manifest_file = folder(data_dir) / "host" / f"{HOST}.{flavor}.json"
+            if manifest_file.exists():
+                _write_json(manifest_file, host_manifest(flavor, path))
+    else:
+        home = Path(home or Path.home())
+        for name, flavor, base in (MAC_FOLDERS if platform == "darwin" else LINUX_FOLDERS):
+            target = _host_folder(flavor, home / base) / f"{HOST}.json"
+            if name in known and target.exists():
+                _write_json(target, host_manifest(flavor, path))
+    # Folders loaded by hand (a developer's): made again - where the sources
+    # are here; the public copy has none (the stores' extension is the users').
+    if source().is_dir() and any((folder(data_dir) / flavor / "manifest.json").exists()
+                                 for flavor in FLAVORS):
+        prepare(data_dir, version, icon)
+    return known
+
+
 def install(data_dir: Path, command: List[str], version: str, icon: Any = None,
             platform: str = sys.platform, home: Optional[Path] = None,
             registry: Any = None) -> Dict[str, Any]:
-    """On the user's word (Settings > General): the folders made, and the
-    host made known to the browsers."""
-    folders = prepare(data_dir, version, icon)
+    """On the user's word (Settings > General): the host made known to the
+    browsers here - the extension itself comes from the stores (STORES), not
+    from a folder here (the user, 2026-11-02)."""
     known = register(data_dir, command, platform, home, registry)
-    return status(data_dir, platform, home, registry, folders=folders, known=known)
+    return status(data_dir, platform, home, registry, known=known)
+
+
+def open_store(browser: str, platform: str = sys.platform) -> bool:
+    """The extension's page in its store, opened in that browser - "chrome"
+    or "firefox"; in the default browser where that one is not found here.
+    Only opened: nothing clicked in it."""
+    which = "firefox" if browser == "firefox" else "chrome"
+    url = STORES.get(which)
+    if not url:
+        return False
+    program = _browser_program(which, platform)
+    try:
+        if program:
+            subprocess.Popen(program + [url], close_fds=True)
+            return True
+        import webbrowser
+        return bool(webbrowser.open(url))
+    except OSError:
+        log.debug("could not open the store for %s", browser, exc_info=True)
+        return False
 
 
 def status(data_dir: Path, platform: str = sys.platform, home: Optional[Path] = None,
@@ -404,7 +520,8 @@ def status(data_dir: Path, platform: str = sys.platform, home: Optional[Path] = 
             known = connected(data_dir, platform, home, registry)
         except Exception:
             known = []
-    return {"prepared": bool(folders), "folders": folders, "connected": known,
+    return {"prepared": bool(known), "folders": folders, "connected": known,
+            "browsers": browsers(data_dir),
             "id": CHROMIUM_ID, "firefox_id": FIREFOX_ID, "stores": dict(STORES),
             "pages": EXTENSIONS_PAGES}
 
@@ -412,7 +529,9 @@ def status(data_dir: Path, platform: str = sys.platform, home: Optional[Path] = 
 #: Where each browser lists its extensions - and loads one from a folder.
 EXTENSIONS_PAGES = {"chromium": "chrome://extensions", "edge": "edge://extensions",
                     "brave": "brave://extensions",
-                    "firefox": "about:debugging#/runtime/this-firefox"}
+                    "firefox": "about:debugging#/runtime/this-firefox",
+                    # Where a store's extension, paused, is turned on again.
+                    "firefox_addons": "about:addons"}
 
 
 #: Each browser's program, as Windows names its process - for the icon
@@ -424,32 +543,80 @@ PROCESSES = {"Google Chrome": "chrome.exe", "Microsoft Edge": "msedge.exe",
 SEEN_DAYS = 14
 
 
-def mark_seen(data_dir: Path, browser: str) -> None:
-    """The extension is in this browser: kept, with when (`seen_processes`)."""
+def from_store(caller: str, install: str = "") -> bool:
+    """WHETHER IT IS THE STORES' EXTENSION that said it is here (the user,
+    2026-11-02: "应该只check browser public 版本的install"): by its own word
+    where it gives it ("install" - the browser's installType: "normal" from a
+    store, "development" loaded by hand); else, in a Chromium browser, by the
+    origin it called from - a store's id or not. Firefox's own id is the same
+    either way: an extension too old to say is taken at its word."""
+    if install:
+        return install in ("normal", "admin")
+    if caller.startswith("chrome-extension://"):
+        return caller[len("chrome-extension://"):].strip("/") in STORE_IDS
+    return True
+
+
+def mark_seen(data_dir: Path, browser: str, store: bool = True) -> None:
+    """The extension is in this browser: kept, with when (`seen_processes`) -
+    and, the stores' one, apart (`browsers`: Settings' rows)."""
     if browser not in PROCESSES:
         return
     import time
-    path = folder(data_dir) / "seen.json"
+    for name in (["seen.json", "store_seen.json"] if store else ["seen.json"]):
+        path = folder(data_dir) / name
+        try:
+            said = json.loads(path.read_text(encoding="utf-8"))
+            said = said if isinstance(said, dict) else {}
+        except (OSError, ValueError):
+            said = {}
+        said[browser] = time.time()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _write_json(path, said)
+
+
+#: THE TWO ROWS of Settings (the user, 2026-11-02: "直接就应该列出2个版本
+#: (chrome, firefox), 然后检查状态是否安装"): each store's browser, and the
+#: browsers whose word counts for it - Chrome's store serves the others too.
+ROWS = (("chrome", "Chrome", ("Google Chrome", "Brave", "Vivaldi", "Opera")),
+        ("firefox", "Firefox", ("Firefox",)))
+
+
+def _seen(data_dir: Path, name: str = "store_seen.json") -> Dict[str, float]:
     try:
-        said = json.loads(path.read_text(encoding="utf-8"))
-        said = said if isinstance(said, dict) else {}
+        said = json.loads((folder(data_dir) / name).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        said = {}
-    said[browser] = time.time()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _write_json(path, said)
+        return {}
+    return {str(name): float(at) for name, at in (said.items() if isinstance(said, dict) else [])
+            if isinstance(at, (int, float))}
+
+
+def browsers(data_dir: Path) -> List[Dict[str, Any]]:
+    """WHETHER THE STORES' EXTENSION IS IN EACH: it says so itself - as it
+    is installed, as its browser starts, as it is used ("here",
+    native_host.py) - the stores' one alone counted (`from_store`). Its
+    STATE: "installed", heard from within SEEN_DAYS; "quiet", heard from
+    once and not since - PAUSED (an update asking for more is held until
+    the user turns it on again) or removed (the user, 2026-11-02: "extension
+    如果被暂停了，也要提醒用户"); "absent", never. Its store's page to get it."""
+    import time
+    seen, since = _seen(data_dir), time.time() - SEEN_DAYS * 86400
+    out = []
+    for key, name, said_as in ROWS:
+        last = max([seen[one] for one in said_as if one in seen] or [0.0])
+        state = "installed" if last >= since else "quiet" if last else "absent"
+        out.append({"key": key, "name": name, "installed": state == "installed",
+                    "state": state, "seen_at": last or None,
+                    "store": STORES.get(key, "")})
+    return out
 
 
 def seen_processes(data_dir: Path) -> set:
-    """The programs of the browsers the extension is in - its own icon is
-    there, so the agent's is not."""
+    """The programs of the browsers the extension is in - any of it, the
+    stores' or one loaded by hand: its own icon is there, so the agent's is
+    not."""
     import time
-    try:
-        said = json.loads((folder(data_dir) / "seen.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return set()
-    if not isinstance(said, dict):
-        return set()
+    said = _seen(data_dir, "seen.json")
     since = time.time() - SEEN_DAYS * 86400
     return {PROCESSES[name] for name, at in said.items()
             if name in PROCESSES and isinstance(at, (int, float)) and at >= since}
@@ -460,7 +627,7 @@ def open_extensions_page(browser: str, platform: str = sys.platform) -> bool:
     clicked in it. False when the browser is not found here."""
     page = {"chrome": EXTENSIONS_PAGES["chromium"], "edge": EXTENSIONS_PAGES["edge"],
             "brave": EXTENSIONS_PAGES["brave"],
-            "firefox": EXTENSIONS_PAGES["firefox"]}.get(browser)
+            "firefox": EXTENSIONS_PAGES["firefox_addons"]}.get(browser)
     program = _browser_program(browser, platform)
     if not page or not program:
         return False
@@ -525,6 +692,6 @@ def reveal(path: str, platform: str = sys.platform) -> bool:
         return False
 
 
-__all__ = ["HOST", "KEY", "CHROMIUM_ID", "FIREFOX_ID", "install", "remove", "status",
+__all__ = ["HOST", "KEY", "CHROMIUM_ID", "FIREFOX_ID", "STORE_IDS", "EXTENSION_VERSION", "package", "keep_current", "open_store", "from_store", "install", "remove", "status",
            "prepare", "register", "connected", "manifest", "host_manifest", "launcher",
            "open_extensions_page", "reveal", "extension_id", "WORDS"]

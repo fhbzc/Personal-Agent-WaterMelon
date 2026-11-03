@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from pathlib import Path
 
 from support import TemporaryAgent
 from test_delegate import PLAN, _Models
@@ -80,9 +81,43 @@ class WhoItIsForTests(unittest.TestCase):
         self.assertLess(said.index("Ada asked about a talk"),
                         said.index("The user replied to Quillfeather"))
         self.assertIn("WHO THE USER IS: ", said)
-        rules = " ".join(rn.QUICK_RULES.split())
-        self.assertIn("IS WRITTEN AS THE USER WRITES TO THAT PERSON", rules)
+        rules = " ".join(rn.WRITING_RULES.split())
+        self.assertIn("FOLLOW THE USER'S TONE: write as the user writes to that person", rules)
         self.assertIn("not what the task said when it was drafted", rules)
+
+    def test_written_as_the_next_message_of_the_exchange_in_the_users_tone(self) -> None:
+        """The user, 2026-11-02, of a reply drafted in a thread: "your kind offer
+        不是我会说的话", "我之前已经提过是什么工作了，后面略写就行了" - "要模型在写的
+        时候，理解整个context, 并且知道context里的话之前已经说过了 ... follow the
+        tone". Every work agent is told, the quick way and the thorough way."""
+        rules = " ".join(rn.WRITING_RULES.split())
+        for words in ("UNDERSTAND THE WHOLE EXCHANGE FIRST",
+                      "and do not say it again: a reply is read under what came before",
+                      "No phrase the user does not use with them",
+                      "shows how they write, never what to say here",
+                      "cut each sentence that tells them what they already know"):
+            self.assertIn(words, rules)
+        source = (Path(rn.__file__)).read_text(encoding="utf-8")
+        self.assertIn('+ "\\n\\n" + WRITING_RULES', source, "in every work agent's system")
+        monitor = " ".join(rn.MONITOR_SYSTEM.split())
+        self.assertIn("tells the person again what was already said between them", monitor)
+        draft = self._drafted()
+        if draft["context"].get("found"):
+            self.assertIn("What the user wrote to OTHER people among them shows how they write",
+                          instruction_of(draft, draft["plan"], []))
+
+    def test_a_contact_called_by_a_first_name_is_not_one_inside_another_name(self) -> None:
+        """A reply to Prof. Ben Thistlewood was told about a WeChat contact "Ben"."""
+        self.app.connections.add("Ben", relationship="investor",
+                                 summary="Met over WeChat.")
+        self.app.models = _Models(dict(PLAN, people=[]))
+        for text, told in (("Write to Prof. Benjamin Thistlewood; 'contact Ben Thistlewood' "
+                            "is on the calendar", False),
+                           ("Ask Ben about the deck", True)):
+            draft = self.app.drafts.create(text=text, collect=False)
+            self.app.drafts.collect_and_plan(draft["id"])
+            names = [one["name"] for one in self.app.drafts.get(draft["id"])["context"]["people"]]
+            self.assertEqual("Ben" in names, told, text)
 
     def test_two_of_the_same_name_are_not_told_apart_by_guessing(self) -> None:
         self.app.connections.add("Ada Quillfeather", relationship="neighbour",

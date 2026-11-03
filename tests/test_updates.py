@@ -192,6 +192,81 @@ class TheListOfReleasesTests(unittest.TestCase):
             got = up.published_releases()
         self.assertEqual([one["tag"] for one in got], ["v1.0.10", "v1.0.2"])
         self.assertEqual(got[1]["notes"], "Fixes")
+        with mock.patch.object(up, "_get", return_value=_Answer(
+                __import__("json").dumps(listed).encode())):
+            got = up.published_releases(pre=True)
+        self.assertEqual([one["tag"] for one in got], ["v1.2.0", "v1.0.10", "v1.0.2"],
+                         "with pre-releases when asked for; never a draft")
+
+
+class PreReleasesTests(unittest.TestCase):
+    """The user, 2026-11-02: "check now 是允许检测pre-release或者beta 版的，可以
+    选择安装，但是pre-release/beta版不会被自动安装，也不会在被检测到的时候弹出提醒"."""
+
+    def make(self, mode: str, listed) -> None:
+        self.work = tempfile.TemporaryDirectory()
+        self.addCleanup(self.work.cleanup)
+        self.told, self.installed = [], []
+        self.updater = up.Updater(_Config(updates=mode), Path(self.work.name),
+                                  notify=lambda *a, **k: self.told.append(a[0]),
+                                  working=lambda: False)
+        self.updater.quit = lambda: None
+        patches = [mock.patch.object(up, "how_installed", return_value="windows"),
+                   mock.patch.object(up, "published_releases", return_value=listed),
+                   mock.patch.object(self.updater, "download",
+                                     side_effect=lambda release, kind, **k: Path("setup.exe")),
+                   mock.patch.object(self.updater, "install",
+                                     side_effect=lambda *a: self.installed.append(a[2])),
+                   mock.patch("personalized_agent.platform_layer.quiet_update.can_make_ready",
+                              return_value=False)]
+        for one in patches:
+            one.start()
+            self.addCleanup(one.stop)
+
+    def test_found_listed_and_said_to_be_one_never_installed_by_itself(self) -> None:
+        self.make("install", [_release("v9.1.0", prerelease=True)])
+        said = self.updater.once()
+        self.assertEqual([(one["tag"], one["prerelease"]) for one in said["versions"]],
+                         [("v9.1.0", True)])
+        self.assertTrue(said["versions"][0]["can_install"])
+        self.assertFalse(said["newer"], "no newer release: a pre-release is not one")
+        self.assertEqual(self.installed, [], "not installed by itself, even set to install")
+
+    def test_never_told_in_a_notice(self) -> None:
+        self.make("ask", [_release("v9.1.0", prerelease=True)])
+        self.updater.once()
+        self.updater.once()
+        self.assertEqual(self.told, [])
+
+    def test_installed_when_the_user_chooses_it(self) -> None:
+        self.make("ask", [_release("v9.1.0", prerelease=True)])
+        self.updater.check_now()
+        self.updater.once()
+        self.updater.install_now("v9.1.0")
+        self.updater.once()
+        self.assertEqual(self.installed, ["v9.1.0"])
+
+    def test_a_release_beside_it_is_still_what_is_installed_and_told(self) -> None:
+        self.make("install", [_release("v9.2.0", prerelease=True), _release("v9.1.0")])
+        said = self.updater.once()
+        self.assertEqual([one["tag"] for one in said["versions"]], ["v9.2.0", "v9.1.0"])
+        self.assertEqual(said["latest"], "v9.1.0")
+        self.assertEqual(self.installed, ["v9.1.0"], "the release, not the pre-release")
+        self.make("ask", [_release("v9.2.0", prerelease=True), _release("v9.1.0")])
+        self.updater.once()
+        self.assertEqual(len(self.told), 1)
+        self.assertIn("v9.1.0", self.told[0])
+
+    def test_chosen_over_a_newer_release_set_to_install(self) -> None:
+        self.make("install", [_release("v9.2.0"), _release("v9.1.0", prerelease=True)])
+        self.updater.install_now("v9.1.0")
+        self.updater.once()
+        self.assertEqual(self.installed, ["v9.1.0"], "the one the user chose")
+
+    def test_the_page_says_which_is_a_pre_release(self) -> None:
+        script = (ROOT / "personalized_agent" / "api" / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("a pre-release", script)
+        self.assertIn("A newer pre-release can be chosen below.", script)
 
 
 class _Answer(io.BytesIO):

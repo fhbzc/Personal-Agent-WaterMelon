@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import json
 import struct
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,6 +24,10 @@ from personalized_agent.agent.work import handover, picked
 from personalized_agent.agent.work.delegate import instruction_of
 from personalized_agent.platform_layer import browser_extension as extension
 from personalized_agent.platform_layer import native_host
+
+#: THE EXTENSION'S SOURCES are in the private repository alone (the user,
+#: 2026-11-02): where they are not, the tests that read them are skipped.
+HAS_SOURCE = extension.source().is_dir()
 
 WEB = Path(__file__).resolve().parents[1] / "personalized_agent" / "api" / "web"
 SELECTED = {"where": "browser", "app": "Google Chrome", "url": "https://example.org/garden",
@@ -286,6 +291,7 @@ class ExtensionTests(unittest.TestCase):
     def test_its_id_is_fixed_by_its_key(self) -> None:
         self.assertEqual(extension.CHROMIUM_ID, "ppndbddcegnoelabjaacahmkcnmodddp")
 
+    @unittest.skipUnless(HAS_SOURCE, "the extension's sources are in the private repository alone")
     def test_its_folders_one_for_chromium_one_for_firefox(self) -> None:
         from PIL import Image
         folders = extension.prepare(self.data, "0.2.16", Image.new("RGBA", (128, 128)))
@@ -296,7 +302,9 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(firefox["background"], {"scripts": ["background.js"]})
         self.assertEqual(firefox["browser_specific_settings"]["gecko"]["id"],
                          extension.FIREFOX_ID)
-        self.assertEqual(chromium["version"], "0.2.16")
+        # Its own version, not the agent's (the user, 2026-11-02).
+        self.assertEqual(chromium["version"], extension.EXTENSION_VERSION)
+        self.assertRegex(extension.EXTENSION_VERSION, r"^\d+\.\d+\.\d+$")
         self.assertIn("nativeMessaging", chromium["permissions"])
         # No script in every page, no access to every site: the store's
         # strictest review and the install's warning are not needed.
@@ -321,6 +329,34 @@ class ExtensionTests(unittest.TestCase):
         for name in ("opening.html", "opening.js"):
             self.assertTrue((Path(folders["firefox"]) / name).exists(), name)
 
+    @unittest.skipUnless(HAS_SOURCE, "the extension's sources are in the private repository alone")
+    def test_the_stores_packages(self) -> None:
+        """The user, 2026-11-02: "在chrome和firefox上都release 这个extension"."""
+        import zipfile
+        from unittest import mock
+        from PIL import Image
+        made = extension.package(self.data / "out", "0.2.20", Image.new("RGBA", (128, 128)))
+        with zipfile.ZipFile(made["chromium"]) as box:
+            chromium = json.loads(box.read("manifest.json"))
+            names = set(box.namelist())
+        self.assertNotIn("key", chromium, "a store takes no key: it gives its own id")
+        self.assertIn("background.js", names)
+        self.assertIn("icons/128.png", names)
+        with zipfile.ZipFile(made["firefox"]) as box:
+            firefox = json.loads(box.read("manifest.json"))
+        gecko = firefox["browser_specific_settings"]["gecko"]
+        self.assertEqual(gecko["id"], extension.FIREFOX_ID)
+        self.assertEqual(gecko["data_collection_permissions"], {"required": ["none"]},
+                         "nothing collected: what is right-clicked goes to the agent here")
+        self.assertFalse((self.data / "out" / "staging").exists(), "no copy left behind")
+        # The store's own id answered by the host, beside the unpacked one's.
+        with mock.patch.object(extension, "STORE_IDS", ("a" * 32,)):
+            host = extension.host_manifest("chromium", Path("launch.cmd"))
+        self.assertEqual(host["allowed_origins"],
+                         [f"chrome-extension://{extension.CHROMIUM_ID}/",
+                          f"chrome-extension://{'a' * 32}/"])
+
+    @unittest.skipUnless(HAS_SOURCE, "the extension's sources are in the private repository alone")
     def test_the_box_is_opened_at_the_click_waiting_for_nothing(self) -> None:
         """Measured in a real browser (2026-11-02): reading the extension's
         storage took Edge three seconds; the host's start half a second. The
@@ -347,7 +383,8 @@ class ExtensionTests(unittest.TestCase):
         key = r"Software\Google\Chrome\NativeMessagingHosts" + "\\" + extension.HOST
         host = json.loads(Path(registry.keys[key]).read_text("utf-8"))
         self.assertEqual(host["allowed_origins"],
-                         [f"chrome-extension://{extension.CHROMIUM_ID}/"])
+                         [f"chrome-extension://{one}/"
+                          for one in (extension.CHROMIUM_ID, *extension.STORE_IDS)])
         launcher = Path(host["path"]).read_text("utf-8")
         self.assertIn('"C:/A 1" --native-host %*', launcher)
         firefox = json.loads(Path(registry.keys[r"Software\Mozilla\NativeMessagingHosts"
@@ -371,9 +408,187 @@ class ExtensionTests(unittest.TestCase):
             self.assertEqual(extension.connected(self.data, "linux", home), known)
             extension.remove(self.data, "linux", home)
             self.assertEqual(extension.connected(self.data, "linux", home), [])
-            (home / "Library/Application Support/Microsoft Edge").mkdir(parents=True)
-            self.assertEqual(extension.register(self.data, ["/a"], "darwin", home),
-                             ["Microsoft Edge"])
+            # NOT EDGE (the user, 2026-11-02): never made known to it; an
+            # earlier version's there, taken out by remove.
+            edge = home / "Library/Application Support/Microsoft Edge"
+            edge.mkdir(parents=True)
+            self.assertEqual(extension.register(self.data, ["/a"], "darwin", home), [])
+            old = edge / "NativeMessagingHosts" / f"{extension.HOST}.json"
+            old.parent.mkdir(parents=True)
+            old.write_text("{}", encoding="utf-8")
+            extension.remove(self.data, "darwin", home)
+            self.assertFalse(old.exists())
+
+    def test_installed_from_the_stores_not_edge(self) -> None:
+        """The user, 2026-11-02: "install调用的是注册好的链接，而不是本地链接";
+        Edge no longer."""
+        self.assertEqual(extension.STORES["chrome"],
+                         "https://chromewebstore.google.com/detail/ikdgdhidoljaomoicjlfdchckaklbcbh")
+        self.assertIn(extension.FIREFOX_ID, extension.STORES["firefox"])
+        names = [one[0] for one in extension.WINDOWS_KEYS + extension.MAC_FOLDERS
+                 + extension.LINUX_FOLDERS]
+        self.assertNotIn("Microsoft Edge", names)
+        registry = _Registry()
+        registry.keys[extension.LEGACY_EDGE["win32"] + "\\" + extension.HOST] = "old.json"
+        extension.remove(self.data, platform="win32", registry=registry)
+        self.assertEqual(registry.keys, {}, "an earlier version's Edge key taken out")
+
+    def test_two_rows_installed_by_the_extensions_own_word(self) -> None:
+        """The user, 2026-11-02: "直接就应该列出2个版本(chrome, firefox), 然后检查
+        状态是否安装 ... refresh 按钮，安装了之后能再detect"."""
+        import time
+        rows = {one["key"]: one for one in extension.browsers(self.data)}
+        self.assertEqual(list(rows), ["chrome", "firefox"])
+        self.assertFalse(rows["chrome"]["installed"])
+        self.assertEqual(rows["firefox"]["store"], extension.STORES["firefox"])
+        extension.mark_seen(self.data, "Brave")            # Chrome's store serves Brave too
+        rows = {one["key"]: one for one in extension.browsers(self.data)}
+        self.assertTrue(rows["chrome"]["installed"])
+        self.assertFalse(rows["firefox"]["installed"])
+        # Not heard from for long: not taken to be there.
+        seen = extension.folder(self.data) / "store_seen.json"
+        seen.write_text(json.dumps({"Firefox": time.time() - (extension.SEEN_DAYS + 1) * 86400}),
+                        encoding="utf-8")
+        rows = {one["key"]: one for one in extension.browsers(self.data)}
+        self.assertFalse(rows["firefox"]["installed"])
+        self.assertIn("browsers", extension.status(self.data, platform="win32",
+                                                   registry=_Registry()))
+
+    def test_only_the_stores_extension_counts_as_installed(self) -> None:
+        """The user, 2026-11-02: "应该只check browser public 版本的install, 你现在
+        check应该是local也算了"."""
+        store = f"chrome-extension://{extension.STORE_IDS[0]}/"
+        unpacked = f"chrome-extension://{extension.CHROMIUM_ID}/"
+        self.assertTrue(extension.from_store(store))
+        self.assertFalse(extension.from_store(unpacked))
+        # Its own word, where it gives it (0.0.2), comes first.
+        self.assertFalse(extension.from_store(store, "development"))
+        self.assertTrue(extension.from_store(extension.FIREFOX_ID, "normal"))
+        self.assertFalse(extension.from_store(extension.FIREFOX_ID, "development"))
+        # Said by a hand-loaded one: its icon is the extension's, but no row counts it.
+        native_host.answer({"type": "here", "browser": "Google Chrome"}, self.data,
+                           lambda *a: "", caller=unpacked)
+        rows = {one["key"]: one for one in extension.browsers(self.data)}
+        self.assertEqual(rows["chrome"]["state"], "absent")
+        self.assertIn("chrome.exe", extension.seen_processes(self.data))
+        native_host.answer({"type": "here", "browser": "Google Chrome"}, self.data,
+                           lambda *a: "", caller=store)
+        rows = {one["key"]: one for one in extension.browsers(self.data)}
+        self.assertEqual(rows["chrome"]["state"], "installed")
+
+    def test_heard_from_once_and_not_since_paused_or_removed(self) -> None:
+        """The user, 2026-11-02: "extension 如果被暂停了，也要提醒用户"."""
+        import time
+        old = time.time() - (extension.SEEN_DAYS + 3) * 86400
+        path = extension.folder(self.data) / "store_seen.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"Firefox": old}), encoding="utf-8")
+        rows = {one["key"]: one for one in extension.browsers(self.data)}
+        self.assertEqual(rows["firefox"]["state"], "quiet")
+        self.assertFalse(rows["firefox"]["installed"])
+        self.assertEqual(rows["chrome"]["state"], "absent")
+        page = (WEB / "app.js").read_text(encoding="utf-8")
+        self.assertIn("if you use this browser, it may be paused (after an update) or removed.", page)
+        self.assertIn('data-extension-page="', page)
+        self.assertEqual(extension.EXTENSIONS_PAGES["firefox_addons"], "about:addons")
+
+    @unittest.skipUnless(HAS_SOURCE, "the extension's sources are in the private repository alone")
+    def test_it_says_how_it_was_installed(self) -> None:
+        code = (extension.source() / "background.js").read_text(encoding="utf-8")
+        here = code[code.index("function sayHere()"):code.index("function menus()")]
+        self.assertIn("management.getSelf", here)
+        self.assertIn("install: (self && self.installType)", here)
+        self.assertNotIn('"management"', json.dumps(extension.manifest("chromium")),
+                         "no permission asked for it: an update asking more is paused")
+        # Every six hours while the browser runs - "alarms", shown to no one.
+        self.assertIn('ext.alarms.create("here", { periodInMinutes: HERE_EVERY_MINUTES })', code)
+        self.assertIn("alarms", extension.manifest("chromium")["permissions"])
+        self.assertEqual(extension.EXTENSION_VERSION.split()[0], "0.0.2")
+
+    def test_the_host_is_told_who_calls(self) -> None:
+        from personalized_agent import __main__ as entry
+        with mock.patch.object(entry, "_root_of", return_value=None),                 mock.patch("personalized_agent.common.paths.AppPaths.create",
+                           return_value=mock.Mock(data_dir=self.data)),                 mock.patch("personalized_agent.common.paths.resolve_root", return_value=self.data),                 mock.patch("personalized_agent.platform_layer.native_host.serve",
+                           return_value=0) as served:
+            entry._native_host([], [f"chrome-extension://{extension.STORE_IDS[0]}/",
+                                    "--parent-window=0"])
+        self.assertEqual(served.call_args.kwargs["caller"],
+                         f"chrome-extension://{extension.STORE_IDS[0]}/")
+
+    def test_install_for_one_browser_opens_its_store(self) -> None:
+        agent = TemporaryAgent()
+        try:
+            from personalized_agent.api.routes import build_routes
+            from test_handed_ways import _Ask
+            routes = build_routes(agent.app)
+            with mock.patch.object(extension, "Registry", return_value=_Registry()),                     mock.patch.object(extension.Path, "home", return_value=self.data),                     mock.patch.object(extension, "open_store", return_value=True) as opened:
+                said = routes[("POST", "/api/extension/install")](_Ask(browser="firefox"))
+            opened.assert_called_once_with("firefox")
+            self.assertTrue(said["opened"])
+            self.assertEqual([one["key"] for one in said["browsers"]], ["chrome", "firefox"])
+        finally:
+            agent.cleanup()
+
+    def test_the_chrome_stores_id_is_answered(self) -> None:
+        """Given by the store, 2026-11-02."""
+        self.assertIn("ikdgdhidoljaomoicjlfdchckaklbcbh", extension.STORE_IDS)
+        host = extension.host_manifest("chromium", Path("launch.cmd"))
+        self.assertIn("chrome-extension://ikdgdhidoljaomoicjlfdchckaklbcbh/",
+                      host["allowed_origins"])
+
+    def test_kept_current_at_each_start_where_installed_only(self) -> None:
+        """A host made known before the store's id did not name it: written
+        again at the start, where it is - the registry itself untouched."""
+        registry = _Registry()
+        command = ["C:/A/agent.exe", "--root", "C:/A 1"]
+        # Never installed: nothing at all.
+        self.assertEqual(extension.keep_current(self.data, command, "0.2.20",
+                                                platform="win32", registry=registry), [])
+        self.assertFalse(extension.folder(self.data).exists())
+        self.assertEqual(registry.keys, {})
+        extension.install(self.data, command, "0.2.16", platform="win32", registry=registry)
+        self.assertFalse((extension.folder(self.data) / "chromium").exists(),
+                         "the store gives the extension: no folder made here")
+        if HAS_SOURCE:
+            extension.prepare(self.data, "0.2.16")          # a developer's, loaded by hand
+        manifest_file = extension.folder(self.data) / "host" / f"{extension.HOST}.chromium.json"
+        old = json.loads(manifest_file.read_text("utf-8"))
+        old["allowed_origins"] = [f"chrome-extension://{extension.CHROMIUM_ID}/"]
+        manifest_file.write_text(json.dumps(old), encoding="utf-8")       # as before the store
+        keys_before = dict(registry.keys)
+
+        class _Watched(_Registry):
+            def set(self, key, value):
+                raise AssertionError("the registry is not written again")
+        watched = _Watched()
+        watched.keys = registry.keys
+        known = extension.keep_current(self.data, command, "0.2.20", platform="win32",
+                                       registry=watched)
+        self.assertIn("Google Chrome", known)
+        self.assertEqual(registry.keys, keys_before)
+        now = json.loads(manifest_file.read_text("utf-8"))
+        self.assertIn("chrome-extension://ikdgdhidoljaomoicjlfdchckaklbcbh/", now["allowed_origins"])
+        if not HAS_SOURCE:
+            return
+        chromium = json.loads((extension.folder(self.data) / "chromium" / "manifest.json")
+                              .read_text("utf-8"))
+        self.assertEqual(chromium["version"], extension.EXTENSION_VERSION,
+                         "its folders made again - its own version, whatever the agent's")
+
+    def test_kept_current_elsewhere_only_in_the_folders_it_is_in(self) -> None:
+        home = self.data / "home"
+        (home / ".config/google-chrome").mkdir(parents=True)
+        (home / ".config/chromium").mkdir(parents=True)
+        command = ["/opt/agent/agent"]
+        extension.install(self.data, command, "0.2.16", platform="linux", home=home)
+        chromium_host = home / ".config/chromium/NativeMessagingHosts" / f"{extension.HOST}.json"
+        chromium_host.unlink()                       # taken out by the user
+        extension.keep_current(self.data, command, "0.2.20", platform="linux", home=home)
+        self.assertFalse(chromium_host.exists(), "not put back where it is not")
+        chrome = json.loads((home / ".config/google-chrome/NativeMessagingHosts"
+                             / f"{extension.HOST}.json").read_text("utf-8"))
+        self.assertIn("chrome-extension://ikdgdhidoljaomoicjlfdchckaklbcbh/",
+                      chrome["allowed_origins"])
 
     def test_settings_install_on_the_users_word(self) -> None:
         agent = TemporaryAgent()
@@ -382,16 +597,22 @@ class ExtensionTests(unittest.TestCase):
             routes = build_routes(agent.app)
             from test_handed_ways import _Ask
             registry = _Registry()
+            if sys.platform == "darwin":
+                # A Mac connects the browsers whose folder there is.
+                (self.data / "Library/Application Support/Google/Chrome").mkdir(parents=True)
             with mock.patch.object(extension, "Registry", return_value=registry), \
                     mock.patch.object(extension.Path, "home", return_value=self.data):
                 self.assertFalse(routes[("GET", "/api/extension")](_Ask())["prepared"])
                 said = routes[("POST", "/api/extension/install")](_Ask())
                 self.assertTrue(said["prepared"])
                 self.assertTrue(said["connected"])
-                with mock.patch("personalized_agent.platform_layer.clipboard.copy",
-                                return_value=True) as copied:
-                    routes[("POST", "/api/extension/open")](_Ask(what="copy", browser="firefox"))
-                self.assertTrue(copied.call_args[0][0].endswith("firefox"))
+                self.assertFalse(said["folders"], "nothing made here: the stores give it")
+                with mock.patch.object(extension, "_browser_program", return_value=None), \
+                        mock.patch("webbrowser.open", return_value=True) as opened:
+                    routes[("POST", "/api/extension/open")](_Ask(what="store", browser="firefox"))
+                    routes[("POST", "/api/extension/open")](_Ask(what="store", browser="chrome"))
+                self.assertEqual([one.args[0] for one in opened.call_args_list],
+                                 [extension.STORES["firefox"], extension.STORES["chrome"]])
                 routes[("POST", "/api/extension/remove")](_Ask())
             self.assertEqual(registry.keys, {})
         finally:
@@ -632,6 +853,7 @@ class TextIsTheIconsTests(unittest.TestCase):
         return (Path(__file__).resolve().parents[1] / "personalized_agent" / "resources"
                 / Path(*parts)).read_text("utf-8")
 
+    @unittest.skipUnless(HAS_SOURCE, "the extension's sources are in the private repository alone")
     def test_in_a_page_selected_text_is_the_right_clicks_too(self) -> None:
         # The user, 2026-11-01: "网页选字什么和网址一样，都是右键delegate work".
         background = self._source("browser_extension", "background.js")
@@ -748,6 +970,59 @@ class WorkAssignedTests(unittest.TestCase):
         html = (Path(__file__).resolve().parents[1] / "personalized_agent" / "api" / "web"
                 / "index.html").read_text("utf-8")
         self.assertLess(html.index('id="ov-assigned"'), html.index('id="ov-todo"'))
+
+    def test_a_file_handed_over_is_listed_once_as_a_file(self) -> None:
+        """On the lab's Mac, 2026-11-02: a file from Finder's Quick Actions
+        was listed in the box as a folder and as a file."""
+        js = (WEB / "app.js").read_text("utf-8")
+        compose = js[js.index("function delegateCompose"):]
+        compose = compose[:compose.index("\n}\n")]
+        self.assertIn("(draft.folders || []).filter((one) => !files.includes(one))", compose)
+
+    def test_the_avatar_s_menu_on_a_mac_whatever_is_in_front(self) -> None:
+        """On the lab's Mac, 2026-11-02: "右键logo没有东西弹出来" - Tk drops a
+        right click while another program is in front. Heard through
+        AppKit and told through the queue - a call into Tk from AppKit's
+        callback ended the process - and opened up above the Dock."""
+        desk = (Path(__file__).resolve().parents[1] / "personalized_agent" / "ui"
+                / "desktop.py").read_text("utf-8")
+        bound = desk[desk.index("from .macos_avatar import right_clicks_while_away"):]
+        bound = bound[:bound.index("except Exception")]
+        self.assertIn('self.queue.put(("call"', bound)
+        self.assertNotIn("self.root.after", bound, "never into Tk from AppKit's callback")
+        menu = desk[desk.index("def _on_right_click"):desk.index("# -- delegate work")]
+        self.assertIn("y = max(0, y - high)", menu, "opened up where down it does not fit")
+        mac = (Path(__file__).resolve().parents[1] / "personalized_agent" / "ui"
+               / "macos_avatar.py").read_text("utf-8")
+        self.assertIn("event.windowNumber() == number and not app.isActive()", mac)
+        from personalized_agent.ui import chat_bubble
+        source = Path(chat_bubble.__file__).read_text("utf-8")
+        self.assertIn("visibleFrame()", source, "a Mac's Dock and menu bar left out")
+
+    def test_an_answer_it_handed_over_opens_from_here(self) -> None:
+        """The user, 2026-11-02: an answer could not be opened from Work
+        assigned - it said "See it in Work"."""
+        js = (WEB / "app.js").read_text("utf-8")
+        made = js[js.index("function ovTodoMade"):js.index("function ovTodoTracked")]
+        self.assertIn('item.kind === "answer" ? "Open the answer"', made)
+        self.assertNotIn('shown: item.kind === "text" || item.kind === "answer"', made)
+
+    def test_delegated_from_another_window_listed_here_too(self) -> None:
+        """The user, 2026-11-02: work delegated from the browser's box (a
+        window of its own) was not under Work assigned - the agent's window
+        had read the list when it opened, and was never told."""
+        js = (WEB / "app.js").read_text("utf-8")
+        solo = js[js.index("if (DELEGATE_SOLO) {\n        // CLOSED AT ONCE"):]
+        self.assertLess(solo.index("ovSayAssigned();"), solo.index("return;"),
+                        "the box says it started a work")
+        self.assertIn("new BroadcastChannel(OV_WORK_CHANNEL).onmessage", js)
+        self.assertIn('if (!document.hidden) ovListsAgain();', js)
+        self.assertNotIn('window.addEventListener("focus"', js, "nothing asked at each focus")
+        # A work going that neither list knows: the lists asked again, once.
+        watch = js[js.index("async function watchWorkGoing"):js.index("setTimeout(watchWorkGoing, 1000)")]
+        self.assertIn("ovTodos.concat(ovAssigned)", watch)
+        self.assertIn("!ovUnitsAskedFor.has(unit)", watch)
+        self.assertIn("if (unknown.length", watch)
 
 
 class TheWordsOnThePageTests(unittest.TestCase):

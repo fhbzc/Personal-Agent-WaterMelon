@@ -3,6 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- THE PAGE HAS ITS OWN DARK THEME, said before anything is drawn (the user,
+     2026-11-02: the Overview sometimes opened in odd colours, in Firefox, set
+     right by a reload). Dark Reader, in their Firefox, judges a page as it loads:
+     with the agent busy at its start, the styles came late, the page was still
+     the browser's white, and it was darkened on top of its own dark theme - its
+     blue made navy. "darkreader-lock" tells Dark Reader to leave the page as it
+     is; "color-scheme" tells the browser the same. -->
+<meta name="darkreader-lock">
+<meta name="color-scheme" content="light dark">
 <title>Personal Agent WaterMelon</title>
 <!-- THE DELEGATE WORK BOX ALONE, from its first frame: marked before the
      page is drawn, so the rest of it never shows while app.js loads -
@@ -89,24 +98,19 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
     <div class="card ov-tokens-card">
       <!-- Section 14.33, as amended: what the model time was spent on.
 
-           One line per kind of work, because the total on its own says a
-           number went up and not what to do about it. A heartbeat outspending
-           every conversation is a setting to change; the same total spread
-           evenly is a busy week. -->
+           One line per MODULE - each a switch in Settings (the user,
+           2026-11-02: "token usage 只有by module ... 本质上是要setting里让大家知道
+           关什么"): the total on its own says a number went up and not what to
+           do about it; by module, it says which part to turn off. -->
       <div class="dbg-tokens" id="dbg-tokens">
         <div class="dbg-timeline-head">
           <strong>Token usage</strong>
-          <span class="muted">by the kind of work that spent it</span>
+          <span class="muted">by the part of the agent that spent it - each can be turned off
+            in Settings</span>
           <label>View
             <select id="dbg-tokens-view">
               <option value="calls">last 600 calls</option>
               <option value="days" selected>per day</option>
-            </select>
-          </label>
-          <label>By
-            <select id="dbg-tokens-group">
-              <option value="task" selected>kind of work</option>
-              <option value="module">module</option>
             </select>
           </label>
           <label id="dbg-tokens-days-label">Over
@@ -874,27 +878,24 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
       </div>
     </div>
     <!-- THE BROWSER EXTENSION (platform_layer/browser_extension.py): under
-         Updates (the user, 2026-11-01); Install opens its install page. -->
+         Updates (the user, 2026-11-01). Two rows, Chrome and Firefox - each
+         installed or not, Install to its store - and Refresh to look again
+         (the user, 2026-11-02). -->
     <div class="card" id="extension-card">
       <h3>Browser extension</h3>
-      <p class="panel-note">Right-click any web page, selected text, a link or a picture and
-        pick Delegate work: the agent gets the page's address and the text you selected.
-        One extension for Chrome, Edge, Brave and Firefox - more of the agent's parts will
+      <p class="panel-note">The agent in your browser. Today: right-click any web page,
+        selected text, a link or a picture and pick Delegate work - more of the agent will
         come in it.</p>
-      <p id="extension-status" class="muted"></p>
+      <ul class="extension-rows" id="extension-rows"></ul>
       <div class="ov-lp-buttons">
-        <button type="button" id="extension-install">Install the browser extension</button>
-        <button type="button" id="extension-remove" class="secondary" hidden>Remove</button>
+        <button type="button" id="extension-refresh" class="secondary">Refresh</button>
       </div>
-    </div>
-    <!-- DELEGATE WORK IN THE USER'S EDITORS (platform_layer/editor_menus.py):
-         each found on this computer, its own right-click entry to put in. -->
-    <div class="card" id="editor-menus-card">
-      <h3>Right-click in your editors</h3>
-      <p class="panel-note">Delegate work on the right-click menu of the file, or the text you
-        selected in it. Where the system's own menu reaches - Explorer and the file managers,
-        and on a Mac the Services menu of every program - it is there already.</p>
-      <ul id="editor-menus-list" class="editor-menus"></ul>
+      <p class="muted">Installed in a browser, it says so as it starts - press Refresh once
+        it is added.</p>
+      <!-- Added before the agent was made known to that browser, its word was
+           lost: a restart of the browser, or one Delegate work, says it again. -->
+      <p class="muted">Added it before pressing Install? Restart that browser, or use Delegate
+        work once, then press Refresh.</p>
     </div>
     <div class="card" id="heartbeat-settings-card">
       <h3>Heartbeats</h3>
@@ -1420,18 +1421,6 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
       <button type="button" class="secondary" id="delegate-cancel">Cancel</button>
       <button type="button" class="secondary" id="delegate-save">Save as draft</button>
       <button type="button" id="delegate-start" disabled>Start</button>
-    </div>
-  </form>
-</dialog>
-<!-- INSTALLING THE BROWSER EXTENSION: what to do in each browser, step by
-     step - the agent opens the page and shows the folder; the clicks in the
-     browser are the user's. -->
-<dialog id="extension-box" class="delegate extension-box" aria-labelledby="extension-title">
-  <form method="dialog" class="delegate-form">
-    <h3 id="extension-title">Install the browser extension</h3>
-    <div id="extension-body"></div>
-    <div class="delegate-actions">
-      <button type="button" id="extension-done">Done</button>
     </div>
   </form>
 </dialog>

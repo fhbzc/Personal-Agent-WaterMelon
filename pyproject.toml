@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personalized-agent"
-version = "0.2.19"
+version = "0.2.20"
 description = "Cross-platform desktop AI agent with activity awareness, a knowledge graph and a scheduler"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -70,3 +70,8 @@ include = ["personalized_agent*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# Output caught in Python, not by redirecting the process's own handles:
+# with them redirected (pytest's default, "fd"), Tk on Windows failed to read
+# its own init.tcl / tk.tcl at start - "couldn't read file ...: No error" -
+# six times in eight (measured 2026-11-02; unittest, -s and "sys": none).
+addopts = "--capture=sys"

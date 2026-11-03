@@ -28,6 +28,7 @@ numpy>=1.24              # scoring pairs of state vectors, in the agent's own pr
 torch>=2.0               # the tensor library the sentence model runs on, in its own process
 transformers>=4.40       # loading and running all-MiniLM-L6-v2 locally
 pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'  # per-pixel macOS avatar transparency
+pyobjc-framework-WebKit>=10.0; sys_platform == 'darwin'  # the Delegate work box in a panel of its own (ui/mac_panel.py)
 
 # Watching a video in a piece of work (runtime/video.py): its frames and its
 # sound decoded by PyAV, what is said recognised by faster-whisper on the

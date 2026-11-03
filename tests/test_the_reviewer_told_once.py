@@ -113,6 +113,24 @@ class TheSecondPackageTests(_Base):
             self.store.link(rid, jid, "supports")
         return rid
 
+    def test_a_question_no_reason_answers_points_to_the_cases_that_do(self) -> None:
+        """The user, 2026-11-02: asked "how long should the summary be", a
+        run was told "nothing learned bears on this" - though the user's own
+        short notes, judged to answer it, were among its cases."""
+        notes = self.case("Fern reading notes", deliverable=["deliverable:notes"])
+        rid = self._reason("Listen, not read.", [self.judgment(notes)])
+        questions = [{"q": "How long should the summary be?", "kind": "output"},
+                     {"q": "Which colour is its heading?", "kind": "output"}]
+        verdicts = {"reasons": {rid: {"holds": "no", "answers": {}}},
+                    "cases": {notes: {"alike": 2, "answers": {"1": 2}, "same_as": ""}}}
+        said = Finder(self.db).answer("notes", {"deliverable": ["deliverable:notes"]}, questions,
+                                      ask=lambda system, content, most: verdicts)["text"]
+        first = said[said.index("== QUESTION 1"):said.index("== QUESTION 2")]
+        self.assertNotIn("nothing learned bears on this", first)
+        self.assertIn(f"the user's own work answers it: {notes} (Fern reading notes)", first)
+        second = said[said.index("== QUESTION 2"):]
+        self.assertIn("(nothing learned bears on this)", second, "where nothing does")
+
     def test_what_its_context_holds_is_named_and_the_pointer_said_once(self) -> None:
         slides = self.case("Defence slides", deliverable=["deliverable:slides"])
         rid = self._reason("Listen, not read.", [self.judgment(slides)])

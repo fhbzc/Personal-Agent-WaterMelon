@@ -157,9 +157,12 @@ class TheSchedulerTests(_Base):
         self.assertEqual(len(self.work.waiting), 1)
         if sys.platform == "win32":
             self.assertEqual(psutil.Process(alive[0].pid).nice(), psutil.IDLE_PRIORITY_CLASS)
-            gov.samples.clear()
-            gov.samples.extend([10.0] * 3)
-            gov.steer()
+        # Calm again (on every system - it was asked on Windows alone, and
+        # elsewhere the computer stayed busy and nothing could start).
+        gov.samples.clear()
+        gov.samples.extend([10.0] * 3)
+        gov.steer()
+        if sys.platform == "win32":
             self.assertEqual(psutil.Process(alive[0].pid).nice(),
                              psutil.BELOW_NORMAL_PRIORITY_CLASS)
         # Calm: the last one waiting starts.

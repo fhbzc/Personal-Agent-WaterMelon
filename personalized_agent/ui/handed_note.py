@@ -45,6 +45,12 @@ As the user asked for it:
     is): what was handed over is shown whole, its words scrolled within
     themselves under its lines - not drawn whole into a canvas, which grows
     past what a window can be.
+  - FOLDED TO ITS BAR (the user, 2026-11-02: "要有一个最小化选项，可以把它
+    collapse (像zoom那个collapse一样，留一个bar)"): – beside the ✕ - or a
+    double click on the bar - leaves only its bar, where it stood by its
+    right edge and top, still on top and dragged by it; □ there, or a double
+    click again, opens it as it was - its size, its sides, where each was
+    scrolled to, nothing built again.
 """
 
 from __future__ import annotations
@@ -52,6 +58,7 @@ from __future__ import annotations
 import sys
 import tkinter as tk
 from typing import Any, Callable, Dict, List, Optional
+from .on_top import on_release
 
 #: Its colours: the agent's dark bubbles', with the amber of what to mind.
 PALETTE = {"edge": "#3a4152", "bar": "#262b37", "bg": "#1d212b", "ink": "#e9ecf3",
@@ -85,6 +92,10 @@ SIDES = ("item", "how")
 #: Its sides' widths at the first zoom, and where it stands: this far from
 #: the screen's right edge and top, and from its bottom (the taskbar's room).
 LEFT_WIDTH, WIDTH, RIGHT, TOP, BOTTOM = 460, 380, 24, 64, 64
+
+#: The most of the work's name its bar shows; and the widest it is folded to
+#: (at the first zoom), whatever the name.
+HEADING_MOST, FOLDED_WIDEST = 60, 420
 
 #: What each kind of item is called on its side.
 KINDS = {"email": "Email", "event": "Event", "text": "Text to paste", "file": "File",
@@ -154,15 +165,25 @@ class HandedNote:
         self._unsaved = False
         self._save_button: Any = None
         self._words: Any = None
+        #: FOLDED TO ITS BAR (module docstring): whether it is, and its size
+        #: before it was; its bar, its foot, its middle, the – / □ in its bar.
+        self.folded = False
+        self._unfolded_size: Optional[tuple] = None
+        self._bar_frame: Any = None
+        self._foot_frame: Any = None
+        self._middle: Any = None
+        self._fold_button: Any = None
+        self._strip_places: List[Dict[str, Any]] = []
 
     # -- the window --------------------------------------------------------------------------
     def show(self) -> None:
         window = tk.Toplevel(self.root)
         self.window = window
-        window.overrideredirect(True)
+        from .on_top import borderless
+        borderless(window)                   # its words written in, on a Mac too
         window.attributes("-topmost", True)
         window.configure(bg=PALETTE["edge"])
-        window.title(self.words("Before you use it"))
+        window.title(self.heading())
         modifier = "Command" if sys.platform == "darwin" else "Control"
         for keys, step in ((("plus", "equal", "KP_Add"), 1), (("minus", "KP_Subtract"), -1)):
             for key in keys:
@@ -177,6 +198,8 @@ class HandedNote:
         window.bind("<Button-1>", self._pressed, add="+")
         self._build()
         self._rounded()
+        from .on_top import stay_on_top
+        stay_on_top(window)                  # on a Mac, asked before it was laid out: lost
 
     def close(self) -> None:
         if self.window is not None:
@@ -191,6 +214,80 @@ class HandedNote:
                 except tk.TclError:
                     pass
             self._fonts = {}
+
+    def heading(self) -> str:
+        """ITS BAR SAYS WHOSE IT IS (the user, 2026-11-02: "header应该是这个
+        project的name, 而不是before you use it"): the work's name, cut short
+        past HEADING_MOST - else, from where no work is named, the words of
+        before."""
+        name = " ".join(str(self.note.get("work") or "").split())
+        if not name:
+            return self.words("Before you use it")
+        return name if len(name) <= HEADING_MOST else name[:HEADING_MOST - 1].rstrip() + "…"
+
+    # -- folded to its bar (module docstring) ------------------------------------------------
+    def toggle_folded(self) -> None:
+        if self.folded:
+            self.unfold()
+        else:
+            self.fold()
+
+    def fold(self) -> None:
+        """Only its bar left, where it stood by its right edge and top: its
+        middle, its foot and its edges taken away, nothing destroyed."""
+        window = self.window
+        if window is None or self.folded or self._bar_frame is None:
+            return
+        try:
+            window.update_idletasks()
+            self._unfolded_size = (window.winfo_width(), window.winfo_height())
+            right, top = window.winfo_x() + window.winfo_width(), window.winfo_y()
+            self.folded = True
+            for part in (self._middle, self._foot_frame):
+                if part is not None:
+                    part.pack_forget()
+            for one in [getattr(self, "_grip", None)] + list(getattr(self, "_strips", [])):
+                if one is not None:
+                    one.place_forget()
+            self._fold_button.configure(text="□")
+            window.update_idletasks()
+            bar = self._bar_frame
+            width = min(self._unfolded_size[0], self._px(FOLDED_WIDEST),
+                        max(bar.winfo_reqwidth() + 2 + 2 * RIM, self._px(240)))
+            height = bar.winfo_reqheight() + 2 + 2 * RIM
+            window.geometry(f"{width}x{height}+{max(0, right - width)}+{top}")
+        except tk.TclError:                              # pragma: no cover - closed meanwhile
+            pass
+
+    def unfold(self) -> None:
+        """Opened as it was - its size, its sides, where each was scrolled
+        to - by the right edge and top its bar now has."""
+        window = self.window
+        if window is None or not self.folded:
+            return
+        try:
+            right, top = window.winfo_x() + window.winfo_width(), window.winfo_y()
+            # Packed again in the order they were made: the bar, the foot, the middle.
+            if self._foot_frame is not None:
+                self._foot_frame.pack(side="bottom", fill="x")
+            if self._middle is not None:
+                self._middle.pack(side="top", fill="both", expand=True)
+            grip = getattr(self, "_grip", None)
+            if grip is not None:
+                grip.place(relx=1.0, rely=1.0, anchor="se")
+                grip.lift()
+            for strip, place in zip(getattr(self, "_strips", []), self._strip_places):
+                strip.place(**place)
+                strip.lift()
+            self._fold_button.configure(text="–")
+            self.folded = False
+            width, height = self._unfolded_size or (window.winfo_reqwidth(),
+                                                    window.winfo_reqheight())
+            x = max(0, min(right - width, window.winfo_screenwidth() - width))
+            y = max(0, min(top, window.winfo_screenheight() - height - BOTTOM // 2))
+            window.geometry(f"{width}x{height}+{x}+{y}")
+        except tk.TclError:                              # pragma: no cover - closed meanwhile
+            pass
 
     @property
     def zoom(self) -> int:
@@ -312,6 +409,7 @@ class HandedNote:
             child.destroy()
         self._texts, self._long, self._areas, self._panes = [], None, {}, []
         self._words = None
+        self.folded = False                  # built whole; folded only by the user
         # LAID OUT ON THE SCREEN, UNSEEN, BEFORE ITS WORDS ARE MEASURED: a
         # text not yet on the screen is as narrow as nothing, and counts a
         # line for every letter. Unseen while it is (no flicker), at the size
@@ -463,8 +561,8 @@ class HandedNote:
     def _configured(self, event: Any) -> None:
         """Its own size changed - not a part of it, not where it stands: moved
         by its bar, nothing is laid out again (it flickered)."""
-        if event.widget is not self.window:
-            return
+        if event.widget is not self.window or self.folded:
+            return                           # folded: only its bar, nothing to lay out
         size = (event.width, event.height)
         if size == getattr(self, "_laid_for", None):
             return
@@ -501,10 +599,15 @@ class HandedNote:
         wrapped anew, as tall as their lines; each side's bar shown when what
         it says no longer fits, and gone when it does - nothing built again."""
         self._reflow_due = None
-        if self.window is None:
-            return
+        if self.window is None or self.folded:
+            return                           # laid out when it is opened again
         self._reflowing = True
         try:
+            # ITS NEW SIZE GIVEN TO ITS PARTS BEFORE THEIR WORDS ARE MEASURED:
+            # measured first, on a busy machine they were measured at the
+            # width they had - narrowed, the words kept their old lines
+            # (measured 2026-11-02: 2 of 3 under load, before and after).
+            self.window.update_idletasks()
             self._fit_texts()
             self.window.update_idletasks()
             panes = []
@@ -545,26 +648,34 @@ class HandedNote:
             pass
 
     def _bar(self, card: Any) -> Any:
-        """Its own bar, dragged to move it - one ✕ for both sides."""
+        """Its own bar, dragged to move it - one ✕ for both sides, and –
+        beside it to fold the note to this bar (□ to open it again)."""
         bar = tk.Frame(card, bg=PALETTE["bar"], padx=self._px(12), pady=self._px(7))
         bar.pack(side="top", fill="x")
+        self._bar_frame = bar
         dot = tk.Canvas(bar, width=self._px(9), height=self._px(9), bg=PALETTE["bar"],
                         highlightthickness=0, bd=0)
         dot.create_oval(1, 1, self._px(9) - 1, self._px(9) - 1, fill=PALETTE["accent"],
                         outline="")
-        dot.pack(side="left", padx=(0, self._px(8)))
-        heading = tk.Label(bar, text=self.words("Before you use it"), bg=PALETTE["bar"],
-                           fg=PALETTE["muted"], font=self._font(-1, "bold"))
-        heading.pack(side="left")
+        # Its buttons packed first: a long name is cut short, never them.
         self._flat(bar, "✕", self.close, PALETTE["bar"]).pack(side="right")
+        self._fold_button = self._flat(bar, "□" if self.folded else "–",
+                                       self.toggle_folded, PALETTE["bar"])
+        self._fold_button.pack(side="right")
+        dot.pack(side="left", padx=(0, self._px(8)))
+        heading = tk.Label(bar, text=self.heading(), bg=PALETTE["bar"],
+                           fg=PALETTE["muted"], font=self._font(-1, "bold"), anchor="w")
+        heading.pack(side="left", fill="x", expand=True)
         for one in (bar, dot, heading):
             one.bind("<ButtonPress-1>", self._grab)
             one.bind("<B1-Motion>", self._move)
+            one.bind("<Double-Button-1>", lambda _e: self.toggle_folded())
         return bar
 
     def _foot(self, card: Any) -> Any:
         foot = tk.Frame(card, bg=PALETTE["bg"], padx=self._px(18), pady=self._px(10))
         foot.pack(side="bottom", fill="x")
+        self._foot_frame = foot
         hint = "⌘ + / − to zoom" if sys.platform == "darwin" else "Ctrl + / − to zoom"
         tk.Label(foot, text=self.words(hint), bg=PALETTE["bg"], fg=PALETTE["muted"],
                  font=self._font(-2)).pack(side="left")
@@ -572,7 +683,7 @@ class HandedNote:
                         fg=PALETTE["on_accent"], font=self._font(-1, "bold"),
                         padx=self._px(14), pady=self._px(4), cursor="hand2")
         done.pack(side="right", padx=(0, self._px(10)))
-        done.bind("<Button-1>", lambda _e: self.close())
+        on_release(done, self.close)
         grip = tk.Label(card, text="◢", bg=PALETTE["bg"], fg=PALETTE["thumb_on"],
                         font=self._font(-1),
                         cursor="size_nw_se" if sys.platform.startswith("win")
@@ -587,7 +698,7 @@ class HandedNote:
     # -- sized by its edges, shared by the line between its sides ---------------------------
     def _edges(self, rim: Any) -> None:
         """Its edges and corners, each a strip of its rim to size it by."""
-        self._strips = []
+        self._strips, self._strip_places = [], []
         corner = 3 * RIM
         for edge, cursor in EDGES.items():
             strip = tk.Frame(rim, bg=PALETTE["bg"], cursor=cursor)
@@ -610,6 +721,7 @@ class HandedNote:
             if edge == "s":
                 place.update(anchor="sw", relx=0.0)
             strip.place(**place)
+            self._strip_places.append(place)         # placed again when opened again
             strip.bind("<ButtonPress-1>", lambda e, edge=edge: self._edge_start(e, edge))
             strip.bind("<B1-Motion>", self._edge_move)
             strip.bind("<ButtonRelease-1>", self._resize_end)
@@ -725,7 +837,7 @@ class HandedNote:
                           padx=self._px(7), pady=0, cursor="hand2")
         button.bind("<Enter>", lambda _e: button.configure(bg=PALETTE["hover"], fg=PALETTE["ink"]))
         button.bind("<Leave>", lambda _e: button.configure(bg=bg, fg=PALETTE["muted"]))
-        button.bind("<Button-1>", lambda _e: act())
+        on_release(button, act)                  # done when let go over it
         return button
 
     def _zoomer(self, row: Any, side: str) -> None:
@@ -830,7 +942,7 @@ class HandedNote:
             # said on the button when done.
             copy = self._flat(head, self.words("Copy all"), lambda: None, PALETTE["bg"],
                               small=True)
-            copy.bind("<Button-1>", lambda _e, b=copy: (self._copy_item(), self._flash(b)))
+            on_release(copy, lambda b=copy: (self._copy_item(), self._flash(b)))
             copy.pack(side="right", padx=(0, self._px(8)))
         if (item.get("text") or item.get("parts")) and True:
             if item.get("editable", True) and self.on_save is not None:
@@ -957,7 +1069,7 @@ class HandedNote:
                                    PALETTE["ink"], wrap, editable=True)
             box.bind("<<Modified>>", lambda _e, b=box: self._part_changed(b), add="+")
             copy = self._flat(row, self.words("Copy"), lambda: None, PALETTE["bg"], small=True)
-            copy.bind("<Button-1>", lambda _e, b=box, c=copy: (
+            on_release(copy, lambda b=box, c=copy: (
                 self._copy(b.get("1.0", "end-1c")), self._flash(c)))
             copy.pack(side="right")
             self._part_boxes.append(box)

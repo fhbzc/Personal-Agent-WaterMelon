@@ -8,6 +8,7 @@ import os
 import subprocess
 import tempfile
 import time
+import sys
 import unittest
 import unittest.mock
 from datetime import datetime, timedelta, timezone
@@ -220,7 +221,8 @@ class SeveralFoldersAreOneProjectTests(unittest.TestCase):
         read = tools.call("read_file", {"path": f"{two.name}/notes.md"})
         self.assertEqual(read["text"], "notes")
         self.assertIn("principles", tools.call("read_file", {"path": "plan.md"})["text"])
-        self.assertIn("outside", tools.call("read_file", {"path": "C:/Windows/win.ini"})["error"])
+        elsewhere = "C:/Windows/win.ini" if sys.platform == "win32" else "/etc/hosts"
+        self.assertIn("outside", tools.call("read_file", {"path": elsewhere})["error"])
         self.assertTrue(ws.is_repository())
         self.assertEqual(len(ws.commits(None, until)), 1)
 

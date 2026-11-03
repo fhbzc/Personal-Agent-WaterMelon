@@ -293,18 +293,23 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         return browser_extension.status(app.data_dir)
 
     @route("POST", "/api/extension/install")
-    def extension_install(_request: Any) -> Any:
-        """On the user's word: its folders made, and its host made known to
-        the browsers on this computer."""
+    def extension_install(request: Any) -> Any:
+        """On the user's word, for one browser (Settings' row): the agent made
+        known to the browsers on this computer, and that browser's store page
+        opened - the user adds it there."""
         from ..platform_layer import browser_extension
         from ..platform_layer.autostart import launch_command
         from ..version import __version__
         command = getattr(app, "launch_command", None) or launch_command(app.root)
         try:
-            return browser_extension.install(app.data_dir, command, __version__,
+            said = browser_extension.install(app.data_dir, command, __version__,
                                              _extension_icon())
         except OSError as exc:
-            raise ApiError(f"the extension could not be made: {exc}", 500)
+            raise ApiError(f"the agent could not be made known to the browsers: {exc}", 500)
+        browser = str(request.get("browser") or "")
+        if browser in ("chrome", "firefox"):
+            said["opened"] = browser_extension.open_store(browser)
+        return said
 
     @route("POST", "/api/extension/remove")
     def extension_remove(_request: Any) -> Any:
@@ -321,6 +326,9 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         what = str(request.get("what") or "")
         flavor = "firefox" if str(request.get("browser") or "") == "firefox" else "chromium"
         path = (said.get("folders") or {}).get(flavor) or ""
+        if what == "store":
+            # FROM THE STORES (the user, 2026-11-02): its page there, in that browser.
+            return {"opened": browser_extension.open_store(str(request.get("browser") or ""))}
         if what == "page":
             return {"opened": browser_extension.open_extensions_page(
                 str(request.get("browser") or ""))}
@@ -448,7 +456,9 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             # THE BROWSER RIGHT-CLICKED IN OPENS IT (the user, 2026-11-02: the
             # box "弹出来要卡一下" - a browser started cold for it): only its
             # address, signed in, said back.
-            return {"url": app.sign_in_url(fragment)}
+            # Its ticket marked for the extension: Firefox calls the window
+            # an extension opens cross-site (api/access.py, `ticket`).
+            return {"url": app.sign_in_url(fragment, for_extension=True)}
         from ..platform_layer import app_window
         _threading.Thread(target=lambda: app_window.open_page(
             app.sign_in_url(fragment), app.paths.data_dir / app_window.PROFILE),
@@ -2552,7 +2562,10 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         # WHAT IT IS, HOW IT IS USED AND WHAT TO CHECK, on the desktop beside it.
         told = handed.note(item, acts, say, copied=copied)
         told["check"] = first + list(told.get("check") or [])
-        app.bus.publish("work.handed_opened", dict(told, run=run["id"], n=at))
+        # Headed by the work's name (the user, 2026-11-02: "header应该是这个
+        # project的name, 而不是before you use it").
+        app.bus.publish("work.handed_opened", dict(told, run=run["id"], n=at,
+                                                   work=str(run.get("unit_name") or "")))
         if item["kind"] == "message":
             return {"opened": "message", "copied": copied, "in": chat.get("name", ""),
                     "how": chat.get("how", ""), "chat": {key: chat.get(key) for key in
@@ -2587,6 +2600,11 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             if sys.platform.startswith("win"):
                 subprocess.Popen(["explorer", f"/select,{found}"])
             return {"shown": str(found)}
+        # AN ANSWER, A TEXT: opened where it is read whole - the note on the
+        # desktop, published above, to read, change, save and copy (the
+        # user, 2026-11-02: "deliverable为什么不能从Work assigned直接打开").
+        if item["kind"] in ("answer", "text"):
+            return {"opened": "note", "kind": item["kind"]}
         raise ApiError("there is nothing to open: copy it", 409)
 
     # -- the Experience debugger: the same work done three ways ---------------

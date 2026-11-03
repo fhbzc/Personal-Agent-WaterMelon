@@ -226,6 +226,8 @@ class AnotherCopysEntryTests(unittest.TestCase):
         self.assertFalse(it.follow(False))
         self.assertEqual(self.registry.value, f'"{self.other}"')
 
+    @unittest.skipUnless(sys.platform == "win32",
+                         "a Windows Run entry, quoted as Windows quotes it, read on Windows")
     def test_a_copy_run_from_the_source_holds_it_too(self) -> None:
         script = self.dir / "checkout" / "run.py"
         script.parent.mkdir()

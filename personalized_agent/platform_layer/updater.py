@@ -208,12 +208,13 @@ def _release_of(release: Dict[str, Any]) -> Dict[str, Any]:
             "files": files}
 
 
-def published_releases() -> List[Dict[str, Any]]:
-    """Every published release - no draft, no pre-release - newest first."""
+def published_releases(pre: bool = False) -> List[Dict[str, Any]]:
+    """Every published release - no draft; no pre-release (or beta) unless
+    `pre` - newest first."""
     with _get(RELEASES, timeout=20) as response:
         listed = json.loads(response.read().decode("utf-8"))
     out = [_release_of(one) for one in listed if isinstance(one, dict)]
-    out = [one for one in out if not one["draft"] and not one["prerelease"]
+    out = [one for one in out if not one["draft"] and (pre or not one["prerelease"])
            and version_of(one["tag"])]
     return sorted(out, key=lambda one: version_of(one["tag"]), reverse=True)
 
@@ -366,8 +367,15 @@ class Updater:
             self._set(doing="", error="")
             return self.status()
         self._set(doing="checking", error="")
-        releases = published_releases()
+        # PRE-RELEASES (the user, 2026-11-02: "check now 是允许检测pre-release
+        # 或者beta 版的，可以选择安装，但是pre-release/beta版不会被自动安装，
+        # 也不会在被检测到的时候弹出提醒"): listed on the page, each to be
+        # chosen - never installed by itself, never told in a notice. All
+        # else (`newer`, `newest`: what is installed or told) is releases only.
+        listed = published_releases(pre=True)
+        releases = [one for one in listed if not one["prerelease"]]
         newer = [one for one in releases if is_newer(one["tag"])]
+        offered = [one for one in listed if is_newer(one["tag"])]
         kind = how_installed()
 
         def installable(release: Dict[str, Any]) -> bool:
@@ -377,33 +385,39 @@ class Updater:
         # A download under way is finished first (the user, 2026-10-30): a
         # version newer still is had the time after.
         under_way = self._under_way()
-        carried_on = next((one for one in newer if under_way and one["tag"] == under_way["tag"]
+        carried_on = next((one for one in offered if under_way and one["tag"] == under_way["tag"]
                            and installable(one)), None)
         self._set(checked_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                   latest=(newest or (releases[0] if releases else {})).get("tag", ""),
                   newer=bool(newer), page=newest["page"] if newest else "", doing="",
                   can_install=bool(newest and installable(newest)),
-                  # Every version newer than this one, each to be chosen.
+                  # Every version newer than this one, each to be chosen -
+                  # pre-releases among them, said to be.
                   versions=[{"tag": one["tag"], "published": one["published"],
                              "notes": one["notes"], "page": one["page"],
-                             "can_install": installable(one)} for one in newer])
-        if not newest:
+                             "prerelease": one["prerelease"],
+                             "can_install": installable(one)} for one in offered])
+        if not offered:
             return self.status()
         asked = self.state.get("asked_to_install")
         if carried_on is not None and not (asked and asked is not True
                                            and asked != carried_on["tag"]):
             chosen: Optional[Dict[str, Any]] = carried_on
-        elif self.mode() == "install":
+        elif asked and asked is not True:
+            # The one the user chose - a pre-release only ever so.
+            chosen = next((one for one in offered if one["tag"] == asked), None)
+        elif newest and (self.mode() == "install" or asked):
             chosen = newest
-        elif asked:
-            chosen = newest if asked is True else next(
-                (one for one in newer if one["tag"] == asked), None)
         else:
-            self._tell_once(newest["tag"], newest["page"], quietly=for_you)
+            if newest:
+                self._tell_once(newest["tag"], newest["page"], quietly=for_you)
+            elif asked:
+                self._set(asked_to_install=None)
             return self.status()
         if chosen is None or not installable(chosen):
             self._set(asked_to_install=None)
-            self._tell_once(newest["tag"], newest["page"], quietly=for_you)
+            if newest:
+                self._tell_once(newest["tag"], newest["page"], quietly=for_you)
             return self.status()
         from . import quiet_update as quiet
         if chosen["tag"] in quiet.skipped(self.folder):

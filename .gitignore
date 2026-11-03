@@ -62,3 +62,6 @@ credentials.json
 
 # The test runner's measured times (scripts/run_tests.py): this machine's.
 tests/.durations.json
+
+# The society website: its own private repo (fhbzc/Personal-Agent-Society), worked in place
+agent_society_server_end/

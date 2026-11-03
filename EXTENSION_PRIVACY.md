@@ -2,7 +2,7 @@
 
 *As of 2 November 2026.*
 
-The Personal Agent WaterMelon browser extension (Chrome, Edge, Firefox) puts
+The Personal Agent WaterMelon browser extension (Chrome, Firefox) puts
 **Delegate work** on the browser's right-click menu, and hands what was
 right-clicked to the Personal Agent WaterMelon app on the same computer.
 
@@ -13,6 +13,14 @@ right-clicked to the Personal Agent WaterMelon app on the same computer.
   the page's visible text.
 - **Nothing at any other time.** It has no script in your pages, no access to
   every site, and does not follow your browsing.
+
+## What it tells the app by itself
+
+- When the browser starts, and every six hours while it runs, it tells the app
+  on the same computer that it is installed: which browser it is in, and
+  whether it came from a store. Nothing about your pages or your browsing. The
+  app's Settings use this to tell you when the extension was paused or
+  removed.
 
 ## Where it goes
 

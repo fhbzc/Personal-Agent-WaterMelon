@@ -3,6 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- THE PAGE HAS ITS OWN DARK THEME, said before anything is drawn (the user,
+     2026-11-02: the Overview sometimes opened in odd colours, in Firefox, set
+     right by a reload). Dark Reader, in their Firefox, judges a page as it loads:
+     with the agent busy at its start, the styles came late, the page was still
+     the browser's white, and it was darkened on top of its own dark theme - its
+     blue made navy. "darkreader-lock" tells Dark Reader to leave the page as it
+     is; "color-scheme" tells the browser the same. -->
+<meta name="darkreader-lock">
+<meta name="color-scheme" content="light dark">
 <title>Conversation - Personal Agent WaterMelon</title>
 <!-- Section 7.1, as amended: the conversation interface, on its own - the
      desktop agent clicked once. The same conversation as the main page's

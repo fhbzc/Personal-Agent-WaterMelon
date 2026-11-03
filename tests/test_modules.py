@@ -264,12 +264,13 @@ class TheChartByModuleTests(unittest.TestCase):
                 "/api/tokens": {"by_task": by_task, "tokens_over_time": []},
                 "/api/tokens/by_day": {"days": [today], "rows": rows},
                 "/api/modules": modules.described(None, {})}
-        steps = ("const pick=document.querySelector('#dbg-tokens-group');"
-                 "pick.value='module';pick.dispatchEvent(new Event('change'));await wait(300);"
-                 "await loadTokenUsage();await wait(300);"
+        # BY MODULE ALONE (the user, 2026-11-02): no choice of grouping left.
+        steps = ("out.choice=Boolean(document.querySelector('#dbg-tokens-group'));"
+                 "await wait(300);await loadTokenUsage();await wait(300);"
                  "out.legend=text(document.querySelector('#dbg-tokens-legend'));")
         result = _render(self.engine, stub, steps)
         self.assertEqual(result["err"], "")
+        self.assertFalse(result["out"]["choice"], "no 'kind of work' to choose")
         legend = result["out"]["legend"]
         for name in ("Started by you", "Task organisation", "Newspaper",
                      "Calendar management"):

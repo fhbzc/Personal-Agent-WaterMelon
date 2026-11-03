@@ -133,9 +133,11 @@ for line in sys.stdin:
             seen.append(list(args[0]))
             raise OSError("not started in this test")
 
+        # The command as the provider hands it to the children wrapper - which
+        # on a Mac starts it through a guard of its own, the command not in
+        # the guard's own arguments (found on the lab's Mac, 2026-11-02).
         with patch.object(self.provider, "executable", return_value="codex"), \
-                patch("personalized_agent.models.providers.codex_provider.subprocess.Popen",
-                      side_effect=spawn):
+                patch("personalized_agent.common.children.popen", side_effect=spawn):
             with self.assertRaises(OSError):
                 self.provider.refresh_models()
         self.assertIs(subprocess.Popen, real)

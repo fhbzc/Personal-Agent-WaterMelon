@@ -677,10 +677,30 @@ class ConnectionsRound:
         return {"needs": needs, "items": items, "used": used, "pictures": pictures,
                 "me": me_said, "tidied": tidied}
 
-    def _recent_stories(self, issues: int = 3, most: int = 60) -> List[str]:
-        """The titles the last issues carried - not to be found again."""
+    def _issues_shown(self) -> List[Dict[str, Any]]:
+        """The issues of the last SHOWN_DAYS (recommend.py): what they carried
+        is not shown again, nor what is related to it (the user, 2026-11-02 -
+        it was the last three issues alone)."""
+        from datetime import datetime, timedelta, timezone
+        from .recommend import SHOWN_DAYS
+        since = datetime.now(timezone.utc) - timedelta(days=SHOWN_DAYS)
+        out = []
+        for one in self.store.briefings():
+            try:
+                at = datetime.fromisoformat(str(one.get("at") or ""))
+                if at.tzinfo is None:
+                    at = at.replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+            if at >= since:
+                out.append(one)
+        return out
+
+    def _recent_stories(self, most: int = 200) -> List[str]:
+        """The titles the issues of the last SHOWN_DAYS carried - not to be
+        found again."""
         out: List[str] = []
-        for one in self.store.briefings()[:issues]:
+        for one in self._issues_shown():
             for item in (self.store.briefing(one["id"]) or {}).get("items") or []:
                 title = str(item.get("title") or "")
                 if title and title not in out:
@@ -845,8 +865,9 @@ class ConnectionsRound:
             seen, read_vectors = set(), []
         from .recommend import story_text
         shown_vectors: List[List[float]] = []
-        recent = [story_text(item) for one in self.store.briefings()[:3]
-                  for item in (self.store.briefing(one["id"]) or {}).get("items") or []][:60]
+        # Every story of the last SHOWN_DAYS (it was the last three issues).
+        recent = [story_text(item) for one in self._issues_shown()
+                  for item in (self.store.briefing(one["id"]) or {}).get("items") or []][:600]
         if recent and self.embedder is not None:
             try:
                 shown_vectors = self.embedder.embed(recent)

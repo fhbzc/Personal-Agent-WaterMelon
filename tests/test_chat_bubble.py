@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import gc
 import queue
+import sys
 import threading
 import time
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 try:
     import tkinter as tk
@@ -40,6 +42,85 @@ class BesideTheAvatarTests(unittest.TestCase):
         self.assertLessEqual(y + 400, 1080 - cb.MARGIN)
         x, y = cb.beside((1500, -50, 120, 120), (340, 400), (1920, 1080))
         self.assertGreaterEqual(y, cb.MARGIN)
+
+    def test_above_the_taskbar_however_tall_it_is(self) -> None:
+        """The user, 2026-11-02: its buttons could not be pressed - under
+        the taskbar. Kept in the part of the screen windows may use."""
+        _x, y = cb.beside((1732, 832, 128, 128), (400, 360), (1920, 1080),
+                          area=(0, 0, 1920, 1000))
+        self.assertLessEqual(y + 360, 1000 - cb.MARGIN)
+
+
+@unittest.skipUnless(HAVE_TK, "no display for Tk here")
+class TheNotificationBubbleOnTheScreenTests(unittest.TestCase):
+    """The user, 2026-11-02: "notification是不是太靠下了，我都不能点击button
+    了 (而且notification无法移动)"."""
+
+    def setUp(self) -> None:
+        import collections
+        from personalized_agent.ui import desktop
+        self.root = tk.Tk()
+        self.root.withdraw()
+        root = self.root
+
+        class Harness(desktop.DesktopAgent):
+            def __init__(self) -> None:              # no super().__init__: no avatar
+                self.root = root
+                self._bubble_queue = collections.deque()
+                self._bubble, self._bubble_count, self._showing = None, None, None
+                self.app = SimpleNamespace(REMIND_LATER_MINUTES=30)
+
+            def _popup_font(self):
+                return ("Segoe UI", 12)
+
+            def _words(self, text):
+                return text
+
+            def _fill(self, text, *args):
+                return text.format(*args)
+
+            def _avatar_box(self):
+                return (1732, 832, 128, 128)        # low on the right, as the user's
+
+            def _options_for(self, _question):
+                return [{"key": "", "label": "Got it", "primary": True}]
+        self.agent = Harness()
+
+    def tearDown(self) -> None:
+        self.root.destroy()
+        del self.root, self.agent
+        gc.collect()
+
+    def test_all_of_it_above_the_taskbar_and_dragged_by_its_words(self) -> None:
+        area = (0, 0, 1920, 1000)
+        with mock.patch("personalized_agent.ui.chat_bubble.work_area", return_value=area):
+            self.agent.notify_bubble(
+                "Delegated work did not start: The garden plan could not start because "
+                "its folder is in use - open it, change it and start it again.",
+                notification_id="n1", template="reminder")
+        bubble = self.agent._bubble
+        self.root.update()
+        self.assertGreater(bubble.winfo_height(), 200, "its whole card, buttons and all")
+        self.assertLessEqual(bubble.winfo_y() + bubble.winfo_height(), area[3],
+                             "its buttons above the taskbar")
+        card = bubble.winfo_children()[0]
+        words = next(one for one in card.winfo_children() if isinstance(one, tk.Label))
+        x0, y0 = bubble.winfo_x(), bubble.winfo_y()
+        words.event_generate("<ButtonPress-1>", x=5, y=5, rootx=x0 + 30, rooty=y0 + 60)
+        words.event_generate("<B1-Motion>", x=5, y=5, rootx=x0 - 170, rooty=y0 - 40)
+        self.root.update()
+        self.assertEqual((bubble.winfo_x(), bubble.winfo_y()), (x0 - 200, y0 - 100), "moved")
+        # Its buttons are pressed, never dragged.
+        got_it = next(one for one in self._all(card) if isinstance(one, tk.Label)
+                      and str(one.cget("text")).startswith("Got it"))
+        self.assertNotIn("grab", str(got_it.bind("<B1-Motion>")) or "")
+        self.assertEqual(got_it.bind("<B1-Motion>"), "")
+
+    def _all(self, widget):
+        out = []
+        for child in widget.winfo_children():
+            out += [child] + self._all(child)
+        return out
 
 
 @unittest.skipUnless(HAVE_TK, "no display for Tk here")
@@ -164,9 +245,34 @@ class TheBubbleTests(unittest.TestCase):
         self.assertLessEqual(len(given), 3, "sixty moves, given a few times - not sixty")
         bubble.close()
 
+    def test_zoomed_by_ctrl_plus_and_minus_nothing_made_again(self) -> None:
+        """The user, 2026-11-02: "chat bubble 也要支持ctrl + - 缩放"."""
+        zoomed = []
+        bubble = self._bubble(lambda t, c: {"answer": "ok"}, on_zoom=zoomed.append)
+        modifier = "Command" if sys.platform == "darwin" else "Control"
+        for key in ("plus", "equal", "minus", "0"):
+            self.assertTrue(bubble.window.bind(f"<{modifier}-{key}>"), key)
+        box_font, said_font = bubble.box.cget("font"), bubble.said.cget("font")
+        size = lambda name: int(self.root.tk.call("font", "configure", name, "-size"))
+        before, box = size(box_font), bubble.box
+        bubble.zoom_by(1)
+        bubble.zoom_by(1)
+        self.root.update()
+        self.assertIs(bubble.box, box, "nothing made again")
+        self.assertGreater(size(box_font), before)
+        self.assertEqual(size(box_font), size(said_font), "what was said too")
+        self.assertEqual(zoomed, [cb.ZOOM_START + 1, cb.ZOOM_START + 2], "each kept")
+        bubble.zoom_to(cb.ZOOM_START)
+        self.assertEqual(size(box_font), before, "Ctrl 0: as it started")
+        for _ in range(20):
+            bubble.zoom_by(-1)
+        self.assertEqual(bubble.zoom, 0, "never smaller than the smallest")
+        bubble.close()
+        self.assertEqual(bubble._fonts, {}, "its fonts let go")
+
     def test_the_desktop_opens_one_and_keeps_its_size(self) -> None:
         from personalized_agent.ui.desktop import DesktopAgent
-        kept = {"chat_bubble_size": [420, 300]}
+        kept = {"chat_bubble_size": [420, 300], "chat_bubble_zoom": 4}
         config = SimpleNamespace(get=lambda key, default=None: kept.get(key, default),
                                  set=lambda key, value, internal=False: kept.update({key: value}))
         fake = SimpleNamespace(
@@ -186,6 +292,10 @@ class TheBubbleTests(unittest.TestCase):
         self.assertIs(fake._chat_bubble, first, "one bubble - pressed again, written in again")
         first.on_size((500, 360))
         self.assertEqual(kept["chat_bubble_size"], [500, 360])
+        # ITS ZOOM, a hidden setting: opened at it, each new one kept.
+        self.assertEqual(first.zoom, 4)
+        first.zoom_by(1)
+        self.assertEqual(kept["chat_bubble_zoom"], 5)
         first.close()
 
 

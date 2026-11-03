@@ -8,6 +8,7 @@ import json
 import re
 import subprocess
 import tempfile
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -99,7 +100,9 @@ class LookedAtWithoutAskingTests(unittest.TestCase):
                 return self.body[key]
         with self.assertRaises(ApiError):
             routes[("POST", "/api/permissions/macos/open")](_Req())
-        self.assertFalse(routes[("GET", "/api/permissions/macos")](_Req())["applies"])
+        # Applies on a Mac alone.
+        self.assertEqual(routes[("GET", "/api/permissions/macos")](_Req())["applies"],
+                         sys.platform == "darwin")
 
 
 PAGE = """<!doctype html><html><body>

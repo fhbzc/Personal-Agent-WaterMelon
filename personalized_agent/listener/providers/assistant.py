@@ -58,6 +58,15 @@ CONTENT_FIELDS = ("content", "display", "pastedContents", "message", "text",
 #: Where a turn is cut when it runs long, unless the setting says otherwise.
 DEFAULT_MAX_CHARS = 4000
 
+#: THE AGENT'S OWN WINDOWS NOT HELD UP WHILE TRANSCRIPTS ARE READ (the user,
+#: 2026-11-02: the note beside what was handed over "弹出的速度好像很慢"):
+#: after a start every transcript is read again from its beginning - hundreds
+#: of megabytes of lines decoded on end - and every step the desktop's windows
+#: take waited its turn behind it: a note made in half a second took four to
+#: six (measured). After this long of decoding, this long a pause, and the
+#: windows are made as fast as with nothing read (measured: 0.54 s).
+FOLD_WORK_SECONDS, FOLD_PAUSE_SECONDS = 0.005, 0.002
+
 
 def _lines(raw: Any) -> List[str]:
     """A multiline setting as the list of things the user actually typed."""
@@ -302,7 +311,11 @@ class AssistantProvider(ListenerProvider):
         working directory, a count - so reading a transcript in two pieces
         and folding both into one tally gives what reading it whole gives.
         """
+        worked_since = time.monotonic()
         for line in handle:
+            if time.monotonic() - worked_since > FOLD_WORK_SECONDS:
+                time.sleep(FOLD_PAUSE_SECONDS)       # the windows' turn (above)
+                worked_since = time.monotonic()
             line = line.strip()
             if not line:
                 continue

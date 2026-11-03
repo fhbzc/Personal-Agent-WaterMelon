@@ -272,6 +272,48 @@ class ApiAccessTests(unittest.TestCase):
         self.assertEqual(self.ask("GET", f"{SIGN_IN_PATH}?{query}",
                                   {"Sec-Fetch-Site": "cross-site"})[0], 401)
 
+    def test_the_extensions_own_window_is_signed_in_from_firefox(self) -> None:
+        """Found trying the extension in Firefox (2026-11-02): Firefox says
+        every page an extension opens was opened from another site
+        (`Sec-Fetch-Site: cross-site`, measured) - the box never opened. A
+        ticket made for the extension is taken however the browser says the
+        page came; a plain one still is not; the mark cannot be put on."""
+        access = self.app.api_access
+        made = access.ticket(for_extension=True)
+        self.assertTrue(access.for_extension(made))
+        query = urllib.parse.urlencode({TICKET_PARAM: made, "next": "/?solo=delegate"})
+        status, headers, _b = self.ask("GET", f"{SIGN_IN_PATH}?{query}",
+                                       {"Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(status, 303)
+        self.assertEqual(headers["Location"], "/?solo=delegate")
+        self.assertIn(f"{COOKIE}=", headers["Set-Cookie"])
+        # Once only, as every ticket.
+        self.assertEqual(self.ask("GET", f"{SIGN_IN_PATH}?{query}",
+                                  {"Sec-Fetch-Site": "cross-site"})[0], 401)
+        # A plain ticket marked by hand: the mark is signed with it - refused.
+        marked = access.ticket() + "." + access.EXTENSION_MARK
+        query = urllib.parse.urlencode({TICKET_PARAM: marked, "next": "/"})
+        self.assertEqual(self.ask("GET", f"{SIGN_IN_PATH}?{query}",
+                                  {"Sec-Fetch-Site": "cross-site"})[0], 401)
+        # Nor is an extension's ticket with its mark taken off a plain one.
+        bare = ".".join(access.ticket(for_extension=True).split(".")[:3])
+        query = urllib.parse.urlencode({TICKET_PARAM: bare, "next": "/"})
+        self.assertEqual(self.ask("GET", f"{SIGN_IN_PATH}?{query}",
+                                  {"Sec-Fetch-Site": "none"})[0], 401)
+
+    def test_the_extensions_host_is_given_a_ticket_marked_for_it(self) -> None:
+        status, _h, body = self.ask("POST", "/api/open_box", self.keyed_headers(),
+                                    body={"fragment": "/?solo=delegate&delegate_inbox=abc123",
+                                          "give": True})
+        self.assertEqual(status, 200)
+        url = json.loads(body)["url"]
+        ticket = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)[TICKET_PARAM][0]
+        self.assertTrue(self.app.api_access.for_extension(ticket))
+        # And the desktop's own links stay plain.
+        plain = urllib.parse.parse_qs(urllib.parse.urlsplit(
+            self.app.sign_in_url("/")).query)[TICKET_PARAM][0]
+        self.assertFalse(self.app.api_access.for_extension(plain))
+
     def test_a_sign_in_sends_the_browser_nowhere_but_this_page(self) -> None:
         for where in ("//evil.example/", "http://evil.example/", "/\\evil.example",
                       "javascript:alert(1)", "/ok\r\nSet-Cookie: x=y"):

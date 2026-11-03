@@ -211,28 +211,53 @@ class ApiAccess:
         return {HEADER: self.key}
 
     # -- tickets ------------------------------------------------------------
-    def _mac(self, expires: int, nonce: str) -> str:
-        message = f"sign-in|{expires}|{nonce}".encode("ascii")
+    #: A ticket made for the browser extension's own window (``ticket(...,
+    #: for_extension=True)``) is marked so - its mark signed with it.
+    EXTENSION_MARK = "x"
+
+    def _mac(self, expires: int, nonce: str, extension: bool = False) -> str:
+        what = "sign-in-extension" if extension else "sign-in"
+        message = f"{what}|{expires}|{nonce}".encode("ascii")
         return _b64(hmac.new(self.key.encode("ascii"), message,
                              hashlib.sha256).digest())
 
-    def ticket(self, seconds: int = TICKET_SECONDS) -> str:
-        """A single-use ticket, good for ``seconds``."""
+    def ticket(self, seconds: int = TICKET_SECONDS, for_extension: bool = False) -> str:
+        """A single-use ticket, good for ``seconds``.
+
+        FOR THE EXTENSION (found trying it in Firefox, 2026-11-02): Firefox
+        says every page an extension opens - its window, its tab - was opened
+        from another site (``Sec-Fetch-Site: cross-site``, measured), so a
+        plain ticket is refused there and the box never opened. A ticket the
+        agent hands only to its own extension, over native messaging, is
+        marked, and taken however the browser says it was opened: no site can
+        have one, which is all the refusal is for."""
         expires = int(time.time()) + int(seconds)
         nonce = secrets.token_urlsafe(16)
-        return f"{expires}.{nonce}.{self._mac(expires, nonce)}"
+        made = f"{expires}.{nonce}.{self._mac(expires, nonce, for_extension)}"
+        return f"{made}.{self.EXTENSION_MARK}" if for_extension else made
+
+    @classmethod
+    def for_extension(cls, ticket: str) -> bool:
+        """Whether ``ticket`` says it was made for the extension - said only:
+        ``redeem`` checks the mark is signed."""
+        parts = str(ticket or "").split(".")
+        return len(parts) == 4 and parts[3] == cls.EXTENSION_MARK
 
     def redeem(self, ticket: str) -> bool:
         """Whether ``ticket`` is good - spending it if it is."""
+        parts = str(ticket or "").split(".")
+        extension = self.for_extension(ticket)
+        if extension:
+            parts = parts[:3]
         try:
-            expires_text, nonce, mac = str(ticket or "").split(".")
+            expires_text, nonce, mac = parts
             expires = int(expires_text)
         except ValueError:
             return False
         now = time.time()
         if expires < now or expires > now + LONG_TICKET_SECONDS + 5:
             return False
-        if not hmac.compare_digest(mac, self._mac(expires, nonce)):
+        if not hmac.compare_digest(mac, self._mac(expires, nonce, extension)):
             return False
         with self._lock:
             for old, until in list(self._spent.items()):
@@ -244,9 +269,9 @@ class ApiAccess:
         return True
 
     def sign_in_url(self, base_url: str, next_path: str = "/",
-                    seconds: int = TICKET_SECONDS) -> str:
+                    seconds: int = TICKET_SECONDS, for_extension: bool = False) -> str:
         """The link that signs a browser in and opens ``next_path``."""
-        query = urllib.parse.urlencode({TICKET_PARAM: self.ticket(seconds),
+        query = urllib.parse.urlencode({TICKET_PARAM: self.ticket(seconds, for_extension),
                                         "next": next_path or "/"})
         return f"{base_url.rstrip('/')}{SIGN_IN_PATH}?{query}"
 

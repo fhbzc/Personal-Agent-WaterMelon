@@ -69,6 +69,16 @@ WAYS = ("quick", "full")
 PAGE_CHARS, SCREEN_CHARS, README_CHARS, MOST_ENTRIES = 8000, 6000, 3000, 60
 #: Of each try before, what it reported last, read this far.
 TRY_REPORT = 2500
+#: A DOCUMENT ON THEIR COMPUTER, READ INTO WHAT THE PLAN IS DRAFTED FROM (the
+#: user, 2026-11-02 - a PDF right-clicked in the browser: the plan knew it
+#: only from their records, its page read as nothing): the one open where
+#: they right-clicked (a file:// address), and each file handed over - read
+#: here (runtime/documents.py: a PDF's pages, Word, PowerPoint, Excel, a
+#: picture's words), this much of its text; none larger than this is read.
+DOCUMENT_CHARS, FILE_CHARS, DOCUMENT_LARGEST = 12000, 6000, 100 * 1024 * 1024
+#: Files read as they are.
+TEXT_SUFFIXES = (".md", ".txt", ".py", ".csv", ".json", ".tex", ".r", ".js", ".html",
+                 ".yaml", ".yml", ".toml", ".ipynb")
 #: WHO IT IS FOR (the user, 2026-10-31): at most this many people, and of
 #: each, what passed between them and the user - the latest this many, each
 #: read this far.
@@ -80,8 +90,9 @@ change: not the detailed plan - only enough for them to see at a glance
 whether you understood the task.
 
 Below is what they handed over, and the context collected around it: the
-window it came from (when they selected text in it) and its public page, the
-folders they gave and what is in them, and what was FOUND of their own
+window it came from (when they selected text in it) and its public page, a
+document of theirs open there ("document": its text, or the start of it),
+the folders and files they gave and what is in them, and what was FOUND of their own
 records by its words - their activity, tasks and past work, each with how
 relevant and how recent it is. Use what bears on the task; leave out what
 does not.
@@ -134,6 +145,56 @@ PLAN_PROMPT_QUICK = PLAN_PROMPT.replace(
 ).replace(""",
  "way": "quick or full",
  "way_why": "one sentence: why that way, from what the work is"}""", "}").split("\n\nTHE WAY:")[0]
+
+
+def local_path(url: str) -> Optional[Path]:
+    """The file on this computer a file:// address names (as the browser
+    shows a PDF opened from the disk) - None for any other address, and for
+    one on another computer's share."""
+    if not str(url or "").lower().startswith("file:"):
+        return None
+    from urllib.parse import urlparse
+    from urllib.request import url2pathname
+    parsed = urlparse(url)
+    if parsed.netloc not in ("", "localhost"):
+        return None
+    try:
+        return Path(url2pathname(parsed.path))
+    except (OSError, ValueError):
+        return None
+
+
+def read_document(path: Path, most: int) -> Dict[str, Any]:
+    """A DOCUMENT OF THE USER'S, READ HERE (DOCUMENT_CHARS): its path and name,
+    how many pages, the first `most` characters of its text and, when there
+    is more, how much - or why it was not read. Only read, never changed."""
+    out: Dict[str, Any] = {"path": str(path), "name": path.name}
+    try:
+        if not path.is_file():
+            return dict(out, error="no such file")
+        size = path.stat().st_size
+        out["size"] = size
+        if size > DOCUMENT_LARGEST:
+            return dict(out, error="too large to read before the work starts - the work reads it")
+        suffix = path.suffix.lower()
+        from ...runtime import documents
+        if suffix in TEXT_SUFFIXES:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        elif suffix in documents.DOCUMENTS or suffix in documents.PICTURES:
+            said = documents.extract(path)
+            text = str(said.get("text") or "")
+            if said.get("pages"):
+                out["pages"] = len(said["pages"])
+        else:
+            return dict(out, error="not a kind of file read here - the work reads it")
+    except Exception as exc:                          # a document unread is said, never fatal
+        log.debug("could not read %s", path, exc_info=True)
+        return dict(out, error=str(exc)[:200])
+    out["chars"] = len(text)
+    out["text"] = text[:most]
+    if len(text) > most:
+        out["cut"] = f"the first {most} of its {len(text)} characters - the work reads the rest"
+    return out
 
 
 def _now() -> str:
@@ -296,9 +357,11 @@ class Drafts:
         try:
             from ...heartbeat.connections.people import _named_in
             from ...heartbeat.connections.store import name_key
-            hay = name_key(" ".join([asked_of(draft), str(draft.get("text") or ""),
-                                     str((draft.get("window") or {}).get("title") or "")]))
-            return [one["name"] for one in store.people() if _named_in(one, hay)][:MOST_PEOPLE]
+            said = " ".join([asked_of(draft), str(draft.get("text") or ""),
+                             str((draft.get("window") or {}).get("title") or "")])
+            hay = name_key(said)
+            return [one["name"] for one in store.people()
+                    if _named_in(one, hay) and _said_as_them(one, said)][:MOST_PEOPLE]
         except Exception:                # pragma: no cover - the work goes on without it
             return []
 
@@ -810,6 +873,10 @@ class Drafts:
         url = str(window.get("url") or "")
         if url.lower().startswith(("http://", "https://")):
             context["page"] = self._page(url)
+        # A DOCUMENT OF THEIRS OPEN WHERE THEY RIGHT-CLICKED (DOCUMENT_CHARS).
+        local = local_path(str((window.get("picked") or {}).get("url") or url))
+        if local is not None:
+            context["document"] = read_document(local, DOCUMENT_CHARS)
         context["folders"] = [self._folder(Path(one)) for one in draft.get("folders") or []]
         context["files"] = [self._file(Path(one)) for one in draft.get("files") or []][:6]
         unit = self._unit(draft)
@@ -881,12 +948,20 @@ class Drafts:
         out: Dict[str, Any] = {"path": str(path)}
         try:
             out["size"] = path.stat().st_size
-            if path.suffix.lower() in (".md", ".txt", ".py", ".csv", ".json", ".tex", ".r",
-                                       ".js", ".html", ".yaml", ".yml", ".toml", ".ipynb"):
+            if path.suffix.lower() in TEXT_SUFFIXES:
                 out["start"] = path.read_text(encoding="utf-8",
                                               errors="replace")[:README_CHARS]
+                return out
         except OSError as exc:
             out["error"] = str(exc)[:200]
+            return out
+        # A PDF, Word, PowerPoint, Excel or a picture: its words (DOCUMENT_CHARS).
+        read = read_document(path, FILE_CHARS)
+        if read.get("text"):
+            out["start"] = read["text"]
+            out.update({key: read[key] for key in ("pages", "chars", "cut") if key in read})
+        elif read.get("error"):
+            out["error"] = read["error"]
         return out
 
     def _unit(self, draft: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -1069,7 +1144,8 @@ class Drafts:
                     if wanted.get("way") in WAYS:
                         plan["way"] = wanted["way"]
                     self.start_apart(draft_id, plan=plan,
-                                     folders=wanted.get("folders", draft.get("folders")))
+                                     folders=wanted.get("folders", draft.get("folders")),
+                                     options={"plan_unseen": True})
                     return
                 time.sleep(every)
             why = "its plan was not drafted in time - start it again"
@@ -1118,9 +1194,16 @@ class Drafts:
         if held:
             return {"error": work.folder_said(held), "folder_held": held}
         # The box's settings as the user left them, over what it opened with.
+        given_options = options or {}
         options = dict(draft.get("options") or {},
-                       **{k: v for k, v in (options or {}).items()
+                       **{k: v for k, v in given_options.items()
                           if k in ("limits", "packages", "sound", "unconfined", "see_tries")})
+        # A PLAN THE USER NEVER SAW (started before it was drafted, by itself
+        # once it was - `_wait_then_start`): said so to the work. Started from
+        # the box, its plan in front of them, it is theirs again.
+        options.pop("plan_unseen", None)
+        if given_options.get("plan_unseen"):
+            options["plan_unseen"] = True
         tried: Dict[str, Any] = {}
         if not draft.get("unit_id") and draft.get("source") == "todo" and options.get("todo"):
             options["version"] = self._next_version(str(options["todo"]), draft_id)
@@ -1168,7 +1251,8 @@ class Drafts:
         earlier = self._tries_said(str(options.get("todo") or ""), besides=draft_id) \
             if tried.get("attempt", 0) > 1 and options.get("see_tries", True) is not False \
             else []
-        said = work.start(unit, instruction_of(draft, approved, folders, earlier=earlier),
+        said = work.start(unit, instruction_of(draft, approved, folders, earlier=earlier,
+                                              unseen=bool(options.get("plan_unseen"))),
                           limits=options.get("limits") or {},
                           # Auto unless the user chose Ask (2026-10-27); where the
                           # system does not confine installs, asked all the same.
@@ -1350,6 +1434,34 @@ def _name_and_addresses(said: str) -> tuple:
     return (name or (addresses[0] if addresses else said)), addresses
 
 
+def _said_as_them(person: Dict[str, Any], text: str) -> bool:
+    """WHETHER `text` NAMES THIS CONTACT - not another person whose name holds
+    theirs (the user, 2026-11-02: a reply to a professor was told about a
+    WeChat contact "Ben", found inside "Ben Thistlewood" - and "ben" is
+    inside "Benjamin" too). A name in letters counts said as a word of its
+    own, and a one-word one not as the first name of someone else ("Ben"
+    followed by "Thistlewood"); a name in Chinese, Japanese or Korean
+    characters, which has no spaces to tell, as before."""
+    standing = []
+    try:
+        from ...heartbeat.connections.people import standing_word
+    except Exception:                    # pragma: no cover - the check as before
+        standing_word = lambda _one: False   # noqa: E731
+    for name in [person.get("name") or "", *(person.get("aliases") or [])]:
+        name = " ".join(str(name).split())
+        if not name or standing_word(name):
+            continue
+        if not name.isascii():
+            standing.append(True)
+            continue
+        # The surname after it told by its capital - matched as written.
+        followed = r"(?!(?-i:\s+[A-Z][a-z]))" if " " not in name else ""
+        if re.search(rf"(?<![^\W\d_]){re.escape(name)}(?![^\W\d_]){followed}", text,
+                     re.IGNORECASE):
+            return True
+    return any(standing)
+
+
 def _names_said(names: List[str]) -> List[str]:
     """How a person may be named in the records: each of their names whole,
     and - written in letters - its last part, the family name ("Quillfeather";
@@ -1391,12 +1503,27 @@ def asked_of(draft: Dict[str, Any]) -> str:
     return str((draft.get("options") or {}).get("instruction") or "").strip()
 
 
+#: A PLAN THE USER NEVER SAW (the user, 2026-11-02: Start closes the box at
+#: once - the plan drafted after, by the agent, was told to the work as
+#: "the plan the user approved - follow it; it is theirs", and each of its
+#: choices - how many sections, how long, what more - was kept to as theirs).
+UNSEEN_PLAN = ("THE PLAN DRAFTED FOR THIS WORK - BY THE AGENT; THE USER DID NOT SEE IT (they "
+               "pressed Start before it was written). Their own words above, and their ways "
+               "(what was learned of them), come first: follow the plan where it fits what "
+               "they asked; where it asks for more than they did - more parts, more length, "
+               "more than the request - do what they asked instead. Its open questions were "
+               "never answered: settle each from their words and their ways, and say how")
+
+
 def instruction_of(draft: Dict[str, Any], plan: Dict[str, Any],
                    folders: Optional[List[str]] = None,
-                   earlier: Optional[List[Dict[str, Any]]] = None) -> str:
+                   earlier: Optional[List[Dict[str, Any]]] = None,
+                   unseen: bool = False) -> str:
     """What the run is told: the user's instruction and what they handed
     over, WHERE IT WORKS, and the plan they approved - theirs, word for word.
-    `folders`: the ones the user gave it, as they left them in the box."""
+    `folders`: the ones the user gave it, as they left them in the box.
+    `unseen`: the plan was drafted after they pressed Start - never seen by
+    them, said so (UNSEEN_PLAN)."""
     lines = []
     if asked_of(draft):
         lines += ["THE USER'S INSTRUCTION:", asked_of(draft), ""]
@@ -1414,6 +1541,24 @@ def instruction_of(draft: Dict[str, Any], plan: Dict[str, Any],
     if window.get("title") or window.get("url"):
         lines += [f"IT CAME FROM: {window.get('title') or ''} {window.get('url') or ''}".strip(),
                   ""]
+    # ITS TEXT, AND WHERE THE FILE IS (the user, 2026-11-02: "你要给他text, 然后
+    # 告诉他文件地址，他如果要读full pdf可以自己慢慢打开"): the document open
+    # where they right-clicked, read before the work began (DOCUMENT_CHARS).
+    document = (draft.get("context") or {}).get("document") or {}
+    if document.get("path"):
+        about = ", ".join(one for one in (
+            f"{document['pages']} pages" if document.get("pages") else "",
+            f"{document['chars']} characters of text" if document.get("chars") else "") if one)
+        lines.append(f"THE DOCUMENT OPEN WHERE THEY RIGHT-CLICKED - the file: {document['path']}"
+                     + (f" ({about})" if about else ""))
+        if document.get("text"):
+            lines.append("ITS TEXT" + (f" - {document['cut']}; open the file itself when the "
+                                       "work needs more of it" if document.get("cut")
+                                       else ", whole") + ":")
+            lines += ["<<<", str(document["text"]).strip(), ">>>"]
+        elif document.get("error"):
+            lines.append(f"  not read beforehand ({document['error']}) - open the file itself")
+        lines.append("")
     # THE TRIES BEFORE (the user, 2026-10-31): what they found and made.
     if earlier:
         lines.append("THIS WORK WAS TRIED BEFORE - each try, the first first. What they found "
@@ -1468,7 +1613,9 @@ def instruction_of(draft: Dict[str, Any], plan: Dict[str, Any],
     if found:
         lines.append("REFERENCES FROM THE USER'S OWN RECORDS - found by the work's words, "
                      "the most relevant and recent first; search further with "
-                     "search_records, and read files and the web, as the detail needs:")
+                     "search_records, and read files and the web, as the detail needs. "
+                     "What the user wrote to OTHER people among them shows how they "
+                     "write - not what to say to this one:")
         lines += [f"  - [{one.get('kind')}] {one.get('title')} ({str(one.get('at') or '')[:10]})"
                   for one in found]
         lines.append("")
@@ -1487,15 +1634,22 @@ def instruction_of(draft: Dict[str, Any], plan: Dict[str, Any],
     elif not draft.get("unit_id"):
         lines += ["WHERE YOU WORK: no folder was given - make what you make in your own "
                   "folder, the one you may write in.", ""]
-    lines += ["THE PLAN THE USER APPROVED - follow it; it is theirs:"
-              if plan.get("way") == "quick" else
-              "THE PLAN THE USER APPROVED - follow it; it is theirs, and the detailed "
-              "contract is drafted from it:",
+    if unseen:
+        heading = UNSEEN_PLAN + (":" if plan.get("way") == "quick" else
+                                 "; the detailed contract is drafted from it, by the same rule:")
+    else:
+        heading = ("THE PLAN THE USER APPROVED - follow it; it is theirs:"
+                   if plan.get("way") == "quick" else
+                   "THE PLAN THE USER APPROVED - follow it; it is theirs, and the detailed "
+                   "contract is drafted from it:")
+    lines += [heading,
               f"Title: {plan.get('title')}",
               f"What they want: {plan.get('understanding')}",
               f"Goal: {plan.get('goal')}"]
     for name, label in (("steps", "Steps"), ("deliverables", "Deliverables"),
-                        ("out_of_scope", "Not part of it"), ("questions", "Open questions")):
+                        ("out_of_scope", "Not part of it"),
+                        ("questions", "Open questions - never answered by the user"
+                         if unseen else "Open questions")):
         if plan.get(name):
             lines.append(f"{label}:")
             lines += [f"  - {one}" for one in plan[name]]

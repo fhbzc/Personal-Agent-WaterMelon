@@ -4287,7 +4287,9 @@ label.delegate-see-tries input { width: auto; margin: 3px 3px 3px 4px; flex: non
 .delegate-picked { border-left: 3px solid var(--accent, #5b6cff); padding: 2px 0 2px 10px; margin: 4px 0 10px; }
 .delegate-picked p { margin: 3px 0; }
 .delegate-picked-head { margin-bottom: 6px; }
-.delegate-picked-text { margin: 6px 0; font-size: 1.02em; white-space: pre-wrap; }
+.delegate-picked-text { margin: 6px 0; font-size: 1.15em; line-height: 1.5; white-space: pre-wrap; }
+/* The selected text is what matters; where it was, small under it. */
+.delegate-picked-on { font-size: 0.85em; color: var(--muted); }
 /* Installing the browser extension: its steps. */
 .extension-box { max-width: 640px; }
 .extension-steps { padding-left: 1.3em; }
@@ -4428,3 +4430,11 @@ label.delegate-see-tries input { width: auto; margin: 3px 3px 3px 4px; flex: non
 
 /* A delegated work that did not start: said in red, its plan to open. */
 .ov-todo-version-failed .ov-todo-where { color: var(--err); }
+
+/* THE BROWSER EXTENSION'S TWO ROWS (Settings > General). */
+.extension-rows { list-style: none; padding: 0; margin: 8px 0; }
+.extension-row { display: flex; align-items: center; gap: 10px; padding: 6px 0;
+  border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.extension-name { font-weight: 600; min-width: 6em; }
+.extension-in { color: var(--ok); font-weight: 600; }
+.extension-quiet { color: var(--warn); }

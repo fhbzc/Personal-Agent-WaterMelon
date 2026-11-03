@@ -24,7 +24,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -106,11 +106,32 @@ def open_window(url: str, profile: Path, size: Tuple[int, int] = SIZE) -> bool:
         return False
 
 
+#: A PANEL OF THE AGENT'S OWN (the user, 2026-11-02): where the process that
+#: opens the box has one - on a Mac, the desktop's (ui/mac_panel.py, made on
+#: its main thread) - `opener(url, size)` opens it and says True.
+_native_opener: Optional[Callable[[str, Tuple[int, int]], bool]] = None
+
+
+def set_native_opener(opener: Optional[Callable[[str, Tuple[int, int]], bool]]) -> None:
+    global _native_opener
+    _native_opener = opener
+
+
 def open_page(url: str, profile: Path, size: Tuple[int, int] = SIZE) -> None:
-    """In a window of its own where one can be opened, else in the browser."""
+    """In a window of its own where one can be opened - a panel of the
+    agent's own on a Mac, a browser's app window on Windows - else in the
+    browser."""
+    opener = _native_opener
+    if opener is not None:
+        try:
+            if opener(url, size):
+                return
+        except Exception:
+            log.warning("no panel of its own for %s", url, exc_info=True)
     if not open_window(url, profile, size):
         import webbrowser
         webbrowser.open(url)
 
 
-__all__ = ["browser", "command", "open_window", "open_page", "SIZE", "PROFILE"]
+__all__ = ["browser", "command", "open_window", "open_page", "set_native_opener", "SIZE",
+           "PROFILE"]

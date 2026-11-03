@@ -18,6 +18,7 @@ installed environments left out of it (environments.py).
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 import uuid
@@ -35,6 +36,9 @@ SETTLE_SECONDS = 0.3
 #: heard back - a watched folder tells its changes in order, so all before
 #: it are in. Waited for this long at most.
 FLUSH_MOST_SECONDS = 5.0
+#: Changes told late (a Mac's batches): a file last changed this long before
+#: the watch began, and told during it, is not of this run.
+JUST_BEFORE = 3.0
 
 try:                                                   # pragma: no branch
     from watchdog.events import FileSystemEventHandler
@@ -47,8 +51,21 @@ except Exception:                                      # pragma: no cover - the 
 
 
 class _Heard(FileSystemEventHandler):                  # type: ignore[misc]
-    def __init__(self, paths: Set[str], lock: threading.Lock) -> None:
+    def __init__(self, paths: Set[str], lock: threading.Lock,
+                 spelled: Sequence[tuple] = ()) -> None:
         self.paths, self.lock = paths, lock
+        #: (as the system says a folder, as the work was given it): a Mac
+        #: tells its changes by their real path - /private/var/... for a
+        #: folder given as /var/..., a link's target for a link - and each is
+        #: said again as the folder was given (found on the lab's Mac,
+        #: 2026-11-02: every change was thought outside the work, and left out).
+        self.spelled = list(spelled)
+
+    def _as_given(self, path: str) -> str:
+        for real, given in self.spelled:
+            if path == real or path.startswith(real + os.sep):
+                return given + path[len(real):]
+        return path
 
     def on_any_event(self, event) -> None:             # pragma: no cover - by the system
         if getattr(event, "is_directory", False) or getattr(event, "event_type", "") in (
@@ -57,7 +74,7 @@ class _Heard(FileSystemEventHandler):                  # type: ignore[misc]
         with self.lock:
             for path in (getattr(event, "src_path", ""), getattr(event, "dest_path", "")):
                 if path:
-                    self.paths.add(str(path))
+                    self.paths.add(self._as_given(str(path)))
 
 
 class Watch:
@@ -82,7 +99,12 @@ class Watch:
             return False
         try:
             observer = Observer()
-            handler = _Heard(self._paths, self._lock)
+            spelled = []
+            for root in self.roots:
+                real = os.path.realpath(str(root))
+                if os.path.normcase(real) != os.path.normcase(str(root)):
+                    spelled.append((real, str(root)))
+            handler = _Heard(self._paths, self._lock, spelled)
             for root in self.roots:
                 observer.schedule(handler, str(root), recursive=True)
             observer.daemon = True
@@ -91,6 +113,7 @@ class Watch:
             log.debug("could not watch %s - walked instead", self.roots, exc_info=True)
             return False
         self._observer = observer
+        self._began = time.time()
         return True
 
     def stop(self) -> Optional[Set[str]]:
@@ -109,10 +132,22 @@ class Watch:
         with self._lock:
             heard = set(self._paths)
         out: Set[str] = set()
+        began = getattr(self, "_began", 0.0)
         for path in heard:
             if self.left_out(path) or (mark is not None and Path(path).name == mark.name):
                 continue
             target = Path(path)
+            # TOLD LATE, CHANGED JUST BEFORE (a Mac tells changes in batches,
+            # a moment after - found on the lab's Mac, 2026-11-02): a file
+            # there still, last changed in the moments before the watch began,
+            # is not of this run. Only those moments: a file unpacked now
+            # keeps its old time, and is of this run.
+            try:
+                if began and target.is_file() and \
+                        began - JUST_BEFORE < target.stat().st_mtime < began:
+                    continue
+            except OSError:
+                pass
             # A file made, changed or gone - not a folder.
             if target.is_dir():
                 continue

@@ -518,9 +518,14 @@ class AccountLoginSession:
     def cancel(self) -> Dict[str, Any]:
         with self._lock:
             transport, self._transport = self._transport, None
+            # As it stood BEFORE it was stopped: stopping it ends its process,
+            # and what reads the process may call that a failure first (on the
+            # lab's Mac, 2026-11-02) - cancelled, it was cancelled.
+            before = self.state
         if transport is not None:
             transport.stop()
-        if self.state not in (LoginState.COMPLETED, LoginState.FAILED):
+        if before not in (LoginState.COMPLETED, LoginState.FAILED) \
+                and self.state != LoginState.COMPLETED:
             self.state = LoginState.CANCELLED
             self.detail = "the sign-in was cancelled"
         return self.describe()

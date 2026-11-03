@@ -7,6 +7,7 @@ the screen. Everything in it is made up; nothing here touches the clipboard."""
 from __future__ import annotations
 
 import gc
+import sys
 import unittest
 from types import SimpleNamespace
 
@@ -19,6 +20,10 @@ except Exception:                                  # pragma: no cover - no displ
     HAVE_TK = False
 
 from personalized_agent.ui import handed_note as hn
+
+#: The keys as this system writes them: Command and ⌘V on a Mac.
+MOD = "Command" if sys.platform == "darwin" else "Control"
+PASTE = "⌘V" if sys.platform == "darwin" else "Ctrl+V"
 
 NOTE = {"title": "Reply to Ada about the talk date",
         "how": "Press Reply in the thread that opens, paste the reply, and send it yourself.",
@@ -50,6 +55,12 @@ class TheNoteTests(unittest.TestCase):
         self.root.update()
         return note
 
+    def _click(self, widget):
+        """Pressed and let go over it, as a button is."""
+        self.root.update()
+        widget.event_generate("<ButtonPress-1>", x=2, y=2)
+        widget.event_generate("<ButtonRelease-1>", x=2, y=2)
+
     @staticmethod
     def _without_the_clipboard(note):
         """What Copy would put on the clipboard - never the user's own."""
@@ -76,7 +87,13 @@ class TheNoteTests(unittest.TestCase):
         note = self._note()
         window = note.window
         self.assertTrue(window.attributes("-topmost"))
-        self.assertTrue(window.overrideredirect(), "its own bar, not the system's")
+        if sys.platform == "darwin":
+            # A Mac's "plain" style: no title bar, and still written in
+            # (an overrideredirect window never takes the keys there).
+            style = str(window.tk.call("::tk::unsupported::MacWindowStyle", "style", window._w))
+            self.assertIn("plain", style, "its own bar, not the system's")
+        else:
+            self.assertTrue(window.overrideredirect(), "its own bar, not the system's")
         texts = self._texts(window)
         for words in ("Before you use it", NOTE["title"], "How to use it", NOTE["how"],
                       "Check before you use it", "It answers: The talk & the date", "Done"):
@@ -112,7 +129,7 @@ class TheNoteTests(unittest.TestCase):
         note.window.winfo_containing = lambda x, y: None
         note.window.focus_force()
         note._pressed(SimpleNamespace(widget=note._areas["item"]))
-        note.window.event_generate("<Control-Key-0>")
+        note.window.event_generate(f"<{MOD}-Key-0>")
         self.root.update()
         self.assertEqual(note.zooms, {"item": hn.ZOOM_START, "how": hn.ZOOM_START - 2})
         # Ctrl and the wheel: the side it is over.
@@ -123,7 +140,12 @@ class TheNoteTests(unittest.TestCase):
         note.close()
 
     def test_never_taller_than_the_screen_and_what_it_says_scrolls(self) -> None:
-        long = dict(NOTE, how=" ".join(["Open the sheet and compare its totals."] * 60))
+        # Taller than any screen: how to use it is kept to its first 1200
+        # characters (handed.HOW_MOST) - on a Mac, whose fonts are drawn
+        # smaller, those fit (found on the lab's Mac, 2026-11-02) - so many
+        # things to check as well.
+        long = dict(NOTE, how=" ".join(["Open the sheet and compare its totals."] * 60),
+                    check=[f"Line {n}: the month's total matches the sheet" for n in range(80)])
         note = self._note(long, zoom=len(hn.ZOOMS) - 1)
         window = note.window
         self.assertLessEqual(window.winfo_y() + window.winfo_height(),
@@ -146,7 +168,7 @@ class TheNoteTests(unittest.TestCase):
         saying it is on the clipboard; how and what to check on the right."""
         note = self._note(dict(NOTE, item=EMAIL, copied=True))
         texts = self._texts(note.window)
-        for words in ("Email", "Copy all", "✓  Already on your clipboard - paste it with Ctrl+V",
+        for words in ("Email", "Copy all", f"✓  Already on your clipboard - paste it with {PASTE}",
                       "Sent to: ada@example.com\nSubject: Re: The talk", EMAIL["text"],
                       "How to use it", "It answers: The talk & the date"):
             self.assertIn(words, texts)
@@ -161,13 +183,13 @@ class TheNoteTests(unittest.TestCase):
         copied = self._without_the_clipboard(note)
         note._copy(EMAIL["text"])
         self.assertEqual(copied, [EMAIL["text"]])
-        self.assertIn("✓  Copied - paste it with Ctrl+V", self._texts(note.window))
+        self.assertIn(f"✓  Copied - paste it with {PASTE}", self._texts(note.window))
         note.close()
 
     def test_not_copied_it_does_not_say_so_until_copy_is_pressed(self) -> None:
         note = self._note(dict(NOTE, item={"kind": "text", "meta": [], "text": "Sure."}))
         texts = self._texts(note.window)
-        self.assertNotIn("✓  Already on your clipboard - paste it with Ctrl+V", texts)
+        self.assertNotIn(f"✓  Already on your clipboard - paste it with {PASTE}", texts)
         self.assertEqual(len(note._panes), 2)
         self._without_the_clipboard(note)
         note._copy("Sure.")
@@ -184,7 +206,7 @@ class TheNoteTests(unittest.TestCase):
         # Ctrl+A - bound, and what it does called by name: a key generated
         # reaches it only while it has the desktop's focus, which another
         # window may take in the middle of a test.
-        self.assertTrue(how.bind("<Control-a>"), "Ctrl+A is bound")
+        self.assertTrue(how.bind(f"<{MOD}-a>"), "Ctrl+A (⌘A) is bound")
         how.select_everything()
         self.assertEqual(how.get("sel.first", "sel.last"), NOTE["how"], "Ctrl+A: all of it")
         copied = self._without_the_clipboard(note)
@@ -209,7 +231,13 @@ class TheNoteTests(unittest.TestCase):
         [button] = [child for child in self._all(note.window)
                     if isinstance(child, tk.Label) and child.cget("text") == "Copy all"]
         copied = self._without_the_clipboard(note)
-        button.event_generate("<Button-1>")
+        # Pressed and dragged off it: nothing (the user, 2026-11-02: done
+        # when let go over it, as a button is - not when pressed).
+        self.root.update()
+        button.event_generate("<ButtonPress-1>", x=2, y=2)
+        button.event_generate("<ButtonRelease-1>", x=-50, y=-50)
+        self.assertEqual(copied, [], "let go elsewhere: not copied")
+        self._click(button)
         self.assertEqual(copied, [EMAIL["text"]], "the whole of it")
         self.assertEqual(button.cget("text"), "✓  Copied", "said on the button pressed")
         self.root.after(1700)
@@ -295,6 +323,73 @@ class TheNoteTests(unittest.TestCase):
             out += [child] + self._all(child)
         return out
 
+    def test_headed_by_the_work_s_name(self) -> None:
+        """The user, 2026-11-02: its header the work's name, not "Before you
+        use it" - cut short when long, its buttons never pushed out."""
+        long = "Summary of the garden club's spring planting plan and seed order " * 3
+        note = self._note(dict(NOTE, work=long))
+        texts = self._texts(note._bar_frame)
+        self.assertNotIn("Before you use it", texts)
+        shown = next(one for one in texts if one.startswith("Summary of the garden"))
+        self.assertLessEqual(len(shown), hn.HEADING_MOST)
+        self.assertTrue(shown.endswith("…"))
+        self.assertEqual(note.window.title(), shown)
+        for button in ("–", "✕"):
+            widget = next(one for one in note._bar_frame.winfo_children()
+                          if isinstance(one, tk.Label) and one.cget("text") == button)
+            self.assertTrue(widget.winfo_ismapped() and widget.winfo_width() > 1, button)
+        note.close()
+        plain = self._note(dict(NOTE, work="Garden plan"))
+        self.assertIn("Garden plan", self._texts(plain._bar_frame))
+        plain.close()
+
+    def test_folded_to_its_bar_and_opened_as_it_was(self) -> None:
+        """The user, 2026-11-02: a way to minimize it - collapsed as Zoom's
+        is, a bar left."""
+        note = self._note(dict(NOTE, item=EMAIL))
+        window = note.window
+        self.assertIn("–", self._texts(note._bar_frame), "– beside the ✕")
+        words = note._texts[-1] if note._texts else None
+        if words is not None:
+            words.yview_moveto(0.5)
+        self.root.update()
+        before = (window.winfo_width(), window.winfo_height())
+        right, top = window.winfo_x() + window.winfo_width(), window.winfo_y()
+        scrolled = words.yview()[0] if words is not None else None
+        note.fold()
+        self.root.update()
+        self.assertTrue(note.folded)
+        self.assertFalse(note._middle.winfo_ismapped(), "what it says taken away")
+        self.assertFalse(note._foot_frame.winfo_ismapped())
+        self.assertTrue(note._bar_frame.winfo_ismapped(), "its bar left")
+        self.assertLess(window.winfo_height(), 80, "only a bar")
+        self.assertLess(window.winfo_width(), before[0])
+        self.assertAlmostEqual(window.winfo_x() + window.winfo_width(), right, delta=2,
+                               msg="where it stood, by its right edge")
+        self.assertEqual(window.winfo_y(), top)
+        self.assertTrue(window.attributes("-topmost"), "still on top")
+        self.assertEqual(note._fold_button.cget("text"), "□")
+        note.unfold()
+        self.root.update()
+        self.assertFalse(note.folded)
+        self.assertTrue(note._middle.winfo_ismapped())
+        self.assertTrue(note._foot_frame.winfo_ismapped())
+        self.assertEqual((window.winfo_width(), window.winfo_height()), before, "as it was")
+        if words is not None:
+            self.assertAlmostEqual(words.yview()[0], scrolled, places=3,
+                                   msg="where it was scrolled to")
+        self.assertEqual(note._fold_button.cget("text"), "–")
+        # A double click on its bar folds it, and again opens it (Tk makes
+        # no double click of its own for a test: the binding, then its act).
+        self.assertTrue(note._bar_frame.bind("<Double-Button-1>"))
+        note.toggle_folded()
+        self.root.update()
+        self.assertTrue(note.folded)
+        note.toggle_folded()
+        self.root.update()
+        self.assertFalse(note.folded)
+        note.close()
+
     def test_its_size_dragged_by_its_corner(self) -> None:
         note = self._note(dict(NOTE, item=EMAIL))
         width, height = note.window.winfo_width(), note.window.winfo_height()
@@ -375,14 +470,14 @@ class TheNoteTests(unittest.TestCase):
         self.root.update()
         texts = self._texts(note.window)
         for words in ("Form to fill", "1.  Summary", "2.  Weaknesses",
-                      "The paper studies ferns.", "✓  Already on your clipboard - paste it with Ctrl+V"):
+                      "The paper studies ferns.", f"✓  Already on your clipboard - paste it with {PASTE}"):
             self.assertIn(words, texts)
         self.assertEqual(texts.count("Copy"), 2, "a Copy for each part")
         copied = self._without_the_clipboard(note)
         second = note._part_boxes[1]
         copy = [child for child in self._all(note.window)
                 if isinstance(child, tk.Label) and child.cget("text") == "Copy"][1]
-        copy.event_generate("<Button-1>")
+        self._click(copy)
         self.assertEqual(copied, [form["parts"][1]["text"]])
         self.assertLessEqual(note.window.winfo_y() + note.window.winfo_height(),
                              note.window.winfo_screenheight(), "a long form scrolls")
@@ -413,8 +508,14 @@ class TheNoteTests(unittest.TestCase):
             self.root.update()
         note._resize_end()
         self.root.update()
-        self.root.after(120)
-        self.root.update()
+        # Given once a frame and laid out a moment after the last change: a
+        # busy machine (the suite in four processes) took longer than the
+        # 120 ms this once waited - waited for, up to 3 s.
+        import time
+        until = time.monotonic() + 3.0
+        while int(how.cget("height")) <= lines and time.monotonic() < until:
+            self.root.after(20)
+            self.root.update()
         self.assertEqual(built, [], "nothing built again")
         self.assertGreater(int(how.cget("height")), lines, "its words wrapped anew, narrower")
         self.assertEqual(kept[-1][0], (note.window.winfo_width(), note.window.winfo_height()))

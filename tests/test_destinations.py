@@ -140,6 +140,38 @@ class OpenedForTheUserTests(unittest.TestCase):
             said = self.routes[("POST", "/api/work/handed/open")](_Ask(run="run_m", n=n))
         return said, order
 
+    def test_an_answer_opens_in_the_note_headed_by_its_work(self) -> None:
+        """The user, 2026-11-02: an answer a work handed over could not be
+        opened from Work assigned. Opened: the note, whole, with the work's
+        name - nothing else opened, no "nothing to open"."""
+        recap = "Last night: the garden club planted 40 tomatoes."
+        self.app.db.execute(
+            "INSERT INTO work_runs (id, unit_id, unit_name, folder, status, instruction, plan, "
+            "log, final, started_at, ended_at, updated_at) VALUES ('run_a', ?, "
+            "'Garden Recap for Today', '', 'done', 'recap it', ?, '[]', '', "
+            "'2026-11-01T09:00:00', '2026-11-01T09:10:00', '2026-11-01T09:10:00')",
+            (self.unit["id"], json.dumps({"handed": [handed.checked(
+                {"kind": "answer", "title": "The recap", "text": recap,
+                 "how": "Read it.", "check": ["The numbers are right"]}, lambda p: None)]})))
+
+        class _Ask(dict):
+            def get(self, key, default=None):
+                return super().get(key, default)
+
+            def require(self, key):
+                return self[key]
+
+            def int_param(self, key, default=0):
+                return int(self.get(key, default))
+        with mock.patch("webbrowser.open") as browser, \
+                mock.patch("os.startfile", create=True) as started:
+            said = self.routes[("POST", "/api/work/handed/open")](_Ask(run="run_a", n=0))
+        self.assertEqual(said, {"opened": "note", "kind": "answer"})
+        browser.assert_not_called()
+        started.assert_not_called()
+        self.assertEqual(self.notes[-1]["item"]["text"], recap)
+        self.assertEqual(self.notes[-1]["work"], "Garden Recap for Today", "headed by its work")
+
     def test_wechat_brought_forward_the_rest_said(self) -> None:
         said, order = self._open(0)
         self.assertEqual(order, [("copied", "Thank you for the slides!"), "wechat forward"],

@@ -94,6 +94,7 @@ class SingleInstance:
         self._handle: Optional[Any] = None
         self._mutex: Optional[Any] = None
         self._socket: Optional[socket.socket] = None
+        self._global_file: Any = None              # the Mac's machine-wide lock
         self.held = False
 
     # -- reporting ----------------------------------------------------------
@@ -178,6 +179,24 @@ class SingleInstance:
                 sock.close()
                 raise AlreadyRunning(self.describe_conflict(), self.holder())
             self._socket = sock
+        if sys.platform == "darwin":
+            # ON A MAC TOO (2026-11-02: found by the tests on the lab's Mac -
+            # two agents of different roots ran side by side): a lock on a
+            # file in the user's own temporary folder, dropped by the system
+            # with the process. No abstract socket and no named mutex here.
+            import fcntl
+            import tempfile
+            try:
+                handle = open(Path(tempfile.gettempdir()) / f"{GLOBAL_NAME}.lock", "a+")
+            except OSError as exc:
+                log.warning("could not create the single-instance guard (%s)", exc)
+                return
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                handle.close()
+                raise AlreadyRunning(self.describe_conflict(), self.holder())
+            self._global_file = handle
 
     def _acquire_root_lock(self) -> None:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -247,6 +266,9 @@ class SingleInstance:
         sock, self._socket = self._socket, None
         if sock is not None:
             sock.close()
+        held, self._global_file = getattr(self, "_global_file", None), None
+        if held is not None:
+            held.close()                          # its lock goes with it
 
     def __enter__(self) -> "SingleInstance":
         return self.acquire()

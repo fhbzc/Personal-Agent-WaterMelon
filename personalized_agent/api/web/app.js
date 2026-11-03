@@ -1799,8 +1799,15 @@ async function watchWorkGoing() {
       });
       // A TO-DO'S WORK, TRACKED: where each version stands, as it moves;
       // one that ended - asked again, to say how.
-      const tracked = new Set(ovTodos.flatMap((one) => ovTodoVersions(one)
+      const tracked = new Set(ovTodos.concat(ovAssigned).flatMap((one) => ovTodoVersions(one)
         .map((version) => version.unit).filter(Boolean)));
+      // WORK ASSIGNED ELSEWHERE (the user, 2026-11-02: "我刚刚delegate了一个
+      // work, 为什么没有出现在Work assigned里"): a work going that neither list
+      // knows - delegated from the browser's box, Explorer, the selection's
+      // icon - and the lists are asked again, once for each such work.
+      const unknown = DELEGATE_SOLO ? [] : Object.keys(workGoing.byUnit)   // the box lists none
+        .filter((unit) => !tracked.has(unit) && !ovUnitsAskedFor.has(unit));
+      unknown.forEach((unit) => ovUnitsAskedFor.add(unit));
       if (typeof delegateFolderCheck === "function" && $("#delegate") && $("#delegate").open) {
         delegateFolderCheck();
       }
@@ -1818,7 +1825,8 @@ async function watchWorkGoing() {
         if (unitNow && unitNow.state === "starting") xpDrawTitleRun(null);
         else if (wasStarting && activeTab === "experience") xpLoadRuns();
       }
-      if (Object.keys(before).some((unit) => tracked.has(unit) && !workGoing.byUnit[unit])) {
+      if (unknown.length || (!ovAssignedLoaded && !DELEGATE_SOLO)  // not come yet: asked again
+          || Object.keys(before).some((unit) => tracked.has(unit) && !workGoing.byUnit[unit])) {
         loadTodos();
       } else if (typeof ovPlaceTodos === "function") {
         ovPlaceTodos();
@@ -11425,6 +11433,11 @@ function renderUpdates(said) {
     }
   } else if (said.checked_at) {
     parts.push("It is the latest.");
+    // Newer pre-releases: on the list below, each to be chosen - never
+    // installed by themselves, never told in a notice.
+    if ((said.versions || []).some((one) => one.prerelease)) {
+      parts.push("A newer pre-release can be chosen below.");
+    }
   }
   if (download && download.stopped && said.mode !== "off") parts.push(...downloadWords(download));
   if (said.error) parts.push(`The last look failed: ${said.error}`);
@@ -11502,8 +11515,9 @@ function renderUpdateVersions(said) {
   versions.forEach((one) => {
     const option = document.createElement("option");
     option.value = one.tag;
-    option.textContent = one.published ? `Version ${one.tag} (${clock(one.published)})`
-      : `Version ${one.tag}`;
+    // A PRE-RELEASE said to be one: chosen only ever by the user.
+    const name = one.prerelease ? `Version ${one.tag}, a pre-release` : `Version ${one.tag}`;
+    option.textContent = one.published ? `${name} (${clock(one.published)})` : name;
     box.appendChild(option);
   });
   // The one chosen stays chosen when the box is drawn again.
@@ -11587,148 +11601,74 @@ async function refreshUpdates() {
   catch (err) { console.warn("updates", err); }
 }
 
-/* THE BROWSER EXTENSION (Settings > General, under Updates; the user,
-   2026-11-01): whether it is made and which browsers know it - and Install,
-   which makes it and opens its install page: what to do in each browser. */
+/* THE BROWSER EXTENSION (Settings > General, under Updates): TWO ROWS (the
+   user, 2026-11-02: "直接就应该列出2个版本(chrome, firefox), 然后检查状态是否安装，
+   没有的话有进入install链接的按钮。然后有一个refresh 按钮，安装了之后能再detect").
+   Each row says whether the extension is in that browser - by its own word to
+   the agent, as it is added, as the browser starts, as it is used - and, not
+   yet, Install: the agent made known to the browsers, the store's page opened. */
 const extensionState = { said: null };
 
 function renderExtension(said) {
   extensionState.said = said || null;
-  const line = $("#extension-status");
-  if (!line || !said) return;
-  const known = said.connected || [];
-  line.textContent = said.prepared && known.length
-    ? `Made, and known to: ${known.join(", ")}. Add it to your browser from its install page.`
-    : "Not installed yet.";
-  const remove = $("#extension-remove");
-  if (remove) remove.hidden = !said.prepared;
-  const install = $("#extension-install");
-  if (install) install.textContent = said.prepared ? "Open its install page"
-    : "Install the browser extension";
+  const rows = $("#extension-rows");
+  if (!rows || !said) return;
+  const when = (one) => clock(new Date(one.seen_at * 1000).toISOString());
+  rows.innerHTML = (said.browsers || []).map((one) => `<li class="extension-row">
+      <span class="extension-name">${escapeHtml(one.name)}</span>
+      ${one.state === "installed"
+        ? `<span class="extension-in">${escapeHtml("Installed")}</span> <span class="muted">${
+            escapeHtml(`last heard from ${when(one)}`)}</span>`
+        // PAUSED OR REMOVED (the user, 2026-11-02): heard from once, not since -
+        // an update asking for more is held until it is turned on again.
+        : one.state === "quiet"
+        ? `<span class="extension-quiet">${escapeHtml(`Not heard from since ${when(one)} - if you use this browser, it may be paused (after an update) or removed.`)}</span>
+           <button type="button" class="small" data-extension-page="${escapeHtml(one.key)}">${
+             escapeHtml("Open its extensions page")}</button>
+           <button type="button" class="small secondary" data-extension-get="${escapeHtml(one.key)}">${
+             escapeHtml("Install")}</button>`
+        : `<span class="muted">${escapeHtml("Not installed")}</span>
+           <button type="button" class="small" data-extension-get="${escapeHtml(one.key)}">${
+             escapeHtml("Install")}</button>`}</li>`).join("");
 }
 
 async function refreshExtension() {
   try { renderExtension(await api.get("/api/extension")); }
   catch (err) { console.warn("extension", err); }
-  refreshEditorMenus();
-}
-
-/* RIGHT-CLICK IN THE USER'S EDITORS (Settings > General): each found here -
-   VS Code and its kin, Sublime Text, the JetBrains IDEs - with Install, or
-   Remove once it is in. */
-const EDITOR_KIND = { vscode: "", sublime: "", jetbrains: "JetBrains" };
-
-function renderEditorMenus(programs, said) {
-  const list = $("#editor-menus-list");
-  if (!list) return;
-  if (!(programs || []).length) {
-    list.innerHTML = `<li class="muted">No editor of these was found here: VS Code, Cursor,
-      VSCodium, Windsurf, Sublime Text, a JetBrains IDE.</li>`;
-    return;
-  }
-  list.innerHTML = programs.map((one) => `<li><span class="editor-menus-name">${
-      escapeHtml(one.name)}</span>${EDITOR_KIND[one.kind] ? ` <span class="muted">${
-      escapeHtml(EDITOR_KIND[one.kind])}</span>` : ""} <span class="muted">${one.installed
-      ? escapeHtml("In it") : ""}</span> <button type="button" class="small${
-      one.installed ? " secondary" : ""}" data-editor-menu="${escapeHtml(one.key)}" data-editor-in="${
-      one.installed ? "1" : ""}">${escapeHtml(one.installed ? "Remove" : "Install")}</button></li>`)
-    .join("") + (said && said.restart ? `<li class="muted">${escapeHtml(said.restart)}</li>` : "");
-}
-
-async function refreshEditorMenus() {
-  try { renderEditorMenus((await api.get("/api/editor_menus")).programs); }
-  catch (err) { console.warn("editor_menus", err); }
-}
-
-document.addEventListener("click", async (event) => {
-  const button = event.target.closest && event.target.closest("[data-editor-menu]");
-  if (!button) return;
-  button.disabled = true;
-  try {
-    const said = await api.post(button.dataset.editorIn ? "/api/editor_menus/remove"
-      : "/api/editor_menus/install", { key: button.dataset.editorMenu });
-    renderEditorMenus(said.programs, said);
-  } catch (err) {
-    toast(err.message, "error");
-    button.disabled = false;
-  }
-});
-
-function extensionSteps(said) {
-  const folders = said.folders || {};
-  const where = (flavor) => `<p class="extension-folder"><code>${escapeHtml(folders[flavor] || "")}</code></p>
-    <p class="ov-lp-buttons"><button type="button" class="small secondary" data-extension-folder="${flavor}">
-      Show the folder</button> <button type="button" class="small secondary" data-extension-copy="${flavor}">
-      Copy its path</button></p>`;
-  const open = (browser, name) => `<button type="button" class="small" data-extension-page="${browser}">${
-    escapeHtml(`Open in ${name}`)}</button>`;
-  return `<p class="muted">The extension is made, and this computer's browsers know the agent${
-      (said.connected || []).length ? `: ${escapeHtml(said.connected.join(", "))}` : ""}.
-      Now add it to your browser - the clicks there are yours.</p>
-    <h4>Chrome, Edge, Brave, Vivaldi</h4>
-    <ol class="extension-steps">
-      <li>Open the extensions page: ${open("chrome", "Chrome")} ${open("edge", "Edge")} ${
-        open("brave", "Brave")} <span class="muted">- or type chrome://extensions in the address bar</span></li>
-      <li>Turn on Developer mode, at its top right.</li>
-      <li>Press Load unpacked, and choose this folder:${where("chromium")}</li>
-    </ol>
-    <h4>Firefox</h4>
-    <ol class="extension-steps">
-      <li>${open("firefox", "Firefox")} <span class="muted">- or type about:debugging in the address bar,
-        then This Firefox</span></li>
-      <li>Press Load Temporary Add-on, and choose manifest.json in this folder:${where("firefox")}</li>
-      <li class="muted">Firefox keeps it until it restarts - until the extension is in Firefox's store.</li>
-    </ol>
-    <h4>Try it</h4>
-    <p>Right-click any page - or text you selected on it - and pick Delegate work.</p>`;
-}
-
-async function openExtensionBox() {
-  const box = $("#extension-box");
-  if (!box) return;
-  $("#extension-body").innerHTML = `<p class="muted delegate-wait"><span class="sb-spin" aria-hidden="true"></span>
-    Making the extension, and connecting it to your browsers&hellip;</p>`;
-  if (!box.open) box.showModal();
-  try {
-    const said = await api.post("/api/extension/install", {});
-    renderExtension(said);
-    $("#extension-body").innerHTML = extensionSteps(said);
-  } catch (err) {
-    $("#extension-body").innerHTML = `<p class="delegate-error">${escapeHtml(err.message)}</p>`;
-  }
 }
 
 document.addEventListener("click", async (event) => {
   if (!event.target.closest) return;
-  if (event.target.closest("#extension-install")) { openExtensionBox(); return; }
-  if (event.target.closest("#extension-done")) { $("#extension-box").close(); return; }
-  if (event.target.closest("#extension-remove")) {
-    try { renderExtension(await api.post("/api/extension/remove", {})); }
+  const refresh = event.target.closest("#extension-refresh");
+  if (refresh) {
+    refresh.disabled = true;
+    try { renderExtension(await api.get("/api/extension")); }
     catch (err) { toast(err.message, "error"); }
+    finally { refresh.disabled = false; }
     return;
   }
   const page = event.target.closest("[data-extension-page]");
-  const folder = event.target.closest("[data-extension-folder]");
-  const copy = event.target.closest("[data-extension-copy]");
-  if (!(page || folder || copy)) return;
-  try {
-    if (page) {
+  if (page) {
+    try {
       const said = await api.post("/api/extension/open", { what: "page",
         browser: page.dataset.extensionPage });
-      if (!said.opened) toast("That browser was not found here - type its extensions page's address in it");
-    } else if (folder) {
-      await api.post("/api/extension/open", { what: "folder", browser:
-        folder.dataset.extensionFolder === "firefox" ? "firefox" : "chrome" });
-    } else {
-      const said = await api.post("/api/extension/open", { what: "copy", browser:
-        copy.dataset.extensionCopy === "firefox" ? "firefox" : "chrome" });
-      if (said.copied) {
-        const was = copy.textContent;
-        copy.textContent = "Copied";
-        setTimeout(() => { copy.textContent = was; }, 1500);
-      }
-    }
-  } catch (err) { toast(err.message, "error"); }
+      toast(said.opened ? "Its extensions page is open in that browser - turn it on there, then press Refresh"
+        : "That browser was not found here - open its extensions page in it");
+    } catch (err) { toast(err.message, "error"); }
+    return;
+  }
+  const get = event.target.closest("[data-extension-get]");
+  if (!get) return;
+  get.disabled = true;
+  try {
+    const said = await api.post("/api/extension/install", { browser: get.dataset.extensionGet });
+    renderExtension(said);
+    toast(said.opened ? "Its store page is open in that browser - add it there, then press Refresh"
+      : "The store's page could not be opened here");
+  } catch (err) {
+    toast(err.message, "error");
+    get.disabled = false;
+  }
 });
 
 /* Asked for, a version is made ready in the background: Settings says how
@@ -19762,6 +19702,7 @@ let ovTodoDrawn = "";                     // what the box was last written with
    work status opened out, as a to-do's is. */
 let ovAssigned = [];
 let ovAssignedDrawn = "";
+let ovAssignedLoaded = false;             // the list has come at least once
 
 async function loadTodos() {
   try {
@@ -19770,6 +19711,7 @@ async function loadTodos() {
     ovTodos = todos.todos || [];
     if (assigned) {
       ovAssigned = assigned.assigned || [];
+      ovAssignedLoaded = true;
       // Opened out from the start - its work status is what it is listed for.
       for (const one of ovAssigned) {
         if (!delegateState.collapsed.has(one.id)) delegateState.tracking.add(one.id);
@@ -19780,6 +19722,39 @@ async function loadTodos() {
   }
   ovPlaceTodos();
 }
+
+/* WORK ASSIGNED FROM ANOTHER WINDOW, LISTED HERE TOO (the user, 2026-11-02:
+   "我刚刚delegate了一个work, 为什么没有出现在Work assigned里"): the box the
+   browser opens is a window of its own, and so are Explorer's and the
+   selection icon's. The lists are asked again when such a box says it
+   started a work (the same browser), when this window is shown again, and
+   when a work going is one neither list knows (watchWorkGoing). */
+const ovUnitsAskedFor = new Set();
+const OV_WORK_CHANNEL = "personal-agent-work-assigned";
+let ovListsAskedAt = 0;
+function ovListsAgain() {
+  if (typeof DELEGATE_SOLO !== "undefined" && DELEGATE_SOLO) return;
+  const now = Date.now();
+  if (now - ovListsAskedAt < 1500) return;
+  ovListsAskedAt = now;
+  loadTodos();
+}
+function ovSayAssigned() {
+  try {
+    const channel = new BroadcastChannel(OV_WORK_CHANNEL);
+    channel.postMessage({ type: "assigned" });
+    channel.close();
+  } catch (_err) { /* an older browser: this window's coming back says it */ }
+}
+try {
+  new BroadcastChannel(OV_WORK_CHANNEL).onmessage = () => {
+    ovListsAskedAt = 0;                       // said by the box: asked at once
+    ovListsAgain();
+  };
+} catch (_err) { /* no channel: the window's focus and the going work say it */ }
+// Not on the window's focus: nothing is asked each time it comes to the
+// front (tests/test_system_permissions.py) - shown again after being hidden.
+document.addEventListener("visibilitychange", () => { if (!document.hidden) ovListsAgain(); });
 
 function ovAssignedBox() {
   const items = ovAssigned.map((one) => {
@@ -19794,6 +19769,9 @@ function ovAssignedBox() {
   return `<div class="ov-todo-headrow"><div class="ov-todo-heading"><h3 class="ov-head">Work assigned${
     ovAssigned.length ? ` <span class="ov-head-count">(${ovAssigned.length})</span>` : ""}</h3></div></div>${
     ovAssigned.length ? `<ul class="ov-todo-list">${items}</ul>`
+      // LOADING, NOT "NOTHING YET" (the user, 2026-11-02: "一开始还在load的时候
+      // 要显示loading, 而不是没有task"): until the list has come once.
+      : !ovAssignedLoaded ? `<p class="muted">Loading…</p>`
       : `<p class="muted">Nothing yet. Work you delegate - from a right-click, selected text or Add work - is listed here, with where it stands.</p>`}`;
 }
 
@@ -19895,11 +19873,14 @@ function ovTodoMade(version) {
   if ((version.items || []).length) {
     return version.items.map((item) => ({
       what: `${XP_HANDED_KIND[item.kind] || item.kind} · ${item.name || item.title || ""}`,
-      // Text and an answer are read and copied where the work is shown.
-      shown: item.kind === "text" || item.kind === "answer",
+      // OPENED FROM HERE, AN ANSWER AND A TEXT TOO (the user, 2026-11-02:
+      // "deliverable为什么不能从Work assigned直接打开" - they said "See it in
+      // Work"): in the note on the desktop, whole, to read, save and copy.
       open: ` data-todo-handed="${escapeHtml(String(item.n))}"`,
       words: item.kind === "folder" ? "Open the folder" : item.kind === "email"
-        ? "Open the email" : item.kind === "event" ? "Open the event" : "Open the file",
+        ? "Open the email" : item.kind === "event" ? "Open the event"
+        : item.kind === "answer" ? "Open the answer" : item.kind === "text"
+        ? "Open the text" : "Open the file",
     }));
   }
   if (version.result) {
@@ -20280,8 +20261,12 @@ function delegateClear() {
 /* Step one: what was handed over, and the instruction - changed, or written. */
 function delegateCompose(draft) {
   const asked = (draft.options || {}).instruction || "";
-  const items = [...(draft.folders || []).map((one) => `<li><span class="delegate-kind">folder</span> <code>${
-      escapeHtml(one)}</code></li>`), ...(draft.files || []).map((one) => `<li><span
+  // A file handed over is also where the work works (drafts keep it among
+  // the folders): said once, as a file (on the lab's Mac, 2026-11-02: a
+  // file from Finder's Quick Actions was listed as a folder and a file).
+  const files = draft.files || [];
+  const items = [...(draft.folders || []).filter((one) => !files.includes(one)).map((one) => `<li><span class="delegate-kind">folder</span> <code>${
+      escapeHtml(one)}</code></li>`), ...files.map((one) => `<li><span
       class="delegate-kind">file</span> <code>${escapeHtml(one)}</code></li>`)].join("");
   $("#delegate-head").innerHTML = `${delegateHanded(draft)}
     ${items ? `<ul class="delegate-items">${items}</ul>` : ""}
@@ -20456,6 +20441,22 @@ async function delegateFollow(id) {
 const PICKED_KIND = { page: "The page", selection: "Selected text", link: "A link",
                       image: "A picture", file: "The file", folder: "The folder" };
 
+/* A PAGE'S ADDRESS, SHORT (the user, 2026-11-02: "text才是核心" - a search's
+   address took three lines under the selected text): its site and the start
+   of its path; the whole of it on hover. */
+function delegateShortUrl(url) {
+  const whole = String(url || "");
+  let shown = whole;
+  try {
+    const at = new URL(whole);
+    const rest = (at.pathname === "/" ? "" : at.pathname) + at.search;
+    shown = at.hostname.replace(/^www\./, "") + (rest.length > 40 ? `${rest.slice(0, 40)}…` : rest);
+  } catch (_err) {
+    shown = whole.length > 70 ? `${whole.slice(0, 70)}…` : whole;
+  }
+  return `<span class="delegate-url" title="${escapeHtml(whole)}">${escapeHtml(shown)}</span>`;
+}
+
 function delegatePicked(one) {
   if (!one || !one.kind) return "";
   const rows = [];
@@ -20469,8 +20470,9 @@ function delegatePicked(one) {
     escapeHtml(one.src)}</span></p>`);
   if (one.file) rows.push(`<p><span class="muted">${escapeHtml("File:")}</span> <code>${escapeHtml(one.file)}</code>${
     one.line ? ` <span class="muted">${escapeHtml("line")} ${Number(one.line)}</span>` : ""}</p>`);
-  if (one.title || one.url) rows.push(`<p><span class="muted">${escapeHtml(one.text ? "On:" : "Page:")}</span> ${
-    escapeHtml(one.title || "")}${one.url ? ` <span class="delegate-url">${escapeHtml(one.url)}</span>` : ""}</p>`);
+  if (one.title || one.url) rows.push(`<p class="${one.text ? "delegate-picked-on" : ""}"><span class="muted">${
+    escapeHtml(one.text ? "On:" : "Page:")}</span> ${
+    escapeHtml(one.title || "")}${one.url ? ` ${delegateShortUrl(one.url)}` : ""}</p>`);
   return `<div class="delegate-picked"><p class="delegate-picked-head"><strong>${
     escapeHtml("You right-clicked")}</strong> <span class="delegate-kind">${
     escapeHtml(PICKED_KIND[one.kind] || one.kind)}</span>${one.app ? ` <span class="muted">${
@@ -20819,7 +20821,8 @@ document.addEventListener("click", async (event) => {
         // CLOSED AT ONCE, AS A TO-DO'S DELEGATE IS (the user, 2026-11-02:
         // "和to do的assign一样，不用等到plan出来"): its context collected, its
         // plan drafted and its start go on without the box - where it stands
-        // is on the Overview, under Work assigned.
+        // is on the Overview, under Work assigned - the agent's window told.
+        ovSayAssigned();
         $("#delegate").close();
         return;
       }
@@ -24109,7 +24112,7 @@ document.addEventListener("toggle", (event) => {
 */
 const dbgTokens = { calls: [], since: "", metric: "total_tokens", open: true,
                     hidden: new Set(), view: "days", days: 30, daily: null,
-                    order: [], group: "task", taskModules: {}, manualTasks: [] };
+                    order: [], group: "module", taskModules: {}, manualTasks: [] };
 
 /* BY MODULE: each call's module (common/modules.py), as its name. */
 const MODULE_NAMES = { core: "Activity and states", tasks: "Task organisation",
@@ -24140,9 +24143,13 @@ function tokenGrouped(rows) {
   }
   // Named by the agent where it can: what the user started, each kind of
   // it, and a function they ran with a button, apart.
-  return rows.map((row) => Object.assign({}, row, { task: row.module === "other" ? "other"
-    : row.module_name || MODULE_NAMES[row.module || moduleOfTask(row.task)] || row.module
-    || moduleOfTask(row.task) }));
+  // A call of no known module is the one Other - not a second line of
+  // that name beside it.
+  return rows.map((row) => {
+    const module = row.module || moduleOfTask(row.task);
+    return Object.assign({}, row, { task: module === "other" ? "other"
+      : row.module_name || MODULE_NAMES[module] || module });
+  });
 }
 
 /* One colour per kind of work, and the same one in both views.
@@ -24678,23 +24685,14 @@ function wireTokenUsage() {
     dbgTokens.metric = metric.value;
     renderTokenChart();
   });
-  const group = $("#dbg-tokens-group");
-  if (group) {
-    group.addEventListener("change", async () => {
-      dbgTokens.group = group.value;
-      // Colours ranked anew for what is now grouped; nothing kept hidden.
-      dbgTokens.order = [];
-      dbgTokens.hidden = new Set();
-      if (dbgTokens.group === "module" && !Object.keys(dbgTokens.taskModules).length) {
-        try {
-          const said = await api.get("/api/modules");
-          dbgTokens.taskModules = said.task_modules || {};
-          dbgTokens.manualTasks = said.manual_tasks || [];
-        } catch (err) { /* grouped as well as it can be */ }
-      }
-      renderTokenChart();
-    });
-  }
+  // BY MODULE ALONE (the user, 2026-11-02: "token usage 只有by module ... 本质上是
+  // 要setting里让大家知道关什么"): each line a module - a switch in Settings,
+  // named as it is there. Which module each kind of call is, asked once.
+  api.get("/api/modules").then((said) => {
+    dbgTokens.taskModules = (said && said.task_modules) || {};
+    dbgTokens.manualTasks = (said && said.manual_tasks) || [];
+    renderTokenChart();
+  }).catch(() => { /* grouped as well as it can be */ });
   const view = $("#dbg-tokens-view");
   const days = $("#dbg-tokens-days");
   const showDays = async () => {

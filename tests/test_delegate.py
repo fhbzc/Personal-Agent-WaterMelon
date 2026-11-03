@@ -50,6 +50,107 @@ class DraftsTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.agent.cleanup()
 
+    def test_a_document_of_theirs_open_where_they_right_clicked_is_read(self) -> None:
+        """The user, 2026-11-02: a PDF on their disk, right-clicked in the
+        browser - the plan knew it only from their records. Now its words."""
+        from personalized_agent.agent.work import delegate
+        paper = self.folder / "fern paper v1.pdf"
+        paper.write_bytes(b"%PDF-1.4 made up")
+        url = paper.resolve().as_uri()
+        self.assertEqual(delegate.local_path(url), paper.resolve())
+        self.assertIsNone(delegate.local_path("https://example.org/a.pdf"))
+        self.assertIsNone(delegate.local_path("file://fileserver/share/a.pdf"), "another computer's")
+        words = "Ferns of the valley. " * 1000
+        read = {"text": words, "pages": ["one", "two", "three"], "ocr": False}
+        self.app.models = _Models(PLAN)
+        window = {"title": paper.name, "app": "Google Chrome", "url": url,
+                  "picked": {"kind": "image", "url": url, "where": "browser",
+                             "src": "chrome-extension://abc/9a47"}}
+        draft = self.app.drafts.create(text="", window=window, collect=False)
+        with mock.patch("personalized_agent.runtime.documents.extract",
+                        return_value=read) as extracted:
+            said = self.app.drafts.collect_and_plan(draft["id"])
+        extracted.assert_called_once()
+        document = said["context"]["document"]
+        self.assertEqual((document["name"], document["pages"], document["chars"]),
+                         (paper.name, 3, len(words)))
+        self.assertEqual(document["text"], words[:delegate.DOCUMENT_CHARS])
+        self.assertIn("the work reads the rest", document["cut"])
+        asked = self.app.models.asked[-1].messages[0]["content"]
+        self.assertIn("Ferns of the valley.", asked, "in what the plan is drafted from")
+        self.assertIn('a\ndocument of theirs open there', delegate.PLAN_PROMPT)
+        # The work: its text, and where the file is - the rest read from it.
+        told = instruction_of(said, said["plan"])
+        self.assertIn(f"THE DOCUMENT OPEN WHERE THEY RIGHT-CLICKED - the file: {paper.resolve()} "
+                      f"(3 pages, {len(words)} characters of text)", told)
+        self.assertIn("ITS TEXT - the first 12000 of its", told)
+        self.assertIn("open the file itself when the work needs more of it", told)
+        self.assertIn("Ferns of the valley.", told)
+
+    def test_a_plan_the_user_never_saw_is_not_told_as_theirs(self) -> None:
+        """The user, 2026-11-02: Start closes the box - the plan drafted after
+        it was told to the work as "the plan the user approved"."""
+        from personalized_agent.agent.work import delegate
+        draft = {"text": "", "options": {"instruction": "summarise this paper"}}
+        plan = dict(PLAN, way="quick", questions=["English or Chinese?"])
+        seen = instruction_of(draft, plan)
+        self.assertIn("THE PLAN THE USER APPROVED - follow it; it is theirs:", seen)
+        unseen = instruction_of(draft, plan, unseen=True)
+        self.assertNotIn("THE PLAN THE USER APPROVED", unseen)
+        self.assertIn("BY THE AGENT; THE USER DID NOT SEE IT", unseen)
+        self.assertIn("where it asks for more than they did", unseen)
+        self.assertIn("Open questions - never answered by the user:\n  - English or Chinese?",
+                      unseen)
+        self.assertIn("by the same rule:", instruction_of(draft, dict(plan, way="full"),
+                                                          unseen=True))
+        from personalized_agent.agent.work.runner import ALONE_SYSTEM
+        self.assertIn("THE USER DID NOT SEE is only the\nagent's draft", ALONE_SYSTEM)
+
+    def test_started_before_its_plan_the_work_is_told_it_was_unseen(self) -> None:
+        """Started before the plan (the box closed), it starts by itself once
+        the plan is drafted - and the work is told the user never saw it;
+        started from the box, the plan in front of them, it is theirs."""
+        self.app.models = _Models(PLAN)
+        draft = self.app.drafts.create(text="Summarise this", folders=[str(self.folder)],
+                                       window={"title": "Meeting - Notes"}, collect=False)
+        told = []
+        self.app.work.start = lambda unit, instruction, **_kw: (told.append(instruction)
+                                                                or {"run": "run_x"})
+        with mock.patch.object(self.app.drafts, "_wait_then_start"):
+            said = self.app.drafts.start_apart(draft["id"], plan={"way": "quick"},
+                                               folders=[str(self.folder)])
+        self.assertTrue(said.get("when_ready"), "started before its plan")
+        self.app.drafts.collect_and_plan(draft["id"])
+        self.app.drafts._when_ready(draft["id"], every=0.05, most=5)
+        for _ in range(200):
+            if told:
+                break
+            time.sleep(0.05)
+        self.assertTrue(told, "started by itself")
+        self.assertIn("THE USER DID NOT SEE IT", told[-1])
+        self.assertTrue(self.app.drafts.get(draft["id"])["options"]["plan_unseen"])
+        # Its start undone (as one that failed), then started from the box,
+        # its plan in front of them: theirs.
+        self.app.drafts._set(draft["id"], status=READY)
+        self.app.drafts.start(draft["id"], folders=[str(self.folder)])
+        self.assertIn("THE PLAN THE USER APPROVED", told[-1])
+        self.assertNotIn("plan_unseen", self.app.drafts.get(draft["id"])["options"])
+
+    def test_a_document_handed_over_is_read_and_one_missing_said(self) -> None:
+        from personalized_agent.agent.work import delegate
+        report = self.folder / "seed order.docx"
+        report.write_bytes(b"PK made up")
+        with mock.patch("personalized_agent.runtime.documents.extract",
+                        return_value={"text": "Order: 40 tomato seeds."}):
+            given = self.app.drafts._file(report)
+        self.assertEqual(given["start"], "Order: 40 tomato seeds.")
+        gone = delegate.read_document(self.folder / "gone.pdf", 100)
+        self.assertEqual(gone["error"], "no such file")
+        with mock.patch("personalized_agent.runtime.documents.extract",
+                        side_effect=ValueError("not a PDF")):
+            broken = delegate.read_document(report, 100)
+        self.assertEqual(broken["error"], "not a PDF", "said, never fatal")
+
     def test_context_then_a_plan_in_the_users_language(self) -> None:
         self.app.models = _Models(PLAN)
         draft = self.app.drafts.create(text="Summarise this", folders=[str(self.folder)],

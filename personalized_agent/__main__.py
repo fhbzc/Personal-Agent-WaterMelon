@@ -21,7 +21,7 @@ import logging
 import signal
 import sys
 import threading
-from typing import Any
+from typing import Any, Optional
 from pathlib import Path
 
 from .version import APP_NAME, __version__
@@ -273,10 +273,15 @@ def _delegate(root: Path | None, path: str) -> int:
                 break                          # it answers: it is up
             except Exception:
                 time.sleep(1)
+    fragment = f"/?solo=delegate&delegate_inbox={ident}"
+    # OPENED BY THE AGENT ITSELF where it can: its own panel on a Mac (the
+    # user, 2026-11-02: from Finder it opened as a page in Safari) - this
+    # process has none. Else here, as before.
+    if _ask_agent_to_open(paths, fragment):
+        return 0
     access = ApiAccess(key_file_for(paths.credentials_dir))
     from .platform_layer import app_window
-    app_window.open_page(access.sign_in_url(base, f"/?solo=delegate&delegate_inbox={ident}",
-                                            LONG_TICKET_SECONDS),
+    app_window.open_page(access.sign_in_url(base, fragment, LONG_TICKET_SECONDS),
                          paths.data_dir / app_window.PROFILE)
     return 0
 
@@ -289,7 +294,7 @@ def _root_of(args_before: list) -> Path | None:
     return None
 
 
-def _native_host(args_before: list) -> int:
+def _native_host(args_before: list, browsers_args: Optional[list] = None) -> int:
     """`--native-host`: the browser extension's messages answered
     (platform_layer/native_host.py) - a Delegate work kept, and its box
     opened by a process apart."""
@@ -318,7 +323,12 @@ def _native_host(args_before: list) -> int:
         if not _ask_agent_to_open(paths, fragment):
             open_apart(command(), ident, which)
         return ""
-    return serve(paths.data_dir, [], opener=opener)
+    # WHO IS CALLING, as the browser says it after the flag: a Chromium
+    # browser the extension's origin, Firefox its id (browser_extension.py,
+    # `from_store`).
+    caller = next((str(one) for one in browsers_args or []
+                   if str(one).startswith("chrome-extension://") or "@" in str(one)), "")
+    return serve(paths.data_dir, [], opener=opener, caller=caller)
 
 
 def _ask_agent_to_open(paths: Any, fragment: str, give: bool = False) -> Any:
@@ -590,7 +600,8 @@ def main(argv: list[str] | None = None) -> int:
     # by the browser with its own arguments after the flag - and its standard
     # output is the browser's, so nothing else may be written there.
     if "--native-host" in args_in:
-        return _native_host(args_in[:args_in.index("--native-host")])
+        at = args_in.index("--native-host")
+        return _native_host(args_in[:at], args_in[at + 1:])
     # A run of the user's work, in a process of its own (agent/work/child.py).
     from .agent.work.child import CHILD_FLAG
     if args_in and args_in[0] == CHILD_FLAG:

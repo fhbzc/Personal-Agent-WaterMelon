@@ -2065,7 +2065,9 @@ is no reviewer and no contract - how you go about it is yours to decide. A
 PLAN THE USER APPROVED, where the task has one, is theirs: follow it; where
 you find it does not match the facts - something happened since it was
 drafted, or it is wrong - you may change it, and say in your report what you
-changed and why.
+changed and why. A plan the task says THE USER DID NOT SEE is only the
+agent's draft: what they asked and their ways come first - where it asks for
+more than they did, do what they asked.
 
 YOU MAY OPEN THE REFERENCES. Every file and folder the task points to - and
 any file or folder under the user's home - can be listed and read with your
@@ -2100,15 +2102,7 @@ contacts - who anyone the work involves is, what they are to the user, how
 the user writes to them), open_case and open_reason (their past work and
 their reasons, by the ids given), the web.
 
-{too_big}WHAT YOU MAKE FOR SOMEONE - an email, a message, a reply, a letter - IS
-WRITTEN AS THE USER WRITES TO THAT PERSON: the greeting, the register, the
-length, the sign-off and the attitude of the user's own messages to them
-(WHO IT IS FOR, in the task; search_records by their name for more). With
-none to them, as the user writes to people of their standing. Where things
-stand is the latest of what passed between them - not what the task said
-when it was drafted.
-
-A README.md only when you made more than one file.
+{too_big}A README.md only when you made more than one file.
 
 A MONITOR WATCHES YOUR WORK: as you write, run and end a turn, it looks up
 what bears on what you are doing - the user's records, their files, what
@@ -2117,6 +2111,32 @@ asked or how they do it, reminds you, with its evidence: with a tool's
 result ("monitor") or with the next message. It never stops you. Weigh each
 reminder: where it holds, change course; where it does not, go on, and say
 why in your report."""
+
+#: WHAT IS WRITTEN FOR SOMEONE (the user, 2026-11-02, of a reply drafted in
+#: a thread: "your kind offer 不是我会说的话", "我之前已经提过是什么工作了，后面
+#: 略写就行了" - and "要模型在写的时候，理解整个context, 并且知道context里的话
+#: 之前已经说过了 ... 告诉模型要follow the tone").
+WRITING_RULES = """WHAT YOU WRITE FOR SOMEONE - an email, a message, a reply, a letter:
+- UNDERSTAND THE WHOLE EXCHANGE FIRST, then write the next message in it.
+  Know what has already been said, by the user and by them - who the user
+  is, what the work or the request is, what was offered, asked or agreed -
+  and do not say it again: a reply is read under what came before. Refer
+  to any of it in a word or two ("the research", "the coffee"), as people
+  do in a conversation already going on.
+- FOLLOW THE USER'S TONE: write as the user writes to that person - the
+  greeting, the register, the length, the sign-off, their own turns of
+  phrase (WHO IT IS FOR, in the task; search_records by their name for
+  more). No phrase the user does not use with them: stock courtesies
+  ("your kind offer", "I am following up on", "I hope this finds you
+  well") are what a person writing as themselves seldom says. With nothing
+  of theirs to that person, as they write to people of that standing.
+- WHAT THE USER WROTE TO OTHER PEOPLE shows how they write, never what to
+  say here: take their voice from it, not its content.
+- WHERE THINGS STAND is the latest of what passed between them - not what
+  the task said when it was drafted.
+- BEFORE YOU HAND IT OVER, read it as that person will, under the thread:
+  cut each sentence that tells them what they already know, and each
+  phrase the user would not write."""
 
 #: QUICK, while the thorough way is open: when to say the work needs it.
 QUICK_TOO_BIG = """TOO BIG FOR THE QUICK WAY? If the work turns out to need much more than a
@@ -2156,8 +2176,12 @@ them, and theirs to the user (search_records by the person's name; the
 latest first), and compare the draft with how the user writes to them: the
 greeting, the register, the length, the sign-off, the attitude - the user
 modest and courteous where the draft is curt, transactional or talks down
-("As a reminder"). Where they differ, that is a difference to say, with the
-user's own words as the evidence.
+("As a reminder"); the draft formal or full of stock courtesies ("your kind
+offer", "I am following up on") where the user is plain. And read it as
+the next message of the exchange: a draft that tells the person again what
+was already said between them - who the user is, what the work is, what
+was offered - differs. Where they differ, that is a difference to say, with
+the user's own words as the evidence.
 Not a matter of taste, not "it could be better", not what the agent says it
 will do next anyway, and nothing you said before (listed below). When
 nothing differs, say so - that is the usual answer.
@@ -7755,6 +7779,7 @@ class Run:
         return system.replace("{environment}", self._environment_text()).replace(
             "{packages}", packages) \
             + "\n\n" + handed.HAND_OVER_RULES \
+            + "\n\n" + WRITING_RULES \
             + self._what_they_use() \
             + ("\n\n" + QUICK_RULES.replace(
                 "{too_big}", QUICK_TOO_BIG if getattr(self.owner, "thorough_open", True) else "")

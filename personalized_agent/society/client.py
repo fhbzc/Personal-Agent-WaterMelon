@@ -21,7 +21,9 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from .identity import Identity, b64
 
 #: The server, unless the settings name another.
-DEFAULT_SERVER = "https://society-20859845152.us-central1.run.app"
+#: The society's own address (2026-11-02). The run.app one it had before
+#: still answers - copies that have it keep working.
+DEFAULT_SERVER = "https://agentssociety.org"
 TIMEOUT = 30
 
 Transport = Callable[[str, str, Dict[str, str], bytes], Tuple[int, Any]]

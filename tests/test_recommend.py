@@ -177,6 +177,19 @@ class _Embed:
         return [0.0, 0.0, 1.0]
 
 
+class _TwoPianos(_Embed):
+    """Two piano stories that are not one story: each close to the piano page,
+    apart from each other."""
+
+    @staticmethod
+    def one(text):
+        if "Piano one" in text:
+            return [1.0, 0.9, 0.0]
+        if "Piano two" in text:
+            return [1.0, -0.9, 0.0]
+        return _Embed.one(text)
+
+
 class ThePagesTests(unittest.TestCase):
 
     def _subject(self, key, kind, vector, title=None):
@@ -281,9 +294,14 @@ class CheckedScoredLaidOutTests(unittest.TestCase):
     def test_only_close_stories_are_printed(self) -> None:
         # The user's decision (2026-10-18): no stories a step to the side.
         class _Lean(_Embed):
-            @staticmethod
-            def one(text):
-                return [0.4, 0.0, 0.9165] if "broad" in text else [1.0, 0.0, 0.0]
+            # Four close stories, each its own (one issue keeps one story of
+            # a thing): as close to the page, far from each other.
+            APART = {"0": [1.0, 0.9, 0.0], "1": [1.0, -0.9, 0.0], "2": [1.0, 0.0, 0.9],
+                     "3": [1.0, 0.0, -0.9]}
+
+            @classmethod
+            def one(cls, text):
+                return [0.4, 0.0, 0.9165] if "broad" in text else cls.APART[text.split()[1][0]]
         stories = [self._story(f"c{n}", f"close {n}", "piano", gain=5 - n * 0.5)
                    for n in range(4)] + \
             [self._story(f"b{n}", f"broad {n}", "piano") for n in range(3)]
@@ -302,10 +320,30 @@ class CheckedScoredLaidOutTests(unittest.TestCase):
             [self._story("p1", "Piano one", "piano", gain=5),
              self._story("p2", "Piano two", "piano", gain=4),
              self._story("f1", "Restaurant one", "food", gain=3)],
-            self.pages, _Embed(), [], [], set())
+            self.pages, _TwoPianos(), [], [], set())
         self.assertEqual(paper["front"], ["p1", "f1"])
         self.assertEqual(paper["brief"], ["p2"])
         self.assertEqual([page["key"] for page in paper["pages"]], ["piano", "food"])
+
+    def test_not_the_same_story_again_nor_twice_in_one_issue(self) -> None:
+        """The user, 2026-11-02: "之前推送过的东西不要重复推送" - a story as close
+        as one shown in the last month (0.9 here: the same story told again)
+        is left out, a follow-up (0.8) is not ("还是不要去重改严了"); and of
+        two the same in this issue, the first stays."""
+        self.assertEqual((recommend.SHOWN_ALIKE, recommend.SHOWN_DAYS), (0.85, 30))
+        printed, _ = recommend.lay_out(
+            [self._story("a", "Piano one", "piano"), self._story("b", "Piano two", "piano")],
+            self.pages, _TwoPianos(), [], shown_vectors=[[1.0, 0.9, 0.1]], seen=set())
+        self.assertEqual([one["id"] for one in printed], ["b"], "the one shown before, out")
+        follow = recommend.lay_out(
+            [self._story("a", "Piano one", "piano")], self.pages, _TwoPianos(), [],
+            shown_vectors=[[1.0, 0.3, 0.5]], seen=set())[0]
+        self.assertEqual([one["id"] for one in follow], ["a"], "a follow-up, kept")
+        printed, _ = recommend.lay_out(
+            [self._story("a", "Piano one", "piano"), self._story("c", "Piano one again", "piano"),
+             self._story("b", "Piano two", "piano")],
+            self.pages, _TwoPianos(), [], [], set())
+        self.assertEqual([one["id"] for one in printed], ["a", "b"], "once in one issue")
 
     def test_news_of_someone_they_know_is_never_left_out(self) -> None:
         """Far from every page: on a page of its own, not dropped."""

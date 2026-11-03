@@ -161,8 +161,13 @@ class ApiServer:
                 ticket = (query.get(TICKET_PARAM) or [""])[0]
                 site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
                 # Opened from outside the browser (the desktop, a pasted
-                # link) or from this page - never followed from a site.
-                if site not in ("", "none", "same-origin") or not server.access.redeem(ticket):
+                # link) or from this page - never followed from a site. A
+                # ticket made for the extension's own window is taken however
+                # the browser says it came: Firefox calls every page an
+                # extension opens cross-site (api/access.py, `ticket`).
+                from_outside = site in ("", "none", "same-origin")
+                if not (from_outside or ApiAccess.for_extension(ticket)) \
+                        or not server.access.redeem(ticket):
                     self._send(401, SIGN_IN_REFUSED.encode("utf-8"),
                                "text/html; charset=utf-8")
                     return

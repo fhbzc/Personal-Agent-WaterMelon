@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import sys
 import unittest
 import unittest.mock
 import zipfile
@@ -419,7 +420,9 @@ class PathsAsPeopleWriteThemTests(_Base):
         (repo / "pkg").mkdir(parents=True)
         (repo / "pkg" / "service.py").write_text("x", encoding="utf-8")
         (repo / "pkg" / "patterns.py").write_text("y", encoding="utf-8")
-        out = _split_paths([{"location": r"pkg\service.py and patterns.py",
+        # As people write them on this system: with \ on Windows.
+        written = r"pkg\service.py" if sys.platform == "win32" else "pkg/service.py"
+        out = _split_paths([{"location": f"{written} and patterns.py",
                              "what": "the build"},
                             {"location": "a session somewhere"}], [repo])
         self.assertEqual([one["location"] for one in out],

@@ -188,7 +188,10 @@ def run_item(names: List[str], name_filter: Optional[str]) -> Tuple[int, str, fl
         if name_filter:
             command += ["-k", name_filter]
         started = time.time()
+        # A test's output in another code page (a Windows tool's '·') must
+        # not lose the item's result - read it with what cannot be read replaced.
         completed = subprocess.run(command, capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace",
                                    cwd=str(REPO_ROOT), env=environment(),
                                    **below_normal())
         try:
