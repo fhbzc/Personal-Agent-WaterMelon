@@ -282,9 +282,16 @@ class ToolBridge:
                 with self._lock:
                     self._busy -= 1
                 self.last_activity = time.monotonic()
+        # A PICTURE GOES AS A PICTURE (models/vision.py): written into the text
+        # it was only a long run of letters, cut off - and of no use to anyone.
+        pictures = said.get("_pictures") if isinstance(said, dict) else None
+        if pictures:
+            said = {key: value for key, value in said.items() if key != "_pictures"}
         text = said if isinstance(said, str) else json.dumps(said, ensure_ascii=False,
                                                              default=str)
         failed = isinstance(said, dict) and bool(said.get("error"))
         self.calls.append({"name": name, "arguments": arguments, "result": text[:MOST_RESULT],
                            "error": failed})
-        return {"content": [{"type": "text", "text": text[:MOST_RESULT]}], "isError": failed}
+        return {"content": [{"type": "text", "text": text[:MOST_RESULT]},
+                            *[{"type": "image", "data": one["data"], "mimeType": one["media_type"]}
+                              for one in pictures or []]], "isError": failed}

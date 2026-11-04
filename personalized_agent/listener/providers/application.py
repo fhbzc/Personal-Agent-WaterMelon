@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from ...common.titles import same_title
@@ -35,6 +35,9 @@ class ApplicationProvider(ListenerProvider):
         self._current: Optional[Dict[str, Any]] = None
         self._polls = 0
         self._platform_error: Optional[str] = None
+        #: Whether the last look found the user away (PR #6, taken for the
+        #: Monitor's signals): None until the first look, which always says.
+        self._away: Optional[bool] = None
 
     # -- lifecycle ----------------------------------------------------------
     def start(self) -> None:
@@ -68,6 +71,7 @@ class ApplicationProvider(ListenerProvider):
     # -- polling ------------------------------------------------------------
     def _poll(self) -> None:
         self._polls += 1
+        self._watch_presence()
         window = self.platform.activity.get_active_window()
         app = window.application
         if not app:
@@ -142,8 +146,58 @@ class ApplicationProvider(ListenerProvider):
             "last_error": self.last_error,
         }
 
+    def _watch_hands(self, idle: float) -> None:
+        """When the hands leave the keyboard and mouse and come back, sooner
+        than being away: beside an agent at work, it tells whose work it is
+        (heartbeat/monitor/windows.py). The moment only, as with presence."""
+        off = idle >= float(self.config.get("listener_hands_seconds", 120))
+        if off == getattr(self, "_hands_off", None):
+            return
+        first = getattr(self, "_hands_off", None) is None
+        self._hands_off = off
+        moment = datetime.now(timezone.utc)
+        if off and not first:
+            moment -= timedelta(seconds=idle)
+        self.emit(ListenerEvent(
+            event_type="presence.hands_off" if off else "presence.hands_on",
+            source=self.provider_id, application=None, data={},
+            metadata={"platform": self.platform.name}, timestamp=moment))
+
+    def _watch_presence(self) -> None:
+        """Say when the user leaves and when they come back (PR #6; the user,
+        2026-11-03: "可以的"). A window left in front overnight is one long
+        focus period; without these a break and a day's end could only be
+        guessed from silence. Only the moment is recorded - never a count
+        of keys or the movement of the mouse."""
+        ask = getattr(self.platform.activity, "seconds_since_input", None)
+        if ask is None:
+            return
+        try:
+            idle = ask()
+        except Exception:
+            return
+        if idle is None:
+            return
+        self._watch_hands(float(idle))
+        limit = float(self.config.get("listener_presence_seconds", 300))
+        away = idle >= limit
+        if away == self._away:
+            return
+        first = self._away is None
+        self._away = away
+        # The user left when they last touched the machine, not when it was noticed.
+        moment = datetime.now(timezone.utc)
+        if away and not first:
+            moment -= timedelta(seconds=idle)
+        self.emit(ListenerEvent(
+            event_type="presence.away" if away else "presence.back",
+            source=self.provider_id, application=None,
+            data={"idle_seconds": round(float(idle), 1)},
+            metadata={"platform": self.platform.name}, timestamp=moment))
+
     def supported_event_types(self) -> List[str]:
-        return ["application.focused", "application.focus_ended"]
+        return ["application.focused", "application.focus_ended",
+                "presence.away", "presence.back", "presence.hands_off", "presence.hands_on"]
 
     def get_capabilities(self) -> Dict[str, Any]:
         caps = self.platform.capabilities()

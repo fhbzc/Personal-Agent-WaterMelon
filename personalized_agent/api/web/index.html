@@ -31,6 +31,7 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
     <button data-tab="connections">Connections</button>
     <button data-tab="experience">Work</button>
     <button data-tab="learning">Learning</button>
+    <button data-tab="monitor">Monitor</button>
     <button data-tab="society">Society</button>
     <button data-tab="chat">Chat</button>
     <button data-tab="settings">Settings</button>
@@ -186,7 +187,12 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
     </div>
     <div class="rec-grid">
       <nav class="card rec-side" id="rec-pages" aria-label="Pages"></nav>
-      <div class="card rec-main" id="ov-know"><p class="muted">Reading&hellip;</p></div>
+      <div class="rec-main-col">
+        <!-- A NEW ISSUE BEING MADE (the user, 2026-11-03): said above the
+             issue shown, with a picture, while it is made. -->
+        <div class="rec-making" id="rec-making" role="status" aria-live="polite" hidden></div>
+        <div class="card rec-main" id="ov-know"><p class="muted">Reading&hellip;</p></div>
+      </div>
     </div>
   </section>
 
@@ -604,6 +610,28 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
        lesson - the user's own folders and projects, what they added, what
        the heartbeat added - each turned on or off or deleted; the never
        list; when it learns, how far it is, and what it spent. -->
+  <!-- THE MONITOR (the user, 2026-11-03): the real-time signals, the
+       Activators the agent writes and code runs on them, and what they did.
+       The user's two switches on each: on, and protected. -->
+  <section id="monitor" class="tab">
+    <div class="card mon-card">
+      <h2>Right now</h2>
+      <p class="muted">What the agent reads of your day, every few seconds - by code, no model.</p>
+      <div id="mon-signals" class="mon-signals"></div>
+    </div>
+    <div class="card mon-card">
+      <h2>Activators</h2>
+      <p class="muted">What the agent watches for, and what it does then. It writes and changes
+        them itself - tell it in Chat, or mark a notification as bad. A protected one it can
+        neither change nor delete.</p>
+      <div id="mon-tree"></div>
+    </div>
+    <div class="card mon-card">
+      <h2>What they did</h2>
+      <div id="mon-firings"></div>
+    </div>
+  </section>
+
   <section id="learning" class="tab">
     <div class="card xp-learn" id="xp-learn"></div>
   </section>
@@ -617,6 +645,11 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
     <nav class="society-views" aria-label="Society">
       <button type="button" class="society-view-button on" data-society-view="chats">Conversations
         <span class="society-count" id="society-unread" hidden></span></button>
+      <!-- FOLLOWING (the user, 2026-11-02/03): the recent events of those the
+           agent follows, whom it follows, and the user's own events -
+           posted by the user alone. -->
+      <button type="button" class="society-view-button" data-society-view="following">Following
+        <span class="society-count" id="society-events-unread" hidden></span></button>
       <button type="button" class="society-view-button" data-society-view="settings">Settings</button>
     </nav>
     <div id="society-view-chats" class="society-view">
@@ -636,6 +669,9 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
           <p class="muted society-pick">Pick a conversation - or search for someone, and Write.</p>
         </section>
       </div>
+    </div>
+    <div id="society-view-following" class="society-view" hidden>
+      <div id="society-following"></div>
     </div>
     <div id="society-view-settings" class="society-view" hidden>
       <div id="society-me"></div>

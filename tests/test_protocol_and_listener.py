@@ -3213,6 +3213,34 @@ class ReadingIsGatheredIntoSittingsTests(unittest.TestCase):
         provider.flush_what_is_gathered()
         self.assertEqual(self.seen[0].data["window_title"], "A different article")
 
+    def test_a_chat_programs_conversations_are_kept_apart(self) -> None:
+        # One window for every conversation, its title saying which (the
+        # user, 2026-11-03: a message sent in one was kept under the title
+        # of the next, and taken as never sent).
+        platform = _Showing("Hi Ada, here is the package.", title="Ada Quist (DM) - Tea House - Slack")
+        platform.reading.application = "slack.exe"
+        provider = self._provider(platform)
+        provider._look()
+        platform.reading.title = "general (Channel) - Tea House - Slack"
+        platform.reading.text = "Lunch is in the garden today."
+        provider._look()
+        provider.flush_what_is_gathered()
+        self.assertEqual([(one.data["window_title"], one.data["text"]) for one in self.seen],
+                         [("Ada Quist (DM) - Tea House - Slack", "Hi Ada, here is the package."),
+                          ("general (Channel) - Tea House - Slack",
+                           "Lunch is in the garden today.")])
+
+    def test_a_chat_page_in_a_browser_too(self) -> None:
+        platform = _Showing("Our first thread.", title="Bo Lind - Messenger")
+        provider = self._provider(platform)
+        provider._look()
+        platform.reading.title = "Eve Stranger - Messenger"
+        platform.reading.text = "Another thread entirely."
+        provider._look()
+        provider.flush_what_is_gathered()
+        self.assertEqual([one.data["window_title"] for one in self.seen],
+                         ["Bo Lind - Messenger", "Eve Stranger - Messenger"])
+
     def test_closing_the_agent_does_not_lose_the_sitting(self) -> None:
         platform = _Showing("What they were reading when it closed.")
         provider = self._provider(platform)

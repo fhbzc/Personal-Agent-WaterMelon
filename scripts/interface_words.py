@@ -200,6 +200,9 @@ def looks_like_ui(t):
         return False
     if re.fullmatch(r"[a-z0-9_\-./:#\[\]=*]+", bare):                 # identifiers, selectors, paths
         return False
+    # A PDF's own syntax (chat.js writes a summary document's PDF itself).
+    if re.match(r"(<<|%PDF|xref\b|trailer\b|endstream\b|q \d|\d+ 0 obj\b|0 obj\b)", bare):
+        return False
     # Code, not prose: a semicolon with no space after it, braces, arrows -
     # an explanation's "; " and a label's "folder:" are prose.
     if re.search(r"^(https?:|/api/|#|\.[\w-]|--)|[{}]|;\S|=>|\$\(|\(\)|\bvar\(|px\b|rgba?\(|"

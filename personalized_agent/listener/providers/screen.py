@@ -34,6 +34,7 @@ import hashlib
 import copy
 import logging
 import os
+import re
 import threading
 import time
 import types
@@ -48,6 +49,31 @@ from ..core.manager import STOPPING_GRACE_SECONDS
 from . import fast_reading
 
 log = logging.getLogger(__name__)
+
+#: Programs a command line runs in. A coding assistant draws a banner when it starts -
+#: its name, the model and the folder it was started in - and the terminal's title is
+#: then the session's name, with no folder in it. The banner is on screen for a few
+#: seconds, and a reading every few seconds misses it often; so a terminal is read again
+#: the moment its title changes (PR #6, the user, 2026-11-03: "可以采纳").
+TERMINAL_PROGRAMS = ("terminal", "powershell", "pwsh", "cmd", "conhost", "wezterm",
+                     "alacritty", "iterm", "konsole", "mintty")
+#: A program drawing a spinner or a star before a title is saying it is busy. The
+#: assistant redraws it every second while it works, which is not a new title.
+_LEADING_MARK = re.compile(r"^[^\w\u4e00-\u9fff]+")
+#: At most this many extra readings a minute: a title that will not keep still is not
+#: worth a core.
+MOST_EXTRA_READINGS_A_MINUTE = 12
+
+
+def a_new_title_in_a_terminal(before: Optional[Tuple[str, str]], application: str,
+                              title: str) -> Tuple[bool, Tuple[str, str]]:
+    """(whether a terminal has just shown a different title, and the title as kept) -
+    compared without the spinner or star the assistant draws before it."""
+    program = str(application or "").lower()
+    kept = (program, _LEADING_MARK.sub("", str(title or "")).strip().lower())
+    if not any(name in program for name in TERMINAL_PROGRAMS):
+        return False, kept
+    return before is not None and before != kept, kept
 
 
 def _taken_at(reading: Any) -> Dict[str, Any]:
@@ -229,7 +255,9 @@ class ScreenProvider(ListenerProvider):
                 # Back from a window read often: the ordinary interval from now.
                 self._next_read_at = now + self._interval()
             self._was_fast = False
-            if requested and self._last_read_started_at is None or now >= self._next_read_at:
+            if (self._a_terminal_just_changed(front, now)
+                    or requested and self._last_read_started_at is None
+                    or now >= self._next_read_at):
                 self._last_read_started_at = now
                 try:
                     self._look()
@@ -260,6 +288,27 @@ class ScreenProvider(ListenerProvider):
                 # Never overlapped: the next look is counted from the end.
                 self._pace.took(now, time.monotonic() - began)
         return self._pace.interval(self._typing, time.monotonic())
+
+    def _a_terminal_just_changed(self, front: Any, now: float) -> bool:
+        """Whether to read now, between readings: a terminal's title changed."""
+        if front is None or not bool(self.config.get("listener_screen_enabled", False)):
+            return False
+        try:
+            changed, self._watched = a_new_title_in_a_terminal(
+                getattr(self, "_watched", None), front.application, front.title)
+        except Exception:
+            return False
+        if not changed:
+            return False
+        extra = getattr(self, "_extra", None)
+        if extra is None:
+            extra = self._extra = collections.deque()
+        while extra and now - extra[0] > 60.0:
+            extra.popleft()
+        if len(extra) >= MOST_EXTRA_READINGS_A_MINUTE:
+            return False
+        extra.append(now)
+        return True
 
     def _focus_changed(self, _topic, payload) -> None:
         self._front_application = payload.get('application') or ''
@@ -429,10 +478,23 @@ class ScreenProvider(ListenerProvider):
         an interleaving of two.
         """
         held = self._gathering
+        # A CONVERSATION CHANGED IN THE SAME WINDOW ends the sitting too: a
+        # chat program shows every conversation in one window, its title
+        # saying which (the user, 2026-11-03: a Slack message to one person
+        # was kept under the title of the conversation read after it, and
+        # taken as never sent). A program whose title never says which
+        # (WhatsApp, Telegram, Signal, Feishu, DingTalk, QQ) is not guessed
+        # at from its contents - that splits one conversation and loses whom
+        # it is with; each needs its own reading of the chat's header, as
+        # WeChat has.
         chat_changed = (held is not None
+                        and (held["title"], held["how"]) != (reading.title, reading.how)
                         and (is_wechat_application(held["application"])
-                             or is_wechat_application(reading.application))
-                        and (held["title"], held["how"]) != (reading.title, reading.how))
+                             or is_wechat_application(reading.application)
+                             or fast_reading.is_conversation(self.config, held["application"],
+                                                             held["title"])
+                             or fast_reading.is_conversation(self.config, reading.application,
+                                                             reading.title)))
         if held is not None and (held["handle"] != reading.handle or chat_changed):
             self._report(held)
             held = None
@@ -450,8 +512,8 @@ class ScreenProvider(ListenerProvider):
         held["lines"].append(fresh)
         held["readings"] += 1
         held["milliseconds"] += reading.milliseconds
-        # Chat title changes separate conversations. Other applications keep
-        # upstream's sitting behavior and retain the newest window title.
+        # A chat's title changes separate conversations (above). Other
+        # applications keep one sitting and retain the newest window title.
         held["title"] = reading.title
 
     def _report_if_it_is_time(self, reading: Any) -> None:

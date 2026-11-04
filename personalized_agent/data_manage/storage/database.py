@@ -227,6 +227,15 @@ class Database:
 #: SQLite can only add a column with a constant default, which is why each of
 #: these is nullable rather than NOT NULL.
 ADDED_COLUMNS = (
+    # A lesson's example: its class, its exact content, its English (the user,
+    # 2026-11-03: the lessons kept as learning keeps its work).
+    ("lesson_evidence", "category", "TEXT NOT NULL DEFAULT ''"),
+    ("lesson_evidence", "content", "TEXT NOT NULL DEFAULT ''"),
+    ("lesson_evidence", "english", "TEXT NOT NULL DEFAULT ''"),
+    # A chat topic's shared context (the user, 2026-11-03).
+    ("chat_projects", "context", "TEXT DEFAULT ''"),
+    # The collection's folders (the user, 2026-11-03).
+    ("rec_collection", "folder_id", "TEXT DEFAULT ''"),
     ('learn_items', 'source_id', "TEXT DEFAULT ''"),
     ('learn_items', 'more', "TEXT DEFAULT '[]'"),
     ('listener_wechat_captures', 'content_key', 'TEXT'),
@@ -465,13 +474,15 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_dedupe ON notifications(dedupe_key, created_at);
 
--- A name the user gathers conversations under in the chat's sidebar. Only a
--- grouping: a conversation in a project reads nothing of the project's other
--- conversations.
+-- A TOPIC the user gathers conversations under in the chat's sidebar (the
+-- user, 2026-11-03, from PR #8). A conversation in one reads nothing of the
+-- topic's other conversations - only the topic's CONTEXT, the user's own
+-- words, given to every chat in it.
 CREATE TABLE IF NOT EXISTS chat_projects (
     id         TEXT PRIMARY KEY,
     created_at TEXT NOT NULL,
-    name       TEXT NOT NULL
+    name       TEXT NOT NULL,
+    context    TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS conversations (
@@ -1235,7 +1246,10 @@ CREATE TABLE IF NOT EXISTS lesson_evidence (
     weight       REAL NOT NULL DEFAULT 1.0,
     features     TEXT,
     processed_at TEXT,
-    outcome_of   TEXT NOT NULL DEFAULT ''
+    outcome_of   TEXT NOT NULL DEFAULT '',
+    category     TEXT NOT NULL DEFAULT '',   -- its class, in English
+    content      TEXT NOT NULL DEFAULT '',   -- exactly what it was, kept
+    english      TEXT NOT NULL DEFAULT ''    -- what happened, for finding it
 );
 CREATE INDEX IF NOT EXISTS lesson_evidence_kind ON lesson_evidence (kind, processed_at);
 CREATE TABLE IF NOT EXISTS lesson_rules (
@@ -1363,7 +1377,15 @@ CREATE TABLE IF NOT EXISTS rec_collection (
     issue_id      TEXT NOT NULL DEFAULT '',
     story_id      TEXT NOT NULL DEFAULT '',
     story         TEXT NOT NULL DEFAULT '{}',
-    removed_at    TEXT NOT NULL DEFAULT ''
+    removed_at    TEXT NOT NULL DEFAULT '',
+    folder_id     TEXT DEFAULT ''          -- its folder; '' none
+);
+-- THE COLLECTION'S FOLDERS (the user, 2026-11-03): folders in folders.
+CREATE TABLE IF NOT EXISTS rec_collection_folders (
+    id          TEXT PRIMARY KEY,
+    parent_id   TEXT NOT NULL DEFAULT '',
+    name        TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS reading_topics (
     id          TEXT PRIMARY KEY,

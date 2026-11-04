@@ -254,7 +254,8 @@ class TheAppLearnsFromEveryKindTests(unittest.TestCase):
         sources = {row["source_id"] for row in self.app.db.query(
             "SELECT source_id FROM lesson_evidence WHERE kind = 'connections'")}
         self.assertEqual(len(sources), 1, "the change to Ada, not to the user's profile")
-        self.assertIn("None learned yet", self.app.connections.lessons_text())
+        # No rule yet: what the user did is given, as an example (2026-11-04).
+        self.assertIn("WHAT THE USER ACTUALLY DID", self.app.connections.lessons_text())
         del ada
 
     def test_the_old_lessons_go_and_the_actions_are_learned_from_again(self) -> None:
@@ -371,7 +372,7 @@ class OneAlgorithmForEveryKindTests(unittest.TestCase):
         self.app.lessons.record("notifications", "calact_y", "The user deleted this event.",
                                 action="delete")
         said = self.app.lessons.standing()
-        self.assertEqual(set(said), {"notifications", "connections", "work"})
+        self.assertEqual(set(said), {"notifications", "connections", "work", "general"})
         self.assertTrue(said["notifications"]["due"])
         self.assertEqual((said["notifications"]["waiting"], said["notifications"]["share"]),
                          (1, 0))

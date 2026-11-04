@@ -1,6 +1,8 @@
-/* THE CHAT'S SIDEBAR: every conversation, to reopen, and a new one - chats,
-   in one list, newest first; no projects to file them under. Ported from
-   PR #4 (by daniela-miaut).
+/* THE CHAT'S SIDEBAR: every conversation, to reopen, and a new one - newest
+   first; pinned ones on top, then the user's TOPICS (the user, 2026-11-03,
+   from PR #8), each with its conversations and a shared context given to
+   every chat in it, then the chats in no topic. Ported from PR #4 (by
+   daniela-miaut).
 
    Shared by the Chat tab and the conversation window (chat.html), which draw
    a conversation each in their own way: this keeps the list, and hands the
@@ -25,10 +27,15 @@ window.createChatNavigation = function ({ api, onOpen }) {
   sidebar.innerHTML = `
     <div class="chat-sidebar-head"><strong>Conversations</strong>
       <button type="button" class="chat-nav-icon" data-close aria-label="Close the sidebar">☰</button></div>
-    <button type="button" class="chat-new" data-new><span aria-hidden="true">＋</span> New chat</button>
+    <div class="chat-new-row">
+      <button type="button" class="chat-new" data-new><span aria-hidden="true">＋</span> New chat</button>
+      <button type="button" class="chat-new" data-new-topic><span aria-hidden="true">＋</span> New topic</button>
+    </div>
     <div class="chat-sidebar-scroll">
       <div class="chat-section-label" data-pinned-label hidden>Pinned</div>
       <nav class="chat-pinned" aria-label="Pinned"></nav>
+      <div class="chat-section-label chat-topics-label">Topics</div>
+      <div class="chat-topics" aria-label="Topics"></div>
       <div class="chat-section-label">Chats</div>
       <nav class="chat-history" aria-label="Conversations"></nav>
     </div>
@@ -48,7 +55,9 @@ window.createChatNavigation = function ({ api, onOpen }) {
   const $s = (selector) => sidebar.querySelector(selector);
   const mobile = window.matchMedia("(max-width: 700px)");
   const route = () => new URLSearchParams(location.search);
-  const state = { conversations: [], conversation: null,
+  const state = { conversations: [], conversation: null, topics: [], editing: "",
+    // A new chat started under a topic: put there once its first message made it.
+    pendingTopic: "", open: new Set(),
     busy: false, request: 0, loading: false, initialized: false };
   let desktopOpen = true;
   let drawerOpen = false;
@@ -175,6 +184,14 @@ window.createChatNavigation = function ({ api, onOpen }) {
     const first = item(conversation.pinned_at ? "Unpin" : "Pin",
       () => pinConversation(conversation, !conversation.pinned_at));
     item("Rename", () => startRename(line, conversation));
+    // UNDER A TOPIC, or under none, or a new one (the user, 2026-11-03).
+    for (const topic of state.topics) {
+      if (topic.id !== conversation.project_id) {
+        item(`Move to “${topic.name}”`, () => moveToTopic(conversation.id, topic.id));
+      }
+    }
+    if (conversation.project_id) item("Take out of its topic", () => moveToTopic(conversation.id, ""));
+    item("Move to a new topic…", () => startTopic(conversation.id));
     item("Delete", () => askToDelete(line, conversation), true);
     // ABOVE THE PAGE, not inside the list: the list scrolls, and a menu
     // inside it was cut off at its edge - Delete was below the fold. Placed
@@ -201,6 +218,132 @@ window.createChatNavigation = function ({ api, onOpen }) {
   });
   // Above the page, it would stay put while its row scrolled away.
   $s(".chat-sidebar-scroll").addEventListener("scroll", closeMenu, { passive: true });
+
+  /* -- TOPICS ------------------------------------------------------------- */
+  async function moveToTopic(id, topic) {
+    try {
+      await api.post("/api/conversation/topic", { id, topic });
+      if (topic) state.open.add(topic);
+      await refresh();
+    } catch (error) {
+      status(`Could not move the conversation: ${error.message}`);
+    }
+  }
+
+  async function startTopic(conversationId = "") {
+    // A new topic - its name asked in place, then its context to write.
+    state.editing = `new:${conversationId}`;
+    render();
+    $s("[data-topic-name]")?.focus();
+  }
+
+  function topicForm(topic, conversationId) {
+    const form = document.createElement("form");
+    form.className = "chat-topic-form";
+    const name = document.createElement("input");
+    name.type = "text";
+    name.maxLength = 120;
+    name.dataset.topicName = "";
+    name.placeholder = "Topic name";
+    name.setAttribute("aria-label", "Topic name");
+    name.value = topic ? topic.name : "";
+    const context = document.createElement("textarea");
+    context.rows = 5;
+    context.maxLength = 20000;
+    context.placeholder = "Shared context - given to every chat in this topic";
+    context.setAttribute("aria-label", "Shared context - given to every chat in this topic");
+    context.value = topic ? topic.context || "" : "";
+    const buttons = document.createElement("div");
+    buttons.className = "chat-topic-buttons";
+    const save = document.createElement("button");
+    save.type = "submit";
+    save.className = "small";
+    save.textContent = topic ? "Save" : "Make the topic";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "small secondary";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => { state.editing = ""; render(); });
+    buttons.append(save, cancel);
+    if (topic) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.classList.add("small", "secondary", "danger-text");
+      remove.textContent = "Delete topic";
+      remove.title = "Its conversations are kept, in no topic";
+      remove.addEventListener("click", async () => {
+        try {
+          await api.post("/api/chat/projects/delete", { id: topic.id });
+          state.editing = "";
+          await refresh();
+        } catch (error) { status(`Could not delete the topic: ${error.message}`); }
+      });
+      buttons.append(remove);
+    }
+    form.append(name, context, buttons);
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!name.value.trim()) { name.focus(); return; }
+      try {
+        let id = topic ? topic.id : "";
+        if (!topic) id = (await api.post("/api/chat/projects", { name: name.value.trim() })).id;
+        await api.post("/api/chat/projects/edit", { id, name: name.value.trim(), context: context.value });
+        if (conversationId) await api.post("/api/conversation/topic", { id: conversationId, topic: id });
+        state.open.add(id);
+        state.editing = "";
+        await refresh();
+      } catch (error) { status(`Could not save the topic: ${error.message}`); }
+    });
+    return form;
+  }
+
+  function renderTopics(host) {
+    host.replaceChildren();
+    if (state.editing.startsWith("new:")) host.appendChild(topicForm(null, state.editing.slice(4)));
+    for (const topic of state.topics) {
+      const section = document.createElement("section");
+      section.className = "chat-topic";
+      const chats = state.conversations.filter((one) => one.project_id === topic.id && !one.pinned_at);
+      const open = state.open.has(topic.id) || chats.some((one) => one.id === state.conversation);
+      const head = document.createElement("div");
+      head.className = "chat-topic-head";
+      const toggle = row(`${open ? "▾" : "▸"} ${topic.name}`, false, () => {
+        if (state.open.has(topic.id)) state.open.delete(topic.id); else state.open.add(topic.id);
+        render();
+      }, "chat-nav-row chat-topic-name");
+      toggle.setAttribute("aria-expanded", String(open));
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "chat-nav-more";
+      add.textContent = "＋";
+      add.title = "New chat in this topic";
+      add.setAttribute("aria-label", "New chat in this topic");
+      add.addEventListener("click", () => { newChat(); state.pendingTopic = topic.id; status(`New chat in “${topic.name}”`); });
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "chat-nav-more";
+      edit.textContent = "✎";
+      edit.title = "Edit topic & context";
+      edit.setAttribute("aria-label", "Edit topic & context");
+      edit.addEventListener("click", () => { state.editing = topic.id; render(); });
+      head.append(toggle, add, edit);
+      section.appendChild(head);
+      if (state.editing === topic.id) section.appendChild(topicForm(topic, ""));
+      if (topic.context && open) {
+        const said = document.createElement("p");
+        said.classList.add("chat-topic-context", "muted");
+        said.textContent = topic.context;
+        section.appendChild(said);
+      }
+      if (open) {
+        const list = document.createElement("div");
+        list.className = "chat-topic-chats";
+        historyRows(list, chats, "No conversations in this topic yet");
+        section.appendChild(list);
+      }
+      host.appendChild(section);
+    }
+  }
 
   async function pinConversation(conversation, pinned) {
     try {
@@ -296,16 +439,21 @@ window.createChatNavigation = function ({ api, onOpen }) {
     pinnedList.replaceChildren();
     $s("[data-pinned-label]").hidden = !pinned.length;
     historyRows(pinnedList, pinned, "");
-    historyRows(list, state.conversations.filter((one) => !one.pinned_at),
-      pinned.length ? "" : "No conversations yet");
+    renderTopics($s(".chat-topics"));
+    const known = new Set(state.topics.map((one) => one.id));
+    historyRows(list, state.conversations.filter((one) => !one.pinned_at
+      && !(one.project_id && known.has(one.project_id))),
+      pinned.length || state.topics.length ? "" : "No conversations yet");
   }
 
   async function refresh() {
     if (state.loading) return;
     state.loading = true;
     try {
-      const conversations = await api.get("/api/conversations");
+      const [conversations, topics] = await Promise.all([api.get("/api/conversations"),
+        api.get("/api/chat/projects").catch(() => ({ projects: state.topics }))]);
       state.conversations = conversations.conversations || [];
+      state.topics = topics.projects || [];
       render();
       status("");
     } catch (error) {
@@ -336,6 +484,7 @@ window.createChatNavigation = function ({ api, onOpen }) {
     if (state.busy) return;
     ++state.request;
     state.conversation = null;
+    state.pendingTopic = "";
     onOpen({ conversation_id: null, messages: [], followups: [] });
     render();
     updateUrl(push);
@@ -356,6 +505,7 @@ window.createChatNavigation = function ({ api, onOpen }) {
   $s("[data-close]").addEventListener("click", () => setOpen(false, true));
   backdrop.addEventListener("click", () => setOpen(false, true));
   $s("[data-new]").addEventListener("click", () => newChat());
+  $s("[data-new-topic]").addEventListener("click", () => startTopic(""));
   document.addEventListener("keydown", (event) => {
     if (!mobile.matches || !drawerOpen) return;
     if (event.key === "Escape") { event.preventDefault(); setOpen(false, true); }
@@ -397,6 +547,12 @@ window.createChatNavigation = function ({ api, onOpen }) {
     },
     async recordConversation(id) {
       state.conversation = id;
+      // Started under a topic: put there now that it is made.
+      if (state.pendingTopic && id) {
+        const topic = state.pendingTopic;
+        state.pendingTopic = "";
+        api.post("/api/conversation/topic", { id, topic }).then(refresh).catch(() => {});
+      }
       updateUrl(false);
       await refresh();
     },

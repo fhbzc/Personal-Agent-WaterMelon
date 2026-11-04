@@ -322,7 +322,7 @@ def hidden_import_arguments(target: str) -> List[str]:
 # cannot be read in the packaged application (runtime/video.py).
 _VIDEO = ["av", "faster_whisper", "ctranslate2"]
 COLLECT_ALL_PACKAGES = {"windows": ["winpty", "comtypes", "pystray", "tzdata", *_VIDEO],
-                        "macos": ["pystray", *_VIDEO], "linux": ["pystray", *_VIDEO]}
+                        "macos": ["pystray", *_VIDEO], "linux": ["tkinterdnd2", "pystray", *_VIDEO]}
 
 
 def collect_arguments(target: str) -> List[str]:

@@ -6,7 +6,7 @@ agent id, 是一个unique的，存在用户本机上 (放在data里，卸载也�
   them: Ed25519, to sign what the agent says; X25519, to open what is sealed
   for it - its public half signed by the first, so no one can put another in.
 * ITS PUBLIC ID is the Ed25519 public key's hash, short, for people:
-  `pa-XXXX-XXXX-XXXX-XXXX` (agent_society_server_end/society/ids.py makes it
+  `pa-XXXX-XXXX-XXXX-XXXX` (the server's society/ids.py makes it
   the same way). The private keys are never shown, never sent.
 * KEPT IN THE DATA FOLDER (credentials/), not the system keychain: it stays
   when the program is uninstalled, and moves with the user's data. Encrypted
@@ -60,6 +60,14 @@ def short_id(public_key: bytes) -> str:
         number >>= 5
     text = "".join(reversed(chars))
     return "pa-" + "-".join(text[at:at + 4] for at in range(0, 16, 4))
+
+
+def key_code(public_key: bytes) -> str:
+    """A key's fingerprint as the server names it (v2's X-Key): 60 bits of
+    its hash in Crockford's base32, `XXXX-XXXX-XXXX`. Of the PUBLIC key."""
+    number = int.from_bytes(hashlib.sha256(b"pa-key\x00" + public_key).digest()[:8], "big")
+    chars = "".join(CROCKFORD[(number >> (5 * n)) & 31] for n in range(12))[::-1]
+    return "-".join(chars[at:at + 4] for at in range(0, 12, 4))
 
 
 def normal_id(text: Any) -> Optional[str]:

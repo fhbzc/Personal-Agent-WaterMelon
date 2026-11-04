@@ -188,6 +188,33 @@ def extract(path: Any) -> Dict[str, Any]:
     return dict(said, from_copy=False, sha256=sha)
 
 
+def held_back(path: Any) -> bool:
+    """Whether a picture shows a password or a code, and so is not given to a
+    model - its words are, with those hidden."""
+    return bool(extract(path).get("credentials")) and _hides()
+
+
+def shows_credentials(text: str) -> bool:
+    """Whether words hold a password or a code: a drawing of the page holding
+    them is not given to a model."""
+    if not _hides():
+        return False
+    from ..common.credentials_guard import hide_credentials
+    return hide_credentials(text) != text
+
+
+def forget_copy(path: Any) -> None:
+    """What was read of a file let go - a screenshot's words stay no longer
+    than it does."""
+    forget_copy_of(sha256_of(Path(str(path))))
+
+
+def forget_copy_of(sha: str) -> None:
+    kept = _copy_path(sha)
+    if kept is not None:
+        kept.unlink(missing_ok=True)
+
+
 def _hides() -> bool:
     try:
         return bool(_hiding())
@@ -394,5 +421,6 @@ def read_for_model(path: Any, from_line: int = 1, most: int = 40000,
     return out
 
 
-__all__ = ["configure", "extract", "copy_of", "kind_of", "needs_reading", "read_for_model",
+__all__ = ["configure", "extract", "copy_of", "forget_copy", "forget_copy_of", "held_back", "shows_credentials", "kind_of", "needs_reading",
+           "read_for_model",
            "picture_for_model", "ocr_picture", "ocr_file", "PICTURES", "DOCUMENTS"]

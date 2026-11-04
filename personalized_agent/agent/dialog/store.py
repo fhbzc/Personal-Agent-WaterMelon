@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...common.events.models import json_dump, json_load, new_id
+
+
+log = logging.getLogger(__name__)
+
+#: What is kept of a turn of a conversation, by its task's id.
+TURN_RECORDS = ("raw_edits", "context_uses", "retrieval_timings")
 
 
 class ConversationStore:
@@ -129,11 +137,39 @@ class ConversationStore:
         return self.db.execute("DELETE FROM chat_followups WHERE id = ?",
                                (followup_id,)).rowcount > 0
 
+    def attachments(self, conversation_id: Optional[str] = None) -> List[str]:
+        """The ids of the files attached in a conversation - or in any."""
+        sql = "SELECT metadata FROM messages WHERE metadata LIKE '%chatfile_%'"
+        rows = self.db.query(sql + " AND conversation_id = ?", (conversation_id,)) \
+            if conversation_id else self.db.query(sql)
+        out: List[str] = []
+        for row in rows:
+            for one in (json_load(row["metadata"]) or {}).get("attachments") or []:
+                out.append(str(one.get("id")))
+        return out
+
     def delete(self, conversation_id: str) -> bool:
         """A conversation gone from the chat: its messages, what was summed up
-        of them and the follow-ups asked about them, with it. Whether there
-        was one. The files it made in its folder are the user's and stay."""
+        of them and the follow-ups asked about them, with it; and the records
+        of its turns (the user, 2026-11-04: "都删掉") - what was said and
+        answered, the tools used, what was looked up - and the copies of its
+        messages the heartbeat kept as materials. Whether there was one. The
+        files it made in its folder are the user's and stay."""
+        messages = self.db.query("SELECT id, metadata FROM messages WHERE conversation_id = ?",
+                                 (conversation_id,))
+        turns = {str((json_load(row["metadata"]) or {}).get("task_id") or "") for row in messages}
+        turns.discard("")
+        copies: List[str] = []
+        for row in messages:
+            for kept in self.db.query("SELECT copies FROM state_materials WHERE event_id = ?",
+                                      (row["id"],)):
+                copies.extend(str(one) for one in (json_load(kept["copies"]) or {}).values())
         with self.db.write() as conn:
+            for turn in turns:
+                for table in TURN_RECORDS:
+                    conn.execute(f"DELETE FROM {table} WHERE task_id = ?", (turn,))
+            for row in messages:
+                conn.execute("DELETE FROM state_materials WHERE event_id = ?", (row["id"],))
             conn.execute(
                 "DELETE FROM chat_followups WHERE conversation_id = ? OR message_id IN "
                 "(SELECT id FROM messages WHERE conversation_id = ?)",
@@ -143,6 +179,13 @@ class ConversationStore:
             conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
             gone = conn.execute("DELETE FROM conversations WHERE id = ?",
                                 (conversation_id,)).rowcount
+        for one in copies:
+            path = Path(one)
+            if "materials" in path.parts:                # never anything but a kept copy
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    log.info("a copy of a deleted message could not be removed", exc_info=True)
         return bool(gone)
 
     def conversations(self, limit: Optional[int] = 30) -> List[Dict[str, Any]]:
@@ -178,10 +221,52 @@ class ConversationStore:
     def project(self, project_id: str) -> Optional[Dict[str, Any]]:
         return self.db.query_one("SELECT * FROM chat_projects WHERE id = ?", (project_id,))
 
+    #: A topic's shared context at most so long.
+    MOST_CONTEXT = 20000
+
+    def edit_project(self, project_id: str, name: str, context: str) -> Optional[Dict[str, Any]]:
+        """A topic renamed, its shared context written - given to every
+        chat in it."""
+        name = str(name or "").strip()
+        if not name or len(name) > 120:
+            raise ValueError("a topic's name is 1 to 120 characters")
+        context = str(context or "")
+        if len(context) > self.MOST_CONTEXT:
+            raise ValueError(f"a topic's context is at most {self.MOST_CONTEXT} characters")
+        if not self.db.execute("UPDATE chat_projects SET name = ?, context = ? WHERE id = ?",
+                               (name, context, project_id)).rowcount:
+            return None
+        return self.project(project_id)
+
+    def delete_project(self, project_id: str) -> bool:
+        """A topic gone - its conversations kept, in no topic."""
+        with self.db.write() as conn:
+            conn.execute("UPDATE conversations SET project_id = NULL WHERE project_id = ?",
+                         (project_id,))
+            return bool(conn.execute("DELETE FROM chat_projects WHERE id = ?",
+                                     (project_id,)).rowcount)
+
+    def move_to_project(self, conversation_id: str, project_id: Optional[str]) -> bool:
+        """A conversation put under a topic - or, None, under none."""
+        if project_id and not self.project(project_id):
+            raise ValueError("there is no such topic")
+        return bool(self.db.execute("UPDATE conversations SET project_id = ? WHERE id = ?",
+                                    (project_id or None, conversation_id)).rowcount)
+
+    def topic_context(self, conversation_id: str) -> str:
+        """The shared context of the topic a conversation is under, with its
+        name; "" when it is under none, or the topic says nothing."""
+        row = self.db.query_one(
+            "SELECT p.name, p.context FROM chat_projects p JOIN conversations c "
+            "ON c.project_id = p.id WHERE c.id = ?", (conversation_id,))
+        if not row or not str(row.get("context") or "").strip():
+            return ""
+        return f"Topic: {row['name']}\n{str(row['context']).strip()}"
+
     def create_project(self, name: str) -> Dict[str, Any]:
         name = str(name or "").strip()
         if not name or len(name) > 120:
-            raise ValueError("a project's name is 1 to 120 characters")
+            raise ValueError("a topic's name is 1 to 120 characters")
         project = {"id": new_id("project"),
                    "created_at": datetime.now(timezone.utc).isoformat(), "name": name}
         self.db.execute("INSERT INTO chat_projects (id, created_at, name) VALUES (?, ?, ?)",

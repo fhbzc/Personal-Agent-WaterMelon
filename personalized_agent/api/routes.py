@@ -6,6 +6,8 @@ subsystem.  No business logic lives here.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 from typing import Any, Callable, Dict, List, Tuple
@@ -518,6 +520,52 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         the user saw it (its content hash), sealed and left for its agent."""
         return {"sent": _society(lambda: app.society.send_draft(
             str(request.require("id")), str(request.require("hash"))))}
+
+    # -- following and recent events (the user, 2026-11-03) ---------------------------------
+    @route("GET", "/api/society/events")
+    def society_events(request: Any) -> Any:
+        """The recent events of those followed - read once shown; whom the
+        agent follows; the user's own events; the draft one, if any."""
+        events = app.society.events()
+        if request.get("read"):
+            app.society.read_events()
+        following, mine, error = [], [], ""
+        try:
+            following = _society(app.society.following)
+            mine = _society(app.society.my_events)
+        except ApiError as exc:
+            error = str(exc)
+        return {"events": events, "following": following, "mine": mine,
+                "draft": app.society.status().get("event_draft"), "error": error}
+
+    @route("POST", "/api/society/follow")
+    def society_follow(request: Any) -> Any:
+        peer = str(request.require("id"))
+        if str(request.get("do") or "follow") == "unfollow":
+            return _society(lambda: app.society.unfollow(peer))
+        return _society(lambda: app.society.follow(peer))
+
+    @route("POST", "/api/society/events/collect")
+    def society_events_collect(_request: Any) -> Any:
+        return _society(app.society.collect_v2)
+
+    @route("POST", "/api/society/events/post")
+    def society_event_post(request: Any) -> Any:
+        """THE USER'S POST - the one door a recent event leaves by."""
+        return {"posted": _society(lambda: app.society.post_event(str(request.require("text"))))}
+
+    @route("POST", "/api/society/events/withdraw")
+    def society_event_withdraw(request: Any) -> Any:
+        return _society(lambda: app.society.withdraw_event(str(request.require("id"))))
+
+    @route("POST", "/api/society/events/draft")
+    def society_event_draft(request: Any) -> Any:
+        """The draft event kept as the user left it - or let go of."""
+        text = str(request.get("text") or "")
+        if not text.strip():
+            app.society.discard_event_draft()
+            return {"draft": None}
+        return {"draft": _society(lambda: app.society.draft_event(text, written_by="user"))}
 
     @route("POST", "/api/society/backup")
     def society_backup(request: Any) -> Any:
@@ -1244,7 +1292,7 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         return {"active": True, "task_id": progress.get("task_id"),
                 "origin": progress.get("kind"), "summary": progress.get("summary"),
                 "started_at": progress.get("started_at"),
-                "steps": progress.get("steps", [])}
+                "steps": progress.get("steps", []), "text": progress.get("text", "")}
 
     # ------------------------------------------------------------- states
     @route("GET", "/api/debugger/connections")
@@ -1665,8 +1713,71 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     # ---------------------------------------------------------------- agent
     @route("POST", "/api/chat")
     def chat(request: Any) -> Any:
-        message = str(request.require("message"))
-        return app.agent.handle_message(message, request.get("conversation_id"))
+        attachments = [str(one) for one in request.get("attachments") or []]
+        message = str(request.get("message") or "").strip()
+        if not message and not attachments:
+            raise ApiError("a message needs words or a file")
+        try:
+            return app.agent.handle_message(
+                message, request.get("conversation_id"), attachments=attachments or None,
+                mentions=[str(one) for one in request.get("mentions") or []] or None)
+        except ValueError as exc:
+            raise ApiError(str(exc), 400)
+
+    # TWO SPEEDS (agent/two_speed.py): the quick reply now, the full agent after.
+    @route("POST", "/api/chat/turn")
+    def chat_turn(request: Any) -> Any:
+        attachments = [str(one) for one in request.get("attachments") or []]
+        mentions = [str(one) for one in request.get("mentions") or []]
+        message = str(request.get("message") or "").strip()
+        if not message and not attachments:
+            raise ApiError("a message needs words or a file")
+        try:
+            if app.two_speed.on:
+                return app.two_speed.send(message, request.get("conversation_id"), attachments,
+                                          mentions)
+            said = app.agent.handle_message(message, request.get("conversation_id"),
+                                            attachments=attachments or None,
+                                            mentions=mentions or None)
+        except ValueError as exc:
+            raise ApiError(str(exc), 400)
+        return {**said, "layer": "", "turn": ""}
+
+    @route("GET", "/api/chat/turn")
+    def chat_turn_state(request: Any) -> Any:
+        return app.two_speed.state(str(request.require("id")))
+
+    # FILES AND PICTURES ATTACHED IN CHAT (agent/chat_files.py).
+    @route("POST", "/api/chat/upload")
+    def chat_upload(request: Any) -> Any:
+        try:
+            data = base64.b64decode(str(request.require("data")), validate=True)
+            return app.chat_files.save(request.require("name"), data)
+        except (ValueError, binascii.Error) as exc:
+            raise ApiError(str(exc), 400)
+
+    @route("POST", "/api/chat/file/remove")
+    def chat_file_remove(request: Any) -> Any:
+        """A file taken off before it was sent: what it was being read for
+        stops, and it goes. One sent goes with its conversation."""
+        ident = str(request.require("id"))
+        if ident in app.conversations.attachments():
+            raise ApiError("that file was sent", 409)
+        app.chat_files.forget([ident])
+        return {"removed": ident}
+
+    @route("POST", "/api/chat/clipboard")
+    def chat_clipboard(request: Any) -> Any:
+        """What the user has just pasted, when the page could not read it."""
+        return app.chat_files.from_clipboard(bool(request.get("with_text")))
+
+    @route("GET", "/api/chat/file")
+    def chat_file(request: Any) -> Any:
+        try:
+            data, media = app.chat_files.file(str(request.require("id")))
+        except KeyError:
+            raise ApiError("no such file", 404)
+        return Raw(data, media)
 
     @route("POST", "/api/chat/followup")
     def chat_followup(request: Any) -> Any:
@@ -1730,8 +1841,10 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         conversation_id = request.require("id")
         if not isinstance(conversation_id, str):
             raise ApiError("a conversation's id must be text")
+        attached = app.conversations.attachments(conversation_id)
         if not app.conversations.delete(conversation_id):
             raise ApiError("there is no such conversation", 404)
+        app.chat_files.forget(attached)              # and the files that were in it
         return {"deleted": conversation_id}
 
     @route("GET", "/api/chat/projects")
@@ -1747,6 +1860,53 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             return app.conversations.create_project(name)
         except ValueError as exc:
             raise ApiError(str(exc)) from exc
+
+    # -- CHAT TOPICS (the user, 2026-11-03, from PR #8): renamed, their
+    #    shared context written, deleted; a conversation moved under one.
+    @route("POST", "/api/chat/summary")
+    def chat_summary(request: Any) -> Any:
+        """A SUMMARY DOCUMENT of the answers the user ticked, from them alone
+        (agent/chat_summary.py) - read here by their ids."""
+        from ..agent.chat_summary import answers_of, summarise
+        ids = request.require("ids")
+        if not isinstance(ids, list):
+            raise ApiError("ids is a list of the answers' ids")
+        try:
+            return summarise(app.models, answers_of(app.conversations, ids),
+                             str(request.get("title") or ""), str(request.get("style") or "plain"))
+        except ValueError as exc:
+            raise ApiError(str(exc)) from exc
+
+    @route("POST", "/api/chat/projects/edit")
+    def edit_chat_project(request: Any) -> Any:
+        try:
+            done = app.conversations.edit_project(str(request.require("id")),
+                                                  str(request.require("name")),
+                                                  str(request.get("context") or ""))
+        except ValueError as exc:
+            raise ApiError(str(exc)) from exc
+        if done is None:
+            raise ApiError("there is no such topic", 404)
+        return done
+
+    @route("POST", "/api/chat/projects/delete")
+    def delete_chat_project(request: Any) -> Any:
+        if not app.conversations.delete_project(str(request.require("id"))):
+            raise ApiError("there is no such topic", 404)
+        return {"deleted": str(request.require("id"))}
+
+    @route("POST", "/api/conversation/topic")
+    def conversation_topic(request: Any) -> Any:
+        """A conversation put under a topic, or under none (`topic` empty)."""
+        conversation_id = str(request.require("id"))
+        try:
+            moved = app.conversations.move_to_project(conversation_id,
+                                                      str(request.get("topic") or "") or None)
+        except ValueError as exc:
+            raise ApiError(str(exc), 404) from exc
+        if not moved:
+            raise ApiError("there is no such conversation", 404)
+        return {"id": conversation_id, "topic": str(request.get("topic") or "")}
 
     @route("GET", "/api/conversation")
     def conversation(request: Any) -> Any:
@@ -3182,8 +3342,9 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                 # issue's, and of the ones in the collection.
                 "says": {**kept["says"],
                          **says_of(app.db, (briefing or {}).get("id") or "")},
-                # The stories kept, from any issue, and which of this one's.
-                "collection": kept["items"],
+                # The stories kept, from any issue, and which of this one's -
+                # and their folders.
+                "collection": kept["items"], "folders": kept.get("folders") or [],
                 "collected": collected_of(app.db, (briefing or {}).get("id") or ""),
                 "progress": dict(app.connections_round.progress),
                 # When the next issue is made, and in which time zone.
@@ -3213,6 +3374,30 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             return uncollect(app.db, story)
         try:
             return collect(app.db, app.connections, str(request.require("issue")), story)
+        except KeyError as exc:
+            raise ApiError(str(exc).strip("'"), 404)
+
+    @route("POST", "/api/recommend/collection/folder")
+    def recommend_collection_folder(request: Any) -> Any:
+        """A folder of the collection made, renamed or moved, or deleted
+        (only when it is empty)."""
+        from ..heartbeat.connections.recommend import edit_folder
+        try:
+            return edit_folder(app.db, str(request.require("action")),
+                               str(request.get("id") or ""), str(request.get("name") or ""),
+                               str(request.get("parent") or ""))
+        except KeyError as exc:
+            raise ApiError(str(exc).strip("'"), 404)
+        except ValueError as exc:
+            raise ApiError(str(exc), 409)
+
+    @route("POST", "/api/recommend/collection/move")
+    def recommend_collection_move(request: Any) -> Any:
+        """A kept story put in a folder, or in none."""
+        from ..heartbeat.connections.recommend import move_kept
+        try:
+            return move_kept(app.db, str(request.require("story")),
+                             str(request.get("folder") or ""))
         except KeyError as exc:
             raise ApiError(str(exc).strip("'"), 404)
 
@@ -3376,6 +3561,15 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                           app.connections_round.running)
         return {"started": started, "progress": dict(app.connections_round.progress)}
 
+    @route("POST", "/api/connections/cancel")
+    def connections_cancel(request: Any) -> Any:
+        """The issue being made, cancelled (the user, 2026-11-03): no issue
+        kept, as if it had never been started."""
+        said = app.connections_round.cancel()
+        if said.get("error"):
+            raise ApiError(said["error"], 409)
+        return {"cancelled": True, "progress": dict(app.connections_round.progress)}
+
     # ------------------------------------------------------ testing browser
     # BROWSER TESTING, in Settings (runtime/browser.py): Google's Chrome for
     # Testing headless shell, downloaded only when the user asks.
@@ -3475,18 +3669,111 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         except Exception:        # pragma: no cover - the list shows without it
             log.debug("what came of the to-dos could not be read", exc_info=True)
             came = {}
+        shown = app.todos.shown()
         return {"todos": [dict(one, work=came[one["id"]]) if one.get("id") in came else one
-                          for one in app.todos.shown()]}
+                          for one in shown],
+                # IN GROUPS (list_groups.py): the open ones.
+                "groups": _list_groups("todo", [one for one in shown if not one.get("done_at")])}
 
     @route("GET", "/api/work/assigned")
     def work_assigned(_request: Any) -> Any:
         """WORK ASSIGNED, on the Overview left of To do: the work delegated
         not from a to-do, each with where it stands."""
         try:
-            return {"assigned": app.drafts.assigned()}
+            assigned = app.drafts.assigned()
         except Exception:        # pragma: no cover - the panel shows without it
             log.debug("the work assigned could not be read", exc_info=True)
             return {"assigned": []}
+        return {"assigned": assigned, "groups": _list_groups("assigned", assigned)}
+
+    def _list_groups(which: str, items: List[Dict[str, Any]]) -> Any:
+        grouper = getattr(app, "list_groups", None)
+        if grouper is None:
+            return None
+        try:
+            return grouper.view(which, items)
+        except Exception:        # pragma: no cover - the list shows ungrouped
+            log.debug("the %s list's groups could not be read", which, exc_info=True)
+            return None
+
+    # -- THE USER MOVES THE GROUPS (list_groups.py): each change kept, the
+    #    next grouping told it first.
+    @route("POST", "/api/lists/groups/rename")
+    def list_groups_rename(request: Any) -> Any:
+        try:
+            return {"groups": app.list_groups.rename(str(request.require("list")),
+                                                     str(request.require("from")),
+                                                     str(request.require("to")))}
+        except ValueError as exc:
+            raise ApiError(str(exc), 400)
+
+    @route("POST", "/api/lists/groups/move")
+    def list_groups_move(request: Any) -> Any:
+        """An item put in a group - one there is or a new one - or, `to`
+        empty, in Others."""
+        try:
+            return {"groups": app.list_groups.move(str(request.require("list")),
+                                                   str(request.require("item")),
+                                                   str(request.get("to") or ""))}
+        except ValueError as exc:
+            raise ApiError(str(exc), 400)
+
+    # -- THE MONITOR (heartbeat/monitor/, the user, 2026-11-03): the signals now,
+    #    the Activators and what they did; the user's two switches - on, and
+    #    protected (then the model can neither change nor delete it).
+    @route("GET", "/api/monitor")
+    def monitor_status(request: Any) -> Any:
+        from ..heartbeat.monitor.signals import Signals
+        said = app.monitor.status()
+        said["interface"] = Signals.describe()
+        return said
+
+    @route("POST", "/api/monitor/switch")
+    def monitor_switch(request: Any) -> Any:
+        try:
+            return {"activator": app.monitor.store.switch(str(request.require("id")),
+                                                          bool(request.get("on")))}
+        except ValueError as exc:
+            raise ApiError(str(exc), 404)
+
+    @route("POST", "/api/monitor/undo")
+    def monitor_undo(request: Any) -> Any:
+        """What a turn of the agent's changed, taken back: there is no asking
+        before such a change, so there is this after it."""
+        ids = request.require("ids")
+        if not isinstance(ids, list):
+            raise ApiError("ids is a list")
+        return {"undone": app.monitor.store.undo([str(one) for one in ids])}
+
+    @route("POST", "/api/monitor/quiet/remove")
+    def monitor_quiet_remove(request: Any) -> Any:
+        return {"removed": app.monitor.store.remove_quiet(str(request.require("id")), "user")}
+
+    @route("POST", "/api/monitor/protect")
+    def monitor_protect(request: Any) -> Any:
+        try:
+            return {"activator": app.monitor.store.protect(str(request.require("id")),
+                                                           bool(request.get("protected")))}
+        except ValueError as exc:
+            raise ApiError(str(exc), 404)
+
+    @route("POST", "/api/lists/groups/add")
+    def list_groups_add(request: Any) -> Any:
+        """A group with nothing in it yet (the user, 2026-11-03)."""
+        try:
+            return {"groups": app.list_groups.add_group(str(request.require("list")),
+                                                        str(request.require("name")))}
+        except ValueError as exc:
+            raise ApiError(str(exc), 400)
+
+    @route("POST", "/api/lists/groups/delete")
+    def list_groups_delete(request: Any) -> Any:
+        """A group deleted by the user: its items in Others."""
+        try:
+            return {"groups": app.list_groups.delete_group(str(request.require("list")),
+                                                           str(request.require("name")))}
+        except ValueError as exc:
+            raise ApiError(str(exc), 400)
 
     @route("POST", "/api/todos/add")
     def todos_add(request: Any) -> Any:
@@ -3526,7 +3813,7 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         if request.get("all"):
             app.notifications.mark_all_read()
         else:
-            app.notifications.mark_read(str(request.require("id")))
+            app.notification_got_it(str(request.require("id")))
         return {"ok": True}
 
     # ---------------------------------------------------------------- tokens

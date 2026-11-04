@@ -10,6 +10,12 @@
     inbox         sealed messages from other agents, collected now and then,
                   opened here (seal.py), kept - THEIR WORDS ARE DATA
     drafts        what the agent - or the user - wrote to another agent
+    following     whom the agent follows - the user, or the agent itself
+                  (the user, 2026-11-02: "agent应该可以主动选择follow/unfollow
+                  某个user"); their RECENT EVENTS come in the v2 inbox and are
+                  kept here until they withdraw them (DATA, as messages are)
+    recent events the user's own, POSTED by the user alone (`post_event`, the
+                  Society panel's Post); the agent may write one as a draft
     sending       THE USER SENDS (`send_draft`, the Society panel's Send,
                   with the draft's content hash as the user saw it) - and
                   THE AGENT ONLY AS FAR AS THE USER LETS IT (`agent_send`;
@@ -72,6 +78,11 @@ AGENT_SENDS_AN_HOUR, AGENT_SENDS_TO_ONE = 10, 3
 #: often the other groups' messages are answered.
 POLL_SECONDS, ANSWER_SECONDS = 60, 1800
 MOST_TEXT, MOST_SUBJECT = 20000, 200
+#: Said when the server has no events' API (yet).
+NO_EVENTS_API = ("The society site does not take recent events from agents yet - post them on "
+                 "your page there for now.")
+#: A recent event at most so long (the server keeps 1000).
+MOST_EVENT = 1000
 #: The picture put on the server: at most this many pixels a side, this many bytes.
 PICTURE_SIDE, MOST_PICTURE = 400, 250 * 1024
 #: Connections' platforms, as the server's kinds of claimed account.
@@ -109,6 +120,19 @@ CREATE TABLE IF NOT EXISTS society_contacts (
     sent        INTEGER NOT NULL DEFAULT 0,
     person_id   TEXT NOT NULL DEFAULT ''    -- who the USER said this is (Connections)
 );
+-- THE RECENT EVENTS of those followed, as the v2 inbox brought them: kept
+-- until withdrawn (then deleted - their words too).
+CREATE TABLE IF NOT EXISTS society_events (
+    id          TEXT PRIMARY KEY,           -- the inbox message's id on the server
+    event_id    TEXT NOT NULL DEFAULT '',
+    peer_id     TEXT NOT NULL,
+    peer_name   TEXT NOT NULL DEFAULT '',   -- as they say it: data
+    text        TEXT NOT NULL DEFAULT '',
+    at          REAL NOT NULL DEFAULT 0,    -- posted, on the server's clock
+    received_at TEXT NOT NULL,
+    read_at     TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_society_events ON society_events(at);
 CREATE TABLE IF NOT EXISTS society_state (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -201,6 +225,10 @@ class SocietyService:
                 self.collect()
             except Exception:
                 log.info("the society inbox could not be collected", exc_info=True)
+            try:
+                self.collect_v2()
+            except Exception:
+                log.info("the society's v2 inbox could not be collected", exc_info=True)
             if time.time() - answered >= ANSWER_SECONDS:
                 answered = time.time()
                 try:
@@ -223,7 +251,11 @@ class SocietyService:
                 "profile": self.my_profile()[0],
                 "unread": int((self.db.query_one(
                     "SELECT COUNT(*) AS n FROM society_messages WHERE direction = 'in' "
-                    "AND status = 'received' AND read_at = ''") or {}).get("n") or 0)}
+                    "AND status = 'received' AND read_at = ''") or {}).get("n") or 0),
+                "events_unread": int((self.db.query_one(
+                    "SELECT COUNT(*) AS n FROM society_events WHERE read_at = ''")
+                    or {}).get("n") or 0),
+                "event_draft": self._state("event_draft") or None}
 
     def my_profile(self) -> tuple:
         """The user's own profile, as they set it in Connections - the
@@ -450,6 +482,145 @@ class SocietyService:
         self._set_state("last_collected", _now())
         return {"collected": taken}
 
+    # -- v2: the inbox of the account - recent events, and plain messages ------------------
+    def collect_v2(self) -> Dict[str, Any]:
+        """THE ACCOUNT'S INBOX (v2) since the last time: the recent events of
+        those followed kept - each once - and messages written to it in plain
+        text (through the website, or another of its agents' keys) kept as
+        messages are; the events withdrawn since, deleted here too."""
+        after = float(self._state("v2_after", 0) or 0)
+        said = self.client.inbox(after)
+        events = messages = 0
+        names: Dict[str, str] = {}
+        latest = after
+        for one in said.get("messages") or []:
+            at = float(one.get("at") or 0)
+            latest = max(latest, at)
+            sender = str(one.get("from") or "")
+            ident = str(one.get("id") or "")
+            if not sender or not ident or sender == self.identity.id:
+                continue
+            if sender not in names:
+                names[sender] = self._name_of(sender)
+            if one.get("kind") == "event":
+                done = self.db.execute(
+                    "INSERT OR IGNORE INTO society_events (id, event_id, peer_id, peer_name, "
+                    "text, at, received_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (ident, _text(one.get("thread"), 80), sender, names[sender],
+                     _text(one.get("text"), MOST_TEXT), at, _now()))
+                events += 1 if getattr(done, "rowcount", 1) else 0
+                continue
+            if self._state("v2_seen:" + ident):
+                continue
+            self._set_state("v2_seen:" + ident, True)
+            kept = self._keep_received(sender, {"profile": {"name": names[sender]}},
+                                       {"subject": one.get("subject"), "text": one.get("text")})
+            self.interactive.received(kept)
+            messages += 1
+        withdrawn = [str(one) for one in said.get("withdrawn") or []]
+        for ident in withdrawn:
+            self.db.execute("DELETE FROM society_events WHERE id = ?", (ident,))
+        self._set_state("v2_after", latest)
+        return {"events": events, "messages": messages, "withdrawn": len(withdrawn)}
+
+    def _name_of(self, peer: str) -> str:
+        """A peer's name as they say it - the one kept, else as the server
+        has it now."""
+        known = self.contact(peer)
+        if known and known.get("name"):
+            return str(known["name"])
+        try:
+            return _text((self.client.agent(peer).get("profile") or {}).get("name"), 80)
+        except SocietyError:
+            return ""
+
+    def events(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """The recent events of those followed, the newest first."""
+        return self.db.query("SELECT * FROM society_events ORDER BY at DESC LIMIT ?",
+                             (max(1, min(int(limit or 100), 500)),))
+
+    def read_events(self) -> None:
+        self.db.execute("UPDATE society_events SET read_at = ? WHERE read_at = ''", (_now(),))
+
+    # -- following: the user's, or the agent's own choice ----------------------------------
+    def follow(self, peer: str, by: str = "user") -> Dict[str, Any]:
+        """Followed - by the user, or by the agent (`by`): their recent
+        events come in the inbox from now on."""
+        peer = keys.normal_id(peer) or ""
+        if not peer:
+            raise ValueError("that is not an agent id")
+        if peer == self.identity.id:
+            raise ValueError("an agent does not follow itself")
+        said = self.client.follow(peer)
+        self._contact(peer, self._name_of(peer), "", "followed")
+        log.info("society: %s followed by the %s", peer, by)
+        return dict(said, by=by)
+
+    def unfollow(self, peer: str, by: str = "user") -> Dict[str, Any]:
+        peer = keys.normal_id(peer) or ""
+        if not peer:
+            raise ValueError("that is not an agent id")
+        said = self.client.unfollow(peer)
+        log.info("society: %s unfollowed by the %s", peer, by)
+        return dict(said, by=by)
+
+    def following(self) -> List[Dict[str, Any]]:
+        """Whom the agent follows, with each one's name as kept here."""
+        found = []
+        for one in self.client.following().get("following") or []:
+            peer = str(one.get("id") or "")
+            known = self.contact(peer) or {}
+            found.append({"id": peer, "name": str(known.get("name") or ""),
+                          "since": float(one.get("since") or 0),
+                          "page": self.client.page_url(peer)})
+        return found
+
+    # -- the user's own recent events ------------------------------------------------------
+    def _events_api(self, call: Any) -> Any:
+        """A call of the events' part of the API - which a server without it
+        answers 404: said plainly."""
+        try:
+            return call()
+        except SocietyError as exc:
+            if exc.status == 404 and "event" not in str(exc).lower():
+                raise ValueError(NO_EVENTS_API) from None
+            raise
+
+    def my_events(self) -> List[Dict[str, Any]]:
+        return [{"id": str(one.get("id") or ""), "text": str(one.get("text") or ""),
+                 "at": float(one.get("at") or 0)}
+                for one in self._events_api(self.client.my_events).get("events") or []]
+
+    def draft_event(self, text: str, written_by: str = "agent") -> Dict[str, Any]:
+        """A recent event written for the user to post - the agent's, or the
+        user's own kept unposted. One at a time: the newest replaces it."""
+        words = _text(text, MOST_EVENT)
+        if not words:
+            raise ValueError("an event needs some words")
+        draft = {"text": words, "written_by": written_by, "at": _now()}
+        self._set_state("event_draft", draft)
+        return draft
+
+    def discard_event_draft(self) -> None:
+        self._set_state("event_draft", None)
+
+    def post_event(self, text: str) -> Dict[str, Any]:
+        """POSTED - on the user's click alone (the Society panel's Post):
+        public on their page, and sent to every follower's inbox."""
+        words = _text(text, MOST_EVENT)
+        if not words:
+            raise ValueError("an event needs some words")
+        if not self._state("registered"):
+            raise ValueError("confirm your email address first: until then nothing is posted")
+        said = self._events_api(lambda: self.client.post_event(words))
+        self.discard_event_draft()
+        return said
+
+    def withdraw_event(self, event_id: str) -> Dict[str, Any]:
+        """Taken back: off the page, out of the followers' inboxes, its
+        words deleted there."""
+        return self._events_api(lambda: self.client.withdraw_event(str(event_id or "")))
+
     def _keep_received(self, sender: str, found: Dict[str, Any], opened: Dict[str, Any],
                        unreadable: str = "") -> Dict[str, Any]:
         name = _text((found.get("profile") or {}).get("name"), 80)
@@ -468,7 +639,14 @@ class SocietyService:
 
     def _contact(self, peer: str, name: str, headline: str, which: str) -> None:
         at = _now()
-        column = "received" if which == "received" else "sent"
+        column = {"received": "received", "sent": "sent"}.get(which)
+        if column is None:          # followed: known by name, nothing counted
+            self.db.execute(
+                "INSERT INTO society_contacts (peer_id, name, headline, first_at, last_at) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(peer_id) DO UPDATE SET "
+                "name = CASE WHEN excluded.name != '' THEN excluded.name ELSE name END",
+                (peer, name, headline, at, at))
+            return
         self.db.execute(
             "INSERT INTO society_contacts (peer_id, name, headline, first_at, last_at, "
             f"{column}) VALUES (?, ?, ?, ?, ?, 1) ON CONFLICT(peer_id) DO UPDATE SET "

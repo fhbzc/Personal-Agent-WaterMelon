@@ -38,7 +38,12 @@ ROLES = ("primary", "heartbeat", "scheduled_task")
 _ROLE_OVERRIDE_KEYS = {
     "heartbeat": "heartbeat_model_override",
     "scheduled_task": "scheduled_task_model_override",
+    "fast_reply": "chat_fast_model",
 }
+
+#: The quick reply in Chat (agent/two_speed.py), left unset: the small model of a
+#: provider that has one; elsewhere whatever the chat runs on.
+FAST_MODELS = {"claude_code": "claude-haiku-5-5", "anthropic": "claude-haiku-5-5"}
 
 #: What a usage limit says, for a provider that files it as a rate limit
 #: (Claude Code's session limit): it does not pass in seconds, so the next
@@ -300,6 +305,11 @@ class ModelManager:
         self.invalidate()
         return kept
 
+    def lowest_effort(self, provider_id: str, model_id: str) -> str:
+        """The least thinking this model can be asked for; "" if it has no say."""
+        offered = self.efforts_of(provider_id, model_id)
+        return next((one for one in ("none", "minimal", "low") if one in offered), "")
+
     def efforts_of(self, provider_id: str, model_id: str) -> List[str]:
         """The levels of thinking a model on the list may be asked for."""
         provider = self.provider(provider_id)
@@ -360,6 +370,8 @@ class ModelManager:
             if parsed:
                 return ResolvedModel(role, parsed[0], parsed[1], True)
         chain = self.chain(role)
+        if role == "fast_reply" and chain and chain[0].provider_id in FAST_MODELS:
+            return ResolvedModel(role, chain[0].provider_id, FAST_MODELS[chain[0].provider_id], True)
         # With the list emptied, what there was before it - only to be named:
         # `invoke` asks none.
         return chain[0] if chain else self._primary(role)
@@ -697,6 +709,11 @@ class ModelManager:
             # Not the fallback's: chosen for the primary model alone.
             if resolved.provider_id != "codex" or resolved.is_override or fallback_used:
                 effort = ""
+        # THE QUICK REPLY THINKS AS LITTLE AS THE MODEL ALLOWS (the user, 2026-11-04):
+        # where there is no small model it runs on the large one, and it must
+        # still be quick.
+        if resolved.role == "fast_reply":
+            effort = self.lowest_effort(resolved.provider_id, resolved.model_id) or effort
         if effort and effort != "default" and request.reasoning_effort is None:
             request = replace(request, reasoning_effort=effort)
         request = self._as_configured(request)

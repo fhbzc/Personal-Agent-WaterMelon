@@ -12,7 +12,7 @@ import logging
 import sys
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .agent.character.manager import CharacterManager
 from .agent.core.agent_core import AgentCore
@@ -356,6 +356,38 @@ class AgentApplication:
         self.calendar_nature = CalendarNature(self.db, self.models, self.config,
                                               lessons=self.lessons)
         self.heartbeat.calendar_nature = self.calendar_nature
+        # THE MONITOR (heartbeat/monitor/, the user, 2026-11-03): the real-time
+        # signals, the Activators the model writes and code runs on them - the
+        # two rules above among them, built in and protected - and what they
+        # ask the model; the heartbeat's step_monitor judges what they queue.
+        # The lessons are given by what a moment is like (the user: "做context
+        # retrieval") - they are written in English, and read by the state
+        # heartbeat's own embedding model; a window is placed by its words.
+        from .heartbeat.monitor.decide import Decider
+        from .heartbeat.monitor.engine import Monitor
+        from .heartbeat.monitor.signals import Signals as MonitorSignals
+        embedder = getattr(self.state_heartbeat, "embedder", None)
+        from .heartbeat.lessons.retrieve import LessonRetriever
+        self.lesson_retriever = LessonRetriever(self.lessons, embedder, self.models)
+        self.calendar_nature.retriever = self.lesson_retriever
+        # The lessons made again, once, as examples and rules in English.
+        self.lessons.rebuild_once()
+        self.monitor_signals = MonitorSignals(
+            self.db, self.config, states=self.states,
+            idle=getattr(activity, "seconds_since_input", None))
+        self.monitor_decider = Decider(self.db, self.config, self.models, self.monitor_signals,
+                                       lessons=self.calendar_nature,
+                                       experience=self._monitor_experience,
+                                       tasks=self._monitor_tasks)
+        self.monitor = Monitor(self.db, self.config, self.monitor_signals,
+                               notifications=self.notifications, questions=self.questions,
+                               decider=self.monitor_decider, heartbeat=self.heartbeat)
+        self.triggers.rules = self.monitor.text_rules
+        self.heartbeat.monitor_step = lambda: self.monitor_decider.step(self.monitor)
+        self.bus.subscribe("feedback.answered", self.monitor.on_answered)
+        # EVERY ANSWER LEARNED FROM (the user, 2026-11-03): a question's here;
+        # a notification's own buttons where they are pressed (`learn_answer`).
+        self.bus.subscribe("feedback.answered", self._question_answered)
         # THE USER'S CONNECTIONS (heartbeat/connections/): the people around
         # them - written by the agent heartbeat's step 2 from what the user
         # had in front of them, and by the user in the Connections panel -
@@ -367,6 +399,7 @@ class AgentApplication:
         # Their pictures in the protected state, beside nothing of the user's.
         self.connections = ConnectionsStore(self.db, self.paths.data_dir / "connections")
         self.connections.lessons = self.lessons
+        self.connections.retriever = self.lesson_retriever
         self.connections_round = ConnectionsRound(self.connections, self.models, self.db)
         # Its contacts' part only while Connections is on (the user,
         # 2026-10-30): with it off, an issue is the news alone.
@@ -464,6 +497,41 @@ class AgentApplication:
         self.society = SocietyService(self)
         from .society.tools import add_tools as _society_tools
         _society_tools(self.agent.tools, self.society)
+        # THE TO-DO LIST from the chat (agent/feedback/todo_tools.py): added
+        # when the user asks; never taken off by the agent.
+        from .agent.feedback.todo_tools import add_tools as _todo_tools
+        _todo_tools(self.agent.tools, self.todos)
+        # THE MONITOR FROM CHAT (heartbeat/monitor/tools.py): its signals, its
+        # Activators - added, edited, deleted only when it must; never a protected one.
+        from .heartbeat.monitor.tools import add_tools as _monitor_tools
+        _monitor_tools(self.agent.tools, self.monitor,
+                       lambda: getattr(self, "lesson_retriever", None))
+        # FILES AND PICTURES ATTACHED IN CHAT, kept in the agent's own folder.
+        from .agent.chat_files import ChatFiles, add_tools as _chat_file_tools
+        self.chat_files = ChatFiles(self.paths.data_dir / "chat_files", prepares=True)
+        self.agent.chat_files = self.chat_files
+        _chat_file_tools(self.agent.tools, self.chat_files)
+        from .agent.two_speed import TwoSpeed
+        self.two_speed = TwoSpeed(self.agent, self.conversations, self.agent.models, self.config,
+                                  self.chat_files, self.db)
+        self.chat_files.forget_unsent(self.conversations.attachments())
+        # LESSONS FROM THE CHAT (heartbeat/lessons/tools.py): what the user says
+        # to remember, kept like every other lesson.
+        from .heartbeat.lessons.tools import add_tools as _lesson_tools
+        _lesson_tools(self.agent.tools, self.lessons, self.lesson_retriever)
+        # A NEWSPAPER SPECIAL ISSUE FROM CHAT (the user, 2026-11-03, from PR
+        # #8): the brief agreed in the chat handed to the newspaper.
+        self._add_special_issue_tool()
+        # THE TWO LISTS IN GROUPS (agent/feedback/list_groups.py): grouped by
+        # a model whenever an item comes or changes - Task organisation's
+        # calls - the user's own moves told to it first.
+        from .agent.feedback.list_groups import ListGroups
+        from .common import modules as _modules
+        self.list_groups = ListGroups(
+            self.db, lambda: self.models,
+            {"todo": lambda: [one for one in self.todos.shown() if not one.get("done_at")],
+             "assigned": lambda: self.drafts.assigned()},
+            allowed=lambda: _modules.enabled(self.config, "tasks"))
 
         # UPDATES from the project's published releases (platform_layer/
         # updater.py): never while a piece of work runs. `quit` is set by
@@ -712,6 +780,7 @@ class AgentApplication:
         if shown is None:
             return None
         self.notifications.mark_read(notification_id)
+        self.learn_answer(shown, "remind_later")
         meta = shown.get("metadata") or {}
         when = utcnow() + timedelta(minutes=self.REMIND_LATER_MINUTES)
         note = f"Remind me later, pressed on \"{shown.get('title') or ''}\""
@@ -786,6 +855,85 @@ class AgentApplication:
         from .agent.character.manager import avatar_name
         return avatar_name(self.config, getattr(self, "characters", None))
 
+    def _add_special_issue_tool(self) -> None:
+        from .common import modules as _modules
+        from .models.base import ToolSpec
+
+        def make(args: Dict[str, Any]) -> Any:
+            if not _modules.enabled(self.config, "recommend"):
+                return {"error": "Newspaper is switched off in Settings: no special issue "
+                                 "can be made. Tell the user."}
+            return self.connections_round.start_special(str(args.get("requirements") or ""),
+                                                        str(args.get("title") or ""))
+        self.agent.tools.add(ToolSpec(
+            "make_special_issue",
+            "Hand a SPECIAL ISSUE's brief to the Newspaper, which researches it on the web "
+            "and publishes it there. In the chat you only make the brief clear with the user "
+            "- ask, offer options - and call this once they want it made; you never write "
+            "the issue here, nor copy the conversations into it as stories. The requirements "
+            "carry everything agreed (audience, depth, time range, sources) and what of the "
+            "chosen conversations it is about. A title only when the user gave one. Say that "
+            "it was started, not that it is done.",
+            {"type": "object", "properties": {
+                "requirements": {"type": "string", "description": "the brief, in full"},
+                "title": {"type": "string", "description": "only a title the user gave"}},
+             "required": ["requirements"], "additionalProperties": False}), make)
+
+    # -- EVERY ANSWER IS LEARNED FROM (the user, 2026-11-03: "所有notification,
+    #    包括question, 的每个answer (包括add to do)都进行一个学习") -----------------------
+    #: What each of a notification's own buttons says, for the model.
+    ANSWERS = {"got_it": "saw it, with no complaint", "remind_later": "wanted it later: the "
+               "moment was wrong, not necessarily the content",
+               "to_todo": "worth doing: put it on their to-do list"}
+    #: "Got it" says little: a weak sign.
+    WEAK_ANSWERS = {"got_it": 0.5, "acknowledged": 0.5}
+
+    def learn_answer(self, notification: Optional[Dict[str, Any]], answer: str, meaning: str = "",
+                     said: str = "", question: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """One answer, an example for the lessons: what was said or asked, why
+        it was made, what the user answered, in their words."""
+        shown = notification or {}
+        title = str(shown.get("title") or (question or {}).get("question") or "")
+        message = str(shown.get("message") or (question or {}).get("task_detail") or "")
+        if not (title or message) or shown.get("kind") not in (None, "proactive"):
+            return None
+        meaning = meaning or self.ANSWERS.get(answer, answer)
+        summary = f'The agent said "{title}": {message[:600]} - the user answered "{answer}": {meaning}.'
+        try:
+            source = str(shown.get("id") or (question or {}).get("id") or "")
+            return self.lessons.record(
+                "notifications", f"answer:{source}:{answer}", summary, action=answer,
+                reason=str(said or "")[:1000], weight=None if said else self.WEAK_ANSWERS.get(answer),
+                content=json.dumps({"notification": shown or None, "question": question,
+                                    "answer": answer, "means": meaning}, ensure_ascii=False,
+                                   default=str))
+        except Exception:
+            log.warning("an answer could not be learned from", exc_info=True)
+            return None
+
+    def _question_answered(self, _topic: str, payload: Any = None) -> None:
+        """A question answered: learned from, with its notification."""
+        if not isinstance(payload, dict):
+            return
+        from .agent.feedback.templates import meaning_of
+        answer = str(payload.get("answer") or "")
+        notification_id = str((payload.get("metadata") or {}).get("notification_id") or "")
+        shown = self.notifications.get(notification_id) if notification_id else None
+        if shown is None:
+            row = self.db.query_one("SELECT id FROM notifications WHERE metadata LIKE ? "
+                                    "ORDER BY created_at DESC LIMIT 1",
+                                    (f'%"question_id": "{payload.get("id")}"%',))
+            shown = self.notifications.get(row["id"]) if row else None
+        self.learn_answer(shown, answer, meaning_of(str(payload.get("kind") or ""), answer),
+                          str(payload.get("comment") or ""), payload)
+
+    def notification_got_it(self, notification_id: str) -> None:
+        """Got it: read, and an answer like any other."""
+        shown = self.notifications.get(notification_id)
+        self.notifications.mark_read(notification_id)
+        if shown is not None and not (shown.get("metadata") or {}).get("question_id"):
+            self.learn_answer(shown, "got_it")
+
     def notification_to_todo(self, notification_id: str) -> Optional[Dict[str, Any]]:
         """"Add to to-do": no more notifications about it - dismissed, and
         the question it asked, if any, answered so - and on the to-do list,
@@ -804,6 +952,8 @@ class AgentApplication:
                                       "AND deleted_at = ''", (notification_id,))
             if found is not None:
                 return self.todos.get(found["id"])
+        else:
+            self.learn_answer(shown, "to_todo")      # a question's answer is learned as one
         return self.todos.add(str(shown.get("title") or ""), str(shown.get("message") or ""),
                               notification_id=notification_id,
                               task_id=str(meta.get("task_id") or ""))
@@ -819,8 +969,38 @@ class AgentApplication:
         task_id = str((shown.get("metadata") or {}).get("task_id") or "")
         task = self.scheduler.store.get(task_id) if task_id else None
         self.notifications.mark_read(notification_id)
+        # One of the Monitor's: kept whole with why it was made (engine.on_bad).
+        try:
+            self.monitor.on_bad(shown, said)
+        except Exception:
+            log.warning("the Monitor could not keep a bad notification", exc_info=True)
         return self.calendar_nature.record("bad_notification", task, shown,
                                            said=said)
+
+    # -- what the Monitor's decisions are given (heartbeat/monitor/decide.py) ----------
+    def _monitor_tasks(self) -> List[str]:
+        """The work going on: the tasks worked on lately, with where each stands."""
+        from .heartbeat.states.tasks import Kept
+        tasks = sorted(Kept(self.db).live(), key=lambda one: str(getattr(one, "updated_at", "")
+                                                                 or ""), reverse=True)
+        out = []
+        for task in tasks[:12]:
+            said = task.described or {}
+            title = str(said.get("title") or "").strip()
+            if title and not said.get("deleted_by_user"):
+                status = str(said.get("status") or said.get("where_it_stands") or "").strip()
+                out.append(title + (f" - {status[:160]}" if status else ""))
+        return out
+
+    def _monitor_experience(self, query: str) -> List[str]:
+        """What was learned of how the user works, like the moment (Work learning)."""
+        experience = getattr(self.state_heartbeat, "experience", None)
+        if experience is None or not query.strip():
+            return []
+        found = experience.retriever().retrieve(query)
+        return [str(rule.get("statement") or rule.get("title") or rule.get("detail") or "")
+                for rule in found.get("rules") or []
+                if rule.get("statement") or rule.get("title") or rule.get("detail")]
 
     #: Set once the lessons were started afresh in the engine.
     LESSONS_FRESH = "lessons_engine_started"
@@ -980,6 +1160,7 @@ class AgentApplication:
                                 ("AgentHeartbeat", self.heartbeat.start),
                                 ("RawHousekeeping", self.housekeeping.start),
                                 ("StateHeartbeat", self.state_heartbeat.start),
+                                ("Monitor", self.monitor.start),
                                 ("IssueClock", self.issue_clock.start),
                                 ("Learning", self.learning.begin),
                                 ("Triggers", self.triggers.start),
@@ -1245,6 +1426,7 @@ class AgentApplication:
             if not self._started:
                 return
             log.info("stopping the personalized agent")
+            self.chat_files.stop()
             try:
                 self.society.stop()
             except Exception:                    # pragma: no cover - never in the way
@@ -1282,7 +1464,7 @@ class AgentApplication:
             # A build going is ended: what it read is kept, and the next one
             # does not read it again.
             self.local_index.halt()
-            for component in (self.state_heartbeat,
+            for component in (self.state_heartbeat, self.monitor,
                               self.issue_clock, self.triggers,
                               self.housekeeping,
                               self.heartbeat, self.scheduler, self.listener):

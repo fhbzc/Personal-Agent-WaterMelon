@@ -50,10 +50,11 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from ...common.events.models import new_id, utcnow
-from ...common.languages import in_display
+from ...common.languages import in_display, in_english
 from ...models.base import ModelRequest
 
 log = logging.getLogger(__name__)
+
 
 #: What the user did. Each is the user saying something about a
 #: notification - that they want one, that they wanted it otherwise, that
@@ -170,7 +171,8 @@ class CalendarNature:
             try:
                 self.engine.record("notifications", action_id,
                                     evidence_text(action, raw), action=action,
-                                    reason=raw.get("user_said") or "")
+                                    reason=raw.get("user_said") or "",
+                                    content=json.dumps(raw, ensure_ascii=False, default=str))
                 # THE AGENT CORRECTED: a notification it made on lessons,
                 # deleted, disabled, edited or called bad - against them.
                 if action != "add" and task_row.get("id"):
@@ -377,7 +379,9 @@ class CalendarNature:
                     system=REASON_PROMPT,
                     max_tokens=1500,
                     task="notification_lessons",
-                    language=in_display(),
+                    # IN ENGLISH (the user, 2026-11-03): the lessons are the
+                    # model's, hidden - and read by the English model of meanings.
+                    language=in_english("the lessons, and why"),
                     metadata={"context_summary":
                               f"why the user {_verb(row['action'])}: "
                               f"{_title_of(raw)}"[:2000]},
@@ -520,6 +524,18 @@ class CalendarNature:
         if engine is not None:
             return engine.text("notifications")
         return "\n".join(f"- {one['content']}" for one in self.lessons())
+
+    #: THE ONE WAY OF FINDING LESSONS (heartbeat/lessons/retrieve.py), set by
+    #: the application.
+    retriever: Any = None
+
+    def relevant_text(self, query: str, k: int = 8, rewrite_task: str = "") -> str:
+        """The rules and examples like `query` - what a notification being set
+        up is about (the user, 2026-11-03: "做context retrieval"), not all."""
+        if self.retriever is None:
+            return self.text()
+        return self.retriever.text(("notifications", "general"), query, rules=k,
+                                   rewrite_task=rewrite_task)
 
     def summary(self) -> str:
         """Nothing is summarised any more: the lessons are kept a line each."""

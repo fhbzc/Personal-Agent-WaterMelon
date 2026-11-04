@@ -74,10 +74,15 @@ class TheListAndItsNotesTests(unittest.TestCase):
                 self.assertIsNotNone(title, stderr[-1500:])
                 out = json.loads(html.unescape(title.group(1)))
                 self.assertNotIn("error", out, out)
-                self.assertEqual(out["rows"], 46)
+                # Each conversation's menu, and each topic's ＋ and ✎ (two topics).
+                self.assertEqual(out["rows"], 50)
                 self.assertEqual(out["outside"], 0, "a row's menu past the edge of the list")
                 self.assertTrue(out["shortInside"])
-                self.assertEqual(out["menu"], ["Pin", "Rename", "Delete"])
+                # It is in a topic: to the other, out of it, or a new one (the
+                # user, 2026-11-03, from PR #8).
+                self.assertEqual(out["menu"], ["Pin", "Rename", "Move to “Second project”",
+                                               "Take out of its topic", "Move to a new topic…",
+                                               "Delete"])
                 self.assertTrue(out["foldedByTitle"], "the title folds it")
                 self.assertTrue(out["unfoldedByRow"], "the row unfolds it")
                 self.assertTrue(out["foldedByTriangle"], "the triangle still does")

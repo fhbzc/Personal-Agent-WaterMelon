@@ -477,6 +477,10 @@ def recent_states(db: Any, hours: int = RECENT_HOURS, most: int = MOST_RECENT) -
     return "\n".join(lines) or "Nothing recorded lately."
 
 
+class Cancelled(Exception):
+    """The user cancelled the issue being made: nothing of it is kept."""
+
+
 class ConnectionsRound:
     """One round of it at a time, on a thread of its own; its progress for
     the State heartbeat panel's bar."""
@@ -504,6 +508,14 @@ class ConnectionsRound:
         #: The round's count, kept by its two searches at once.
         self._count_lock = threading.RLock()
         self.progress: Dict[str, Any] = {"running": False}
+        #: CANCEL (the user, 2026-11-03: "在generate的时候我可以点cancel, 这样你就当
+        #: 什么没发生过，不generate新的issue"): asked for, the round stops at its next
+        #: step and keeps no issue - the pictures fetched for it alone go too. Once
+        #: the issue is saved it is made, and Cancel is no longer offered.
+        self._cancelled = threading.Event()
+        self._saved = False
+        self._pictures_before: set = set()
+        self._new_pictures: set = set()
         #: THE CHECKS ON THE WEB (runtime/web_guard.py), new each round:
         #: what it is told of the user and their contacts is theirs, what
         #: it reads on the web is public - and a search or a page that could
@@ -524,25 +536,171 @@ class ConnectionsRound:
                 return False
             self.progress = {"running": True, "stage": "starting", "done": 0,
                              "total": STAGES, "started_at": now(), "calls": 0, "web": 0}
+            going = self._begin(going)
             self._thread = threading.Thread(target=self._run, args=(going, look_me_up),
                                             name="connections-round", daemon=True)
             self._thread.start()
         return True
+
+    # -- A SPECIAL ISSUE, from Chat (the user, 2026-11-03, from PR #8) ----------------------
+    #: A brief at most so long; a title.
+    MOST_BRIEF, MOST_TITLE = 40000, 160
+
+    def start_special(self, requirements: str, title: str = "") -> Dict[str, Any]:
+        """A brief agreed in Chat taken on: the issue made on a thread of its
+        own, as an issue is - not while another is being made."""
+        requirements, title = str(requirements or "").strip(), str(title or "").strip()
+        if not requirements:
+            return {"error": "A special issue needs its brief: what it is to be about."}
+        if len(requirements) > self.MOST_BRIEF or len(title) > self.MOST_TITLE:
+            return {"error": f"A brief is at most {self.MOST_BRIEF} characters, a title "
+                             f"{self.MOST_TITLE}."}
+        with self._lock:
+            if self.running():
+                return {"error": "The newspaper is making an issue now - try again when it "
+                                 "is done."}
+            self.progress = {"running": True, "special": True, "title": title,
+                             "stage": "starting the special issue", "done": 0,
+                             "total": STAGES, "started_at": now(), "calls": 0, "web": 0}
+            going = self._begin(lambda: True)
+
+            def make() -> None:
+                try:
+                    said = self.special_issue(title, requirements, going)
+                    self.progress.update(running=False, stage="done", done=STAGES,
+                                         finished_at=now(), **said)
+                except Cancelled:
+                    self._forget_cancelled()
+                except Exception as exc:
+                    if self._cancelled.is_set() and not self._saved:
+                        self._forget_cancelled()     # it stopped because it was cancelled
+                        return
+                    log.warning("the special issue failed", exc_info=True)
+                    self.progress.update(running=False, stage="failed", error=str(exc)[:300],
+                                         finished_at=now())
+            self._thread = threading.Thread(target=make, name="newspaper-special", daemon=True)
+            self._thread.start()
+        return {"started": True,
+                "said": "The newspaper is making the special issue now. It appears in "
+                        "Newspaper's issue list when it is done; tell the user that."}
+
+    def special_issue(self, title: str, requirements: str,
+                      going: Callable[[], bool] = lambda: True) -> Dict[str, Any]:
+        """THE SPECIAL ISSUE: one page, searched on the public web from the
+        brief - the chats it was agreed in give its subjects and context, not
+        its stories - laid out and pictured as an issue is."""
+        from ...runtime.web_guard import WebGuard
+        self.guard = WebGuard()
+        used = {"calls": 0, "web": 0, "tokens_in": 0, "tokens_out": 0}
+        self._stage(1, "planning the special issue")
+        if not title:
+            answer = self._ask([{"role": "user", "content": requirements}], used,
+                               system="Choose a short, descriptive title for a newspaper "
+                                      "special issue from this editorial brief. Answer with "
+                                      "the title alone.",
+                               language=in_display("the special issue's title"),
+                               task=NEWS_TASK)
+            title = str(getattr(answer, "text", "") or "").strip().strip('"')[:self.MOST_TITLE] \
+                or "Special issue"
+        self.progress.update(title=title)
+        page = {"key": "special", "title": title, "kind": "work", "leisure": False,
+                "detail": ["A SPECIAL ISSUE the user asked for. Find NEW information on the "
+                           "public web for this brief, and give your sources. The "
+                           "conversations it names give its subjects and context - they "
+                           "are not stories to copy or summarise.\n" + requirements],
+                "subjects": [{"key": "special", "kind": "work", "title": title}],
+                "anchors": [], "topic_ids": []}
+        if self.embedder is not None:
+            try:
+                page["anchors"] = self.embedder.embed([requirements[:4000]])
+            except Exception:
+                page["anchors"] = []
+        since = datetime.now().astimezone() - timedelta(days=30)
+        today = datetime.now().astimezone().strftime("%A %d %B %Y, %H:%M %Z")
+        self._stage(4, "researching the special issue on the web")
+        stories = self._page_branch(used, going, [page], today, since)
+        items, paper = self._paper([], stories, [page])
+        if not items:
+            raise RuntimeError("No stories were found for this brief - try making its "
+                               "subject clearer, or its time range wider.")
+        self._stage(5, "pictures for the special issue")
+        items = self._pictured(items, going)
+        self._about_to_save()
+        ident = self.store.save_briefing([], items, dict(
+            used, paper=paper, special=True, title=title, requirements=requirements))
+        return {"issue_id": ident, "title": title, "stories": len(items)}
 
     def wait(self, timeout: Optional[float] = None) -> None:
         thread = self._thread
         if thread is not None:
             thread.join(timeout)
 
+    # -- cancelled ------------------------------------------------------------------
+    def _begin(self, going: Callable[[], bool]) -> Callable[[], bool]:
+        """A round starting: not cancelled, nothing saved yet, the pictures
+        already kept noted - so that those fetched for it alone are known."""
+        self._cancelled.clear()
+        self._saved = False
+        self._new_pictures = set()
+        folder = self.store.folder / "briefing" if self.store.folder is not None else None
+        try:
+            self._pictures_before = ({one.name for one in folder.iterdir()}
+                                     if folder is not None and folder.is_dir() else set())
+        except OSError:
+            self._pictures_before = set()
+        return lambda: bool(going()) and not self._cancelled.is_set()
+
+    def cancel(self) -> Dict[str, Any]:
+        """The issue being made, cancelled: it stops at its next step."""
+        with self._lock:
+            if not self.running():
+                return {"cancelled": False, "error": "No issue is being made."}
+            if self._saved:
+                return {"cancelled": False, "error": "The issue is already made."}
+            self._cancelled.set()
+            self.progress.update(cancelling=True, stage="cancelling")
+        return {"cancelled": True}
+
+    def _about_to_save(self) -> None:
+        """Just before the issue is saved: cancelled, it is not; saved, it can
+        no longer be cancelled."""
+        with self._lock:
+            if self._cancelled.is_set():
+                raise Cancelled()
+            self._saved = True
+            self.progress["saved"] = True
+
+    def _forget_cancelled(self) -> None:
+        """As if it had never been started: the pictures kept for it alone
+        deleted, the progress back to none."""
+        folder = self.store.folder / "briefing" if self.store.folder is not None else None
+        if folder is not None:
+            for name in self._new_pictures - self._pictures_before:
+                try:
+                    (folder / name).unlink()
+                except OSError:
+                    log.debug("a cancelled issue's picture %s stays", name, exc_info=True)
+        self.progress = {"running": False, "stage": "cancelled", "cancelled": True,
+                         "finished_at": now()}
+
     def _stage(self, done: int, stage: str) -> None:
+        if self._cancelled.is_set():
+            return                                 # it says it is cancelling
         self.progress.update(done=done, stage=stage)
 
     def _run(self, going: Callable[[], bool], look_me_up: bool = False) -> None:
         try:
             said = self.run(going, look_me_up)
+            if self._cancelled.is_set() and not self._saved:
+                raise Cancelled()
             self.progress.update(running=False, done=STAGES, stage="done", finished_at=now(),
                                  items=len(said.get("items") or []))
+        except Cancelled:
+            self._forget_cancelled()
         except Exception as exc:
+            if self._cancelled.is_set() and not self._saved:
+                self._forget_cancelled()             # it stopped because it was cancelled
+                return
             log.warning("the connections round failed", exc_info=True)
             self.progress.update(running=False, stage="failed", error=str(exc)[:300],
                                  finished_at=now())
@@ -598,7 +756,7 @@ class ConnectionsRound:
             stale="\n".join(f"- [{one['id']}] {one['name']} ({one['relationship'] or '?'}, "
                             f"closeness {one['closeness']}) - last looked at "
                             f"{(one['checked_at'] or 'never')[:10]}" for one in stale)
-            or "None.", proactive=MOST_PROACTIVE, lessons=self.store.lessons_text(),
+            or "None.", proactive=MOST_PROACTIVE, lessons=self.store.lessons_text(work),
             orgs=", ".join(one["name"] for one in self.store.names_in_use("org")[:MOST_NAMES])
             or "None yet.", today=today, stale_days=STALE_DAYS, known=known)
         web_items: List[Any] = []
@@ -619,7 +777,7 @@ class ConnectionsRound:
         topics_branch = None
         if pages:
             from .recommend import since_of
-            since = since_of((self.store.briefing() or {}).get("at"))
+            since = since_of((self.store.latest_daily() or {}).get("at"))
             topics_branch = threading.Thread(
                 target=lambda: topic_items.extend(self._page_branch(
                     used, going, pages, today, since)),
@@ -651,6 +809,7 @@ class ConnectionsRound:
         items, paper = self._paper(items, topic_items, pages)
         self._stage(5, "a picture for each story")
         items = self._pictured(items, going)
+        self._about_to_save()
         self.store.save_briefing(needs, items, dict(used, stale_offered=len(stale),
                                                     web_items=len(web_items),
                                                     topic_items=len(topic_items),
@@ -1325,7 +1484,9 @@ class ConnectionsRound:
                     continue
                 ext = avatars.TYPES.get(kind)
                 if ext is not None and data:
-                    return self.store.save_briefing_picture(data, ext)
+                    name = self.store.save_briefing_picture(data, ext)
+                    self._new_pictures.add(name)
+                    return name
             return ""
         except Exception:                    # one source failing is not the end
             log.debug("no picture from %s", url, exc_info=True)
@@ -1335,7 +1496,7 @@ class ConnectionsRound:
         """The list as it stands, each item with an id - one written before
         items had ids is given one now."""
         from .store import new_id
-        briefing = self.store.briefing() or {}
+        briefing = self.store.latest_daily() or {}
         out = []
         for one in briefing.get("items") or []:
             # A recommendation is made once: not kept on the list. (Its topic

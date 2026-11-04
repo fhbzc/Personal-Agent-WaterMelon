@@ -179,6 +179,22 @@ STUB = r"""
         followups: id === 'c1' ? [{id:'f1', message_id:'a_c1', about:'census API',
           question:'what is census API', answer:'A public data service.'}] : []};
     }
+    if (parsed.pathname === '/api/chat/clipboard') {
+      data = {files:[{id:'chatfile_2', name:'screenshot-1.png', size:5, picture:false}], skipped:[]};
+    }
+    if (parsed.pathname === '/api/chat/upload') {
+      data = {id:'chatfile_1', name:JSON.parse(options.body).name, size:5, picture:false};
+    }
+    if (parsed.pathname === '/api/chat/turn' && options.method !== 'POST') {
+      data = {state:'done', answer:'More from the full agent', message_id:'a_slow', kind:'more'};
+    }
+    if (parsed.pathname === '/api/chat/turn' && options.method === 'POST') {
+      const payload = JSON.parse(options.body);
+      chats.unshift({id:payload.conversation_id||'new-general',
+        project_id:payload.conversation_id?'p1':null, title:payload.message});
+      data = {conversation_id:payload.conversation_id||'new-general', message_id:'a_new',
+        answer:'New reply', layer:'fast', turn:'turn_1'};
+    }
     if (parsed.pathname === '/api/chat') {
       const payload = JSON.parse(options.body);
       chats.unshift({id:payload.conversation_id||'new-general',
@@ -265,12 +281,101 @@ CHECKS = r"""
       assert(!new URLSearchParams(location.search).has('project'), 'no project in the address');
       find('#chat-input').value = 'A new question';
       find('#chat-form').dispatchEvent(new Event('submit',{cancelable:true}));
-      report.lockedWhileSending = find('#chat-form button').disabled;
+      report.lockedWhileSending = find('#chat-form button[type=submit]').disabled;
       await wait(120);
-      report.unlockedAfter = !find('#chat-form button').disabled;
+      report.unlockedAfter = !find('#chat-form button[type=submit]').disabled;
       assert(!__posts.some(p=>p[0]==='/api/conversations'), 'no conversation made in a project');
-      assert(__posts.some(p=>p[0]==='/api/chat' && !p[1].conversation_id), 'a new chat');
+      assert(__posts.some(p=>p[0]==='/api/chat/turn' && !p[1].conversation_id), 'a new chat');
       assert(Boolean(find('.msg.assistant[data-message="a_new"]')), 'a new reply keeps its id');
+      assert(find('.msg.assistant[data-message="a_new"]').classList.contains('layer-fast'), 'the quick reply');
+      for (let n = 0; n < 60 && !find('.chat-fold .layer-slow'); n++) await wait(50);
+      const fold = find('.msg.assistant[data-message="a_new"] .chat-fold');
+      assert(fold && !fold.open, 'the full agent folded under it');
+      assert(fold.textContent.includes('More from the full agent'), 'whole, in the fold');
+      // A file attached: shown above the box, sent with the message, shown with it.
+      const picker = find('#chat-form input[type=file]');
+      const chosen = new DataTransfer();
+      chosen.items.add(new File(['notes'], 'notes.txt', {type:'text/plain'}));
+      picker.files = chosen.files;
+      picker.dispatchEvent(new Event('change'));
+      assert(find('.chat-file-chip')?.textContent.includes('notes.txt'), 'the file shown before it is sent');
+      const uploaded = () => __posts.some(p=>p[0]==='/api/chat/upload' && p[1].name==='notes.txt' && p[1].data);
+      for (let n = 0; n < 100 && !uploaded(); n++) await wait(50);
+      report.meta = find('#chat-meta').textContent;
+      assert(uploaded(), 'the file uploaded');
+      await wait(120);
+      // What the page cannot read: the application reads the clipboard.
+      find('#chat-input').dispatchEvent(new ClipboardEvent('paste',
+        {clipboardData:new DataTransfer(), bubbles:true, cancelable:true}));
+      for (let n = 0; n < 100 && !__posts.some(p=>p[0]==='/api/chat/clipboard'); n++) await wait(50);
+      await wait(60);
+      assert(find('.chat-attached').textContent.includes('screenshot-1.png'), 'pasted from the application');
+      find('.chat-file-chip:last-child button').click();
+      const words = new DataTransfer();
+      words.setData('text/plain', 'plain words');
+      const asked = __posts.length;
+      find('#chat-input').dispatchEvent(new ClipboardEvent('paste',
+        {clipboardData:words, bubbles:true, cancelable:true}));
+      await wait(60);
+      assert(__posts.length===asked, 'words pasted stay words');
+      // A picture is seen at once, large, before the upload has answered.
+      const picture = new DataTransfer();
+      picture.items.add(new File(['x'], 'bed.png', {type:'image/png'}));
+      picker.files = picture.files;
+      picker.dispatchEvent(new Event('change'));
+      assert(find('.chat-file-chip.is-picture img')?.src.startsWith('blob:'), 'seen before it is sent');
+      assert(find('.chat-file-chip.is-picture img').getBoundingClientRect().width >= 80, 'and large');
+      await wait(150);
+      find('.chat-file-chip.is-picture button').click();
+      assert(!find('.chat-file-chip.is-picture'), 'taken off');
+      assert(__posts.some(p=>p[0]==='/api/chat/file/remove'), 'and let go, its reading stopped');
+      // Dragged onto the chat, even beside the box; "+" is there too.
+      assert(find('.chat-clip').textContent === '+', 'the + beside the box');
+      const dragged = new DataTransfer();
+      dragged.items.add(new File(['y'], 'dragged.txt', {type:'text/plain'}));
+      const host = find('#chat-log');
+      assert(find('.chat-drop-cover').hidden, 'nothing until a file comes');
+      const over = new DragEvent('dragenter', {dataTransfer:dragged, bubbles:true, cancelable:true});
+      host.dispatchEvent(over);
+      assert(over.defaultPrevented, 'the browser does not open it instead');
+      assert(!find('.chat-drop-cover').hidden, 'the moment it is over, all of it is where to let go');
+      const cover = find('.chat-drop-cover').getBoundingClientRect();
+      assert(cover.height > 200, 'all of it, not a line: ' + cover.height);
+      host.dispatchEvent(new DragEvent('dragleave', {dataTransfer:dragged, bubbles:true}));
+      assert(find('.chat-drop-cover').hidden, 'gone out of the window, gone');
+      host.dispatchEvent(new DragEvent('dragenter', {dataTransfer:dragged, bubbles:true, cancelable:true}));
+      const dropped = new DragEvent('drop', {dataTransfer:dragged, bubbles:true, cancelable:true});
+      host.dispatchEvent(dropped);
+      assert(dropped.defaultPrevented, 'nor when it is let go');
+      assert(find('.chat-drop-cover').hidden, 'let go, it clears');
+      const landed = () => __posts.some(p=>p[0]==='/api/chat/upload' && p[1].name==='dragged.txt');
+      for (let n = 0; n < 100 && !landed(); n++) await wait(50);
+      assert(landed(), 'dragged and uploaded');
+      await wait(60);
+      find('.chat-file-chip:last-child button').click();
+      // @: the files come up; Enter takes the one chosen.
+      const input = find('#chat-input');
+      input.value = 'see @no';
+      input.setSelectionRange(7, 7);
+      input.dispatchEvent(new Event('input', {bubbles:true}));
+      assert(!find('.chat-mention').hidden, 'the files come up');
+      assert(find('.chat-mention button').textContent.includes('notes.txt'), 'that one');
+      input.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true, cancelable:true}));
+      assert(input.value === 'see @notes.txt ', 'chosen: ' + input.value);
+      assert(find('.chat-mention').hidden, 'and gone');
+      input.value = 'a@no';
+      input.setSelectionRange(4, 4);
+      input.dispatchEvent(new Event('input', {bubbles:true}));
+      assert(find('.chat-mention').hidden, 'not inside a word');
+      input.value = 'see @notes.txt ';
+      find('#chat-form').dispatchEvent(new Event('submit',{cancelable:true}));
+      await wait(120);
+      const sent = __posts.filter(p=>p[0]==='/api/chat/turn').pop();
+      assert(sent[1].mentions.length===1 && sent[1].mentions[0]==='chatfile_1', 'the file @ed goes with it');
+      assert(sent[1].attachments.length===1 && sent[1].attachments[0]==='chatfile_1', 'a file alone is sent');
+      assert(find('.chat-attached').hidden, 'the row emptied once sent');
+      assert(find('.msg.user .chat-message-files a')?.textContent.includes('notes.txt'),
+             'the file shown with its message');
       report.errors = __errors;
       report.ok = true;
     } catch (error) { report.error = error.message; report.errors = window.__errors; }

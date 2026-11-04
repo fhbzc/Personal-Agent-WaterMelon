@@ -2385,12 +2385,22 @@ class AgentHeartbeat:
                             waiting = getattr(self, "pending", None)
                             if waiting is not None:
                                 found.pending = waiting.lines()
-                            # All of it, every time: it is kept short enough
-                            # to give whole (calendar_nature.py).
+                            # THE LESSONS LIKE THIS ROUND, not all of them
+                            # (the user, 2026-11-03: "做context retrieval给
+                            # related content"): by what is in it - its
+                            # states and the windows of its events.
                             keeper = getattr(self, "calendar_nature", None)
                             if keeper is not None:
                                 try:
-                                    found.calendar_nature = keeper.text()
+                                    asked = " ".join(
+                                        [str(getattr(one, "title", "") or "")
+                                         for one in (found.states or [])[:20]]
+                                        + [str((one.get("data") or {}).get("window_title") or "")
+                                           for one in (found.events or [])[-40:]
+                                           if isinstance(one, dict)])
+                                    found.calendar_nature = (
+                                        keeper.relevant_text(asked, 12)
+                                        if hasattr(keeper, "relevant_text") else keeper.text())
                                 except Exception:
                                     log.warning("the calendar nature could "
                                                 "not be read", exc_info=True)
@@ -2652,6 +2662,11 @@ class AgentHeartbeat:
             # Its own failure is not this round's failure: the states are
             # written by now and the grouping of them can wait.
             report["state_round"] = self._state_round_if_due()
+            # STEP_MONITOR (heartbeat/monitor/decide.py, the user, 2026-11-03):
+            # what the Monitor's Activators queued, judged once each, and the
+            # Activators reprogrammed when it is needed. Its failure is not
+            # this round's either.
+            report["step_monitor"] = self._monitor_step()
             return self._finish(report)
         finally:
             span = getattr(self, "_span", None)
@@ -2662,6 +2677,19 @@ class AgentHeartbeat:
                 except Exception:
                     log.debug("heartbeat span close failed", exc_info=True)
             self._running.release()
+
+    #: The Monitor's step (set by the application): judges what was queued.
+    monitor_step: Any = None
+
+    def _monitor_step(self) -> Dict[str, Any]:
+        step = getattr(self, "monitor_step", None)
+        if step is None:
+            return {}
+        try:
+            return step() or {}
+        except Exception as exc:
+            log.warning("the Monitor's step failed", exc_info=True)
+            return {"error": str(exc)[:300]}
 
     def _state_round_if_due(self) -> Dict[str, Any]:
         """Ask the state heartbeat whether it is due, and let it run.
@@ -3922,6 +3950,9 @@ class AgentHeartbeat:
             except ValueError:
                 meta = {}
             if meta.get("origin") == "chat_debugger":
+                continue
+            # The quick reply knows nothing of the user: no fact to learn from.
+            if meta.get("layer") == "fast" or not str(row["content"] or "").strip():
                 continue
             who = ("THE USER, to you (the agent)" if row["role"] == "user"
                    else "YOU (the agent), replying to the user")

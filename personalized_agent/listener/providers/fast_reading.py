@@ -40,7 +40,9 @@ FAST_APPLICATIONS = (
     "feishu", "飞书", "lark",
     # Chat, elsewhere
     "slack", "ms-teams", "teams", "microsoft teams", "discord", "telegram", "telegram desktop",
-    "whatsapp", "whatsapp root", "signal", "line", "kakaotalk", "messenger", "messages", "信息",
+    "whatsapp", "whatsapp root", "whatsapp.root", "signal", "line", "kakaotalk", "messenger",
+    "messages", "信息", "skype", "viber", "wire", "threema", "element", "mattermost",
+    "rocket.chat", "zalo", "chatwork", "beeper", "ferdium", "rambox", "franz", "tim",
     # Mail
     "outlook", "olk", "thunderbird", "mail", "邮件", "foxmail", "mailmaster", "网易邮箱大师",
     "spark", "spark desktop", "airmail", "mimestream", "postbox", "em client", "mailbird",
@@ -57,7 +59,8 @@ FAST_TITLES = (
     "inbox", "收件箱", "收信", "webmail",
     # Chat on the web
     "slack", "discord", "telegram", "whatsapp", "messenger", "microsoft teams", "飞书", "钉钉",
-    "微信网页版", "wechat web",
+    "微信网页版", "wechat web", "google chat", "chat.google.com", "messages for web", "skype",
+    "mattermost", "rocket.chat", "zalo", "chatwork", "viber",
     # Social media
     "/ x", "twitter", "微博", "weibo", "小红书", "xiaohongshu", "rednote", "知乎", "facebook",
     "instagram", "linkedin", "reddit", "bluesky", "mastodon",
@@ -107,6 +110,23 @@ def wanted(config: Any, application: str, title: str) -> bool:
         return True
     said = (title or "").casefold()
     return bool(said) and any(word.casefold() in said for word in titles(config))
+
+
+def talks(config: Any, application: str) -> bool:
+    """A chat or mail PROGRAM, by its name - the lists above, and any the
+    settings add (one taken off them is read less often, still a chat)."""
+    return _name(application) in set(applications(config)) | set(FAST_APPLICATIONS)
+
+
+def is_conversation(config: Any, application: str, title: str) -> bool:
+    """A chat, mail or social window - whether or not it is read often: one
+    whose title says WHICH conversation is in front (Slack's "Ada Quist
+    (DM) - Tea House - Slack"), so a new title is another one."""
+    if talks(config, application):
+        return True
+    said = (title or "").casefold()
+    return bool(said) and any(word.casefold() in said
+                              for word in set(titles(config)) | set(FAST_TITLES))
 
 
 def _on_battery() -> bool:

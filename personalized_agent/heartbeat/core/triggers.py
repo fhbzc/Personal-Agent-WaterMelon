@@ -28,6 +28,13 @@ waits `SETTLE` seconds for the page to finish showing. NOT WHEN NOBODY IS
 THERE: with no keyboard or mouse for `AWAY_AFTER` seconds, nothing runs.
 Never the agent's own windows. The listener's exclusions already keep out
 what it is not to read.
+
+THE MONITOR'S TEXT ACTIVATORS ARE ITS RULES NOW (heartbeat/monitor, the
+user, 2026-11-03): `rules` may be a callable giving them as they stand. Each
+matches with where the window is (page, email, chat, terminal), each has its
+own cooldown in a window and its own switch, every one that matches is
+marked - and, settled, does what it says (`act`). The two rules above are
+the Monitor's built-in, protected ones, run as before.
 """
 
 from __future__ import annotations
@@ -109,7 +116,8 @@ class Triggers:
         self.bus = bus
         self.raw_store = raw_store
         self.config = config
-        self.rules = list(RULES if rules is None else rules)
+        #: A list - or a callable giving the rules as they stand (the Monitor's).
+        self._rules = rules if callable(rules) else list(RULES if rules is None else rules)
         #: The window in front, read whole - the platform's own reader.
         self.front = front or _front_window
         self._lock = threading.Lock()
@@ -127,6 +135,20 @@ class Triggers:
         self._unsubscribe: Optional[Callable[[], None]] = None
         #: What was done, the latest first: for the debugger.
         self.history: List[Dict[str, Any]] = []
+
+    @property
+    def rules(self) -> List[Any]:
+        if callable(self._rules):
+            try:
+                return list(self._rules())
+            except Exception:
+                log.warning("the Monitor's rules could not be read", exc_info=True)
+                return []
+        return self._rules
+
+    @rules.setter
+    def rules(self, value: Any) -> None:
+        self._rules = value if callable(value) else list(value)
 
     # -- watching -----------------------------------------------------------------------------------
     def start(self) -> None:
@@ -174,7 +196,20 @@ class Triggers:
             return
         if not (fresh_title or fresh_text):
             return
+        where = ""
         for rule in self.rules:
+            if hasattr(rule, "match"):
+                # An Activator: its own switch, where the window is, and every
+                # one that matches marked.
+                if hasattr(rule, "allowed") and not rule.allowed():
+                    continue
+                if not where:
+                    from ..monitor.engine import where_of
+                    where = where_of(self.config, application, title)
+                if rule.match(fresh_title, fresh_text, where):
+                    self.mark(rule, key, _clean(title) or title, application,
+                              fresh=fresh_text or fresh_title, handle=int(data.get("handle") or 0))
+                continue
             if rule.matches(fresh_title, fresh_text):
                 self.mark(rule, key, _clean(title) or title, application,
                           fresh=fresh_text or fresh_title, handle=int(data.get("handle") or 0))
@@ -215,8 +250,12 @@ class Triggers:
     def mark(self, rule: Rule, key: str, window: str = "", application: str = "",
              now: Optional[float] = None, fresh: str = "", handle: int = 0) -> bool:
         now = time.time() if now is None else now
+        # An Activator has its own cooldown in a window, and its own place.
+        cooldown = float(getattr(rule, "cooldown", COOLDOWN))
+        if hasattr(rule, "cooldown"):
+            key = f"{key}|{rule.name}"
         with self._lock:
-            if now - self._looked.get(key, -1e18) < COOLDOWN:
+            if now - self._looked.get(key, -1e18) < cooldown:
                 return False
             if key in self._due:
                 # More of it while it settles: what is new is all given.
@@ -231,8 +270,12 @@ class Triggers:
 
     def enabled(self) -> bool:
         from ...common.modules import enabled as module_on
-        return self.config is None or (bool(self.config.get("triggers_enabled", True))
-                                       and module_on(self.config, "calendar"))
+        if self.config is None:
+            return True
+        if not bool(self.config.get("triggers_enabled", True)):
+            return False
+        # The Monitor's rules have each their own module (Monitor.allowed).
+        return callable(self._rules) or module_on(self.config, "calendar")
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -265,7 +308,9 @@ class Triggers:
         said = self.read_window(window, handle)
         if not (said.strip() or fresh.strip()):
             return self._kept({"rule": rule.name, "window": window, "skipped": "nothing to read"})
-        if rule.action == "notify":
+        if hasattr(rule, "act"):
+            report = rule.act(window, application, said, fresh)
+        elif rule.action == "notify":
             report = notify_now(self.heartbeat, rule, window, said, fresh)
         else:                                      # pragma: no cover - a rule of another kind
             report = {"skipped": f"no action {rule.action}"}
@@ -384,7 +429,10 @@ def notify_now(heartbeat: Any, rule: Rule, window: str, text: str,
     lessons = ""
     if keeper is not None:
         try:
-            lessons = keeper.text()
+            # The lessons like this window, not all of them (the user, 2026-11-03).
+            lessons = (keeper.relevant_text(f"{window}\n{fresh}", 12,
+                                            rewrite_task="calendar_lessons_query")
+                       if hasattr(keeper, "relevant_text") else keeper.text())
         except Exception:
             lessons = ""
     sections = [

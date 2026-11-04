@@ -69,6 +69,19 @@ class PutBackOnAScreenTests(unittest.TestCase):
             agent._keep_on_screen()
         self.assertEqual(window.placed, ["home"])
 
+    def test_half_past_the_side_of_the_screen_it_stays(self) -> None:
+        # The user, 2026-11-04: left at the side, its middle past it.
+        def on_the_screen(_window, x, y):
+            return 0 <= x < 1920 and 0 <= y < 1080
+        with mock.patch.object(desktop_module, "_on_a_screen", side_effect=on_the_screen):
+            for x in (1865, 1886, -86):                  # beside it, in the right, in the left
+                window = _Window(x, 910)
+                _desktop(window)._keep_on_screen()
+                self.assertEqual(window.placed, [], x)
+            window = _Window(2100, 910)
+            _desktop(window)._keep_on_screen()
+            self.assertEqual(window.placed, ["home"], "none of it on a screen")
+
     def test_on_a_screen_it_stays(self) -> None:
         window = _Window(300, 300)
         agent = _desktop(window)

@@ -57,8 +57,13 @@ FOR EACH PERSON, only what the window shows:
   - who they are: their name as written, other names (an English name, a
     nickname, a handle), and any account or profile address seen (a LinkedIn
     page, a GitHub profile, an email address). A WeChat chat's name (its
-    "wechat chat" line) is the user's own name for the person in it - one of
-    their names: put it among their other names. A WORD THE USER CALLS THEM
+    "wechat chat" line) is THE USER'S OWN REMARK for the person in it - the
+    name the user chose for them, which says best how the user calls them.
+    THEIR MAIN NAME COMES FROM IT: the person's name in it ("林小雨 Rain
+    lab" -> 林小雨), its other words - an English name, a school, a role -
+    among their other names or tags. A WeChat nickname, a group nickname or a
+    name seen on the web is one of their OTHER names, not the main one. Where
+    the remark holds no name ("爱笑的小林"), choose the name that suits best. A WORD THE USER CALLS THEM
     BY THAT IS NOT A NAME - how they stand to the user: 学姐, 师兄, 老师,
     "my advisor" - is never one of their names (the user may have several
     学姐): put it in "called", once you can tell whom it means;
@@ -82,7 +87,11 @@ WITHOUT DUPLICATES. For each person you write, an "action":
     and what they did. The same person under another name, in another
     script (谭梅 / Mei Tan) or on another platform IS someone listed: check
     every name, other name and account first. Activity already listed under
-    them is not written again - not in other words either.
+    them is not written again - not in other words either. When their main
+    name as listed is not the one the user's remark gives them (a nickname
+    from a group, say, where the WeChat chat's remark names them), give
+    "rename_to" and "why": the main name becomes it, and the old one stays
+    among their other names. A name the user set themselves stays.
   - "add" - someone NOT in the list at all.
 
   A DIFFERENT PERSON IS NOT AN UPDATE. Names that cannot be one person's - a
@@ -134,6 +143,7 @@ RETURNS = """{
                 "accounts": ["their handles or addresses, as listed"],
                 "activity": ["their activity's ids, as listed"]}],
      "name": "their name as written",
+     "rename_to": "update only, and only when needed: the main name they should have instead of the one listed - from the user's remark for them",
      "aliases": ["other names, handles"],
      "accounts": [{"platform": "linkedin|github|email|wechat|x|...", "handle": "...", "url": "..."}],
      "relationships": ["what they are to the user, the main one first - empty when the window does not show it"],
@@ -381,7 +391,7 @@ def context(store: ConnectionsStore, activity_text: str) -> str:
     return (f"THE USER'S CONTACTS ({len(people)} - those named in this window first):\n"
             f"{known}\n\nLESSONS ABOUT THE USER'S CONTACTS - learned from their own "
             f"changes, each with how sure and how many cases back it; follow the sure "
-            f"ones:\n{store.lessons_text()}\n\nSPELLINGS ALREADY IN USE - "
+            f"ones:\n{store.lessons_text(activity_text)}\n\nSPELLINGS ALREADY IN USE - "
             f"an organisation or an account's platform that means one of these is "
             f"written as it is here:\n  organisations: {orgs}\n  platforms: {labels}\n"
             f"  relationships: {relationships}")
@@ -468,6 +478,20 @@ def apply(store: ConnectionsStore, people: Any, evidence_known: Optional[set] = 
                                    found_at=found_at, aliases=aliases, tags=tags, **fields)
                 row["added"] = True
             else:
+                # THEIR MAIN NAME CHANGED (the user, 2026-11-03: the user's
+                # WeChat remark for them, not a nickname seen first) - the
+                # model's decision; never a name the user set themselves.
+                rename = " ".join(str(entry.get("rename_to") or "").split())[:120]
+                if rename and name_key(rename) != name_key(person["name"]):
+                    if "name" in (person.get("user_set") or []):
+                        row["rename_refused"] = "the user set this name themselves"
+                    else:
+                        old = person["name"]
+                        person = store.edit(person["id"], by=by, found_at=found_at,
+                                            reason=str(entry.get("why") or
+                                                       "the name the user gives them")[:300],
+                                            name=rename, aliases=[old])
+                        row["renamed"] = {"from": old, "to": rename}
                 more = dict(fields)
                 if tags:
                     more["tags"] = tags

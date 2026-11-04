@@ -155,6 +155,13 @@ class Observability:
                 "started_at": _now(), "steps": [],
             }
 
+    def task_text(self, task_id: str, text: str) -> None:
+        """The reply so far, for whoever is waiting on it."""
+        with self._lock:
+            active = self._active_task
+            if active and active.get("task_id") == task_id:
+                active["text"] = text
+
     def task_step(self, task_id: str, stage: str, detail: str = "") -> None:
         """Record what the agent is doing now, for whoever is waiting on it.
 

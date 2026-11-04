@@ -1593,11 +1593,13 @@ class EveryQuestionComesFromATemplateTests(unittest.TestCase):
         self.assertEqual([o.label for o in options_for(PASSIVE)][0],
                          "OK (no more notifications)")
 
-    def test_there_is_no_fourth_template(self) -> None:
+    def test_there_is_no_fifth_template(self) -> None:
+        # The fourth is the Monitor's suggestion (2026-11-03, from PR #6):
+        # offered, taken or left - with buttons of its own.
         from personalized_agent.agent.feedback.templates import (
-            ALL_TEMPLATES, PASSIVE, PERMISSION, REMINDER, TEMPLATES)
+            ALL_TEMPLATES, PASSIVE, PERMISSION, REMINDER, SUGGESTION, TEMPLATES)
 
-        self.assertEqual(set(TEMPLATES), {REMINDER, PERMISSION, PASSIVE})
+        self.assertEqual(set(TEMPLATES), {REMINDER, PERMISSION, PASSIVE, SUGGESTION})
         self.assertEqual(set(ALL_TEMPLATES), set(TEMPLATES),
                          "the list a notification chooses from is the list "
                          "of templates, not a copy that can drift from it")

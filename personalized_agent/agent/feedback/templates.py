@@ -53,6 +53,10 @@ PERMISSION = "permission"
 #: Something said, with nothing asked: the agent is telling the user a thing
 #: and wants no decision from them. One option, and it closes the task.
 PASSIVE = "passive"
+#: A suggestion of the Monitor's (heartbeat/monitor, from PR #6): offered, and
+#: taken or left. Its buttons are its own - "Open", "Take a break", "Not now",
+#: "Not today", the evening report's "Later" - each closing the question.
+SUGGESTION = "suggestion"
 
 #: What these were called before the templates existed.
 #:
@@ -157,6 +161,22 @@ TEMPLATES: Dict[str, Tuple[Option, ...]] = {
                "the user saw it"),
         Option(TO_TODO, TO_TODO_LABEL, COMPLETE, TO_TODO_MEANING),
     ),
+    SUGGESTION: (
+        Option("accept", "Open", COMPLETE, "the user took the suggestion"),
+        Option("decline", "Not now", COMPLETE,
+               "the user did not want the suggestion at that moment"),
+    ),
+}
+
+#: Buttons a suggestion MAY carry beyond its two, so that each reads back in
+#: words and closes the question like the others.
+OPTIONAL_OPTIONS: Dict[str, Tuple[Option, ...]] = {
+    SUGGESTION: (
+        Option("not_today", "Not today", COMPLETE, "the user wanted no more of these today"),
+        Option("later", "Later", COMPLETE, "the user wanted to be asked again later"),
+        Option("at_fixed", "At the fixed time", COMPLETE,
+               "the user wanted it at the time they set"),
+    ),
 }
 
 
@@ -180,7 +200,8 @@ def options_for(template: str, delay_seconds: Optional[int] = None) -> List[Opti
 
 
 def effect_of(template: str, answer: str) -> Optional[str]:
-    for option in TEMPLATES.get(template_of(template), ()):
+    for option in (TEMPLATES.get(template_of(template), ())
+                   + OPTIONAL_OPTIONS.get(template_of(template), ())):
         if option.key == answer:
             return option.effect
     return None
@@ -188,7 +209,8 @@ def effect_of(template: str, answer: str) -> Optional[str]:
 
 def meaning_of(template: str, answer: str) -> str:
     """How an answer reads back to the agent later, in words rather than a key."""
-    for option in TEMPLATES.get(template_of(template), ()):
+    for option in (TEMPLATES.get(template_of(template), ())
+                   + OPTIONAL_OPTIONS.get(template_of(template), ())):
         if option.key == answer:
             return option.meaning
     return answer
@@ -211,9 +233,10 @@ def _delay_label(seconds: int) -> str:
 
 
 #: Every template there is. A notification declares one of these.
-ALL_TEMPLATES = (REMINDER, PERMISSION, PASSIVE)
+ALL_TEMPLATES = (REMINDER, PERMISSION, PASSIVE, SUGGESTION)
 
-__all__ = ["REMINDER", "PERMISSION", "PASSIVE", "ALL_TEMPLATES", "TEMPLATES", "Option",
+__all__ = ["REMINDER", "PERMISSION", "PASSIVE", "SUGGESTION", "ALL_TEMPLATES", "TEMPLATES",
+           "OPTIONAL_OPTIONS", "Option",
            "TO_CHECK", "DELAY", "COMPLETE", "RUN",
            "options_for", "effect_of", "meaning_of", "answers_for", "GOT_IT", "BAD_LABEL", "TO_TODO",
            "TO_TODO_LABEL", "DEFAULT_DELAY_SECONDS", "delay_label"]

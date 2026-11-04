@@ -352,6 +352,12 @@ class DesktopAgent:
         x = screen_width - self.size - 60
         y = screen_height - self.size - 120
         self.agent_window.geometry(f"{self.size}x{self.size}+{x}+{y}")
+        self._tucked = self._beside = ""
+        live = getattr(self, "_live", None)
+        if live:
+            live.pop("slide", None)
+            live.pop("sneak", None)
+            live["tuck"] = live["grip"] = 0.0
 
     # -- character ----------------------------------------------------------
     def _own_panel_for_the_box(self) -> None:
@@ -529,6 +535,9 @@ class DesktopAgent:
         # way (TURN_SECONDS) - rather than flipping in one frame.
         facing = facing_for(left, self.size, self.agent_window.winfo_screenwidth(),
                             live.get("facing", "left"))
+        tucked = getattr(self, "_tucked", "")
+        if tucked in ("left", "right"):            # the body goes away from its face
+            facing = "left" if tucked == "right" else "right"
         if facing != live.get("facing", "left"):
             live["turn"] = (now, live.get("facing", "left"))
         live["facing"] = facing
@@ -539,6 +548,11 @@ class DesktopAgent:
         aim = (max(-1.0, min(1.0, (px - cx) / 150)), max(-1.0, min(1.0, (py - cy) / 150)))
         if now - live["moved"] > 12:               # nothing moved: it looks ahead
             aim = (0.0, 0.0)
+        sneaking = self._sneak_on(live, now, left <= px < left + self.size
+                                  and top <= py < top + self.size)
+        if sneaking:
+            aim = {"right": (sneaking.look, 0.0), "left": (-sneaking.look, 0.0),
+                   "top": (0.0, -sneaking.look), "bottom": (0.0, sneaking.look)}[self._beside]
         look = [v + (a - v) * 0.35 for v, a in zip(live["look"], aim)]
         if max(abs(a - b) for a, b in zip(look, live["look"])) > 0.01:
             busy = True
@@ -562,8 +576,11 @@ class DesktopAgent:
         if on_it:
             live["hover"], live["off_since"] = True, None
         elif live["hover"]:
+            # Off it a moment - quickly looked at (the user, 2026-11-03: going
+            # off it felt like a jolt - the next look came at the slow pace).
             live["off_since"] = live.get("off_since") or now
-            if now - live["off_since"] > 0.33:
+            busy = True
+            if now - live["off_since"] > self.OFF_SECONDS:
                 live["hover"], live["off_since"] = False, None
         # THE READOUT PUT AWAY BY WHERE THE POINTER IS, too: a leave over
         # the see-through pixels round the figure, the pointer still in its
@@ -574,7 +591,30 @@ class DesktopAgent:
                 getattr(self, "_hover", None) is not None
                 or getattr(self, "_hover_wait", None) is not None):
             self._on_hover_leave()
-        mood = self.state if self.state != "idle" else ("hover" if live["hover"] else "idle")
+        self._peek_on(live)
+        mood = self.state if self.state != "idle" else (
+            "hover" if live["hover"] and not tucked else "idle")
+        # CARRIED: held, whatever it was doing (the user, 2026-11-04).
+        carried = bool(getattr(self, "_carried", False))
+        caught = now < float(live.get("caught_until") or 0.0)
+        if carried or caught:
+            mood = "grabbed"
+        elif sneaking:
+            mood = "sneaky"
+        leaning = self._lean_on(live, now, carried, left)
+        # INTO THE SMILE AND OUT OF IT, over a moment - not at once (the user,
+        # 2026-11-03: the smile going felt like a jolt): drawn at thirty
+        # frames a second while it changes (watermelon.draw_face's `smile`).
+        wanted = 1.0 if mood == "hover" else 0.0
+        smile = 0.0 if carried or caught else float(live.get("smile", wanted))
+        if smile != wanted:
+            step = (now - float(live.get("smiled_at", now) or now)) / self.SMILE_SECONDS
+            step = min(1.0, max(step, 0.2))
+            smile = min(wanted, smile + step) if wanted > smile else max(wanted, smile - step)
+            busy, live["smiling"] = True, True
+        else:
+            live["smiling"] = False
+        live["smile"], live["smiled_at"] = smile, now
         since = t - live["poked"]
         squash, hop = 1 + 0.015 * math.sin(2 * math.pi * t / 3.2), 0.0
         if since < 0.7:                            # clicked: a hop and a squash
@@ -587,6 +627,13 @@ class DesktopAgent:
             busy = True
         elif mood in ("talking", "thinking"):
             busy = True
+        elif carried:                              # hanging from the hand
+            squash, hop, busy = 1.05, 3.0, False   # and no frames to hold the drag up
+        elif sneaking:
+            squash, hop = sneaking.squash, sneaking.hop
+        if sneaking and sneaking.done:
+            self._sneaked_in(live)
+        self._slide_on(live, now)
         shown, narrow = live.get("facing", "left"), 1.0
         turn = live.get("turn")
         if turn:
@@ -599,8 +646,16 @@ class DesktopAgent:
                 shown = turn[1] if into < 0.5 else shown
                 narrow, busy = max(0.06, abs(math.cos(math.pi * into))), True
         try:
+            more = {"tuck": live["tuck"]} if live.get("tuck") else {}
+            if leaning:
+                more["lean"] = live["lean"]
+            if live.get("tuck") or live.get("grip"):
+                side = getattr(self, "_tucked", "") or getattr(self, "_beside", "")
+                more["edge"] = side if side in ("top", "bottom") else "side"
+            if live.get("grip"):
+                more.update(grip=live["grip"], reach=self._reach(live))
             frame = self._rig.frame(mood, tuple(look), blink, t, squash, hop, size=self.size,
-                                    facing=shown)
+                                    facing=shown, smile=smile, **more)
             if narrow < 1.0:
                 from PIL import Image
                 width = max(1, int(self.size * narrow))
@@ -616,8 +671,177 @@ class DesktopAgent:
             self._present_frame(frame)
         except Exception:                          # pragma: no cover - drawn next time
             log.debug("could not draw the avatar", exc_info=True)
-        # Turning, thirty frames a second, so the turn is seen as a turn.
-        self.root.after(33 if live.get("turn") else 50 if busy else 160, self._animate)
+        # Turning, thirty frames a second, so the turn is seen as a turn; and
+        # the smile coming or going.
+        self._animate_job = self.root.after(
+            33 if live.get("turn") or live.get("smiling") or live.get("slide")
+            or live.get("sneak") else 80 if carried    # its frames must not hold the drag up
+            else 50 if busy or caught or leaning else 160, self._animate)
+
+    #: How long the smile takes to come, or to go; and how long the pointer
+    #: is off it before it goes (the see-through pixels round the figure).
+    SMILE_SECONDS = 0.16
+    OFF_SECONDS = 0.2
+
+    # -- tucked into the side of the screen (ui/avatar_tuck.py) --------------------------
+    #: How long it takes to go in, or to come out.
+    TUCK_SECONDS = 0.24
+    #: How long it looks caught, seen sneaking.
+    CAUGHT_SECONDS = 1.0
+
+    def _slide_on(self, live: Dict[str, Any], now: float) -> None:
+        """One step of going in or coming out: the window, and the body off
+        the leaves with it."""
+        slide = live.get("slide")
+        if not slide:
+            return
+        into = min(1.0, (now - slide["at"]) / self.TUCK_SECONDS)
+        eased = 1 - (1 - into) ** 3
+        x = int(round(slide["x"] + (slide["to"][0] - slide["x"]) * eased))
+        y = int(round(slide["y"] + (slide["to"][1] - slide["y"]) * eased))
+        live["tuck"] = slide["tuck"] + (slide["to_tuck"] - slide["tuck"]) * eased
+        live["grip"] = slide["grip"] + (slide["to_grip"] - slide["grip"]) * eased
+        live["at"] = (x, y)
+        self.agent_window.geometry(f"+{x}+{y}")
+        if into >= 1:
+            live.pop("slide", None)
+
+    #: Pulled along, how far it leans back at most, and for how fast a pull.
+    LEAN_MOST, LEAN_PER_PIXEL = 11.0, 0.02
+
+    def _lean_on(self, live: Dict[str, Any], now: float, carried: bool, left: int) -> float:
+        """How far it leans now (the user's earlier companion, yanked: it leans
+        back against the pull) - after the hand, and upright when let go."""
+        wanted = 0.0
+        last = live.get("carried_at")
+        if carried and last:
+            speed = (left - last[1]) / max(0.01, now - last[0])
+            wanted = max(-self.LEAN_MOST, min(self.LEAN_MOST, speed * self.LEAN_PER_PIXEL))
+        live["carried_at"] = (now, left) if carried else None
+        lean = float(live.get("lean") or 0.0)
+        lean += (wanted - lean) * 0.4
+        live["lean"] = 0.0 if abs(lean) < 0.2 and not wanted else lean
+        return live["lean"]
+
+    def _peek_on(self, live: Dict[str, Any]) -> None:
+        """In the side, the pointer on its leaf: its head out, to look; the
+        pointer gone, back in."""
+        side = getattr(self, "_tucked", "")
+        if not side or live.get("slide"):
+            return
+        looking = bool(live.get("hover"))
+        if looking == bool(live.get("peeking")):
+            return
+        from . import avatar_tuck
+        live["peeking"] = looking
+        place = avatar_tuck.peek_at if looking else avatar_tuck.tucked_at
+        self._slide_from_here(self._placed(place, side), 0.0 if looking else 1.0, 1.0)
+
+    def _placed(self, place: Any, side: str) -> tuple:
+        """Where `place` (ui/avatar_tuck.py) puts it, in the side it is in."""
+        from . import avatar_tuck
+        window = self.agent_window
+        x, y = window.winfo_x(), window.winfo_y()
+        sides = avatar_tuck.sides_of(window, *avatar_tuck.seen_at(side, x, y, self.size))
+        return place(side, x, y, self.size, sides)
+
+    def _reach(self, live: Dict[str, Any]) -> float:
+        """How far in from the side of the screen its window is out, in the
+        128 units it is drawn in: the leaves stay on the side as it moves."""
+        side = getattr(self, "_tucked", "") or getattr(self, "_beside", "")
+        x, y = live.get("at") or (self.agent_window.winfo_x(), self.agent_window.winfo_y())
+        edge = live.get("edge", 0)
+        out = {"right": edge - x, "left": x + self.size - edge,
+               "top": y + self.size - edge, "bottom": edge - y}[side]
+        return out * 128 / self.size
+
+    def _slide_from_here(self, to: tuple, tuck: float, grip: float) -> None:
+        window, live = self.agent_window, self._live
+        live["slide"] = {"at": time.monotonic(), "x": window.winfo_x(), "y": window.winfo_y(),
+                         "to": to, "tuck": float(live.get("tuck") or 0.0), "to_tuck": tuck,
+                         "grip": float(live.get("grip") or 0.0), "to_grip": grip}
+
+    def _note_the_side(self) -> None:
+        """Let go: beside the side of a screen, it will sneak in, left alone."""
+        self._beside = ""
+        if not getattr(getattr(self, "_rig", None), "TUCKS", False):
+            return
+        from . import avatar_tuck
+        window = self.agent_window
+        x, y = window.winfo_x(), window.winfo_y()
+        sides = avatar_tuck.sides_of(window, x + self.size // 2, y + self.size // 2)
+        self._beside = avatar_tuck.side_to_tuck(x, y, self.size, sides)
+        self._beside_since = time.monotonic()
+
+    def _watched(self, pointer_on_it: bool) -> bool:
+        """Whether anything is going on with it: it does not sneak off then."""
+        bubble = getattr(self, "_chat_bubble", None)
+        return bool(pointer_on_it or getattr(self, "_carried", False)
+                    or getattr(self, "state", "idle") != "idle"
+                    or getattr(self, "character_hidden", False)
+                    or (bubble is not None and bubble.is_open)
+                    or getattr(self, "_bubble", None) is not None
+                    or getattr(self, "_hover", None) is not None)
+
+    def _sneak_on(self, live: Dict[str, Any], now: float, pointer_on_it: bool) -> Any:
+        """A moment of sneaking in, if it is at it (ui/avatar_tuck.py). Seen
+        at it, it stops and goes back."""
+        side = getattr(self, "_beside", "")
+        if not side or getattr(self, "_tucked", "") or live.get("slide"):
+            return None
+        from . import avatar_tuck
+        sneak = live.get("sneak")
+        if self._watched(pointer_on_it):
+            self._beside_since = now
+            if sneak:
+                del live["sneak"]
+                live["poked"] = now - live["start"]      # caught: a hop, and that face
+                live["caught_until"] = now + self.CAUGHT_SECONDS
+                self._slide_from_here((sneak["x"], sneak["y"]), 0.0, 0.0)
+            return None
+        window = self.agent_window
+        if not sneak:
+            if now - getattr(self, "_beside_since", now) < avatar_tuck.SNEAK_AFTER:
+                return None
+            x, y = window.winfo_x(), window.winfo_y()
+            sides = avatar_tuck.sides_of(window, x + self.size // 2, y + self.size // 2)
+            sneak = live["sneak"] = {"at": now, "x": x, "y": y,
+                                     "to": avatar_tuck.tucked_at(side, x, y, self.size, sides)}
+            live["edge"] = avatar_tuck.edge_of(side, sides)
+        step = avatar_tuck.sneak_at(now - sneak["at"])
+        x = int(round(sneak["x"] + (sneak["to"][0] - sneak["x"]) * step.walk))
+        y = int(round(sneak["y"] + (sneak["to"][1] - sneak["y"]) * step.walk))
+        window.geometry(f"+{x}+{y}")
+        live["at"] = (x, y)
+        live["tuck"] = live["grip"] = step.tuck
+        return step
+
+    def _sneaked_in(self, live: Dict[str, Any]) -> None:
+        self._tucked, self._beside = self._beside, ""
+        live.pop("sneak", None)
+        live["tuck"] = live["grip"] = 1.0
+
+    def _untuck(self) -> None:
+        """The leaf clicked: it comes back out - beside the side, and goes in
+        again in a while."""
+        from . import avatar_tuck
+        side, self._tucked = self._tucked, ""
+        self._live["peeking"] = False
+        self._beside, self._beside_since = side, time.monotonic()
+        self._slide_from_here(self._placed(avatar_tuck.back_at, side), 0.0, 0.0)
+        self._look_now()
+
+    def _look_now(self) -> None:
+        """The next frame at once - the pointer just came on or went: the
+        smile begins now, not at the next slow frame (up to 160 ms on)."""
+        job = getattr(self, "_animate_job", None)
+        if job is None:
+            return
+        try:
+            self.root.after_cancel(job)
+        except Exception:
+            pass
+        self._animate_job = self.root.after(1, self._animate)
 
     def set_state(self, state: str) -> None:
         self.state = state if state in STATE_COLORS else "idle"
@@ -626,9 +850,11 @@ class DesktopAgent:
     def _bind_events(self) -> None:
         self.canvas.bind("<Enter>", self._on_hover_enter)
         self.canvas.bind("<Leave>", self._on_hover_leave)
-        # One click or two counted in `_on_click` - not Tk's own double
-        # click, which any event between the presses broke.
-        self.canvas.bind("<Button-1>", self._on_click)
+        # A CLICK IS LET GO WHERE IT WAS PRESSED (the user, 2026-11-04: it hopped
+        # at the press and opened the chat whatever came next): the press does
+        # nothing to be seen, a drag is held at once, and `_end_drag` counts
+        # one click or two in `_on_click` - not Tk's own double click, which
+        # any event between the presses broke.
         self.canvas.bind("<Button-3>", self._on_right_click)
         if sys.platform == "darwin":
             # A Mac's Tk calls the right button 2; and a Mac without one
@@ -665,6 +891,10 @@ class DesktopAgent:
         self._drag_offset = (event.x_root - self.agent_window.winfo_x(),
                              event.y_root - self.agent_window.winfo_y())
         self._dragged = False
+        self._pressed = True
+        self._live.pop("slide", None)
+        if self._live.pop("sneak", None):
+            self._live["tuck"] = self._live["grip"] = 0.0
 
     def _on_drag(self, event: tk.Event) -> None:
         press = getattr(self, "_drag_press", (event.x_root, event.y_root))
@@ -680,14 +910,33 @@ class DesktopAgent:
             self._carried = True
             if getattr(self, "_hover", None) is not None:
                 self._on_hover_leave()
+            # Pulled out by its leaf: all of it, in the hand.
+            if getattr(self, "_tucked", ""):
+                self._tucked = ""
+                self._drag_offset = (self.size // 2, self.size // 2)
+            self._live["tuck"] = self._live["grip"] = 0.0
+            self._live["peeking"] = False
+            self._look_now()                     # held, at once
         offset = getattr(self, "_drag_offset", (0, 0))
         self.agent_window.geometry(f"+{event.x_root - offset[0]}+{event.y_root - offset[1]}")
 
-    def _end_drag(self, _event: Any = None) -> None:
-        """Let go: the readout again, the pointer being still on it."""
+    def _end_drag(self, event: Any = None) -> None:
+        """Let go: the readout again, the pointer being still on it - and,
+        beside the side of a screen, it will sneak in. Let go where it was
+        pressed: a click - its leaf's brings it out. (A Mac's Control-click is
+        a right click: its press never came here, and nor does its let go.)"""
+        pressed, self._pressed = getattr(self, "_pressed", False), False
         if getattr(self, "_carried", False):
             self._carried = False
             self._on_hover_enter()
+            self._note_the_side()
+            self._look_now()
+        elif not pressed:
+            return
+        elif getattr(self, "_tucked", ""):
+            self._untuck()
+        elif event is not None:
+            self._on_click(event)
 
     #: How far apart, on the screen, two presses may be and still be one
     #: double click (the system's own is a few pixels; a hand at 175%
@@ -707,7 +956,8 @@ class DesktopAgent:
         return 0.4
 
     def _on_click(self, event: tk.Event) -> None:
-        """ONE CLICK OR TWO, COUNTED HERE (the user, 2026-10-26): a double
+        """ONE CLICK OR TWO, COUNTED HERE, EACH WHEN IT IS LET GO (the user,
+        2026-10-26, 2026-11-04): a double
         click, sometimes, opened two conversations. Tk's own double click is
         broken by any event between the two presses - and a click makes the
         avatar hop, so the pixel under a pointer at its edge turns
@@ -717,6 +967,8 @@ class DesktopAgent:
         presses 300 ms apart opened the chat AND the Overview. Now the
         presses are counted: a second within the system's double-click time,
         and near the first, is a double click; a single waits that long."""
+        if getattr(self, "_tucked", ""):                 # only comes out (`_end_drag`)
+            return
         # A hop for being clicked.
         self._live["poked"] = time.monotonic() - self._live["start"]
         now = time.monotonic()
@@ -1049,7 +1301,13 @@ class DesktopAgent:
         try:
             self.agent_window.update_idletasks()
             x, y = self.agent_window.winfo_x(), self.agent_window.winfo_y()
-            if not _on_a_screen(self.agent_window, x + self.size // 2, y + self.size // 2):
+            # ANY OF IT ON A SCREEN is on a screen: beside the side, its middle
+            # may well be past it (the user, 2026-11-04: left at the side, it
+            # was taken for lost and sent home), and in the side it is meant
+            # to be.
+            far = self.size - 1
+            if not any(_on_a_screen(self.agent_window, x + across, y + down)
+                       for across in (0, far) for down in (0, far)):
                 log.info("the avatar was off every screen (at %s,%s): put back", x, y)
                 self._place_bottom_right()
                 self.agent_window.deiconify()
@@ -1147,12 +1405,28 @@ class DesktopAgent:
                 log.debug("the chat bubble's zoom could not be kept", exc_info=True)
         self._chat_bubble = ChatBubble(
             self.root, name=self.app.avatar_name(), family=font[0], size=font[1],
-            send=lambda text, conversation: self.app.agent.handle_message(text, conversation),
+            send=lambda text, conversation, files=None, mentions=None, on_text=None:
+            self.app.agent.handle_message(text, conversation, attachments=files or None,
+                                          mentions=mentions or None, on_text=on_text),
+            streams=True, turn=getattr(self, "_chat_turn", None),
+            files=getattr(self.app, "chat_files", None),
             post=lambda fn: self.queue.put(("call", fn)), open_full=full, words=self._words,
-            conversation_id=self._conversation_id,
+            # A NEW CONVERSATION each time one is opened: the last was closed
+            # (the user, 2026-11-03: "点击关闭之后再打开就是一个新的session").
+            conversation_id=None,
             on_conversation=lambda conversation: setattr(self, "_conversation_id", conversation),
             kept_size=kept or None, on_size=sized, zoom=zoom, on_zoom=zoomed)
         self._chat_bubble.show(near=self._avatar_box())
+
+    def _chat_turn(self, text: Any, conversation: Optional[str] = None, files: Any = None,
+                   mentions: Any = None, on_done: Any = None) -> Any:
+        """A bubble's message at two speeds (agent/two_speed.py); asked with
+        None, whether they are on."""
+        two = self.app.two_speed
+        if text is None:
+            return two.on
+        said = two.send(text, conversation, files, mentions, on_done)
+        return said
 
     def _avatar_box(self) -> tuple:
         """Where the avatar is on the screen: (x, y, width, height)."""
@@ -1211,8 +1485,10 @@ class DesktopAgent:
         return left <= px < left + self.size and top <= py < top + self.size
 
     def _on_hover_enter(self, _event: Any = None) -> None:
-        """The pointer came onto it: the readout after `HOVER_AFTER_MS`, if
-        it is still there then and the avatar is not being carried."""
+        """The pointer came onto it: its smile begins at once (`_look_now`);
+        the readout after `HOVER_AFTER_MS`, if it is still there then and the
+        avatar is not being carried."""
+        self._look_now()
         if self._hover is not None or getattr(self, "_carried", False) \
                 or getattr(self, "_hover_wait", None) is not None:
             return
@@ -1247,6 +1523,8 @@ class DesktopAgent:
         if _event is not None and not getattr(self, "_carried", False) \
                 and self._pointer_on_avatar():
             return
+        if _event is not None:
+            self._look_now()                     # the smile begins to go at once
         wait = getattr(self, "_hover_wait", None)
         if wait is not None:
             try:
@@ -1846,7 +2124,7 @@ class DesktopAgent:
                 name="bubble-answer", daemon=True).start()
         elif notification_id:
             # "Got it (no more notifications)": read, and that is the end of it.
-            threading.Thread(target=self.app.notifications.mark_read,
+            threading.Thread(target=self.app.notification_got_it,
                              args=(notification_id,), name="bubble-read",
                              daemon=True).start()
         # Dismissing a proactive message completes the interaction. Do not

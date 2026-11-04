@@ -419,6 +419,9 @@ class TheClockTests(unittest.TestCase):
             def briefing(self):
                 return {"at": self.at} if self.at else None
 
+            def latest_daily(self):              # a special issue is not the day's
+                return self.briefing()
+
         store = _Store()
         # By itself only with its switch on.
         off = IssueClock(_Config(recommend_times="08:00"), _Round(), store)

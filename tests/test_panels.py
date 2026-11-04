@@ -3286,7 +3286,7 @@ class ChatFollowUpPanelTests(unittest.TestCase):
         page = re.sub(r"<script[^>]*src=[^>]*></script>", "",
                       (web / "index.html").read_text(encoding="utf-8"))
         stub = {
-            "/api/chat": {"answer": "They are fetched from the census API.",
+            "/api/chat/turn": {"answer": "They are fetched from the census API.",
                           "message_id": "msg_1", "conversation_id": "conv_1",
                           "classification": "answer", "tool_calls": [],
                           "duration_seconds": 1},

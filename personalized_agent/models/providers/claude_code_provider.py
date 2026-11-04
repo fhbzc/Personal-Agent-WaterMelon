@@ -324,6 +324,26 @@ NATIVE_READ_NOTE = (
 )
 
 
+#: The most pictures sent with one call, the latest: a document's pages too.
+MOST_PICTURES = 24
+
+
+def with_pictures(command: List[str], prompt: str, pictures: List[Dict[str, str]]) -> tuple:
+    """A CALL THAT CARRIES PICTURES (the user, 2026-11-04: "正常claude/gpt都能读文件和图片"):
+    the client takes a prompt as text, and a picture said in words never reached
+    the model. Given as a message of its stream instead - measured - the words
+    and then each picture as the picture it is. A call with none is as ever."""
+    if not pictures:
+        return command, prompt
+    at = command.index("-p") + 1
+    message = {"type": "user", "message": {"role": "user", "content": [
+        {"type": "text", "text": prompt},
+        *[{"type": "image", "source": {"type": "base64", "media_type": one["media_type"],
+                                       "data": one["data"]}} for one in pictures[-MOST_PICTURES:]]]}}
+    return ([*command[:at], "--input-format", "stream-json", *command[at:]],
+            json.dumps(message, ensure_ascii=False) + "\n")
+
+
 def _unconfined_checks(request: ModelRequest) -> Any:
     """Without the sandbox: the agent's check of the client's own tools,
     for its hook (agent/work/unconfined.py) - each refusal told."""
@@ -847,12 +867,8 @@ class ClaudeCodeProvider(ModelProvider):
                 content = text_of(content)
             parts.append(f"{speaker}: {content}")
         parts.append("Assistant:")
-        prompt = "\n\n".join(parts)
-        if getattr(request, "native_read", None):
-            # Claude sees pictures: the file one came from, opened with Read.
-            prompt = prompt.replace("[a picture]", "[a picture - to see it, open the file at "
-                                    "its path above with your Read tool]")
-        return prompt
+        # The pictures themselves go with the prompt (`with_pictures`).
+        return "\n\n".join(parts).replace("[a picture]", "[a picture, shown with this message]")
 
     @staticmethod
     def _tool_results(blocks: List[Any]) -> Optional[str]:
@@ -1050,6 +1066,8 @@ class ClaudeCodeProvider(ModelProvider):
         system, system_file = _system_to_file(command)
         settings_file = _settings_to_file(command)
         prompt = self._prompt(request)
+        from ..vision import pictures_in
+        command, given = with_pictures(command, prompt, pictures_in(request.messages))
         cwd = str(self.workspace) if self.workspace else None
         if request.unconfined and (request.unconfined or {}).get("workdir"):
             # Without the sandbox, its own tools work from the work's folder.
@@ -1073,7 +1091,7 @@ class ClaudeCodeProvider(ModelProvider):
         try:
             completed = children.run(
                 command,
-                input=prompt,
+                input=given,
                 capture_output=True, text=True,
                 encoding="utf-8", errors="replace",
                 cwd=cwd, env=env,
@@ -1350,9 +1368,31 @@ class _Stream:
         self.working = 0.0
         self.mark = time.monotonic()
         self.usage: Dict[str, Dict[str, int]] = {}
+        self.text = ""
+
+    def _said(self, line: str) -> None:
+        """THE REPLY AS IT IS WRITTEN (the user, 2026-11-04): told to whoever
+        waits - the client gives each piece as it comes."""
+        try:
+            event = json.loads(line).get("event") or {}
+        except (ValueError, AttributeError):
+            return
+        kind = event.get("type")
+        if kind == "message_start":
+            self.text = ""
+        elif kind == "content_block_delta" and (event.get("delta") or {}).get("type") == "text_delta":
+            self.text += str(event["delta"].get("text") or "")
+        else:
+            return
+        try:
+            self.request.on_text(self.text)
+        except Exception:                    # pragma: no cover - the caller's display
+            log.debug("could not tell the reply so far", exc_info=True)
 
     def line(self, line: str) -> None:
         self.last = time.monotonic()
+        if '"stream_event"' in line and callable(self.request.on_text):
+            self._said(line)
         if self.request.unconfined and '"tool_result"' in line:
             self._refusals(line)
         if '"usage"' not in line or not callable(self.request.on_usage):

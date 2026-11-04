@@ -793,6 +793,9 @@ class TheNewspapersSwitchTests(unittest.TestCase):
             def briefing(self):
                 return {}
 
+            def latest_daily(self):              # a special issue is not the day's
+                return {}
+
         config = _Config(recommend_times="08:00")
         clock = IssueClock(config, mock.Mock(running=lambda: False), _Store())
         late = datetime.now().astimezone().replace(hour=23, minute=0)

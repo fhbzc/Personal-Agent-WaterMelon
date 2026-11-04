@@ -14,10 +14,18 @@ weaker as evidence arrives, including evidence of whether acting on it
 worked.
 
   EVIDENCE   ONLY WHAT THE USER DID THEMSELVES - added, deleted, edited,
-             disabled - with their reason when they gave one; and among it,
-             the user undoing what the agent did on a lesson (`used`,
-             `outcome`). What the agents do - a decision left standing, the
-             reviewer opening work again - is never evidence.
+             disabled, and EVERY ANSWER to a notification or a question (the
+             user, 2026-11-03: Got it, Remind me later, Add to to-do, Open,
+             Not now, Allow...: each says something different) - with their
+             reason when they gave one; and among it, the user undoing what
+             the agent did on a lesson (`used`, `outcome`). What the agents do
+             - a decision left standing, the reviewer opening work again - is
+             never evidence, nor is a notification left unanswered.
+             KEPT AS LEARNING KEEPS ITS WORK (the user, 2026-11-03): each
+             piece an EXAMPLE, marked with its class, its exact content kept,
+             said in English; the rules above them are the possible universal
+             ones. All in English, for the model, never shown to the user;
+             found by one way (`retrieve.py`).
   RULES      hypotheses with explicit conditions, each with the evidence
              that supports and the evidence that contradicts it. A rule is a
              CANDIDATE until enough evidence backs it, then ACTIVE - a lesson
@@ -69,8 +77,9 @@ log = logging.getLogger(__name__)
 #: The most rules a piece of evidence is judged against, the most relevant
 #: first.
 SHORTLIST = 20
-#: Pooled evidence sharing features, this many or more, is induced from.
-GROUP_AT = 3
+#: Pooled evidence of one class or sharing features, this many or more, is
+#: induced from: a POSSIBLE rule, a candidate until enough backs it.
+GROUP_AT = 2
 #: How alike two pieces of pooled evidence must be to be grouped.
 GROUP_SCORE = 3.0
 #: Evidence counts half as much after this many days.
@@ -101,21 +110,31 @@ WEIGHT_CORRECTION = 1.5
 
 #: The most pieces of evidence one call is given.
 BATCH = 30
+#: What is kept of an example's exact content.
+MOST_CONTENT = 12000
 
 #: What each kind of lesson is about - said to the model.
 KINDS = {
     "notifications": ("Notification lessons",
                       "what the user did to the notifications and calendar events the "
-                      "agent made or they made themselves"),
+                      "agent made or they made themselves, and how they answered every "
+                      "notification and question. EACH ANSWER SAYS SOMETHING DIFFERENT: "
+                      "accepted, opened, allowed or added to the to-do list - it was right; "
+                      "not now, later or remind me later - the MOMENT was wrong, not "
+                      "necessarily the content; not today - enough of this today; denied - "
+                      "the agent should not do this; a bad notification - it should never "
+                      "have been said; got it - seen, with no complaint, a weak sign"),
     "connections": ("Connection lessons",
                     "what the user did to their contacts - added, edited, deleted, merged"),
     "work": ("How you work",
              "the stages of the user's own work - what they decided, required, "
              "accepted and rejected"),
+    "general": ("General lessons",
+                "what the user told their agent to remember about how they want things done"),
 }
 
 #: The kinds learned with the state heartbeat's round.
-LEARNED_KINDS = ("notifications", "connections", "work")
+LEARNED_KINDS = ("notifications", "connections", "work", "general")
 #: Each kind's module (common/modules.py): one turned off is not learned.
 KIND_MODULE = {"notifications": "calendar", "connections": "connections",
                "work": "experience"}
@@ -125,9 +144,13 @@ matched by. Return ONLY this JSON object:
 {{"features": {{"<record id>": {{"source": "where it came from - an app or channel, e.g. wechat, email, screen, calendar, manual",
                                 "event_type": "what kind of thing it is about, in two or three words, e.g. meeting, deadline, payment, person",
                                 "person": "the person it is about or with, if any, as named",
-                                "keywords": ["3 to 8 words that say what it is about"]}}}}}}
+                                "keywords": ["3 to 8 words that say what it is about"],
+                                "category": "its class: two to four words naming the kind of case, reusing one of the classes below when it fits",
+                                "english": "one or two sentences: what the situation was and what the user did or answered - in general terms, by which a like moment finds it"}}}}}}
 
-Lower case.
+Lower case, but for "english".
+
+THE CLASSES THERE ARE SO FAR: {categories}
 
 THE RECORDS:
 {records}"""
@@ -297,9 +320,10 @@ class LessonEngine:
     # -- what the user did ---------------------------------------------------
     def record(self, kind: str, source_id: str, summary: str, action: str = "",
                reason: str = "", at: str = "", weight: Optional[float] = None,
-               outcome_of: str = "", learn: bool = False) -> str:
+               outcome_of: str = "", learn: bool = False, content: str = "") -> str:
         """One piece of evidence, kept - learned from with the next round
-        (or at once, with `learn`)."""
+        (or at once, with `learn`). `content`: exactly what it was - what was
+        shown, why it was made - kept with it."""
         from ...common.events.models import new_id
         reason = " ".join(str(reason or "").split())[:1000]
         if weight is None:
@@ -307,13 +331,48 @@ class LessonEngine:
         ident = new_id("evi")
         self.db.execute(
             "INSERT INTO lesson_evidence (id, kind, source_id, at, action, summary, reason, "
-            "weight, features, processed_at, outcome_of) VALUES (?, ?, ?, ?, ?, ?, ?, ?, "
-            "NULL, NULL, ?)",
+            "weight, features, processed_at, outcome_of, content) VALUES (?, ?, ?, ?, ?, ?, "
+            "?, ?, NULL, NULL, ?, ?)",
             (ident, kind, str(source_id or ""), at or _iso(), str(action or "")[:40],
-             str(summary or "")[:4000], reason, float(weight), str(outcome_of or "")))
+             str(summary or "")[:4000], reason, float(weight), str(outcome_of or ""),
+             str(content or "")[:MOST_CONTENT]))
         if learn:
             self.learn_in_background(kind)
         return ident
+
+    def rule_from_the_user(self, kind: str, statement: str, evidence: str) -> str:
+        """A rule the user stated themselves, in the chat: in force at once,
+        its example the conversation it was said in."""
+        rule = self._new_rule(kind, {"statement": statement}, "stated by the user in the chat",
+                              state="active")
+        self.db.execute("INSERT OR REPLACE INTO lesson_links (evidence_id, rule_id, relation, "
+                        "why, at) VALUES (?, ?, 'supports', ?, ?)",
+                        (evidence, rule, "the user stated it", _iso()))
+        return rule
+
+    def rebuild_once(self) -> int:
+        """ONCE (the user, 2026-11-03: "所有lessons都要重新弄"): the notification
+        and connection lessons made again as examples and rules in English -
+        their rules let go (one the user pinned or rejected stays), every
+        piece of evidence read afresh with the next round. The natures of the
+        work are learning's own, and stay."""
+        key = "lessons.rebuilt.examples"
+        done = self.db.query_one("SELECT value FROM kv WHERE key = ?", (key,))
+        if done and done["value"]:
+            return 0
+        made = 0
+        for kind in ("notifications", "connections"):
+            rules = self.db.query("SELECT id FROM lesson_rules WHERE kind = ? AND pinned = 0 "
+                                  "AND state != 'rejected'", (kind,))
+            for row in rules:
+                self.db.execute("DELETE FROM lesson_links WHERE rule_id = ?", (row["id"],))
+                self.db.execute("DELETE FROM lesson_rules WHERE id = ?", (row["id"],))
+            cursor = self.db.execute("UPDATE lesson_evidence SET features = NULL, "
+                                     "processed_at = NULL WHERE kind = ?", (kind,))
+            made += int(cursor.rowcount or 0)
+        self.db.execute("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE "
+                        "SET value = excluded.value", (key, _iso()))
+        return made
 
     def forget_source(self, kind: str, source_id: str) -> int:
         """The evidence of one action taken back - and what it said of every
@@ -469,7 +528,8 @@ class LessonEngine:
         def with_evidence(rule: Dict[str, Any]) -> Dict[str, Any]:
             links = self.db.query(
                 "SELECT l.relation, l.why, e.id, e.summary, e.reason, e.at, e.source_id, "
-                "e.action FROM lesson_links l JOIN lesson_evidence e ON e.id = l.evidence_id "
+                "e.action, e.category, e.english FROM lesson_links l JOIN lesson_evidence e "
+                "ON e.id = l.evidence_id "
                 "WHERE l.rule_id = ? ORDER BY e.at DESC", (rule["id"],))
             return dict(rule, evidence=[dict(one) for one in links][:50],
                         cases=sum(1 for one in links if one["relation"] == "supports"),
@@ -715,8 +775,12 @@ class LessonEngine:
                                 + (f" - the user's reason: {row['reason']}" if row["reason"]
                                    else "") for row in part)
             self._at(kind, "reading the new edits", start, len(wanting))
-            said = self._ask(FEATURES_PROMPT.format(about=about, records=records),
-                             language=in_english("the features and keywords"))
+            classes = [row["category"] for row in self.db.query(
+                "SELECT DISTINCT category FROM lesson_evidence WHERE kind = ? AND category != '' "
+                "LIMIT 60", (kind,))]
+            said = self._ask(FEATURES_PROMPT.format(about=about, records=records,
+                                                    categories=", ".join(classes) or "none yet"),
+                             language=in_english("the features, the classes and keywords"))
             if said is None:
                 return                      # tried again with the next edit
             got = said.get("features") if isinstance(said.get("features"), dict) else {}
@@ -727,8 +791,11 @@ class LessonEngine:
                             "person": str(one.get("person") or "")[:80],
                             "keywords": [str(k).lower()[:40] for k in one.get("keywords") or []][:10],
                             "action": row["action"]}
-                self.db.execute("UPDATE lesson_evidence SET features = ? WHERE id = ?",
-                                (json.dumps(features, ensure_ascii=False), row["id"]))
+                self.db.execute(
+                    "UPDATE lesson_evidence SET features = ?, category = ?, english = ? WHERE id = ?",
+                    (json.dumps(features, ensure_ascii=False),
+                     " ".join(str(one.get("category") or "").lower().split())[:60],
+                     " ".join(str(one.get("english") or "").split())[:600], row["id"]))
 
     # 2. MATCH
     def shortlist(self, features: Dict[str, Any], rules: List[Dict[str, Any]]
@@ -809,14 +876,15 @@ class LessonEngine:
                        "action": row["features"].get("action"),
                        "keywords": row["features"].get("keywords")}
             group = [one for one in pooled if one["id"] not in used and (
-                one is row or relevance(one["features"], as_rule) >= GROUP_SCORE)]
+                one is row or relevance(one["features"], as_rule) >= GROUP_SCORE
+                or (row.get("category") and one.get("category") == row["category"]))]
             if len(group) < GROUP_AT:
                 continue
             records = "\n".join(f"[{one['id']}] ({one['action']}) {one['summary'][:600]}"
                                 + (f" - the user's reason: {one['reason']}" if one["reason"]
                                    else "") for one in group[:12])
             said = self._ask(INDUCE_PROMPT.format(about=about, records=records),
-                             language=in_display("the statement")
+                             language=in_english("the statement")
                              + in_english("its conditions and keywords"))
             if said is None:
                 return made
@@ -919,7 +987,7 @@ class LessonEngine:
             about=about, statement=rule["statement"],
             conditions=json.dumps(rule["conditions"], ensure_ascii=False),
             supporting=cases("supports"), contradicting=cases("contradicts")),
-            language=in_display("each statement")
+            language=in_english("each statement")
             + in_english("their conditions and keywords, and why"))
         if said is None:
             return False
@@ -983,7 +1051,7 @@ class LessonEngine:
                 if len(left & right) / min(len(left), len(right)) < MERGE_OVERLAP:
                     continue
                 said = self._ask(MERGE_PROMPT.format(a=a["statement"], b=b["statement"]),
-                                 language=in_display("the statement"))
+                                 language=in_english("the statement"))
                 if not said or not said.get("same"):
                     continue
                 keep, drop = (a, b) if a["support"] >= b["support"] else (b, a)

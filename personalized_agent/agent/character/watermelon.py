@@ -43,6 +43,8 @@ PUPIL = (22, 12, 8)
 INK = (26, 40, 18)
 BROW = (30, 86, 26)
 BLUSH = (240, 120, 120)
+PINK = (255, 157, 176)
+TEAR = (176, 226, 250)
 
 #: The body, in a 128-unit box: centre, half length and half height, its
 #: tilt (the left end a little higher - it faces left) and how square its
@@ -59,9 +61,15 @@ MOUTH = (42.0, 73.0)
 #: The cheeks, the "!" of a notification and the thought bubbles - by the face.
 CHEEKS = ((62, 70), (26, 66))
 BADGE = (22.0, 16.0, 10.0)
+SWEAT = (78.0, 42.0)
 BUBBLES = ((36, 24, 2.2), (28, 16, 3), (18, 7, 3.8))
 #: Where the body rests: it squashes and hops from here.
 GROUND = CY + B
+#: How far the body goes off the leaves when tucked into the side of the
+#: screen: past what stays out (ui/avatar_tuck.py), only a leaf left.
+TUCK_SHIFT = 30
+#: How far past the side of the screen the leaves holding on to it go.
+GRIP_PAST = 4
 
 #: What the page needs to draw the same face (api: GET /api/characters).
 RIG = {"kind": NAME, "box": 128, "eyes": [list(one) for one in EYES], "mouth": list(MOUTH),
@@ -175,9 +183,21 @@ def _leaves(scale: int) -> Any:
 
 # -- the face, every frame ----------------------------------------------------
 def draw_face(image: Any, scale: int, look: Tuple[float, float] = (0.0, 0.0),
-              blink: float = 0.0, mood: str = "idle", t: float = 0.0) -> None:
+              blink: float = 0.0, mood: str = "idle", t: float = 0.0,
+              smile: Any = None) -> None:
     """The eyes - looking `look` (each of x, y from -1 to 1), `blink` shut -
-    the brows and the mouth, for `mood`, onto the body."""
+    the brows and the mouth, for `mood`, onto the body.
+
+    `smile`, 0 to 1: HOW FAR INTO THE HOVER'S SMILE (the user, 2026-11-03:
+    the smile came at once and it felt like a jolt) - the eyes close as in a
+    blink and open again as ^ ^, the brows rise, the mouth widens. None: all
+    of it for "hover", none for the rest.
+
+    "grabbed", while it is carried or caught sneaking (the user, 2026-11-04:
+    "被抓包的表情，不要一直微笑"), as the user's earlier companion looked when it was
+    yanked: round white eyes staring, plain round pupils, a small round mouth,
+    pink cheeks, two strokes of being pulled - and a drop of sweat. "sneaky", going into the side of the screen:
+    half-shut eyes sliding round."""
     from PIL import ImageDraw
     draw = ImageDraw.Draw(image)
     S = scale
@@ -187,11 +207,26 @@ def draw_face(image: Any, scale: int, look: Tuple[float, float] = (0.0, 0.0),
 
     width = lambda w: max(1, int(round(S * w)))      # noqa: E731
     lx, ly = max(-1.0, min(1.0, look[0])), max(-1.0, min(1.0, look[1]))
-    happy = mood == "hover"
+    grabbed, sneaky = mood == "grabbed", mood == "sneaky"
+    if grabbed:
+        blink = 0.0
+    if sneaky:
+        blink = max(blink, 0.4)
+    level = (1.0 if mood == "hover" else 0.0) if smile is None else max(0.0, min(1.0, float(smile)))
+    happy = level >= 0.5
+    # On the way into the smile (and out of it), the eyes close as in a blink.
+    blink = max(blink, 1.0 - abs(2.0 * level - 1.0)) if 0.0 < level < 1.0 else blink
     for i, (cx, cy, rx, ry, ir) in enumerate(EYES):
-        lift = -2.2 if mood in ("notification", "hover") else 0.0
+        lift = (-2.2 if mood == "notification" else 1.6 if sneaky
+                else -2.2 * level)
         tilt = 2.0 if mood == "thinking" and i == 0 else 0.0
         bx = cx + 1
+        if grabbed:                                 # staring: round, white, no brows
+            wide = rx * 1.25
+            oval(cx, cy, wide + 1.1, wide * 1.17 + 1.1, fill=INK + (255,))
+            oval(cx, cy, wide, wide * 1.17, fill=(255, 255, 255, 255))
+            oval(cx - wide * 0.14, cy - 0.4, wide * 0.42, wide * 0.46, fill=PUPIL + (255,))
+            continue
         draw.arc(((bx - rx * 0.95) * S, (cy - ry - 8 + lift - tilt) * S,
                   (bx + rx * 0.95) * S, (cy - ry + 2 + lift) * S),
                  start=220, end=340, fill=BROW + (255,), width=width(1.6))
@@ -215,22 +250,45 @@ def draw_face(image: Any, scale: int, look: Tuple[float, float] = (0.0, 0.0),
         oval(px, py, ir * 0.55, irr * 0.55, fill=PUPIL + (255,))
         oval(px + ir * 0.35, py - irr * 0.45, ir * 0.32, ir * 0.32, fill=(255, 255, 255, 255))
         oval(px - ir * 0.35, py + irr * 0.35, ir * 0.14, ir * 0.14, fill=(255, 255, 255, 220))
+        if sneaky:                                  # the lid, straight across
+            draw.line(((cx - rx - 1.2) * S, (cy - ery) * S, (cx + rx + 1.2) * S, (cy - ery) * S),
+                      fill=INK + (255,), width=width(2.0))
     mx, my = MOUTH
     if mood == "talking":
         h = 3.5 + 2.5 * abs(math.sin(t * 9))
         oval(mx, my + 1, 4.2, h, fill=(70, 24, 20, 255), outline=INK + (255,), width=width(1.1))
         oval(mx, my + 1 + h * 0.5, 2.6, h * 0.35, fill=(214, 92, 92, 255))
+    elif grabbed:                                   # a small round o
+        oval(mx, my + 3.5, 3.7, 3.4, fill=INK + (255,))
+    elif sneaky:                                    # pressed together, to one side
+        draw.line(((mx - 3.2) * S, (my + 1.4) * S, (mx + 3.2) * S, (my - 0.2) * S),
+                  fill=INK + (255,), width=width(1.5))
     elif mood == "thinking":
         draw.line(((mx - 3) * S, (my + 1) * S, (mx + 3) * S, (my - 0.5) * S),
                   fill=INK + (255,), width=width(1.4))
     else:
-        w = 6.5 if happy else 5.0
+        w = 5.0 + 1.5 * level
         draw.arc(((mx - w) * S, (my - 4) * S, (mx + w) * S, (my + 3.5) * S), start=20, end=160,
                  fill=INK + (255,), width=width(1.5))
     # Pink cheeks for a notification only: on a smile they read as dimples.
     if mood == "notification":
         for cx, cy in CHEEKS:
             oval(cx, cy, 3.6, 2.0, fill=BLUSH + (110,))
+    if grabbed:                                     # cheeks, solid: Pillow does not blend
+        for cx, cy in CHEEKS:
+            oval(cx + 1, cy + 3, 4.2, 3.0, fill=PINK + (255,))
+        for one in (((21, 50), (14, 44)), ((21, 74), (14, 80))):     # the strokes
+            draw.line((one[0][0] * S, one[0][1] * S, one[1][0] * S, one[1][1] * S),
+                      fill=LEAF_VEIN + (255,), width=width(1.6))
+        x, y = SWEAT                                # and a drop of sweat
+        tip = ((x + 1.5) * S, (y - 13) * S)
+        draw.polygon((tip, ((x - 6.2) * S, (y - 1) * S), ((x + 6.2) * S, (y - 1) * S)),
+                     fill=OUTLINE + (255,))
+        oval(x, y + 1, 7.0, 7.4, fill=OUTLINE + (255,))
+        draw.polygon((((x + 1.4) * S, (y - 11) * S), ((x - 5.2) * S, (y - 0.5) * S),
+                      ((x + 5.2) * S, (y - 0.5) * S)), fill=TEAR + (255,))
+        oval(x, y + 1, 6.0, 6.4, fill=TEAR + (255,))
+        oval(x - 2.2, y + 0.2, 1.5, 2.2, fill=(255, 255, 255, 255))
 
 
 def _extras(image: Any, scale: int, mood: str, t: float) -> None:
@@ -259,6 +317,9 @@ def _extras(image: Any, scale: int, mood: str, t: float) -> None:
 class Watermelon:
     """The character, painted once at `scale` times and framed on demand."""
 
+    #: It can go into the side of the screen (ui/avatar_tuck.py).
+    TUCKS = True
+
     def __init__(self, scale: int = 3, package: Any = None) -> None:
         """Painted afresh, or - from a package's layers - read, which is
         quicker at start."""
@@ -278,17 +339,27 @@ class Watermelon:
 
     def frame(self, mood: str = "idle", look: Tuple[float, float] = (0.0, 0.0),
               blink: float = 0.0, t: float = 0.0, squash: float = 1.0,
-              hop: float = 0.0, size: int = 128, facing: str = "left") -> Any:
+              hop: float = 0.0, size: int = 128, facing: str = "left",
+              smile: Any = None, tuck: float = 0.0, lean: float = 0.0,
+              grip: float = 0.0, reach: float = 34.0, edge: str = "side") -> Any:
         """One frame, `size` pixels square. `squash` below 1 flattens the
         body on the ground and above 1 stretches it; `hop` lifts it.
         `facing`: "left", as it is drawn, or "right" - the whole of it turned
-        round, its eyes still on the pointer."""
+        round, its eyes still on the pointer. `tuck`, 0 to 1: how far the body
+        has gone off the leaves, away from the way it faces. `lean`: degrees
+        the body tips over on the screen, anticlockwise - pulled along, it
+        leans back; the leaves hang as they are. `grip`, 0 to 1: how far the
+        leaves have turned to stand up the side of the screen and hold on to
+        it (the user, 2026-11-04: "竖着的叶子群"), `reach` of the 128 units of
+        the window from that side. `edge`: "side" - to the left of the way it
+        is drawn, the right, turned for the left - "top" or "bottom"."""
         from PIL import Image, ImageOps
         if facing == "right":
-            turned = self.frame(mood, (-look[0], look[1]), blink, t, squash, hop, size, "left")
+            turned = self.frame(mood, (-look[0], look[1]), blink, t, squash, hop, size, "left",
+                                smile, tuck, -lean, grip, reach, edge)
             return ImageOps.mirror(turned)
         body = self.body.copy()
-        draw_face(body, self.scale, look, blink, mood, t)
+        draw_face(body, self.scale, look, blink, mood, t, smile)
         n = body.size[0]
         if abs(squash - 1.0) > 1e-3 or hop:
             w = max(1, int(n * (2 - squash) ** 0.5))
@@ -299,10 +370,39 @@ class Watermelon:
             layer.paste(body, ((n - w) // 2, int(ground - ground * squash - hop * self.scale)),
                         body)
             body = layer
-        out = Image.alpha_composite(self.leaves, body)
+        if lean:
+            body = body.rotate(lean, resample=Image.BILINEAR,
+                               center=(n / 2, GROUND * self.scale))
+        if tuck:
+            layer = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+            shift = int(tuck * TUCK_SHIFT * self.scale)
+            layer.paste(body, {"top": (0, -shift), "bottom": (0, shift)}.get(edge, (shift, 0)), body)
+            body = layer
+        out = Image.alpha_composite(self.leaves_at(grip, reach, edge) if grip else self.leaves, body)
         _extras(out, self.scale, mood, t)
         return out.resize((size, size), Image.LANCZOS) if size != n else out
 
+
+    def leaves_at(self, grip: float, reach: float, edge: str = "side") -> Any:
+        """The leaves turned from their bed to lie along a side of the screen,
+        `reach` units in - their stems past it, as if holding on. At the top
+        they are as they grow, stems up; at the bottom, turned over."""
+        from PIL import Image
+        n, scale = self.leaves.size[0], self.scale
+        turn = {"side": -90, "top": 0, "bottom": 180}[edge]
+        middle = (n / 2, n / 2)
+        turned = self.leaves.rotate(turn * grip, resample=Image.BILINEAR, center=middle)
+        box = self.leaves.rotate(turn, resample=Image.BILINEAR,
+                                 center=middle).getchannel("A").getbbox()
+        if edge == "top":
+            at = (0, int(grip * (128 - reach - GRIP_PAST - box[1] / scale) * scale))
+        elif edge == "bottom":
+            at = (0, int(grip * (reach + GRIP_PAST - box[3] / scale) * scale))
+        else:
+            at = (int(grip * (reach + GRIP_PAST - box[2] / scale) * scale), 0)
+        layer = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+        layer.paste(turned, at, turned)
+        return layer
 
     def icon(self) -> Any:
         """THE ICON (the taskbar, the title bars, the tray): the melon and

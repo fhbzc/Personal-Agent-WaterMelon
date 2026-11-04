@@ -45,6 +45,13 @@ MODULES: List[Dict[str, str]] = [
              "Connections is on, what your contacts have been doing.",
      "off": "No issue is made and nothing read is kept, so no one is looked up on the web "
             "either. \"Make an issue now\" still works."},
+    {"key": "monitor", "setting": "module_monitor_enabled", "name": "Monitor",
+     "what": "The real-time signals - what you are doing, since when, how busy, your habits "
+             "- and the Activators run on them: spam and scam warnings, recommendations at "
+             "the right moments, breaks and the evening report; the heartbeat's step that "
+             "judges what they queue and reprograms them.",
+     "off": "Nothing is watched for and nothing is recommended or warned of by itself; "
+            "the meeting invitations and agreed times are still acted on (Calendar)."},
     {"key": "experience", "setting": "module_experience_enabled", "name": "Work learning",
      "what": "Your work - your Work projects and the places you list in Work's Learning "
              "panel, with your coding agents' conversations - read into cases and the "
@@ -85,9 +92,18 @@ TASK_MODULE = {
     "heartbeat:step_nature": "core",
     "heartbeat:same_notification": "calendar",
     "heartbeat_trigger": "calendar",
+    # THE MONITOR (heartbeat/monitor/): a recommendation, the evening report, its step.
+    "monitor_recommend": "monitor",
+    "monitor_evening": "monitor",
+    # The moment said again in English before its lessons are looked for.
+    "monitor_lessons_query": "monitor",
+    "calendar_lessons_query": "calendar",
+    "connections_lessons_query": "connections",
+    "heartbeat:step_monitor": "monitor",
     "notification_lessons": "calendar",
     "lessons_notifications": "calendar",
     "lessons_connections": "connections",
+    "lessons_general": "core",
     "lessons_work": "experience",
     "experience_stages": "experience_manual",
     "experience_merge": "experience_manual",
@@ -118,9 +134,14 @@ TASK_MODULE = {
     # The quick way's monitor (2026-10-31): the user's own work too.
     "work_monitor": "manual_work",
     "agent_instruction": "manual_chat",
+    "chat_fast": "manual_chat",
     "chat_followup": "manual_chat",
     "chat_history_summary": "manual_chat",
+    # A summary document of answers the user ticked (agent/chat_summary.py).
+    "chat_summary_document": "manual_chat",
     "scheduled_task": "manual_scheduled",
+    # The to-do list and Work assigned grouped (agent/feedback/list_groups.py).
+    "list_grouping": "tasks",
     "verification": "manual_scheduled",
     "task_completion": "manual_scheduled",
     "lessons_package": "manual_lessons",

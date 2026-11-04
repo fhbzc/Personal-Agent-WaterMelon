@@ -6497,6 +6497,7 @@ $$("#tabs button").forEach((button) => {
     if (activeTab === "connections") loadConnections();
     if (activeTab === "experience") loadExperience(true);
     if (activeTab === "learning") loadLearning();
+    if (activeTab === "monitor") loadMonitor();
     if (activeTab === "society") loadSociety();
     if (activeTab === "resourcedebug") rdTick();
     if (activeTab === "overview") ovCentreTheCurrent();
@@ -6856,7 +6857,7 @@ function drawOverviewPart(part, held) {
   if (part === "principles") { renderPrinciples(answer); return; }
   if (part === "lessonsPackage") { renderLessonsPackage(answer); return; }
   if (part === "todos") {
-    if (answer) ovTodos = answer.todos || [];
+    if (answer) { ovTodos = answer.todos || []; ovGroups.todo = answer.groups || null; }
     ovPlaceTodos();
     return;
   }
@@ -14195,7 +14196,10 @@ $("#connections").addEventListener("click", async (event) => {
    it stops. */
 //: `issue`: the id of the issue being read - "" for the newest, which is
 //: then what a refresh shows.
-const knowCard = { timer: null, wasRunning: false, issue: "", page: "", data: null };
+const knowCard = { timer: null, wasRunning: false, issue: "", page: "", data: null,
+                   // THE COLLECTION'S FOLDER open ("" all of it), and a folder
+                   // being made or renamed here.
+                   folder: "", folderEdit: "" };
 
 /* The card's answer: the newest issue - or the one being read. */
 function knowAsk() {
@@ -14212,6 +14216,7 @@ function renderKnowCard(data) {
   const running = Boolean(progress.running);
   const briefing = data.briefing;
   $("#ov-know-run").disabled = running;
+  renderRecMaking(progress);
   $("#ov-know-progress").innerHTML = running ? cxProgressHtml(progress)
     : (progress.error ? `<p class="muted">The last working-out failed: ${
         escapeHtml(progress.error)}</p>` : "");
@@ -14234,8 +14239,60 @@ function renderKnowCard(data) {
   } else if (knowCard.wasRunning) {
     // Just finished: the tab's own lists may have moved with it.
     knowCard.wasRunning = false;
+    if (progress.cancelled) toast("Cancelled - no new issue was made.");
     if (activeTab === "connections") loadConnections();
   }
+}
+
+/* A NEW ISSUE BEING MADE (the user, 2026-11-03: "如果是有新的正在被generate, 你要在
+   当前显示的报纸内容上方用醒目的标语和图片展示"): above the issue shown, while it is
+   made - a press turning out pages, what it is doing now, and that the issue
+   below is the last one until it is done. */
+/* A NEWSPAPER PAGE BEING WRITTEN (the user, 2026-11-03: the press's two
+   circles said nothing - "你重新画"): its masthead and picture there, its
+   lines of text written in one after another, left to right, and again. */
+const REC_MAKING_PICTURE = `<svg class="rec-making-picture" viewBox="0 0 120 90" aria-hidden="true">
+  <rect x="20" y="5" width="80" height="80" rx="3" class="rec-page"/>
+  <rect x="28" y="12" width="64" height="9" rx="1.5" class="rec-mast"/>
+  <path d="M28 25.5h64" class="rec-rule"/>
+  <rect x="28" y="30" width="28" height="22" rx="1.5" class="rec-pic"/>
+  <path d="M31 49l7-8 5 5 4-4 7 7z" class="rec-pic-hill"/>
+  <rect x="60" y="31" width="32" height="3" rx="1.5" class="rec-line rec-line-0"/>
+  <rect x="60" y="37" width="32" height="3" rx="1.5" class="rec-line rec-line-1"/>
+  <rect x="60" y="43" width="24" height="3" rx="1.5" class="rec-line rec-line-2"/>
+  <rect x="60" y="49" width="30" height="3" rx="1.5" class="rec-line rec-line-3"/>
+  <rect x="28" y="57" width="64" height="3" rx="1.5" class="rec-line rec-line-4"/>
+  <rect x="28" y="63" width="64" height="3" rx="1.5" class="rec-line rec-line-5"/>
+  <rect x="28" y="69" width="52" height="3" rx="1.5" class="rec-line rec-line-6"/>
+  <rect x="28" y="75" width="60" height="3" rx="1.5" class="rec-line rec-line-7"/>
+</svg>`;
+
+function renderRecMaking(progress) {
+  const box = $("#rec-making");
+  if (!box) return;
+  if (!progress.running) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  // CANCEL (the user, 2026-11-03): until the issue is saved - then it is made.
+  const cancel = progress.cancelling
+    ? `<span class="rec-making-cancelling">${escapeHtml("Cancelling - no new issue will be kept.")}</span>`
+    : progress.saved ? ""
+      : `<span><button type="button" class="small secondary" data-rec-cancel>Cancel</button></span>`;
+  const words = `<div class="rec-making-words"><strong class="rec-making-head">${
+    escapeHtml(progress.special ? "A special issue is being made - stay tuned!"
+      : "A new issue is being made - stay tuned!")}</strong>${progress.special && progress.title
+      ? `<span class="rec-making-title">${escapeHtml(progress.title)}</span>` : ""}
+    <span>${escapeHtml("Below is the last issue until the new one is ready.")}</span>
+    <span class="muted rec-making-stage">${escapeHtml(progress.cancelling ? "" : progress.stage || "starting")}</span>
+    ${cancel}</div>`;
+  if (box.hidden || !box.querySelector(".rec-making-picture")) {
+    box.innerHTML = REC_MAKING_PICTURE + words;
+  } else {
+    box.querySelector(".rec-making-words").outerHTML = words;   // the picture keeps turning
+  }
+  box.hidden = false;
 }
 
 /* THE FRONT PAGE: a masthead and its dateline - when it was worked out,
@@ -14311,6 +14368,9 @@ async function saveRecTimes(value) {
 
 /* DOWN THE LEFT: every issue kept (the newest hundred), and this issue's
    pages - the front page, then a page per topic, each with its stories. */
+//: What a special issue is called where it is listed and headed.
+const knowSpecialWord = "Special issue";
+
 function knowSide(briefing, issues) {
   const paper = ((briefing && briefing.stats) || {}).paper || {};
   const pages = paper.pages || [];
@@ -14319,7 +14379,7 @@ function knowSide(briefing, issues) {
       <select data-know-issue aria-label="Issue">${issues.map((one) =>
         `<option value="${escapeHtml(one.id)}"${briefing && one.id === briefing.id
           ? " selected" : ""}>${one.issue ? `No. ${one.issue}, ` : ""}${escapeHtml(
-          knowIssueTime(one.at))}</option>`).join("")}</select></label>` : "";
+          knowIssueTime(one.at))}${one.special ? escapeHtml(` - ${knowSpecialWord}: ${one.title}`) : ""}</option>`).join("")}</select></label>` : "";
   const list = briefing && (paper.front || pages.length) ? [
     { key: "", title: "Front page", count: (paper.front || []).length + (paper.brief || []).length },
     ...pages.map((one) => ({ key: one.key, title: one.title, count: (one.stories || []).length })),
@@ -14328,9 +14388,9 @@ function knowSide(briefing, issues) {
   // THE COLLECTION FIRST: what the user kept, above any one issue - it is
   // theirs across issues, and below a long list of pages it went unseen.
   const collection = `<h3 class="rec-side-head">Collection</h3>
-    <button type="button" class="rec-page rec-collection${current === "collection"
-      ? " selected" : ""}" data-know-page="collection">Stories you kept<span class="muted">${
-      kept === 1 ? "1 story" : `${kept} stories`}</span></button>`;
+    <button type="button" class="rec-page rec-collection${current === "collection" && !knowCard.folder
+      ? " selected" : ""}" data-know-page="collection" data-know-folder="">Stories you kept<span class="muted">${
+      kept === 1 ? "1 story" : `${kept} stories`}</span></button>${knowFolderTree("", 1)}`;
   return `${collection}${picker}${list.length ? `<h3 class="rec-side-head">Pages</h3>${list.map((one, n) =>
     `<button type="button" class="rec-page${current === one.key ? " selected" : ""}"
       data-know-page="${escapeHtml(one.key)}"><span class="paper-page-no">${
@@ -14338,6 +14398,80 @@ function knowSide(briefing, issues) {
       Number(one.count) || 0} stor${Number(one.count) === 1 ? "y" : "ies"}</span></button>`)
     .join("")}` : ""}`;
 }
+
+/* THE COLLECTION'S FOLDERS (the user, 2026-11-03): folders in folders, down
+   the left under "Stories you kept"; a story kept in one, or in none. */
+function knowFolders() { return (knowCard.data || {}).folders || []; }
+function knowFolderPath(id) {
+  const byId = new Map(knowFolders().map((one) => [one.id, one]));
+  const names = [];
+  for (let at = byId.get(id); at; at = byId.get(at.parent_id)) names.unshift(at.name);
+  return names.join(" / ");
+}
+function knowFolderTree(parent, depth) {
+  const items = (knowCard.data || {}).collection || [];
+  return knowFolders().filter((one) => (one.parent_id || "") === parent).map((one) => {
+    const count = items.filter((kept) => kept.folder_id === one.id).length;
+    return `<button type="button" class="rec-page rec-folder${knowCard.page === "collection"
+      && knowCard.folder === one.id ? " selected" : ""}" style="padding-left:${8 + depth * 14}px"
+      data-know-page="collection" data-know-folder="${escapeHtml(one.id)}">&#128193; ${
+      escapeHtml(one.name)}<span class="muted">${count}</span></button>${knowFolderTree(one.id, depth + 1)}`;
+  }).join("");
+}
+function knowFolderOptions(selected, leaveOut = "") {
+  // Every folder by its path - not the one being moved, nor anything in it.
+  const inside = (id) => {
+    const byId = new Map(knowFolders().map((one) => [one.id, one]));
+    for (let at = byId.get(id); at; at = byId.get(at.parent_id)) if (at.id === leaveOut) return true;
+    return false;
+  };
+  return knowFolders().filter((one) => !leaveOut || !inside(one.id))
+    .map((one) => ({ id: one.id, path: knowFolderPath(one.id) }))
+    .sort((a, b) => a.path.localeCompare(b.path))
+    .map((one) => `<option value="${escapeHtml(one.id)}"${one.id === selected ? " selected" : ""}>${
+      escapeHtml(one.path)}</option>`).join("");
+}
+function knowFolderTools() {
+  const open = knowFolders().find((one) => one.id === knowCard.folder);
+  const editing = knowCard.folderEdit;
+  if (editing) {
+    const making = editing === "new";
+    return `<div class="rec-folder-tools rec-folder-form">
+      <input type="text" data-know-folder-name maxlength="120" value="${making ? "" : escapeHtml(open ? open.name : "")}"
+        placeholder="${escapeHtml("The folder's name")}" aria-label="${escapeHtml("The folder's name")}">
+      <label class="muted">${escapeHtml("Inside")}
+        <select data-know-folder-parent><option value="">${escapeHtml("The top level")}</option>${
+          knowFolderOptions(making ? knowCard.folder : (open ? open.parent_id : ""), making ? "" : knowCard.folder)}</select></label>
+      <button type="button" class="small" data-know-folder-save>${escapeHtml(making ? "Make the folder" : "Save")}</button>
+      <button type="button" class="small secondary" data-know-folder-cancel>${escapeHtml("Cancel")}</button></div>`;
+  }
+  const items = ((knowCard.data || {}).collection || []);
+  const empty = open && !items.some((one) => one.folder_id === open.id)
+    && !knowFolders().some((one) => one.parent_id === open.id);
+  return `<div class="rec-folder-tools">
+    <button type="button" class="small secondary" data-know-folder-new>${escapeHtml(open ? "New folder inside" : "New folder")}</button>${
+    open ? `<button type="button" class="small secondary" data-know-folder-edit>${escapeHtml("Rename or move")}</button>
+      <button type="button" class="small secondary" data-know-folder-delete${empty ? "" : ` disabled title="${
+        escapeHtml("Move its stories and folders out first")}"`}>${escapeHtml("Delete the empty folder")}</button>` : ""}</div>`;
+}
+
+document.addEventListener("change", async (event) => {
+  const move = event.target.closest?.("[data-know-move]");
+  if (!move) return;
+  try {
+    await api.post("/api/recommend/collection/move", { story: move.dataset.knowMove, folder: move.value });
+    renderKnowCard(await knowAsk());
+    toast(move.value ? "Moved to the folder" : "Taken out of its folder");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && event.target.closest?.("[data-know-folder-name]")) {
+    event.preventDefault();
+    $("[data-know-folder-save]")?.click();
+  }
+});
 
 /* Whether a story is in the collection - of this issue, or kept from any. */
 function knowKept(storyId) {
@@ -14351,16 +14485,25 @@ function knowKept(storyId) {
    to-do is. Each can still be said "more like this", "not interested" or
    "already knew", as in its issue. */
 function knowCollection(data) {
-  const items = data.collection || [];
+  const all = data.collection || [];
+  const open = knowFolders().find((one) => one.id === knowCard.folder);
+  if (knowCard.folder && !open) knowCard.folder = "";
+  const items = open ? all.filter((one) => one.folder_id === open.id) : all;
   const mast = `<header class="paper-mast">
-      <h2 class="paper-title">Collection</h2>
-      <div class="paper-dateline"><span>Stories you kept, the newest first</span></div>
-    </header>`;
+      <h2 class="paper-title">${escapeHtml(open ? knowFolderPath(open.id) : "Collection")}</h2>
+      <div class="paper-dateline"><span>${escapeHtml(open ? "Stories kept in this folder, the newest first"
+        : "Stories you kept, the newest first")}</span></div>
+    </header>${knowFolderTools()}`;
+  const inside = knowFolders().filter((one) => (one.parent_id || "") === (open ? open.id : ""));
+  const folders = open && inside.length ? `<div class="rec-folder-inside">${inside.map((one) =>
+    `<button type="button" class="small secondary" data-know-page="collection" data-know-folder="${
+      escapeHtml(one.id)}">&#128193; ${escapeHtml(one.name)}</button>`).join("")}</div>` : "";
   if (!items.length) {
-    return `<article class="paper">${mast}<p class="paper-empty">Nothing kept yet. "Add to
-      collection" under a story keeps it here.</p></article>`;
+    return `<article class="paper">${mast}${folders}<p class="paper-empty">${open
+      ? escapeHtml("Nothing in this folder yet. Under a story kept, choose this folder.")
+      : `Nothing kept yet. "Add to collection" under a story keeps it here.`}</p></article>`;
   }
-  return `<article class="paper">${mast}<div class="paper-stories paper-collection">${
+  return `<article class="paper">${mast}${folders}<div class="paper-stories paper-collection">${
     items.map((one) => {
       const story = one.story || {};
       const from = story.issue_no
@@ -14368,7 +14511,9 @@ function knowCollection(data) {
         : story.issue_at ? `From the issue of ${knowIssueTime(story.issue_at)}` : "";
       return `<div class="paper-kept">${from
         ? `<p class="paper-kept-from muted">${escapeHtml(from)}</p>` : ""}${
-        knowStory(story, "story", one.issue_id)}</div>`;
+        knowStory(story, "story", one.issue_id)}<label class="rec-kept-folder muted">${escapeHtml("Folder")}
+        <select data-know-move="${escapeHtml(one.story_id)}"><option value="">${escapeHtml("No folder")}</option>${
+          knowFolderOptions(one.folder_id)}</select></label></div>`;
     }).join("")}</div></article>`;
 }
 
@@ -14385,7 +14530,7 @@ function knowFrontPage(briefing, issues = []) {
       <select data-know-issue aria-label="Issue">${issues.map((one) =>
         `<option value="${escapeHtml(one.id)}"${briefing && one.id === briefing.id
           ? " selected" : ""}>${one.issue ? `No. ${one.issue}, ` : ""}${escapeHtml(
-          knowIssueTime(one.at))}</option>`).join("")}</select></label>` : "";
+          knowIssueTime(one.at))}${one.special ? escapeHtml(` - ${knowSpecialWord}: ${one.title}`) : ""}</option>`).join("")}</select></label>` : "";
   // An issue from before Newspaper keeps its own name.
   const mast = `<header class="paper-mast">
       <h2 class="paper-title">${briefing ? "What you need to know"
@@ -14428,9 +14573,12 @@ function knowPaper(briefing, issues, paper) {
       <select data-know-issue aria-label="Issue">${issues.map((one) =>
         `<option value="${escapeHtml(one.id)}"${one.id === briefing.id
           ? " selected" : ""}>${one.issue ? `No. ${one.issue}, ` : ""}${escapeHtml(
-          knowIssueTime(one.at))}</option>`).join("")}</select></label>` : "";
+          knowIssueTime(one.at))}${one.special ? escapeHtml(` - ${knowSpecialWord}: ${one.title}`) : ""}</option>`).join("")}</select></label>` : "";
+  // A SPECIAL ISSUE, made from Chat (the user, 2026-11-03), by its title.
+  const special = (briefing.stats || {}).special;
   const mast = `<header class="paper-mast">
-      <h2 class="paper-title">Newspaper</h2>
+      <h2 class="paper-title">${special ? escapeHtml(`${knowSpecialWord}: ${briefing.stats.title || ""}`)
+        : "Newspaper"}</h2>
       <div class="paper-dateline"><span>${briefing.issue ? `No. ${briefing.issue}, ` : ""}${
         escapeHtml(knowIssueTime(briefing.at))}</span>
         ${picker || `<span>From what you read, your tasks, your contacts and the public web</span>`}</div>
@@ -14475,7 +14623,44 @@ document.addEventListener("click", async (event) => {
   const turn = event.target.closest?.("[data-know-page]");
   if (turn) {
     knowCard.page = turn.dataset.knowPage;
+    if (turn.dataset.knowFolder !== undefined) knowCard.folder = turn.dataset.knowFolder;
+    knowCard.folderEdit = "";
     if (knowCard.data) renderKnowPaper();
+    return;
+  }
+  const folderAct = event.target.closest?.("[data-know-folder-new],[data-know-folder-edit],"
+    + "[data-know-folder-delete],[data-know-folder-save],[data-know-folder-cancel]");
+  if (folderAct) {
+    if (folderAct.dataset.knowFolderNew !== undefined || folderAct.dataset.knowFolderEdit !== undefined) {
+      knowCard.folderEdit = folderAct.dataset.knowFolderNew !== undefined ? "new" : "edit";
+      renderKnowPaper();
+      $("[data-know-folder-name]")?.focus();
+      return;
+    }
+    if (folderAct.dataset.knowFolderCancel !== undefined) {
+      knowCard.folderEdit = "";
+      renderKnowPaper();
+      return;
+    }
+    const making = knowCard.folderEdit === "new";
+    const body = folderAct.dataset.knowFolderDelete !== undefined
+      ? { action: "delete", id: knowCard.folder }
+      : { action: making ? "create" : "edit", id: making ? "" : knowCard.folder,
+          name: ($("[data-know-folder-name]") || {}).value || "",
+          parent: ($("[data-know-folder-parent]") || {}).value || "" };
+    try {
+      const said = await api.post("/api/recommend/collection/folder", body);
+      knowCard.folderEdit = "";
+      if (body.action === "delete") {
+        const gone = knowFolders().find((one) => one.id === knowCard.folder);
+        knowCard.folder = gone ? gone.parent_id || "" : "";
+      } else if (making && said.id) {
+        knowCard.folder = said.id;
+      }
+      renderKnowCard(await knowAsk());
+    } catch (err) {
+      toast(err.message, "error");
+    }
     return;
   }
   const keep = event.target.closest?.("[data-know-keep]");
@@ -14591,6 +14776,18 @@ async function followKnowCard() {
     console.warn("connections", err);
   }
 }
+
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest?.("[data-rec-cancel]");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    await api.post("/api/connections/cancel", {});
+  } catch (err) {
+    toast(err.message, "error");
+  }
+  followKnowCard();
+});
 
 // An earlier issue read; the newest again by choosing it.
 document.addEventListener("change", async (event) => {
@@ -19696,6 +19893,26 @@ function drawWhatIsRunning(whole) {
    open ones are shown. */
 let ovTodos = [];
 let ovTodoDrawn = "";                     // what the box was last written with
+/* EACH LIST IN ITS GROUPS (agent/feedback/list_groups.py; the user,
+   2026-11-03): {groups, loose, new, grouping} as the server has them - null,
+   the list as it is. The user renames a group, drags an item to another, out
+   of every one, or into a new one; each change is told to the next grouping
+   first. */
+const ovGroups = { todo: null, assigned: null };
+const ovGroupEdit = { renaming: "", moving: "", adding: "" };
+let ovGroupsAgain = null;
+/* EACH GROUP FOLDED AND OPENED (the user, 2026-11-03: "分类之后要能够by group
+   collapse, 展开"): its heading clicked; which are folded is this browser's
+   own, kept over a reload, a group renamed keeping it. */
+const OV_GROUP_FOLDED_KEY = "ov-groups-folded";
+const ovGroupFolded = (() => {
+  try { return new Set(JSON.parse(localStorage.getItem(OV_GROUP_FOLDED_KEY) || "[]")); }
+  catch (_err) { return new Set(); }
+})();
+function ovGroupFoldSave() {
+  try { localStorage.setItem(OV_GROUP_FOLDED_KEY, JSON.stringify([...ovGroupFolded])); }
+  catch (_err) { /* folded for now only */ }
+}
 /* WORK ASSIGNED (the user, 2026-11-02: "overview在to do左边加个panel, 是works
    assigned, 形式和to do差不多，但是delegate work (不是通过to do的) 都会放在这里"):
    each piece of work delegated not from a to-do, with where it stands - its
@@ -19709,8 +19926,10 @@ async function loadTodos() {
     const [todos, assigned] = await Promise.all([
       api.get("/api/todos"), api.get("/api/work/assigned").catch(() => null)]);
     ovTodos = todos.todos || [];
+    ovGroups.todo = todos.groups || null;
     if (assigned) {
       ovAssigned = assigned.assigned || [];
+      ovGroups.assigned = assigned.groups || null;
       ovAssignedLoaded = true;
       // Opened out from the start - its work status is what it is listed for.
       for (const one of ovAssigned) {
@@ -19721,7 +19940,247 @@ async function loadTodos() {
     return;                               // the lists stay as they were
   }
   ovPlaceTodos();
+  // A GROUPING ON ITS WAY - after something was added or changed: asked
+  // again in a moment, and drawn in its groups when it is done.
+  clearTimeout(ovGroupsAgain);
+  if ((ovGroups.todo && ovGroups.todo.grouping) || (ovGroups.assigned && ovGroups.assigned.grouping)) {
+    ovGroupsAgain = setTimeout(loadTodos, 3000);
+  }
 }
+
+/* A list's items in its groups: a heading for each - its name, renamed in
+   place, the group deleted - then its items; "Others" last, for what fits
+   no group well (the user, 2026-11-03), never renamed or deleted; the new
+   ones, not grouped yet. A group emptied stays, until it is deleted or the
+   next grouping drops it. An item is dragged to a heading, or moved with
+   Move; "+ Add group" makes one with nothing in it. `drawn` is each item's
+   own row. */
+function ovGroupedItems(list, items, drawn) {
+  const grouped = ovGroups[list];
+  if (!grouped || !items.length) return items.map(drawn).join("");
+  const byId = new Map(items.map((one) => [String(one.id), one]));
+  const others = grouped.others || "Others";
+  const names = (grouped.groups || []).filter((one) => !one.others).map((one) => one.name);
+  const row = (one) => {
+    const id = String(one.id);
+    const moving = ovGroupEdit.moving === `${list}:${id}`;
+    return drawn(one).replace(/^<li /, `<li draggable="true" data-group-item="${escapeHtml(id)}" data-group-list="${list}" `)
+      .replace(/<\/li>$/, `${moving ? ovGroupMover(list, id, names, others) : ""}</li>`);
+  };
+  const foldOf = (name, kind) => `${list}:${kind}:${name}`;
+  const head = (name, kind, count) => {
+    const key = `${list}:${name}`;
+    if (kind === "group" && ovGroupEdit.renaming === key) {
+      return `<li class="ov-group-head" data-group-drop="${escapeHtml(name)}" data-group-list="${list}">
+        <input type="text" class="ov-group-name" data-group-rename-text maxlength="60" value="${escapeHtml(name)}">
+        <button type="button" class="small" data-group-rename-save="${escapeHtml(name)}" data-group-list="${list}">Save</button>
+        <button type="button" class="small secondary" data-group-rename-cancel>Cancel</button></li>`;
+    }
+    const words = kind === "new" ? (grouped.grouping ? "New - being grouped…" : "Not grouped yet")
+      : kind === "others" ? "Others" : name;
+    const folded = ovGroupFolded.has(foldOf(name, kind));
+    const says = folded ? "Show this group" : "Hide this group";
+    const tools = kind === "group"
+      ? ` <button type="button" class="ov-group-rename" data-group-rename="${escapeHtml(name)}" data-group-list="${list}"
+          title="Rename this group" aria-label="Rename this group">&#9998;</button>
+        <button type="button" class="ov-group-rename ov-group-delete" data-group-delete="${escapeHtml(name)}"
+          data-group-list="${list}" title="${escapeHtml(count ? "Delete this group - its items go to Others"
+            : "Delete this group")}" aria-label="Delete this group">&#128465;</button>` : "";
+    return `<li class="ov-group-head${kind === "group" ? "" : " ov-group-other"}${folded ? " ov-group-folded" : ""}"${
+      kind === "new" ? "" : ` data-group-drop="${escapeHtml(kind === "others" ? others : name)}" data-group-list="${list}"`}>
+      <button type="button" class="ov-group-fold" data-group-fold="${escapeHtml(foldOf(name, kind))}"
+        aria-expanded="${folded ? "false" : "true"}" title="${escapeHtml(says)}"><span class="ov-group-caret"
+        aria-hidden="true">${folded ? "&#9656;" : "&#9662;"}</span><span class="ov-group-title">${escapeHtml(words)}</span>
+        <span class="ov-group-count">${count}</span></button>${tools}</li>`;
+  };
+  const out = [];
+  const section = (name, kind, here) => {
+    out.push(head(name, kind, here.length));
+    if (ovGroupFolded.has(foldOf(name, kind))) return;
+    if (here.length) out.push(...here.map(row));
+    else if (kind === "group") {
+      out.push(`<li class="ov-group-empty muted" data-group-drop="${escapeHtml(name)}" data-group-list="${list}">${
+        escapeHtml("Nothing in it yet - drag an item here, or use Move.")}</li>`);
+    }
+  };
+  let rest = [];
+  for (const group of grouped.groups || []) {
+    const here = (group.items || []).map((id) => byId.get(id)).filter(Boolean);
+    if (group.others) rest = here;
+    else section(group.name, "group", here);
+  }
+  const fresh = (grouped.new || []).map((id) => byId.get(id)).filter(Boolean);
+  if (fresh.length) section("", "new", fresh);
+  // Others, always last.
+  if (rest.length || names.length) section("", "others", rest);
+  const add = ovGroupAdder(list);
+  if (!names.length && !grouped.grouping) return items.map(drawn).join("") + add;
+  out.push(add);
+  return out.join("");
+}
+
+/* "+ Add group" (the user, 2026-11-03: "不加to do, 就单纯add group"). */
+function ovGroupAdder(list) {
+  if (ovGroupEdit.adding === list) {
+    return `<li class="ov-group-add" data-group-list="${list}"><span class="ov-group-new-name">
+      <input type="text" data-group-add-text maxlength="60" placeholder="${escapeHtml("The new group's name")}">
+      <button type="button" class="small" data-group-add-save data-group-list="${list}">Add</button>
+      <button type="button" class="small secondary" data-group-add-cancel>Cancel</button></span></li>`;
+  }
+  return `<li class="ov-group-add" data-group-list="${list}"><button type="button" class="small secondary"
+    data-group-add data-group-list="${list}">+ Add group</button></li>`;
+}
+
+function ovGroupMover(list, id, names, others = "Others") {
+  return `<span class="ov-group-mover" data-group-mover="${escapeHtml(id)}" data-group-list="${list}">
+    <select data-group-mover-to aria-label="${escapeHtml("Move it to")}">
+      ${names.map((name) => `<option value="g:${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("")}
+      <option value="g:${escapeHtml(others)}">${escapeHtml("Others")}</option>
+      <option value="new">${escapeHtml("A new group…")}</option></select>
+    <input type="text" data-group-mover-new maxlength="60" placeholder="${escapeHtml("The new group's name")}" hidden>
+    <button type="button" class="small" data-group-mover-go>Move</button>
+    <button type="button" class="small secondary" data-group-mover-cancel>Cancel</button></span>`;
+}
+
+async function ovGroupMove(list, item, to) {
+  try {
+    const said = await api.post("/api/lists/groups/move", { list, item, to });
+    ovGroups[list] = said.groups;
+  } catch (err) { toast(err.message, "error"); }
+  ovGroupEdit.moving = "";
+  ovPlaceTodos();
+}
+
+document.addEventListener("click", async (event) => {
+  const at = event.target.closest && event.target.closest(
+    "[data-group-fold],[data-group-rename],[data-group-rename-save],[data-group-rename-cancel],[data-group-move],"
+    + "[data-group-mover-go],[data-group-mover-cancel],[data-group-add],[data-group-add-save],"
+    + "[data-group-add-cancel],[data-group-delete]");
+  if (!at) return;
+  event.preventDefault();
+  const list = at.dataset.groupList || (at.closest("[data-group-list]") || {}).dataset?.groupList || "";
+  if (at.dataset.groupFold !== undefined) {
+    const fold = at.dataset.groupFold;
+    if (ovGroupFolded.has(fold)) ovGroupFolded.delete(fold); else ovGroupFolded.add(fold);
+    ovGroupFoldSave();
+    ovPlaceTodos();
+  } else if (at.dataset.groupRename !== undefined) {
+    ovGroupEdit.renaming = `${list}:${at.dataset.groupRename}`;
+    ovPlaceTodos();
+    const box = document.querySelector("[data-group-rename-text]");
+    if (box) { box.focus(); box.select(); }
+  } else if (at.dataset.groupRenameSave !== undefined) {
+    const to = (document.querySelector("[data-group-rename-text]") || {}).value || "";
+    try {
+      const said = await api.post("/api/lists/groups/rename",
+        { list, from: at.dataset.groupRenameSave, to });
+      ovGroups[list] = said.groups;
+      // Folded under its old name, folded under its new one.
+      const was = `${list}:group:${at.dataset.groupRenameSave}`;
+      if (ovGroupFolded.delete(was)) {
+        ovGroupFolded.add(`${list}:group:${to.split(/\s+/).filter(Boolean).join(" ").slice(0, 60)}`);
+        ovGroupFoldSave();
+      }
+    } catch (err) { toast(err.message, "error"); }
+    ovGroupEdit.renaming = "";
+    ovPlaceTodos();
+  } else if (at.dataset.groupRenameCancel !== undefined) {
+    ovGroupEdit.renaming = "";
+    ovPlaceTodos();
+  } else if (at.dataset.groupDelete !== undefined) {
+    try {
+      const said = await api.post("/api/lists/groups/delete", { list, name: at.dataset.groupDelete });
+      ovGroups[list] = said.groups;
+      if (ovGroupFolded.delete(`${list}:group:${at.dataset.groupDelete}`)) ovGroupFoldSave();
+    } catch (err) { toast(err.message, "error"); }
+    ovPlaceTodos();
+  } else if (at.dataset.groupAdd !== undefined) {
+    ovGroupEdit.adding = list;
+    ovPlaceTodos();
+    document.querySelector("[data-group-add-text]")?.focus();
+  } else if (at.dataset.groupAddSave !== undefined) {
+    const box = document.querySelector("[data-group-add-text]");
+    const name = ((box || {}).value || "").trim();
+    if (!name) { box?.focus(); return; }
+    try {
+      const said = await api.post("/api/lists/groups/add", { list, name });
+      ovGroups[list] = said.groups;
+      ovGroupEdit.adding = "";
+    } catch (err) { toast(err.message, "error"); }
+    ovPlaceTodos();
+  } else if (at.dataset.groupAddCancel !== undefined) {
+    ovGroupEdit.adding = "";
+    ovPlaceTodos();
+  } else if (at.dataset.groupMove !== undefined) {
+    ovGroupEdit.moving = ovGroupEdit.moving === `${list}:${at.dataset.groupMove}` ? "" : `${list}:${at.dataset.groupMove}`;
+    ovPlaceTodos();
+  } else if (at.dataset.groupMoverGo !== undefined) {
+    const mover = at.closest("[data-group-mover]");
+    const chosen = mover.querySelector("[data-group-mover-to]").value;
+    const name = mover.querySelector("[data-group-mover-new]").value.trim();
+    if (chosen === "new" && !name) { mover.querySelector("[data-group-mover-new]").focus(); return; }
+    await ovGroupMove(mover.dataset.groupList, mover.dataset.groupMover,
+      chosen === "new" ? name : chosen.slice(2));
+  } else if (at.dataset.groupMoverCancel !== undefined) {
+    ovGroupEdit.moving = "";
+    ovPlaceTodos();
+  }
+});
+
+document.addEventListener("change", (event) => {
+  const chosen = event.target.closest && event.target.closest("[data-group-mover-to]");
+  if (!chosen) return;
+  const name = chosen.closest("[data-group-mover]").querySelector("[data-group-mover-new]");
+  name.hidden = chosen.value !== "new";
+  if (!name.hidden) name.focus();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  const box = event.target.closest && event.target.closest(
+    "[data-group-rename-text],[data-group-add-text],[data-group-mover-new]");
+  if (!box) return;
+  event.preventDefault();
+  const button = box.parentElement.querySelector(
+    "[data-group-rename-save],[data-group-add-save],[data-group-mover-go]");
+  if (button) button.click();
+});
+
+/* DRAGGED: an item onto a group's heading (Others' too), or onto an empty
+   group - in its own list. */
+let ovDragged = null;
+document.addEventListener("dragstart", (event) => {
+  const item = event.target.closest && event.target.closest("[data-group-item]");
+  if (!item) return;
+  ovDragged = { list: item.dataset.groupList, item: item.dataset.groupItem };
+  event.dataTransfer.effectAllowed = "move";
+  try { event.dataTransfer.setData("text/plain", item.dataset.groupItem); } catch (_err) { /* fine */ }
+  item.classList.add("ov-dragging");
+});
+document.addEventListener("dragend", (event) => {
+  const item = event.target.closest && event.target.closest("[data-group-item]");
+  if (item) item.classList.remove("ov-dragging");
+  $$(".ov-drop-on").forEach((one) => one.classList.remove("ov-drop-on"));
+});
+function ovDropOf(event) {
+  const target = event.target.closest && event.target.closest("[data-group-drop]");
+  return target && ovDragged && target.dataset.groupList === ovDragged.list ? target : null;
+}
+document.addEventListener("dragover", (event) => {
+  const target = ovDropOf(event);
+  if (!target) return;
+  event.preventDefault();
+  $$(".ov-drop-on").forEach((one) => one !== target && one.classList.remove("ov-drop-on"));
+  target.classList.add("ov-drop-on");
+});
+document.addEventListener("drop", (event) => {
+  const target = ovDropOf(event);
+  if (!target) return;
+  event.preventDefault();
+  const { list, item } = ovDragged;
+  ovDragged = null;
+  ovGroupMove(list, item, target.dataset.groupDrop);
+});
 
 /* WORK ASSIGNED FROM ANOTHER WINDOW, LISTED HERE TOO (the user, 2026-11-02:
    "我刚刚delegate了一个work, 为什么没有出现在Work assigned里"): the box the
@@ -19757,15 +20216,16 @@ try {
 document.addEventListener("visibilitychange", () => { if (!document.hidden) ovListsAgain(); });
 
 function ovAssignedBox() {
-  const items = ovAssigned.map((one) => {
+  const items = ovGroupedItems("assigned", ovAssigned, (one) => {
     const open = delegateState.tracking.has(one.id);
     return `<li class="ov-todo-item" data-todo="${escapeHtml(one.id)}">
       <span class="ov-todo-text">${escapeHtml(one.text)}</span>${
         one.detail ? `<span class="muted ov-todo-detail">${escapeHtml(one.detail)}</span>` : ""}
       <span class="ov-todo-actions"><button type="button" class="small ov-todo-track"
         aria-expanded="${open}" title="Where it stands now">${open ? "&#9662;" : "&#9656;"}
-        Work status</button></span>${ovTodoTracked(one)}</li>`;
-  }).join("");
+        Work status</button>${ovGroups.assigned ? ` <button type="button" class="small secondary"
+        data-group-move="${escapeHtml(one.id)}" data-group-list="assigned">Move</button>` : ""}</span>${ovTodoTracked(one)}</li>`;
+  });
   return `<div class="ov-todo-headrow"><div class="ov-todo-heading"><h3 class="ov-head">Work assigned${
     ovAssigned.length ? ` <span class="ov-head-count">(${ovAssigned.length})</span>` : ""}</h3></div></div>${
     ovAssigned.length ? `<ul class="ov-todo-list">${items}</ul>`
@@ -19954,15 +20414,17 @@ function ovTodoBox() {
   // with a Yes first - not ticked and kept.
   const open = ovTodos.filter((one) => !one.done_at);
   const asking = delegateState.removing;
-  const items = open.map((one) => `<li class="ov-todo-item" data-todo="${escapeHtml(one.id)}">
+  const items = ovGroupedItems("todo", open, (one) => `<li class="ov-todo-item" data-todo="${escapeHtml(one.id)}">
     <span class="ov-todo-text">${escapeHtml(one.text)}</span>${
       one.detail ? `<span class="muted ov-todo-detail">${escapeHtml(one.detail)}</span>` : ""}
     <span class="ov-todo-actions">${ovTodoWork(one)}
     ${asking === one.id ? `<span class="ov-todo-confirm">Remove it?
         <button type="button" class="small danger ov-todo-yes">Yes</button>
         <button type="button" class="small secondary ov-todo-no">No</button></span>`
-      : `<button type="button" class="small secondary ov-todo-delete">Remove</button>`}
-    </span>${ovTodoTracked(one)}</li>`).join("");
+      : `<button type="button" class="small secondary ov-todo-delete">Remove</button>`}${
+      ovGroups.todo ? ` <button type="button" class="small secondary" data-group-move="${
+        escapeHtml(one.id)}" data-group-list="todo">Move</button>` : ""}
+    </span>${ovTodoTracked(one)}</li>`);
   return `<h3 class="ov-head">To do${open.length ? ` <span class="ov-head-count">(${
     open.length})</span>` : ""}</h3>${
     open.length ? `<ul class="ov-todo-list">${items}</ul>`
@@ -25923,7 +26385,7 @@ setInterval(pollNotifications, 20000);
 const societyState = { status: null, chats: [], peer: "", messages: [], contact: null,
                        emailSent: false, backupOpen: false, restoreOpen: false,
                        asking: "", offers: [], offerAt: -1, timer: null, asked: "",
-                       linking: false, follow: null };
+                       linking: false, follow: null, feed: null };
 
 /* WHO GETS WHAT ANSWER - THE GROUPS, the user's to set (the user,
    2026-11-02): each group holds people, and kinds of people; a person put in
@@ -25950,6 +26412,13 @@ async function loadSociety() {
     return;
   }
   renderSocietyMe();
+  const eventsBadge = $("#society-events-unread");
+  if (eventsBadge) {
+    const n = Number(societyState.status.events_unread || 0);
+    eventsBadge.hidden = !n || societyState.view === "following";
+    eventsBadge.textContent = String(n);
+  }
+  if (societyState.view === "following") loadSocietyFollowing(true);
   // CONVERSATIONS FIRST; until the agent is registered, its settings.
   if (!societyState.view) societyView(societyState.status.registered ? "chats" : "settings");
   await loadSocietyChats();
@@ -26087,8 +26556,82 @@ function renderSocietyMe() {
 function societyView(which) {
   $$("[data-society-view]").forEach((one) => one.classList.toggle("on", one.dataset.societyView === which));
   $("#society-view-chats").hidden = which !== "chats";
+  $("#society-view-following").hidden = which !== "following";
   $("#society-view-settings").hidden = which !== "settings";
   societyState.view = which;
+  if (which === "following") loadSocietyFollowing(true);
+}
+
+/* -- FOLLOWING (society/service.py; the user, 2026-11-02/03): the recent
+   events of those the agent follows - their words as text, never markup;
+   whom it follows; the user's own recent events, POSTED BY THE USER ALONE
+   (the agent may leave one as a draft). -------------------------------------------------- */
+function societyAt(seconds) {
+  return seconds ? localStamp(new Date(Number(seconds) * 1000).toISOString()) : "";
+}
+
+async function loadSocietyFollowing(read) {
+  try {
+    societyState.feed = await api.get(`/api/society/events${read ? "?read=1" : ""}`);
+  } catch (err) {
+    $("#society-following").innerHTML = `<p class="delegate-error">${escapeHtml(err.message)}</p>`;
+    return;
+  }
+  if (read) {
+    const badge = $("#society-events-unread");
+    if (badge) badge.hidden = true;
+  }
+  renderSocietyFollowing();
+}
+
+function renderSocietyFollowing() {
+  const box = $("#society-following");
+  const feed = societyState.feed;
+  if (!box || !feed) return;
+  const typing = $("#society-event-text");
+  const kept = typing ? typing.value : null;
+  const draft = feed.draft;
+  const events = (feed.events || []).map((one) => `<li class="society-event">
+      ${societyFace({ name: one.peer_name || one.peer_id }, "small")}
+      <div class="society-event-text"><div class="society-chat-top"><strong>${escapeHtml(one.peer_name || one.peer_id)}</strong>
+        <span class="muted">${escapeHtml(societyAt(one.at))}</span></div>
+        <div class="society-event-words">${escapeHtml(one.text)}</div></div></li>`).join("");
+  const following = (feed.following || []).map((one) => `<li class="society-follow-row">
+      <span><strong>${escapeHtml(one.name || one.id)}</strong> <code class="muted">${escapeHtml(one.id)}</code></span>
+      <button type="button" class="small secondary" data-society-unfollow="${escapeHtml(one.id)}">${escapeHtml("Unfollow")}</button></li>`).join("");
+  const mine = (feed.mine || []).map((one) => `<li class="society-follow-row">
+      <span class="society-event-words">${escapeHtml(one.text)} <span class="muted">${escapeHtml(societyAt(one.at))}</span></span>
+      <button type="button" class="small secondary" data-society-withdraw="${escapeHtml(one.id)}">${escapeHtml("Withdraw")}</button></li>`).join("");
+  box.innerHTML = `
+    ${feed.error ? `<p class="delegate-error">${escapeHtml(feed.error)}</p>` : ""}
+    <div class="society-following">
+      <section class="card">
+        <div class="society-side-head"><strong>${escapeHtml("Recent events of those you follow")}</strong>
+          <button type="button" class="small secondary" id="society-events-collect">${escapeHtml("Check now")}</button></div>
+        <ul class="society-events">${events || `<li class="muted">${escapeHtml("Nothing yet. Follow someone below - what they post from then on comes here.")}</li>`}</ul>
+      </section>
+      <section class="card">
+        <strong>${escapeHtml("Your recent events")}</strong>
+        <p class="muted">${escapeHtml("Public on your page, and sent to everyone who follows you. Withdrawn, an event is deleted - from your page and from their inboxes.")}</p>
+        ${draft ? `<p class="muted">${escapeHtml(draft.written_by === "agent"
+          ? "Written by your agent - read it, change it if you like, then Post." : "Not posted yet.")}</p>` : ""}
+        <textarea id="society-event-text" rows="3" maxlength="1000" placeholder="${escapeHtml("What are you doing?")}"></textarea>
+        <div class="society-actions">
+          <button type="button" id="society-event-post">${escapeHtml("Post")}</button>
+          ${draft ? `<button type="button" class="secondary" id="society-event-drop">${escapeHtml("Discard the draft")}</button>` : ""}</div>
+        <ul class="society-follows">${mine}</ul>
+      </section>
+      <section class="card">
+        <strong>${escapeHtml("Whom you follow")}</strong>
+        <p class="muted">${escapeHtml("Seen by you alone. Your agent may follow and unfollow too, and says when it does.")}</p>
+        <div class="society-inline"><input id="society-follow-id" autocomplete="off"
+          placeholder="${escapeHtml("An agent id, pa-XXXX-XXXX-XXXX-XXXX")}" aria-label="${escapeHtml("An agent id, pa-XXXX-XXXX-XXXX-XXXX")}">
+          <button type="button" id="society-follow-go">${escapeHtml("Follow")}</button></div>
+        <ul class="society-follows">${following || `<li class="muted">${escapeHtml("You follow no one yet.")}</li>`}</ul>
+      </section>
+    </div>`;
+  const text = $("#society-event-text");
+  if (text) text.value = kept !== null && kept !== "" ? kept : (draft ? draft.text : "");
 }
 
 /* -- the conversations, on the left ---------------------------------------------------- */
@@ -26422,6 +26965,33 @@ document.addEventListener("click", async (event) => {
     if (said) { societyState.status = said; societyState.restoreOpen = false; renderSocietyMe(); toast("Restored"); }
   } else if (at.id === "society-collect") {
     if (await run(() => api.post("/api/society/collect", {}))) loadSocietyChats();
+  } else if (at.id === "society-events-collect") {
+    if (await run(() => api.post("/api/society/events/collect", {}))) loadSocietyFollowing(true);
+  } else if (at.id === "society-follow-go") {
+    const id = $("#society-follow-id").value.trim();
+    if (!id) { $("#society-follow-id").focus(); return; }
+    if (await run(() => api.post("/api/society/follow", { id }))) {
+      toast("Followed");
+      loadSocietyFollowing(false);
+    }
+  } else if (at.dataset.societyUnfollow) {
+    if (await run(() => api.post("/api/society/follow",
+      { id: at.dataset.societyUnfollow, do: "unfollow" }))) loadSocietyFollowing(false);
+  } else if (at.id === "society-event-post") {
+    const text = $("#society-event-text").value;
+    if (!text.trim()) { $("#society-event-text").focus(); return; }
+    if (await run(() => api.post("/api/society/events/post", { text }))) {
+      $("#society-event-text").value = "";
+      toast("Posted");
+      loadSocietyFollowing(false);
+    }
+  } else if (at.id === "society-event-drop") {
+    await run(() => api.post("/api/society/events/draft", { text: "" }));
+    $("#society-event-text").value = "";
+    loadSocietyFollowing(false);
+  } else if (at.dataset.societyWithdraw) {
+    if (await run(() => api.post("/api/society/events/withdraw",
+      { id: at.dataset.societyWithdraw }))) { toast("Withdrawn"); loadSocietyFollowing(false); }
   } else if (at.dataset.societyLinkOpen) {
     societyState.linking = !societyState.linking;
     renderSocietyChat();
@@ -26469,4 +27039,207 @@ document.addEventListener("click", async (event) => {
     await openSocietyChat(societyState.peer, false);
     loadSocietyChats();
   }
+});
+
+
+/* ------------------------------------------------------------------ monitor */
+/* THE MONITOR (heartbeat/monitor/, the user, 2026-11-03): the signals now, the
+   Activators in their groups - each with the user's two switches, on and
+   protected, and what it watches for and does - and what they did. Read
+   every few seconds while the tab is open; a part redrawn only when it
+   changed, so an opened Activator stays open. */
+const monState = { open: new Set(), drawn: { tree: "", firings: "" }, data: null };
+const MON_GROUPS = [["recommend", "Recommendations"], ["risk", "Risks"], ["calendar", "Calendar"],
+  ["rest", "Breaks and the evening"], ["other", "Other"]];
+
+async function loadMonitor() {
+  try {
+    monState.data = await api.get("/api/monitor");
+  } catch (err) {
+    $("#mon-signals").innerHTML = `<p class="muted">${escapeHtml(err.message)}</p>`;
+    return;
+  }
+  renderMonitor(monState.data);
+}
+
+setInterval(() => {
+  if (typeof activeTab !== "undefined" && activeTab === "monitor" && !document.hidden) loadMonitor();
+}, 5000);
+
+function monMinutes(value) {
+  const minutes = Math.round(Number(value) || 0);
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+
+function monClock(hours) {
+  const value = Number(hours);
+  if (!(value >= 0)) return "—";
+  const h = Math.floor(value);
+  const m = Math.round((value - h) * 60) % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function monFact(label, value) {
+  return `<div class="mon-fact"><span class="muted">${escapeHtml(label)}</span>
+    <strong>${escapeHtml(String(value ?? "—") || "—")}</strong></div>`;
+}
+
+function renderMonitor(data) {
+  const now = data.signals || {};
+  const habits = data.habits || {};
+  const modes = { working: "Working", shallow: "In the browser or messages", resting: "Resting",
+    busy: "In a meeting", away: "Away" };
+  const facts = Object.keys(now).length ? [
+    monFact("Now", modes[now.mode] || now.mode || "—"),
+    monFact("In front", now.title || now.application || "—"),
+    monFact("Project", now.project ? `${now.project} · ${monMinutes(now.project_minutes)}` : "—"),
+    monFact("Task", now.task || "—"),
+    monFact("Work began today", now.work_started_today || "—"),
+    monFact("Worked today", monMinutes(now.worked_today_minutes)),
+    monFact("Since the last break", monMinutes(now.since_break_minutes)),
+    monFact("At the keyboard", now.present ? "Yes" : `Away ${monMinutes(now.away_minutes)}`),
+  ] : [`<p class="muted">${escapeHtml(data.enabled ? "Read in a few seconds…"
+    : "The Monitor is switched off (Settings > Modules).")}</p>`];
+  const usual = Number(habits.habit_days) >= 3 ? [
+    monFact("Work usually begins", monClock(habits.usual_start_hour)),
+    monFact("A stretch usually runs", Number(habits.usual_stretch_minutes) >= 0
+      ? monMinutes(habits.usual_stretch_minutes) : "—"),
+    monFact("Usually worked by now", monMinutes(habits.usual_worked_by_now_minutes)),
+  ] : [];
+  $("#mon-signals").innerHTML = `<div class="mon-facts">${facts.join("")}</div>${usual.length
+    ? `<h3 class="mon-sub">${escapeHtml(`Your habits (${habits.habit_days} days like today)`)}</h3>
+       <div class="mon-facts">${usual.join("")}</div>`
+    : `<p class="muted mon-sub">${escapeHtml("Your habits show once there are a few days like today.")}</p>`}`;
+  const tree = monQuiet(data.quiet || []) + monTree(data);
+  if (tree !== monState.drawn.tree) {
+    monState.drawn.tree = tree;
+    $("#mon-tree").innerHTML = tree;
+    for (const button of $("#mon-tree").querySelectorAll("[data-mon-undo]")) {
+      button.addEventListener("click", async (event) => {
+        event.preventDefault();
+        await api.post("/api/monitor/undo", { ids: [button.dataset.monUndo] });
+        monState.drawn.tree = "";
+        loadMonitor();
+      });
+    }
+    for (const button of $("#mon-tree").querySelectorAll("[data-quiet-remove]")) {
+      button.addEventListener("click", async () => {
+        await api.post("/api/monitor/quiet/remove", { id: button.dataset.quietRemove });
+        monState.drawn.tree = "";
+        loadMonitor();
+      });
+    }
+  }
+  const firings = monFirings(data.firings || []);
+  if (firings !== monState.drawn.firings) {
+    monState.drawn.firings = firings;
+    $("#mon-firings").innerHTML = firings;
+  }
+}
+
+/* RULES OF QUIET: said once, they hold all that speaks for itself. */
+function monQuiet(rules) {
+  if (!rules.length) return "";
+  return `<h3 class="mon-sub">${escapeHtml("Quiet rules")}</h3><ul class="mon-quiet">${rules.map((one) =>
+    `<li><strong>${escapeHtml(one.name)}</strong><span class="muted">${escapeHtml(monCond(one.when))}</span>
+     <button type="button" class="secondary" data-quiet-remove="${escapeHtml(one.id)}">${
+       escapeHtml("Remove")}</button></li>`).join("")}</ul>`;
+}
+
+function monCond(cond) {
+  if (!cond || typeof cond !== "object") return "";
+  if (cond.all) return cond.all.map(monCond).join(" and ");
+  if (cond.any) return `(${cond.any.map(monCond).join(" or ")})`;
+  if (cond.not) return `not ${monCond(cond.not)}`;
+  if (cond.signal) return `${cond.signal} ${cond.op} ${cond.value}`;
+  if (cond.event) return `when: ${cond.event}`;
+  if (cond.keywords) {
+    const words = Object.keys(cond.keywords.words || {});
+    return `${words.length} keywords in ${(cond.keywords.where || ["any"]).join(", ")} - ${
+      words.slice(0, 6).join(", ")}${words.length > 6 ? ", …" : ""}`;
+  }
+  if (cond.pattern) return `a pattern in the ${cond.in || "window"}`;
+  return "";
+}
+
+function monThen(tier) {
+  const does = tier.do === "notify" ? `say “${tier.title}”`
+    : tier.do === "queue" ? "judged at the next heartbeat"
+      : tier.handler === "calendar" ? "the notification step on that window"
+        : tier.handler === "evening" ? "offer the evening report" : "ask the agent what to recommend";
+  return tier.min_score ? `score ${tier.min_score}+: ${does}` : does;
+}
+
+function monTree(data) {
+  const changes = data.changes || [];
+  const groups = MON_GROUPS.map(([key, label]) => {
+    const mine = (data.activators || []).filter((one) => (one.group || "other") === key);
+    if (!mine.length) return "";
+    return `<h3 class="mon-group">${escapeHtml(label)}</h3>${mine.map((one) => {
+      const history = changes.filter((change) => change.activator_id === one.id).slice(0, 6);
+      const open = monState.open.has(one.id);
+      return `<details class="mon-act${one.enabled ? "" : " mon-off"}" data-mon-act="${escapeHtml(one.id)}"${open ? " open" : ""}>
+        <summary><span class="mon-name">${escapeHtml(one.name)}</span>
+          ${one.protected ? `<span class="mon-badge">${escapeHtml("Protected")}</span>` : ""}
+          ${one.builtin ? `<span class="mon-badge mon-badge-quiet">${escapeHtml("Built in")}</span>` : ""}
+          <span class="mon-switches">
+            <label><input type="checkbox" data-mon-switch="${escapeHtml(one.id)}"${one.enabled ? " checked" : ""}> ${escapeHtml("On")}</label>
+            <label title="${escapeHtml("Protected: the agent can neither change nor delete it")}"><input type="checkbox" data-mon-protect="${escapeHtml(one.id)}"${one.protected ? " checked" : ""}> ${escapeHtml("Protected")}</label>
+          </span></summary>
+        <p class="muted">${escapeHtml(one.purpose || "")}</p>
+        <dl class="mon-dl">
+          <dt>${escapeHtml("Watches for")}</dt><dd>${escapeHtml(monCond(one.when))}</dd>
+          <dt>${escapeHtml("Then")}</dt><dd>${(one.then || []).map((tier) => escapeHtml(monThen(tier))).join("<br>")}</dd>
+          <dt>${escapeHtml("At most")}</dt><dd>${escapeHtml(`${one.most_per_day} a day, ${one.cooldown_minutes} min apart`)}</dd>
+        </dl>
+        ${history.length ? `<ul class="mon-history">${history.map((change) => `<li><span class="muted">${
+          escapeHtml(localStamp(change.at))}</span> ${escapeHtml(change.op)} · ${escapeHtml(change.by)}${
+          change.why && change.op !== "undo" ? ` - ${escapeHtml(change.why)}` : ""}${
+          ["chat", "heartbeat"].includes(change.by) && change.op === "edit"
+            && !changes.some((later) => later.op === "undo" && later.why === change.id)
+            ? ` <button type="button" class="secondary mon-undo" data-mon-undo="${escapeHtml(change.id)}">${
+              escapeHtml("Undo")}</button>` : ""}</li>`).join("")}</ul>` : ""}
+      </details>`;
+    }).join("")}`;
+  });
+  return groups.join("") || `<p class="muted">${escapeHtml("No Activators yet.")}</p>`;
+}
+
+function monFirings(rows) {
+  if (!rows.length) return `<p class="muted">${escapeHtml("Nothing yet.")}</p>`;
+  return `<table class="mon-table"><thead><tr><th>${escapeHtml("When")}</th><th>${escapeHtml("Activator")}</th>
+    <th>${escapeHtml("Why")}</th><th>${escapeHtml("What was done")}</th></tr></thead><tbody>${rows.slice(0, 40).map((row) => {
+    const outcome = row.outcome || {};
+    const done = row.action === "held" ? `${"held"}` : outcome.title ? `“${outcome.title}”`
+      : outcome.queued ? "queued for the heartbeat" : outcome.asking ? "asking the agent…"
+        : outcome.sent === false ? `nothing said - ${outcome.why || ""}` : outcome.skipped || outcome.error || row.action;
+    return `<tr class="${row.acted ? "" : "muted"}"><td>${escapeHtml(localStamp(row.at))}</td>
+      <td>${escapeHtml(row.name || row.activator_id)}</td><td>${escapeHtml(row.why || "")}</td>
+      <td>${escapeHtml(String(done || ""))}${outcome.answer ? ` <span class="muted">(${escapeHtml(outcome.answer)})</span>` : ""}</td></tr>`;
+  }).join("")}</tbody></table>`;
+}
+
+document.addEventListener("toggle", (event) => {
+  const box = event.target.closest && event.target.closest("[data-mon-act]");
+  if (!box) return;
+  if (box.open) monState.open.add(box.dataset.monAct); else monState.open.delete(box.dataset.monAct);
+}, true);
+
+document.addEventListener("click", (event) => {
+  // The switches sit in the summary: a click on them is not a fold.
+  if (event.target.closest && event.target.closest(".mon-switches")) event.stopPropagation();
+}, true);
+
+document.addEventListener("change", async (event) => {
+  const on = event.target.closest && event.target.closest("[data-mon-switch]");
+  const guard = event.target.closest && event.target.closest("[data-mon-protect]");
+  if (!on && !guard) return;
+  try {
+    if (on) await api.post("/api/monitor/switch", { id: on.dataset.monSwitch, on: on.checked });
+    else await api.post("/api/monitor/protect", { id: guard.dataset.monProtect, protected: guard.checked });
+  } catch (err) {
+    toast(err.message, "error");
+  }
+  loadMonitor();
 });

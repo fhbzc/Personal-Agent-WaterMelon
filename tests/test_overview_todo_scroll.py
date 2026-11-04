@@ -23,6 +23,15 @@ def _function(source: str, name: str) -> str:
     return source[start:source.index("\n}\n", start) + 3]
 
 
+def GROUPS(source: str) -> str:
+    """The lists' groups (list_groups.py), none given here: the list as it is."""
+    return ("const ovGroups={todo:null,assigned:null};"
+            "const ovGroupEdit={renaming:'',moving:'',adding:''};"
+            "const ovGroupFolded=new Set();"
+            + _function(source, "ovGroupedItems") + _function(source, "ovGroupMover")
+            + _function(source, "ovGroupAdder"))
+
+
 class OverviewTodoScrollTests(unittest.TestCase):
 
     def test_at_its_ends_the_wheel_goes_on_to_the_page(self) -> None:
@@ -49,7 +58,7 @@ class OverviewTodoScrollTests(unittest.TestCase):
             + "const delegateLabel=()=>'Delegate work';"
             + "let ovTodos=" + json.dumps(todos) + ";let ovTodoDrawn='';"
             + _function(source, "ovTodoVersions") + _function(source, "ovTodoTracked")
-            + _function(source, "ovTodoWork") + _function(source, "ovTodoBox")
+            + _function(source, "ovTodoWork") + GROUPS(source) + _function(source, "ovTodoBox")
             + _function(source, "ovPlaceTodos")
             + "window.addEventListener('load',()=>{const out={};"
             "ovPlaceTodos();const list=()=>document.querySelector('.ov-todo-list');"
@@ -132,7 +141,7 @@ class ATodosWorkIsTrackedTests(unittest.TestCase):
             + "".join(_function(source, name) for name in (
                 "ovTodoVersions", "ovTodoGoing", "ovTodoControls", "ovTodoWhere", "ovTodoWork", "ovTodoMade",
                 "ovTodoTracked", "ovTodoBox",
-                "ovPlaceTodos"))
+                "ovPlaceTodos")) + GROUPS(source)
             + "window.addEventListener('load',()=>{const out={};ovPlaceTodos();"
             "const item=document.querySelector('[data-todo=\"t1\"]');"
             "out.delegate=item.querySelector('.ov-todo-delegate').textContent.replace(/\\s+/g,' ').trim();"
@@ -199,6 +208,71 @@ class ATodosWorkIsTrackedTests(unittest.TestCase):
         # Removing asks first.
         self.assertEqual(out["asking"], "Remove V1? Yes No")
         self.assertFalse(out["plain"], "a to-do never handed over has no versions")
+
+
+class EachGroupFoldsTests(unittest.TestCase):
+    """THE USER, 2026-11-03: "分类之后要能够by group collapse, 展开" and "group
+    的名字更大一点"."""
+
+    def test_a_group_folded_shows_its_heading_and_how_many(self) -> None:
+        engine = _browser()
+        if not engine:
+            self.skipTest("a browser is needed to draw the list")
+        source = (WEB / "app.js").read_text(encoding="utf-8")
+        todos = [{"id": f"t{n}", "text": f"Fictional errand {n}"} for n in range(1, 6)]
+        groups = {"groups": [{"name": "Garden", "items": ["t1", "t2"]},
+                             {"name": "Workshop", "items": ["t3"]},
+                             {"name": "Someday", "items": []},
+                             {"name": "Others", "items": ["t5"], "others": True}],
+                  "new": ["t4"], "loose": [], "others": "Others", "grouping": False}
+        script = (
+            "window.$=s=>document.querySelector(s);" + ESCAPE
+            + "const delegateState={removing:'',tracking:new Set()};"
+            + "const delegateLabel=()=>'Delegate work';"
+            + "let ovTodos=" + json.dumps(todos) + ";let ovTodoDrawn='';"
+            + _function(source, "ovTodoVersions") + _function(source, "ovTodoTracked")
+            + _function(source, "ovTodoWork") + GROUPS(source) + _function(source, "ovTodoBox")
+            + _function(source, "ovPlaceTodos")
+            + "ovGroups.todo=" + json.dumps(groups) + ";"
+            + "window.addEventListener('load',()=>{const out={};"
+            "const shown=()=>Array.from(document.querySelectorAll('[data-todo]')).map(e=>e.dataset.todo);"
+            "ovPlaceTodos();out.all=shown();"
+            "ovGroupFolded.add('todo:group:Garden');ovGroupFolded.add('todo:others:');ovPlaceTodos();"
+            "out.folded=shown();"
+            "const heads=Array.from(document.querySelectorAll('.ov-group-head'));"
+            "out.heads=heads.map(h=>h.querySelector('.ov-group-fold').textContent.replace(/\s+/g,' ').trim());"
+            "out.expanded=heads.map(h=>h.querySelector('.ov-group-fold').getAttribute('aria-expanded'));"
+            "out.keys=heads.map(h=>h.querySelector('.ov-group-fold').dataset.groupFold);"
+            "const px=e=>parseFloat(getComputedStyle(e).fontSize);"
+            "out.bigger=px(heads[1].querySelector('.ov-group-title'))>px(document.querySelector('.ov-todo-item'));"
+            "out.empty=document.querySelector('.ov-group-empty').dataset.groupDrop;"
+            "out.deletable=heads.map(h=>Boolean(h.querySelector('[data-group-delete]')));"
+            "out.add=document.querySelector('[data-group-add]').textContent.trim();"
+            "const pre=document.createElement('pre');pre.id='out';"
+            "pre.textContent=JSON.stringify(out);document.body.prepend(pre);});")
+        page = ("<!doctype html><html><head><meta charset='utf-8'><style>"
+                + (WEB / "styles.css").read_text(encoding="utf-8")
+                + "</style></head><body><div class='card' id='ov-tasks-card'>"
+                "<aside id='ov-todo' class='ov-todo'></aside></div>"
+                "<script>" + script + "</script></body></html>")
+        stdout, stderr = _run_browser_probe(engine, page)
+        found = re.search(r'<pre id="out">(.*?)</pre>', stdout, re.S)
+        self.assertIsNotNone(found, stderr[-2000:])
+        out = json.loads(found.group(1).replace("&quot;", '"'))
+        self.assertEqual(out["all"], ["t1", "t2", "t3", "t4", "t5"], out)
+        # Folded: its items gone, its heading kept with how many it holds.
+        self.assertEqual(out["folded"], ["t3", "t4"], out)
+        self.assertEqual(out["heads"], ["▸Garden 2", "▾Workshop 1", "▾Someday 0", "▾Not grouped yet 1",
+                                        "▸Others 1"], out)
+        self.assertEqual(out["expanded"], ["false", "true", "true", "true", "false"], out)
+        self.assertEqual(out["keys"], ["todo:group:Garden", "todo:group:Workshop", "todo:group:Someday",
+                                       "todo:new:", "todo:others:"], out)
+        # An empty group stays, to be dropped on; Others is never deleted; a group added.
+        self.assertEqual(out["empty"], "Someday", out)
+        self.assertEqual(out["deletable"], [True, True, True, False, False], out)
+        self.assertEqual(out["add"], "+ Add group", out)
+        # A group's name larger than its items.
+        self.assertTrue(out["bigger"], out)
 
 
 if __name__ == "__main__":

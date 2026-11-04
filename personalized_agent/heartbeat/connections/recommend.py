@@ -1089,10 +1089,10 @@ def collection(db: Any) -> Dict[str, Any]:
     """The collection, the newest kept first - each story as it was printed,
     and what the user last said of each."""
     try:
-        rows = db.query("SELECT id, collected_at, issue_id, story_id, story FROM "
+        rows = db.query("SELECT id, collected_at, issue_id, story_id, story, folder_id FROM "
                         "rec_collection WHERE removed_at = '' ORDER BY collected_at DESC")
     except Exception:                       # no table yet: nothing kept
-        return {"items": [], "says": {}}
+        return {"items": [], "says": {}, "folders": []}
     items = []
     for row in rows:
         try:
@@ -1101,6 +1101,7 @@ def collection(db: Any) -> Dict[str, Any]:
             story = {}
         items.append({"id": row["id"], "collected_at": row["collected_at"],
                       "issue_id": row["issue_id"], "story_id": row["story_id"],
+                      "folder_id": str(row["folder_id"] or ""),
                       "story": dict(story, id=row["story_id"])})
     says: Dict[str, str] = {}
     ids = [one["story_id"] for one in items]
@@ -1109,7 +1110,72 @@ def collection(db: Any) -> Dict[str, Any]:
         for row in db.query(f"SELECT story_id, action FROM rec_feedback WHERE story_id IN "
                             f"({marks}) AND action IN ('more', 'less', 'knew')", ids):
             says[row["story_id"]] = row["action"]
-    return {"items": items, "says": says}
+    return {"items": items, "says": says, "folders": collection_folders(db)}
+
+
+# -- THE COLLECTION'S FOLDERS (the user, 2026-11-03, from PR #8): a story kept
+#    in one folder or none; folders in folders; one deleted only when empty.
+MOST_FOLDER_NAME = 120
+
+
+def collection_folders(db: Any) -> List[Dict[str, Any]]:
+    try:
+        return db.query("SELECT id, parent_id, name FROM rec_collection_folders "
+                        "ORDER BY name COLLATE NOCASE, id")
+    except Exception:                       # no table yet: no folders
+        return []
+
+
+def edit_folder(db: Any, action: str, ident: str = "", name: str = "",
+                parent_id: str = "") -> Dict[str, Any]:
+    """A folder made, renamed or moved ("edit"), or deleted - only when
+    nothing is in it."""
+    from ...common.events.models import new_id
+    folders = {one["id"]: one for one in collection_folders(db)}
+    if action not in ("create", "edit", "delete"):
+        raise ValueError("no such thing to do with a folder")
+    if action != "create" and ident not in folders:
+        raise KeyError("no such folder")
+    if action == "delete":
+        if any(one["parent_id"] == ident for one in folders.values()) or db.query_one(
+                "SELECT id FROM rec_collection WHERE folder_id = ? AND removed_at = ''",
+                (ident,)):
+            raise ValueError("Move its stories and folders out before deleting it")
+        db.execute("DELETE FROM rec_collection_folders WHERE id = ?", (ident,))
+        return {"ok": True, "folders": collection_folders(db)}
+    name = " ".join(str(name or "").split())
+    if not name or len(name) > MOST_FOLDER_NAME:
+        raise ValueError(f"A folder's name is 1 to {MOST_FOLDER_NAME} characters")
+    parent_id = str(parent_id or "")
+    if parent_id and parent_id not in folders:
+        raise KeyError("no such folder to put it in")
+    above = parent_id
+    while above:                            # never inside itself
+        if above == ident:
+            raise ValueError("A folder cannot go inside itself")
+        above = folders[above]["parent_id"]
+    if any(one["parent_id"] == parent_id and one["name"].casefold() == name.casefold()
+           and one["id"] != ident for one in folders.values()):
+        raise ValueError("There is a folder of that name here already")
+    if action == "create":
+        ident = new_id("recfolder")
+        db.execute("INSERT INTO rec_collection_folders (id, parent_id, name, created_at) "
+                   "VALUES (?, ?, ?, ?)", (ident, parent_id, name, _now().isoformat()))
+    else:
+        db.execute("UPDATE rec_collection_folders SET parent_id = ?, name = ? WHERE id = ?",
+                   (parent_id, name, ident))
+    return {"ok": True, "id": ident, "folders": collection_folders(db)}
+
+
+def move_kept(db: Any, story_id: str, folder_id: str = "") -> Dict[str, Any]:
+    """A story kept put in a folder - or, `folder_id` empty, in none."""
+    folder_id = str(folder_id or "")
+    if folder_id and folder_id not in {one["id"] for one in collection_folders(db)}:
+        raise KeyError("no such folder")
+    if not db.execute("UPDATE rec_collection SET folder_id = ? WHERE story_id = ? AND "
+                      "removed_at = ''", (folder_id, story_id)).rowcount:
+        raise KeyError("that story is not in the collection")
+    return {"ok": True, "story": story_id, "folder": folder_id}
 
 
 def collected_of(db: Any, issue_id: str) -> List[str]:
@@ -1123,6 +1189,7 @@ def collected_of(db: Any, issue_id: str) -> List[str]:
 
 
 __all__ = ["record_feedback", "ACTIONS", "collect", "uncollect", "collection",
+           "collection_folders", "edit_folder", "move_kept",
            "collected_of", "kept_story", "subjects", "plan_pages", "lay_out", "story_text",
            "said_examples",
            "known_points", "since_of", "said_of_topics", "seen_addresses", "freshness",

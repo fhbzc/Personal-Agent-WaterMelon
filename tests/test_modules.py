@@ -100,8 +100,14 @@ class TurnedOffTests(unittest.TestCase):
         self.assertTrue(_step_on(self.app.config, "step_state"), "the core is always on")
         self.assertFalse(_step_on(self.app.config, "step_notify"))
         self.assertFalse(_step_on(self.app.config, "step_people"))
-        # And calendar management's triggers.
-        self.assertFalse(self.app.triggers.enabled())
+        # And calendar management's triggers - the Monitor's two calendar
+        # Activators now; its others go on, by the Monitor's own switch.
+        calendar = [rule for rule in self.app.triggers.rules
+                    if rule.activator.get("group") == "calendar"]
+        self.assertEqual(len(calendar), 2)
+        self.assertFalse(any(rule.allowed() for rule in calendar))
+        self._off("monitor")
+        self.assertFalse(any(rule.allowed() for rule in self.app.triggers.rules))
 
     def test_each_heartbeat_step_is_counted_under_its_own_function(self) -> None:
         """Every step's calls carry the step's own tag - one tag for all four

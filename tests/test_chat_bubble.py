@@ -194,6 +194,378 @@ class TheBubbleTests(unittest.TestCase):
         self.assertEqual(sent, ["Hi"])
         bubble.close()
 
+    def test_a_file_attached_and_sent_with_or_without_words(self) -> None:
+        # The user, 2026-11-04: the bubble too.
+        asked = []
+
+        class Files:
+            def add_paths(self, paths):
+                return {"files": [{"id": "chatfile_1", "name": "notes.txt", "picture": False}],
+                        "skipped": []}
+
+            def from_clipboard(self, with_text):
+                asked.append(("clipboard", with_text))
+                return {"files": [], "skipped": []}
+
+        def send(text, conversation, files=None):
+            asked.append((text, files))
+            return {"answer": "Seen.", "conversation_id": "c1"}
+        bubble = self._bubble(send, files=Files())
+        with mock.patch("tkinter.filedialog.askopenfilenames", return_value=("x/notes.txt",)):
+            bubble._pick()
+        self._settle(0.2)
+        self.assertEqual([one["name"] for one in bubble.attached], ["notes.txt"])
+        self.assertTrue(bubble.files_row.winfo_ismapped(), "shown over the box")
+        bubble.submit()
+        self._settle(0.3)
+        self.assertEqual(asked, [("", ["chatfile_1"])], "a file alone is a message")
+        self.assertIn("[notes.txt]", bubble.said.get("1.0", "end"))
+        self.assertEqual(bubble.attached, [])
+        self.assertFalse(bubble.files_row.winfo_ismapped())
+        bubble.close()
+
+    def _with_a_picture(self, send):
+        from PIL import Image
+
+        class Files:
+            def add_paths(self, paths):
+                return {"files": [{"id": "chatfile_1", "name": "bed.png", "picture": True}],
+                        "skipped": []}
+
+            def thumbnail(self, ident, side):
+                return Image.new("RGBA", (side, side), (200, 30, 30, 255))
+        bubble = self._bubble(send, files=Files())
+        with mock.patch("tkinter.filedialog.askopenfilenames", return_value=("x/bed.png",)):
+            bubble._pick()
+        self._settle(0.2)
+        return bubble
+
+    def _drop_data(self, path):
+        """A data object as the system hands one over, holding a file."""
+        import ctypes
+        import struct
+        from ctypes import wintypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+        kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+        kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+        data = struct.pack("<IiiII", 20, 0, 0, 0, 1) + (path + "\0\0").encode("utf-16-le")
+        drop = kernel32.GlobalAlloc(0x0042, len(data))
+        ctypes.memmove(kernel32.GlobalLock(drop), data, len(data))
+        kernel32.GlobalUnlock(drop)
+        return drop
+
+    @unittest.skipUnless(sys.platform.startswith("win"), "the system's own message, on Windows")
+    def test_where_ole_cannot_a_file_let_go_is_still_taken(self) -> None:
+        import ctypes
+        from ctypes import wintypes
+        from personalized_agent.ui import file_drop
+        taken = []
+
+        class Files:
+            def add_paths(self, paths):
+                taken.extend(paths)
+                return {"files": [{"id": "chatfile_1", "name": "notes.txt", "picture": False}],
+                        "skipped": []}
+        with mock.patch.object(file_drop, "_ole", return_value=False):
+            bubble = self._bubble(lambda text, conversation: {}, files=Files())
+        self.assertIsNotNone(bubble.clip, "and + is there as well")
+        user32 = ctypes.windll.user32
+        user32.GetAncestor.restype = wintypes.HWND
+        user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        path = "C:\\made\\up\\notes.txt"
+        user32.PostMessageW(user32.GetAncestor(bubble.window.winfo_id(), 2), 0x0233,
+                            self._drop_data(path), 0)
+        self._settle(0.4)
+        self.assertEqual(taken, [path])
+        self.assertEqual([one["name"] for one in bubble.attached], ["notes.txt"])
+        bubble.close()
+
+    @unittest.skipUnless(sys.platform.startswith("win"), "the system's own calls, on Windows")
+    def test_a_file_over_it_covers_it_and_let_go_is_attached(self) -> None:
+        # The calls the system makes of a drop target, made of the real one -
+        # with a data object written out as the system's is.
+        import ctypes
+        from ctypes import wintypes
+        from personalized_agent.ui import file_drop
+        taken = []
+
+        class Files:
+            def add_paths(self, paths):
+                taken.extend(paths)
+                return {"files": [{"id": "chatfile_1", "name": "notes.txt", "picture": False}],
+                        "skipped": []}
+        bubble = self._bubble(lambda text, conversation: {}, files=Files())
+        user32 = ctypes.windll.user32
+        user32.GetAncestor.restype = wintypes.HWND
+        user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        handle = int(user32.GetAncestor(bubble.window.winfo_id(), 2))
+        kept = file_drop._held[handle]
+        self.assertEqual(kept[0], "ole")
+        calls = kept[1]
+        path = "C:\\made\\up\\notes.txt"
+        pointer = ctypes.c_void_p
+
+        class Medium(ctypes.Structure):
+            _fields_ = [("medium", wintypes.DWORD), ("handle", pointer), ("release", pointer)]
+
+        def get(_this, _format, medium):
+            one = ctypes.cast(medium, ctypes.POINTER(Medium))[0]
+            one.medium, one.handle, one.release = 1, self._drop_data(path), None
+            return 0
+        get_call = ctypes.WINFUNCTYPE(ctypes.c_long, pointer, pointer, pointer)(get)
+        ask_call = ctypes.WINFUNCTYPE(ctypes.c_long, pointer, pointer)(lambda _this, _format: 0)
+        table = (pointer * 6)(None, None, None, ctypes.cast(get_call, pointer), None,
+                              ctypes.cast(ask_call, pointer))
+        data = (pointer * 1)(ctypes.cast(table, pointer))
+        thing = ctypes.cast(data, pointer)
+        effect = wintypes.DWORD(0)
+        calls[3](None, thing, 0, 0, ctypes.byref(effect))
+        self.assertEqual(effect.value, 1, "it will take it")
+        self._settle(0.1)
+        self.assertIsNotNone(bubble.drop_cover, "covered the moment it is over")
+        self.assertGreater(bubble.drop_cover.winfo_height(), 60)
+        calls[5](None)
+        self._settle(0.1)
+        self.assertIsNone(bubble.drop_cover, "gone away, uncovered")
+        calls[3](None, thing, 0, 0, ctypes.byref(effect))
+        calls[6](None, thing, 0, 0, ctypes.byref(effect))
+        self._settle(0.3)
+        self.assertIsNone(bubble.drop_cover)
+        self.assertEqual(taken, [path])
+        self.assertEqual([one["name"] for one in bubble.attached], ["notes.txt"])
+        bubble.close()
+        self.assertNotIn(handle, file_drop._held, "let go of with the window")
+
+    def test_on_a_mac_a_clear_view_takes_what_is_dragged(self) -> None:
+        # AppKit written out as far as this needs: the real one is on a Mac.
+        from personalized_agent.ui import file_drop
+
+        class View:
+            def __init__(self):
+                self.kinds, self.gone = [], False
+
+            @classmethod
+            def alloc(cls):
+                return cls()
+
+            def initWithFrame_(self, _frame):
+                return self
+
+            def setAutoresizingMask_(self, _mask):
+                pass
+
+            def registerForDraggedTypes_(self, kinds):
+                self.kinds = kinds
+
+            def unregisterDraggedTypes(self):
+                self.kinds = []
+
+            def removeFromSuperview(self):
+                self.gone = True
+
+        size = SimpleNamespace(width=380, height=120)
+        added = []
+        content = SimpleNamespace(bounds=lambda: SimpleNamespace(size=size), addSubview_=added.append)
+        native = SimpleNamespace(title=lambda: "tk", contentView=lambda: content)
+        kit = SimpleNamespace(
+            NSView=View, NSURL="url", NSDragOperationCopy=1, NSViewWidthSizable=2, NSViewHeightSizable=16,
+            NSPasteboardTypeFileURL="public.file-url",
+            NSApplication=SimpleNamespace(sharedApplication=lambda: SimpleNamespace(windows=lambda: [native])))
+        window = SimpleNamespace(update_idletasks=lambda: None, title=lambda: "tk",
+                                 winfo_width=lambda: 380, winfo_height=lambda: 120)
+        told, overs = [], []
+        with mock.patch.dict(sys.modules, {"AppKit": kit}), \
+                mock.patch.object(file_drop, "_mac_view", None), \
+                mock.patch.object(sys, "platform", "darwin"):
+            self.assertTrue(file_drop.accept_files(window, told.append, overs.append))
+            view = added[0]
+            self.assertEqual(view.kinds, ["public.file-url"])
+            self.assertIsNone(view.hitTest_(None), "the pointer goes through to Tk")
+            self.assertEqual(view.draggingEntered_(None), 1)
+            view.draggingExited_(None)
+            self.assertEqual(overs, [True, False])
+            board = SimpleNamespace(readObjectsForClasses_options_=lambda classes, options: [
+                SimpleNamespace(path=lambda: "/made/up/notes.txt")])
+            self.assertTrue(view.performDragOperation_(
+                SimpleNamespace(draggingPasteboard=lambda: board)))
+            self.assertEqual(told, [["/made/up/notes.txt"]])
+            file_drop.let_go(window)
+            self.assertTrue(view.gone)
+
+    def test_the_reply_is_shown_as_it_is_written_and_the_whole_takes_its_place(self) -> None:
+        go = threading.Event()
+
+        def send(text, conversation, files, mentions, on_text=None):
+            on_text("The first ")
+            go.wait(3)
+            return {"answer": "The first words and the rest.", "conversation_id": "c1"}
+        bubble = self._bubble(send, streams=True)
+        bubble.box.insert("end", "Tell me")
+        bubble.submit()
+        self._settle(0.3)
+        self.assertIn("The first", bubble.said.get("1.0", "end"), "before it is finished")
+        self.assertNotIn("Thinking", bubble.said.get("1.0", "end"))
+        go.set()
+        self._settle(0.3)
+        said = bubble.said.get("1.0", "end")
+        self.assertIn("The first words and the rest.", said)
+        self.assertEqual(said.count("The first"), 1, "once")
+        bubble.close()
+
+    def _two_speeds(self, done):
+        finish = []
+
+        def turn(text, conversation=None, files=None, mentions=None, on_done=None):
+            if text is None:
+                return True
+            finish.append(lambda: on_done(done))
+            return {"answer": "Looking into it, more below.", "layer": "fast", "turn": "turn_1",
+                    "conversation_id": "c1", "message_id": "m1"}
+        bubble = self._bubble(lambda text, conversation: {}, turn=turn)
+        bubble.box.insert("end", "What is on today?")
+        bubble.submit()
+        self._settle(0.3)
+        return bubble, finish
+
+    def test_the_quick_reply_at_once_the_full_one_folded_under_it(self) -> None:
+        bubble, finish = self._two_speeds({"state": "done", "answer": "Nothing today.", "kind": "more"})
+        said = bubble.said
+        self.assertIn("Looking into it, more below.", said.get("1.0", "end"))
+        self.assertTrue(said.tag_ranges("fast"), "in its colour")
+        self.assertFalse(bubble.waiting, "the next message may be written at once")
+        finish[0]()
+        self._settle(0.2)
+        body = next(one for one in said.tag_names() if one.startswith("fold_body"))
+        head = body.replace("body", "head")
+        self.assertIn("More detail", said.get(*said.tag_ranges(head)))
+        self.assertTrue(said.compare(said.tag_ranges(head)[0], ">=", said.tag_ranges("fast")[1]),
+                        "under the quick reply")
+        self.assertTrue(said.get(*said.tag_ranges(head)).startswith("\n"), "on a line of its own")
+        self.assertEqual(said.get(*said.tag_ranges(body)).strip(), "Nothing today.", "whole")
+        self.assertEqual(int(said.tag_cget(body, "elide")), 1, "folded")
+        bubble._fold_toggle(body)
+        self.assertEqual(int(said.tag_cget(body, "elide")), 0, "opened")
+        bubble._fold_toggle(body)
+        self.assertEqual(int(said.tag_cget(body, "elide")), 1, "and folded again")
+        bubble.close()
+
+    def test_nothing_to_add_leaves_nothing_behind(self) -> None:
+        bubble, finish = self._two_speeds({"state": "done", "answer": "", "nothing": True})
+        self.assertIn("Looking into it…", bubble.said.get("1.0", "end"))
+        finish[0]()
+        self._settle(0.2)
+        self.assertNotIn("Looking into it…", bubble.said.get("1.0", "end"))
+        bubble.close()
+
+    def test_a_full_agent_that_answers_before_its_line_is_drawn(self) -> None:
+        fold = {"turn": "t"}
+        bubble = self._bubble(lambda text, conversation: {})
+        bubble._fold_done(fold, {"answer": "Quick work.", "kind": "correction"})
+        bubble._fold_begin(fold)
+        self.assertIn("A correction", bubble.said.get("1.0", "end"))
+        bubble.close()
+
+    def test_the_box_is_one_line_and_grows_with_what_is_written(self) -> None:
+        bubble = self._bubble(lambda text, conversation: {})
+        self.assertEqual(int(bubble.box.cget("height")), 1)
+        bubble.box.insert("end", "\n".join("line" for _ in range(3)))
+        bubble._fit_box()
+        self.assertEqual(int(bubble.box.cget("height")), 3)
+        bubble.box.insert("end", "\n".join("line" for _ in range(20)))
+        bubble._fit_box()
+        self.assertEqual(int(bubble.box.cget("height")), cb.BOX_TALLEST)
+        bubble.close()
+
+    def test_a_picture_is_seen_before_it_is_sent(self) -> None:
+        bubble = self._with_a_picture(lambda text, conversation, files=None: {})
+        self.assertEqual(len(bubble._thumbs), 1)
+        self.assertTrue(bubble.files_row.winfo_ismapped())
+        self.assertGreaterEqual(bubble.files_row.winfo_height(), cb.THUMB)
+        bubble.close()
+
+    def test_at_brings_up_the_files_and_the_one_chosen_goes_with_the_message(self) -> None:
+        asked = []
+
+        def send(text, conversation, files=None, mentions=None):
+            asked.append((text, files, mentions))
+            return {"answer": "Seen.", "conversation_id": "c1"}
+        bubble = self._with_a_picture(send)
+        bubble.box.insert("end", "Look")
+        bubble.submit()
+        self._settle(0.3)
+        self.assertEqual(asked, [("Look", ["chatfile_1"], None)])
+        bubble.box.insert("end", "and @be")
+        bubble._watch_mentions()
+        self.root.update()
+        self.assertTrue(bubble.mention_row.winfo_ismapped(), "sent before: still there to @")
+        self.assertEqual(bubble._enter(SimpleNamespace(state=0)), "break", "Enter chooses")
+        self.assertEqual(bubble.box.get("1.0", "end-1c"), "and @bed.png ")
+        self.assertFalse(bubble.mention_row.winfo_ismapped())
+        bubble.submit()
+        self._settle(0.3)
+        self.assertEqual(asked[-1], ("and @bed.png", [], ["chatfile_1"]))
+        bubble.box.insert("end", "write to a@b")
+        bubble._watch_mentions()
+        self.assertIsNone(bubble._mention, "in a word, no")
+        bubble.close()
+
+    def test_pasted_nothing_there_is_said_and_words_go_on_as_ever(self) -> None:
+        asked = []
+
+        class Files:
+            def from_clipboard(self, with_text):
+                asked.append(with_text)
+                return {"files": [], "skipped": []}
+        bubble = self._bubble(lambda text, conversation: {}, files=Files())
+        self.root.clipboard_clear()
+        self.root.clipboard_append("plain words")
+        bubble._pasted()
+        self._settle(0.2)
+        self.assertEqual(asked, [True], "words: only the pictures of an HTML copy")
+        self.assertFalse(bubble.files_row.winfo_ismapped(), "nothing to say about it")
+        bubble.close()
+
+    def test_a_long_conversation_has_a_bar_on_its_right(self) -> None:
+        # The user, 2026-11-03: the chat from the avatar, once it is long.
+        bubble = self._bubble(lambda text, c: {"answer": "Noted."})
+        bubble.box.insert("1.0", "Hi")
+        bubble.submit()
+        self._settle(0.5)
+        self.assertFalse(bubble.bar.wanted, "short: no bar")
+        self.assertEqual(bubble.bar.canvas.find_all(), ())
+        for n in range(40):
+            bubble._write("Fern", "agent", f"Line {n} of a long answer about the garden.")
+        self._settle(0.3)
+        self.assertTrue(bubble.bar.wanted)
+        self.assertTrue(bubble.bar.canvas.find_all(), "the thumb drawn")
+        self.assertGreater(bubble.bar.canvas.winfo_x(), bubble.said.winfo_x(), "on the right")
+        bubble.bar.text.yview_moveto(0.0)
+        self._settle(0.2)
+        self.assertEqual(bubble.bar.view[0], 0.0, "it follows the view")
+        bubble.close()
+
+    def test_while_sized_the_old_turns_are_folded_and_all_back_after(self) -> None:
+        # The user, 2026-11-03: sizing it went in jerks - each width had the
+        # whole conversation measured again.
+        bubble = self._bubble(lambda text, c: {"answer": "ok"})
+        for n in range(150):
+            bubble._write("Fern", "agent", f"Turn {n} about the garden.")
+        self._settle(0.2)
+        everything = bubble.said.get("1.0", "end-1c")
+        bubble._edge_start(SimpleNamespace(x_root=500, y_root=500), "se")
+        folded = bubble.said.tag_ranges(cb.FOLDED)
+        self.assertTrue(folded, "the old turns folded")
+        self.assertIn("Turn 149", bubble.said.get(folded[-1], "end"), "the newest shown")
+        bubble._edge_move(SimpleNamespace(x_root=560, y_root=540))
+        bubble._edge_end()
+        self.assertEqual(bubble.said.tag_ranges(cb.FOLDED), ())
+        self.assertEqual(bubble.said.get("1.0", "end-1c"), everything, "nothing lost")
+        bubble.close()
+
     def test_a_failure_is_said_in_it(self) -> None:
         def send(text, conversation):
             raise RuntimeError("no model is set")
@@ -270,6 +642,46 @@ class TheBubbleTests(unittest.TestCase):
         bubble.close()
         self.assertEqual(bubble._fonts, {}, "its fonts let go")
 
+    def test_minimised_to_a_bar_nothing_lost_closed_a_new_one(self) -> None:
+        # The user, 2026-11-03: a bar when minimised, all of it back when
+        # expanded; closed, the next one opened is a new conversation.
+        bubble = self._bubble(lambda t, c: {"answer": "Watered.", "conversation_id": "conv_2"})
+        bubble.box.insert("1.0", "Water the ferns")
+        bubble.submit()
+        self._settle(0.5)
+        bubble.box.insert("1.0", "half written")
+        tall = bubble.window.winfo_height()
+        bottom = bubble.window.winfo_y() + tall
+        bubble.minimize()
+        self.root.update()
+        self.assertTrue(bubble.minimized)
+        self.assertLess(bubble.window.winfo_height(), tall / 2, "only its line: a bar")
+        self.assertFalse(bubble.row.winfo_ismapped())
+        self.assertEqual(bubble.window.winfo_y() + bubble.window.winfo_height(), bottom,
+                         "its bottom where it was")
+        bubble._edge_start(SimpleNamespace(x_root=500, y_root=500), "se")
+        self.assertIsNone(bubble._resizing, "a bar is not sized")
+        # An answer that comes meanwhile: the bar stays a bar, its dot lit.
+        bubble._write("Fern", "agent", "And the tomatoes too.")
+        self.root.update()
+        self.assertTrue(bubble.minimized)
+        self.assertFalse(bubble.said_box.winfo_ismapped())
+        dot, oval = bubble._dot
+        self.assertEqual(dot.itemcget(oval, "fill"), cb.LOOK["you"])
+        bubble.show()                            # the avatar pressed: as it was
+        self.root.update()
+        self.assertFalse(bubble.minimized)
+        self.assertTrue(bubble.row.winfo_ismapped() and bubble.said_box.winfo_ismapped())
+        self.assertIn("And the tomatoes too.", bubble.said.get("1.0", "end-1c"))
+        self.assertEqual(bubble.box.get("1.0", "end-1c"), "half written", "nothing lost")
+        self.assertEqual(dot.itemcget(oval, "fill"), cb.LOOK["dot"])
+        self.assertEqual(bubble.conversation_id, "conv_2")
+        bubble.window.event_generate("<Escape>")
+        self.root.update()
+        self.assertTrue(bubble.minimized, "Escape minimises - nothing is lost by it")
+        bubble.close()
+        self.assertIsNone(bubble.conversation_id, "closed: the next is a new conversation")
+
     def test_the_desktop_opens_one_and_keeps_its_size(self) -> None:
         from personalized_agent.ui.desktop import DesktopAgent
         kept = {"chat_bubble_size": [420, 300], "chat_bubble_zoom": 4}
@@ -287,7 +699,8 @@ class TheBubbleTests(unittest.TestCase):
         self.root.update()
         first = fake._chat_bubble
         self.assertEqual((first.window.winfo_width(), first.window.winfo_height()), (420, 300))
-        self.assertEqual(first.conversation_id, "conv_7", "the chat page's conversation")
+        # A NEW CONVERSATION each time one is opened (the user, 2026-11-03).
+        self.assertIsNone(first.conversation_id, "a new conversation")
         DesktopAgent.open_chat_bubble(fake)
         self.assertIs(fake._chat_bubble, first, "one bubble - pressed again, written in again")
         first.on_size((500, 360))

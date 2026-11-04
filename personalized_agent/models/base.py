@@ -255,6 +255,9 @@ class ModelRequest:
     #: tools is many rounds of the model - so a caller can keep to its limits.
     on_usage: Optional[Callable[["ModelUsage"], None]] = field(
         default=None, repr=False, compare=False)
+    #: Told the reply so far as it is written, where the provider can: all of
+    #: the text of the message under way, "" as a new one begins.
+    on_text: Optional[Callable[[str], None]] = field(default=None, repr=False, compare=False)
 
     def emit_debug(self, kind: str, data: Dict[str, Any]) -> None:
         """Hand a snapshot to whoever is watching, if anyone is.

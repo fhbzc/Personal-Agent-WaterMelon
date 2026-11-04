@@ -762,8 +762,9 @@ class TheRoutesTests(_Base):
         self.assertEqual(len(self._get("/api/connections")["people"]), 1)
         light = self._get("/api/connections/briefing")
         self.assertEqual(set(light), {"briefing", "progress", "issues", "schedule", "says",
-                                      # the stories kept, across issues
-                                      "collection", "collected"})
+                                      # the stories kept, across issues - and
+                                      # their folders (the user, 2026-11-03)
+                                      "collection", "collected", "folders"})
         # A profile of the user's own: on the one profile that is theirs, never
         # among the contacts.
         self._post("/api/connections/source", {"url": "https://github.com/me-myself"})

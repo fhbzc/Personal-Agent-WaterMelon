@@ -23,6 +23,8 @@ import logging
 import threading
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from ..chat_files import ALONE
+from ..two_speed import CORRECTION, FULL_NOTE, NOTHING_TO_ADD
 
 from ...common.events.models import new_id
 from ...common.observability.tracing import NullTracer, new_trace_id
@@ -102,6 +104,14 @@ CHAT_WEB_TOOLS = [
 CHAT_WEB_TOOL_NAMES = {one.name for one in CHAT_WEB_TOOLS}
 
 #: Added to the prompt when the older part of the conversation is summarised.
+#: THE TOPIC A CONVERSATION IS UNDER (the user, 2026-11-03, from PR #8): its
+#: shared context, the user's own words for every chat of it.
+TOPIC_CONTEXT = """
+This conversation is under a topic of the user's. What they wrote for every
+conversation under it - background to keep in mind, as they put it:
+{context}
+"""
+
 EARLIER_IN_CONVERSATION = """
 Earlier in this conversation, summarised (the messages after it follow in full):
 {summary}
@@ -174,7 +184,7 @@ class AgentCore:
         )
 
     # -- prompt -------------------------------------------------------------
-    def _system_prompt(self, summary: str = "") -> str:
+    def _system_prompt(self, summary: str = "", topic: str = "") -> str:
         prompt = SYSTEM_PROMPT.format(
             agent_name=avatar_name(self.config, getattr(self, "characters", None)),
             # The user's clock by name, not UTC: a time to schedule is given
@@ -185,6 +195,8 @@ class AgentCore:
             chat_folder=str(chat_root(self.runtime.policy.workspace_root)
                             / "<this conversation's title>"),
         )
+        if topic:
+            prompt += TOPIC_CONTEXT.format(context=topic.strip())
         if summary:
             prompt += EARLIER_IN_CONVERSATION.format(summary=summary.strip())
         return prompt
@@ -197,8 +209,17 @@ class AgentCore:
         origin: str = "user",
         *,
         debug: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+        attachments: Optional[List[str]] = None,
+        mentions: Optional[List[str]] = None,
+        on_text: Optional[Callable[[str], None]] = None,
+        after_quick: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """One turn of a conversation.
+        """One turn of a conversation. `attachments`: the ids of the files
+        attached to it; `mentions`: of the files it @s (agent/chat_files.py).
+        `on_text` is told the reply so far as it is written, where the model
+        can say it; the page reads it with the progress. `after_quick`: taken
+        up after a quick reply (agent/two_speed.py) - "ids", the messages
+        already written, and "reply", what the user has been told.
 
         The model is given what was said in this conversation before this
         message (see `_past`); a conversation id that is unknown, or none,
@@ -209,21 +230,55 @@ class AgentCore:
         for the chat debugger. An ordinary chat passes nothing and nothing
         is copied.
         """
+        files = getattr(self, "chat_files", None)
+        attached = files.for_the_model(attachments) if files is not None and attachments else None
         conversation_id = self.conversations.ensure(conversation_id)
         with self._conversation_lock(conversation_id):
             # Read before this message is written: the history is what came
             # before it, and the message itself is the turn being answered.
             earlier = self.conversations.messages(conversation_id, limit=None)
+            if after_quick:
+                earlier = [one for one in earlier if one["id"] not in after_quick["ids"]]
+            if files is not None:
+                earlier = files.later(earlier)
+                if mentions:
+                    attached = files.with_mentions(attached, attachments or [], mentions,
+                                                   self.conversations.attachments(conversation_id))
             # Where it came from - the Chat debugger's are tests, and not
             # read as the user's own words (heartbeat `_direct_chat`).
-            self.conversations.add_message(conversation_id, "user", text,
-                                           metadata={"origin": origin} if origin else None)
+            metadata: Dict[str, Any] = {"origin": origin} if origin else {}
+            if attached and attached["files"]:
+                metadata["attachments"] = attached["files"]
+            if not after_quick:
+                self.conversations.add_message(conversation_id, "user", text,
+                                               metadata=metadata or None)
+            asked = f"{text.strip() or ALONE}\n\n{attached['text']}" if attached else text
+            layer: Dict[str, Any] = {}
+            if after_quick:
+                layer = {"layer": "slow"}
+                if after_quick.get("reply"):
+                    asked += FULL_NOTE.format(reply=after_quick["reply"], correction=CORRECTION,
+                                              nothing=NOTHING_TO_ADD)
             result = self.run_instruction(
-                text, {"conversation_id": conversation_id, "origin": origin,
-                       "earlier": earlier}, debug=debug)
+                asked, {"conversation_id": conversation_id, "origin": origin,
+                        "earlier": earlier, "said": text, "on_text": on_text,
+                        "pictures": attached["pictures"] if attached else []}, debug=debug)
+            if after_quick:
+                plain = str(result["answer"]).strip()
+                result["kind"] = "more"
+                if plain.startswith(NOTHING_TO_ADD):
+                    # Kept empty: the turn's records go with the conversation by it.
+                    result["answer"], result["nothing"] = "", True
+                    layer["nothing"] = True
+                elif plain.startswith(CORRECTION):
+                    result["answer"] = plain[len(CORRECTION):].strip()
+                    result["kind"] = layer["kind"] = "correction"
+                result["did"] = after_quick["did"](result) if after_quick.get("did") else {}
+                if result["did"]:
+                    layer["did"] = result["did"]
             said = self.conversations.add_message(
                 conversation_id, "assistant", result["answer"],
-                metadata={"task_id": result["task_id"],
+                metadata={**layer, "task_id": result["task_id"],
                           "classification": result["classification"],
                           # What it searched for and read, and which tools
                           # it used - for the heartbeat beside the reply.
@@ -381,6 +436,16 @@ class AgentCore:
         except Exception:                # pragma: no cover - naming is cosmetic
             return "the model"
 
+    def _reply_so_far(self, task_id: str, text: str, told: Any) -> None:
+        """Shown as it is written - unless it is a tool call written out,
+        which is no reply (models/providers/local_tools.py)."""
+        if text.lstrip().startswith("{"):
+            return
+        if self.observability is not None and hasattr(self.observability, "task_text"):
+            self.observability.task_text(task_id, text)
+        if callable(told):
+            told(text)
+
     def _step(self, task_id: str, stage: str, detail: str = "") -> None:
         """Say what is happening now, for whoever is waiting on the answer.
 
@@ -402,7 +467,10 @@ class AgentCore:
         started = datetime.now(timezone.utc)
         if self.observability is not None:
             self.observability.task_started(task_id, origin, instruction[:120])
-        self.recorder.instruction_received(instruction, task_id, source=origin)
+        # What the user said - not the words of their files, which go with
+        # the conversation (agent/chat_files.py).
+        said = context.get("said", instruction)
+        self.recorder.instruction_received(said, task_id, source=origin)
 
         # One trace_id spans the whole instruction so the Debugger can
         # reconstruct it (14.6).
@@ -415,7 +483,7 @@ class AgentCore:
         try:
             with self.tracer.span(
                 "agent.instruction", trace_id=trace_id, task_id=task_id,
-                event_type="agent.instruction", inputs=instruction[:200],
+                event_type="agent.instruction", inputs=said[:200],
                 metadata={"kind": "user_instruction", "origin": origin},
             ):
                 history, summary = self._past(context.get("conversation_id"),
@@ -433,10 +501,14 @@ class AgentCore:
                 folder = (ConversationFolder(self.conversations, cid,
                                              self.runtime.policy.workspace_root)
                           if cid and self.conversations is not None else None)
+                topic = (self.conversations.topic_context(cid)
+                         if cid and self.conversations is not None else "")
                 result = self._reason(instruction, task_id, trace_id, started,
+                                      pictures=context.get("pictures"), said=said,
+                                      on_text=context.get("on_text"),
                                       withheld=WITHHELD_FROM.get(origin, ()),
                                       history=history, summary=summary, debug=debug,
-                                      folder=folder)
+                                      folder=folder, topic=topic)
         except Exception as exc:
             self._emit_debug(debug, "error", {
                 "task_id": task_id, "trace_id": trace_id,
@@ -453,10 +525,16 @@ class AgentCore:
                 started: datetime, withheld: tuple = (),
                 history: Optional[List[Dict[str, Any]]] = None, summary: str = "",
                 debug: Any = None,
-                folder: Optional[ConversationFolder] = None) -> Dict[str, Any]:
+                folder: Optional[ConversationFolder] = None,
+                topic: str = "", pictures: Optional[List[Dict[str, str]]] = None,
+                said: Optional[str] = None,
+                on_text: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
 
+        # Pictures attached to the message: seen by a model that sees them,
+        # taken out for one that does not (models/vision.py); their words are
+        # in the text either way.
         messages: List[Dict[str, Any]] = [*(history or []),
-                                          {"role": "user", "content": instruction}]
+                                          {"role": "user", "content": _said(instruction, pictures)}]
         tool_calls_made: List[Dict[str, Any]] = []
         answer = ""
         classification = "immediate"
@@ -514,7 +592,7 @@ class AgentCore:
                 # The client's own reading tools, denied where the chat may
                 # not read.
                 native_read=unreadable_for(self.runtime.policy),
-                system=self._system_prompt(summary),
+                system=self._system_prompt(summary, topic),
                 # The app's tools, and its web tools - which a client with
                 # search of its own is given only to read pages with.
                 tools=[spec for spec in [*self.tools.specs, *CHAT_WEB_TOOLS]
@@ -523,6 +601,7 @@ class AgentCore:
                 # client that can runs the tools in the call, and its own
                 # search and reading are held to the web's checks.
                 tool_runner=lambda name, arguments: run_tool(name, arguments),
+                on_text=lambda text: self._reply_so_far(task_id, text, on_text),
                 web_guard=guard,
                 max_tokens=int(self.config.get("max_output_tokens", 4096)),
                 task="agent_instruction",
@@ -611,7 +690,7 @@ class AgentCore:
             answer = "I could not produce an answer for this request."
         self._step(task_id, "Writing the answer", "")
 
-        self.recorder.agent_response(task_id, instruction, answer)
+        self.recorder.agent_response(task_id, instruction if said is None else said, answer)
         if self.observability is not None:
             self.observability.task_finished(task_id, "error" if error else "completed",
                                              error or "")
@@ -736,8 +815,20 @@ def _clip(text: str) -> str:
 
 
 def _verbatim(turns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Stored messages as the model's message list: the role and the words."""
-    return [{"role": one["role"], "content": _clip(str(one["content"]))} for one in turns]
+    """Stored messages as the model's message list: the role and the words -
+    and the pictures attached, the latest of them (agent/chat_files.py)."""
+    return [{"role": one["role"], "content": _said(_clip(str(one["content"])), one.get("pictures"))}
+            for one in turns]
+
+
+def _said(text: str, pictures: Optional[List[Dict[str, str]]]) -> Any:
+    """A message's content: its words, and its pictures as pictures. A model
+    that sees none has them taken out by the manager (models/vision.py)."""
+    if not pictures:
+        return text
+    return [{"type": "text", "text": text},
+            *[{"type": "image", "source": {"type": "base64", "media_type": one["media_type"],
+                                           "data": one["data"]}} for one in pictures]]
 
 
 def _tool_summary(arguments: Any) -> str:

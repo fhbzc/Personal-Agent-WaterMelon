@@ -158,7 +158,8 @@ class TheMenuOnEachRowTests(unittest.TestCase):
         self.assertEqual(said["err"], "")
         out = said["out"]
         self.assertEqual(out["crosses"], 2)
-        self.assertEqual(out["items"], ["Pin", "Rename", "Delete"])
+        # And it can go under a topic (the user, 2026-11-03, from PR #8).
+        self.assertEqual(out["items"], ["Pin", "Rename", "Move to a new topic…", "Delete"])
         self.assertIn("cannot be brought back", out["asked"])
         self.assertEqual(out["postedBefore"], 0, "deleted before it was asked")
         self.assertEqual(out["posted"], ["/api/conversation/delete:c2"])

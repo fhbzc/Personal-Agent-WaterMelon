@@ -94,7 +94,8 @@ class IssueClock:
         latest = latest_time(self.times(), now)
         if latest is None or latest == self._started_for:
             return False
-        last = (self.store.briefing() or {}).get("at")
+        # A special issue made from Chat is not the day's issue.
+        last = (self.store.latest_daily() or {}).get("at")
         try:
             made = datetime.fromisoformat(str(last).replace("Z", "+00:00")) if last else None
         except ValueError:

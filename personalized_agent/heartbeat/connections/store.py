@@ -950,7 +950,8 @@ class ConnectionsStore:
                        "person_name": (person or {}).get("name", "") or after.get("name", "")
                        or before.get("name", ""), "before": before, "after": after}
                 self.lessons.record("connections", ident, self.evidence_text(one),
-                                    action=action, reason=one["reason"])
+                                    action=action, reason=one["reason"],
+                                    content=json.dumps(one, ensure_ascii=False, default=str))
             except Exception:             # pragma: no cover - the change stands
                 log.warning("the change could not be learned from", exc_info=True)
         return ident
@@ -971,11 +972,19 @@ class ConnectionsStore:
         row = self.db.query_one("SELECT * FROM connection_lessons WHERE id = 'summary'")
         return dict(row) if row else {"text": "", "covers": 0, "until": ""}
 
-    def lessons_text(self) -> str:
-        """WHAT THE AGENT IS GIVEN of the user's connection lessons: those
-        the lessons engine has learned from their changes - never the
-        changes themselves. Without an engine, the changes, dated: the
-        summary of the older ones, then each kept one, newest first."""
+    #: The one way of finding lessons (heartbeat/lessons/retrieve.py), set by
+    #: the application.
+    retriever: Any = None
+
+    def lessons_text(self, moment: str = "") -> str:
+        """WHAT THE AGENT IS GIVEN of the user's connection lessons: the rules
+        and examples like `moment` (the one way, `retrieve.py`), else those in
+        force. Without an engine, the changes, dated: the summary of the
+        older ones, then each kept one, newest first."""
+        if self.retriever is not None:
+            return self.retriever.text(("connections", "general"), moment, rules=12,
+                                       rewrite_task="connections_lessons_query") \
+                or "None learned yet."
         if self.lessons is not None:
             return self.lessons.text("connections") or "None learned yet."
         return self.changes_text()
@@ -1688,8 +1697,10 @@ class ConnectionsStore:
 
     def save_briefing(self, needs: List[Any], items: List[Any], stats: Dict[str, Any]) -> str:
         ident = new_id("cbr")
-        last = self.briefing() or {}
-        issue = int((last.get("stats") or {}).get("issue") or 0) + 1
+        # Numbered by the daily issues: a SPECIAL ISSUE has no number of its own.
+        last = self.latest_daily() or {}
+        issue = 0 if stats.get("special") else \
+            int((last.get("stats") or {}).get("issue") or 0) + 1
         stats = dict(stats, issue=issue)
         self.db.execute("INSERT INTO connection_briefings (id, at, needs, items, stats) "
                         "VALUES (?, ?, ?, ?, ?)",
@@ -1711,8 +1722,20 @@ class ConnectionsStore:
             stats = _loads(row["stats"], {})
             out.append({"id": row["id"], "at": row["at"],
                         "issue": int(stats.get("issue") or 0),
-                        "stories": len(_loads(row["items"], []))})
+                        "stories": len(_loads(row["items"], [])),
+                        # A special issue made from Chat, by its title.
+                        "special": bool(stats.get("special")),
+                        "title": str(stats.get("title") or "")})
         return out
+
+    def latest_daily(self) -> Optional[Dict[str, Any]]:
+        """THE NEWEST DAILY ISSUE - not a special one: what the next issue is
+        numbered after, looks for news since, and is due after."""
+        for row in self.db.query("SELECT id, stats FROM connection_briefings "
+                                 "ORDER BY at DESC, rowid DESC"):
+            if not _loads(row["stats"], {}).get("special"):
+                return self.briefing(row["id"])
+        return None
 
     # -- the pictures of its stories ------------------------------------------------------
     def save_briefing_picture(self, data: bytes, ext: str) -> str:

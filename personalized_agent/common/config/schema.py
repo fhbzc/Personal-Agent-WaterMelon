@@ -457,6 +457,12 @@ SETTINGS_SCHEMA: List[SettingField] = [
                  "application does not know to look. Empty means: use the client "
                  "chosen above. Setting this overrides that choice.",
                  chooser="application"),
+    SettingField("chat_two_speed", "Quick reply in Chat", "bool", True, "Models",
+                 "Answer at once with a small model, and let the full agent add to it below. "
+                 "Off: every message waits for the full agent."),
+    SettingField("chat_fast_model", "Quick reply model", "string", "", "Models",
+                 "The small model that answers at once in Chat. Empty means: Claude Haiku on "
+                 "Claude, otherwise the model the chat runs on. Format: provider/model."),
     SettingField("heartbeat_model_override", "Heartbeat model override", "string", "", "Models",
                  "Model used for the periodic background heartbeat instead of the "
                  "primary model. A cheaper model here reduces the cost of work you "
@@ -775,6 +781,32 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
                  "looked up on the web with it.", hidden=True),
     SettingField("module_experience_enabled", "Work learning", "bool", True, "Modules",
                  "Work natures grouped and learned from by themselves.", hidden=True),
+    SettingField("module_monitor_enabled", "Monitor", "bool", True, "Modules",
+                 "The real-time signals and the Activators run on them.", hidden=True),
+    # THE MONITOR (heartbeat/monitor/, the user, 2026-11-03).
+    SettingField("monitor_tick_seconds", "Look at what you are doing every (s)", "int", 10,
+                 "Monitor", "How often the signals are read and the Activators run.",
+                 minimum=5, maximum=120),
+    SettingField("monitor_most_a_day", "Most recommendations and breaks a day", "int", 8,
+                 "Monitor", "However many moments there are, no more than this many said a day.",
+                 minimum=1, maximum=50),
+    SettingField("monitor_least_gap_minutes", "Least time between two (min)", "int", 20,
+                 "Monitor", "A recommendation or a break is never said sooner than this after "
+                 "the last.", minimum=1, maximum=600),
+    SettingField("monitor_recommend_search", "Look recommendations up on the web", "bool", True,
+                 "Monitor", "The model may search the public web for what it recommends; only "
+                 "the words of the search are sent."),
+    SettingField("monitor_place_by_words", "Tell projects apart by the words of titles",
+                 "bool", True, "Monitor",
+                 "When neither the windows nor the folders say which project is in front, the "
+                 "words of its titles are compared with each task's, in any language."),
+    SettingField("monitor_evening_fixed_time", "Evening report: the fixed time", "string",
+                 "21:00", "Monitor", "When the evening report comes if you choose \"At the fixed "
+                 "time\" (HH:MM)."),
+    SettingField("monitor_windows_keep_days", "Keep the record of your time for (days)", "int",
+                 180, "Monitor", "Each fifteen minutes of your day - what kind of work, which "
+                 "project, how long - kept for your habits; never what was on the screen.",
+                 minimum=14, maximum=3650),
     SettingField("mail_app", "Your mail", "choice", "auto", "Work",
                  "Where an email the agent writes for you is opened - as a new message, "
                  "filled in, for you to read and send yourself: Gmail, Outlook on the "
