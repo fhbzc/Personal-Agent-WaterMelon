@@ -305,7 +305,9 @@ class ResourceWatch:
         self._processes: Dict[int, Any] = {}
         self._gpu, self._gpu_how = None, ""
         self._gpu_made = False
-        self._disk: Dict[str, Any] = {"places": [], "measured_at": "", "measuring": False}
+        # Every key from the start: the page reads this while it is measured.
+        self._disk: Dict[str, Any] = {"places": [], "measured_at": "", "measuring": False,
+                                      "at": 0.0}
         self._disk_thread: Optional[threading.Thread] = None
         self._leftovers: List[Dict[str, Any]] = []
         self._leftovers_at = 0.0
