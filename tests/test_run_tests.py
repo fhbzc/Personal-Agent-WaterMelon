@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -70,6 +71,46 @@ class TheWorkIsDividedByTimeTests(unittest.TestCase):
                 runner.keep({"test_a.SlowTests.test_1": 3.0, "test_a.SlowTests.test_2": 4.5})
                 kept = json.loads(times.read_text(encoding="utf-8"))
         self.assertEqual(kept["test_a.SlowTests"], 7.5)
+
+
+class AnItemNeverHoldsTheRunTests(unittest.TestCase):
+    """v0.2.24 on the build machine: six hours on one item, and nothing said."""
+
+    def _item(self, script: str, **limits):
+        runner = _runner()
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as work:
+            fake = Path(work) / "fake_runner.py"
+            fake.write_text(script, encoding="utf-8")
+            with mock.patch.object(runner, "TIMED_RUNNER", fake):
+                for name, value in limits.items():
+                    setattr(runner, name, value)
+                began = time.monotonic()
+                said = runner.run_item(["test_a.Tests"], None)
+            return said, time.monotonic() - began
+
+    def test_a_program_left_behind_does_not_hold_it(self) -> None:
+        said, took = self._item(
+            "import subprocess, sys\n"
+            "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(8)'])\n"
+            "print('finished')\n")
+        self.assertEqual(said[0], 0)
+        self.assertIn("finished", said[1])
+        self.assertLess(took, 6)
+
+    def test_one_that_never_ends_is_stopped_and_told(self) -> None:
+        said, took = self._item(
+            "import time\nprint('got this far', flush=True)\ntime.sleep(30)\n",
+            ITEM_SECONDS=1.5)
+        self.assertNotEqual(said[0], 0)
+        self.assertIn("got this far", said[1])
+        self.assertLess(took, 15)
+
+    def test_its_own_watch_goes_off_first(self) -> None:
+        spec = importlib.util.spec_from_file_location("timed_under_test",
+                                                      ROOT / "scripts" / "timed_unittest.py")
+        timed = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(timed)
+        self.assertGreater(_runner().ITEM_SECONDS, timed.STUCK_AFTER_SECONDS)
 
 
 if __name__ == "__main__":

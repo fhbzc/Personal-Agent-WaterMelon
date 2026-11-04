@@ -52,6 +52,9 @@ SPLIT_SECONDS = 90.0
 #: Short items are put together until a batch is about this long: each
 #: process pays the imports once per batch.
 BATCH_SECONDS = 45.0
+#: An item still going after this was not ended by its own watch
+#: (scripts/timed_unittest.py, STUCK_AFTER_SECONDS): it is stopped from here.
+ITEM_SECONDS = 1860.0
 #: Never measured: what one test is counted as.
 UNMEASURED_TEST_SECONDS = 2.0
 
@@ -182,24 +185,32 @@ def below_normal() -> Dict[str, object]:
 
 
 def run_item(names: List[str], name_filter: Optional[str]) -> Tuple[int, str, float, int, Dict[str, float]]:
-    with tempfile.TemporaryDirectory(prefix="pa-times-") as work:
+    with tempfile.TemporaryDirectory(prefix="pa-times-", ignore_cleanup_errors=True) as work:
         times_file = Path(work) / "times.json"
+        out_file, err_file = Path(work) / "out.txt", Path(work) / "err.txt"
         command = [sys.executable, str(TIMED_RUNNER), str(times_file), *names]
         if name_filter:
             command += ["-k", name_filter]
         started = time.time()
+        # INTO FILES, NOT PIPES: a pipe is read until everyone holding it has
+        # gone, and a program a test left behind holds it for ever, after the
+        # test itself has ended. A file is simply there to read.
+        with open(out_file, "wb") as out, open(err_file, "wb") as err:
+            try:
+                code = subprocess.run(command, stdout=out, stderr=err, cwd=str(REPO_ROOT),
+                                      env=environment(), timeout=ITEM_SECONDS,
+                                      **below_normal()).returncode
+            except subprocess.TimeoutExpired:
+                code = 1
         # A test's output in another code page (a Windows tool's '·') must
         # not lose the item's result - read it with what cannot be read replaced.
-        completed = subprocess.run(command, capture_output=True, text=True,
-                                   encoding="utf-8", errors="replace",
-                                   cwd=str(REPO_ROOT), env=environment(),
-                                   **below_normal())
+        output = "".join(one.read_bytes().decode("utf-8", "replace").replace("\r\n", "\n")
+                         for one in (err_file, out_file))
         try:
             said = json.loads(times_file.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             said = {}
-    return (completed.returncode, completed.stderr + completed.stdout,
-            time.time() - started, int(said.get("ran", 0)), said.get("times", {}))
+    return (code, output, time.time() - started, int(said.get("ran", 0)), said.get("times", {}))
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -262,15 +273,16 @@ def main(argv: Optional[List[str]] = None) -> int:
             label = names[0] if len(names) == 1 else f"{names[0]} and {len(names) - 1} more"
             print(f"  {mark} {seconds:6.1f}s  {count:3d} tests  {label}", flush=True)
             if code != 0:
-                failures.append(output)
+                # Told now: a run that never reaches its end has still said it.
+                failures.append(label)
+                marker = output.find("=" * 20)
+                print(output[marker:].strip() if marker >= 0 else output.strip(), flush=True)
     keep(times)
 
     elapsed = time.time() - started
     print()
-    for output in failures:
-        marker = output.find("=" * 20)
-        print(output[marker:].strip() if marker >= 0 else output.strip())
-        print()
+    for label in failures:
+        print(f"failed: {label}")
     verdict = "OK" if not failures else f"FAILED ({len(failures)} item(s))"
     print(f"{total} tests in {elapsed / 60:.1f} min: {verdict}")
     return 0 if not failures else 1

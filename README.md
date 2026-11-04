@@ -367,7 +367,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
-| [v0.2.24](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.24) | 2026-11-04 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.24) |
+| [v0.2.25](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.25) | 2026-11-04 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.25) |
 | [v0.2.20](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) | 2026-11-03 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) |
 | [v0.2.19](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.19) | 2026-11-02 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.19) |
 | [v0.2.16](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) | 2026-10-30 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.16/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.16/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.16/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) |
@@ -630,9 +630,9 @@ has it.
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
 
-### [v0.2.24](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.24) (2026-11-04, being built)
+### [v0.2.25](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.25) (2026-11-04, being built)
 
-The release v0.2.21, v0.2.22 and v0.2.23 were to be: their tests failed on the build machine (v0.2.21's Linux build too), and their tags stay.
+The release v0.2.21 to v0.2.24 were to be: their tests failed or stuck on the build machine (v0.2.21's Linux build too), and their tags stay.
 
 - **Chat answers at two speeds.** A small model (or, where the channel has none, the main one thinking as little as it can) replies at once, in blue; the full agent then does the work and folds what it adds under that reply, in red, with what it changed on the fold's line. Only the full agent acts, so nothing is done twice. On Claude the answer is also shown as it is written. Settings > Models turns the quick reply off or names its model.
 - **Files and pictures in Chat.** Drag them onto the chat (the whole of it shows where to let go), use +, or paste: a screenshot from WeChat and other programs pastes as it is, read from the clipboard by the agent itself. Pictures are previewed large before they are sent, and the model now truly sees them. `@` brings up the files of the conversation to refer to one.

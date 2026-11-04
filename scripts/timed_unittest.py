@@ -7,10 +7,18 @@ Class.test": seconds}}, which it keeps for dividing the next run's work."""
 
 from __future__ import annotations
 
+import faulthandler
 import json
 import sys
 import time
 import unittest
+
+
+#: Longer than any item has ever taken, by far. An item that gets here is
+#: stuck: every thread's place is written out and the process ends, so a run
+#: says which test and where, instead of waiting for ever (v0.2.24 on the
+#: build machine: six hours, and nothing said).
+STUCK_AFTER_SECONDS = 1800
 
 
 class _Timed(unittest.TextTestResult):
@@ -31,6 +39,7 @@ class _Timed(unittest.TextTestResult):
 
 
 def main(argv) -> int:
+    faulthandler.dump_traceback_later(STUCK_AFTER_SECONDS, exit=True, file=sys.__stderr__)
     times_file, rest = argv[0], argv[1:]
     pattern = None
     if "-k" in rest:

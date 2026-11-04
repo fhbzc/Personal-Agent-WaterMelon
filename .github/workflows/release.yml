@@ -29,6 +29,7 @@ jobs:
   tests:
     name: Automated tests
     runs-on: windows-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
