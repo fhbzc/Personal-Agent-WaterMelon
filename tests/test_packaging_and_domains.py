@@ -338,6 +338,18 @@ class CharacterResourceTests(unittest.TestCase):
             self.assertEqual(avatar.getpixel((64, 63)), (0, 0, 255, 255))
 
 
+class TheTestRunnerTests(unittest.TestCase):
+    def test_a_failure_it_cannot_spell_is_still_told(self) -> None:
+        """v0.2.23 on the build machine: the failure's own words ended the run."""
+        code = ("import sys; sys.path.insert(0, sys.argv[1]); import run_tests; "
+                "run_tests.main(['no-such-file']); print('\ufffd told')")
+        done = subprocess.run([sys.executable, "-c", code, str(ROOT / "scripts")],
+                              capture_output=True, encoding="cp1252", errors="replace",
+                              env={**os.environ, "PYTHONIOENCODING": "cp1252"})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("? told", done.stdout)
+
+
 class TheAppImageTests(unittest.TestCase):
     def test_the_machine_is_named_to_appimagetool(self) -> None:
         """Without it, a package carrying binaries for several machines left

@@ -203,6 +203,11 @@ def run_item(names: List[str], name_filter: Optional[str]) -> Tuple[int, str, fl
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    # A failure's own words reach the log even on a console that cannot show
+    # all of them (cp1252 on the build machine): printing them must not be
+    # what ends the run, with the failure unsaid.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
     parser = argparse.ArgumentParser(
         description="Run the test suite, or part of it, in a few processes at once")
     parser.add_argument("patterns", nargs="*",
