@@ -118,7 +118,9 @@ def build_appimage() -> Path | None:
     )
     apprun.chmod(0o755)
     output = dist_dir(TARGET) / f"{BINARY_NAME}.AppImage"
-    run([tool, str(appdir), str(output)], check=False)
+    # Named, not found: a package carrying its binaries for several machines
+    # (tkinterdnd2 does) leaves appimagetool unable to tell, and no AppImage.
+    run([tool, str(appdir), str(output)], env={"ARCH": platform.machine()}, check=False)
     return output if output.exists() else None
 
 

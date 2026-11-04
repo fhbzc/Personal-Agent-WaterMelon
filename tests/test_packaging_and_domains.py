@@ -338,6 +338,24 @@ class CharacterResourceTests(unittest.TestCase):
             self.assertEqual(avatar.getpixel((64, 63)), (0, 0, 255, 255))
 
 
+class TheAppImageTests(unittest.TestCase):
+    def test_the_machine_is_named_to_appimagetool(self) -> None:
+        """Without it, a package carrying binaries for several machines left
+        no AppImage: the Linux build of v0.2.21."""
+        from unittest import mock
+        spec = importlib.util.spec_from_file_location(
+            "build_linux_under_test", ROOT / "build" / "linux" / "build_linux.py")
+        build_linux = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(build_linux)
+        with tempfile.TemporaryDirectory() as held:
+            dist, work = Path(held) / "dist", Path(held) / "work"
+            (dist / build_linux.BINARY_NAME).mkdir(parents=True)
+            work.mkdir()
+            with mock.patch.object(build_linux, "which", return_value="appimagetool"),                     mock.patch.object(build_linux, "dist_dir", return_value=dist),                     mock.patch.object(build_linux, "work_dir", return_value=work),                     mock.patch.object(build_linux, "run") as run,                     mock.patch.object(build_linux.platform, "machine", return_value="x86_64"):
+                build_linux.build_appimage()
+        self.assertEqual(run.call_args.kwargs["env"], {"ARCH": "x86_64"})
+
+
 class VersionConsistencyTests(unittest.TestCase):
     """Section 105: one version, visible everywhere."""
 
