@@ -116,14 +116,15 @@ def add_tools(registry: Any, monitor: Any, retriever: Any = lambda: None) -> Non
 
     registry.add(ToolSpec(
         "monitor_quiet_add",
-        "A rule of quiet: while `when` holds, nothing the Monitor would say or recommend by "
-        "itself is said - every Activator of those, by this one rule. ONLY when the user asks "
+        "A blocker: while `when` holds, no reminder of any kind is shown. What the Monitor would "
+        "say or recommend by itself is not said; any other reminder waits until it is over. "
+        "ONLY when the user asks "
         "to be left alone at some moment. `when` is a condition as an Activator's "
         "(monitor_signals).",
         _schema({"name": {"type": "string"}, "when": {"type": "object"},
                  "why": {"type": "string"}}, ["name", "when", "why"])), quiet)
     registry.add(ToolSpec(
-        "monitor_quiet_remove", "A rule of quiet taken away, when the user asks.",
+        "monitor_quiet_remove", "A blocker taken away, when the user asks.",
         _schema({"id": {"type": "string"}, "why": {"type": "string"}}, ["id", "why"])), unquiet)
 
 

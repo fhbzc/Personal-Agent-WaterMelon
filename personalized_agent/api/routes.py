@@ -2660,7 +2660,8 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             raise ApiError("it is still working - what it hands over opens once it is done", 409)
         from ..agent.work import mail_pages
         acts = handed.actions(item, handed.where(app.config, app.db), app.db,
-                              lambda: mail_pages.from_history(app.platform, app.paths.cache_dir))
+                              lambda: mail_pages.from_history(app.platform, app.paths.cache_dir),
+                              handed.person_judge(app.models))
 
         def start(target: str) -> None:
             if sys.platform.startswith("win"):
@@ -3154,6 +3155,57 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             raise ApiError("task not found", 404)
         return said
 
+    # The user's own say over what a task or a project is called and whether
+    # it is shown: a name they write is kept, what they put away stays away.
+    def _user_say(action: Any) -> Any:
+        try:
+            return action()
+        except LookupError as exc:
+            raise ApiError(str(exc), 404)
+        except ValueError as exc:
+            raise ApiError(str(exc), 400)
+
+    @route("POST", "/api/state_heartbeat/task/rename")
+    def state_task_rename(request: Any) -> Any:
+        return _user_say(lambda: app.state_heartbeat.rename_task(
+            str(request.require("id")), str(request.require("title"))))
+
+    @route("POST", "/api/state_heartbeat/task/delete")
+    def state_task_delete(request: Any) -> Any:
+        return _user_say(lambda: app.state_heartbeat.delete_task(str(request.require("id"))))
+
+    @route("POST", "/api/state_heartbeat/project/rename")
+    def state_project_rename(request: Any) -> Any:
+        return _user_say(lambda: app.state_heartbeat.rename_project(
+            str(request.require("id")), str(request.require("title"))))
+
+    @route("POST", "/api/state_heartbeat/project/delete")
+    def state_project_delete(request: Any) -> Any:
+        return _user_say(lambda: app.state_heartbeat.delete_project(str(request.require("id"))))
+
+    @route("POST", "/api/state_heartbeat/projects/merge")
+    def state_projects_merge(request: Any) -> Any:
+        """What the user chose, saved: one piece of work, gone through again."""
+        groups = list(request.require("groups"))
+        return _user_say(lambda: app.state_heartbeat.merge_and_update(groups))
+
+    @route("GET", "/api/panel_zooms")
+    def panel_zooms(_request: Any) -> Any:
+        """Each panel's size of words (app.js): a setting no page shows."""
+        return {"zooms": dict(app.config.get("panel_zooms", {}) or {})}
+
+    @route("POST", "/api/panel_zooms")
+    def panel_zoom(request: Any) -> Any:
+        said = dict(app.config.get("panel_zooms", {}) or {})
+        said[str(request.require("panel"))[:120]] = min(2.2, max(0.7, float(request.require("zoom"))))
+        app.config.set("panel_zooms", said, internal=True)
+        return {"zooms": said}
+
+    @route("POST", "/api/state_heartbeat/project/step")
+    def state_project_step(request: Any) -> Any:
+        return _user_say(lambda: app.state_heartbeat.tick_step(
+            str(request.require("id")), str(request.require("step")), bool(request.get("done"))))
+
     @route("GET", "/api/state_heartbeat/sandbox")
     def state_heartbeat_sandbox(_request: Any) -> Any:
         """Where the sandbox is, and what is in it."""
@@ -3227,14 +3279,26 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     # --------------------------------------------------------- notifications
     @route("GET", "/api/notifications")
     def notifications(request: Any) -> Any:
+        rows = app.notifications.recent(
+            limit=request.int_param("limit", 50),
+            unread_only=str(request.get("unread", "false")).lower() == "true")
+        part_of = app.item_links.of_many("notification", [one["id"] for one in rows])
         return {
-            "notifications": app.notifications.recent(
-                limit=request.int_param("limit", 50),
-                unread_only=str(request.get("unread", "false")).lower() == "true",
-            ),
+            "notifications": [dict(one, associated=part_of.get(one["id"], [])) for one in rows],
             # How long "Remind me in ..." waits, so the button can say it.
             "remind_later_minutes": app.REMIND_LATER_MINUTES,
+            # A blocker holds every reminder: they wait, unread, until it is over.
+            "blocked": app.monitor.blocker,
         }
+
+    @route("GET", "/api/notifications/picture")
+    def notifications_picture(request: Any) -> Any:
+        """The picture a notification came with, kept here when it was made."""
+        shown = app.notifications.get(str(request.require("id"))) or {}
+        path = app.monitor.picture_path((shown.get("metadata") or {}).get("picture"))
+        if path is None:
+            raise ApiError("no picture", 404)
+        return Raw(path.read_bytes(), "image/png")
 
     @route("GET", "/api/debugger/languages")
     def debugger_languages(_request: Any) -> Any:
@@ -3342,9 +3406,8 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                 # issue's, and of the ones in the collection.
                 "says": {**kept["says"],
                          **says_of(app.db, (briefing or {}).get("id") or "")},
-                # The stories kept, from any issue, and which of this one's -
-                # and their folders.
-                "collection": kept["items"], "folders": kept.get("folders") or [],
+                # The stories kept, from any issue, and which of this one's.
+                "collection": kept["items"],
                 "collected": collected_of(app.db, (briefing or {}).get("id") or ""),
                 "progress": dict(app.connections_round.progress),
                 # When the next issue is made, and in which time zone.
@@ -3355,51 +3418,46 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         """The user's say on a story: more like this, not interested, already
         knew it - or that they opened it. For its topic, next time; and what
         they knew already is kept as known."""
-        from ..heartbeat.connections.recommend import record_feedback
+        from ..heartbeat.connections.recommend import record_feedback, story_of
+        issue, story = str(request.require("issue")), str(request.require("story"))
+        action = str(request.require("action"))
         try:
-            return record_feedback(app.db, app.connections, str(request.require("issue")),
-                                   str(request.require("story")),
-                                   str(request.require("action")),
+            said = record_feedback(app.db, app.connections, issue, story, action,
                                    embedder=app.connections_round.embedder)
         except (KeyError, ValueError) as exc:
             raise ApiError(str(exc), 400)
+        # A CHOICE IS A LESSON (the user, 2026-11-04); opening one is no choice.
+        if said.get("say") and not said.get("unchanged"):
+            app.learn_choice(dict(story_of(app.db, app.connections, issue, story) or {}, id=story),
+                             action)
+        return said
 
     @route("POST", "/api/recommend/collection")
     def recommend_collection(request: Any) -> Any:
         """Keep a story in the collection, or take it out ("keep": false).
         Keeping it is not a say on it: that is /api/recommend/feedback."""
-        from ..heartbeat.connections.recommend import collect, uncollect
+        from ..heartbeat.connections.recommend import collect, story_of, uncollect
         story = str(request.require("story"))
+        issue = str(request.get("issue") or "")
+        printed = dict(story_of(app.db, app.connections, issue, story) or {}, id=story)
         if request.get("keep", True) is False:
-            return uncollect(app.db, story)
-        try:
-            return collect(app.db, app.connections, str(request.require("issue")), story)
-        except KeyError as exc:
-            raise ApiError(str(exc).strip("'"), 404)
+            said = uncollect(app.db, story)
+            app.learn_choice(printed, "taken_out")
+        else:
+            try:
+                said = collect(app.db, app.connections, issue, story)
+            except KeyError as exc:
+                raise ApiError(str(exc).strip("'"), 404)
+            if not said.get("again"):
+                app.learn_choice(printed, "add_to_collection")
+        app.collection_changed()
+        return said
 
-    @route("POST", "/api/recommend/collection/folder")
-    def recommend_collection_folder(request: Any) -> Any:
-        """A folder of the collection made, renamed or moved, or deleted
-        (only when it is empty)."""
-        from ..heartbeat.connections.recommend import edit_folder
-        try:
-            return edit_folder(app.db, str(request.require("action")),
-                               str(request.get("id") or ""), str(request.get("name") or ""),
-                               str(request.get("parent") or ""))
-        except KeyError as exc:
-            raise ApiError(str(exc).strip("'"), 404)
-        except ValueError as exc:
-            raise ApiError(str(exc), 409)
-
-    @route("POST", "/api/recommend/collection/move")
-    def recommend_collection_move(request: Any) -> Any:
-        """A kept story put in a folder, or in none."""
-        from ..heartbeat.connections.recommend import move_kept
-        try:
-            return move_kept(app.db, str(request.require("story")),
-                             str(request.get("folder") or ""))
-        except KeyError as exc:
-            raise ApiError(str(exc).strip("'"), 404)
+    @route("GET", "/api/collection")
+    def collection_list(_request: Any) -> Any:
+        """THE COLLECTIONS PANEL: what was kept, the newest first, in its groups."""
+        items = app.collection_items()
+        return {"items": items, "groups": _list_groups("collection", items)}
 
     @route("GET", "/api/connections/person")
     def connections_person(request: Any) -> Any:
@@ -3670,7 +3728,9 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             log.debug("what came of the to-dos could not be read", exc_info=True)
             came = {}
         shown = app.todos.shown()
-        return {"todos": [dict(one, work=came[one["id"]]) if one.get("id") in came else one
+        part_of = app.item_links.of_many("todo", [one["id"] for one in shown])
+        return {"todos": [dict(one, associated=part_of.get(one["id"], []),
+                               **({"work": came[one["id"]]} if one.get("id") in came else {}))
                           for one in shown],
                 # IN GROUPS (list_groups.py): the open ones.
                 "groups": _list_groups("todo", [one for one in shown if not one.get("done_at")])}
@@ -3684,7 +3744,9 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         except Exception:        # pragma: no cover - the panel shows without it
             log.debug("the work assigned could not be read", exc_info=True)
             return {"assigned": []}
-        return {"assigned": assigned, "groups": _list_groups("assigned", assigned)}
+        part_of = app.item_links.of_many("assigned", [one["id"] for one in assigned])
+        return {"assigned": [dict(one, associated=part_of.get(one["id"], [])) for one in assigned],
+                "groups": _list_groups("assigned", assigned)}
 
     def _list_groups(which: str, items: List[Dict[str, Any]]) -> Any:
         grouper = getattr(app, "list_groups", None)
@@ -3782,7 +3844,12 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         text = str(request.get("text") or "").strip()
         if not text:
             raise ApiError("a to-do needs its words", 400)
-        return {"ok": True, "todo": app.todos.add(text, str(request.get("detail") or ""))}
+        todo = app.todos.add(text, str(request.get("detail") or ""))
+        try:                 # what they add says what matters to them (the user, 2026-11-04)
+            app.lessons.the_user_did("added_todo", f'Added a to-do of their own: "{text[:300]}".')
+        except Exception:
+            log.warning("what the user did could not be kept as a lesson", exc_info=True)
+        return {"ok": True, "todo": todo}
 
     @route("POST", "/api/todos/tick")
     def todos_tick(request: Any) -> Any:
@@ -3797,6 +3864,13 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     def todos_delete(request: Any) -> Any:
         if not app.todos.delete(str(request.require("id"))):
             raise ApiError("no such to-do", 404)
+        return {"ok": True}
+
+    @route("POST", "/api/notifications/chat")
+    def notifications_chat(request: Any) -> Any:
+        """Written on a notification: it closes, and it is a lesson. Nothing answers."""
+        if not app.notification_chat(str(request.require("id")), str(request.require("text"))):
+            raise ApiError("no such notification, or nothing written", 404)
         return {"ok": True}
 
     @route("POST", "/api/notifications/bad")

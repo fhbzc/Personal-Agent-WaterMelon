@@ -577,7 +577,8 @@ deadline still to meet: that is one notification, not a series. Leave
 
 Write it for the user. The title is what they see first and the message is
 one or two plain sentences. Your evidence and reasoning go in "why", which
-is shown only if they ask. A person in it is named as the user's contacts
+is shown under the notification, so it is written to them too, in a line. A
+person in it is named as the user's contacts
 name them (WHO IS IN THIS WINDOW) - not 学姐 or "the junior students" when
 it says who that is; where it cannot be told, the user's own word.
 
@@ -4137,7 +4138,9 @@ class AgentHeartbeat:
                 for row in self.raw_store.db.query(
                         f"SELECT * FROM notifications WHERE id IN ({holes})",
                         tuple(by_kind["notif"])):
-                    put(str(row["id"]), "notif", dict(row))
+                    links = getattr(self, "item_links", None)
+                    note = links.note("notification", str(row["id"])) if links is not None else ""
+                    put(str(row["id"]), "notif", dict(row, part_of=note) if note else dict(row))
         except Exception as exc:         # pragma: no cover - a read
             log.debug("could not read by id", exc_info=True)
             for one in ids:

@@ -154,6 +154,36 @@ class TuckedIntoTheSideTests(unittest.TestCase):
         desktop._on_hover_enter = lambda *a: None
         return desktop
 
+    def test_a_press_in_the_air_does_not_stop_the_jump_or_open_the_chat(self) -> None:
+        """Where the user saw it: half way out of the top, its head out, the chat opening."""
+        desktop = self._desktop(900, -28)
+        desktop._tucked = ""
+        desktop._live.update(tuck=0.0, grip=1.0)
+        desktop._slide_from_here((900, 16), 0.0, 0.0, leap="top")
+        desktop._on_click = mock.Mock()
+        at = SimpleNamespace(x=64, y=20, x_root=964, y_root=20)
+        desktop._start_drag(at)
+        self.assertIn("slide", desktop._live, "it goes on")
+        desktop._on_drag(SimpleNamespace(x=0, y=0, x_root=1100, y_root=300))
+        self.assertEqual(desktop.agent_window.y, -28, "and no hand takes it")
+        desktop._end_drag(at)
+        desktop._on_click.assert_not_called()
+        self._finish(desktop)
+        self.assertEqual(desktop.agent_window.y, 16)
+
+    def test_out_of_the_top_the_jump_is_quicker(self) -> None:
+        """Its way is the shortest and it does not rise: it crept in the time of the others."""
+        from personalized_agent.ui import avatar_tuck
+        self.assertLess(avatar_tuck.leap_seconds("top"), avatar_tuck.leap_seconds("right"))
+        self.assertEqual(avatar_tuck.leap_seconds("left"), avatar_tuck.LEAP_SECONDS)
+        desktop = self._desktop(900, -28)
+        desktop._live.update(tuck=0.0, grip=1.0)
+        desktop._slide_from_here((900, 16), 0.0, 0.0, leap="top")
+        desktop._live["slide"]["at"] = time.monotonic() - avatar_tuck.leap_seconds("top") - 0.01
+        desktop._slide_on(desktop._live, time.monotonic())
+        self.assertNotIn("slide", desktop._live)
+        self.assertEqual(desktop.agent_window.y, 16)
+
     def _sides(self, left=True, right=True):
         from personalized_agent.ui.avatar_tuck import Sides
         return mock.patch("personalized_agent.ui.avatar_tuck.sides_of",
@@ -255,8 +285,8 @@ class TuckedIntoTheSideTests(unittest.TestCase):
             desktop._live["hover"] = True
             desktop._peek_on(desktop._live)
             self._finish(desktop)
-            self.assertEqual(desktop.agent_window.y, 92 - 128)
-            self.assertEqual(desktop._reach(desktop._live), 92.0)
+            self.assertEqual(desktop.agent_window.y, 100 - 128)
+            self.assertEqual(desktop._reach(desktop._live), 100.0)
             desktop._start_drag(SimpleNamespace(x=5, y=60, x_root=964, y_root=20))
             desktop._end_drag()
             self._finish(desktop)
@@ -395,10 +425,10 @@ class TuckedIntoTheSideTests(unittest.TestCase):
         with self._sides():
             desktop._peek_on(desktop._live)
             self._finish(desktop)
-            self.assertEqual(desktop.agent_window.x, 1920 - 68, "both eyes out")
+            self.assertEqual(desktop.agent_window.x, 1920 - 88, "its face out, on end")
             self.assertEqual(desktop._live["tuck"], 0.0)
             self.assertEqual(desktop._live["grip"], 1.0, "the leaves still holding on")
-            self.assertEqual(desktop._reach(desktop._live), 68.0, "at the side as it moved")
+            self.assertEqual(desktop._reach(desktop._live), 88.0, "at the side as it moved")
             self.assertEqual(desktop._tucked, "right", "still in the side")
             desktop._peek_on(desktop._live)
             self.assertNotIn("slide", desktop._live, "once")
@@ -409,7 +439,7 @@ class TuckedIntoTheSideTests(unittest.TestCase):
         self.assertEqual(desktop._live["tuck"], 1.0)
 
     def test_looking_out_a_click_still_brings_it_out(self) -> None:
-        desktop = self._desktop(1920 - 68)
+        desktop = self._desktop(1920 - 88)
         desktop._tucked = "right"
         desktop._live.update(tuck=0.0, hover=True, peeking=True)
         with self._sides():
@@ -589,6 +619,45 @@ class TheRouteTests(unittest.TestCase):
                                             if c["name"] == "watermelon"))
         finally:
             agent.cleanup()
+
+
+class QuickFramesTests(unittest.TestCase):
+    """The frames of a jump, on the smaller canvas."""
+
+    KINDS = dict(tuck=0.3, edge="top", grip=0.6, reach=60.0, turn=0.5)
+
+    def setUp(self) -> None:
+        from personalized_agent.agent.character.watermelon import Watermelon
+        self.rig = Watermelon(scale=2)
+
+    def _frame(self, rig):
+        return rig.frame("idle", (0.0, 0.0), 0.0, 0.3, 1.0, 0.0, size=128, facing="left",
+                         smile=None, **self.KINDS)
+
+    def test_the_same_size_and_the_same_figure(self) -> None:
+        from PIL import ImageChops
+        full, quick = self._frame(self.rig), self._frame(self.rig.quick())
+        self.assertEqual(full.size, quick.size)
+        shape = ImageChops.difference(full.getchannel("A").point(lambda a: 255 if a >= 110 else 0),
+                                      quick.getchannel("A").point(lambda a: 255 if a >= 110 else 0))
+        apart = sum(shape.histogram()[128:])
+        self.assertLess(apart, 128 * 128 * 0.03, "no jump in its outline when it lands")
+
+    def test_made_once_and_leaves_the_rig_as_it_was(self) -> None:
+        body = self.rig.body
+        self.assertIs(self.rig.quick(), self.rig.quick())
+        self.assertIs(self.rig.quick().quick(), self.rig.quick())
+        self.assertIs(self.rig.body, body)
+        self.assertEqual(self.rig.scale, 2)
+        self.assertEqual(self.rig.quick().body.size, (128, 128))
+
+    def test_the_leaves_box_is_worked_out_once_an_edge(self) -> None:
+        first = self.rig.leaves_at(0.5, 60.0, "side")
+        self.assertEqual(list(self.rig._leaf_boxes), ["side"])
+        again = self.rig.leaves_at(0.5, 60.0, "side")
+        self.assertEqual(first.tobytes(), again.tobytes())
+        self.rig.leaves_at(0.5, 60.0, "top")
+        self.assertEqual(sorted(self.rig._leaf_boxes), ["side", "top"])
 
 
 if __name__ == "__main__":

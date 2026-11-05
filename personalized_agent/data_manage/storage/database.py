@@ -247,6 +247,8 @@ ADDED_COLUMNS = (
     ("conversations", "pinned_at", "TEXT"),
     # Which try of a Work debugger project is shown and started from.
     ("debug_projects", "current_try", "INTEGER"),
+    # When the user put a task of a run away: kept, and shown to nothing.
+    ("state_run_tasks", "put_away", "TEXT NOT NULL DEFAULT ''"),
     # The folders the user named for it whose learned experience its full
     # way is not given, beside its own (JSON list).
     ("debug_projects", "leave_out", "TEXT"),
@@ -1048,7 +1050,8 @@ CREATE TABLE IF NOT EXISTS state_run_tasks (
     ends_at         TEXT,
     places          TEXT NOT NULL DEFAULT '{}',   -- folder or page -> times
     continues       TEXT NOT NULL DEFAULT '',     -- the project its writer named
-    project_id      TEXT NOT NULL DEFAULT ''
+    project_id      TEXT NOT NULL DEFAULT '',
+    put_away        TEXT NOT NULL DEFAULT ''      -- when the user put it away
 );
 CREATE INDEX IF NOT EXISTS idx_state_run_tasks_when ON state_run_tasks(scope, ends_at);
 CREATE INDEX IF NOT EXISTS idx_state_run_tasks_project ON state_run_tasks(scope, project_id);

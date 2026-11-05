@@ -176,6 +176,12 @@ OPTIONAL_OPTIONS: Dict[str, Tuple[Option, ...]] = {
         Option("later", "Later", COMPLETE, "the user wanted to be asked again later"),
         Option("at_fixed", "At the fixed time", COMPLETE,
                "the user wanted it at the time they set"),
+        Option("read_detail", "Read detail", COMPLETE,
+               "the user wanted more: they opened the page it pointed to"),
+        Option("good_to_know", "Good to know", COMPLETE,
+               "the user was glad to be told, and wanted no more than that"),
+        Option("add_to_collection", "Add to collection", COMPLETE,
+               "the user kept it in their collection: it was worth keeping"),
     ),
 }
 

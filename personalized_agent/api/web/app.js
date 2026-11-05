@@ -110,6 +110,9 @@ const BAD_LABEL = "Bad notification (no more notifications + fewer similar ones 
    said it (/api/notifications). */
 let remindLaterMinutes = 30;
 
+/* What is being opened from the to-dos and Work assigned, by what it is. */
+const ovOpening = new Set();
+
 /* A notification, shown in the page: with a way to say it was a bad one,
    and long enough on screen to say it. */
 function notificationToast(n) {
@@ -120,6 +123,26 @@ function notificationToast(n) {
   }
   const words = document.createElement("div");
   words.textContent = `${n.title}: ${n.message}`;
+  let meta = {};
+  try {
+    meta = typeof n.metadata === "string" ? JSON.parse(n.metadata || "{}") : (n.metadata || {});
+  } catch (_err) { /* shown without what it came with */ }
+  const noted = (said) => {
+    const note = document.createElement("div");
+    note.className = "muted";
+    note.textContent = said;
+    words.append(note);
+  };
+  if (meta.recommended) {
+    item.classList.add("toast-recommended");
+    const kind = document.createElement("div");
+    kind.className = "muted";
+    kind.textContent = "Recommended content";
+    words.prepend(kind);
+  }
+  if (meta.reason) noted(`Why: ${meta.reason}`);
+  const partOf = (n.associated || []).map((one) => one.title).filter(Boolean);
+  if (partOf.length) noted(`Part of: ${partOf.join(", ")}`);
   // EACH BUTTON SAYS WHAT HAPPENS: how long until it is back, or that it
   // never is.
   const button = (label, then) => {
@@ -151,6 +174,59 @@ function notificationToast(n) {
   bad.addEventListener("click", () => markBadNotification(n.id, item));
   const buttons = document.createElement("div");
   buttons.className = "toast-buttons";
+  // WRITTEN ON IT: it closes, and it is a lesson (the user, 2026-11-04).
+  const chat = document.createElement("form");
+  chat.className = "toast-chat";
+  const chatBox = document.createElement("input");
+  chatBox.type = "text";
+  chatBox.placeholder = "Tell the agent for next time...";
+  const chatSend = document.createElement("button");
+  chatSend.type = "submit";
+  chatSend.className = "small secondary";
+  chatSend.textContent = "Send";
+  chat.append(chatBox, chatSend);
+  chat.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const text = chatBox.value.trim();
+    if (!text) return;
+    try {
+      await api.post("/api/notifications/chat", { id: n.id, text });
+      item.remove();
+    } catch (err) { toast(err.message, "error"); }
+  });
+  if (meta.chat_conversation) {
+    buttons.append(button("Read the whole reply", () => {
+      const page = new URL("chat.html", location.href);
+      page.searchParams.set("conversation", meta.chat_conversation);
+      window.open(page);
+      api.post("/api/notifications/read", { id: n.id });
+      item.remove();
+    }));
+  }
+  const answered = (label, key) => button(label, async () => {
+    try {
+      await api.post("/api/questions/answer", { id: meta.question_id, answer: key });
+      item.remove();
+    } catch (err) { toast(err.message, "error"); }
+  });
+  // WHAT THE MODEL SENDS has answers of its own (the user, 2026-11-04).
+  if (meta.content && meta.question_id) {
+    if (meta.url) buttons.append(answered("Read detail", "read_detail"));
+    buttons.append(answered("Good to know", "good_to_know"));
+    if (meta.recommended) buttons.append(answered("Add to collection", "add_to_collection"));
+    buttons.append(bad);
+    if (meta.picture) {
+      const picture = document.createElement("img");
+      picture.className = "toast-picture";
+      picture.alt = "";
+      picture.src = `/api/notifications/picture?id=${encodeURIComponent(n.id)}`;
+      words.append(picture);
+    }
+    item.append(words, buttons, chat);
+    $("#toast").appendChild(item);
+    setTimeout(() => { if (!item.contains(document.activeElement)) item.remove(); }, 20000);
+    return;
+  }
   // A reminder can come back in half an hour; a notice is only read.
   if (((n.metadata || {}).template || "") !== "passive") {
     const later = document.createElement("button");
@@ -169,9 +245,9 @@ function notificationToast(n) {
     buttons.append(gotIt);
   }
   buttons.append(toTodo, bad);
-  item.append(words, buttons);
+  item.append(words, buttons, chat);
   $("#toast").appendChild(item);
-  setTimeout(() => item.remove(), 20000);
+  setTimeout(() => { if (!item.contains(document.activeElement)) item.remove(); }, 20000);
 }
 
 
@@ -6498,6 +6574,7 @@ $$("#tabs button").forEach((button) => {
     if (activeTab === "experience") loadExperience(true);
     if (activeTab === "learning") loadLearning();
     if (activeTab === "monitor") loadMonitor();
+    if (activeTab === "collections") loadCollections();
     if (activeTab === "society") loadSociety();
     if (activeTab === "resourcedebug") rdTick();
     if (activeTab === "overview") ovCentreTheCurrent();
@@ -10940,12 +11017,15 @@ function renderOvRound(said) {
   if (!button || !line || !said) return;
   button.disabled = Boolean(said.running);
   button.textContent = said.running ? "Updating tasks…" : "Update tasks now";
+  // WHEN IT LAST UPDATED, beside when it next will (the user, 2026-11-04).
+  const last = said.last_at ? `Last update: ${clock(said.last_at)}` : "";
   if (said.running) {
-    line.textContent = "A round is running now; the tasks change as it goes.";
+    line.textContent = ["A round is running now; the tasks change as it goes.", last]
+      .filter(Boolean).join(" · ");
   } else if (said.next_at) {
-    line.textContent = `Next regular round: ${clock(said.next_at)}`;
+    line.textContent = [last, `Next regular round: ${clock(said.next_at)}`].filter(Boolean).join(" · ");
   } else {
-    line.textContent = "";
+    line.textContent = last;
   }
 }
 
@@ -14196,10 +14276,7 @@ $("#connections").addEventListener("click", async (event) => {
    it stops. */
 //: `issue`: the id of the issue being read - "" for the newest, which is
 //: then what a refresh shows.
-const knowCard = { timer: null, wasRunning: false, issue: "", page: "", data: null,
-                   // THE COLLECTION'S FOLDER open ("" all of it), and a folder
-                   // being made or renamed here.
-                   folder: "", folderEdit: "" };
+const knowCard = { timer: null, wasRunning: false, issue: "", page: "", data: null };
 
 /* The card's answer: the newest issue - or the one being read. */
 function knowAsk() {
@@ -14384,94 +14461,13 @@ function knowSide(briefing, issues) {
     { key: "", title: "Front page", count: (paper.front || []).length + (paper.brief || []).length },
     ...pages.map((one) => ({ key: one.key, title: one.title, count: (one.stories || []).length })),
   ] : [];
-  const kept = ((knowCard.data || {}).collection || []).length;
-  // THE COLLECTION FIRST: what the user kept, above any one issue - it is
-  // theirs across issues, and below a long list of pages it went unseen.
-  const collection = `<h3 class="rec-side-head">Collection</h3>
-    <button type="button" class="rec-page rec-collection${current === "collection" && !knowCard.folder
-      ? " selected" : ""}" data-know-page="collection" data-know-folder="">Stories you kept<span class="muted">${
-      kept === 1 ? "1 story" : `${kept} stories`}</span></button>${knowFolderTree("", 1)}`;
-  return `${collection}${picker}${list.length ? `<h3 class="rec-side-head">Pages</h3>${list.map((one, n) =>
+  return `${picker}${list.length ? `<h3 class="rec-side-head">Pages</h3>${list.map((one, n) =>
     `<button type="button" class="rec-page${current === one.key ? " selected" : ""}"
       data-know-page="${escapeHtml(one.key)}"><span class="paper-page-no">${
       String.fromCharCode(65 + n)}1</span> ${escapeHtml(one.title)}<span class="muted">${
       Number(one.count) || 0} stor${Number(one.count) === 1 ? "y" : "ies"}</span></button>`)
     .join("")}` : ""}`;
 }
-
-/* THE COLLECTION'S FOLDERS (the user, 2026-11-03): folders in folders, down
-   the left under "Stories you kept"; a story kept in one, or in none. */
-function knowFolders() { return (knowCard.data || {}).folders || []; }
-function knowFolderPath(id) {
-  const byId = new Map(knowFolders().map((one) => [one.id, one]));
-  const names = [];
-  for (let at = byId.get(id); at; at = byId.get(at.parent_id)) names.unshift(at.name);
-  return names.join(" / ");
-}
-function knowFolderTree(parent, depth) {
-  const items = (knowCard.data || {}).collection || [];
-  return knowFolders().filter((one) => (one.parent_id || "") === parent).map((one) => {
-    const count = items.filter((kept) => kept.folder_id === one.id).length;
-    return `<button type="button" class="rec-page rec-folder${knowCard.page === "collection"
-      && knowCard.folder === one.id ? " selected" : ""}" style="padding-left:${8 + depth * 14}px"
-      data-know-page="collection" data-know-folder="${escapeHtml(one.id)}">&#128193; ${
-      escapeHtml(one.name)}<span class="muted">${count}</span></button>${knowFolderTree(one.id, depth + 1)}`;
-  }).join("");
-}
-function knowFolderOptions(selected, leaveOut = "") {
-  // Every folder by its path - not the one being moved, nor anything in it.
-  const inside = (id) => {
-    const byId = new Map(knowFolders().map((one) => [one.id, one]));
-    for (let at = byId.get(id); at; at = byId.get(at.parent_id)) if (at.id === leaveOut) return true;
-    return false;
-  };
-  return knowFolders().filter((one) => !leaveOut || !inside(one.id))
-    .map((one) => ({ id: one.id, path: knowFolderPath(one.id) }))
-    .sort((a, b) => a.path.localeCompare(b.path))
-    .map((one) => `<option value="${escapeHtml(one.id)}"${one.id === selected ? " selected" : ""}>${
-      escapeHtml(one.path)}</option>`).join("");
-}
-function knowFolderTools() {
-  const open = knowFolders().find((one) => one.id === knowCard.folder);
-  const editing = knowCard.folderEdit;
-  if (editing) {
-    const making = editing === "new";
-    return `<div class="rec-folder-tools rec-folder-form">
-      <input type="text" data-know-folder-name maxlength="120" value="${making ? "" : escapeHtml(open ? open.name : "")}"
-        placeholder="${escapeHtml("The folder's name")}" aria-label="${escapeHtml("The folder's name")}">
-      <label class="muted">${escapeHtml("Inside")}
-        <select data-know-folder-parent><option value="">${escapeHtml("The top level")}</option>${
-          knowFolderOptions(making ? knowCard.folder : (open ? open.parent_id : ""), making ? "" : knowCard.folder)}</select></label>
-      <button type="button" class="small" data-know-folder-save>${escapeHtml(making ? "Make the folder" : "Save")}</button>
-      <button type="button" class="small secondary" data-know-folder-cancel>${escapeHtml("Cancel")}</button></div>`;
-  }
-  const items = ((knowCard.data || {}).collection || []);
-  const empty = open && !items.some((one) => one.folder_id === open.id)
-    && !knowFolders().some((one) => one.parent_id === open.id);
-  return `<div class="rec-folder-tools">
-    <button type="button" class="small secondary" data-know-folder-new>${escapeHtml(open ? "New folder inside" : "New folder")}</button>${
-    open ? `<button type="button" class="small secondary" data-know-folder-edit>${escapeHtml("Rename or move")}</button>
-      <button type="button" class="small secondary" data-know-folder-delete${empty ? "" : ` disabled title="${
-        escapeHtml("Move its stories and folders out first")}"`}>${escapeHtml("Delete the empty folder")}</button>` : ""}</div>`;
-}
-
-document.addEventListener("change", async (event) => {
-  const move = event.target.closest?.("[data-know-move]");
-  if (!move) return;
-  try {
-    await api.post("/api/recommend/collection/move", { story: move.dataset.knowMove, folder: move.value });
-    renderKnowCard(await knowAsk());
-    toast(move.value ? "Moved to the folder" : "Taken out of its folder");
-  } catch (err) {
-    toast(err.message, "error");
-  }
-});
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && event.target.closest?.("[data-know-folder-name]")) {
-    event.preventDefault();
-    $("[data-know-folder-save]")?.click();
-  }
-});
 
 /* Whether a story is in the collection - of this issue, or kept from any. */
 function knowKept(storyId) {
@@ -14480,45 +14476,7 @@ function knowKept(storyId) {
     || (data.collection || []).some((one) => one.story_id === storyId);
 }
 
-/* THE COLLECTION: the stories the user kept, the newest first, each as it
-   was printed and with where it came from - kept until taken out, as a
-   to-do is. Each can still be said "more like this", "not interested" or
-   "already knew", as in its issue. */
-function knowCollection(data) {
-  const all = data.collection || [];
-  const open = knowFolders().find((one) => one.id === knowCard.folder);
-  if (knowCard.folder && !open) knowCard.folder = "";
-  const items = open ? all.filter((one) => one.folder_id === open.id) : all;
-  const mast = `<header class="paper-mast">
-      <h2 class="paper-title">${escapeHtml(open ? knowFolderPath(open.id) : "Collection")}</h2>
-      <div class="paper-dateline"><span>${escapeHtml(open ? "Stories kept in this folder, the newest first"
-        : "Stories you kept, the newest first")}</span></div>
-    </header>${knowFolderTools()}`;
-  const inside = knowFolders().filter((one) => (one.parent_id || "") === (open ? open.id : ""));
-  const folders = open && inside.length ? `<div class="rec-folder-inside">${inside.map((one) =>
-    `<button type="button" class="small secondary" data-know-page="collection" data-know-folder="${
-      escapeHtml(one.id)}">&#128193; ${escapeHtml(one.name)}</button>`).join("")}</div>` : "";
-  if (!items.length) {
-    return `<article class="paper">${mast}${folders}<p class="paper-empty">${open
-      ? escapeHtml("Nothing in this folder yet. Under a story kept, choose this folder.")
-      : `Nothing kept yet. "Add to collection" under a story keeps it here.`}</p></article>`;
-  }
-  return `<article class="paper">${mast}${folders}<div class="paper-stories paper-collection">${
-    items.map((one) => {
-      const story = one.story || {};
-      const from = story.issue_no
-        ? `From No. ${story.issue_no}, ${knowIssueTime(story.issue_at)}`
-        : story.issue_at ? `From the issue of ${knowIssueTime(story.issue_at)}` : "";
-      return `<div class="paper-kept">${from
-        ? `<p class="paper-kept-from muted">${escapeHtml(from)}</p>` : ""}${
-        knowStory(story, "story", one.issue_id)}<label class="rec-kept-folder muted">${escapeHtml("Folder")}
-        <select data-know-move="${escapeHtml(one.story_id)}"><option value="">${escapeHtml("No folder")}</option>${
-          knowFolderOptions(one.folder_id)}</select></label></div>`;
-    }).join("")}</div></article>`;
-}
-
 function knowFrontPage(briefing, issues = []) {
-  if (knowCard.page === "collection") return knowCollection(knowCard.data || {});
   const items = (briefing && briefing.items) || [];
   const paper = ((briefing && briefing.stats) || {}).paper;
   // AN ISSUE OF CUSTOMIZED RECOMMENDATION: pages, one per topic.
@@ -14623,44 +14581,7 @@ document.addEventListener("click", async (event) => {
   const turn = event.target.closest?.("[data-know-page]");
   if (turn) {
     knowCard.page = turn.dataset.knowPage;
-    if (turn.dataset.knowFolder !== undefined) knowCard.folder = turn.dataset.knowFolder;
-    knowCard.folderEdit = "";
     if (knowCard.data) renderKnowPaper();
-    return;
-  }
-  const folderAct = event.target.closest?.("[data-know-folder-new],[data-know-folder-edit],"
-    + "[data-know-folder-delete],[data-know-folder-save],[data-know-folder-cancel]");
-  if (folderAct) {
-    if (folderAct.dataset.knowFolderNew !== undefined || folderAct.dataset.knowFolderEdit !== undefined) {
-      knowCard.folderEdit = folderAct.dataset.knowFolderNew !== undefined ? "new" : "edit";
-      renderKnowPaper();
-      $("[data-know-folder-name]")?.focus();
-      return;
-    }
-    if (folderAct.dataset.knowFolderCancel !== undefined) {
-      knowCard.folderEdit = "";
-      renderKnowPaper();
-      return;
-    }
-    const making = knowCard.folderEdit === "new";
-    const body = folderAct.dataset.knowFolderDelete !== undefined
-      ? { action: "delete", id: knowCard.folder }
-      : { action: making ? "create" : "edit", id: making ? "" : knowCard.folder,
-          name: ($("[data-know-folder-name]") || {}).value || "",
-          parent: ($("[data-know-folder-parent]") || {}).value || "" };
-    try {
-      const said = await api.post("/api/recommend/collection/folder", body);
-      knowCard.folderEdit = "";
-      if (body.action === "delete") {
-        const gone = knowFolders().find((one) => one.id === knowCard.folder);
-        knowCard.folder = gone ? gone.parent_id || "" : "";
-      } else if (making && said.id) {
-        knowCard.folder = said.id;
-      }
-      renderKnowCard(await knowAsk());
-    } catch (err) {
-      toast(err.message, "error");
-    }
     return;
   }
   const keep = event.target.closest?.("[data-know-keep]");
@@ -14854,6 +14775,7 @@ async function refresh() {
   try {
     const status = await api.get("/api/status");
     speaksInBubble = Boolean(status.speaks_in_bubble);
+    settingsForInstalled(Boolean(status.paths?.frozen));
     if (status.updating) followUpdate(status.updating);
     const app = status.application || {};
     // WHAT IT IS DOING, IF IT IS DOING ANYTHING. A grouping round is one
@@ -14970,6 +14892,15 @@ $("#reauth-dismiss")?.addEventListener("click", async () => {
 
 $("#reauth-go")?.addEventListener("click", () => openModelSettings(reauthState.provider));
 
+/* OTHERS IS NOT SHOWN IN THE INSTALLED PROGRAM (the user, 2026-11-04), only run from
+   the source. */
+function settingsForInstalled(installed) {
+  const others = $('[data-settings-view="others"]');
+  if (!others) return;
+  others.hidden = installed;
+  if (installed && others.classList.contains("active")) settingsView("general");
+}
+
 /* SETTINGS IN TWO VIEWS: General - the model the agent thinks with, how
    it is reached, the languages - and Others, every other setting. The one
    last open is opened again. */
@@ -15043,11 +14974,41 @@ const reauthState = { provider: "" };
    the page. */
 let speaksInBubble = false;
 
+let waitingOpened = false;
+
+function showWaiting(count) {
+  let line = $("#toast-waiting");
+  if (!count) {
+    if (line) line.remove();
+    return;
+  }
+  if (!line) {
+    line = document.createElement("button");
+    line.type = "button";
+    line.id = "toast-waiting";
+    line.className = "small secondary";
+    line.addEventListener("click", () => {
+      waitingOpened = true;
+      line.remove();
+      pollNotifications();
+    });
+    $("#toast").appendChild(line);
+  }
+  line.textContent = `${count} waiting`;
+}
+
 async function pollNotifications() {
   if (speaksInBubble) return;
   try {
     const data = await api.get("/api/notifications?unread=true&limit=5");
     if (Number(data.remind_later_minutes)) remindLaterMinutes = Number(data.remind_later_minutes);
+    // HELD BY A BLOCKER: collapsed - how many wait, opened by hand.
+    if (!data.blocked) waitingOpened = false;
+    if (data.blocked && !waitingOpened) {
+      showWaiting(data.notifications.length);
+      return;
+    }
+    showWaiting(0);
     data.notifications.forEach((n) => {
       notificationToast(n);
       api.post("/api/notifications/read", { id: n.id });
@@ -19611,12 +19572,365 @@ function pjWhen(iso) {
                                             hour: "2-digit", minute: "2-digit" });
 }
 
-/* One colour per project, from its id - the same wherever it is drawn and
+/* THE REST OF THE ORCHARD (the user, 2026-11-04: at least a hundred): a real
+   fruit each, drawn from the shape it has in the colours it has - the colours
+   anyone knows it by: no red banana, though there is one. */
+const pjLeaf = (x = 16, y = 6) => `<path d="M${x} ${y}c1-3 5-4 8-3-1 3-5 5-8 3z" fill="#4e9a3c"/>`;
+const pjStalk = (x = 16, y = 7) => `<path d="M${x} ${y}c0-2 0-3 1-5" fill="none" stroke="#7a4a21"
+  stroke-width="2" stroke-linecap="round"/>`;
+const pjGlint = (x, y) => `<ellipse cx="${x}" cy="${y}" rx="2.2" ry="3.2" fill="#fff" opacity=".5"
+  transform="rotate(25 ${x} ${y})"/>`;
+const pjRound = (skin, crease) => `<circle cx="16" cy="18" r="12" fill="${skin}"/>
+  <path d="M16 6c-5 5-5 18 0 24" fill="none" stroke="${crease}" stroke-width="1.6"/>
+  ${pjGlint(22, 13)}${pjLeaf()}`;
+const pjApple = (skin) => `<path d="M16 10c-3-3-12-2-12 7 0 7 5 12 9 12 1.5 0 2-1 3-1s1.5 1 3 1c4 0 9-5 9-12 0-9-9-10-12-7z"
+  fill="${skin}"/>${pjGlint(10, 15)}${pjStalk(16, 10)}${pjLeaf(18, 7)}`;
+const pjPear = (skin) => `<path d="M16 7c-3 0-4 3-5 7-1 3-5 5-5 9 0 5 5 7 10 7s10-2 10-7c0-4-4-6-5-9-1-4-2-7-5-7z"
+  fill="${skin}"/>${pjGlint(11, 22)}${pjStalk()}${pjLeaf(17, 5)}`;
+const pjEgg = (skin, blush) => `<ellipse cx="16" cy="17" rx="10" ry="13" fill="${skin}"
+  transform="rotate(18 16 17)"/><ellipse cx="20" cy="12" rx="5" ry="6" fill="${blush}" opacity=".6"/>
+  ${pjGlint(11, 15)}${pjStalk(19, 6)}`;
+const pjSlice = (rind, pith, pulp) => `<circle cx="16" cy="16" r="13" fill="${rind}"/>
+  <circle cx="16" cy="16" r="10.5" fill="${pith}"/><g fill="${pulp}"><path d="M16 15 11 7a10 10 0 0 1 10 0z"/>
+  <path d="M17 16l5-8a10 10 0 0 1 4 9z"/><path d="M17 17l9 1a10 10 0 0 1-5 8z"/>
+  <path d="M16 17l4 9a10 10 0 0 1-9 0z"/><path d="M15 17l-4 8a10 10 0 0 1-5-8z"/>
+  <path d="M15 16 6 17a10 10 0 0 1 4-9z"/></g>`;
+const pjSeeded = (skin, flesh, seed) => `<circle cx="16" cy="16" r="13" fill="${skin}"/>
+  <circle cx="16" cy="16" r="11" fill="${flesh}"/><g fill="${seed}"><circle cx="16" cy="9" r="1"/>
+  <circle cx="21" cy="11" r="1"/><circle cx="23" cy="16" r="1"/><circle cx="21" cy="21" r="1"/>
+  <circle cx="16" cy="23" r="1"/><circle cx="11" cy="21" r="1"/><circle cx="9" cy="16" r="1"/>
+  <circle cx="11" cy="11" r="1"/><circle cx="14" cy="14" r=".9"/><circle cx="18" cy="14" r=".9"/>
+  <circle cx="16" cy="18" r=".9"/></g>`;
+const pjHalf = (skin, flesh, stone) => `<path d="M16 3c8 0 13 7 13 14 0 7-6 12-13 12S3 24 3 17C3 10 8 3 16 3z"
+  fill="${skin}"/><path d="M16 6c6 0 10 6 10 11 0 6-5 9-10 9s-10-3-10-9C6 12 10 6 16 6z" fill="${flesh}"/>
+  <circle cx="16" cy="18" r="5.5" fill="${stone}"/>`;
+const pjWedge = (rind, flesh, seed) => `<path d="M3 12a13 13 0 0 0 26 0z" fill="${flesh}"/>
+  <path d="M2.5 12a13.5 13.5 0 0 0 27 0" fill="none" stroke="${rind}" stroke-width="3"/>
+  <g fill="${seed}"><ellipse cx="11" cy="16" rx="1" ry="1.6"/><ellipse cx="16" cy="19" rx="1" ry="1.6"/>
+  <ellipse cx="21" cy="16" rx="1" ry="1.6"/></g>`;
+const pjClump = (skin, shade) => `<g fill="${skin}"><circle cx="11" cy="12" r="4.5"/><circle cx="21" cy="12"
+  r="4.5"/><circle cx="16" cy="11" r="4.5"/><circle cx="9" cy="18" r="4.5"/><circle cx="16" cy="18" r="4.5"/>
+  <circle cx="23" cy="18" r="4.5"/><circle cx="12" cy="24" r="4.5"/><circle cx="20" cy="24" r="4.5"/>
+  <circle cx="16" cy="28" r="3.5"/></g><g fill="${shade}"><circle cx="10" cy="11" r="1.3"/>
+  <circle cx="20" cy="11" r="1.3"/><circle cx="15" cy="17" r="1.3"/><circle cx="22" cy="17" r="1.3"/>
+  <circle cx="11" cy="23" r="1.3"/><circle cx="19" cy="23" r="1.3"/></g>
+  <path d="M16 9 10 8l3-2-1-3 4 2 4-2-1 3 3 2z" fill="#4e9a3c"/>`;
+const pjBerries = (skin, shade) => `<path d="M16 4C14 10 10 13 9 16M16 4c1 7 1 11 0 15M16 4c3 6 6 9 8 12"
+  fill="none" stroke="#5f8c32" stroke-width="1.5"/>${pjLeaf(16, 5)}
+  <g fill="${skin}"><circle cx="9" cy="20" r="6"/><circle cx="23" cy="20" r="6"/><circle cx="16" cy="24" r="6"/></g>
+  <g fill="${shade}"><circle cx="7" cy="18" r="1.5"/><circle cx="21" cy="18" r="1.5"/><circle cx="14" cy="22" r="1.5"/></g>`;
+const pjBunch = (skin, shine) => `<g fill="${skin}"><circle cx="10" cy="12" r="5"/><circle cx="22" cy="12" r="5"/>
+  <circle cx="16" cy="13" r="5"/><circle cx="13" cy="20" r="5"/><circle cx="19" cy="20" r="5"/>
+  <circle cx="16" cy="26" r="4.5"/></g><g fill="${shine}"><circle cx="9" cy="10" r="1.2"/><circle cx="15" cy="11" r="1.2"/>
+  <circle cx="21" cy="10" r="1.2"/><circle cx="12" cy="18" r="1.2"/><circle cx="18" cy="18" r="1.2"/></g>${pjLeaf(15, 7)}`;
+const pjPair = (skin, other) => `<path d="M11 19C12 12 15 7 22 3M22 19c-1-6-1-11 0-16" fill="none" stroke="#5f8c32"
+  stroke-width="1.8" stroke-linecap="round"/><path d="M22 3c3-1 6 0 7 3-3 1-6 0-7-3z" fill="#4e9a3c"/>
+  <circle cx="10" cy="23" r="7" fill="${skin}"/><circle cx="22" cy="23" r="7" fill="${other}"/>${pjGlint(7, 21)}${pjGlint(19, 21)}`;
+const pjCurve = (skin, tip) => `<path d="M6 5c-1 11 5 20 20 22 2 0 3-2 1-3-9-3-14-9-16-19-1-2-5-2-5 0z" fill="${skin}"/>
+  <path d="M6 5c0-2 4-2 5 0z" fill="${tip}"/><path d="M26 27c2 0 3-2 1-3l-2 3z" fill="${tip}"/>`;
+const pjSpiky = (skin, tip) => `<g fill="${tip}"><path d="M16 1l3 6h-6zM16 31l3-6h-6zM1 16l6 3v-6zM31 16l-6 3v-6z"/>
+  <path d="M5 5l6 3-3 3zM27 5l-6 3 3 3zM5 27l6-3-3-3zM27 27l-6-3 3-3z"/></g>
+  <circle cx="16" cy="16" r="11" fill="${skin}"/>${pjGlint(11, 11)}`;
+const pjStar = (skin, ridge) => `<path d="M16 2l4 9 10 1-7 7 2 10-9-5-9 5 2-10-7-7 10-1z" fill="${skin}"
+  stroke="${ridge}" stroke-width="1.4" stroke-linejoin="round"/><circle cx="16" cy="16" r="2" fill="${ridge}"/>`;
+const pjScales = (skin, line) => `<ellipse cx="16" cy="19" rx="10" ry="11.5" fill="${skin}"/>
+  <path d="M9 13l14 14M8 20l10 10M12 10l13 13M23 13 9 27M24 20 14 30M20 10 7 23" stroke="${line}" stroke-width="1.2"/>
+  <path d="M16 9c-2-3-5-4-7-3 1 1 2 2 3 4 1 0 3 0 4-1 1 1 3 1 4 1 1-2 2-3 3-4-2-1-5 0-7 3z" fill="#4e9a3c"/>`;
+const pjPod = (skin, ridge) => `<ellipse cx="16" cy="16" rx="8.5" ry="14" fill="${skin}" transform="rotate(30 16 16)"/>
+  <path d="M9 7c2 7 5 14 13 20M13 5c2 7 5 13 13 19M6 10c2 7 6 14 12 19" fill="none" stroke="${ridge}" stroke-width="1.3"/>`;
+const pjLantern = (husk, berry) => `<path d="M16 3c7 3 11 10 10 16-1 5-5 9-10 10-5-1-9-5-10-10C5 13 9 6 16 3z"
+  fill="${husk}"/><path d="M16 3v26M16 3c-3 7-4 18 0 26M16 3c3 7 4 18 0 26" fill="none" stroke="#8a6a2f" stroke-width=".8"/>
+  <circle cx="16" cy="20" r="6" fill="${berry}"/>`;
+const pjCrowned = (skin, crown) => `<circle cx="16" cy="18" r="12" fill="${skin}"/>${pjGlint(10, 14)}
+  <path d="M10 8l2-5 2 3 2-4 2 4 2-3 2 5c-4 2-8 2-12 0z" fill="${crown}"/>`;
+const pjTear = (skin, flesh) => `<path d="M16 3c1 5 11 11 11 18 0 6-5 9-11 9S5 27 5 21C5 14 15 8 16 3z" fill="${skin}"/>
+  <path d="M16 15c3 1 6 3 6 7s-3 5-6 5-6-1-6-5 3-6 6-7z" fill="${flesh}" opacity=".6"/>${pjGlint(11, 19)}`;
+const pjBumpy = (skin, shade) => `<ellipse cx="16" cy="17" rx="12" ry="13" fill="${skin}"/><g fill="${shade}">
+  <circle cx="11" cy="10" r="2"/><circle cx="19" cy="9" r="2"/><circle cx="7" cy="16" r="2"/><circle cx="15" cy="15" r="2"/>
+  <circle cx="23" cy="15" r="2"/><circle cx="11" cy="21" r="2"/><circle cx="19" cy="21" r="2"/><circle cx="15" cy="26" r="2"/>
+  <circle cx="23" cy="24" r="1.6"/><circle cx="7" cy="23" r="1.6"/></g>${pjStalk(16, 5)}`;
+
+const PJ_ORCHARD = [
+  // plum, damson, greengage, mirabelle, apricot, nectarine, pluot, white peach, flat peach, tomato, cherry plum
+  ["#6a2c70", pjRound, "#7b3a84", "#4b1d52"], ["#3f2a6b", pjRound, "#4a3580", "#2b1c4d"],
+  ["#9fc25b", pjRound, "#a9cc66", "#7ea03f"], ["#e6bd3a", pjRound, "#f2c94c", "#d9a92f"],
+  ["#f7a35c", pjRound, "#f7b267", "#e08e3a"], ["#e8604c", pjRound, "#ec6a55", "#f5b041"],
+  ["#a23b72", pjRound, "#b24a82", "#7f2a58"], ["#f4b8a0", pjRound, "#fbd5c5", "#f0a890"],
+  ["#f59a60", pjRound, "#f8b27a", "#d9744a"], ["#e0392b", pjRound, "#e74c3c", "#b02a1f"],
+  ["#d9524a", pjRound, "#c9413a", "#8f2a26"],
+  // red, Fuji, golden, crab, quince, wax, rose apple, pink lady, russet
+  ["#d63031", pjApple, "#d63031"], ["#e8636a", pjApple, "#ec7078"], ["#ecc94b", pjApple, "#ecc94b"],
+  ["#c0392b", pjApple, "#b53325"], ["#e5c84f", pjApple, "#dcc24a"], ["#ef7f94", pjApple, "#ef7f94"],
+  ["#f3a6b8", pjApple, "#f3a6b8"], ["#e25a7a", pjApple, "#e25a7a"], ["#b0763c", pjApple, "#b0763c"],
+  // Bartlett, nashi, loquat, pepino, Bosc
+  ["#d4c84a", pjPear, "#d4c84a"], ["#d9b36c", pjPear, "#d9b36c"],
+  ["#f0a73b", pjPear, "#f0a73b"], ["#e8d989", pjPear, "#efe19a"], ["#a9783f", pjPear, "#a9783f"],
+  // papaya, guava, feijoa, avocado, sapodilla, mamey, canistel, jujube, olive, date, tamarillo, kumquat, citron, yuzu, key lime
+  ["#f2994a", pjEgg, "#f2b04a", "#7fb83a"],
+  ["#a6c86a", pjEgg, "#a6c86a", "#d9e59a"], ["#7ba05b", pjEgg, "#7ba05b", "#5c8040"],
+  ["#4f6f3a", pjEgg, "#4f6f3a", "#2f4a24"], ["#8d6748", pjEgg, "#8d6748", "#6f4e33"],
+  ["#a0522d", pjEgg, "#a0522d", "#c97a4a"], ["#f2b134", pjEgg, "#f2b134", "#e08e20"],
+  ["#9c3a2b", pjEgg, "#9c3a2b", "#c9674a"], ["#6b7a3a", pjEgg, "#6b7a3a", "#4a5a26"],
+  ["#7a4a21", pjEgg, "#7a4a21", "#5a3415"], ["#c0392b", pjEgg, "#d0452f", "#f28a3a"],
+  ["#f59e0b", pjEgg, "#f59e0b", "#f7c23e"], ["#e8d44d", pjEgg, "#e8d44d", "#c9d04a"],
+  ["#f2cf3b", pjEgg, "#f2cf3b", "#a9c94a"], ["#a3c94a", pjEgg, "#a3c94a", "#7ea03f"],
+  // lime, grapefruit, blood orange, pomelo, mandarin, clementine, tangerine, tangelo, bergamot, ugli
+  ["#8bc34a", pjSlice, "#6fa83a", "#e4f3b4", "#a8d65c"], ["#f2715a", pjSlice, "#f2a05a", "#ffe6d8", "#f2715a"],
+  ["#b3173c", pjSlice, "#e8792b", "#ffd0a8", "#c21f47"], ["#f7c8a8", pjSlice, "#d9e07a", "#fdeccb", "#f7c8a8"],
+  ["#f59324", pjSlice, "#f59324", "#ffe9c4", "#f9b24e"], ["#f58220", pjSlice, "#f58220", "#ffe3bd", "#f9a03f"],
+  ["#ef6c1a", pjSlice, "#ef6c1a", "#ffdcb5", "#f58a3a"], ["#f2782a", pjSlice, "#e8602a", "#ffe0c0", "#f28a4a"],
+  ["#b5c94a", pjSlice, "#b5c94a", "#f4f4c4", "#d8e27a"], ["#c9c24a", pjSlice, "#a8b04a", "#fff0c4", "#f4c14a"],
+  // gold kiwi, dragon fruit white, red and yellow, pink guava, passion fruit, fig cut, kiwi berry
+  ["#d9b92f", pjSeeded, "#a57b3c", "#e8cf4a", "#3b2a14"], ["#e0379a", pjSeeded, "#e0379a", "#faf6f0", "#222222"],
+  ["#c2185b", pjSeeded, "#e0379a", "#c2185b", "#2b1020"], ["#e8c21f", pjSeeded, "#e8c21f", "#fbf6e8", "#222222"],
+  ["#f28a9a", pjSeeded, "#b5cc6a", "#f7a3ae", "#fff3c4"], ["#e8b21f", pjSeeded, "#5e2a6b", "#f7c52e", "#2b1c10"],
+  ["#c2527a", pjSeeded, "#6a3b7a", "#e8748f", "#f9e2a8"], ["#8fb83a", pjSeeded, "#7a9a3a", "#b7d65c", "#2b2118"],
+  // avocado, peach, apricot, lychee, longan, nutmeg, marula: cut, with the stone
+  ["#a9bf4a", pjHalf, "#3f5f2a", "#d9e08a", "#7a4a21"], ["#f59a7a", pjHalf, "#ef7f5e", "#fbd08f", "#a0522d"],
+  ["#f7b267", pjHalf, "#f09a4a", "#fbd08f", "#8a5a2f"], ["#e8c8c0", pjHalf, "#e05a6a", "#fbf3ea", "#6b3a21"],
+  ["#d9c9a0", pjHalf, "#c9a36a", "#f5efe0", "#2b1c10"],
+  ["#c98a4a", pjHalf, "#e0a860", "#f4e3b0", "#7a2a1c"], ["#d9c24a", pjHalf, "#d9c24a", "#fff3c4", "#a0814a"],
+  // cantaloupe, honeydew, galia, canary melon, Korean melon
+  ["#f7a75c", pjWedge, "#b9a26a", "#f7a75c", "#d9833a"], ["#b8d88a", pjWedge, "#d0e2a0", "#c4e49a", "#a7c76a"],
+  ["#d9e29a", pjWedge, "#c9b36a", "#d9ecaa", "#b7c97a"], ["#f2d04a", pjWedge, "#f2d04a", "#fbf0c4", "#c9a83a"],
+  ["#e8d04a", pjWedge, "#e8c23a", "#fff3d4", "#d9b36a"],
+  // raspberry, blackberry, mulberry, boysenberry, loganberry, cloudberry, dewberry, yangmei
+  ["#d92c6b", pjClump, "#d92c6b", "#a81f50"], ["#3a2547", pjClump, "#3a2547", "#6a4a80"],
+  ["#5a1f4a", pjClump, "#5a1f4a", "#8a3a70"], ["#6a1f5a", pjClump, "#7a2a6a", "#4a1540"],
+  ["#b3264e", pjClump, "#b3264e", "#7f1a38"], ["#f2a03a", pjClump, "#f2a03a", "#f9c97a"],
+  ["#4a3a6a", pjClump, "#4a3a6a", "#7a6aa0"], ["#a81f3f", pjClump, "#a81f3f", "#d9607a"],
+  // redcurrant, blackcurrant, cranberry, lingonberry, goji, acerola, gooseberry, elderberry, huckleberry, bilberry, sea buckthorn, hawthorn, whitecurrant
+  ["#e02f3f", pjBerries, "#e02f3f", "#f7a0a8"], ["#2b1f3f", pjBerries, "#2b1f3f", "#6a5a8a"],
+  ["#c21f3a", pjBerries, "#c21f3a", "#ef8a9a"], ["#d9273f", pjBerries, "#d9273f", "#f7b0ba"],
+  ["#ef5a2a", pjBerries, "#ef5a2a", "#fbb08a"], ["#e0304a", pjBerries, "#e0304a", "#f79aaa"],
+  ["#a8c95a", pjBerries, "#a8c95a", "#e0efa8"], ["#3a2a5a", pjBerries, "#3a2a5a", "#7a6aa0"],
+  ["#32406a", pjBerries, "#32406a", "#7a8ab5"], ["#2f3f7a", pjBerries, "#2f3f7a", "#8a9ad0"],
+  ["#f58a1f", pjBerries, "#f58a1f", "#fbc98a"], ["#c92a2a", pjBerries, "#c92a2a", "#ef9a8a"],
+  ["#e6dfa8", pjBerries, "#e6dfa8", "#fffdf0"],
+  // green, red and black grapes, jabuticaba
+  ["#9fc25b", pjBunch, "#a9cc66", "#e4f3b4"], ["#a8324f", pjBunch, "#a8324f", "#ef9ab0"],
+  ["#2f2345", pjBunch, "#2f2345", "#7a6aa0"], ["#3a1f3a", pjBunch, "#3a1f3a", "#8a5a8a"],
+  // sour, Rainier and black cherries
+  ["#d9273f", pjPair, "#d9273f", "#c21f3a"], ["#f2b84a", pjPair, "#f2b84a", "#ef7a5a"],
+  ["#4a0f24", pjPair, "#5a1228", "#4a0f24"],
+  // plantain
+  ["#b9c24a", pjCurve, "#b9c24a", "#5a4a21"],
+  // rambutan, durian, kiwano, lychee in its shell, horned melon green
+  ["#d9304a", pjSpiky, "#d9304a", "#5f9c3a"], ["#a8a83a", pjSpiky, "#a8a83a", "#7a7a24"],
+  ["#f59324", pjSpiky, "#f59324", "#d96a1a"], ["#d9506a", pjSpiky, "#d9506a", "#b03048"],
+  ["#6fa83a", pjSpiky, "#6fa83a", "#4e7f26"],
+  // star fruit, green and gold
+  ["#e6c21f", pjStar, "#f2d43a", "#b5941a"], ["#a8c93a", pjStar, "#b9d65a", "#7a9a24"],
+  // salak, pine fruit
+  ["#7a4a2a", pjScales, "#8a5a36", "#4a2a14"],
+  ["#c9a83a", pjScales, "#d9b84a", "#8a6a1f"],
+  // cacao, tamarind, carob
+  ["#c9742a", pjPod, "#d9842f", "#a0541a"], ["#8a5a36", pjPod, "#9a6a42", "#6a4226"],
+  ["#5a3a21", pjPod, "#5a3a21", "#3a2412"],
+  // physalis, tomatillo
+  ["#f2a01f", pjLantern, "#e8cf8a", "#f2a01f"], ["#a8c24a", pjLantern, "#c9d08a", "#a8c24a"],
+  // pomegranate, persimmon, mangosteen
+  ["#c8233f", pjCrowned, "#c8233f", "#8f1a2f"], ["#ef7a1f", pjCrowned, "#ef7a1f", "#5f8c32"],
+  ["#5a1f4a", pjCrowned, "#5a1f4a", "#4e9a3c"],
+  // fig, green fig, black fig
+  ["#7a4a8a", pjTear, "#7a4a8a", "#e0809a"], ["#9ab84a", pjTear, "#9ab84a", "#e8a0a0"],
+  ["#3a2a4a", pjTear, "#3a2a4a", "#c26a8a"],
+  // custard apple, sugar apple, cherimoya, jackfruit, breadfruit, soursop
+  ["#9ab86a", pjBumpy, "#a9c47a", "#7a9a52"], ["#7fa86a", pjBumpy, "#8ab47a", "#648a52"],
+  ["#b5c47a", pjBumpy, "#c2cf8a", "#94a55f"], ["#c9b23a", pjBumpy, "#d0bb4a", "#a8921f"],
+  ["#8fae4a", pjBumpy, "#9ab85a", "#74943a"], ["#6a9a4a", pjBumpy, "#7aa85a", "#527a36"],
+].map(([juice, draw, ...colours]) => ({ juice, art: draw(...colours) }));
+
+/* EACH PROJECT A FRUIT (the user, 2026-11-04); `juice` is the colour of what it
+   leaves along its row. */
+const PJ_FRUITS = [
+  { juice: "#e5484d", art: `<path d="M3 12a13 13 0 0 0 26 0z" fill="#ef5b60"/>
+    <path d="M2.5 12a13.5 13.5 0 0 0 27 0" fill="none" stroke="#3f9142" stroke-width="3"/>
+    <path d="M2 12h28" stroke="#ffd9d0" stroke-width="1.4"/>
+    <g fill="#3b2320"><ellipse cx="11" cy="16" rx="1" ry="1.6"/><ellipse cx="16" cy="19"
+    rx="1" ry="1.6"/><ellipse cx="21" cy="16" rx="1" ry="1.6"/></g>` },
+  { juice: "#f5900c", art: `<circle cx="16" cy="16" r="13" fill="#f59e0b"/>
+    <circle cx="16" cy="16" r="10.5" fill="#ffe0a8"/>
+    <g fill="#f8a62b"><path d="M16 15 11 7a10 10 0 0 1 10 0z"/><path d="M17 16l5-8a10 10 0 0 1 4 9z"/>
+    <path d="M17 17l9 1a10 10 0 0 1-5 8z"/><path d="M16 17l4 9a10 10 0 0 1-9 0z"/>
+    <path d="M15 17l-4 8a10 10 0 0 1-5-8z"/><path d="M15 16 6 17a10 10 0 0 1 4-9z"/></g>` },
+  { juice: "#e0bb12", art: `<path d="M3 17c2-1 3-5 7-8 5-3 11-3 15 0 2 2 3 4 4 6-1 1-2 3-3 5-3 5-10 7-15 5-3-1-5-4-8-8z"
+    fill="#f7d93a"/><path d="M12 12c3-2 6-2 9-1" fill="none" stroke="#fff3a8" stroke-width="2"
+    stroke-linecap="round"/><path d="M19 7c1-3 4-4 7-4-1 3-3 5-7 4z" fill="#6aa84f"/>` },
+  { juice: "#7fb83a", art: `<path d="M16 10c-3-3-12-2-12 7 0 7 5 12 9 12 1.5 0 2-1 3-1s1.5 1 3 1c4 0 9-5 9-12 0-9-9-10-12-7z"
+    fill="#8cc63f"/><path d="M9 14c0-2 1-3 3-3" fill="none" stroke="#d4ee9c" stroke-width="2"
+    stroke-linecap="round"/><path d="M16 10c0-3 0-5 2-7" fill="none" stroke="#7a4a21"
+    stroke-width="2" stroke-linecap="round"/><path d="M18 7c2-3 5-3 7-2-1 3-4 4-7 2z" fill="#4e9a3c"/>` },
+  { juice: "#e8335f", art: `<path d="M16 30C9 25 4 19 5 14c1-4 7-5 11-4 4-1 10 0 11 4 1 5-4 11-11 16z"
+    fill="#ec3b63"/><g fill="#ffe08a"><ellipse cx="11" cy="16" rx=".9" ry="1.3"/><ellipse cx="16"
+    cy="15" rx=".9" ry="1.3"/><ellipse cx="21" cy="16" rx=".9" ry="1.3"/><ellipse cx="13" cy="21"
+    rx=".9" ry="1.3"/><ellipse cx="19" cy="21" rx=".9" ry="1.3"/><ellipse cx="16" cy="26" rx=".9"
+    ry="1.3"/></g><path d="M16 11 9 12l3-3-3-3 5 1 2-4 2 4 5-1-3 3 3 3z" fill="#4e9a3c"/>` },
+  { juice: "#b3173c", art: `<path d="M11 19C12 12 15 7 22 3M22 19c-1-6-1-11 0-16" fill="none"
+    stroke="#5f8c32" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M22 3c3-1 6 0 7 3-3 1-6 0-7-3z" fill="#4e9a3c"/>
+    <circle cx="10" cy="23" r="7" fill="#c21f47"/><circle cx="22" cy="23" r="7" fill="#a81337"/>
+    <path d="M6 21c1-2 2-2 3-2M18 21c1-2 2-2 3-2" fill="none" stroke="#f4a3b5" stroke-width="1.6"
+    stroke-linecap="round"/>` },
+  { juice: "#7d3fb0", art: `<g fill="#8a4cc0"><circle cx="10" cy="12" r="5"/><circle cx="22" cy="12"
+    r="5"/><circle cx="16" cy="13" r="5"/><circle cx="13" cy="20" r="5"/><circle cx="19" cy="20"
+    r="5"/><circle cx="16" cy="26" r="4.5"/></g><g fill="#c7a1e8"><circle cx="9" cy="10" r="1.2"/>
+    <circle cx="15" cy="11" r="1.2"/><circle cx="21" cy="10" r="1.2"/><circle cx="12" cy="18"
+    r="1.2"/><circle cx="18" cy="18" r="1.2"/></g><path d="M16 8c0-2 1-4 2-5M16 7c-3-4-7-4-9-3 2 3 6 5 9 3z"
+    fill="#4e9a3c" stroke="#5f8c32"/>` },
+  { juice: "#a8b83a", art: `<path d="M16 7c-3 0-4 3-5 7-1 3-5 5-5 9 0 5 5 7 10 7s10-2 10-7c0-4-4-6-5-9-1-4-2-7-5-7z"
+    fill="#c5d24a"/><path d="M10 22c0 2 1 4 3 4" fill="none" stroke="#eef2a8" stroke-width="2"
+    stroke-linecap="round"/><path d="M16 7c0-2 0-3 1-5" fill="none" stroke="#7a4a21" stroke-width="2"
+    stroke-linecap="round"/><path d="M17 5c2-2 5-2 6-1-1 3-4 3-6 1z" fill="#4e9a3c"/>` },
+  { juice: "#f59a7a", art: `<circle cx="16" cy="18" r="12" fill="#fbae8c"/>
+    <path d="M16 6c-5 5-5 18 0 24" fill="none" stroke="#ec7f5e" stroke-width="1.6"/>
+    <path d="M22 11c2 2 3 5 2 8" fill="none" stroke="#ffd9c7" stroke-width="2" stroke-linecap="round"/>
+    <path d="M16 6c1-3 5-4 8-3-1 3-5 5-8 3z" fill="#4e9a3c"/>` },
+  { juice: "#6ea52a", art: `<circle cx="16" cy="16" r="13" fill="#8a6237"/>
+    <circle cx="16" cy="16" r="11" fill="#85bf3a"/><circle cx="16" cy="16" r="4.5" fill="#eef5c8"/>
+    <g fill="#2b2118"><circle cx="16" cy="9" r="1"/><circle cx="21" cy="11" r="1"/><circle cx="23"
+    cy="16" r="1"/><circle cx="21" cy="21" r="1"/><circle cx="16" cy="23" r="1"/><circle cx="11"
+    cy="21" r="1"/><circle cx="9" cy="16" r="1"/><circle cx="11" cy="11" r="1"/></g>` },
+  { juice: "#3f5bc4", art: `<circle cx="16" cy="17" r="12" fill="#4a66cf"/>
+    <path d="M16 8l2 3 3-1-1 3 3 2-3 1 1 3-3-1-2 3-2-3-3 1 1-3-3-1 3-2-1-3 3 1z" fill="#2c3f94"/>
+    <path d="M7 19c1 3 3 5 5 6" fill="none" stroke="#a9b8f0" stroke-width="2" stroke-linecap="round"/>` },
+  { juice: "#f0b429", art: `<ellipse cx="16" cy="20" rx="9" ry="11" fill="#f5bf34"/>
+    <path d="M9 13l14 14M8 20l10 10M12 10l13 13M23 13 9 27M24 20 14 30M20 10 7 23" stroke="#c98a16"
+    stroke-width="1.2"/><path d="M16 10c-2-3-5-4-8-4 2 1 3 2 4 4-2-1-3-1-4 0 3 0 6 1 8 2 2-1 5-2 8-2-1-1-2-1-4 0 1-2 2-3 4-4-3 0-6 1-8 4zM16 9c-1-3-1-5 0-8 1 3 1 5 0 8z"
+    fill="#4e9a3c"/>` },
+  // hami melon, long and netted
+  { juice: "#e8b23a", art: `<ellipse cx="16" cy="17" rx="10.5" ry="13.5" fill="#f0c04a"
+    transform="rotate(14 16 17)"/><path d="M9 8c-3 6-3 14 2 20M15 4c-3 8-3 18 0 26M21 5c0 8 1 17-3 25M26 12c0 6-1 12-4 16
+    M7 13c6 2 13 2 19-1M5 20c7 3 15 3 21-1M8 26c5 2 11 2 15 0" fill="none" stroke="#b98a2a" stroke-width="1"/>
+    ${pjStalk(18, 5)}` },
+  // coconut, broken open
+  { juice: "#a9825a", art: `<circle cx="16" cy="16" r="13.5" fill="#6f4a2a"/>
+    <path d="M4 10l-2-2M3 16H0M4 23l-2 2M10 29l-1 2M22 29l1 2M28 23l2 2M29 16h3M28 10l2-2M10 3 9 1M22 3l1-2"
+    stroke="#6f4a2a" stroke-width="1.4" stroke-linecap="round"/>
+    <circle cx="16" cy="16" r="11" fill="#fdfaf2"/><circle cx="16" cy="16" r="6.5" fill="#dfeaf2"/>
+    <path d="M12 13c1-2 3-3 5-3" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>` },
+  // banana, mango
+  { juice: "#f2cf3b", art: pjCurve("#f7d94a", "#7a5a21") },
+  { juice: "#f7a32e", art: pjEgg("#f7c23e", "#ef5b3a") },
+  ...PJ_ORCHARD,
+];
+
+function pjShuffled(list) {
+  const out = [...list];
+  for (let at = out.length - 1; at > 0; at -= 1) {
+    const other = Math.floor(Math.random() * (at + 1));
+    [out[at], out[other]] = [out[other], out[at]];
+  }
+  return out;
+}
+
+/* FRUIT BY CHANCE, and none twice on the screen unless there are more projects
+   than fruits (the user, 2026-11-04). COLOURFUL (the user, 2026-11-04: "尽量五彩缤纷一点，
+   不要都是同一个色系的"): each next fruit is of the colour least shown, never the
+   row above's - by chance among those, so no project is tied to a colour. A
+   project keeps its fruit while the page is open, or each refresh would repaint
+   the picture. */
+const pjFruitsShown = new Map();
+
+function pjColourOf(fruit) {
+  const [red, green, blue] = [1, 3, 5].map((at) => parseInt(fruit.juice.slice(at, at + 2), 16) / 255);
+  const high = Math.max(red, green, blue), low = Math.min(red, green, blue), wide = high - low;
+  if (wide < 0.18) return "pale";
+  const hue = 60 * (high === red ? ((green - blue) / wide + 6) % 6
+    : high === green ? (blue - red) / wide + 2 : (red - green) / wide + 4);
+  if (hue < 18 || hue >= 345) return "red";
+  if (hue < 45) return high < 0.6 ? "brown" : "orange";
+  if (hue < 68) return "yellow";
+  if (hue < 165) return "green";
+  if (hue < 265) return "blue";
+  if (hue < 320) return "purple";
+  return "pink";
+}
+
+function pjShareFruits(projects) {
+  const taken = new Set(projects.map((one) => pjFruitsShown.get(one.id)));
+  let free = pjShuffled(PJ_FRUITS).filter((one) => !taken.has(one));
+  const shown = new Map();
+  const count = (colour) => shown.get(colour) || 0;
+  taken.forEach((one) => {
+    if (one) shown.set(pjColourOf(one), count(pjColourOf(one)) + 1);
+  });
+  let above = "";
+  projects.forEach((one) => {
+    const had = pjFruitsShown.get(one.id);
+    if (had) {
+      above = pjColourOf(had);
+      return;
+    }
+    if (!free.length) free = pjShuffled(PJ_FRUITS);
+    const others = free.filter((fruit) => pjColourOf(fruit) !== above);
+    const from = others.length ? others : free;
+    const fewest = Math.min(...from.map((fruit) => count(pjColourOf(fruit))));
+    const chosen = from.find((fruit) => count(pjColourOf(fruit)) === fewest);
+    free = free.filter((fruit) => fruit !== chosen);
+    pjFruitsShown.set(one.id, chosen);
+    above = pjColourOf(chosen);
+    shown.set(above, count(above) + 1);
+  });
+}
+
+function pjFruit(id) {
+  if (!pjFruitsShown.has(id)) {
+    pjShareFruits([...pjFruitsShown.keys(), id].map((key) => ({ id: key })));
+  }
+  return pjFruitsShown.get(id);
+}
+
+/* What is held under what, until Confirm: {the one dropped: the one it is under}. */
+function pjFolded() {
+  return (typeof stateBeat !== "undefined" && stateBeat.folded) || new Map();
+}
+
+/* `child` dropped on `parent`: under the top of what `parent` is under, with all that was under
+   `child`. On itself, or on what is under it, nothing changes. */
+function pjFoldUnder(held, child, parent) {
+  const out = new Map(held);
+  const top = out.get(parent) || parent;
+  if (top === child || child === parent) return out;
+  out.forEach((under, one) => { if (under === child) out.set(one, top); });
+  out.set(child, top);
+  return out;
+}
+
+/* What Confirm sends: for each that stays, what goes into it. */
+function pjMergeGroups(held) {
+  const groups = new Map();
+  held.forEach((into, one) => groups.set(into, [...(groups.get(into) || []), one]));
+  return [...groups].map(([into, ids]) => ({ into, ids }));
+}
+
+/* JAM ALONG THE ROW (the user, 2026-11-04): round, soft and shiny, running
+   down in drips. What is drawn is blurred and its edge drawn again sharp, so
+   strokes and drips melt into one another. Once, for the whole picture; a row's
+   jam goes through it together, or a long project would be hundreds of filters. */
+const PJ_JUICE = `<svg class="pj-juice-defs" width="0" height="0" aria-hidden="true"><defs>
+  <filter id="pj-juice" x="-5%" y="-40%" width="110%" height="180%"
+      color-interpolation-filters="sRGB">
+    <feGaussianBlur in="SourceGraphic" stdDeviation="3"/>
+    <feColorMatrix values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -9"/>
+  </filter></defs></svg>`;
+
+/* A drip from a stroke, where and how long from what it is of: the same each
+   time it is drawn. */
+function pjDrip(said, left, wide) {
+  let sum = 7;
+  for (const ch of String(said || "")) sum = (sum * 31 + ch.charCodeAt(0)) % 9973;
+  const x = left + wide * (0.2 + (sum % 60) / 100);
+  const long = 6 + (sum % 11);
+  return `<rect x="${x.toFixed(2)}%" y="32" width="7" height="${long}" rx="3.5"
+      transform="translate(-3.5 0)"/>
+    <circle cx="${x.toFixed(2)}%" cy="${32 + long}" r="${(4.5 + (sum % 3) / 2).toFixed(1)}"/>`;
+}
+
+/* One colour per project, its fruit's - the same wherever it is drawn and
    whatever order the rows are in. */
 function pjColour(id) {
-  let sum = 0;
-  for (const ch of String(id || "")) sum = (sum * 31 + ch.charCodeAt(0)) % 9973;
-  return sbColour(sum, true);
+  return pjFruit(id).juice;
 }
 
 function pjSpan(task) {
@@ -19625,11 +19939,13 @@ function pjSpan(task) {
   return [start, Number.isNaN(end) ? start : end];
 }
 
-/* THE PICTURE, as the tasks' one was: a row per project, its tasks as bars
-   where they were worked on, the days along the top. Longest worked on
-   first; with full activity the leisure ones under the work, apart, on the
-   same days. */
+/* THE PICTURE, as the tasks' one was: a row per project, its name on the left,
+   its tasks spread in its fruit's jam where they were worked on, a faint line of
+   it, nearly clear, between them, and the fruit itself at the end of the latest (the user,
+   2026-11-04); the days along the top. Longest worked on first; with full
+   activity the leisure ones under the work, apart, on the same days. */
 function pjChart(projects, since, open) {
+  pjShareFruits(projects);
   const spans = projects.flatMap((one) => (one.tasks || []).map(pjSpan))
     .filter(([start]) => Number.isFinite(start));
   const DAY = 86400000;
@@ -19639,46 +19955,79 @@ function pjChart(projects, since, open) {
   const days = [];
   const first = new Date(low);
   first.setHours(24, 0, 0, 0);
-  for (let day = first.getTime(); day < high; day += DAY) days.push(day);
+  // By the calendar: a day is not always 24 hours, and one clocks go back on
+  // was named twice.
+  for (const day = new Date(first); day.getTime() < high; day.setDate(day.getDate() + 1)) {
+    days.push(day.getTime());
+  }
   const every = Math.max(1, Math.ceil(days.length / 8));
   const grid = days.map((day) => `<span class="pj-grid" style="left:${at(day).toFixed(2)}%"></span>`)
     .join("");
   const axis = days.map((day, n) => (n % every ? "" : `<span class="pj-tick"
       style="left:${at(day).toFixed(2)}%">${escapeHtml(new Date(day).toLocaleDateString([],
       { month: "short", day: "numeric" }))}</span>`)).join("");
-  const row = (one) => {
-    const colour = pjColour(one.id);
-    const bars = (one.tasks || []).map((task) => {
+  const held = pjFolded();
+  const row = (one, under = false) => {
+    const fruit = pjFruit(one.id);
+    const shown = (one.tasks || []).filter((task) => {
       const [start, end] = pjSpan(task);
-      if (!Number.isFinite(start) || end < low) return "";
+      return Number.isFinite(start) && end >= low;
+    });
+    const strokes = shown.map((task) => {
+      const [start, end] = pjSpan(task);
       const left = at(start);
       const wide = Math.max(0.8, at(end) - left);
       const said = `${task.title_display || task.title || ""} - ${pjHours(task.minutes)}, ${
         pjWhen(task.starts_at)} to ${pjWhen(task.ends_at)}`;
-      return `<span class="pj-bar" style="left:${left.toFixed(2)}%;width:${wide.toFixed(2)}%;
-        background:${colour}" title="${escapeHtml(said)}"></span>`;
+      return `<rect class="pj-dab" x="${left.toFixed(2)}%" y="20" width="${wide.toFixed(2)}%"
+        height="18" rx="9"><title>${escapeHtml(said)}</title></rect>`;
     }).join("");
-    return `<div class="pj-crow${one.id === open ? " open" : ""}${one.dormant ? " dormant" : ""}"
-        data-pj-open="${escapeHtml(one.id)}" role="button" tabindex="0"
+    const shine = shown.map((task) => {
+      const left = at(pjSpan(task)[0]);
+      const wide = Math.max(0.8, at(pjSpan(task)[1]) - left);
+      return `<rect x="${(left + wide * 0.15).toFixed(2)}%" y="23" width="${(wide * 0.45).toFixed(2)}%"
+        height="3.5" rx="1.75"/>`;
+    }).join("");
+    const drips = shown.slice(0, 14).map((task, n) => {
+      const left = at(pjSpan(task)[0]);
+      return n % 2 ? "" : pjDrip(task.id || task.ends_at, left,
+                                 Math.max(0.8, at(pjSpan(task)[1]) - left));
+    }).join("");
+    const from = Math.min(...shown.map((task) => at(pjSpan(task)[0])));
+    const to = Math.max(...shown.map((task) => at(pjSpan(task)[1])));
+    const juice = shown.length ? `<svg class="pj-smear" width="100%" height="68"><rect class="pj-wash"
+        fill="${fruit.juice}" x="${from.toFixed(2)}%" y="25" width="${(to - from).toFixed(2)}%"
+        height="8" rx="4"/><g filter="url(#pj-juice)" fill="${fruit.juice}">${strokes}${drips}</g>
+        <g class="pj-shine">${shine}</g></svg>
+      <span class="pj-fruit" style="left:${to.toFixed(2)}%" aria-hidden="true"><svg
+        viewBox="0 0 32 32" width="64" height="64">${fruit.art}</svg></span>` : "";
+    return `<div class="pj-crow${one.id === open ? " open" : ""}${one.dormant ? " dormant" : ""}${
+        under ? " pj-under" : ""}"
+        data-pj-open="${escapeHtml(one.id)}" role="button" tabindex="0" draggable="true"
         aria-expanded="${one.id === open}">
-      <div class="pj-cname"><span class="pj-disc" style="background:${colour}"></span>
+      <div class="pj-cname">
         <span class="pj-cname-text"><strong>${escapeHtml(one.title || "")}</strong>
         <span class="muted">${pjHours(one.minutes)}${one.dormant ? " · dormant" : ""}</span>
-        </span></div>
-      <div class="pj-ctrack">${grid}${bars}</div>
+        </span>${under ? `<button type="button" class="pj-unfold" title="Put back"
+          aria-label="Put back" data-pj-unfold="${escapeHtml(one.id)}">×</button>` : ""}</div>
+      <div class="pj-ctrack">${grid}${juice}</div>
     </div>`;
   };
   const longest = (a, b) => Number(b.minutes || 0) - Number(a.minutes || 0);
-  const work = projects.filter((one) => one.kind !== "leisure").sort(longest);
-  const leisure = projects.filter((one) => one.kind === "leisure").sort(longest);
+  const top = projects.filter((one) => !held.has(one.id) || !projects.some(
+    (other) => other.id === held.get(one.id)));
+  const work = top.filter((one) => one.kind !== "leisure").sort(longest);
+  const leisure = top.filter((one) => one.kind === "leisure").sort(longest);
+  const withHeld = (one) => row(one) + projects.filter((other) => held.get(other.id) === one.id)
+    .sort(longest).map((other) => row(other, true)).join("");
   // Both named when both are there, so which is which is never left to
   // the reader.
   const rows = (leisure.length && work.length
     ? `<div class="pj-section pj-section-first" role="separator">Work</div>` : "")
-    + work.map(row).join("") + (leisure.length
-    ? `<div class="pj-section" role="separator">Leisure</div>${leisure.map(row).join("")}`
+    + work.map(withHeld).join("") + (leisure.length
+    ? `<div class="pj-section" role="separator">Leisure</div>${leisure.map(withHeld).join("")}`
     : "");
-  return `<div class="pj-chart">
+  return `<div class="pj-chart">${PJ_JUICE}
     <div class="pj-crow pj-axis-row"><div class="pj-cname"></div>
       <div class="pj-ctrack pj-axis">${axis}</div></div>
     ${rows}
@@ -19687,8 +20036,7 @@ function pjChart(projects, since, open) {
 
 /* The open project's card, under the picture, as a task's card was: what
    it is, what is being worked on in it now, since when and how long, and
-   where. A project has no tasks under it to list - the bars in the picture
-   are when it was worked on. */
+   where, and its tasks, each to rename or put away. */
 function pjCard(one) {
   if (!one) {
     return `<p class="muted sb-card-empty sb-click-hint">Click a project above to read it
@@ -19697,7 +20045,8 @@ function pjCard(one) {
   const dirs = (one.directories || []).slice(0, 6)
     .map((dir) => `<code>${escapeHtml(dir)}</code>`).join(" ");
   return `<div class="pj-card" style="border-left-color:${pjColour(one.id)}">
-    <p class="sb-card-title">${escapeHtml(one.title || "")}</p>
+    <p class="sb-card-title">${escapeHtml(one.title || "")}
+      ${pjUserSay("project", one.id, one.title)}</p>
     <p class="muted">Since ${escapeHtml(pjWhen(one.first_seen))} · last active
       ${escapeHtml(pjWhen(one.last_seen))} · ${pjHours(one.minutes)} worked on${
       one.kind === "leisure" ? " · leisure" : ""}${one.dormant ? " · dormant" : ""}</p>
@@ -19707,8 +20056,293 @@ function pjCard(one) {
       ${escapeHtml(one.summary)}</p>` : ""}
     ${dirs ? `<p class="sb-card-part pj-dirs"><span class="event-label">Where</span>
       ${dirs}</p>` : ""}
+    ${pjSteps(one)}
+    ${pjOpenItems(one)}
+    ${pjTaskList(one)}
   </div>`;
 }
+
+/* WHAT IS LEFT TO DO (the user, 2026-11-04; task_plan.py): the steps the records show, each to
+   tick, and under each why it is there and the words it came from: "我不知道为什么你会说这个话，我不记得
+   context了". */
+function pjSteps(one) {
+  const steps = one.steps || [];
+  if (!steps.length) return "";
+  return `<div class="sb-card-part pj-steps"><span class="event-label">What is left to do</span>
+    <ul>${steps.map((step) => {
+      const proof = (step.done_evidence || step.evidence || []).map((it) => it.quote).filter(Boolean);
+      const why = step.done_why || step.why || "";
+      return `<li class="${step.done ? "pj-step-done" : ""}">
+        <label><input type="checkbox" data-pj-step="${escapeHtml(String(step.id))}"
+          data-pj-step-of="${escapeHtml(one.id)}"${step.done ? " checked" : ""}>
+        <span>${escapeHtml(step.text || "")}</span></label>${step.reminder && !step.done
+          ? `<span class="muted pj-step-when">${escapeHtml(step.reminder_at || "")}</span>` : ""}
+        ${why ? `<p class="pj-step-why">${escapeHtml(why)}</p>` : ""}
+        ${proof.map((quote) => `<blockquote class="pj-step-from">${escapeHtml(quote)}</blockquote>`).join("")}
+      </li>`;
+    }).join("")}</ul></div>`;
+}
+
+document.addEventListener("change", async (event) => {
+  const box = event.target.closest && event.target.closest("[data-pj-step]");
+  if (!box) return;
+  box.disabled = true;
+  try {
+    const said = await api.post("/api/state_heartbeat/project/step", {
+      id: box.dataset.pjStepOf, step: box.dataset.pjStep, done: box.checked });
+    const one = ((stateBeat.whole || {}).projects || []).find((it) => it.id === said.id);
+    if (one) one.steps = said.steps;
+    box.closest("li").classList.toggle("pj-step-done", box.checked);
+  } catch (err) {
+    box.checked = !box.checked;
+    toast(err.message, "error");
+  }
+  box.disabled = false;
+});
+
+/* EVERY PANEL ITS OWN SIZE OF WORDS (the user, 2026-11-04: "每个panel都支持单独的字体size缩放，并且作为
+   implicit setting保存"): Ctrl with the wheel, or with + - and 0, the pointer on it; the rest of the
+   page stays as it is. Kept by the application, in no page of Settings, a moment after it
+   stops; a panel drawn again takes its size back. */
+// Projects, Work assigned and To do are panels of their own, though they share a card; the
+// head of Projects and its picture are the one panel. An event opened is one too.
+const PANEL_OF_WORDS = ".card, .pj-card, #chat, #ov-todo, #ov-assigned, .ov-tasks-intro, #ov-tasks, "
+  + "#event-detail";
+const panelZooms = {};
+const panelZoomSaves = {};
+
+function panelKey(panel) {
+  if (panel.classList.contains("pj-card")) return "project-card";
+  if (panel.matches(".ov-tasks-intro, #ov-tasks")) return "ov-projects";
+  if (panel.id) return panel.id;
+  const tab = panel.closest(".tab");
+  return `${tab ? tab.id : "page"}:${tab ? [...tab.querySelectorAll(".card")].indexOf(panel) : 0}`;
+}
+
+function showPanelZooms() {
+  $$(PANEL_OF_WORDS).forEach((panel) => {
+    const zoom = panelZooms[panelKey(panel)];
+    panel.style.zoom = zoom && zoom !== 1 ? String(zoom) : "";
+  });
+}
+
+function zoomPanel(panel, to) {
+  const key = panelKey(panel);
+  const zoom = Math.round(Math.min(2.2, Math.max(0.7, to)) * 100) / 100;
+  panelZooms[key] = zoom;
+  showPanelZooms();
+  clearTimeout(panelZoomSaves[key]);
+  panelZoomSaves[key] = setTimeout(() => {
+    api.post("/api/panel_zooms", { panel: key, zoom }).catch(() => {});
+  }, 500);
+}
+
+document.addEventListener("wheel", (event) => {
+  const panel = event.ctrlKey && event.target.closest && event.target.closest(PANEL_OF_WORDS);
+  if (!panel) return;
+  event.preventDefault();
+  zoomPanel(panel, (panelZooms[panelKey(panel)] || 1) + (event.deltaY < 0 ? 0.1 : -0.1));
+}, { passive: false });
+
+document.addEventListener("keydown", (event) => {
+  if (!event.ctrlKey || !["+", "=", "-", "0"].includes(event.key)) return;
+  const panel = [...document.querySelectorAll(":hover")].reverse()
+    .find((one) => one.matches(PANEL_OF_WORDS));
+  if (!panel) return;
+  event.preventDefault();
+  const now = panelZooms[panelKey(panel)] || 1;
+  zoomPanel(panel, event.key === "0" ? 1 : now + (event.key === "-" ? -0.1 : 0.1));
+});
+
+(() => {
+  let due = null;
+  new MutationObserver(() => {
+    if (due === null) due = setTimeout(() => { due = null; showPanelZooms(); }, 120);
+  }).observe(document.documentElement, { childList: true, subtree: true });
+  api.get("/api/panel_zooms").then((said) => {
+    Object.assign(panelZooms, said.zooms || {});
+    showPanelZooms();
+  }).catch(() => {});
+})();
+
+/* DROPPED ON ANOTHER (the user, 2026-11-04: "把一个task放到另一个task上，然后这个task暂时会空一行出现在另一个
+   task底下 ... 我点确定之后就正常生效"): held under it, a step in, until Confirm. Nothing is
+   merged before that, and × puts one back. */
+/* The update a merge starts, shown as a press of Update tasks now is: it may take a moment to
+   begin, the one running having to stop first. */
+async function pjFollowTheUpdate() {
+  for (let tries = 0; tries < 60; tries += 1) {
+    const state = await api.get("/api/state_heartbeat/progress").catch(() => null);
+    if (state && state.running && state.trigger === "merged") {
+      stateBeat.running = true;
+      renderStateBeat();
+      refreshOvRound();
+      await followStateBeat();
+      stateBeat.running = false;
+      renderStateBeat();
+      break;
+    }
+    await new Promise((done) => setTimeout(done, 500));
+  }
+  refreshOvRound();
+  loadOverview();
+}
+
+/* Under the display's choices: what can be done, and with something held, what will happen, and
+   at the right, in red, the two answers. */
+function pjMergeBar() {
+  const held = pjFolded();
+  if (!held.size) {
+    return `<div class="pj-merge-bar"><span class="pj-merge-says muted">Drag a project onto another
+      to merge them.</span></div>`;
+  }
+  const projects = (stateBeat.whole || {}).projects || [];
+  const name = (id) => (projects.find((one) => one.id === id) || {}).title || "";
+  const lines = pjMergeGroups(held).map(({ into, ids }) => `${ids.map(name).join(", ")} → ${name(into)}`);
+  return `<div class="pj-merge-bar"><span class="pj-merge-says"><strong>Confirm the merge of these
+      tasks:</strong> ${escapeHtml(lines.join("; "))}</span>
+    <button type="button" class="pj-merge-no" data-pj-merge="off">Cancel</button>
+    <button type="button" class="pj-merge-yes" data-pj-merge="save">Confirm</button></div>`;
+}
+
+document.addEventListener("click", async (event) => {
+  const back = event.target.closest && event.target.closest("[data-pj-unfold]");
+  if (back) {
+    event.stopPropagation();
+    stateBeat.folded.delete(back.dataset.pjUnfold);
+    drawProjects(stateBeat.whole);
+    return;
+  }
+  const button = event.target.closest && event.target.closest("[data-pj-merge]");
+  if (!button) return;
+  if (button.dataset.pjMerge === "save") {
+    button.disabled = true;
+    try {
+      await api.post("/api/state_heartbeat/projects/merge", { groups: pjMergeGroups(pjFolded()) });
+      toast("Merged. The work is being gone through again.");
+      stateBeat.folded = new Map();
+      pjFollowTheUpdate();
+    } catch (err) {
+      button.disabled = false;
+      toast(err.message, "error");
+      return;
+    }
+  } else {
+    stateBeat.folded = new Map();
+  }
+  drawProjects(stateBeat.whole);
+}, true);
+
+document.addEventListener("dragstart", (event) => {
+  const row = event.target.closest && event.target.closest("[data-pj-open]");
+  if (!row) return;
+  stateBeat.dragging = row.dataset.pjOpen;
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", row.dataset.pjOpen);
+});
+
+document.addEventListener("dragover", (event) => {
+  const row = event.target.closest && event.target.closest("[data-pj-open]");
+  $$(".pj-drop").forEach((one) => one !== row && one.classList.remove("pj-drop"));
+  if (!row || !stateBeat.dragging || row.dataset.pjOpen === stateBeat.dragging) return;
+  event.preventDefault();
+  row.classList.add("pj-drop");
+});
+
+document.addEventListener("drop", (event) => {
+  const row = event.target.closest && event.target.closest("[data-pj-open]");
+  if (!row || !stateBeat.dragging) return;
+  event.preventDefault();
+  stateBeat.folded = pjFoldUnder(pjFolded(), stateBeat.dragging, row.dataset.pjOpen);
+  stateBeat.dragging = "";
+  drawProjects(stateBeat.whole);
+});
+
+document.addEventListener("dragend", () => {
+  stateBeat.dragging = "";
+  $$(".pj-drop").forEach((one) => one.classList.remove("pj-drop"));
+});
+
+/* WHAT IS STILL OPEN UNDER IT (the user, 2026-11-04): its notifications, to-dos
+   and work assigned, as the state heartbeat linked them. */
+const PJ_OPEN_KINDS = { notification: "Notification", todo: "To do", assigned: "Work assigned" };
+
+function pjOpenItems(one) {
+  const items = one.open_items || [];
+  if (!items.length) return "";
+  return `<div class="sb-card-part pj-open"><span class="event-label">Still open</span>
+    <ul>${items.map((item) => `<li><span class="muted">${
+      escapeHtml(PJ_OPEN_KINDS[item.kind] || item.kind)}</span> ${escapeHtml(item.text || "")}${
+      item.detail ? `<span class="muted pj-open-detail">${escapeHtml(item.detail)}</span>` : ""
+    }</li>`).join("")}</ul></div>`;
+}
+
+/* THE USER'S OWN SAY, on a project's card and on each of its tasks. A name
+   they write stays: later runs still say what it is and where it stands. What
+   they put away is not shown, not grouped again and not brought back. */
+function pjUserSay(kind, id, name) {
+  const held = `data-pj-kind="${kind}" data-pj-id="${escapeHtml(String(id))}"
+    data-pj-name="${escapeHtml(String(name || ""))}"`;
+  return `<span class="pj-user-say">
+    <button type="button" class="small secondary" data-pj-rename="1" ${held}
+      title="Give it a name of your own, which later runs keep">Rename</button>
+    <button type="button" class="small secondary" data-pj-delete="1" ${held}
+      title="Put it away: it is not shown again, and new work does not bring it back">Delete</button>
+  </span>`;
+}
+
+function pjTaskList(one) {
+  const tasks = one.tasks || [];
+  if (!tasks.length) return "";
+  return `<details class="pj-tasks" data-sb-open="pj-tasks-${escapeHtml(String(one.id))}">
+    <summary>Tasks (${tasks.length})</summary>
+    <ul>${tasks.map((task) => {
+      const title = task.title_display || task.title || "";
+      return `<li><span>${escapeHtml(title)}</span> ${pjUserSay("task", task.id, title)}</li>`;
+    }).join("")}</ul>
+  </details>`;
+}
+
+function pjKeep(kind, id, title) {
+  const whole = stateBeat.whole || {};
+  const gone = title === null;
+  if (kind === "project") {
+    if (gone) whole.projects = (whole.projects || []).filter((one) => one.id !== id);
+    else (whole.projects || []).forEach((one) => { if (one.id === id) one.title = title; });
+    return;
+  }
+  (whole.projects || []).forEach((project) => {
+    if (gone) project.tasks = (project.tasks || []).filter((task) => task.id !== id);
+    else (project.tasks || []).forEach((task) => {
+      if (task.id === id) task.title = task.title_display = title;
+    });
+  });
+}
+
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest && event.target.closest("[data-pj-rename],[data-pj-delete]");
+  if (!button) return;
+  const { pjKind: kind, pjId: id, pjName: name } = button.dataset;
+  const route = `/api/state_heartbeat/${kind}/${button.dataset.pjRename ? "rename" : "delete"}`;
+  try {
+    if (button.dataset.pjRename) {
+      const said = window.prompt(kind === "project" ? "Name this project:" : "Name this task:", name);
+      if (said === null || !said.trim()) return;
+      const named = await api.post(route, { id, title: said });
+      pjKeep(kind, id, named.title);
+    } else {
+      const sure = window.confirm(kind === "project"
+        ? `Delete the project "${name}"?\n\nIt and its tasks are not shown again, and new work does not bring them back.`
+        : `Delete the task "${name}"?\n\nIt is not shown again, and new work does not bring it back.`);
+      if (!sure) return;
+      await api.post(route, { id });
+      pjKeep(kind, id, null);
+    }
+    drawProjects(stateBeat.whole);
+  } catch (err) {
+    toast(err.message, "error");
+  }
+});
 
 function drawProjects(whole) {
   const host = $("#ov-tasks");
@@ -19730,7 +20364,7 @@ function drawProjects(whole) {
       title="Work activity: the projects of your work only. Full activity: the
              projects of leisure too.">${full ? "show work activity"
       : "show full activity"}</button>` : "";
-  const bars = `<div class="pj-bars">${sbRecentBar()} ${pjLeastBar()} ${toggle}</div>`;
+  const bars = `<div class="pj-bars">${sbRecentBar()} ${pjLeastBar()} ${toggle}</div>${pjMergeBar()}`;
   if (!every.length) {
     const due = whole.due || {};
     host.innerHTML = `${bars}<p class="muted">No project yet. ${
@@ -19898,7 +20532,7 @@ let ovTodoDrawn = "";                     // what the box was last written with
    the list as it is. The user renames a group, drags an item to another, out
    of every one, or into a new one; each change is told to the next grouping
    first. */
-const ovGroups = { todo: null, assigned: null };
+const ovGroups = { todo: null, assigned: null, collection: null };
 const ovGroupEdit = { renaming: "", moving: "", adding: "" };
 let ovGroupsAgain = null;
 /* EACH GROUP FOLDED AND OPENED (the user, 2026-11-03: "分类之后要能够by group
@@ -20215,12 +20849,21 @@ try {
 // front (tests/test_system_permissions.py) - shown again after being hidden.
 document.addEventListener("visibilitychange", () => { if (!document.hidden) ovListsAgain(); });
 
+/* WHAT IT IS PART OF (the user, 2026-11-04): the tasks and projects the state
+   heartbeat linked it to, one or several. */
+function ovPartOf(one) {
+  const names = (one.associated || []).map((link) => link.title).filter(Boolean);
+  return names.length ? `<span class="muted ov-todo-detail">Part of: ${
+    escapeHtml(names.join(", "))}</span>` : "";
+}
+
 function ovAssignedBox() {
   const items = ovGroupedItems("assigned", ovAssigned, (one) => {
     const open = delegateState.tracking.has(one.id);
     return `<li class="ov-todo-item" data-todo="${escapeHtml(one.id)}">
       <span class="ov-todo-text">${escapeHtml(one.text)}</span>${
-        one.detail ? `<span class="muted ov-todo-detail">${escapeHtml(one.detail)}</span>` : ""}
+        one.detail ? `<span class="muted ov-todo-detail">${escapeHtml(one.detail)}</span>` : ""}${
+        ovPartOf(one)}
       <span class="ov-todo-actions"><button type="button" class="small ov-todo-track"
         aria-expanded="${open}" title="Where it stands now">${open ? "&#9662;" : "&#9656;"}
         Work status</button>${ovGroups.assigned ? ` <button type="button" class="small secondary"
@@ -20243,6 +20886,7 @@ function ovPlaceAssigned() {
   const list = box.querySelector(".ov-todo-list");
   const scrolled = list ? list.scrollTop : 0;
   box.innerHTML = html;
+  ovMarkOpening();
   ovAssignedDrawn = html;
   const again = box.querySelector(".ov-todo-list");
   if (again) again.scrollTop = scrolled;
@@ -20321,9 +20965,24 @@ function ovTodoWork(one) {
   if (!versions.length) return delegate;
   // WORK STATUS: where each version stands is in it, opened out.
   const open = delegateState.tracking.has(one.id);
-  return `${delegate}<button type="button" class="small ov-todo-track" aria-expanded="${open}"
+  return `${delegate}${ovTodoLatest(versions)}<button type="button" class="small ov-todo-track" aria-expanded="${open}"
     title="Every version handed over, and where each stands now">${open ? "&#9662;" : "&#9656;"}
     Work status (${versions.length})</button>`;
+}
+
+/* THE LATEST OUTCOME, ONE PRESS AWAY (the user, 2026-11-04): what the newest
+   finished version made, opened as Work status opens it; none made yet, the
+   newest version's session in Work. */
+function ovTodoLatest(versions) {
+  const newestFirst = versions.slice().reverse();
+  const finished = newestFirst.find((one) => one.state === "finished" && ovTodoMade(one).length);
+  if (finished) {
+    return `<button type="button" class="small ov-todo-result" data-todo-run="${
+      escapeHtml(finished.run)}"${ovTodoMade(finished)[0].open}>Open the latest outcome</button>`;
+  }
+  const going = newestFirst.find((one) => one.unit);
+  return going ? `<button type="button" class="small secondary ov-todo-ongoing" data-todo-unit="${
+    escapeHtml(going.unit)}" data-todo-open-run="${escapeHtml(going.run || "")}">See the latest try in Work</button>` : "";
 }
 
 /* What a version made, before it is opened: each thing it handed over -
@@ -20416,7 +21075,8 @@ function ovTodoBox() {
   const asking = delegateState.removing;
   const items = ovGroupedItems("todo", open, (one) => `<li class="ov-todo-item" data-todo="${escapeHtml(one.id)}">
     <span class="ov-todo-text">${escapeHtml(one.text)}</span>${
-      one.detail ? `<span class="muted ov-todo-detail">${escapeHtml(one.detail)}</span>` : ""}
+      one.detail ? `<span class="muted ov-todo-detail">${escapeHtml(one.detail)}</span>` : ""}${
+      ovPartOf(one)}
     <span class="ov-todo-actions">${ovTodoWork(one)}
     ${asking === one.id ? `<span class="ov-todo-confirm">Remove it?
         <button type="button" class="small danger ov-todo-yes">Yes</button>
@@ -20436,6 +21096,7 @@ function ovTodoBox() {
    with it, so each time they are moved up under the heading - the bars
    only: the line under them, with its buttons, stays with the drawing. */
 function ovPlaceTodos() {
+  if (activeTab === "collections") renderCollections();
   const card = $("#ov-tasks-card");
   if (!card) return;
   const slot = card.querySelector(".ov-strip-slot");
@@ -20479,6 +21140,7 @@ function ovPlaceTodos() {
   ovTodoDrawn = html;
   const again = main.querySelector(".ov-todo-list");
   if (again) again.scrollTop = scrolled;
+  ovMarkOpening();
 }
 
 document.addEventListener("click", async (event) => {
@@ -20599,6 +21261,12 @@ document.addEventListener("click", async (event) => {
   }
   const result = event.target.closest && event.target.closest(".ov-todo-result");
   if (result) {
+    // OPENING TAKES A MOMENT (the user, 2026-11-04): the button says so and
+    // takes no second press, though the list be drawn anew meanwhile.
+    const opening = ovOpeningKey(result);
+    if (ovOpening.has(opening)) return;
+    ovOpening.add(opening);
+    ovMarkOpening();
     try {
       if (result.dataset.todoHanded !== undefined) {
         const said = await api.post("/api/work/handed/open", { run: result.dataset.todoRun,
@@ -20622,8 +21290,118 @@ document.addEventListener("click", async (event) => {
         await api.post("/api/work/reveal", { run: result.dataset.todoRun,
                                              path: result.dataset.todoResult, open: true });
       }
-    } catch (err) { toast(err.message, "error"); }
+    } catch (err) {
+      toast(err.message, "error");
+    } finally {
+      ovOpening.delete(opening);
+      ovMarkOpening();
+    }
   }
+});
+
+function ovOpeningKey(button) {
+  const { todoRun, todoHanded, todoResult } = button.dataset;
+  return [todoRun, todoHanded, todoResult].join("|");
+}
+
+function ovMarkOpening() {
+  $$(".ov-todo-result").forEach((button) => {
+    const opening = ovOpening.has(ovOpeningKey(button));
+    if (opening && button.dataset.todoWords === undefined) {
+      button.dataset.todoWords = button.textContent;
+      button.textContent = "Opening...";
+    } else if (!opening && button.dataset.todoWords !== undefined) {
+      button.textContent = button.dataset.todoWords;
+      delete button.dataset.todoWords;
+    }
+    button.disabled = opening;
+  });
+}
+
+/* COLLECTIONS (the user, 2026-11-04): a panel of its own for what was kept from the
+   newspaper and from recommended content, grouped as To do is - by hand and
+   anew on each change - and searched by its words and when it was added. Only to
+   read: what was said of a story is said in the newspaper. */
+const colState = { items: [], loaded: false, timer: 0 };
+
+async function loadCollections() {
+  try {
+    const said = await api.get("/api/collection");
+    colState.items = said.items || [];
+    colState.loaded = true;
+    ovGroups.collection = said.groups || null;
+    renderCollections();
+    clearTimeout(colState.timer);
+    if (ovGroups.collection && ovGroups.collection.grouping && activeTab === "collections") {
+      colState.timer = setTimeout(loadCollections, 3000);
+    }
+  } catch (err) { toast(err.message, "error"); }
+}
+
+/* Its words, and the day it was added, from and to, each given or not. */
+function colFound(items, words, from, to) {
+  const asked = String(words || "").toLowerCase().split(/\s+/).filter(Boolean);
+  const first = from ? new Date(`${from}T00:00:00`).getTime() : -Infinity;
+  const last = to ? new Date(`${to}T23:59:59.999`).getTime() : Infinity;
+  return items.filter((one) => {
+    const said = [one.text, one.detail, one.because, one.page, one.url].join(" ").toLowerCase();
+    const at = Date.parse(one.at);
+    return asked.every((word) => said.includes(word)) && at >= first && at <= last;
+  });
+}
+
+function colRow(one) {
+  const from = one.from === "recommended" ? "Recommended content"
+    : one.issue_no ? `Newspaper No. ${one.issue_no}` : "Newspaper";
+  return `<li class="ov-todo-item col-item" data-collection="${escapeHtml(one.id)}">
+    <span class="ov-todo-text">${one.url ? `<a href="${escapeHtml(one.url)}" target="_blank"
+      rel="noopener noreferrer">${escapeHtml(one.text)}</a>` : escapeHtml(one.text)}</span>
+    ${one.detail ? `<span class="muted ov-todo-detail">${escapeHtml(one.detail)}</span>` : ""}
+    <span class="muted ov-todo-detail">${escapeHtml(from)} - ${
+      escapeHtml(`Added ${localStamp(one.at)}`)}</span>
+    <span class="ov-todo-actions"><button type="button" class="small secondary"
+      data-collection-remove="${escapeHtml(one.id)}">Remove</button>${ovGroups.collection
+      ? ` <button type="button" class="small secondary" data-group-move="${escapeHtml(one.id)}"
+        data-group-list="collection">Move</button>` : ""}</span></li>`;
+}
+
+function renderCollections() {
+  const host = $("#col-list");
+  if (!host) return;
+  const words = ($("#col-words") || {}).value || "";
+  const from = ($("#col-from") || {}).value || "";
+  const to = ($("#col-to") || {}).value || "";
+  const searching = Boolean(words.trim() || from || to);
+  const items = searching ? colFound(colState.items, words, from, to) : colState.items;
+  if (!colState.loaded) {
+    host.innerHTML = `<li class="muted">Loading…</li>`;
+  } else if (!items.length) {
+    host.innerHTML = `<li class="muted">${searching ? "Nothing found."
+      : `Nothing kept yet. "Add to collection" keeps a story or recommended content here.`}</li>`;
+  } else {
+    // SEARCHED, FLAT: what was found, whatever its group.
+    host.innerHTML = searching ? items.map(colRow).join("")
+      : ovGroupedItems("collection", items, colRow);
+  }
+}
+
+document.addEventListener("input", (event) => {
+  if (event.target.closest?.("#col-words,#col-from,#col-to")) renderCollections();
+});
+
+document.addEventListener("click", async (event) => {
+  if (event.target.closest?.("#col-clear")) {
+    ["#col-words", "#col-from", "#col-to"].forEach((one) => { $(one).value = ""; });
+    renderCollections();
+    return;
+  }
+  const gone = event.target.closest?.("[data-collection-remove]");
+  if (!gone) return;
+  try {
+    await api.post("/api/recommend/collection",
+      { story: gone.dataset.collectionRemove, keep: false });
+    await loadCollections();
+  } catch (err) { toast(err.message, "error"); }
 });
 
 /* DELEGATE WORK - and every start of work. What was handed over goes to the
@@ -26338,6 +27116,15 @@ setInterval(pollNotifications, 20000);
       .catch((err) => toast(err.message, "error"));
     return;
   }
+  // A try, from a panel beside the avatar: Work, on it.
+  if (wanted.startsWith("work=")) {
+    const [unit, run] = decodeURIComponent(wanted.slice("work=".length)).split(":");
+    history.replaceState(null, "", location.pathname);
+    experienceState.unit = unit;
+    experienceState.openRun = run || "";
+    $('nav button[data-tab="experience"]')?.click();
+    return;
+  }
   // The selection's "Learn": its learning plan being drafted already.
   if (wanted.startsWith("learn=")) {
     const id = decodeURIComponent(wanted.slice("learn=".length));
@@ -27111,7 +27898,7 @@ function renderMonitor(data) {
     ? `<h3 class="mon-sub">${escapeHtml(`Your habits (${habits.habit_days} days like today)`)}</h3>
        <div class="mon-facts">${usual.join("")}</div>`
     : `<p class="muted mon-sub">${escapeHtml("Your habits show once there are a few days like today.")}</p>`}`;
-  const tree = monQuiet(data.quiet || []) + monTree(data);
+  const tree = monBlocked(data) + monQuiet(data.quiet || []) + monTree(data);
   if (tree !== monState.drawn.tree) {
     monState.drawn.tree = tree;
     $("#mon-tree").innerHTML = tree;
@@ -27139,9 +27926,16 @@ function renderMonitor(data) {
 }
 
 /* RULES OF QUIET: said once, they hold all that speaks for itself. */
+function monBlocked(data) {
+  if (!data.blocker) return "";
+  const count = Number(data.reminders_waiting || 0);
+  return `<p class="muted">${escapeHtml(`Blocked now: ${data.blocker}`)}${
+    count ? ` - ${escapeHtml(`${count} waiting`)}` : ""}</p>`;
+}
+
 function monQuiet(rules) {
   if (!rules.length) return "";
-  return `<h3 class="mon-sub">${escapeHtml("Quiet rules")}</h3><ul class="mon-quiet">${rules.map((one) =>
+  return `<h3 class="mon-sub">${escapeHtml("Blockers")}</h3><ul class="mon-quiet">${rules.map((one) =>
     `<li><strong>${escapeHtml(one.name)}</strong><span class="muted">${escapeHtml(monCond(one.when))}</span>
      <button type="button" class="secondary" data-quiet-remove="${escapeHtml(one.id)}">${
        escapeHtml("Remove")}</button></li>`).join("")}</ul>`;
@@ -27167,8 +27961,10 @@ function monThen(tier) {
   const does = tier.do === "notify" ? `say “${tier.title}”`
     : tier.do === "queue" ? "judged at the next heartbeat"
       : tier.handler === "calendar" ? "the notification step on that window"
-        : tier.handler === "evening" ? "offer the evening report" : "ask the agent what to recommend";
-  return tier.min_score ? `score ${tier.min_score}+: ${does}` : does;
+        : tier.handler === "evening" ? "offer the evening report"
+          : tier.brief ? `ask the agent: ${tier.brief}` : "ask the agent what to recommend";
+  const said = tier.and_then ? `${does}; ${monThen(tier.and_then)}` : does;
+  return tier.min_score ? `score ${tier.min_score}+: ${said}` : said;
 }
 
 function monTree(data) {

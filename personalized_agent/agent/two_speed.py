@@ -114,10 +114,12 @@ class TwoSpeed:
     # -- a message ---------------------------------------------------------------------------
     def send(self, text: str, conversation_id: Optional[str] = None,
              attachments: Optional[Sequence[str]] = None, mentions: Optional[Sequence[str]] = None,
-             on_done: Optional[Callable[[Dict[str, Any]], None]] = None) -> Dict[str, Any]:
+             on_done: Optional[Callable[[Dict[str, Any]], None]] = None,
+             front: str = "", seen: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         """The quick reply, at once: "answer", "message_id", "conversation_id"
         and "turn", the full agent's - "" when it was stopped. Raises
-        ValueError for a file no longer there."""
+        ValueError for a file no longer there. `front`: what is in front of
+        the user (agent/front_screen.py), for both to read."""
         attachments = [str(one) for one in attachments or []]
         mentions = [str(one) for one in mentions or []]
         described = self._described(attachments)
@@ -127,7 +129,7 @@ class TwoSpeed:
         if described:
             metadata["attachments"] = described
         user = self.conversations.add_message(conversation_id, "user", text, metadata=metadata)
-        quick = self._quick(text, earlier, described)
+        quick = self._quick(text, earlier, described, front)
         run = quick["run"] or bool(described) or bool(mentions) or not quick["reply"]
         ids = [user["id"]]
         said: Optional[Dict[str, Any]] = None
@@ -141,7 +143,8 @@ class TwoSpeed:
             turn = new_id("turn")
             self._begin(conversation_id, {
                 "turn": turn, "text": text, "ids": ids, "reply": quick["reply"],
-                "attachments": attachments, "mentions": mentions, "on_done": on_done})
+                "attachments": attachments, "mentions": mentions, "on_done": on_done,
+                "front": front, "seen": seen})
         return {"conversation_id": conversation_id, "answer": quick["reply"], "layer": "fast",
                 "message_id": said["id"] if said else "", "turn": turn}
 
@@ -154,7 +157,7 @@ class TwoSpeed:
             raise ValueError("a file attached is no longer there")
 
     def _quick(self, text: str, earlier: List[Dict[str, Any]],
-               files: List[Dict[str, Any]]) -> Dict[str, Any]:
+               files: List[Dict[str, Any]], front: str = "") -> Dict[str, Any]:
         """What the small model says; nothing, and the full agent answers."""
         turns = [{"role": one["role"], "content": str(one.get("content") or "")[:RECENT_CHARS]}
                  for one in earlier
@@ -165,6 +168,7 @@ class TwoSpeed:
         if files:
             said += "\n\n[attached, which you cannot read: " + ", ".join(
                 str(one["name"]) for one in files) + "]"
+        said += front
         try:
             answer = self.models.invoke(ModelRequest(
                 messages=[*turns, {"role": "user", "content": said}],
@@ -243,6 +247,7 @@ class TwoSpeed:
                 "\n\n".join(one["text"] for one in jobs), conversation_id,
                 attachments=[f for one in jobs for f in one["attachments"]] or None,
                 mentions=[f for one in jobs for f in one["mentions"]] or None, on_text=told,
+                front=jobs[-1].get("front", ""), seen=jobs[-1].get("seen"),
                 after_quick={"ids": [i for one in jobs for i in one["ids"]],
                              "reply": "\n".join(one["reply"] for one in jobs if one["reply"]),
                              "did": lambda said: self._did(mark, said)})

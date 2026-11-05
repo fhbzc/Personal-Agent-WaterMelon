@@ -441,7 +441,8 @@ def build_registry(
     def notify_user(args: Dict[str, Any]) -> Any:
         notification = notifications.notify(
             str(args.get("title") or "Agent"), str(args.get("message") or ""),
-            kind="proactive", metadata={"origin": "agent"},
+            kind="proactive",
+            metadata={"origin": "agent", "reason": str(args.get("why") or "")[:300]},
             template=str(args.get("template") or ""),
             question={"task_id": getattr(registry, "task_id", "") or ""},
         )
@@ -463,13 +464,15 @@ def build_registry(
                  "decision from them. One button, OK, and it is closed.\n"
                  "Choose the one that matches what you are actually saying. A "
                  "notice dressed as a reminder asks the user to decide "
-                 "something you did not mean to ask.",
+                 "something you did not mean to ask. `why` is shown under it: one "
+                 "short line to the user, in their language, on why you are telling them.",
                  _schema({"title": {"type": "string"},
                           "message": {"type": "string"},
+                          "why": {"type": "string"},
                           "template": {"type": "string",
                                        "enum": ["reminder", "permission",
                                                 "passive"]}},
-                         ["title", "message", "template"])),
+                         ["title", "message", "template", "why"])),
         notify_user,
     )
 

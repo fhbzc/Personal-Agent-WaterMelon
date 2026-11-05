@@ -24,6 +24,11 @@ from ..core.triggers import RULES
 
 _RULE = {rule.name: rule for rule in RULES}
 
+#: THE RULES OF QUIET THERE ARE FROM THE START (the user, 2026-11-04): nothing the
+#: Monitor says of its own accord over slides being shown or in a meeting.
+QUIET = (("presenting", "While presenting", {"signal": "presenting", "op": "==", "value": True}),
+         ("meeting", "In a meeting", {"signal": "in_meeting", "op": "==", "value": True}))
+
 
 def _calendar(name: str, label: str) -> Dict[str, Any]:
     rule = _RULE[name]
@@ -86,6 +91,24 @@ SCREEN_MESSAGE = "You have been at the screen {since_break_minutes} minutes with
 OLD_BREAK = (("A long stretch without a break: one is suggested.", SCREEN_PURPOSE),
              ("You have worked {since_break_minutes} minutes without a break.", SCREEN_MESSAGE))
 
+SPAM_BRIEF = ("Code saw words of a scam here and has warned the user; that warning stands, "
+              "whatever you find. Read what was on the screen and give your own reading beside "
+              "it: what looks wrong here, or what looks in order, and what to do. Send only "
+              "if you have something to add.")
+_WARNING = {"do": "notify", "min_score": 8.0, "title": "This looks like a scam",
+            "message": "What is on this page or in this email has the marks of a scam "
+                       "or phishing. Do not click its links or give it any details "
+                       "until you are sure who sent it."}
+#: WHAT IT DID BEFORE, each as it was written to the Monitor's own table.
+OLD_SPAM_THENS = (
+    [_WARNING, {"do": "queue", "min_score": 4.0}],
+    [dict(_WARNING, reason="Words of a scam on the screen: {matched}", and_then={
+        "do": "ask_model", "handler": "judge", "brief": (
+            "Code saw words of a scam here and has already warned the user. Read what "
+            "was on the screen: is it really one? Send only to say it was a false "
+            "alarm, or what exactly is wrong here and what to do.")}),
+     {"do": "queue", "min_score": 4.0}])
+
 SPAM = {"builtin": "spam_risk", "protected": True, "name": "Spam and scam risk",
         "group": "risk",
         "purpose": "Words of a scam or phishing on a page or in an email: a high score is "
@@ -94,7 +117,9 @@ SPAM = {"builtin": "spam_risk", "protected": True, "name": "Spam and scam risk",
         "then": [{"min_score": 8, "do": "notify", "title": "This looks like a scam",
                   "message": "What is on this page or in this email has the marks of a scam "
                              "or phishing. Do not click its links or give it any details "
-                             "until you are sure who sent it."},
+                             "until you are sure who sent it.",
+                  "reason": "Words of a scam on the screen: {matched}",
+                  "and_then": {"do": "ask_model", "handler": "judge", "brief": SPAM_BRIEF}},
                  {"min_score": 4, "do": "queue"}],
         "cooldown_minutes": 30, "most_per_day": 20}
 

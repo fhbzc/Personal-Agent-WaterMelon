@@ -76,7 +76,9 @@ CREATE TABLE IF NOT EXISTS monitor_quiet (
 
 GROUPS = ("recommend", "risk", "calendar", "rest", "other")
 DOES = ("notify", "ask_model", "queue")
-HANDLERS = ("recommend", "calendar", "evening")
+HANDLERS = ("recommend", "judge", "calendar", "evening")
+#: What may come after a notify, once it is said (`and_then`).
+FOLLOWS = ("ask_model", "queue")
 OPS = ("<", "<=", ">", ">=", "==", "!=", "contains")
 WHERE = ("page", "email", "chat", "terminal", "any")
 #: The bounds code holds a written Activator to.
@@ -100,8 +102,18 @@ RULES_FOR_THE_MODEL = f"""HOW TO WRITE AN ACTIVATOR (the Monitor) - code runs it
   matters asks for grouping, history or paths.
 - "then" says what is done by score, highest "min_score" first: "notify" (said at
   once, in the "title" and "message" you give - {{signal_name}} is put in),
-  "ask_model" with "handler" "recommend" (you are asked then whether to
-  recommend, and what) or "evening", or "queue" (judged at the next heartbeat).
+  "ask_model" with "handler" "recommend" and a "brief", or "evening", or "queue"
+  (judged at the next heartbeat).
+- A "notify" MAY ALSO HAVE, when it should not wait for a model: "reason" (shown under it;
+  {{matched}} is what set it off) and "and_then", what comes once it is said:
+  {{"do": "ask_model", "handler": "judge", "brief": "..."}}, a model looks closer at
+  once and says more only if it has more to say, or {{"do": "queue"}}. What it says
+  comes beside the first notification and never takes it back, with no link or
+  picture. Most need neither: use them when a first word cannot wait.
+- AN ACTIVATOR IS A CONDITION AND A JOB. The "brief" of an "ask_model" says what the
+  model is to do when the condition holds, as an order: what to look for, where,
+  and what to tell the user - "Find this week's new papers on soil drainage and
+  send the best one". Write the user's own request into it. It is required.
 - KEYWORDS IN EVERY DISPLAY LANGUAGE the agent supports - {LANGUAGES} - each
   word or phrase as it is written in that language, weighted 0.5 to 10.
 - A cooldown of minutes and a most a day that keep it from being a nuisance.
@@ -110,8 +122,8 @@ RULES_FOR_THE_MODEL = f"""HOW TO WRITE AN ACTIVATOR (the Monitor) - code runs it
   (a higher score, fewer words, a longer cooldown), not deleted.
 - A PROTECTED one cannot be changed or deleted - the user protected it.
 - WHEN THE USER WANTS TO BE LEFT ALONE AT SOME MOMENT ("not during meetings"), that
-  is ONE rule of quiet (monitor_quiet_add), not an edit of every Activator: it
-  holds everything that speaks for itself while it applies.
+  is ONE blocker (monitor_quiet_add), not an edit of every Activator: while it
+  applies no reminder of any kind is shown.
 - TO CHANGE OR DELETE ONE, LOOK FIRST: monitor_evidence, then cite the cases that
   truly bear on it. The more you change in one turn the more it takes, and code
   holds you to it. Nobody is asked: what you cannot show, you do not do - keep
@@ -243,13 +255,20 @@ def check(data: Any, builtin: bool = False) -> Tuple[Dict[str, Any], List[str]]:
                 raise ValueError("a notify says its title")
             if tier.get("choices") in ("break",):
                 clean["choices"] = tier["choices"]
+            if tier.get("reason"):
+                clean["reason"] = str(tier["reason"]).strip()[:300]
+            if tier.get("and_then"):
+                clean["and_then"] = _check_follow(tier["and_then"])
         if do == "ask_model":
             handler = str(tier.get("handler") or "recommend")
             if handler not in HANDLERS or (handler == "calendar" and not builtin):
                 raise ValueError("handler is recommend or evening")
             clean["handler"] = handler
-            if tier.get("brief"):
-                clean["brief"] = str(tier["brief"])[:600]
+            brief = str(tier.get("brief") or "").strip()[:600]
+            if handler == "recommend" and not brief:
+                raise ValueError("an ask_model says what the model is to do, in its brief")
+            if brief:
+                clean["brief"] = brief
         tiers.append(clean)
     tiers.sort(key=lambda one: -one["min_score"])
     try:
@@ -272,6 +291,19 @@ def check(data: Any, builtin: bool = False) -> Tuple[Dict[str, Any], List[str]]:
 
 
 # -- running a condition ------------------------------------------------------------------
+def _check_follow(follow: Any) -> Dict[str, Any]:
+    """What comes after a notify: code says at once, a model after it."""
+    if not isinstance(follow, dict) or follow.get("do") not in FOLLOWS:
+        raise ValueError(f"and_then does one of {', '.join(FOLLOWS)}")
+    if follow["do"] == "queue":
+        return {"do": "queue"}
+    handler = str(follow.get("handler") or "judge")
+    brief = str(follow.get("brief") or "").strip()[:600]
+    if handler not in ("judge", "recommend") or not brief:
+        raise ValueError("and_then asks the model with a handler, judge or recommend, and a brief")
+    return {"do": "ask_model", "handler": handler, "brief": brief}
+
+
 def text_driven(cond: Dict[str, Any]) -> bool:
     """Whether a condition looks at what appears on the screen."""
     if "keywords" in cond or "pattern" in cond:
@@ -548,6 +580,21 @@ class ActivatorStore:
             made += 1
         return made
 
+    def seed_quiet(self, rules: Any) -> int:
+        """The built-in rules of quiet, each written once: one taken away is not
+        brought back."""
+        made = 0
+        for key, name, when in rules:
+            seeded = "monitor.seeded.quiet." + key
+            row = self.db.query_one("SELECT value FROM kv WHERE key = ?", (seeded,))
+            if row and row["value"]:
+                continue
+            self.add_quiet(name, when, "built in", "built in")
+            self.db.execute("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO "
+                            "UPDATE SET value = excluded.value", (seeded, _now()))
+            made += 1
+        return made
+
     def reword(self, builtin: str, pairs: Any) -> int:
         """Words of a built-in one already kept changed, where they are still
         the words it was given: what the user or the model wrote stays."""
@@ -561,6 +608,20 @@ class ActivatorStore:
             if data != row["data"]:
                 self.db.execute("UPDATE monitor_activators SET data = ? WHERE id = ?",
                                 (data, row["id"]))
+                changed += 1
+        return changed
+
+    def retier(self, builtin: str, old: Any, new: Any) -> int:
+        """What a built-in one does changed, where it still does what it was given:
+        what the user or the model made of it stays."""
+        changed = 0
+        for row in self.db.query("SELECT id, data FROM monitor_activators WHERE builtin = ?",
+                                 (builtin,)):
+            data = json.loads(row["data"] or "{}")
+            if data.get("then") == old:
+                data["then"] = new
+                self.db.execute("UPDATE monitor_activators SET data = ?, updated_at = ? WHERE id = ?",
+                                (json.dumps(data, ensure_ascii=False), _now(), row["id"]))
                 changed += 1
         return changed
 

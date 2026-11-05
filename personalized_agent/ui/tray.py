@@ -132,13 +132,16 @@ class Tray:
     def _menu(self) -> Any:
         item, menu = pystray.MenuItem, pystray.Menu
         desktop = self.desktop
-        # THE SAME FOUR AS THE AVATAR'S MENU: the chat, the Overview (what a
+        # THE SAME AS THE AVATAR'S MENU: the chat, To do, Collections, the Overview (what a
         # click on the icon does), the avatar hidden or shown - by how it is
         # now - and quitting.
         # In the display language, read each time the menu opens.
         say = getattr(desktop, "_words", None) or (lambda text: text)
         return menu(
             item(lambda _item: say("Chat"), self._later(desktop.open_chat)),
+            item(lambda _item: say("To do"), self._later(lambda: desktop._quick_panel("todo"))),
+            item(lambda _item: say("Collections"),
+                 self._later(lambda: desktop._quick_panel("collection"))),
             item(lambda _item: say("Overview"), self._later(lambda: desktop.open_url("/#overview")),
                  default=True),
             item(lambda _item: say("Hide avatar" if self._character_shown() else "Show avatar"),

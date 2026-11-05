@@ -184,7 +184,11 @@ class AReplyInItsThreadTests(unittest.TestCase):
         self._visited("The talk & the date - other@example.com - Gmail",
                       "https://mail.google.com/mail/u/0/#inbox/QgrcJHsBmKdLpWxTnRvZyCfGhJkLmNpQ",
                       at="2026-10-31T09:00:00+00:00")
+        self._read("The talk & the date - other@example.com - Gmail — Mozilla Firefox",
+                   "Ada <ada@example.com>", "2026-10-31T09:01:00+00:00")
         self._visited("Re: The talk & the date - sam@example.com - Gmail", self.THREAD)
+        self._read("Re: The talk & the date - sam@example.com - Gmail — Mozilla Firefox",
+                   "Ada <ada@example.com>", "2026-10-30T09:01:00+00:00")
         self._visited("The talk & the dates - sam@example.com - Gmail",
                       "https://mail.google.com/mail/u/1/#inbox/AbcdEfghIjklMnopQrstUvwxYz012345")
         item = handed.checked(EMAIL, lambda path: None)        # "Re: the talk & the date"
@@ -207,7 +211,8 @@ class AReplyInItsThreadTests(unittest.TestCase):
         item = handed.checked(dict(EMAIL, subject="组会时间", reply_to={"subject": "下周的组会"}),
                               lambda path: None)
         self.assertEqual(handed.answers(item), "下周的组会")
-        self.assertEqual(handed.actions(item, GMAIL, self.app.db)["reply"]["found"], "thread")
+        self.assertEqual(handed.actions(item, dict(GMAIL, mail="default"),
+                                        self.app.db)["reply"]["found"], "thread")
         self.assertEqual(handed.unmarked("RE[2]: Fwd: AW: Plan"), "Plan")
         self.assertEqual(handed.unmarked("Rescheduled: talk"), "Rescheduled: talk")
 
@@ -216,7 +221,8 @@ class AReplyInItsThreadTests(unittest.TestCase):
         reply = handed.actions(item, GMAIL, self.app.db)["reply"]
         self.assertEqual(reply["found"], "search")
         self.assertTrue(reply["url"].startswith(
-            "https://mail.google.com/mail/?authuser=sam@example.com#search/subject%3A%28"))
+            "https://mail.google.com/mail/?authuser=sam@example.com#search/from%3Aada%40example.com"
+            "%20subject%3A%28"))
         self.assertIn("the%20talk%20%26%20the%20date", reply["url"])
         outlook = handed.actions(item, dict(GMAIL, mail="outlook"), self.app.db)
         self.assertNotIn("reply", outlook, "opened as a new message, as before")
@@ -260,18 +266,124 @@ class AReplyInItsThreadTests(unittest.TestCase):
         self.assertEqual(kept[self.THREAD]["people"], ["Ada Lovelace", "ada@example.com"])
         self.assertNotIn("See you", json.dumps(kept, ensure_ascii=False))
 
-    def test_unchecked_when_nothing_was_read_from_it(self) -> None:
+    def test_never_read_gmail_searches_and_elsewhere_the_only_one_is_opened(self) -> None:
         self._visited("Re: The talk & the date - sam@example.com - Gmail", self.THREAD)
-        reply = handed.actions(handed.checked(EMAIL, lambda p: None), GMAIL, self.app.db)["reply"]
+        item = handed.checked(EMAIL, lambda p: None)
+        self.assertEqual(handed.actions(item, GMAIL, self.app.db)["reply"]["found"], "search")
+        handed._threads.clear()
+        reply = handed.actions(item, dict(GMAIL, mail="default"), self.app.db)["reply"]
         self.assertEqual((reply["found"], reply["check"], reply["matched"]),
                          ("thread", "unchecked", ""))
+
+    def _one_subject_many_threads(self):
+        """One subject sent to several people, as the user's was (2026-11-04):
+        two threads read without the one it is for, others never read."""
+        base = "https://mail.google.com/mail/u/1/"
+        title = "Meeting - sam@example.com - Gmail"
+        self._visited(title, base + "#inbox/QgrcJHsBmKdLpWxTnRvZyCfGhJkLmNpQ", at="2026-10-29T09:00:00+00:00")
+        self._read(title + " — Mozilla Firefox", "Bo Quill <bo@example.com>",
+                   "2026-10-29T09:01:00+00:00")
+        history = [(base + "#inbox/AbcdEfghIjklMnopQrstUvwxYz012345", "Gmail", title, "2026-10-30T09:00:00+00:00"),
+                   (base + "#sent/QgrcJHsBmKdLpWxTnRvZyCfGhJkLmNpQ", "Gmail", title, "2026-10-31T09:00:00+00:00"),
+                   (base + "#search/words/QgrcJHsBmKdLpWxTnRvZyCfGhJkLmNpQ", "Gmail", title, "2026-10-31T10:00:00+00:00")]
+        item = handed.checked(dict(EMAIL, subject="Re: Meeting", cc=[], to=["cy@example.com"],
+                                   reply_to={"from": "Cy <cy@example.com>"}), lambda p: None)
+        return item, history
+
+    def test_one_subject_many_threads_gmail_searches_for_who_it_answers(self) -> None:
+        item, history = self._one_subject_many_threads()
+        reply = handed.actions(item, GMAIL, self.app.db, lambda: history)["reply"]
+        self.assertEqual(reply["found"], "search", "never the newest, on a guess")
+        self.assertIn("from%3Acy%40example.com", reply["url"])
+        self.assertEqual(reply["same_subject"], 2, "threads, not their pages")
+
+    def test_one_subject_many_threads_elsewhere_a_new_message(self) -> None:
+        item, history = self._one_subject_many_threads()
+        said = handed.actions(item, dict(GMAIL, mail="default"), self.app.db, lambda: history)
+        self.assertNotIn("reply", said)
+
+    def test_a_thread_read_without_them_does_not_come_back_by_another_address(self) -> None:
+        item, history = self._one_subject_many_threads()
+        found = handed.thread_of(self.app.db, "Meeting", "", ["cy@example.com"],
+                                 lambda: history[1:])
+        self.assertEqual(found["check"], "differs", "#sent and #search of the same thread")
+
+    def _a_name_on_the_page(self):
+        title = "Meeting - sam@example.com - Gmail"
+        self._visited(title, self.THREAD, at="2026-10-29T09:00:00+00:00")
+        self._read(title + " — Mozilla Firefox", "Ben F. Hale <ben@other.example.com>",
+                   "2026-10-29T09:01:00+00:00")
+        return handed.checked(dict(EMAIL, subject="Re: Meeting", cc=[], to=["bj@example.com"],
+                                   reply_to={"from": "Benjamin Hale <bj@example.com>"}),
+                              lambda p: None)
+
+    def test_whether_a_name_is_theirs_is_the_models(self) -> None:
+        item = self._a_name_on_the_page()
+        asked = []
+
+        def judge(who, threads):
+            asked.append((who, threads))
+            return {thread: "yes" for thread in threads}
+        reply = handed.actions(item, GMAIL, self.app.db, None, judge)["reply"]
+        self.assertEqual((reply["found"], reply["url"], reply["check"]),
+                         ("thread", self.THREAD, "matched"))
+        self.assertEqual(asked[0][0], ["bj@example.com", "Benjamin Hale"])
+        self.assertTrue(all("sam@example.com" not in people for people in asked[0][1].values()),
+                        "their own address is no one to ask about")
+
+    def test_asked_once_and_drawing_the_page_asks_nothing(self) -> None:
+        item = self._a_name_on_the_page()
+        self.assertEqual(handed.actions(item, GMAIL, self.app.db)["reply"]["found"], "search",
+                         "not asked yet: the page says what is known")
+        judge = mock.Mock(side_effect=lambda who, threads: {one: "yes" for one in threads})
+        handed.actions(item, GMAIL, self.app.db, None, judge)
+        handed._threads.clear()
+        handed.actions(item, GMAIL, self.app.db, None, judge)
+        self.assertEqual(judge.call_count, 1)
+        handed._threads.clear()
+        self.assertEqual(handed.actions(item, GMAIL, self.app.db)["reply"]["found"], "thread")
+
+    def test_only_its_yes_opens_the_thread(self) -> None:
+        item = self._a_name_on_the_page()
+        for answer in ("no", "unsure"):
+            handed._threads.clear()
+            self.app.db.execute("DELETE FROM kv WHERE key LIKE 'reply.same_person.%'")
+            reply = handed.actions(item, GMAIL, self.app.db, None,
+                                   lambda who, threads: {one: answer for one in threads})["reply"]
+            self.assertEqual(reply["found"], "search", answer)
+
+    def test_a_model_that_does_not_answer_has_said_nothing(self) -> None:
+        item = self._a_name_on_the_page()
+        reply = handed.actions(item, GMAIL, self.app.db, None,
+                               mock.Mock(side_effect=OSError("no model")))["reply"]
+        self.assertEqual(reply["found"], "search")
+        self.assertIsNone(self.app.db.query_one(
+            "SELECT 1 FROM kv WHERE key LIKE 'reply.same_person.%'"), "asked again next time")
+
+    def test_a_name_alone_is_never_code_s_to_match(self) -> None:
+        self.assertEqual(handed._on_it(["Hale", "Ann Smith"], ["Benjamin Hale", "Ann"]), "")
+        self.assertEqual(handed._on_it(["BJ@Example.com"], ["bj@example.com"]), "bj@example.com")
+
+    def test_the_judge_reads_what_the_model_answers(self) -> None:
+        models = mock.Mock()
+        models.invoke.return_value = mock.Mock(text='{"T1": "YES", "T2": "no"}')
+        said = handed.person_judge(models)(["bj@example.com"], {"a": ["Ben"], "b": ["Bo"], "c": ["Cy"]})
+        self.assertEqual(said, {"a": "yes", "b": "no", "c": "unsure"})
+        self.assertEqual(models.invoke.call_args.kwargs["role"], "fast_reply")
+
+    def test_seen_with_them_on_one_page_is_theirs_on_all(self) -> None:
+        item, history = self._one_subject_many_threads()
+        found = handed.thread_of(self.app.db, "Meeting", "", ["bo@example.com"], lambda: history)
+        self.assertEqual((found["check"], found["url"].rsplit("/", 1)[-1]),
+                         ("matched", "QgrcJHsBmKdLpWxTnRvZyCfGhJkLmNpQ"))
 
     def test_kept_half_a_year_after_the_records_go(self) -> None:
         self._visited("Re: The talk & the date - sam@example.com - Gmail", self.THREAD)
         mail_pages.keep(self.app.db)
         self.app.db.execute("DELETE FROM raw_events")         # the records gone, after 8 days
         handed._threads.clear()
-        reply = handed.actions(handed.checked(EMAIL, lambda p: None), GMAIL, self.app.db)["reply"]
+        reply = handed.actions(handed.checked(EMAIL, lambda p: None), dict(GMAIL, mail="default"),
+                               self.app.db)["reply"]
         self.assertEqual(reply["url"], self.THREAD)
         self.app.db.execute("UPDATE work_mail_pages SET last_seen = '2025-01-01T00:00:00+00:00'")
         self.assertEqual(mail_pages.keep(self.app.db)["let_go"], 1, "not opened in 180 days")
@@ -308,8 +420,8 @@ class AReplyInItsThreadTests(unittest.TestCase):
             pages = mail_pages.from_history(platform, own)
             self.assertEqual([one[0] for one in pages], [self.THREAD], "message pages alone")
             self.assertEqual(list(own.glob("*")), [], "the copy removed")
-            reply = handed.actions(handed.checked(EMAIL, lambda p: None), GMAIL, self.app.db,
-                                   lambda: pages)["reply"]
+            reply = handed.actions(handed.checked(EMAIL, lambda p: None),
+                                   dict(GMAIL, mail="default"), self.app.db, lambda: pages)["reply"]
             self.assertEqual((reply["url"], reply["check"]), (self.THREAD, "unchecked"))
 
     def test_nothing_but_their_own_browser_opens_it(self) -> None:

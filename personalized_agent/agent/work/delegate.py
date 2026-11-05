@@ -201,6 +201,15 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+#: The pictures handed over that the plan is shown, beside the one of the screen.
+MOST_PLAN_PICTURES = 3
+
+#: What goes with what was in front of the user when they delegated directly.
+FRONT_NOTE = ("What was on the user's screen when they delegated this, read by this application, "
+              "not said by them. The work may have nothing to do with it: use it only where "
+              "their words point to it. Its \"picture\" is a screenshot, which read_file shows.")
+
+
 class Drafts:
     """The `work_drafts` rows: each piece of work handed over, from its
     context to its run."""
@@ -860,6 +869,18 @@ class Drafts:
         folders, and what is FOUND of the user's own records by its words
         (context_search.py) - relevant, from any time, the recent first."""
         context: Dict[str, Any] = {}
+        # WHAT WAS IN FRONT WHEN IT WAS DELEGATED DIRECTLY (the user, 2026-11-04), said
+        # to be no more than that: the work may have nothing to do with it.
+        front = (draft.get("options") or {}).get("front") or {}
+        if front:
+            context["front_screen"] = dict(front, note=FRONT_NOTE)
+        # WHAT IT IS PART OF (heartbeat/states/item_links.py), a to-do's by the to-do.
+        links = getattr(self.app, "item_links", None)
+        todo = str((draft.get("options") or {}).get("todo") or "")
+        note = (links.note("todo", todo) if todo else links.note("assigned", draft.get("id") or "")) \
+            if links is not None else ""
+        if note:
+            context["part_of"] = note
         window = draft.get("window") or {}
         if window:
             context["window"] = {k: window.get(k) for k in ("title", "app", "url")
@@ -972,6 +993,16 @@ class Drafts:
         except Exception:
             return None
 
+    @staticmethod
+    def _pictures(draft: Dict[str, Any]) -> List[Dict[str, str]]:
+        """The pictures handed over, and the one of the screen, as a model sees them."""
+        from ...runtime.documents import PICTURES
+        from ..front_picture import block
+        paths = [one for one in draft.get("files") or []
+                 if Path(one).suffix.lower() in PICTURES][:MOST_PLAN_PICTURES]
+        front = str(((draft.get("options") or {}).get("front") or {}).get("picture") or "")
+        return [said for said in map(block, paths + ([front] if front else [])) if said]
+
     def plan(self, draft: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """The HIGH-LEVEL plan, in the user's language - one call, from what
         was collected and found: quick, for the user to check. The detailed
@@ -985,9 +1016,16 @@ class Drafts:
                      if (draft.get("window") or {}).get("picked") else {}),
                   "folders they gave": draft.get("folders") or [],
                   "files they gave": draft.get("files") or [], "context": context}
+        content: Any = json.dumps(handed, ensure_ascii=False, indent=1)[:60000]
+        pictures = self._pictures(draft)
+        if pictures:
+            # SEEN, NOT ONLY READ: a model that sees none has them taken out
+            # (models/vision.py); their words are in what was collected.
+            content = [{"type": "text", "text": content}, *[
+                {"type": "image", "source": {"type": "base64", "media_type": one["media_type"],
+                                             "data": one["data"]}} for one in pictures]]
         response = self.app.models.invoke(ModelRequest(
-            messages=[{"role": "user", "content": json.dumps(handed, ensure_ascii=False,
-                                                             indent=1)[:60000]}],
+            messages=[{"role": "user", "content": content}],
             system=PLAN_PROMPT if self._thorough() else PLAN_PROMPT_QUICK,
             max_tokens=2000, task="work_draft",
             language=in_display("every field of the plan and the context summary - names of "
@@ -1541,6 +1579,11 @@ def instruction_of(draft: Dict[str, Any], plan: Dict[str, Any],
     if window.get("title") or window.get("url"):
         lines += [f"IT CAME FROM: {window.get('title') or ''} {window.get('url') or ''}".strip(),
                   ""]
+    if (draft.get("context") or {}).get("part_of"):
+        lines += [draft["context"]["part_of"], ""]
+    front = (draft.get("options") or {}).get("front") or {}
+    if front:
+        lines += [FRONT_NOTE] + [f"  {key}: {value}" for key, value in front.items()] + [""]
     # ITS TEXT, AND WHERE THE FILE IS (the user, 2026-11-02: "你要给他text, 然后
     # 告诉他文件地址，他如果要读full pdf可以自己慢慢打开"): the document open
     # where they right-clicked, read before the work began (DOCUMENT_CHARS).

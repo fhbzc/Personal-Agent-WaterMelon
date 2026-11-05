@@ -4440,7 +4440,7 @@ class StateHeartbeat:
                 due = (finished + timedelta(hours=every)).isoformat()
         except ValueError:
             due = ""
-        return {"running": bool(self._visits_in_flight.get(LIVE, 0))
+        return {"last_at": done, "running": bool(self._visits_in_flight.get(LIVE, 0))
                 or self._round_in_progress(),
                 "completed_at": done, "every_hours": every, "next_at": due}
 
@@ -5757,6 +5757,261 @@ class StateHeartbeat:
         return task_id in known
 
     # -- the next steps on what is at the top ------------------------------
+    # -- the user's own say over names and over what is shown -----------------
+    def _say_on_project(self, project_id: str) -> Task:
+        """The project the user is naming or putting away - never during a
+        run, which is holding it and would write back what it holds."""
+        from .project_round import is_scheme_row
+
+        if (self._progress or {}).get("running"):
+            raise ValueError("The agent is going through your work just now. "
+                             "Try again when it has finished.")
+        found = Kept(self.db, LIVE).by_ids([project_id])
+        if not found or not is_scheme_row(found[0]):
+            raise KeyError("no such project")
+        return found[0]
+
+    def _the_user_did(self, action: str, said: str, ident: str) -> None:
+        """Kept as a lesson, for the next run to find: the name and the putting
+        away hold by themselves, what they mean of work like it is the model's."""
+        lessons = getattr(self, "lessons", None)
+        if lessons is not None:
+            try:
+                lessons.the_user_did(action, said, ident)
+            except Exception:
+                log.warning("what the user did could not be kept as a lesson", exc_info=True)
+
+    def rename_project(self, project_id: str, name: str) -> Dict[str, Any]:
+        """The user names a project. Later runs still say what it is and where
+        it stands; what it is called stays what they called it."""
+        name = " ".join(str(name or "").split())[:120]
+        if not name:
+            raise ValueError("A name cannot be empty.")
+        row = self._say_on_project(project_id)
+        said = dict(row.described or {})
+        old = str(said.get("title") or "")
+        if old and old != name and not said.get("title_unnamed"):
+            said["names_before"] = ([one for one in said.get("names_before") or []
+                                     if one != old] + [old])[-20:]
+        said.update(title=name, named_by_user=True,
+                    in_english=dict(said.get("in_english") or {}, title=name))
+        said.pop("title_unnamed", None)
+        row.described = said
+        Kept(self.db, LIVE).save([row])
+        self._the_user_did("renamed_project", f'The user renamed the project "{old}" to "{name}". '
+                           f'It is: {said.get("line") or said.get("summary") or ""}', row.id)
+        return {"id": row.id, "title": name}
+
+    def delete_project(self, project_id: str) -> Dict[str, Any]:
+        """The user puts a project away, its tasks with it: left in the window
+        they would be grouped into a project again at the next run. Nothing is
+        erased, and new work on the same thing is new, not this one back."""
+        from .task_projects import RunTasks
+
+        row = self._say_on_project(project_id)
+        RunTasks(self.db, LIVE).put_away(project_id=row.id)
+        row.described = dict(row.described or {}, deleted_by_user=True)
+        row.archived_at = row.retired_at = task_now()
+        Kept(self.db, LIVE).save([row])
+        said = row.described
+        self._the_user_did("deleted_project", f'The user deleted the project "{said.get("title", "")}" '
+                           f'with its tasks. It was: {said.get("line") or said.get("summary") or ""}',
+                           row.id)
+        return {"id": row.id, "deleted": True}
+
+    def merge_projects(self, ids: Sequence[str], into: str = "") -> Dict[str, Any]:
+        """THE USER SAYS THESE ARE ONE (the user, 2026-11-04: "task user是可以人工指定合并的，可以一次合并
+        多个，弄好之后点击save才确认，save之后自动重新调用state heartbeat ... 防止被合并的东西又被split").
+        The one they were dropped on (`into`; else the one worked on longest) takes the tasks,
+        the steps and what was linked to the others; those end, pointing at it. It is marked, so the grouping keeps it whole, and the merge is
+        a lesson for the runs after. The round is the caller's to start (`after_merge`)."""
+        from .project_round import ProjectRound
+        from .task_projects import RunTasks
+
+        wanted = list(dict.fromkeys(([str(into)] if into else [])
+                                    + [str(one) for one in ids or [] if str(one)]))
+        if len(wanted) < 2:
+            raise ValueError("Choose two or more to merge.")
+        rows = [self._say_on_project(one) for one in wanted]
+        rows.sort(key=lambda one: (one.id != into,
+                                   -float((one.described or {}).get("minutes") or 0.0)))
+        target, others = rows[0], rows[1:]
+        tasks = RunTasks(self.db, LIVE)
+        said = dict(target.described or {})
+        names = [str((one.described or {}).get("title") or "") for one in rows]
+        before = list(said.get("names_before") or [])
+        steps = _todo.items(said)
+        known = {_todo._same(one.get("text")) for one in steps}
+        now = task_now()
+        for one in others:
+            tasks.move_project(one.id, target.id)
+            theirs = dict(one.described or {})
+            title = str(theirs.get("title") or "")
+            if title and title not in before and title != said.get("title"):
+                before.append(title)
+            for step in _todo.items(theirs):
+                if _todo._same(step.get("text")) not in known:
+                    known.add(_todo._same(step.get("text")))
+                    steps.append(step)
+            one.born_of = dict(one.born_of or {}, joined_into=target.id, merged_by_user=True)
+            one.retired_at = now
+        said.update(merged_by_user=True, names_before=before[-20:],
+                    merged_from=list(said.get("merged_from") or []) + [one.id for one in others])
+        if not said.get("named_by_user"):
+            said["name_due"] = "merged by the user"
+        rest = tasks.of_project(target.id, limit=1000)
+        ProjectRound(self, self.where(LIVE), {})._totals(target, said, rest)
+        target.archived_at = ""
+        Kept(self.db, LIVE).save([target] + others)
+        _todo.change(self.db, "state_tasks", LIVE, target.id,
+                     lambda _said: {"todo": steps, "plan_due": True})
+        links = getattr(self, "item_links", None)
+        if links is not None:
+            links.moved([one.id for one in others], target.id)
+        listed = ", ".join(f'"{one}"' for one in names if one)
+        self._the_user_did("merged_projects", f"The user merged {listed} into one piece of work: "
+                           "they are one and must stay one, and work like them belongs together.",
+                           target.id)
+        return {"id": target.id, "merged": [one.id for one in others]}
+
+    def merge_and_update(self, groups: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        """Each group merged and the work gone through again. A ROUND RUNNING IS STOPPED AND DONE AGAIN
+        (the user, 2026-11-04: "在drag的时候，project正在update，他应该停止现在的，重新做update"): what it
+        holds would be written over the merge. Then it is the page that follows."""
+        running = self._running_in(LIVE)
+        if running.acquire(blocking=False):
+            try:
+                merged = [self.merge_projects(one.get("ids") or [], str(one.get("into") or ""))
+                          for one in groups]
+            finally:
+                running.release()
+            self.after_merge()
+            return {"merged": merged}
+        self._stopped_for_merge = True
+        self.abandon(LIVE)
+
+        def later() -> None:
+            got = running.acquire(timeout=900)
+            try:
+                self.carry_on(LIVE)
+                self._stopped_for_merge = False
+                if not got:
+                    log.warning("the round would not stop: the merge was not made")
+                    return
+                for one in groups:
+                    self.merge_projects(one.get("ids") or [], str(one.get("into") or ""))
+            except Exception:
+                log.warning("what the user merged could not be merged", exc_info=True)
+            finally:
+                if got:
+                    running.release()
+            self.after_merge()
+        threading.Thread(target=later, name="state-merge-after-stop", daemon=True).start()
+        return {"stopping": True}
+
+    def after_merge(self) -> None:
+        """The work gone through again, as a round the page can follow; off its thread."""
+        from ...common.observability import started
+
+        def run() -> None:
+            with started.now(("state_heartbeat",)):
+                if self._projects_scheme():
+                    self.run_once(trigger="merged", scope=LIVE)
+                else:
+                    self.settle_merge()
+        threading.Thread(target=run, name="state-merged", daemon=True).start()
+
+    def settle_merge(self) -> Dict[str, Any]:
+        """Not a round: one stops at having little new to read, and what was merged has to be
+        gone through whatever there is. After the round writing now, if one is."""
+        from .project_round import ProjectRound
+
+        running = self._running_in(LIVE)
+        if not running.acquire(timeout=600):
+            return {"skipped": "a round is writing"}
+        try:
+            report: Dict[str, Any] = {}
+            ProjectRound(self, self.where(LIVE), report)._after_the_users_merge()
+            return report
+        finally:
+            running.release()
+
+    def tick_step(self, project_id: str, step: str, done: bool) -> Dict[str, Any]:
+        """The user ticks a step, or takes a tick back. Ticked, its reminder goes; taken back,
+        the agent does not tick it again. Either way it is a lesson."""
+        row = self._say_on_project(project_id)
+        found = next((one for one in _todo.items(row.described) if str(one.get("id")) == str(step)),
+                     None)
+        if found is None:
+            raise KeyError("no such step")
+
+        def how(said: Dict[str, Any]) -> Dict[str, Any]:
+            steps = _todo.items(said)
+            for one in steps:
+                if str(one.get("id")) == str(step):
+                    if done:
+                        one.update(done=True, done_by="user", done_at=task_now())
+                        one.pop("open_by_user", None)
+                    else:
+                        for key in ("done", "done_by", "done_at", "done_why", "done_evidence"):
+                            one.pop(key, None)
+                        one["open_by_user"] = True
+            return {"todo": steps}
+        written = _todo.change(self.db, "state_tasks", LIVE, row.id, how)
+        cancel = getattr(self, "cancel_reminder", None)
+        if done and found.get("reminder") and cancel is not None:
+            cancel(str(found["reminder"]), "the user ticked it")
+        title = str((row.described or {}).get("title") or "")
+        self._the_user_did("ticked_step" if done else "unticked_step",
+                           f'On "{title}" the user {"ticked" if done else "took the tick back from"} '
+                           f'the step "{found.get("text")}".', row.id)
+        return {"id": row.id, "steps": _todo.items(written)}
+
+    def rename_task(self, task_id: str, title: str) -> Dict[str, Any]:
+        """A task is written once, so a name the user gives it stays."""
+        from .task_projects import RunTasks
+
+        title = " ".join(str(title or "").split())[:300]
+        if not title:
+            raise ValueError("A name cannot be empty.")
+        tasks = RunTasks(self.db, LIVE)
+        task = tasks.one(task_id)
+        if task is None:
+            raise KeyError("no such task")
+        tasks.rename(task_id, title)
+        self._the_user_did("renamed_task", f'The user renamed the task "{task["title"]}" to '
+                           f'"{title}". It was: {task.get("summary", "")}', task_id)
+        return {"id": task_id, "title": title}
+
+    def delete_task(self, task_id: str) -> Dict[str, Any]:
+        """The user puts a task away: not shown, not grouped, and its states
+        still held, so the next run does not write them down as new. Its
+        project is left saying what it now holds; with nothing left it ends."""
+        from .project_round import ProjectRound
+        from .task_projects import RunTasks
+
+        tasks = RunTasks(self.db, LIVE)
+        task = tasks.one(task_id)
+        if task is None:
+            raise KeyError("no such task")
+        row = self._say_on_project(task["project_id"]) if task.get("project_id") else None
+        tasks.put_away(task_id=task_id)
+        if row is not None:
+            rest = tasks.of_project(row.id, limit=1000)
+            said = dict(row.described or {})
+            if not rest:
+                row.archived_at = row.retired_at = task_now()
+            elif said.get("last_task") == task_id:
+                said.update(last_task=rest[0]["id"],
+                            summary=rest[0].get("summary_display") or rest[0].get("summary", ""),
+                            in_english=dict(said.get("in_english") or {},
+                                            summary=rest[0].get("summary", "")))
+            ProjectRound(self, self.where(LIVE), {})._totals(row, said, rest)
+            Kept(self.db, LIVE).save([row])
+        self._the_user_did("deleted_task", f'The user deleted the task "{task["title"]}". '
+                           f'It was: {task.get("summary", "")}', task_id)
+        return {"id": task_id, "deleted": True}
+
     def change_todo(self, which: str, add: Any = None, remove: Any = None,
                     finish: Any = None, unfinish: Any = None) -> Dict[str, Any]:
         """The user adds a step to the next steps of a project or of a task
@@ -10773,6 +11028,8 @@ class StateHeartbeat:
         if self._stop.is_set():
             return ("The application is closing, so this round stopped where "
                     "it was. Nothing was written.")
+        if getattr(self, "_stopped_for_merge", False):
+            return "Stopped for what the user merged: it is done again after the merge."
         return (f"The {getattr(where, 'name', 'sandbox')} was emptied while "
                 f"this round was running, so it stopped. Nothing it had found "
                 f"is kept, because what it was about is gone.")
@@ -11932,8 +12189,18 @@ class StateHeartbeat:
                 due = self.due_now()
             except Exception:            # pragma: no cover - a read
                 due = {}
+        projects = [project_view(one, run_tasks, tasks_each) for one in rows]
+        # WHAT IS STILL OPEN UNDER EACH (item_links.py), for the live picture.
+        if scope == LIVE and getattr(self, "item_links", None) is not None \
+                and getattr(self, "active_items", None) is not None:
+            try:
+                under = self.item_links.by_project(self.active_items())
+                for one in projects:
+                    one["open_items"] = under.get(one["id"], [])
+            except Exception:            # pragma: no cover - shown without them
+                log.debug("what is open could not be read", exc_info=True)
         return {"scheme": "projects",
-                "projects": [project_view(one, run_tasks, tasks_each) for one in rows],
+                "projects": projects,
                 "tasks_written": run_tasks.count(),
                 "due": due,
                 "running": bool((self._progress or {}).get("running")),

@@ -448,7 +448,7 @@ function chatFold(quick) {
 function chatDid(did) {
   const parts = [];
   if (did?.remembered) parts.push("Remembered");
-  if (did?.quiet) parts.push("Quiet rule added");
+  if (did?.quiet) parts.push("Blocker added");
   if (did?.rules === 1) parts.push("1 rule changed");
   if (did?.rules > 1) parts.push(`${did.rules} rules changed`);
   return parts;

@@ -81,7 +81,7 @@ class APageOfPleasureTests(unittest.TestCase):
         filled = recommend.PAGE_PLAN.format(
             subjects="- READING/WATCHING: piano music", purpose=recommend.LEISURE_PAGE,
             detail="", known="", shown="", liked="", disliked="", since="", today="",
-            broad=1, most=3, english="")
+            broad=1, most=3, english="", lessons="")
         self.assertIn("THEY ENJOY THIS AS A PASTIME", filled)
 
     def test_a_page_is_leisure_only_when_all_of_it_is(self) -> None:

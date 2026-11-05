@@ -924,7 +924,8 @@ class ConnectionsRound:
                     shown=shown, since=when, today=today,
                     most=PER_TOPIC, english=self._english_field(),
                     liked=self._near(examples, page, "more"),
-                    disliked=self._near(examples, page, "less"))}], used, going,
+                    disliked=self._near(examples, page, "less"),
+                    lessons=self._lessons_for(page))}], used, going,
                     tools=[TOOLS[2], TOOLS[3]], handle=handle, room=lambda: self._room(used),
                     counted={"calls": 0}, system=TOPIC_SYSTEM,
                     language=in_display("the page's heading and its stories")
@@ -985,6 +986,18 @@ class ConnectionsRound:
             for one, vector in zip(examples, vectors):
                 one["vector"] = vector
         return examples
+
+    def _lessons_for(self, page: Dict[str, Any]) -> str:
+        """The lessons of what was recommended, like this page - retrieved, not all."""
+        retriever = getattr(self, "retriever", None)
+        if retriever is None:
+            return "None yet."
+        moment = " ".join(str(page.get(key) or "") for key in ("title", "english", "about"))
+        try:
+            return retriever.text(("recommendations",), moment) or "None yet."
+        except Exception:
+            log.info("the lessons could not be looked for", exc_info=True)
+            return "None yet."
 
     def _near(self, examples: List[Dict[str, Any]], page: Dict[str, Any], action: str,
               most: int = 5) -> str:

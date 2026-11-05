@@ -44,6 +44,12 @@ user is doing, what kind of window and content it is, and what the decision is
 about. Translate what is not English. No names of people. Answer with the
 sentences alone."""
 
+#: What a run that names or groups the user's work is told of the lessons found.
+THE_USERS_OWN = """WHAT THE USER HAS DONE THEMSELVES, in moments like this - names they gave,
+what they deleted, how they grouped things. These are their own actions, not the agent's:
+they come first.
+"""
+
 #: The moments said again, the newest kept.
 MOST_REWRITTEN = 64
 #: The types with examples and rules of this form.
@@ -222,6 +228,16 @@ class LessonRetriever:
             for one in found["examples"]:
                 lines.append(self._example_line(one))
         return "\n".join(lines)
+
+    def the_users_own(self, moment: str, task: str) -> str:
+        """The lessons like this moment, said to be the user's own doing; ""
+        when there are none, or they could not be read - a run goes on."""
+        try:
+            found = self.text(("general",), moment, rewrite_task=task)
+        except Exception:
+            log.info("the lessons could not be looked for", exc_info=True)
+            return ""
+        return THE_USERS_OWN + found if found else ""
 
     @staticmethod
     def _example_line(one: Dict[str, Any]) -> str:

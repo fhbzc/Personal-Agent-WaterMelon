@@ -1,8 +1,13 @@
 """KEYBOARD SHORTCUTS that work in every program (Settings > Shortcuts).
 
-One today: DELEGATE WORK, Ctrl+Alt+D unless the user chose another - the
-Delegate work box, empty, on the screen, for the user to write what they
-want done. Nothing is read from the program in front.
+Two today, each on the keys the user chose, else its own:
+
+* DELEGATE WORK, Ctrl+Alt+D - the Delegate work box, empty, on the screen,
+  for the user to write what they want done;
+* CHAT BUBBLE, Ctrl+Alt+C - the chat bubble opened beside the avatar, and the
+  same keys minimise it to its bar, what is half written kept.
+
+Nothing is read from the program in front.
 
 Windows registers the keys with the system (RegisterHotKey): a combination
 another program already holds is refused, and said so, rather than taken
@@ -24,6 +29,10 @@ SHORTCUTS: List[Dict[str, str]] = [
      "default": "Ctrl+Alt+D", "name": "Delegate work",
      "what": "Opens an empty Delegate work box, from any program, for you to say what "
              "you want done."},
+    {"key": "open_chat", "setting": "shortcut_open_chat",
+     "default": "Ctrl+Alt+C", "name": "Open or minimise the chat bubble",
+     "what": "Opens the chat bubble beside the avatar, from any program; pressed again, "
+             "minimises it, keeping what you have written."},
 ]
 BY_KEY = {one["key"]: one for one in SHORTCUTS}
 

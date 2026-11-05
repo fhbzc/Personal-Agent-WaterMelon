@@ -135,6 +135,11 @@ they serve the same thing, even when they look different (an email, a chat and a
 session about the same project are one task); keep apart things that only share a tool, a \
 site or a topic. Every state goes to exactly one task.
 
+WHAT THE USER HAS DONE THEMSELVES, when it is given, comes first. A name they gave is what \
+they call that work: use it for the same work. Work they deleted is work they do not want \
+kept: when a task is plainly the same thing, write its kind as "routine", which puts it in \
+no project. Work that only resembles it is written as usual.
+
 USE THE PROJECT LIST: a task continues a listed project when it serves THE SAME THING the \
 project is about - the same paper, the same product, the same application - whatever the \
 activity: writing it, submitting it, presenting it, or discussing it with someone. Sharing \
@@ -278,9 +283,32 @@ def worked_minutes(states: Sequence[Any], window: Tuple[Optional[datetime],
 
 # -- the tasks store -------------------------------------------------------------------
 
+def keep_together(groups: Sequence[Sequence[str]], project_of: Dict[str, str],
+                  pinned: Sequence[str]) -> List[List[str]]:
+    """WHAT THE USER MERGED STAYS ONE (the user, 2026-11-04: "防止被合并的东西又被split"): the tasks of
+    each project they merged all go to the group that holds most of them, whatever the
+    grouping found. New work may still join them; none of theirs may leave."""
+    out = [list(one) for one in groups]
+    for project in pinned:
+        mine = {task for task, of in project_of.items() if of == project}
+        if not mine:
+            continue
+        home = max(out, key=lambda one: len(mine & set(one)), default=None)
+        if home is None or not mine & set(home):
+            out.append(sorted(mine))
+            continue
+        for one in out:
+            if one is not home:
+                one[:] = [task for task in one if task not in mine]
+        home.extend(sorted(mine - set(home)))
+    return [one for one in out if one]
+
+
 class RunTasks:
     """The tasks each run wrote. Never rewritten but for the project they
-    belong to, which the grouping decides."""
+    belong to, which the grouping decides, and for what the user says: its
+    name, and that it is put away - kept, its states still held so they are
+    not written down again as new, and read by nothing else."""
 
     COLUMNS = ("id", "scope", "run_id", "written_at", "title", "summary",
                "title_display", "summary_display", "kind", "states", "minutes",
@@ -341,7 +369,7 @@ class RunTasks:
 
     def since(self, when: datetime) -> List[Dict[str, Any]]:
         """The tasks whose work ended in or after `when`, oldest first."""
-        return self._read("SELECT * FROM state_run_tasks WHERE scope = ? AND "
+        return self._read("SELECT * FROM state_run_tasks WHERE scope = ? AND put_away = '' AND "
                           "COALESCE(ends_at, written_at) >= ? "
                           "ORDER BY COALESCE(ends_at, written_at)",
                           (self.scope, iso(when)))
@@ -349,7 +377,7 @@ class RunTasks:
     def window(self, hours: float = WINDOW_HOURS) -> List[Dict[str, Any]]:
         """THE WINDOW, oldest first: the latest tasks until `hours` of work
         and leisure, and the routine ones among them."""
-        latest = self._read("SELECT * FROM state_run_tasks WHERE scope = ? "
+        latest = self._read("SELECT * FROM state_run_tasks WHERE scope = ? AND put_away = '' "
                             "ORDER BY COALESCE(ends_at, written_at) DESC LIMIT 5000",
                             (self.scope,))
         total, start = 0.0, ""
@@ -373,14 +401,30 @@ class RunTasks:
             log.debug("could not move the tasks of %s", project_from, exc_info=True)
 
     def of_project(self, project_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-        return self._read("SELECT * FROM state_run_tasks WHERE scope = ? AND "
+        return self._read("SELECT * FROM state_run_tasks WHERE scope = ? AND put_away = '' AND "
                           "project_id = ? ORDER BY COALESCE(ends_at, written_at) DESC "
                           "LIMIT ?", (self.scope, project_id, int(limit)))
 
     def latest(self, limit: int = 30) -> List[Dict[str, Any]]:
-        return self._read("SELECT * FROM state_run_tasks WHERE scope = ? "
+        return self._read("SELECT * FROM state_run_tasks WHERE scope = ? AND put_away = '' "
                           "ORDER BY COALESCE(ends_at, written_at) DESC LIMIT ?",
                           (self.scope, int(limit)))
+
+    def one(self, task_id: str) -> Optional[Dict[str, Any]]:
+        found = self._read("SELECT * FROM state_run_tasks WHERE scope = ? AND put_away = '' "
+                           "AND id = ?", (self.scope, task_id))
+        return found[0] if found else None
+
+    def rename(self, task_id: str, title: str) -> None:
+        """The user's name for it, in both copies: it is what they call it."""
+        self.db.execute("UPDATE state_run_tasks SET title = ?, title_display = ? "
+                        "WHERE id = ? AND scope = ?", (title, title, task_id, self.scope))
+
+    def put_away(self, task_id: str = "", project_id: str = "") -> None:
+        """One task, or every task of a project."""
+        column, value = ("id", task_id) if task_id else ("project_id", project_id)
+        self.db.execute(f"UPDATE state_run_tasks SET put_away = ? WHERE {column} = ? "
+                        "AND scope = ? AND put_away = ''", (iso(now()), value, self.scope))
 
     def count(self) -> int:
         if self.db is None:

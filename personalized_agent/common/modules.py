@@ -133,6 +133,8 @@ TASK_MODULE = {
     "work_privacy_check": "manual_work",
     # The quick way's monitor (2026-10-31): the user's own work too.
     "work_monitor": "manual_work",
+    # Whether a name read on a mail page is who a reply is for (handed.py).
+    "reply_person": "manual_work",
     "agent_instruction": "manual_chat",
     "chat_fast": "manual_chat",
     "chat_followup": "manual_chat",

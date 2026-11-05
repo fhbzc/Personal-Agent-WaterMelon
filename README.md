@@ -64,10 +64,22 @@ over time, under a name the model gives it. What it learns is stored only on
 your computer, as plain files you can open, and sent only to the model you
 choose ([Your privacy](#your-privacy)).
 
-**An Overview of your work.** Your projects as bars over time, with how
-long you worked on each, a **To do** list you keep yourself, each with a
-**Delegate work** button, and **Work assigned**: everything you delegated,
-with where it stands.
+**An Overview of your work.** Each project a fruit, growing along the days you
+worked on it, with how long you spent, a **To do** list that groups itself,
+each item with a **Delegate work** button, and **Work assigned**: everything
+you delegated, with where it stands. Open a project to see the notifications,
+to-dos and assigned work that belong to it; each says what it is part of. You
+can rename or delete a task or a project, and a name you gave stays.
+
+**What is left to do.** On each active project the model works out what must
+still be done, as far as the records show, as a list you can tick. Every step
+needs proof: a record it read and the exact words in it, shown under the step
+with why it is there. It may look as many times as it needs. Steps with a date
+get a reminder, and a step done takes its reminder with it.
+
+**Merge by dragging.** Drag a project onto another: it waits under it until you
+**Confirm**. The work is then gone through again, and grouping never pulls it
+apart.
 
 **Right-click "Delegate work" almost anywhere.** A web page, selected text, a
 link or a picture (the agent's extension, from the Chrome Web Store and
@@ -77,15 +89,17 @@ file manager - or select text in any program and click the small watermelon
 beside it. The box says exactly what you picked.
 
 <p align="center">
-  <img src="docs/images/overview.png" width="100%" alt="The Overview: work and leisure projects over the last week, ordered by time worked, one opened, and To do"><br>
-  <sub>The Overview: your projects over the last week, longest worked on first and leisure apart, one opened to read it, and your To do list.</sub>
+  <img src="docs/images/overview.png" width="100%" alt="The Overview: projects as fruit over the last week, one dragged under another waiting for Confirm, and a project opened with what is left to do"><br>
+  <sub>The Overview: your projects, one dragged onto another and waiting for <b>Confirm</b>, and one opened with what is left to do, why, and the words it came from.</sub>
 </p>
 
 **Calendar and notifications that learn from you.** It adds reminders it
 thinks you need (an invitation in an email, a deadline in a document) and
 says why each was worth interrupting you for. Every notification's buttons say
 exactly what they do: *Got it*, *Remind me in N minutes*, *Add to to-do*, or
-*Bad notification*. What you do with them, and only what *you* do, teaches it
+*Bad notification*. Its words can be selected and copied, and under each is a
+box to tell the agent for next time: the notification closes and your words
+become a lesson. What you do with them, and only what *you* do, teaches it
 which notifications to send next time.
 
 <p align="center">
@@ -93,8 +107,25 @@ which notifications to send next time.
   <sub>A reminder the agent added: why it was scheduled, and when you postponed it.</sub>
 </p>
 <p align="center">
-  <img src="docs/images/notification.png" width="380" alt="A notification with its four buttons: Got it, Remind me in 30 minutes, Add to to-do, Bad notification"><br>
-  <sub>Every button on a notification says what it does.</sub>
+  <img src="docs/images/notification.png" width="380" alt="Recommended content: a title, a picture, why it was sent, and Read detail, Good to know, Add to collection, Bad notification, with a box to tell the agent for next time"><br>
+  <sub>Recommended content: why it was sent, a picture, and every button saying what it does.</sub>
+</p>
+
+**The Monitor.** It reads your day every few seconds, by code and without a
+model: what is in front of you, how long you have worked, whether the screen is
+locked, a presentation is on, or you are in a meeting (the microphone in use and
+a meeting's web address, not just a browser being open). Two layers act on that.
+**Activators** say when to act and what to do: tell you at once, ask the model,
+or both, so code can warn you the moment it sees a scam's words and the model
+take a closer look after, neither overwriting the other. **Recommended content**
+comes this way, at a moment that suits. **Blockers** hold every reminder while
+you present or sit in a meeting; what waits is one line you can open. The agent
+writes and changes Activators itself when you tell it in Chat or mark a
+notification as bad, and one you protect it never touches.
+
+<p align="center">
+  <img src="docs/images/monitor.png" width="100%" alt="The Monitor tab: what the agent reads right now, the blockers, and the Activators with On and Protected switches"><br>
+  <sub>The Monitor: right now, the blockers, and each Activator with its switch.</sub>
 </p>
 
 **Delegate work.** Hand it a piece of work from wherever you are:
@@ -103,11 +134,19 @@ which notifications to send next time.
   on Windows 11 it is under **Show more options**, or right-click with
   **Shift** held),
 - select text in any window and click the small Watermelon button beside it,
+- press **Ctrl+Alt+D** in any program, for a box that takes folders and files,
 - the avatar's menu, or the **Delegate work** button in To do.
+
+What is on your screen goes with it as context, as a picture and as words, and
+the model is told it may have nothing to do with the work.
 
 <p align="center">
   <img src="docs/images/delegate-menu.png" width="560" alt="Right-clicking a folder in Windows Explorer: Delegate work, with the Watermelon icon"><br>
   <sub>Right-click a folder → <b>Delegate work</b>.</sub>
+</p>
+<p align="center">
+  <img src="docs/images/delegate-box.png" width="480" alt="The Delegate work box: a title, a description, Add folder, Add files, and what is on your screen given as context"><br>
+  <sub>Ctrl+Alt+D, from any program: what you want done, and what was on your screen.</sub>
 </p>
 
 A small **Delegate work** window opens, always in three steps:
@@ -156,14 +195,27 @@ any of your accounts.
 
 **Newspaper.** Each day, things worth reading for your
 current projects and interests, chosen to tell you something you do not already
-know. *More like this* and *Not interested* tune it.
+know. *More like this*, *Add to collection* and *Not interested* are lessons:
+they tune the next issue, and what the model recommends.
 
 <p align="center">
   <img src="docs/images/recommendation.png" width="100%" alt="Newspaper: a newspaper front page with a lead story, In brief, and a page for each project"><br>
   <sub>Today's issue: the front page, a page for each project, how each story ties to your work and what in it is new to you.</sub>
 </p>
 
-**Chat.** Ask it about your work, or ask it to do something. Files it makes
+**Collections.** What you keep from the newspaper and from recommended content,
+in a tab of its own. It groups itself as it grows, you can add and move groups,
+and you can search by word and by the date you added something.
+
+<p align="center">
+  <img src="docs/images/collections.png" width="100%" alt="Collections: kept stories in groups, with a search by word and by date added, and Remove and Move on each"><br>
+  <sub>What you kept, in groups, with search by word and by date.</sub>
+</p>
+
+**Chat.** Ask it about your work, or ask it to do something. It sees what is
+on your screen, as a picture and as words. Close the chat and the reply still
+comes, as a notification; a draft you did not send is there when you come back.
+Click the avatar, or press **Ctrl+Alt+C** in any program. Files it makes
 in a conversation are kept in `workspace/Chat/<conversation title>/`. The ×
 beside a conversation in the list deletes it, after asking once; the files it
 made stay.
@@ -175,14 +227,34 @@ made stay.
 
 **The Watermelon.** A small avatar on your desktop. It shows notifications in
 a speech bubble, looks at your pointer, and turns to face the middle of the
-screen. You can rename it, move it, or hide it.
+screen. Left at the side of the screen it tiptoes in and hides, its leaves
+holding on to the edge; the pointer on them brings its head out, and a click
+brings it back. You can rename it, move it, or hide it.
+
+One click opens the chat. Tucked into a side, a green vine grows out of it with
+a chat button at its end. **To do** and **Collections** are in its right-click
+menu. Each opens a small panel with no web page: search at the top, groups that
+fold, *Add* and *Add group*, *Open*, *Remove*, *Move* and *Delegate work* on each
+item, edges to pull to the size you like, and right-click to copy. What you add
+and where you move things are lessons too.
+
+Every panel, here and in the app's pages, has its own size of words: pointer on
+it, Ctrl with + and - or the wheel. It is remembered, with nothing to set.
 
 <p align="center">
   <img src="docs/images/watermelon-moods.png" width="100%" alt="The Watermelon's moods: idle, hover, talking, thinking, notification">
 </p>
 <p align="center">
-  <img src="docs/images/speech-bubble.png" width="700" alt="The Watermelon on the desktop with a notification in its speech bubble"><br>
+  <img src="docs/images/speech-bubble.png" width="560" alt="The Watermelon on the desktop with a notification beside it: why it was sent, its buttons, and a box to tell the agent for next time"><br>
   <sub>Its moods, and a notification in its speech bubble, waiting until you answer.</sub>
+</p>
+<p align="center">
+  <img src="docs/images/avatar-panel.png" width="480" alt="The To do panel beside the Watermelon: search, groups, and Delegate work, Remove and Move on each item"><br>
+  <sub>To do, from the avatar's right-click menu, with what each item is part of.</sub>
+</p>
+<p align="center">
+  <img src="docs/images/vine.png" width="240" alt="The Watermelon tucked into the side of the screen, its leaves out, and a green vine with a chat button"><br>
+  <sub>Tucked into a side: the vine and its chat button.</sub>
 </p>
 
 **In your language.** English, 中文, Español, 日本語, 한국어, Русский, Français,
@@ -270,10 +342,11 @@ loses without it and what it costs your computer:
 Beyond the switches:
 
 - **Windows it never reads**: password managers, private and incognito
-  browsing, authenticators, banking and payment pages, by default, and any
-  you add.
-- **Folders it never watches**, and the agent's own folders are never
-  watched at all, so its work is never mistaken for yours.
+  browsing, authenticators, banking and payment pages, by default. Run from
+  source, you can add your own in Settings → Others.
+- **Folders it never watches**: caches, package and build folders by default,
+  and, run from source, any you add in Settings → Others. The agent's own
+  folders are never watched at all, so its work is never mistaken for yours.
 - **The smart filter for passwords, one-time codes and keys** takes them out
   of everything the listener records (screen text, window titles,
   addresses, assistant conversations, the words read off a picture) **before
@@ -284,7 +357,7 @@ Beyond the switches:
   sign-in happened, not what was typed. A screenshot showing one is not kept
   at all. On by default (*Hide passwords and codes*).
 - **Never its own folder.** The data folder is never listened to, whatever
-  the list of excluded folders says; Settings shows it there, locked.
+  the list of excluded folders says.
 
 <p align="center">
   <img src="docs/images/settings-privacy.png" width="620" alt="Settings → Privacy: each source its own switch, with what you lose and what it costs"><br>
@@ -293,7 +366,7 @@ Beyond the switches:
 
 <p align="center">
   <img src="docs/images/settings-folders.png" width="620" alt="Settings → Others → Directory exclusions: the agent's data folder first, with a lock, and the folders you added"><br>
-  <sub>Settings → Others: the folders it never watches. Its own data folder is always first, locked.</sub>
+  <sub>Settings → Others, run from source: the folders it never watches. Its own data folder is always first, locked.</sub>
 </p>
 
 ### You choose what it does
@@ -367,7 +440,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
-| [v0.2.25](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.25) | 2026-11-04 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.25) |
+| [v0.2.26](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.26) | 2026-11-04 | pre-release, being built | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.26) |
 | [v0.2.20](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) | 2026-11-03 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) |
 | [v0.2.19](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.19) | 2026-11-02 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.19) |
 | [v0.2.16](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) | 2026-10-30 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.16/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.16/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.16/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) |
@@ -630,19 +703,33 @@ has it.
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
 
-### [v0.2.25](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.25) (2026-11-04, being built)
+### [v0.2.26](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.26) (2026-11-04, being built)
 
-The release v0.2.21 to v0.2.24 were to be: their tests failed or stuck on the build machine (v0.2.21's Linux build too), and their tags stay.
+The release v0.2.21 to v0.2.25 were to be: their tests failed or stuck on the build machine (v0.2.21's Linux build too), and their tags stay.
 
 - **Chat answers at two speeds.** A small model (or, where the channel has none, the main one thinking as little as it can) replies at once, in blue; the full agent then does the work and folds what it adds under that reply, in red, with what it changed on the fold's line. Only the full agent acts, so nothing is done twice. On Claude the answer is also shown as it is written. Settings > Models turns the quick reply off or names its model.
 - **Files and pictures in Chat.** Drag them onto the chat (the whole of it shows where to let go), use +, or paste: a screenshot from WeChat and other programs pastes as it is, read from the clipboard by the agent itself. Pictures are previewed large before they are sent, and the model now truly sees them. `@` brings up the files of the conversation to refer to one.
 - **Slides and documents seen, not only read.** A deck's pages, and the pages of a PDF or a Word file with pictures or charts, are drawn and shown to the model, by Office where it is there (macros forced off) or LibreOffice; failing both, a deck's layout is told in words. Files are got ready in the background from when they are added, and a file taken off stops it.
-- **The Monitor.** Real-time signals and Activators the model writes and code runs, in a Monitor tab: recommendations at the moments that suit, a break, the evening report, risky messages. You can protect an Activator so the agent never changes it. Replaces waiting for the heartbeat.
+- **The Monitor, in two layers.** Activators say when to act and what to do: tell you at once, ask the model, or both, so code can warn you the moment it sees a scam's words and the model look closer after, neither overwriting the other. Blockers hold every reminder while you present, sit in a meeting, or the screen is locked; what waits is one line you can open. It reads the program in front, the microphone and a meeting's web address, not only that a browser is open. You can protect an Activator so the agent never changes it.
+- **To do and Collections beside the avatar.** In its right-click menu, each a small panel with no web page: search at the top, groups that fold, Add and Add group, Open, Remove, Move and Delegate work on each item, Ctrl with + and - or the wheel to zoom, each its own size of words, edges to size it, and right-click to copy. What you add and move are lessons too.
+- **A vine out of the side.** Tucked into a side, a green vine grows out of the avatar with a chat button at its end. It also stays when you rest on a preview in the taskbar.
+- **What is left to do, on each piece of work.** After tasks are summed up, the model goes through each active project, work and leisure: what must still be done, as far as the records show, as a list you can tick on its card. It may look as many times as it needs; a step is added, ticked or removed only with a record it read and the exact words in it, shown under the step with why it is there. Steps with a date get a reminder, and a step done takes its reminder with it. What you ticked, took back or wrote stays yours.
+- **Merge by dragging.** Drag a project onto another: it waits under it, a step in, until you Confirm. The one you dropped it on stays and takes the tasks, steps and what was linked; the work is then gone through again, stopping an update if one is running. The merge is kept as a lesson, and grouping cannot pull it apart.
+- **Every panel its own size of words.** Pointer on it, Ctrl with + and - or the wheel: each card of the page, Projects, Work assigned, To do, an opened event, the panels, the chat, a notification and the Delegate work box, kept without a setting. The two text sizes are gone from Settings.
+- **Recommended content.** At a moment that suits, the model can send you something to read: its own colour, a picture, why it was sent, and Read detail, Good to know, Add to collection or Bad notification.
 - **Changes are earned.** The more Activators the agent would change, the more it must look up first; what it cannot show it does not do, and evidence builds up. What you order yourself goes through. "Not during meetings" is now one rule of quiet, not an edit of every Activator. What a turn changed can be undone with one press.
 - **Two reminders.** Time at the screen, whatever is on it, and a sooner one for your own work: not time resting, and not time your agent works while your hands are off the machine.
 - **Lessons rebuilt.** Every answer to a notification or question is learned from, kept as examples with their exact content, with possible rules above them; found by one retrieval across every kind; and lessons can be added from Chat.
 - **The avatar.** Left at the side of the screen it looks round, tiptoes in and hides, its leaves holding on to the edge; the pointer on them brings its head out, and a click or a drag brings it back. Caught or carried, it looks caught, and leans back against the pull. A click is now let go where it was pressed.
 - **Lists and chat.** To do and Work assigned fold by group, with Others, Add group and empty groups kept; New chat and New topic; the chat bubble minimises to a bar, opens files with +, and takes a file dragged onto it on Windows; a newspaper issue can be cancelled while it is made.
+- **Collections, a tab of its own.** Keep stories from the newspaper and recommended content. Groups of your own or made for you, and search by word and by the date added.
+- **What you choose teaches the next choice.** More like this, Add to collection and Not interested are lessons, for the newspaper and for what the model recommends, and each reads the other's.
+- **Notifications.** Their words can be selected and copied, each says why it was sent, and under each is a box to tell the agent for next time: the notification closes and your words become a lesson.
+- **Everything open, tied to its work.** When tasks are summed up, notifications, to-dos and assigned work are linked to the tasks and projects they belong to. Open a project to see them; each says what it is part of, and the model reads that too.
+- **Chat and Delegate work see your screen.** What is in front of you is given as context, as a picture and as words, and the model is told it may have nothing to do with what you ask. Delegate work is a new box that takes files too.
+- **Chat always finishes.** Close the bubble and the reply still comes, as a notification. A draft you did not send is there when you come back. Ctrl+Alt+C opens and folds the chat from any program.
+- **Your projects as fruit.** Each project a fruit on the Overview, growing along its days, as many colours as there can be. You can rename or delete a task or a project, and a name you gave stays.
+- **Smoother avatar.** Jumping out of a side runs at full speed.
 - **Deleting a chat** takes its files, what was read of them and the records of its turns with it.
 - Also: a WeChat contact's main name comes from your remark; which project and task you are on is told in real time from titles and what is on the screen.
 

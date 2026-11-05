@@ -23,10 +23,10 @@ from .database import Database
 log = logging.getLogger(__name__)
 
 
-#: Windows that are in front while nobody is using the computer: Windows'
-#: lock screen, the sign-in screen, and a screensaver. Time in them is time
-#: away.
-_AWAY = ("lockapp", "logonui", ".scr")
+#: Windows that are in front while nobody is using the computer: the lock
+#: screen, the sign-in screen, and a screensaver, on Windows and on a Mac. Time
+#: in them is time away.
+_AWAY = ("lockapp", "logonui", ".scr", "loginwindow", "screensaverengine")
 
 
 def _away(application: str) -> bool:

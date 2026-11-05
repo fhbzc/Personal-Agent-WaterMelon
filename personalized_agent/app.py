@@ -260,6 +260,8 @@ class AgentApplication:
         from .agent.feedback.todo_list import TodoList
         #: What the user took off a notification to do later (Overview, To do).
         self.todos = TodoList(self.db)
+        from .heartbeat.states.item_links import ItemLinks
+        self.item_links = ItemLinks(self.db)
         self.feedback = FeedbackService(
             questions=self.questions, library=self.library, scheduler=self.scheduler,
             recorder=self.recorder, bus=self.bus, todos=self.todos,
@@ -370,6 +372,18 @@ class AgentApplication:
         from .heartbeat.lessons.retrieve import LessonRetriever
         self.lesson_retriever = LessonRetriever(self.lessons, embedder, self.models)
         self.calendar_nature.retriever = self.lesson_retriever
+        self.state_heartbeat.retriever = self.lesson_retriever
+        self.state_heartbeat.item_links = self.item_links
+        self.state_heartbeat.active_items = self._active_items
+        # What the plan of a piece of work may read and do (heartbeat/states/task_plan.py).
+        self.state_heartbeat.open_records = lambda ids: self.heartbeat._open_by_ids(ids)
+        self.state_heartbeat.schedule_reminder = lambda args: self.agent.tools.call(
+            "schedule_task", args)
+        self.state_heartbeat.cancel_reminder = lambda ident, why: self.scheduler.cancel(
+            ident, reason=why, by="the agent")
+        self.state_heartbeat.close_notification = self.notifications.mark_read
+        self.state_heartbeat.recent_stories = self._recent_stories
+        self.heartbeat.item_links = self.item_links
         # The lessons made again, once, as examples and rules in English.
         self.lessons.rebuild_once()
         self.monitor_signals = MonitorSignals(
@@ -381,7 +395,10 @@ class AgentApplication:
                                        tasks=self._monitor_tasks)
         self.monitor = Monitor(self.db, self.config, self.monitor_signals,
                                notifications=self.notifications, questions=self.questions,
-                               decider=self.monitor_decider, heartbeat=self.heartbeat)
+                               decider=self.monitor_decider, heartbeat=self.heartbeat,
+                               pictures=self.paths.data_dir / "notification_pictures")
+        self.monitor_decider.item_links = self.item_links
+        self.monitor.keeper = self._keep_recommended
         self.triggers.rules = self.monitor.text_rules
         self.heartbeat.monitor_step = lambda: self.monitor_decider.step(self.monitor)
         self.bus.subscribe("feedback.answered", self.monitor.on_answered)
@@ -412,6 +429,7 @@ class AgentApplication:
         # at the times of day the user chose - its own clock.
         self.connections_round.reading = self.reading
         self.connections_round.embedder = getattr(self.state_heartbeat, "embedder", None)
+        self.connections_round.retriever = self.lesson_retriever
         from .heartbeat.connections.schedule import IssueClock
         self.issue_clock = IssueClock(self.config, self.connections_round, self.connections)
         self.state_heartbeat.pool.counts("newspaper", lambda: (
@@ -500,7 +518,7 @@ class AgentApplication:
         # THE TO-DO LIST from the chat (agent/feedback/todo_tools.py): added
         # when the user asks; never taken off by the agent.
         from .agent.feedback.todo_tools import add_tools as _todo_tools
-        _todo_tools(self.agent.tools, self.todos)
+        _todo_tools(self.agent.tools, self.todos, self.item_links)
         # THE MONITOR FROM CHAT (heartbeat/monitor/tools.py): its signals, its
         # Activators - added, edited, deleted only when it must; never a protected one.
         from .heartbeat.monitor.tools import add_tools as _monitor_tools
@@ -510,6 +528,15 @@ class AgentApplication:
         from .agent.chat_files import ChatFiles, add_tools as _chat_file_tools
         self.chat_files = ChatFiles(self.paths.data_dir / "chat_files", prepares=True)
         self.agent.chat_files = self.chat_files
+        # A PICTURE OF THE SCREEN when the chat or Delegate work is opened, for the
+        # model alone (agent/front_picture.py).
+        from .agent.front_picture import FrontPictures
+        from .agent.front_screen import front_now
+        root = self.config.get("workspace_root", "")
+        self.front_pictures = FrontPictures(
+            self.config, getattr(self.platform, "activity", None),
+            Path(root) / "data" / "references" / "front" if root else None,
+            lambda: front_now(self.db, self.config))
         _chat_file_tools(self.agent.tools, self.chat_files)
         from .agent.two_speed import TwoSpeed
         self.two_speed = TwoSpeed(self.agent, self.conversations, self.agent.models, self.config,
@@ -530,8 +557,12 @@ class AgentApplication:
         self.list_groups = ListGroups(
             self.db, lambda: self.models,
             {"todo": lambda: [one for one in self.todos.shown() if not one.get("done_at")],
-             "assigned": lambda: self.drafts.assigned()},
+             "assigned": lambda: self.drafts.assigned(),
+             "collection": lambda: self.collection_items()},
             allowed=lambda: _modules.enabled(self.config, "tasks"))
+        self.list_groups.lessons = self.lessons
+        self.list_groups.retriever = self.lesson_retriever
+        self.list_groups.item_links = self.item_links
 
         # UPDATES from the project's published releases (platform_layer/
         # updater.py): never while a piece of work runs. `quit` is set by
@@ -895,14 +926,20 @@ class AgentApplication:
         shown = notification or {}
         title = str(shown.get("title") or (question or {}).get("question") or "")
         message = str(shown.get("message") or (question or {}).get("task_detail") or "")
-        if not (title or message) or shown.get("kind") not in (None, "proactive"):
+        if not (title or message) or (shown.get("kind") not in (None, "proactive")
+                                      and answer != "chat_reply"):
             return None
         meaning = meaning or self.ANSWERS.get(answer, answer)
         summary = f'The agent said "{title}": {message[:600]} - the user answered "{answer}": {meaning}.'
+        part_of = self.item_links.note("notification", str(shown.get("id") or ""))
+        if part_of:
+            summary += f" {part_of}"
         try:
             source = str(shown.get("id") or (question or {}).get("id") or "")
+            kind = "recommendations" if (shown.get("metadata") or {}).get("recommended") \
+                else "notifications"
             return self.lessons.record(
-                "notifications", f"answer:{source}:{answer}", summary, action=answer,
+                kind, f"answer:{source}:{answer}", summary, action=answer,
                 reason=str(said or "")[:1000], weight=None if said else self.WEAK_ANSWERS.get(answer),
                 content=json.dumps({"notification": shown or None, "question": question,
                                     "answer": answer, "means": meaning}, ensure_ascii=False,
@@ -933,6 +970,33 @@ class AgentApplication:
         self.notifications.mark_read(notification_id)
         if shown is not None and not (shown.get("metadata") or {}).get("question_id"):
             self.learn_answer(shown, "got_it")
+
+    def chat_reply_notice(self, answer: str, conversation: str = "") -> None:
+        """A REPLY NOBODY WAS THERE TO READ (the user, 2026-11-04): the chat closed before
+        the model was done. Said as a notification, opened in the chat; a blocker holds
+        it like any other."""
+        from .common.interface_words import shown
+        answer = str(answer or "").strip()
+        if answer:
+            self.notifications.notify(shown("Reply from your chat", self.config), answer[:900],
+                                      kind="info", metadata={"template": "passive",
+                                                             "chat_conversation": conversation})
+
+    def notification_chat(self, notification_id: str, said: str) -> bool:
+        """WRITTEN ON A NOTIFICATION (the user, 2026-11-04: "所有notification 底下有一个可以chat的
+        东西 ... 这个agent也会记为lesson", "我chat回复之后就关闭", "改成不回复"): dismissed, and a
+        lesson in their own words. Nothing answers it."""
+        said = str(said or "").strip()
+        shown = self.notifications.get(notification_id)
+        if shown is None or not said:
+            return False
+        self.notifications.mark_read(notification_id)
+        meta = shown.get("metadata") or {}
+        if meta.get("question_id"):
+            self.questions.expire(str(meta["question_id"]))   # this is its answer
+        self.learn_answer(shown, "chat_reply", "the user answered it in their own words",
+                          said=said)
+        return True
 
     def notification_to_todo(self, notification_id: str) -> Optional[Dict[str, Any]]:
         """"Add to to-do": no more notifications about it - dismissed, and
@@ -969,6 +1033,11 @@ class AgentApplication:
         task_id = str((shown.get("metadata") or {}).get("task_id") or "")
         task = self.scheduler.store.get(task_id) if task_id else None
         self.notifications.mark_read(notification_id)
+        if (shown.get("metadata") or {}).get("recommended"):
+            self.lessons.record("recommendations", f"bad:{notification_id}",
+                                f'The agent recommended "{shown.get("title") or ""}": '
+                                f'{str(shown.get("message") or "")[:400]} - the user called it a '
+                                "bad notification.", action="bad_notification", reason=said)
         # One of the Monitor's: kept whole with why it was made (engine.on_bad).
         try:
             self.monitor.on_bad(shown, said)
@@ -976,6 +1045,164 @@ class AgentApplication:
             log.warning("the Monitor could not keep a bad notification", exc_info=True)
         return self.calendar_nature.record("bad_notification", task, shown,
                                            said=said)
+
+    #: What each choice on a story means, for the lessons.
+    CHOICES = {"more": "wanted more like it", "less": "was not interested",
+               "knew": "already knew it", "add_to_collection": "kept it in their collection",
+               "taken_out": "took it out of their collection"}
+
+    def learn_choice(self, story: Dict[str, Any], action: str) -> Optional[str]:
+        """A choice on a story of the newspaper, an example for the lessons: found
+        by the next issue and by what the Monitor recommends."""
+        title = str(story.get("title") or "")
+        said = str(story.get("english") or story.get("detail") or "")[:400]
+        return self.lessons.record(
+            "recommendations", f"story:{story.get('id') or ''}:{action}",
+            f'The newspaper showed "{title}": {said} - the user {self.CHOICES.get(action, action)}.',
+            action=action, content=json.dumps(story, ensure_ascii=False, default=str))
+
+    def collection_items(self) -> List[Dict[str, Any]]:
+        """The collection as a list: what the Collections panel shows and groups."""
+        from .heartbeat.connections.recommend import collection
+        out = []
+        for one in collection(self.db)["items"]:
+            story = one["story"]
+            sources = [str(url) for url in story.get("sources") or [] if url]
+            out.append({"id": one["story_id"], "text": str(story.get("title") or ""),
+                        "detail": str(story.get("detail") or story.get("opening") or ""),
+                        "because": str(story.get("reason") or story.get("because") or ""),
+                        "url": str(story.get("url") or (sources[0] if sources else "")),
+                        "from": "recommended" if story.get("recommended") else "newspaper",
+                        "page": str(story.get("page_title") or ""),
+                        "issue_no": story.get("issue_no"), "at": one["collected_at"]})
+        return out
+
+    def local_post(self, path: str, body: Dict[str, Any]) -> Any:
+        """One of the application's own routes, asked as its page asks it: what a
+        panel beside the avatar does is what the Overview does, by the same code."""
+        import urllib.error
+        import urllib.request
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{int(self.config.get('api_port', 8756))}{path}",
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json", **self.api_access.headers()})
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            said = json.loads(exc.read().decode("utf-8") or "{}")
+            raise ValueError(str(said.get("error") or said or exc)) from exc
+
+    def _work_actions(self, versions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """What came of a piece of work, as the Overview offers it: the newest finished
+        version's outcome; none made yet, the newest try."""
+        from .common.interface_words import shown
+        for one in reversed(versions):
+            if one.get("state") != "finished":
+                continue
+            label = shown("Open the latest outcome", self.config)
+            if one.get("items"):
+                return [{"key": "open", "label": label, "path": "/api/work/handed/open",
+                         "body": {"run": one.get("run"), "n": one["items"][0].get("n")}}]
+            if one.get("result"):
+                return [{"key": "open", "label": label, "path": "/api/work/reveal",
+                         "body": {"run": one.get("run"), "path": one["result"], "open": True}}]
+        going = next((one for one in reversed(versions) if one.get("unit")), None)
+        return [{"key": "try", "label": shown("See the latest try in Work", self.config),
+                 "unit": going["unit"], "run": going.get("run") or ""}] if going else []
+
+    def quick_sections(self, which: str) -> List[Dict[str, Any]]:
+        """What a panel beside the avatar lists (ui/avatar_buttons.py), in the groups
+        the list has: "todo" - with the work assigned, as the Overview has it beside
+        To do - or "collection"."""
+        from .common.interface_words import shown
+        todo = which == "todo"
+        items = [dict(one) for one in self.todos.open()] if todo else self.collection_items()
+        part_of = self.item_links.of_many("todo", [one["id"] for one in items]) if todo else {}
+        came = self.drafts.of_todos() if todo else {}
+        moved = {"key": "move", "label": shown("Move", self.config), "moves": True, "list": which}
+
+        def row(one: Dict[str, Any], kind: str = which) -> Dict[str, Any]:
+            links = part_of if kind != "assigned" else self.item_links.of_many(
+                "assigned", [one["id"]])
+            names = [link["title"] for link in links.get(one["id"], [])]
+            note = shown("Part of: {0}", self.config).replace("{0}", ", ".join(names)) if names \
+                else str(one.get("because") or "")
+            said = {"id": str(one["id"]), "title": str(one.get("text") or ""),
+                    "detail": str(one.get("detail") or ""), "note": note,
+                    "url": str(one.get("url") or "")}
+            if kind == "todo":
+                versions = (came.get(one["id"]) or {}).get("versions") or []
+                said["actions"] = self._work_actions(versions) + [
+                    {"key": "delegate", "label": shown("Delegate work", self.config),
+                     "todo": one["id"], "text": "\n".join(
+                         part for part in (one.get("text"), one.get("detail")) if part)},
+                    {"key": "remove", "label": shown("Remove", self.config), "confirm": True,
+                     "changes": True, "path": "/api/todos/delete", "body": {"id": one["id"]}},
+                    moved]
+            elif kind == "assigned":
+                said["actions"] = self._work_actions((one.get("work") or {}).get("versions") or [])
+            else:
+                said["actions"] = ([{"key": "read", "label": shown("Read the source", self.config),
+                                     "url": said["url"]}] if said["url"] else []) + [
+                    {"key": "remove", "label": shown("Remove", self.config), "confirm": True,
+                     "changes": True, "path": "/api/recommend/collection",
+                     "body": {"story": one["id"], "keep": False}}, moved]
+            return said
+        by_id = {str(one["id"]): row(one) for one in items}
+        view = self.list_groups.view(which, items)
+        out: List[Dict[str, Any]] = []
+        placed = set()
+        for group in view.get("groups") or []:
+            ids = [one for one in group.get("items") or [] if one in by_id]
+            placed.update(ids)
+            name = shown("Others", self.config) if group.get("others") else group.get("name")
+            # Empty it stays, as on the Overview, and can be moved to.
+            out.append({"name": str(name or ""), "rows": [by_id[one] for one in ids],
+                        "group": str(group.get("name") or ""), "keep": not group.get("others")})
+        rest = [by_id[one] for one in by_id if one not in placed]
+        if rest:
+            out.append({"name": "", "rows": rest})
+        if todo:
+            assigned = [row(one, "assigned") for one in self.drafts.assigned()]
+            if assigned:
+                out.append({"name": shown("Work assigned", self.config), "rows": assigned})
+        return out
+
+    def collection_changed(self) -> None:
+        """Added or taken out: grouped again, as a list is on a change."""
+        try:
+            self.list_groups.notice("collection", self.collection_items())
+        except Exception:
+            log.warning("the collection could not be grouped", exc_info=True)
+
+    def _keep_recommended(self, outcome: Dict[str, Any]) -> None:
+        """"Add to collection", on what the model recommended."""
+        from .heartbeat.connections.recommend import collect_recommended
+        collect_recommended(self.db, str(outcome.get("notification_id") or ""),
+                            {"title": outcome.get("title"), "detail": outcome.get("message"),
+                             "url": outcome.get("url"), "reason": outcome.get("reason")})
+        self.collection_changed()
+
+    def _recent_stories(self) -> List[Dict[str, str]]:
+        from .heartbeat.connections.recommend import recent_stories
+        return recent_stories(self.connections)
+
+    def _active_items(self) -> List[Dict[str, Any]]:
+        """What is still open, the newest first in each kind: notifications not
+        answered, to-dos, work assigned (heartbeat/states/item_links.py)."""
+        out = [{"kind": "notification", "id": one["id"], "text": one.get("title") or "",
+                "detail": one.get("message") or ""}
+               for one in self.notifications.recent(30, unread_only=True)
+               if one.get("kind") == "proactive"]
+        out += [{"kind": "todo", "id": one["id"], "text": one.get("text") or "",
+                 "detail": one.get("detail") or ""} for one in reversed(self.todos.open())]
+        try:
+            out += [{"kind": "assigned", "id": one["id"], "text": one.get("text") or "",
+                     "detail": one.get("detail") or ""} for one in self.drafts.assigned()]
+        except Exception:        # pragma: no cover - the rest are still linked
+            log.debug("the work assigned could not be read", exc_info=True)
+        return out
 
     # -- what the Monitor's decisions are given (heartbeat/monitor/decide.py) ----------
     def _monitor_tasks(self) -> List[str]:

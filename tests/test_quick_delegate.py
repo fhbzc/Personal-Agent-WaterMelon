@@ -77,6 +77,42 @@ class QuickBoxTests(unittest.TestCase):
         self.assertEqual(self.opened, ["/?solo=delegate#delegate=draft_quick1"])
         self.assertIsNone(self.box.window, "the quick box closes once the page is opened")
 
+    def test_what_is_in_front_goes_with_it_unless_taken_off(self) -> None:
+        self.box._read_front = lambda: {"application": "chrome.exe", "title": "Tide tables"}
+        self.box.show()
+        self.root.update()
+        self.box.text.insert("1.0", "Sort them.")
+        self.box.submit()
+        self._run_posted()
+        self.assertEqual(self.app.drafts.made[0]["options"]["front"]["title"], "Tide tables")
+        self.box.show()
+        self.root.update()
+        self.box._without_front()
+        self.box.text.insert("1.0", "Sort them.")
+        self.box.submit()
+        self._run_posted()
+        self.assertIsNone(self.app.drafts.made[1]["options"])
+
+    def test_its_buttons_are_always_on_it(self) -> None:
+        self.box._read_front = lambda: {"title": "A long title in front " * 8}
+        self.box.show()
+        self.box.folders.extend(["C:/garden/seeds", "C:/garden/beds", "C:/garden/tools"])
+        self.box._draw_chosen()
+        self.root.update()
+        window, button = self.box.window, self.box.next_button
+        bottom = button.winfo_rooty() + button.winfo_height()
+        self.assertLessEqual(bottom, window.winfo_rooty() + window.winfo_height(),
+                             "Create was once pushed off the bottom of the box")
+
+    def test_pressed_twice_it_is_handed_over_once(self) -> None:
+        self.box.show()
+        self.root.update()
+        self.box.text.insert("1.0", "Sort them.")
+        self.box.submit()
+        self.box.submit()
+        self._run_posted()
+        self.assertEqual(len(self.app.drafts.made), 1)
+
     def test_nothing_written_is_not_handed_over(self) -> None:
         self.box.show()
         self.root.update()

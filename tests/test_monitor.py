@@ -191,14 +191,12 @@ class MonitorTests(unittest.TestCase):
                                   "context": context}})
         self.app.bad_notification(shown.id, "not while I am planning the beds")
         model = _Model({"send": True, "title": "A drainage guide", "message": "Gravel under beds.",
-                        "links": [{"title": "Guide", "url": "https://example.org/beds"},
-                                  {"title": "bad", "url": "javascript:alert(1)"}],
-                        "why": "they plan raised beds"})
+                        "url": "https://example.org/drainage", "why": "they plan raised beds"})
         self.app.monitor_decider.models = model
         tier = back["then"][0]
         said = self.app.monitor_decider.recommend(self.monitor, back, tier, context, "monfire_x")
         self.assertTrue(said["said"])
-        self.assertEqual(said["links"], [{"title": "Guide", "url": "https://example.org/beds"}])
+        self.assertEqual(said["url"], "https://example.org/drainage")
         asked = model.asked[0].messages[0]["content"]
         self.assertIn("not while I am planning the beds", asked, "the bad one like it")
         self.assertEqual(model.asked[0].task, "monitor_recommend")
@@ -209,17 +207,408 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(self.app.monitor_decider.recommend(self.monitor, back, tier, context, "f2"),
                          {"sent": False, "why": "nothing new"})
 
-    def test_open_opens_what_was_found(self) -> None:
+    def test_an_activator_is_a_condition_and_a_job(self) -> None:
+        job = dict(GARDEN, then=[{"do": "ask_model", "handler": "recommend"}])
+        with self.assertRaisesRegex(ValueError, "brief"):
+            self.store.add(job, "chat", "the user asked")
+        job["then"] = [{"do": "ask_model", "handler": "recommend",
+                        "brief": "Find this week's new papers on soil drainage"}]
+        ident, _warnings = self.store.add(job, "chat", "the user asked")
+        added = self.store.get(ident)
+        model = _Model({"send": False, "why": "nothing new"})
+        self.app.monitor_decider.models = model
+        context = {"activator": {"id": ident, "name": added["name"], "group": added["group"]}}
+        self.app.monitor_decider.recommend(self.monitor, added, added["then"][0], context, "f")
+        self.assertIn("THE JOB: Find this week's new papers on soil drainage",
+                      model.asked[0].messages[0]["content"])
+
+    def test_every_built_in_that_asks_the_model_says_what_for(self) -> None:
+        for one in self.store.list():
+            for tier in one["then"]:
+                if tier.get("handler") == "recommend":
+                    self.assertTrue(tier.get("brief"), one["name"])
+
+    # -- code says at once, a model after it (the user, 2026-11-04) ----------------------
+    FIRST = {"name": "Seed fraud", "purpose": "Words of a seed fraud.", "group": "risk",
+             "when": {"keywords": {"words": {"magic seeds": 9}, "where": ["any"]}},
+             "then": [{"do": "notify", "min_score": 8, "title": "Careful", "message": "A fraud?",
+                       "reason": "Seen: {matched}",
+                       "and_then": {"do": "ask_model", "handler": "judge", "brief": "Look closer."}}],
+             "cooldown_minutes": 30, "most_per_day": 5}
+
+    def _first_then_model(self, answer):
+        ident, _warnings = self.store.add(self.FIRST, "chat", "the user asked")
+        model = _Model(answer)
+        self.app.monitor_decider.models = model
+        said = self.monitor.fire(self.store.get(ident), 9, ["“magic seeds”"], how="text",
+                                 window={"title": "Seeds", "application": "chrome", "where": "page",
+                                         "fresh": "Buy magic seeds now"})
+        for _ in range(200):
+            if model.asked and self.monitor._asking.acquire(blocking=False):
+                self.monitor._asking.release()
+                break
+            time.sleep(0.01)
+        time.sleep(0.05)
+        return said, model, ident
+
+    def test_code_says_at_once_with_what_set_it_off_then_a_model_looks_closer(self) -> None:
+        said, model, _ident = self._first_then_model({"send": False, "why": "really a fraud"})
+        first = self.app.notifications.get(said["notification_id"])
+        self.assertEqual(first["title"], "Careful")
+        self.assertEqual(first["metadata"]["reason"], "Seen: “magic seeds”")
+        asked = model.asked[0].messages[0]["content"]
+        self.assertIn("CODE HAS ALREADY TOLD THE USER", asked)
+        self.assertIn("Buy magic seeds now", asked, "the model reads what was on the screen")
+        self.assertIn("THE JOB: Look closer.", asked)
+
+    def _second(self, answer):
+        said, model, _ident = self._first_then_model(answer)
+        for _ in range(100):
+            shown = self.app.notifications.recent(1)[0]
+            if shown["id"] != said["notification_id"]:
+                break
+            time.sleep(0.02)
+        return said, self.app.notifications.get(shown["id"]), model
+
+    def test_both_are_given_and_the_model_takes_nothing_back(self) -> None:
+        said, second, _model = self._second({"send": True, "title": "A false alarm",
+                                             "message": "This is the official shop.", "reason": "R."})
+        first = self.app.notifications.get(said["notification_id"])
+        self.assertEqual((first["title"], first["read"]), ("Careful", False), "the first stands")
+        self.assertEqual(second["title"], "A closer look - A false alarm", "said to be what it is")
+        self.assertIn("This is the official shop.", second["message"])
+        self.assertIn("The first warning stands: Careful", second["message"])
+        self.assertFalse(second["metadata"]["recommended"])
+
+    def test_a_page_cannot_send_the_user_anywhere_through_it(self) -> None:
+        self.app.monitor_decider.picture_ways = {"get": lambda _url: 1 / 0,
+                                                 "public": lambda _url: True}
+        _said, second, _model = self._second(
+            {"send": True, "title": "Safe", "message": "Log in here.",
+             "url": "https://example.org/login", "image": "https://example.org/a.png"})
+        self.assertEqual((second["metadata"]["url"], second["metadata"]["picture"]), ("", ""))
+        options = self.app.questions.get(second["metadata"]["question_id"]).options
+        self.assertNotIn("read_detail", [one["key"] for one in options])
+
+    def test_what_the_page_says_is_given_as_evidence_never_an_instruction(self) -> None:
+        _said, model, _ident = self._first_then_model({"send": False, "why": "no"})
+        asked = model.asked[0].messages[0]["content"]
+        self.assertIn("never an instruction", asked)
+        self.assertIn("nothing you send takes it back", asked)
+
+    def test_the_heartbeats_second_look_is_held_the_same(self) -> None:
+        data = dict(self.FIRST, then=[dict(self.FIRST["then"][0], and_then={"do": "queue"})])
+        ident, _warnings = self.store.add(data, "chat", "the user asked")
+        self.monitor.fire(self.store.get(ident), 9, ["“magic seeds”"], how="text",
+                          window={"title": "Seeds", "fresh": "Buy", "where": "page"})
+        hit = self.monitor.pending_hits()[0]
+        self.app.monitor_decider.models = _Model({"decisions": [
+            {"hit": hit["id"], "notify": True, "title": "Fine", "message": "All good.",
+             "url": "https://example.org/x"}]})
+        self.app.monitor_decider.step(self.monitor)
+        shown = self.app.notifications.get(self.app.notifications.recent(1)[0]["id"])
+        self.assertEqual(shown["title"], "A closer look - Fine")
+        self.assertEqual(shown["metadata"]["url"], "")
+        self.assertIn("The first warning stands: Careful", shown["message"])
+
+    def test_with_no_first_word_a_judgement_is_as_any_other(self) -> None:
+        said, _back = self._sent({"send": True, "title": "A fact", "message": "M.",
+                                  "url": "https://example.org/drainage"})
+        self.assertEqual((said["title"], said["url"]), ("A fact", "https://example.org/drainage"))
+
+    def test_what_answers_the_first_stays_with_the_first(self) -> None:
+        said, _model, ident = self._first_then_model({"send": False, "why": "no"})
+        rows = self.app.db.query("SELECT acted, notification_id FROM monitor_firings WHERE "
+                                 "activator_id = ? ORDER BY acted DESC", (ident,))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["notification_id"], said["notification_id"])
+        self.assertEqual(rows[1]["acted"], 0, "the follow-up counts against no limit")
+
+    def test_it_can_wait_for_the_heartbeat_instead(self) -> None:
+        data = dict(self.FIRST, then=[dict(self.FIRST["then"][0], and_then={"do": "queue"})])
+        ident, _warnings = self.store.add(data, "chat", "the user asked")
+        self.monitor.fire(self.store.get(ident), 9, ["“magic seeds”"], how="text",
+                          window={"title": "Seeds", "fresh": "Buy", "where": "page"})
+        hit = self.monitor.pending_hits()[0]
+        self.assertEqual(hit["context"]["said_already"]["title"], "Careful")
+
+    def test_it_is_a_way_to_write_one_not_a_rule_for_all(self) -> None:
+        plain = dict(self.FIRST, then=[{"do": "notify", "min_score": 8, "title": "Careful"}])
+        ident, _warnings = self.store.add(plain, "chat", "the user asked")
+        self.assertNotIn("and_then", self.store.get(ident)["then"][0])
+        self.assertNotIn("and_then", self._builtin("break")["then"][0])
+
+    def test_what_may_follow_is_held_by_code(self) -> None:
+        for follow in ({"do": "notify"}, {"do": "ask_model", "handler": "judge"},
+                       {"do": "ask_model", "handler": "calendar", "brief": "x"}, "queue"):
+            with self.subTest(follow), self.assertRaisesRegex(ValueError, "and_then"):
+                self.store.add(dict(self.FIRST, then=[dict(self.FIRST["then"][0], and_then=follow)]),
+                               "chat", "x")
+
+    def test_spam_speaks_first_with_its_words_kept_on_a_machine_that_had_the_old_one(self) -> None:
+        from personalized_agent.heartbeat.monitor.builtins import OLD_SPAM_THENS
+        spam = self._builtin("spam_risk")
+        self.assertIn("and_then", spam["then"][0])
+        self.assertIn("{matched}", spam["then"][0]["reason"])
+        self.app.db.execute("UPDATE monitor_activators SET data = ? WHERE id = ?",
+                            (json.dumps(dict({k: v for k, v in spam.items() if k in (
+                                "name", "purpose", "group", "when", "cooldown_minutes",
+                                "most_per_day")}, then=OLD_SPAM_THENS[0])), spam["id"]))
+        new = act.check(__import__("personalized_agent.heartbeat.monitor.builtins",
+                                   fromlist=["SPAM"]).SPAM, builtin=True)[0]["then"]
+        self.assertEqual(self.store.retier("spam_risk", OLD_SPAM_THENS[0], new), 1)
+        self.assertEqual(self.store.retier("spam_risk", OLD_SPAM_THENS[0], new), 0, "once")
+        self.assertIn("that warning stands", self.store.get(spam["id"])["then"][0]["and_then"]["brief"])
+
+    def test_quiet_while_presenting_or_in_a_meeting(self) -> None:
+        names = [one["name"] for one in self.store.quiet_rules()]
+        self.assertEqual(names, ["While presenting", "In a meeting"])
+        back = self._builtin("back")
+        for signal, rule in (("presenting", "While presenting"), ("in_meeting", "In a meeting")):
+            with self.subTest(signal):
+                self.monitor.latest = {"present": True, "events": [], signal: True}
+                self.assertEqual(self.monitor.fire(back, 0, [])["held"],
+                                 f"a rule of quiet: {rule}")
+
+    def test_a_blocker_is_told_at_each_look_for_every_reminder(self) -> None:
+        said = {"present": True, "events": [], "presenting": True}
+        self.monitor.signals.record_if_due = lambda _when: None
+        self.monitor.signals.snapshot = lambda _when: said
+        self.monitor.tick()
+        self.assertEqual(self.monitor.blocker, "While presenting")
+        said["presenting"] = False
+        self.monitor.tick()
+        self.assertEqual(self.monitor.blocker, "")
+
+    def _bubbles(self, showing=None):
+        from collections import deque
+
+        from personalized_agent.ui.desktop import DesktopAgent
+        shown = []
+        one = SimpleNamespace(
+            app=self.app, _bubble=object() if showing else None, _showing=showing,
+            _bubble_queue=deque(), BLOCKERS_EVERY_MS=1,
+            root=SimpleNamespace(after=lambda _ms, _then: None))
+        one._bubbles_opened = False
+        one.collapsed = []
+        one._hide_waiting = lambda: one.collapsed.append(0)
+        one._show_waiting = lambda: one.collapsed.append(len(one._bubble_queue))
+        one._blocker = lambda: DesktopAgent._blocker(one)
+        one._blocked = lambda: DesktopAgent._blocked(one)
+        one._watch_the_blockers = lambda: DesktopAgent._watch_the_blockers(one)
+        one._show_next_bubble = lambda: shown.append(list(one._bubble_queue))
+
+        def close():
+            one._bubble = one._showing = None
+        one._close_bubble = close
+        return one, shown
+
+    def test_a_reminder_on_the_screen_goes_back_in_line_when_a_blocker_begins(self) -> None:
+        bubbles, _shown = self._bubbles(showing={"text": "Dentist at three"})
+        self.monitor.blocker = "While presenting"
+        bubbles._watch_the_blockers()
+        self.assertIsNone(bubbles._bubble)
+        self.assertEqual(list(bubbles._bubble_queue), [{"text": "Dentist at three"}])
+
+    def test_what_waited_comes_when_the_blocker_is_over(self) -> None:
+        bubbles, shown = self._bubbles()
+        bubbles._bubble_queue.append({"text": "Dentist at three"})
+        self.monitor.blocker = "In a meeting"
+        bubbles._watch_the_blockers()
+        self.assertEqual(shown, [])
+        self.monitor.blocker = ""
+        bubbles._watch_the_blockers()
+        self.assertEqual(shown, [[{"text": "Dentist at three"}]])
+
+    def test_what_waits_is_collapsed_and_opened_by_hand(self) -> None:
+        from personalized_agent.ui.desktop import DesktopAgent
+        bubbles, shown = self._bubbles()
+        bubbles._bubble_queue.extend([{"text": "One"}, {"text": "Two"}])
+        self.monitor.blocker = "In a meeting"
+        bubbles._watch_the_blockers()
+        self.assertEqual(bubbles.collapsed[-1], 2, "says how many")
+        self.assertEqual(self.monitor.reminders_waiting, 2, "and so does the panel")
+        self.assertEqual(shown, [])
+        DesktopAgent._open_waiting(bubbles)
+        self.assertEqual(len(shown), 1, "pressed, they come")
+        self.assertFalse(bubbles._blocked(), "and the blocker lets them through")
+        bubbles._bubble_queue.clear()
+        bubbles._watch_the_blockers()
+        self.assertTrue(bubbles._blocked(), "all read: the next ones wait again")
+
+    def test_nothing_is_drawn_while_a_blocker_holds(self) -> None:
+        from personalized_agent.ui.desktop import DesktopAgent
+        bubbles, _shown = self._bubbles()
+        bubbles._bubble_queue.append({"text": "Dentist at three"})
+        self.monitor.blocker = "In a meeting"
+        DesktopAgent._show_next_bubble(bubbles)
+        self.assertEqual(len(bubbles._bubble_queue), 1, "still in line, and nothing was drawn")
+
+    def test_a_rule_of_quiet_taken_away_stays_away(self) -> None:
+        from personalized_agent.heartbeat.monitor.builtins import QUIET
+        one = self.store.quiet_rules()[0]
+        self.store.remove_quiet(one["id"], "user")
+        self.assertEqual(self.store.seed_quiet(QUIET), 0)
+        self.assertEqual(len(self.store.quiet_rules()), 1)
+
+    def test_what_a_firing_keeps_leaves_the_programs_out(self) -> None:
+        self.monitor.latest = {"present": True, "events": [], "running": "chrome, zoom"}
+        firing = self.monitor.fire(self._builtin("back"), 0, [])["firing"]
+        kept = self.app.db.query_one("SELECT context FROM monitor_firings WHERE id = ?", (firing,))
+        self.assertNotIn("running", json.loads(kept["context"])["signals"])
+
+    # -- what the model sends (the user, 2026-11-04) -----------------------------------
+    def _sent(self, answer, pictures=None):
+        back = self._builtin("back")
+        firing = f"monfire_{len(self.monitor.firings())}"
+        self.app.db.execute("INSERT INTO monitor_firings (id, activator_id, at, how) "
+                            "VALUES (?, ?, ?, 'tick')",
+                            (firing, back["id"], datetime.now(timezone.utc).isoformat()))
+        context = {"activator": {"id": back["id"], "name": back["name"], "group": "recommend"}}
+        decider = self.app.monitor_decider
+        decider.models = _Model(answer)
+        decider.picture_ways = {"get": (pictures or {}).__getitem__, "public": lambda _url: True}
+        return decider.recommend(self.monitor, back, back["then"][0], context, firing), back
+
+    def _options(self, said):
+        return [one["key"] for one in self.app.questions.get(said["question_id"]).options]
+
+    @staticmethod
+    def _png(size=200):
+        from io import BytesIO
+
+        from PIL import Image
+        out = BytesIO()
+        Image.new("RGB", (size, size), "#3f9142").save(out, "PNG")
+        return out.getvalue()
+
+    def test_content_and_a_page_are_read_or_good_to_know(self) -> None:
         opened = []
         self.monitor.opener = opened.append
-        back = self._builtin("back")
-        firing = self.monitor.fire(back, 0, [])["firing"]
-        context = {"activator": {"id": back["id"], "name": back["name"], "group": "recommend"}}
-        said = self.monitor.say("A guide", "Gravel.", context, firing,
-                                links=[{"title": "Guide", "url": "https://example.org/beds"}])
-        self.monitor._outcome(firing, dict(said, links=[{"url": "https://example.org/beds"}]))
-        self.monitor.on_answered("feedback.answered", {"id": said["question_id"], "answer": "accept"})
+        said, _back = self._sent({"send": True, "title": "A guide", "message": "Gravel under beds.",
+                                  "url": "https://example.org/beds", "why": "they plan beds"})
+        self.assertEqual(self._options(said), ["read_detail", "good_to_know", "add_to_collection"])
+        shown = self.app.notifications.get(said["notification_id"])
+        self.assertTrue(shown["metadata"]["content"])
+        self.assertEqual(shown["metadata"]["url"], "https://example.org/beds")
+        self.app.feedback.answer(said["question_id"], "read_detail")
         self.assertEqual(opened, ["https://example.org/beds"])
+
+    def test_it_says_why_to_the_user_and_keeps_its_own_note(self) -> None:
+        said, _back = self._sent({"send": True, "title": "A fact", "message": "Beds drain.",
+                                  "reason": "You turned to a video on beds.", "why": "A note."})
+        meta = self.app.notifications.get(said["notification_id"])["metadata"]
+        self.assertEqual(meta["reason"], "You turned to a video on beds.")
+        self.assertEqual(meta["monitor"]["why"], "A note.")
+
+    def test_with_no_reason_written_its_own_note_is_shown(self) -> None:
+        said, _back = self._sent({"send": True, "title": "A fact", "message": "M.", "why": "A note."})
+        self.assertEqual(said["reason"], "A note.")
+
+    def test_the_model_is_asked_for_the_line(self) -> None:
+        from personalized_agent.heartbeat.monitor import decide
+        self.assertIn('"reason"', decide.RECOMMEND_SYSTEM)
+        self.assertIn('"reason"', decide.STEP_SYSTEM)
+
+    def test_good_to_know_opens_nothing_and_holds_nothing_back(self) -> None:
+        opened = []
+        self.monitor.opener = opened.append
+        said, back = self._sent({"send": True, "title": "A fact", "message": "Beds drain.",
+                                 "url": "https://example.org/beds"})
+        self.app.feedback.answer(said["question_id"], "good_to_know")
+        self.assertEqual(opened, [])
+        self.assertEqual(self.monitor._kv(f"monitor.snoozed.{back['id']}"), "")
+
+    def test_with_no_page_there_is_nothing_to_read(self) -> None:
+        said, _back = self._sent({"send": True, "title": "A fact", "message": "Beds drain."})
+        self.assertEqual(self._options(said), ["good_to_know", "add_to_collection"])
+
+    def test_an_address_that_may_not_be_opened_is_left_out_and_the_rest_said(self) -> None:
+        said, _back = self._sent({"send": True, "title": "A fact", "message": "Beds drain.",
+                                  "url": "javascript:alert(1)"})
+        self.assertTrue(said["said"])
+        self.assertEqual(said["url"], "")
+        self.assertEqual(self._options(said), ["good_to_know", "add_to_collection"])
+
+    def test_an_address_with_the_users_own_words_in_it_is_left_out(self) -> None:
+        back = self._builtin("back")
+        context = {"activator": {"id": back["id"], "name": back["name"], "group": "recommend"},
+                   "signals": {"project": "Zanzibarcove grant"}}
+        self.app.monitor_decider.models = _Model({"send": True, "title": "A fact", "message": "M.",
+                                                  "url": "https://example.org/zanzibarcove"})
+        said = self.app.monitor_decider.recommend(self.monitor, back, back["then"][0], context, "f")
+        self.assertTrue(said["said"])
+        self.assertEqual(said["url"], "", "nothing of theirs goes out in an address")
+
+    def test_a_picture_is_kept_here_and_served(self) -> None:
+        said, _back = self._sent(
+            {"send": True, "title": "A bed", "message": "This one.",
+             "image": "https://example.org/bed.png"},
+            {"https://example.org/bed.png": (self._png(), "image/png")})
+        self.assertTrue(said["picture"].endswith(".png"))
+        self.assertTrue(self.monitor.picture_path(said["picture"]).is_file())
+        self.assertIsNone(self.monitor.picture_path("../" + said["picture"] + ".nothing"))
+        shown = self.app.notifications.get(said["notification_id"])
+        self.assertEqual(shown["metadata"]["picture"], said["picture"])
+
+    def test_the_picture_a_page_shows_of_itself(self) -> None:
+        page = b'<html><head><meta property="og:image" content="/bed.png"></head></html>'
+        said, _back = self._sent(
+            {"send": True, "title": "A bed", "message": "This one.", "image": "page",
+             "url": "https://example.org/beds"},
+            {"https://example.org/beds": (page, "text/html"),
+             "https://example.org/bed.png": (self._png(), "image/png")})
+        self.assertTrue(said["picture"])
+
+    def test_a_picture_that_cannot_be_had_costs_the_notification_nothing(self) -> None:
+        for name, found in (("not a picture", (b"<html>", "text/html")),
+                            ("a tracking pixel", (self._png(1), "image/png"))):
+            with self.subTest(name):
+                said, _back = self._sent(
+                    {"send": True, "title": "A bed", "message": "This one.",
+                     "image": "https://example.org/bed.png"},
+                    {"https://example.org/bed.png": found})
+                self.assertTrue(said["said"])
+                self.assertEqual(said["picture"], "")
+
+    def test_a_picture_never_comes_from_here(self) -> None:
+        from personalized_agent.heartbeat.monitor import pictures
+        for address in ("http://127.0.0.1/a.png", "http://localhost/a.png",
+                        "http://192.168.1.9/a.png", "http://169.254.169.254/a.png"):
+            with self.subTest(address):
+                self.assertFalse(pictures.is_public(address))
+
+    def test_what_the_step_sends_is_read_as_well(self) -> None:
+        opened = []
+        self.monitor.opener = opened.append
+        spam = self._builtin("spam_risk")
+        self.monitor.fire(spam, 5, ["“gift card”"], how="text",
+                          window={"title": "A prize", "application": "msedge",
+                                  "fresh": "Buy a gift card", "where": "email"})
+        hit = self.monitor.pending_hits()[0]
+        self.app.monitor_decider.models = _Model({"decisions": [
+            {"hit": hit["id"], "notify": True, "title": "Probably a scam", "message": "Do not buy.",
+             "url": "https://example.org/scams", "why": "gift cards"}]})
+        self.app.monitor_decider.step(self.monitor)
+        shown = self.app.notifications.recent(1)[0]
+        question = json.loads(shown["metadata"])["question_id"]
+        self.app.feedback.answer(question, "read_detail")
+        self.assertEqual(opened, ["https://example.org/scams"])
+
+    def test_every_answer_is_learned_from_in_words(self) -> None:
+        said, _back = self._sent({"send": True, "title": "A fact", "message": "Beds drain.",
+                                  "url": "https://example.org/beds"})
+        self.app.feedback.answer(said["question_id"], "good_to_know")
+        from personalized_agent.agent.feedback.templates import meaning_of
+        self.assertIn("glad", meaning_of("suggestion", "good_to_know"))
+        self.assertIn("opened the page", meaning_of("suggestion", "read_detail"))
+
+    def test_a_bad_notification_leaves_nothing_standing(self) -> None:
+        said, back = self._sent({"send": True, "title": "A fact", "message": "Beds drain.",
+                                 "url": "https://example.org/beds"})
+        self.app.bad_notification(said["notification_id"], "not interesting")
+        self.assertEqual(self.monitor.bad_ones(1)[0]["activator_id"], back["id"])
+        self.assertNotEqual(self.app.questions.get(said["question_id"]).status, "pending")
 
     def test_the_watcher_runs_the_text_ones(self) -> None:
         ident, _ = self.store.add(GARDEN, "chat", "the user asked")
@@ -272,6 +661,80 @@ class SignalsTests(unittest.TestCase):
         self.assertGreaterEqual(back["back_after_minutes"], 39)
         self.assertNotIn("back", self.signals.snapshot(now + timedelta(seconds=30))["events"],
                          "said once")
+
+    def test_a_key_pressed_at_the_lock_screen_is_nobody_back(self) -> None:
+        now = datetime.now(timezone.utc)
+        self.signals.snapshot(now)
+        self.idle[0] = 2400.0
+        self.signals.snapshot(now + timedelta(seconds=10))
+        self.idle[0] = 2.0
+        self.signals._front = lambda _local: {"application": "LockApp.exe", "title": ""}
+        locked = self.signals.snapshot(now + timedelta(seconds=20))
+        self.assertFalse(locked["present"])
+        self.assertNotIn("back", locked["events"])
+        self.signals._front = lambda _local: {"application": "chrome.exe", "title": ""}
+        self.assertIn("back", self.signals.snapshot(now + timedelta(seconds=30))["events"])
+
+    def _say(self, held="", microphone=(), programs=()):
+        self.signals.platform = SimpleNamespace(what_holds_the_screen=lambda: held,
+                                                microphone_users=lambda: list(microphone))
+        self.signals.programs = lambda: list(programs)
+        self.signals._running_due = 0.0
+        return self.signals.snapshot(datetime.now(timezone.utc))
+
+    def _in_front(self, application, title):
+        self.signals._front = lambda _local: {"application": application, "title": title}
+
+    def test_what_is_running_is_a_signal(self) -> None:
+        said = self._say(programs=["chrome", "zoom"])
+        self.assertEqual(said["running"], "chrome, zoom")
+        self.assertFalse(said["in_meeting"], "a meeting program open is no meeting")
+
+    def test_a_lock_screen_is_a_signal(self) -> None:
+        self._in_front("LockApp.exe", "")
+        self.assertTrue(self._say()["screen_locked"])
+        self._in_front("chrome.exe", "Seeds")
+        self.assertFalse(self._say()["screen_locked"])
+
+    def test_slides_shown_are_told_from_reading_about_them(self) -> None:
+        self._in_front("POWERPNT.EXE", "PowerPoint Slide Show - Beds.pptx")
+        self.assertTrue(self._say()["presenting"])
+        self._in_front("POWERPNT.EXE", "Beds.pptx - PowerPoint")
+        self.assertFalse(self._say()["presenting"], "editing them")
+        self._in_front("chrome.exe", "Beds - Google Slides")
+        self.assertFalse(self._say()["presenting"], "editing them in a page")
+        self.assertTrue(self._say(held="fullscreen")["presenting"], "over the whole screen")
+        self._in_front("chrome.exe", "A film")
+        said = self._say(held="fullscreen")
+        self.assertTrue(said["full_screen"])
+        self.assertFalse(said["presenting"], "a film is no presentation")
+        self.assertTrue(self._say(held="presentation")["presenting"], "the system says so")
+
+    def test_a_meeting_is_told_by_its_window_process_or_microphone(self) -> None:
+        self._in_front("Zoom.exe", "Zoom Meeting")
+        self.assertTrue(self._say()["in_meeting"])
+        self._in_front("Zoom.exe", "Zoom Workplace")
+        self.assertFalse(self._say()["in_meeting"])
+        self._in_front("Code.exe", "beds.py")
+        self.assertTrue(self._say(programs=["CptHost"])["in_meeting"], "behind other windows")
+        self.assertTrue(self._say(microphone=["msteams"])["in_meeting"])
+        self.assertFalse(self._say(microphone=["chrome"])["in_meeting"], "voice typing in a page")
+        self.signals._pages_lately = lambda _local: ["https://docs.example.org/notes"]
+        self.assertFalse(self._say(microphone=["chrome"])["in_meeting"])
+        self.signals._pages_lately = lambda _local: ["https://meet.google.com/abc-defg-hij"]
+        self.assertTrue(self._say(microphone=["chrome"])["in_meeting"], "a meeting's own address")
+        self.assertFalse(self._say()["in_meeting"], "the address alone: it may have been left")
+        self.assertFalse(self._say(microphone=["audacity"])["in_meeting"], "recording is no call")
+        self._in_front("chrome.exe", "Meet - abc-defg-hij")
+        self.assertTrue(self._say()["in_meeting"])
+        self._in_front("chrome.exe", "How to meet deadlines")
+        self.assertFalse(self._say()["in_meeting"])
+
+    def test_the_system_can_be_asked_here(self) -> None:
+        from personalized_agent.platform_layer import get_platform
+        here = get_platform().activity
+        self.assertIn(here.what_holds_the_screen(), ("", "fullscreen", "presentation"))
+        self.assertIsInstance(here.microphone_users(), list)
 
     def test_weeks_of_habits(self) -> None:
         local = datetime.now(timezone.utc).astimezone()
@@ -430,7 +893,7 @@ class EarnedByEvidenceTests(unittest.TestCase):
         self.assertNotIn("rule of quiet", str(self.monitor._held(spam, "tick", datetime.now(timezone.utc))))
         self.monitor.latest["activity"] = "coding"
         self.assertEqual(self.monitor._quieted(), "")
-        self.assertEqual(len(self.monitor.status()["quiet"]), 1)
+        self.assertEqual(len(self.monitor.status()["quiet"]), 3, "with the two from the start")
 
     def test_a_bad_condition_is_refused(self) -> None:
         self.assertIn("error", self.tools.call("monitor_quiet_add", {
@@ -441,12 +904,13 @@ class EarnedByEvidenceTests(unittest.TestCase):
         before = self.store.get(one["id"])["cooldown_minutes"]
         self._cases(one)
         self._edit(one, [], cooldown=before + 7)
+        from_the_start = self.store.quiet_rules()
         quiet = self.store.add_quiet("In a meeting", {"signal": "activity", "op": "==", "value": "meeting"},
                                      "chat", "asked")
         ids = [row["id"] for row in self.store.changes(limit=2)]
         self.assertEqual(self.store.undo(ids), 2)
         self.assertEqual(self.store.get(one["id"])["cooldown_minutes"], before)
-        self.assertEqual(self.store.quiet_rules(), [])
+        self.assertEqual(self.store.quiet_rules(), from_the_start)
         self.assertEqual(self.store.undo(ids), 0, "once")
         self.assertTrue(quiet)
 

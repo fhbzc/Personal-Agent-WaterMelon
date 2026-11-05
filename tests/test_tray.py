@@ -40,6 +40,9 @@ class _Desktop:
     def open_url(self, fragment="/"):
         self.ran.append(("open", fragment))
 
+    def _quick_panel(self, which):
+        self.ran.append(("panel", which))
+
     def open_chat(self):
         self.ran.append(("chat",))
 
@@ -84,10 +87,10 @@ class TheTrayIconTests(unittest.TestCase):
         import pystray
         items = [item for item in menu.items
                  if item is not pystray.Menu.SEPARATOR]
-        # The same four as the avatar's menu.
+        # The same as the avatar's menu.
         self.assertEqual([item.text for item in items],
-                         ["Chat", "Overview", "Hide avatar", "Quit"])
-        self.assertTrue(items[1].default)       # what a click on the icon does
+                         ["Chat", "To do", "Collections", "Overview", "Hide avatar", "Quit"])
+        self.assertTrue(items[3].default)       # what a click on the icon does
         for item in items:
             item(None)
         # Nothing ran on the tray's thread: all of it is queued.
@@ -96,14 +99,14 @@ class TheTrayIconTests(unittest.TestCase):
             kind, work = desktop.queue.get()
             self.assertEqual(kind, "call")
             work()
-        self.assertEqual(desktop.ran, [("chat",), ("open", "/#overview"), ("character",),
-                                       ("quit",)])
+        self.assertEqual(desktop.ran, [("chat",), ("panel", "todo"), ("panel", "collection"),
+                                       ("open", "/#overview"), ("character",), ("quit",)])
         # Hidden, it offers to show it again - as the desktop keeps it, not
         # as the window is asked from the tray's thread.
         desktop.character_hidden = True
-        self.assertEqual(items[2].text, "Show avatar")
+        self.assertEqual(items[4].text, "Show avatar")
         desktop.character_hidden = False
-        self.assertEqual(items[2].text, "Hide avatar")
+        self.assertEqual(items[4].text, "Hide avatar")
 
     def test_the_checks_read_the_settings(self) -> None:
         tray = Tray(_Desktop())

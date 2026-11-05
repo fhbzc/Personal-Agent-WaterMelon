@@ -129,14 +129,21 @@ KINDS = {
     "work": ("How you work",
              "the stages of the user's own work - what they decided, required, "
              "accepted and rejected"),
+    "recommendations": ("Recommendation lessons",
+                        "what the user did with what was recommended to them, in the newspaper "
+                        "and in the moment by the Monitor. Wanted more of it, read the detail or "
+                        "kept it in their collection - it was right; good to know - fine, no "
+                        "more than that; not interested or a bad notification - not this; "
+                        "already knew it - right subject, nothing new in it"),
     "general": ("General lessons",
                 "what the user told their agent to remember about how they want things done"),
 }
 
 #: The kinds learned with the state heartbeat's round.
-LEARNED_KINDS = ("notifications", "connections", "work", "general")
+LEARNED_KINDS = ("notifications", "recommendations", "connections", "work", "general")
 #: Each kind's module (common/modules.py): one turned off is not learned.
 KIND_MODULE = {"notifications": "calendar", "connections": "connections",
+               "recommendations": "recommend",
                "work": "experience"}
 
 FEATURES_PROMPT = """You read records of {about}, and give each one the features it is
@@ -339,6 +346,13 @@ class LessonEngine:
         if learn:
             self.learn_in_background(kind)
         return ident
+
+    def the_user_did(self, action: str, said: str, source_id: str = "") -> str:
+        """WHAT THE USER DID TO HOW THEIR WORK IS NAMED OR GROUPED (the user,
+        2026-11-04): a task or project named or deleted, a list's groups moved -
+        an example like any other, found by the retrieval of the next run that
+        names or groups anything."""
+        return self.record("general", source_id, said, action=action)
 
     def rule_from_the_user(self, kind: str, statement: str, evidence: str) -> str:
         """A rule the user stated themselves, in the chat: in force at once,

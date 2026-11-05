@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import io
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -241,6 +242,12 @@ class PreReleasesTests(unittest.TestCase):
     def test_installed_when_the_user_chooses_it(self) -> None:
         self.make("ask", [_release("v9.1.0", prerelease=True)])
         self.updater.check_now()
+        # Its look is on a thread of its own: left going, it and the `once`
+        # below both found the version asked for, on a slow machine, and both
+        # installed it. The application's looks are one at a time (`_look`).
+        for one in threading.enumerate():
+            if one.name == "updates-now":
+                one.join(10)
         self.updater.once()
         self.updater.install_now("v9.1.0")
         self.updater.once()

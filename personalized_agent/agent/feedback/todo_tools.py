@@ -18,7 +18,7 @@ def _schema(properties: Dict[str, Any], required: list) -> Dict[str, Any]:
             "additionalProperties": False}
 
 
-def add_tools(registry: Any, todos: Any) -> None:
+def add_tools(registry: Any, todos: Any, links: Any = None) -> None:
     def add(args: Dict[str, Any]) -> Any:
         text = " ".join(str(args.get("text") or "").split())
         if not text:
@@ -29,8 +29,12 @@ def add_tools(registry: Any, todos: Any) -> None:
                         "Tell them, in a few words."}
 
     def listed(_args: Dict[str, Any]) -> Any:
+        def part_of(ident: str) -> Dict[str, Any]:
+            note = links.note("todo", ident) if links is not None else ""
+            return {"part_of": note} if note else {}
         return {"todos": [{"id": one["id"], "text": one["text"], "detail": one["detail"],
-                           "added": one["created_at"], "done": bool(one["done_at"])}
+                           "added": one["created_at"], "done": bool(one["done_at"]),
+                           **part_of(one["id"])}
                           for one in todos.shown()]}
 
     registry.add(ToolSpec(

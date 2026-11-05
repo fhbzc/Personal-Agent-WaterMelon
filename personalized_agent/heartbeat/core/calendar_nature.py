@@ -534,7 +534,7 @@ class CalendarNature:
         up is about (the user, 2026-11-03: "做context retrieval"), not all."""
         if self.retriever is None:
             return self.text()
-        return self.retriever.text(("notifications", "general"), query, rules=k,
+        return self.retriever.text(("notifications", "recommendations", "general"), query, rules=k,
                                    rewrite_task=rewrite_task)
 
     def summary(self) -> str:

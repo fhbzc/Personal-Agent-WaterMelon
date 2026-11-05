@@ -30,7 +30,7 @@ WITHIN = 24
 PEEK = 34 / 128
 #: How much of it is out when it looks round: both eyes, its face being
 #: nearer the top of it than the bottom.
-HEAD_OUT = {"left": 68 / 128, "right": 68 / 128, "top": 92 / 128, "bottom": 84 / 128}
+HEAD_OUT = {"left": 88 / 128, "right": 88 / 128, "top": 100 / 128, "bottom": 84 / 128}
 #: How far from the side it comes back to: still beside it.
 BACK_AT = WITHIN - 8
 #: How long it is left alone before it sneaks in.
@@ -41,6 +41,48 @@ STEPS = ((1.2, 1.7, 0.0, 0.38), (2.0, 2.5, 0.38, 0.72), (3.1, 3.6, 0.72, 1.0))
 SLIP = (3.6, 3.95)
 #: Where it looks until then: -1 at the room, 1 at the side it is going to.
 GLANCES = ((0.4, -1.0), (0.8, 1.0), (1.2, -1.0), (1.7, 1.0), (2.5, -1.0))
+
+
+#: Clicked in the side, it jumps out (the user, 2026-11-04): how long that
+#: takes, and how high it goes, of its size, out of a left or right side.
+LEAP_SECONDS = 0.75
+LEAP_LIFT = 0.3
+#: Out of the top it has the least way to go, with its head out that far, and it does
+#: not rise: in the same time it crept (the user, 2026-11-04: "在上边框探头，跳出来的动画特别慢").
+LEAP_SECONDS_FROM = {"top": 0.45}
+#: The parts of the jump, of 1: gathering itself, then in the air; and how far
+#: back into the side it draws, and past where it lands it flies.
+LEAP_GATHER, LEAP_AIR = 0.18, 0.60
+LEAP_BACK, LEAP_PAST = 0.06, 0.10
+
+
+class Leap(NamedTuple):
+    """A moment of jumping out: how far along, 0 in the side and 1 landed; how
+    high, of the most; and its squash, below 1 flat."""
+    out: float
+    lift: float
+    squash: float
+
+
+def leap_seconds(side: str) -> float:
+    """How long the jump out of that side takes."""
+    return LEAP_SECONDS_FROM.get(side, LEAP_SECONDS)
+
+
+def leap(into: float) -> Leap:
+    """Where it is `into` the jump, 0 to 1: it draws back, flat against the
+    side, flies out past where it will land, and lands, squashed and settling."""
+    if into < LEAP_GATHER:
+        part = into / LEAP_GATHER
+        return Leap(-LEAP_BACK * math.sin(math.pi / 2 * part), 0.0, 1 - 0.2 * part)
+    if into < LEAP_GATHER + LEAP_AIR:
+        part = (into - LEAP_GATHER) / LEAP_AIR
+        stretch = (0.8 + 0.32 * math.sin(math.pi / 2 * part / 0.3) if part < 0.3
+                   else 1.12 - 0.12 * (part - 0.3) / 0.7)
+        return Leap(-LEAP_BACK + (1 + LEAP_PAST + LEAP_BACK) * (1 - (1 - part) ** 2),
+                    math.sin(math.pi * part), stretch)
+    part = (into - LEAP_GATHER - LEAP_AIR) / (1 - LEAP_GATHER - LEAP_AIR)
+    return Leap(1 + LEAP_PAST * (1 - part), 0.0, 1 - 0.2 * math.sin(math.pi * part))
 
 
 class Sides(NamedTuple):

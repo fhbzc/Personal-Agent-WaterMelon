@@ -545,10 +545,9 @@ class TheConnectionsPanelTests(unittest.TestCase):
         self.assertIn("Next issue", out["when"])
         self.assertTrue(out["leftOfMain"], "the pages down the left, the paper on the right")
         self.assertTrue(out["issuePicker"])
-        # The collection first, kept across issues; then the issue's pages.
-        self.assertTrue(out["tabs"][0].startswith("Stories you kept"), out["tabs"])
-        self.assertTrue(out["tabs"][1].startswith("A1 Front page"), out["tabs"])
-        self.assertTrue(out["tabs"][2].startswith("B1 Quantum computing"), out["tabs"])
+        # The issue's pages: the collection is a panel of its own.
+        self.assertTrue(out["tabs"][0].startswith("A1 Front page"), out["tabs"])
+        self.assertTrue(out["tabs"][1].startswith("B1 Quantum computing"), out["tabs"])
         # What the user said before, kept and shown.
         self.assertEqual(out["saidBefore"], ["Not interested"])
         self.assertEqual(out["frontLead"], "A new qubit record")

@@ -32,7 +32,7 @@ import threading
 import time
 import tkinter as tk
 from typing import Any, Callable, Dict, Optional
-from .on_top import on_release
+from .on_top import keys_on_hover, on_release
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +44,14 @@ LOOK = {"outline": "#3a4152", "bg": "#1d212b", "ink": "#e9ecf3", "muted": "#9aa3
         "dot": "#7c9cff", "field": "#262b37", "you": "#b9c6ff", "primary": "#5b7cfa",
         "primary_hover": "#7190ff", "on_primary": "#ffffff", "select": "#3a4d7a",
         "fast": "#8ab4ff", "slow": "#ff8f85"}
+
+#: How long after it is opened the box is fitted to a draft put in it.
+FIT_AFTER_MS = 30
+#: How long after the last key what is written is kept, in milliseconds.
+DRAFT_AFTER_MS = 400
+
+#: How often what is in front is looked at while it is open.
+FRONT_EVERY_MS = 3000
 
 #: How wide it is at the popups' first size, and how tall what was said may
 #: grow before it scrolls.
@@ -88,11 +96,35 @@ def beside(avatar: tuple, size: tuple, screen: tuple,
     return int(x), int(y)
 
 
-def work_area(widget: Any) -> Optional[tuple]:
+def _monitor_work_area(x: int, y: int) -> Optional[tuple]:
+    """The part windows may use of the monitor at x, y, or the nearest (Windows)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Info(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+    user32 = ctypes.WinDLL("user32")
+    user32.MonitorFromPoint.restype = wintypes.HMONITOR
+    user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+    user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.c_void_p]
+    info = Info()
+    info.cbSize = ctypes.sizeof(Info)
+    monitor = user32.MonitorFromPoint(wintypes.POINT(int(x), int(y)), 2)    # the nearest
+    if monitor and user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+        work = info.rcWork
+        if work.right > work.left and work.bottom > work.top:
+            return (work.left, work.top, work.right, work.bottom)
+    return None
+
+
+def work_area(widget: Any, at: Optional[tuple] = None) -> Optional[tuple]:
     """The part of the screen windows may use - (left, top, right, bottom),
     the taskbar's room left out - where the system says it (Windows; on a
     Mac the menu bar's and the Dock's, 2026-11-02); None elsewhere, and
-    `beside` guesses."""
+    `beside` guesses. `at`: a point on the monitor meant, or a box (x, y, width, height):
+    the avatar on a second screen (the user, 2026-11-04: "万一屏幕大小不一样"), what stands
+    beside it goes by that one, on Windows; the main one asked for, it was pulled across."""
     if sys.platform == "darwin":
         try:
             import AppKit
@@ -110,6 +142,11 @@ def work_area(widget: Any) -> Optional[tuple]:
     if not sys.platform.startswith("win"):
         return None
     try:
+        if at:
+            found = _monitor_work_area(at[0] + (at[2] // 2 if len(at) == 4 else 0),
+                                       at[1] + (at[3] // 2 if len(at) == 4 else 0))
+            if found:
+                return found
         import ctypes
         from ctypes import wintypes
         rect = wintypes.RECT()
@@ -140,7 +177,8 @@ class ChatBubble:
     language; `on_conversation` is told the conversation once it has one;
     `files` keeps what is attached (agent/chat_files.py: dragged onto it -
     where a window can take that, ui/file_drop.py - pasted, or "+" beside the
-    box; the user, 2026-11-04)."""
+    box; the user, 2026-11-04); `front` reads what is in front of the user, shown
+    over the box as what goes with a message (agent/front_screen.py)."""
 
     def __init__(self, root: Any, *, name: str, family: str, size: int,
                  send: Callable[[str, Optional[str]], Any], post: Callable[[Callable], None],
@@ -152,8 +190,22 @@ class ChatBubble:
                  on_size: Optional[Callable[[tuple], None]] = None,
                  zoom: Any = ZOOM_START,
                  on_zoom: Optional[Callable[[int], None]] = None,
-                 files: Any = None, streams: bool = False, turn: Any = None) -> None:
+                 files: Any = None, streams: bool = False, turn: Any = None,
+                 front: Optional[Callable[[], Dict[str, str]]] = None,
+                 on_late: Optional[Callable[[str, str], None]] = None,
+                 draft: str = "", on_draft: Optional[Callable[[str], None]] = None) -> None:
         self.root, self.name = root, name
+        #: WHAT WAS WRITTEN AND NOT SENT comes back with it (the user, 2026-11-04): put in
+        #: the box when it is opened, and told to `on_draft` as it changes.
+        self.draft = draft
+        self.on_draft = on_draft
+        self._draft_due: Any = None
+        self.front = front
+        #: Told (answer, conversation) of a reply that came once it was closed.
+        self.on_late = on_late
+        #: The window taken off with ✕: left out until another is in front.
+        self.front_off = ""
+        self._front_line = ""
         #: Two speeds (agent/two_speed.py): `turn(text, conversation, files,
         #: mentions, on_done)` gives the quick reply; None when it is off.
         self.turn = turn
@@ -330,6 +382,8 @@ class ChatBubble:
         row = tk.Frame(card, bg=LOOK["field"], padx=10, pady=8)
         row.pack(fill="x", pady=(10, 0))
         self.row = row
+        self.front_row = tk.Frame(card, bg=LOOK["bg"])   # while something is in front
+        self._front_line = ""
         self.files_row = tk.Frame(card, bg=LOOK["bg"])   # while there are files
         self.mention_row = tk.Frame(card, bg=LOOK["field"])   # while @ is being written
         self.clip = None
@@ -357,6 +411,10 @@ class ChatBubble:
         self.box.bind("<<Paste>>", self._pasted, add="+")
         self.box.bind("<KeyRelease>", self._watch_mentions, add="+")
         self.box.bind("<KeyRelease>", self._fit_box, add="+")
+        self.box.bind("<KeyRelease>", self._draft_changed, add="+")
+        if self.draft:
+            self.box.insert("1.0", self.draft)
+            self.draft = ""
         for key, step in (("<Down>", 1), ("<Up>", -1)):
             self.box.bind(key, lambda _e, s=step: self._move_mention(s))
         self.box.bind("<Tab>", self._pick_mention)
@@ -370,6 +428,7 @@ class ChatBubble:
         for key in ("0", "KP_0"):
             window.bind(f"<{modifier}-{key}>", lambda _e: (self.zoom_to(ZOOM_START), "break")[1])
         self._edges(rim)
+        keys_on_hover(window)
         window.update_idletasks()
         self.width = width
         if self._size:
@@ -382,6 +441,8 @@ class ChatBubble:
             window.geometry(f"{width}x{window.winfo_reqheight()}")
         self._place(near)
         self._rounded()
+        window.after(FIT_AFTER_MS, self._fit_opened)
+        self._watch_front()
         from .on_top import stay_on_top
         stay_on_top(window)                  # on a Mac, asked before it was laid out: lost
         self._focus()
@@ -476,7 +537,8 @@ class ChatBubble:
 
     def close(self) -> None:
         """Closed: the next one opened is a new conversation (the user,
-        2026-11-03)."""
+        2026-11-03) - with what was written and not sent in its box."""
+        self._keep_draft()
         self.conversation_id = None
         self.minimized = False
         self._let_go(self.attached)
@@ -509,7 +571,7 @@ class ChatBubble:
         if near and len(near) == 2:
             near = (near[0], near[1], 0, 0)
         avatar = near or (screen[0] - 140, screen[1] - 240, 100, 100)
-        x, y = beside(avatar, (width, height), screen, work_area(window))
+        x, y = beside(avatar, (width, height), screen, work_area(window, avatar))
         window.geometry(f"+{x}+{y}")
         # Its bottom where it was put: grown, it grows upwards.
         self._bottom = y + height
@@ -529,26 +591,7 @@ class ChatBubble:
 
     def _edges(self, rim: Any) -> None:
         """Its edges and corners, each a strip of its rim to size it by."""
-        corner = 3 * RIM
-        for edge, cursor in EDGES.items():
-            strip = tk.Frame(rim, bg=LOOK["bg"], cursor=cursor)
-            place: Dict[str, Any] = {"width": corner, "height": corner}
-            if edge in ("w", "e"):
-                place = {"width": RIM, "height": -2 * corner, "relheight": 1, "y": corner}
-            elif edge in ("n", "s"):
-                place = {"height": RIM, "width": -2 * corner, "relwidth": 1, "x": corner}
-            place.update(relx=1.0 if "e" in edge else 0.0,
-                         rely=1.0 if edge in ("s", "sw", "se") else 0.0,
-                         anchor=("s" if edge in ("s", "sw", "se") else "n")
-                         + ("e" if "e" in edge else "w"))
-            if edge in ("w", "e"):
-                place["rely"] = 0.0
-                place["anchor"] = "ne" if edge == "e" else "nw"
-            strip.place(**place)
-            strip.bind("<ButtonPress-1>", lambda e, edge=edge: self._edge_start(e, edge))
-            strip.bind("<B1-Motion>", self._edge_move)
-            strip.bind("<ButtonRelease-1>", self._edge_end)
-            strip.lift()
+        edge_strips(rim, self._edge_start, self._edge_move, self._edge_end)
 
     def _edge_start(self, event: Any, edge: str) -> None:
         if self.minimized:
@@ -588,18 +631,7 @@ class ChatBubble:
     def _edge_move(self, event: Any) -> None:
         if self._resizing is None:
             return
-        x0, y0, width, height, left, top, edge = self._resizing
-        dx, dy = event.x_root - x0, event.y_root - y0
-        if "e" in edge:
-            width = max(LEAST[0], width + dx)
-        if "w" in edge:
-            grown = max(LEAST[0], width - dx)
-            left, width = left + width - grown, grown
-        if "s" in edge:
-            height = max(LEAST[1], height + dy)
-        if "n" in edge:
-            grown = max(LEAST[1], height - dy)
-            top, height = top + height - grown, grown
+        width, height, left, top = sized_to(self._resizing, event.x_root, event.y_root)
         # Given at most once a frame: every pointer move given at once drew
         # the whole of it again and again - it flickered. AND AS SOON AS THE
         # LAST ONE IS DRAWN, not a fixed wait more (the user, 2026-11-03: it
@@ -670,6 +702,7 @@ class ChatBubble:
             return
         self.box.delete("1.0", "end")
         self.box.configure(height=1)
+        self._keep_draft()
         sent, self.attached = self.attached, []
         if sent:
             self._draw_files()
@@ -691,7 +724,8 @@ class ChatBubble:
                 if callable(self.turn) and self.turn(None) is True:
                     said = self.turn(text, self.conversation_id, ids, mentioned,
                                      lambda done: self.post(lambda: self._fold_done(fold, done))) or {}
-                    fold.update(turn=said.get("turn"))
+                    fold.update(turn=said.get("turn"), quick=said.get("answer"),
+                                conversation=said.get("conversation_id"))
                 elif self.streams:
                     said = self.send(text, self.conversation_id, ids, mentioned,
                                      on_text=self._told_live()) or {}
@@ -702,10 +736,36 @@ class ChatBubble:
             except Exception as exc:                     # said in the bubble
                 log.warning("the bubble's message could not be answered", exc_info=True)
                 said = {"error": str(exc)[:300]}
-            self.post(lambda: self._answered(said))
+            self.post(lambda: self._answered(said, fold))
             if fold.get("turn"):                         # under the reply, so after it
                 self.post(lambda: self._fold_begin(fold))
         threading.Thread(target=ask, name="chat-bubble", daemon=True).start()
+
+    def _draft_changed(self, _event: Any = None) -> None:
+        """Kept a moment after the typing stops: a crash loses no more than that."""
+        if self.on_draft is None or not self.is_open:
+            return
+        if self._draft_due is not None:
+            self.window.after_cancel(self._draft_due)
+        self._draft_due = self.window.after(DRAFT_AFTER_MS, self._keep_draft)
+
+    def _keep_draft(self) -> None:
+        if self._draft_due is not None and self.is_open:
+            self.window.after_cancel(self._draft_due)
+        self._draft_due = None
+        if self.on_draft is not None and self.is_open:
+            self.on_draft(self.box.get("1.0", "end-1c"))
+
+    def _fit_opened(self) -> None:
+        """The box fitted to a draft, once it is on the screen. Asked twice: the first
+        count after it is laid out still has its lines as they were at no width."""
+        if not self.is_open:
+            return
+        if self.box.winfo_width() <= 1:      # not laid out yet, however long that takes
+            self.window.after(FIT_AFTER_MS, self._fit_opened)
+            return
+        self.box.count("1.0", "end", "update", "displaylines")
+        self._fit_box()
 
     def _fit_box(self, _event: Any = None) -> None:
         """Where the user writes: one line high, growing with what is written
@@ -825,6 +885,54 @@ class ChatBubble:
     def _under_said(self) -> Any:
         """What comes right under what was said."""
         return self.files_row if self.files_row.winfo_manager() else self.row
+
+    # -- what goes with a message ------------------------------------------------------
+    def _watch_front(self) -> None:
+        """Read off Tk's thread, while it is open: the user moves on behind it."""
+        if self.front is None or not self.is_open:
+            return
+
+        def look() -> None:
+            try:
+                said = self.front() or {}
+            except Exception:
+                log.debug("what is in front could not be read", exc_info=True)
+                said = {}
+            self.post(lambda: self._draw_front(said))
+        threading.Thread(target=look, name="bubble-front", daemon=True).start()
+        self.window.after(FRONT_EVERY_MS, self._watch_front)
+
+    def _draw_front(self, said: Dict[str, str]) -> None:
+        if not self.is_open:
+            return
+        from ..agent.front_screen import shown_line
+        title = str(said.get("title") or "")
+        if title != self.front_off:
+            self.front_off = ""                # another window: told again
+        line = "" if self.front_off else shown_line(said)
+        if line == self._front_line:
+            return
+        self._front_line = line
+        row = self.front_row
+        for one in row.winfo_children():
+            one.destroy()
+        if not line:
+            row.pack_forget()
+        else:
+            words = self.words("On your screen, given as context: {0}").replace("{0}", line[:110])
+            tk.Label(row, text=words, bg=LOOK["bg"], fg=LOOK["muted"], font=self._font(-2),
+                     wraplength=self.width - 60, justify="left", anchor="w").pack(
+                side="left", fill="x", expand=True)
+            off = tk.Label(row, text="×", bg=LOOK["bg"], fg=LOOK["muted"], font=self._font(0),
+                           padx=4, cursor="hand2")
+            off.pack(side="right", anchor="n")
+            on_release(off, lambda: self._without_front(title))
+            row.pack(fill="x", pady=(8, 0), before=self.row)
+        self._fit()
+
+    def _without_front(self, title: str) -> None:
+        self.front_off = title
+        self._draw_front({"title": title})
 
     def _draw_files(self, note: str = "") -> None:
         """A line for each file, over the box; none, and nothing is there."""
@@ -968,11 +1076,29 @@ class ChatBubble:
             self._unwrite_waiting()
             self._write("", "waiting", text)
 
-    def _answered(self, said: Any) -> None:
-        self.waiting = False
-        if not self.is_open:
+    def _told_late(self, said: Dict[str, Any], fold: Optional[Dict[str, Any]] = None) -> None:
+        """Closed before the reply came: it is said elsewhere, once."""
+        fold = fold if fold is not None else {}
+        if self.on_late is None or fold.get("told"):
             return
+        answer = str(said.get("answer") or said.get("response") or "").strip()
+        if said.get("nothing") or not answer:
+            # Nothing to add to the quick reply: unless that was not read either.
+            answer = "" if fold.get("seen") else str(fold.get("quick") or "").strip()
+        answer = answer or str(said.get("error") or "").strip()
+        if answer:
+            fold["told"] = True
+            self.on_late(answer, str(said.get("conversation_id") or fold.get("conversation") or ""))
+
+    def _answered(self, said: Any, fold: Optional[Dict[str, Any]] = None) -> None:
+        self.waiting = False
         said = said if isinstance(said, dict) else {"answer": str(said)}
+        if not self.is_open:
+            if not (fold or {}).get("turn"):             # with a turn, its end says
+                self._told_late(said, fold)
+            return
+        if fold is not None:
+            fold["seen"] = True
         conversation = said.get("conversation_id")
         if conversation and conversation != self.conversation_id:
             self.conversation_id = str(conversation)
@@ -998,6 +1124,8 @@ class ChatBubble:
     # -- the full agent's, folded under the quick reply (agent/two_speed.py) ---------------
     def _fold_begin(self, fold: Dict[str, Any]) -> None:
         """A line that it is at work - unless it was stopped, or is done."""
+        if not self.is_open and "done" in fold:
+            self._told_late(fold["done"], fold)
         if not fold.get("turn") or not self.is_open or "head" in fold:
             return
         self._folds += 1
@@ -1014,6 +1142,7 @@ class ChatBubble:
     def _fold_done(self, fold: Dict[str, Any], done: Dict[str, Any]) -> None:
         """Its answer, folded under a line clicked to open it."""
         if not self.is_open:
+            self._told_late(done, fold)
             return
         if "head" not in fold:
             fold["done"] = done                          # before its line was drawn
@@ -1049,7 +1178,7 @@ class ChatBubble:
         if did.get("remembered"):
             parts.append(self.words("Remembered"))
         if did.get("quiet"):
-            parts.append(self.words("Quiet rule added"))
+            parts.append(self.words("Blocker added"))
         if did.get("rules") == 1:
             parts.append(self.words("1 rule changed"))
         elif did.get("rules"):
@@ -1120,6 +1249,48 @@ class ChatBubble:
             self.said.see("end")
         except tk.TclError:
             pass
+
+
+def edge_strips(rim: Any, start: Callable[[Any, str], None], move: Callable[[Any], None],
+                end: Callable[[Any], None], corner: int = 3 * RIM) -> None:
+    """Edges and corners of `rim`, each a strip to size a window by."""
+    for edge, cursor in EDGES.items():
+        strip = tk.Frame(rim, bg=LOOK["bg"], cursor=cursor)
+        place: Dict[str, Any] = {"width": corner, "height": corner}
+        if edge in ("w", "e"):
+            place = {"width": RIM, "height": -2 * corner, "relheight": 1, "y": corner}
+        elif edge in ("n", "s"):
+            place = {"height": RIM, "width": -2 * corner, "relwidth": 1, "x": corner}
+        place.update(relx=1.0 if "e" in edge else 0.0,
+                     rely=1.0 if edge in ("s", "sw", "se") else 0.0,
+                     anchor=("s" if edge in ("s", "sw", "se") else "n")
+                     + ("e" if "e" in edge else "w"))
+        if edge in ("w", "e"):
+            place["rely"] = 0.0
+            place["anchor"] = "ne" if edge == "e" else "nw"
+        strip.place(**place)
+        strip.bind("<ButtonPress-1>", lambda e, edge=edge: start(e, edge))
+        strip.bind("<B1-Motion>", move)
+        strip.bind("<ButtonRelease-1>", end)
+        strip.lift()
+
+
+def sized_to(began: tuple, x: int, y: int) -> tuple:
+    """Where an edge pulled from `began` - (x, y, width, height, left, top, edge) - to x, y
+    leaves the window: (width, height, left, top)."""
+    x0, y0, width, height, left, top, edge = began
+    dx, dy = x - x0, y - y0
+    if "e" in edge:
+        width = max(LEAST[0], width + dx)
+    if "w" in edge:
+        grown = max(LEAST[0], width - dx)
+        left, width = left + width - grown, grown
+    if "s" in edge:
+        height = max(LEAST[1], height + dy)
+    if "n" in edge:
+        grown = max(LEAST[1], height - dy)
+        top, height = top + height - grown, grown
+    return width, height, left, top
 
 
 class ScrollBar:

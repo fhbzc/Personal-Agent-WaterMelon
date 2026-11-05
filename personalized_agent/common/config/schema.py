@@ -324,7 +324,7 @@ SETTINGS_SCHEMA: List[SettingField] = [
     SettingField("font_size", "Font size", "int", 14, "General",
                  "Base text size in points for the agent's windows. Larger values "
                  "enlarge every panel's text, not only the conversation.",
-                 minimum=8, maximum=32),
+                 minimum=8, maximum=32, hidden=True),
     SettingField("agent_name", "Avatar name", "string", "", "Avatar",
                  "What you call your avatar - and what the agent calls itself and "
                  "answers to, in notifications and in conversation. Left empty, it is "
@@ -442,7 +442,7 @@ SETTINGS_SCHEMA: List[SettingField] = [
                  "what it says when it speaks to you, and the status readout when "
                  "you hover over it. Larger values are easier to read on a high "
                  "resolution display. Between 7 and 24; the windows grow to fit.",
-                 minimum=7, maximum=24),
+                 minimum=7, maximum=24, hidden=True),
     SettingField("local_client", "Local Claude client", "dynamic_choice", "auto", "Models",
                  "Which installed Claude client answers when the provider is "
                  "'Claude Code (local)'. A machine can have more than one, and they "
@@ -920,6 +920,9 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
     SettingField("shortcut_delegate_work", "Delegate work shortcut", "string", "Ctrl+Alt+D",
                  "Shortcuts", "The keys that open an empty Delegate work box, from any "
                  "program. Empty for none.", hidden=True),
+    SettingField("shortcut_open_chat", "Chat bubble shortcut", "string", "Ctrl+Alt+C",
+                 "Shortcuts", "The keys that open the chat bubble beside the avatar and "
+                 "minimise it again, from any program. Empty for none.", hidden=True),
     SettingField("delegate_selection_button", "Button beside selected text", "bool", True,
                  "Shortcuts", "A small Delegate work button beside text you select, for a "
                  "few seconds (Windows).", hidden=True),

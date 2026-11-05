@@ -246,7 +246,10 @@ class TaskExecutor:
             template = REMINDER
         self.notifications.notify(
             task.title, message, kind="proactive",
-            metadata={"task_id": task.id, "source": "scheduler"},
+            metadata={"task_id": task.id, "source": "scheduler",
+                      # WHY THE AGENT ADDED IT, shown with it (the user, 2026-11-04);
+                      # one the user added themselves has none.
+                      "reason": str(task.metadata.get("rationale") or "")[:300]},
             template=template, question=self._reply_for(task),
         )
         self._ask_whether_it_was_worth_it(task)

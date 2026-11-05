@@ -68,14 +68,33 @@ a subject - "Meeting" - and Reply answers whoever is in the thread opened).
 Each page of that subject is checked against who was on it while the user
 had it open (the addresses and names read from its window, kept with the
 page - mail_pages.py): whether the sender the reply answers, or someone it
-is written to, is there. One that is - "matched" - is taken first; one read without any of
-them - "differs" - never; one never read - "unchecked" - is taken, said so.
-How many of the emails they opened share that subject is said too, and the
-page asks the user to look before it opens anything (app.js).
+is written to, is there: "matched", "differs" for one read without any of
+them, "unchecked" for one never read. How many of the emails they opened
+share that subject is said too, and the page asks the user to look before it
+opens anything (app.js).
+
+ONLY ONE SEEN TO BE WITH THEM IS OPENED (the user, 2026-11-04: one subject,
+sent to several people, is many threads, and the newest one never read was
+opened - someone else's). A thread is one however it was reached - its page
+from the inbox, from Sent, from a search - so what is known of one of its
+pages is known of all. Not matched, Gmail opens a search for what that person
+sent of that subject: one more press, and never the wrong thread. Elsewhere
+there is no such link: an unchecked thread is opened only when it is the only
+one of that subject, said so, and otherwise it is a new message.
+
+WHETHER A NAME IS THE SAME PERSON IS THE MODEL'S (the user, 2026-11-04: "Ben
+Hale" and "Benjamin F. Hale" are one, two Hales are not, and code cannot
+tell). An address the same is a fact, and code says so. Anything else read on a
+page is put to a small model when the user presses the button (`person_judge`),
+once - the answer is kept - and only its "yes" opens the thread. Drawing the
+page asks nothing: it shows what was answered before.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import re
 import threading
 import time
@@ -107,6 +126,17 @@ REPLY_MARK = re.compile(r"^\s*(?:(?:re|fw|fwd|aw|wg|sv|vs|antw|rif|r|回复|答�
 
 #: For how long a thread found is used again.
 THREAD_FOR = 120.0
+
+log = logging.getLogger(__name__)
+
+#: What a small model is asked of the people read on a mail page.
+SAME_PERSON = """A reply is to go to one person, given as their name and email address. For each
+email thread, the names and addresses read from its page while it was open are given, with
+reading errors in them. Say whether that person is among them: a nickname, a middle initial, a
+title or another address of theirs is the same person; someone who only shares a surname or a
+first name is not. Only say "yes" when you are sure.
+
+Answer with JSON alone: {"<thread>": "yes" or "no" or "unsure", ...}"""
 
 #: What the agent is told of it - in every way's instructions that hands
 #: work to the user.
@@ -628,26 +658,78 @@ def who_of(item: Dict[str, Any]) -> List[str]:
     return out[:12]
 
 
+def _thread_of_page(url: str) -> str:
+    """What names a thread in a page's address, whichever way it was reached:
+    Gmail's #inbox/X, #sent/X and #search/words/X are one."""
+    return url.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+
+
 def _on_it(people: List[str], who: List[str]) -> str:
-    """The first of `who` among the people on a page - an address the
-    same, a name in one of theirs or theirs in it - "" for none."""
-    for person in who:
-        mine = person.casefold()
-        for one in people:
-            theirs = one.casefold()
-            if mine == theirs or ("@" not in mine and "@" not in theirs
-                                  and (mine in theirs or theirs in mine)):
-                return person
-    return ""
+    """The first address of `who` among the people on a page, "" for none.
+    Addresses alone: whether a name is theirs is not code's to say."""
+    seen = {one.casefold() for one in people}
+    return next((one for one in who if "@" in one and one.casefold() in seen), "")
+
+
+def person_judge(models: Any) -> Callable[[List[str], Dict[str, List[str]]], Dict[str, str]]:
+    """Who asks the model (`SAME_PERSON`): given who a reply is for and the
+    people read on each thread, {thread: "yes", "no" or "unsure"}."""
+    def judge(who: List[str], threads: Dict[str, List[str]]) -> Dict[str, str]:
+        from ...heartbeat.states.heartbeat import _as_json
+        from ...models.base import ModelRequest
+        from ...common.languages import in_english
+        labels = {f"T{n + 1}": thread for n, thread in enumerate(threads)}
+        asked = {"the_reply_is_for": who,
+                 "threads": {label: threads[thread] for label, thread in labels.items()}}
+        said = models.invoke(ModelRequest(
+            messages=[{"role": "user", "content": json.dumps(asked, ensure_ascii=False)}],
+            system=SAME_PERSON, max_tokens=300, task="reply_person",
+            language=in_english("the answers")), role="fast_reply")
+        answer = _as_json(getattr(said, "text", "") or "") or {}
+        return {thread: str(answer.get(label) or "unsure").strip().lower()
+                for label, thread in labels.items()}
+    return judge
+
+
+def _judged_key(who: List[str], thread: str, people: List[str]) -> str:
+    said = json.dumps([sorted(who), thread, sorted(people)], ensure_ascii=False)
+    return "reply.same_person." + hashlib.sha1(said.encode("utf-8")).hexdigest()
+
+
+def _the_same_person(db: Any, who: List[str], threads: Dict[str, List[str]],
+                     judge: Optional[Callable]) -> Dict[str, str]:
+    """{thread: "yes", ...}: what was answered before, and with `judge` what was
+    not asked yet, kept. A model that does not answer has said nothing."""
+    said: Dict[str, str] = {}
+    left: Dict[str, List[str]] = {}
+    for thread, people in threads.items():
+        row = db.query_one("SELECT value FROM kv WHERE key = ?",
+                           (_judged_key(who, thread, people),))
+        if row:
+            said[thread] = str(row["value"])
+        else:
+            left[thread] = people
+    if left and judge is not None:
+        try:
+            answers_now = judge(who, left)
+        except Exception:
+            log.info("whether a person is on a mail page could not be asked", exc_info=True)
+            return said
+        for thread, answer in answers_now.items():
+            said[thread] = answer
+            db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)",
+                       (_judged_key(who, thread, left[thread]), answer))
+    return said
 
 
 def thread_of(db: Any, subject: str, account: str = "", who: Optional[List[str]] = None,
-              history: Optional[Callable[[], List[tuple]]] = None) -> Optional[Dict[str, Any]]:
+              history: Optional[Callable[[], List[tuple]]] = None,
+              judge: Optional[Callable] = None) -> Optional[Dict[str, Any]]:
     """THE EMAIL OF THAT SUBJECT, AS THE USER OPENED IT in their webmail,
     CHECKED AGAINST WHO IT IS WITH (module docstring): {"url", "in",
     "title", "at" (when it was last opened), "check" ("matched",
     "unchecked" or "differs"), "matched" (who was found on it),
-    "same_subject" (how many of the emails they opened have it)} - or None.
+    "same_subject" (how many threads they opened have it)} - or None.
     The pages kept (mail_pages.py, brought up to date first), and those in
     the browsers' own histories (`history`), unchecked."""
     from . import mail_pages
@@ -656,7 +738,7 @@ def thread_of(db: Any, subject: str, account: str = "", who: Optional[List[str]]
         return None
     who = list(who or [])
     with _threads_lock:
-        kept = _threads.get((key, account, tuple(who)))
+        kept = _threads.get((key, account, tuple(who), judge is None))
         if kept and time.time() - kept[0] < THREAD_FOR:
             return kept[1]
 
@@ -685,6 +767,30 @@ def thread_of(db: Any, subject: str, account: str = "", who: Optional[List[str]]
             one["check"] = "matched" if one["matched"] else "differs"
         one["mine"] = bool(account) and account.lower() in one["title"].lower()
         candidates.append(one)
+    rank = {"matched": 0, "differs": 1, "unchecked": 2}
+    # WHAT IS KNOWN OF A THREAD, of every page of it: seen with them on any
+    # page, it is theirs; read without them, another address does not bring
+    # it back as never read.
+    threads: Dict[str, Dict[str, Any]] = {}
+    for one in candidates:
+        thread = _thread_of_page(one["url"])
+        if thread not in threads or rank[one["check"]] < rank[threads[thread]["check"]]:
+            threads[thread] = one
+    # READ, AND NO ADDRESS OF THEIRS: whether a name read there is theirs.
+    people: Dict[str, List[str]] = {}
+    for one in candidates:
+        thread = _thread_of_page(one["url"])
+        if threads[thread]["check"] == "differs":
+            people.setdefault(thread, [])
+            people[thread] += [person for person in one["people"] if person not in people[thread]
+                               and person.casefold() != account.casefold()]
+    people = {thread: sorted(said) for thread, said in people.items() if said}
+    for thread, answer in (_the_same_person(db, who, people, judge) if people else {}).items():
+        if answer == "yes":
+            threads[thread] = dict(threads[thread], check="matched", matched=who[-1] if who else "")
+    for one in candidates:
+        known = threads[_thread_of_page(one["url"])]
+        one["check"], one["matched"] = known["check"], known["matched"]
     rank = {"matched": 0, "unchecked": 1, "differs": 2}
     candidates.sort(key=lambda one: str(one["at"] or ""), reverse=True)
     candidates.sort(key=lambda one: (rank[one["check"]], not one["mine"]))
@@ -692,14 +798,15 @@ def thread_of(db: Any, subject: str, account: str = "", who: Optional[List[str]]
     if candidates:
         best = candidates[0]
         found = {name: best[name] for name in ("url", "in", "title", "at", "check", "matched")}
-        found["same_subject"] = len(pages)
+        found["same_subject"] = len(threads)
     with _threads_lock:
-        _threads[(key, account, tuple(who))] = (time.time(), found)
+        _threads[(key, account, tuple(who), judge is None)] = (time.time(), found)
     return found
 
 
 def reply_link(item: Dict[str, Any], place: Dict[str, str], db: Any,
-               history: Optional[Callable[[], List[tuple]]] = None) -> Dict[str, str]:
+               history: Optional[Callable[[], List[tuple]]] = None,
+               judge: Optional[Callable] = None) -> Dict[str, str]:
     """A REPLY, OPENED IN ITS THREAD (module docstring): {"url", "found",
     "in"} - "found" "thread" for the email itself, "search" for Gmail's
     search for it - or {} when it is no reply, or nothing better than a new
@@ -708,23 +815,28 @@ def reply_link(item: Dict[str, Any], place: Dict[str, str], db: Any,
     if not subject:
         return {}
     account = place.get("account") or ""
-    found = thread_of(db, subject, account, who_of(item), history)
+    who = who_of(item)
+    found = thread_of(db, subject, account, who, history, judge)
     said = {"answers": subject, "account": account,
             "same_subject": (found or {}).get("same_subject", 0)}
-    if found and found["check"] != "differs":
+    check = (found or {}).get("check")
+    gmail = place.get("mail") == "gmail"
+    if check == "matched" or (check == "unchecked" and found["same_subject"] == 1 and not gmail):
         return dict(said, url=found["url"], found="thread", **{
             key: found[key] for key in ("in", "title", "at", "check", "matched")})
-    if place.get("mail") == "gmail":
-        asked = "subject:(" + re.sub(r'[()"]', " ", subject).strip() + ")"
+    if gmail:
+        sender = next((one for one in who if "@" in one), "")
+        asked = (f"from:{sender} " if sender else "") + "subject:(" + re.sub(
+            r'[()"]', " ", subject).strip() + ")"
         return dict(said, url="https://mail.google.com/mail/" + (
             "?" + _q({"authuser": account}) if account else "") + "#search/" + quote(asked, safe=""),
-                    found="search", **{"in": "Gmail"},
-                    differs=bool(found and found["check"] == "differs"))
+                    found="search", **{"in": "Gmail"}, differs=check == "differs")
     return {}
 
 
 def actions(item: Dict[str, Any], place: Dict[str, str], db: Any = None,
-            history: Optional[Callable[[], List[tuple]]] = None) -> Dict[str, Any]:
+            history: Optional[Callable[[], List[tuple]]] = None,
+            judge: Optional[Callable] = None) -> Dict[str, Any]:
     """What the page offers for an item: "open" (a link, opened in the
     user's own browser - or a path), "copy" (text to copy), "whole" (the
     link holds all of it), where it opens ("in") - and for a reply, "reply"
@@ -735,7 +847,7 @@ def actions(item: Dict[str, Any], place: Dict[str, str], db: Any = None,
         link = email_link(item, place)
         said = {"open": link["url"], "whole": link["whole"], "copy": item.get("body") or "",
                 "in": {"gmail": "Gmail", "outlook": "Outlook"}.get(place["mail"], "your mail app")}
-        reply = reply_link(item, place, db, history) if db is not None else {}
+        reply = reply_link(item, place, db, history, judge) if db is not None else {}
         if reply:
             said["reply"] = reply
         return said

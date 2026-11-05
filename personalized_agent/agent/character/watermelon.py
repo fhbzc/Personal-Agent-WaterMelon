@@ -21,6 +21,7 @@ draws the same face in SVG over the same body and leaves, from `RIG`.
 from __future__ import annotations
 
 import base64
+import copy
 import io
 import json
 import math
@@ -65,6 +66,11 @@ SWEAT = (78.0, 42.0)
 BUBBLES = ((36, 24, 2.2), (28, 16, 3), (18, 7, 3.8))
 #: Where the body rests: it squashes and hops from here.
 GROUND = CY + B
+#: Stood on end, how far across the 128 units the middle of its face is.
+TURNED_FACE_X = 50
+#: Upside down out of the top, how far down the middle of its face is.
+HANGING_FACE_Y = 78
+
 #: How far the body goes off the leaves when tucked into the side of the
 #: screen: past what stays out (ui/avatar_tuck.py), only a leaf left.
 TUCK_SHIFT = 30
@@ -324,6 +330,8 @@ class Watermelon:
         """Painted afresh, or - from a package's layers - read, which is
         quicker at start."""
         self.scale = scale
+        self._leaf_boxes: dict = {}
+        self._quick: Any = None
         layers = Path(package) / "layers" if package else None
         if layers is not None and (layers / "body.png").exists() \
                 and (layers / "leaves.png").exists():
@@ -341,7 +349,8 @@ class Watermelon:
               blink: float = 0.0, t: float = 0.0, squash: float = 1.0,
               hop: float = 0.0, size: int = 128, facing: str = "left",
               smile: Any = None, tuck: float = 0.0, lean: float = 0.0,
-              grip: float = 0.0, reach: float = 34.0, edge: str = "side") -> Any:
+              grip: float = 0.0, reach: float = 34.0, edge: str = "side",
+              turn: float = 0.0) -> Any:
         """One frame, `size` pixels square. `squash` below 1 flattens the
         body on the ground and above 1 stretches it; `hop` lifts it.
         `facing`: "left", as it is drawn, or "right" - the whole of it turned
@@ -352,14 +361,41 @@ class Watermelon:
         leaves have turned to stand up the side of the screen and hold on to
         it (the user, 2026-11-04: "竖着的叶子群"), `reach` of the 128 units of
         the window from that side. `edge`: "side" - to the left of the way it
-        is drawn, the right, turned for the left - "top" or "bottom"."""
+        is drawn, the right, turned for the left - "top" or "bottom". `turn`,
+        0 to 1: how far it has turned, coming out of a side head first (the
+        user, 2026-11-04): out of the left or right, the whole of it on end,
+        taller than wide, its eyes one above the other; out of the top, upside
+        down, its mouth above its eyes. Out of the bottom it is the way up it
+        is drawn, and does not turn."""
         from PIL import Image, ImageOps
         if facing == "right":
             turned = self.frame(mood, (-look[0], look[1]), blink, t, squash, hop, size, "left",
-                                smile, tuck, -lean, grip, reach, edge)
+                                smile, tuck, -lean, grip, reach, edge, turn)
             return ImageOps.mirror(turned)
         body = self.body.copy()
-        draw_face(body, self.scale, look, blink, mood, t, smile)
+        if turn:
+            # THE WHOLE OF IT TURNED, its head to the room: on end out of a
+            # side, taller than it is wide; upside down out of the top. The
+            # face turns with it but is put where the room can see it: turned
+            # with the body it would go round to the far side. Its eyes stay
+            # on the pointer, whatever is up on the screen for it now.
+            hanging = edge == "top"
+            sees = (-look[0], -look[1]) if hanging else (-look[1], look[0])
+            face = Image.new("RGBA", body.size, (0, 0, 0, 0))
+            draw_face(face, self.scale, sees if turn > 0.5 else look, blink, mood, t, smile)
+            left, top, right, bottom = face.getbbox() or (0, 0, *body.size)
+            middle = ((left + right) / 2, (top + bottom) / 2)
+            angle = (180 if hanging else 90) * turn
+            face = face.rotate(angle, resample=Image.BILINEAR, center=middle)
+            wanted = ((middle[0], HANGING_FACE_Y * self.scale) if hanging
+                      else (TURNED_FACE_X * self.scale, body.size[1] / 2))
+            placed = Image.new("RGBA", body.size, (0, 0, 0, 0))
+            placed.paste(face, (int(turn * (wanted[0] - middle[0])),
+                                int(turn * (wanted[1] - middle[1]))), face)
+            body = body.rotate(angle, resample=Image.BILINEAR)
+            body.alpha_composite(placed)
+        else:
+            draw_face(body, self.scale, look, blink, mood, t, smile)
         n = body.size[0]
         if abs(squash - 1.0) > 1e-3 or hop:
             w = max(1, int(n * (2 - squash) ** 0.5))
@@ -378,7 +414,10 @@ class Watermelon:
             shift = int(tuck * TUCK_SHIFT * self.scale)
             layer.paste(body, {"top": (0, -shift), "bottom": (0, shift)}.get(edge, (shift, 0)), body)
             body = layer
-        out = Image.alpha_composite(self.leaves_at(grip, reach, edge) if grip else self.leaves, body)
+        leaves = self.leaves_at(grip, reach, edge) if grip else self.leaves
+        # On end it is as tall as they are: they hold on in front of it.
+        out = Image.alpha_composite(body, leaves) if turn > 0.5 else \
+            Image.alpha_composite(leaves, body)
         _extras(out, self.scale, mood, t)
         return out.resize((size, size), Image.LANCZOS) if size != n else out
 
@@ -392,8 +431,10 @@ class Watermelon:
         turn = {"side": -90, "top": 0, "bottom": 180}[edge]
         middle = (n / 2, n / 2)
         turned = self.leaves.rotate(turn * grip, resample=Image.BILINEAR, center=middle)
-        box = self.leaves.rotate(turn, resample=Image.BILINEAR,
-                                 center=middle).getchannel("A").getbbox()
+        box = self._leaf_boxes.get(edge)
+        if box is None:                  # the same for every frame at that edge
+            box = self._leaf_boxes[edge] = self.leaves.rotate(
+                turn, resample=Image.BILINEAR, center=middle).getchannel("A").getbbox()
         if edge == "top":
             at = (0, int(grip * (128 - reach - GRIP_PAST - box[1] / scale) * scale))
         elif edge == "bottom":
@@ -403,6 +444,22 @@ class Watermelon:
         layer = Image.new("RGBA", (n, n), (0, 0, 0, 0))
         layer.paste(turned, at, turned)
         return layer
+
+    def quick(self) -> "Watermelon":
+        """THE SAME CHARACTER ON A SMALLER CANVAS, for frames that are gone at once: a jump
+        (the user, 2026-11-04: "跳出来的动画特别慢"). A turned frame costs several times a
+        still one, and at that cost a jump was twenty frames a second. Its edges are
+        coarser, which does not show in the air."""
+        if self.scale == 1:
+            return self
+        if self._quick is None:
+            from PIL import Image
+            twin = copy.copy(self)
+            twin.scale, twin._leaf_boxes, twin._quick = 1, {}, None
+            twin.body = self.body.resize((128, 128), Image.LANCZOS)
+            twin.leaves = self.leaves.resize((128, 128), Image.LANCZOS)
+            self._quick = twin
+        return self._quick
 
     def icon(self) -> Any:
         """THE ICON (the taskbar, the title bars, the tray): the melon and

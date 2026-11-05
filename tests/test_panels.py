@@ -114,6 +114,7 @@ class FrontendSurfaceTests(unittest.TestCase):
         ids = set(re.findall(r'id="([^"]+)"', self.html))
         # ids the script creates itself before querying them
         created = set(re.findall(r'id="([A-Za-z0-9_-]+)"', self.js))
+        created |= set(re.findall(r'\.id = "([A-Za-z0-9_-]+)"', self.js))
         referenced = set(re.findall(r'\$\$?\(\s*"#([A-Za-z0-9_-]+)', self.js))
         missing = sorted(referenced - ids - created)
         self.assertEqual(missing, [], f"script targets nothing in the markup: {missing}")
@@ -1211,7 +1212,10 @@ class OverviewInteractionRenderTests(unittest.TestCase):
         harness = (
             "<script>window.__asked=[];const STUB=" + json.dumps(stub) + ";"
             "window.fetch=(u)=>{const p=String(u).split('?')[0];"
-            "if(p!=='/api/work/going')window.__asked.push(p);"
+            # What the page loads beside the panel, whenever it gets to it - on
+            # a slow machine after the click: none of it asked for by the click.
+            "if(!['/api/work/going','/api/todos','/api/work/assigned'].includes(p))"
+            "window.__asked.push(p);"
             "return Promise.resolve({ok:true,status:200,statusText:'OK',"
             "json:()=>Promise.resolve(STUB[p]||{})});};</script>"
             "<script>" + script + "</script>"

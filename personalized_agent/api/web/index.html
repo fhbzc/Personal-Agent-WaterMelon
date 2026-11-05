@@ -27,6 +27,7 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
   <nav id="tabs">
     <button data-tab="overview" class="active">Overview</button>
     <button data-tab="recommend">Newspaper</button>
+    <button data-tab="collections">Collections</button>
     <button data-tab="calendar">Calendar</button>
     <button data-tab="connections">Connections</button>
     <button data-tab="experience">Work</button>
@@ -610,6 +611,20 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
        lesson - the user's own folders and projects, what they added, what
        the heartbeat added - each turned on or off or deleted; the never
        list; when it learns, how far it is, and what it spent. -->
+  <!-- COLLECTIONS (the user, 2026-11-04): what was kept, grouped and searched. -->
+  <section id="collections" class="tab">
+    <div class="card col-card">
+      <h2>Collections</h2>
+      <p class="muted">What you kept from the newspaper and from recommended content.</p>
+      <div class="col-search">
+        <input type="search" id="col-words" placeholder="Search by word" aria-label="Search by word">
+        <label>Added from <input type="date" id="col-from"></label>
+        <label>to <input type="date" id="col-to"></label>
+        <button type="button" class="small secondary" id="col-clear">Clear</button>
+      </div>
+      <ul id="col-list" class="ov-todo-list col-list"></ul>
+    </div>
+  </section>
   <!-- THE MONITOR (the user, 2026-11-03): the real-time signals, the
        Activators the agent writes and code runs on them, and what they did.
        The user's two switches on each: on, and protected. -->
@@ -944,8 +959,7 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
     <div class="settings-pane" data-settings-pane="display" hidden>
     <div class="card" id="display-settings-card">
       <h3>Display</h3>
-      <p class="panel-note">How the agent reads: the language it writes and speaks
-        in, and the size of its text.</p>
+      <p class="panel-note">The language the agent writes and speaks in.</p>
       <div id="settings-form-display"></div>
     </div>
     <!-- READING THE WORDS IN A PICTURE, on this computer: which of the five

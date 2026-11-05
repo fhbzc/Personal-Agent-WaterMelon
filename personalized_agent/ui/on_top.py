@@ -27,6 +27,122 @@ def borderless(window: Any) -> None:
     window.overrideredirect(True)
 
 
+def rounded(window: Any) -> None:
+    """Rounded where Windows rounds windows (11 and later); square elsewhere."""
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+        handle = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
+        prefer = ctypes.c_int(2)                         # DWMWCP_ROUND
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(handle, 33, ctypes.byref(prefer),
+                                                   ctypes.sizeof(prefer))
+    except Exception:                                    # pragma: no cover - square, then
+        pass
+
+
+def stays_through_peek(window: Any) -> bool:
+    """NOT PUT AWAY BY A PEEK (the user, 2026-11-04: the pointer resting on a window's preview in
+    the taskbar, and the avatar went): Windows hides every other window then, on top or not,
+    unless it is told this one stays. Elsewhere there is no such thing."""
+    if not sys.platform.startswith("win"):
+        return False
+    try:
+        import ctypes
+        window.update_idletasks()
+        stays = ctypes.c_int(1)
+        return ctypes.windll.dwmapi.DwmSetWindowAttribute(        # DWMWA_EXCLUDED_FROM_PEEK
+            int(window.wm_frame(), 16), 12, ctypes.byref(stays), ctypes.sizeof(stays)) == 0
+    except Exception:                                    # pragma: no cover - it goes in a peek
+        return False
+
+
+#: How often a window under the pointer looks whether Ctrl is down, in milliseconds.
+CTRL_EVERY_MS = 50
+
+
+def ctrl_down() -> bool:
+    """Whether Ctrl is held, whichever program has the keyboard (Windows)."""
+    try:
+        import ctypes
+        return bool(ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000)
+    except Exception:                                    # pragma: no cover - not known
+        return False
+
+
+def keys_on_hover(window: Any) -> None:
+    """THE POINTER ON IT AND CTRL DOWN, THE KEYS GO TO IT (the user, 2026-11-04: "所有的panel缩放都支持鼠标+
+    ctrl +-"): a window has them only once it has the keyboard. Not for the pointer alone: passing
+    over a notification, what was being typed elsewhere would have gone nowhere. Something in it
+    that has the keyboard already, a box being written in, keeps it. Where Ctrl cannot be
+    asked of the system, the pointer is enough."""
+    watching = {"on": False}
+
+    def take() -> None:
+        try:
+            held = window.focus_get()
+        except Exception:                                # another window's, or none
+            held = None
+        if held is None or not str(held).startswith(str(window)):
+            try:
+                window.focus_force()
+            except Exception:                            # pragma: no cover - gone
+                pass
+
+    def inside() -> bool:
+        x, y = window.winfo_pointerxy()
+        left, top = window.winfo_rootx(), window.winfo_rooty()
+        return left <= x < left + window.winfo_width() and top <= y < top + window.winfo_height()
+
+    def watch() -> None:
+        try:
+            if not inside():
+                watching["on"] = False
+                return
+            if ctrl_down():
+                take()
+            window.after(CTRL_EVERY_MS, watch)
+        except Exception:                                # the window has gone
+            watching["on"] = False
+
+    def came_in(_event: Any = None) -> None:
+        if not sys.platform.startswith("win"):
+            take()
+        elif not watching["on"]:
+            watching["on"] = True
+            watch()
+    window.bind("<Enter>", came_in, add="+")
+
+
+def selected_words(widget: Any) -> str:
+    """What is selected in a Text, or "" - nothing is copied unasked."""
+    ranges = widget.tag_ranges("sel")
+    return widget.get(ranges[0], ranges[1]) if ranges else ""
+
+
+def copy_to_clipboard(widget: Any, words: str) -> None:
+    widget.clipboard_clear()
+    widget.clipboard_append(words)
+
+
+def with_copy(widget: Any, label: str, whole: str = "") -> None:
+    """COPY FROM THE RIGHT BUTTON (the user, 2026-11-04: "选择之后右键有复制按钮"): what is
+    selected, or `whole` with nothing selected, if it is given."""
+    import tkinter as tk
+
+    def menu(event: Any) -> str:
+        words = selected_words(widget) or whole
+        if words:
+            popup = tk.Menu(widget, tearoff=0)
+            popup.add_command(label=label, command=lambda: copy_to_clipboard(widget, words))
+            popup.tk_popup(event.x_root, event.y_root)
+        return "break"
+    widget.bind("<Button-3>", menu)
+    if sys.platform == "darwin":
+        widget.bind("<Button-2>", menu)
+        widget.bind("<Control-Button-1>", menu)
+
+
 def pressed_shade(widget: Any, color: str) -> str:
     """`color` as it looks pressed: a shade darker - lighter on a dark one,
     where darker would hardly show."""
@@ -122,4 +238,4 @@ def stay_on_top(window: Any) -> None:
         pass
 
 
-__all__ = ["stay_on_top", "borderless", "on_release"]
+__all__ = ["stay_on_top", "stays_through_peek", "keys_on_hover", "borderless", "on_release"]

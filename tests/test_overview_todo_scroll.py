@@ -25,7 +25,9 @@ def _function(source: str, name: str) -> str:
 
 def GROUPS(source: str) -> str:
     """The lists' groups (list_groups.py), none given here: the list as it is."""
-    return ("const ovGroups={todo:null,assigned:null};"
+    return ("let activeTab='overview';const renderCollections=()=>{};const ovMarkOpening=()=>{};"
+            + _function(source, "ovPartOf")
+            + "const ovGroups={todo:null,assigned:null};"
             "const ovGroupEdit={renaming:'',moving:'',adding:''};"
             "const ovGroupFolded=new Set();"
             + _function(source, "ovGroupedItems") + _function(source, "ovGroupMover")
@@ -140,6 +142,7 @@ class ATodosWorkIsTrackedTests(unittest.TestCase):
               "file:'File',folder:'Folder',answer:'Answer'};"
             + "".join(_function(source, name) for name in (
                 "ovTodoVersions", "ovTodoGoing", "ovTodoControls", "ovTodoWhere", "ovTodoWork", "ovTodoMade",
+                "ovTodoLatest",
                 "ovTodoTracked", "ovTodoBox",
                 "ovPlaceTodos")) + GROUPS(source)
             + "window.addEventListener('load',()=>{const out={};ovPlaceTodos();"

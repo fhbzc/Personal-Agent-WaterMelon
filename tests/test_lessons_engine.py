@@ -372,7 +372,8 @@ class OneAlgorithmForEveryKindTests(unittest.TestCase):
         self.app.lessons.record("notifications", "calact_y", "The user deleted this event.",
                                 action="delete")
         said = self.app.lessons.standing()
-        self.assertEqual(set(said), {"notifications", "connections", "work", "general"})
+        self.assertEqual(set(said), {"notifications", "recommendations", "connections", "work",
+                                     "general"})
         self.assertTrue(said["notifications"]["due"])
         self.assertEqual((said["notifications"]["waiting"], said["notifications"]["share"]),
                          (1, 0))

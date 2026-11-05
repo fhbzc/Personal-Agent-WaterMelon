@@ -213,8 +213,13 @@ class AgentCore:
         mentions: Optional[List[str]] = None,
         on_text: Optional[Callable[[str], None]] = None,
         after_quick: Optional[Dict[str, Any]] = None,
+        front: str = "",
+        seen: Optional[List[Dict[str, str]]] = None,
     ) -> Dict[str, Any]:
-        """One turn of a conversation. `attachments`: the ids of the files
+        """One turn of a conversation. `front`: what is in front of the user
+        (agent/front_screen.py), read with this message and not written down
+        with it; `seen`: a picture of it, the same (agent/front_picture.py).
+        `attachments`: the ids of the files
         attached to it; `mentions`: of the files it @s (agent/chat_files.py).
         `on_text` is told the reply so far as it is written, where the model
         can say it; the page reads it with the progress. `after_quick`: taken
@@ -253,6 +258,7 @@ class AgentCore:
                 self.conversations.add_message(conversation_id, "user", text,
                                                metadata=metadata or None)
             asked = f"{text.strip() or ALONE}\n\n{attached['text']}" if attached else text
+            asked += front
             layer: Dict[str, Any] = {}
             if after_quick:
                 layer = {"layer": "slow"}
@@ -262,7 +268,8 @@ class AgentCore:
             result = self.run_instruction(
                 asked, {"conversation_id": conversation_id, "origin": origin,
                         "earlier": earlier, "said": text, "on_text": on_text,
-                        "pictures": attached["pictures"] if attached else []}, debug=debug)
+                        "pictures": (attached["pictures"] if attached else []) + list(seen or [])},
+                debug=debug)
             if after_quick:
                 plain = str(result["answer"]).strip()
                 result["kind"] = "more"

@@ -104,7 +104,7 @@ class TheNotificationBubbleOnTheScreenTests(unittest.TestCase):
         self.assertLessEqual(bubble.winfo_y() + bubble.winfo_height(), area[3],
                              "its buttons above the taskbar")
         card = bubble.winfo_children()[0]
-        words = next(one for one in card.winfo_children() if isinstance(one, tk.Label))
+        words = next(one for one in card.winfo_children() if isinstance(one, tk.Frame))
         x0, y0 = bubble.winfo_x(), bubble.winfo_y()
         words.event_generate("<ButtonPress-1>", x=5, y=5, rootx=x0 + 30, rooty=y0 + 60)
         words.event_generate("<B1-Motion>", x=5, y=5, rootx=x0 - 170, rooty=y0 - 40)
@@ -115,6 +115,92 @@ class TheNotificationBubbleOnTheScreenTests(unittest.TestCase):
                       and str(one.cget("text")).startswith("Got it"))
         self.assertNotIn("grab", str(got_it.bind("<B1-Motion>")) or "")
         self.assertEqual(got_it.bind("<B1-Motion>"), "")
+
+    def _texts(self):
+        return [one for one in self._all(self.agent._bubble) if isinstance(one, tk.Text)]
+
+    def test_its_title_and_words_can_be_selected_and_copied_never_dragged(self) -> None:
+        self.agent.notify_bubble("High water: The gauge reads 3.2 metres at noon, and rising "
+                                 "through the afternoon along the whole of the north coast.",
+                                 notification_id="n1", template="passive")
+        self.root.update()
+        title, words = self._texts()
+        self.assertEqual(title.get("1.0", "end-1c"), "High water")
+        self.assertIn("north coast.", words.get("1.0", "end-1c"))
+        self.assertEqual(str(words.cget("state")), "disabled", "read, not edited")
+        self.assertEqual(words.bind("<B1-Motion>"), "", "dragging selects, it moves nothing")
+        self.assertGreater(int(words.cget("height")), 1, "all of its lines show")
+        self.assertTrue(words.bind("<Button-3>"), "copied from the right button")
+        from personalized_agent.ui.on_top import copy_to_clipboard, selected_words
+        words.tag_add("sel", "1.0", "1.3")
+        self.assertEqual(selected_words(words), "The")
+        copy_to_clipboard(words, selected_words(words))
+        self.assertEqual(self.root.clipboard_get(), "The")
+
+    def test_it_says_why_it_is_told(self) -> None:
+        self.agent.notify_bubble("High water: At noon", notification_id="n1", template="passive",
+                                 reason="You opened the tide tables.")
+        self.root.update()
+        said = [one.get("1.0", "end-1c") for one in self._texts()]
+        self.assertIn("Why: You opened the tide tables.", said)
+
+    def test_with_no_reason_nothing_is_said_of_it(self) -> None:
+        self.agent.notify_bubble("High water: At noon", notification_id="n1", template="passive")
+        self.root.update()
+        self.assertFalse(any("Why:" in one.get("1.0", "end-1c") for one in self._texts()))
+
+    def test_lines_are_counted_by_the_font(self) -> None:
+        from personalized_agent.ui.desktop import lines_of
+        by_eight = lambda piece: 8 * len(piece)      # noqa: E731 - a font of even width
+        self.assertEqual(lines_of("", by_eight, 80), 1)
+        self.assertEqual(lines_of("one two", by_eight, 80), 1)
+        self.assertEqual(lines_of("aaaa bbbb cccc dddd", by_eight, 80), 2)
+        self.assertEqual(lines_of("one\ntwo", by_eight, 80), 2)
+        self.assertEqual(lines_of("潮" * 25, by_eight, 80), 3, "wrapped with no spaces")
+        self.assertEqual(lines_of("x" * 25, by_eight, 80), 3, "one word wider than the line")
+
+    def test_a_word_written_under_it_goes_and_it_closes(self) -> None:
+        told = []
+        self.agent.app.notification_chat = lambda ident, said: told.append((ident, said))
+        self.agent.notify_bubble("High water: At noon", notification_id="n1", template="passive")
+        self.root.update()
+        box = next(one for one in self._all(self.agent._bubble) if isinstance(one, tk.Entry))
+        box.delete(0, "end")
+        box.insert(0, "Not on weekends, please")
+        box.focus_force()
+        self.root.update()
+        box.event_generate("<Return>")
+        self.root.update()
+        import time
+        time.sleep(0.1)
+        self.assertIsNone(self.agent._bubble, "it closes")
+        self.assertEqual(told, [("n1", "Not on weekends, please")])
+
+    def test_the_hint_alone_is_not_sent(self) -> None:
+        told = []
+        self.agent.app.notification_chat = lambda *one: told.append(one)
+        self.agent.notify_bubble("High water: At noon", notification_id="n1", template="passive")
+        self.root.update()
+        box = next(one for one in self._all(self.agent._bubble) if isinstance(one, tk.Entry))
+        box.focus_force()
+        self.root.update()
+        box.event_generate("<Return>")
+        self.root.update()
+        self.assertEqual(told, [])
+        self.assertIsNotNone(self.agent._bubble)
+
+    def test_a_reply_in_a_notification_opens_in_the_chat(self) -> None:
+        opened = []
+        self.agent.open_chat = lambda: opened.append(self.agent._conversation_id)
+        self.agent.app.notification_got_it = lambda _ident: None
+        self.agent.notify_bubble("Reply from your chat: On the calendar", notification_id="n1",
+                                 template="passive", conversation="conv_9")
+        self.root.update()
+        button = next(one for one in self._all(self.agent._bubble) if isinstance(one, tk.Label)
+                      and str(one.cget("text")) == "Read the whole reply")
+        self.assertTrue(button)
+        self.agent._bubble_read_reply(self.agent._showing)
+        self.assertEqual(opened, ["conv_9"])
 
     def _all(self, widget):
         out = []
@@ -153,6 +239,123 @@ class TheBubbleTests(unittest.TestCase):
         bubble.show(near=(1200, 800))
         self.root.update()
         return bubble
+
+    def test_it_says_what_goes_with_a_message_and_it_can_be_taken_off(self) -> None:
+        front = {"title": "Tide tables - Chrome", "address": "https://example.com/tides"}
+        bubble = self._bubble(lambda *_a, **_k: {}, front=lambda: dict(front))
+        self._settle(0.3)
+        said = [one.cget("text") for one in bubble.front_row.winfo_children()]
+        self.assertIn("Tide tables - Chrome (https://example.com/tides)", said[0])
+        self.assertTrue(bubble.front_row.winfo_ismapped())
+        bubble._without_front("Tide tables - Chrome")
+        self.assertEqual(bubble.front_off, "Tide tables - Chrome")
+        self.assertFalse(bubble.front_row.winfo_children())
+        bubble._draw_front(dict(front))
+        self.assertFalse(bubble.front_row.winfo_children(), "the same window: still off")
+        bubble._draw_front({"title": "Notes - Word"})
+        self.assertEqual(bubble.front_off, "", "another window: told again")
+        self.assertTrue(bubble.front_row.winfo_children())
+
+    def test_what_was_not_sent_is_kept_when_it_is_closed(self) -> None:
+        kept = []
+        bubble = self._bubble(lambda *_a, **_k: {}, on_draft=kept.append)
+        bubble.box.insert("1.0", "Half a thought")
+        bubble.close()
+        self.assertEqual(kept[-1], "Half a thought")
+
+    def test_it_is_in_the_box_when_it_is_opened_again(self) -> None:
+        bubble = self._bubble(lambda *_a, **_k: {}, draft="Half a thought")
+        self.assertEqual(bubble.box.get("1.0", "end-1c"), "Half a thought")
+        bubble.close()
+
+    def test_several_lines_show(self) -> None:
+        bubble = self._bubble(lambda *_a, **_k: {}, draft="One\nTwo\nThree")
+        self._settle(0.1)
+        self.assertEqual(int(bubble.box.cget("height")), 3)
+        bubble.close()
+
+    def test_it_is_kept_as_it_is_typed_for_a_crash(self) -> None:
+        kept = []
+        bubble = self._bubble(lambda *_a, **_k: {}, on_draft=kept.append)
+        bubble.box.insert("1.0", "Hal")
+        bubble._draft_changed()
+        bubble.box.insert("end-1c", "f")
+        bubble._draft_changed()
+        self.assertEqual(kept, [], "not at each key")
+        self._settle(0.6)
+        self.assertEqual(kept, ["Half"], "once, after the typing stopped")
+        bubble.close()
+
+    def test_sent_it_is_a_draft_no_more(self) -> None:
+        kept = []
+        bubble = self._bubble(lambda *_a, **_k: {"answer": "Yes."}, on_draft=kept.append)
+        bubble.box.insert("1.0", "Book the room")
+        bubble.submit()
+        self.assertEqual(kept[-1], "")
+        self._settle(0.2)
+        bubble.close()
+        self.assertEqual(kept[-1], "")
+
+    def test_a_reply_after_it_closed_is_told_once(self) -> None:
+        go, late = threading.Event(), []
+
+        def send(_text, _conversation, _files=None, _mentions=None, on_text=None):
+            go.wait(5)
+            return {"answer": "Booked for Friday.", "conversation_id": "conv_1"}
+        bubble = self._bubble(send, streams=True, on_late=lambda *said: late.append(said))
+        bubble.box.insert("1.0", "Book the room")
+        bubble.submit()
+        self._settle(0.1)
+        bubble.close()
+        go.set()
+        self._settle(0.5)
+        self.assertEqual(late, [("Booked for Friday.", "conv_1")])
+
+    def test_a_reply_read_in_the_open_bubble_is_not_told_again(self) -> None:
+        late = []
+        bubble = self._bubble(lambda *_a, **_k: {"answer": "Booked.", "conversation_id": "c"},
+                              streams=True, on_late=lambda *said: late.append(said))
+        bubble.box.insert("1.0", "Book the room")
+        bubble.submit()
+        self._settle(0.4)
+        bubble.close()
+        self._settle(0.1)
+        self.assertEqual(late, [])
+
+    def test_the_full_agents_answer_is_told_and_the_quick_one_only_if_unread(self) -> None:
+        late = []
+        bubble = self._bubble(lambda *_a, **_k: {}, on_late=lambda *said: late.append(said))
+        bubble.close()
+        bubble._fold_done({"turn": "t", "quick": "On it", "conversation": "c"},
+                          {"answer": "It is on the calendar."})
+        bubble._fold_done({"turn": "t", "quick": "On it", "conversation": "c"},
+                          {"answer": "", "nothing": True})
+        bubble._fold_done({"turn": "t", "quick": "On it", "conversation": "c", "seen": True},
+                          {"answer": "", "nothing": True})
+        self.assertEqual(late, [("It is on the calendar.", "c"), ("On it", "c")])
+
+    def test_closed_while_the_model_works_the_work_goes_on_to_its_end(self) -> None:
+        """THE USER, 2026-11-04: once the model is called the turn is said in full,
+        the chat closed or not."""
+        go, finished, told = threading.Event(), [], []
+
+        def send(_text, _conversation, _files=None, _mentions=None, on_text=None):
+            go.wait(5)
+            on_text("Booked")                # the reply so far, to a window gone
+            finished.append("the whole turn")
+            return {"answer": "Booked for Friday.", "conversation_id": "conv_1"}
+        bubble = self._bubble(send, streams=True, on_conversation=told.append)
+        bubble.box.insert("1.0", "Book the room")
+        bubble.submit()
+        self._settle(0.1)
+        bubble.close()
+        self.assertFalse(bubble.is_open)
+        self.assertEqual(finished, [], "closed before the model was done")
+        go.set()
+        self._settle(0.5)
+        self.assertEqual(finished, ["the whole turn"])
+        self.assertEqual(told, [], "it does not reach into the next conversation")
+        self.assertFalse(bubble.waiting)
 
     def test_sent_apart_and_answered_in_the_same_conversation(self) -> None:
         asked = []
@@ -691,7 +894,8 @@ class TheBubbleTests(unittest.TestCase):
             root=self.root, config=config, queue=queue.Queue(), _conversation_id="conv_7",
             _words=lambda text: text, _popup_font=lambda: ("Segoe UI", 10),
             agent_window=SimpleNamespace(winfo_x=lambda: 1200, winfo_y=lambda: 800),
-            _avatar_box=lambda: (1200, 800, 120, 120),
+            _avatar_box=lambda: (1200, 800, 120, 120), _beside_box=lambda: (1200, 800, 120, 120), _chat_draft=lambda: "",
+            _keep_chat_draft=lambda _text: None,
             app=SimpleNamespace(avatar_name=lambda: "Fern",
                                 agent=SimpleNamespace(handle_message=lambda t, c: {})),
             open_chat=lambda: None)

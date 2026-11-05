@@ -33,6 +33,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from . import screen_now
 from . import state as state_module
 from .operations import ProjectMatcher, session_folders, window_items
 from .projects import ProjectIndex
@@ -88,6 +89,11 @@ HABIT_DAYS = 28
 HABIT_EVERY_S = 600
 HABIT_LEAST_DAYS = 3
 
+#: The programs running are read at most so often.
+RUNNING_EVERY_S = 30
+#: A browser's addresses this recent are read for a meeting it may be in.
+MEETING_PAGE_HOURS = 3
+
 #: THE SIGNALS, as the model is told of them: name -> (type, what it is).
 SIGNALS: Dict[str, Tuple[str, str]] = {
     "hour": ("number", "the local time as hours, 14.5 = 14:30"),
@@ -105,6 +111,15 @@ SIGNALS: Dict[str, Tuple[str, str]] = {
     "switch_rate": ("number", "focus changes an hour in the window under way"),
     "application": ("text", "the program in front"),
     "title": ("text", "the title of the window in front"),
+    "screen_locked": ("bool", "the lock screen, sign-in screen or screensaver is up"),
+    "running": ("text", "the programs running now, by name, separated by commas - use contains"),
+    "full_screen": ("bool", "something fills the whole screen: slides, a film, a game "
+                            "(Windows only so far)"),
+    "presenting": ("bool", "slides are being shown"),
+    "in_meeting": ("bool", "in a meeting or a call: its window, a call program using the "
+                           "microphone, or a browser using it on a meeting's own address"),
+    "microphone_in_use": ("text", "the programs using the microphone now, separated by commas "
+                                  "(Windows only so far)"),
     "work_started_today": ("text", "when the first work today was, HH:MM; empty before"),
     "work_started_hour": ("number", "the same, as hours; -1 before any work today"),
     "stretch_minutes": ("number", "minutes worked since the last absence of 30 min or more"),
@@ -206,6 +221,11 @@ class Signals:
         self.config = config
         self.states = states
         self.idle = idle or (lambda: None)
+        from ...platform_layer import get_platform
+        self.platform = getattr(get_platform(), "activity", None)
+        self.programs = screen_now.running_programs
+        self._running: List[str] = []
+        self._running_due = 0.0
         self.store = WindowStore(db)
         self._lock = threading.RLock()
         self._previous: Dict[str, Any] = {}
@@ -804,7 +824,12 @@ class Signals:
             idle = float(idle) if idle is not None else 0.0
             away_after = float(self.config.get("listener_presence_seconds", AWAY_AFTER_S)
                                if self.config else AWAY_AFTER_S)
-            present = idle < away_after
+            front = self._front(local)
+            # A key pressed at the lock screen wakes it: nobody is back yet. The
+            # model was asked about two such returns, and rightly said nothing.
+            from ...data_manage.storage.raw_store import _away as a_locked_screen
+            locked = a_locked_screen(front.get("application", ""))
+            present = idle < away_after and not locked
             if not present and self._away_since is None:
                 self._away_since = when - timedelta(seconds=idle)
             back_after = 0.0
@@ -816,7 +841,6 @@ class Signals:
                     back_after = self._back[1]
                 else:
                     self._back = None
-            front = self._front(local)
             midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
             today = [w for w in self.store.since(midnight) if w.main != AWAY]
             if live is not None and live.main != AWAY and (not today or live.start > today[-1].start):
@@ -845,6 +869,7 @@ class Signals:
                 "switch_rate": round(live.switch_rate, 1) if live is not None else 0.0,
                 "application": front.get("application", ""),
                 "title": front.get("title", ""),
+                "screen_locked": locked, **self._on_now(front, local),
                 "work_started_today": first.strftime("%H:%M") if first else "",
                 "work_started_hour": round(first.hour + first.minute / 60.0, 2) if first else -1.0,
                 "stretch_minutes": round(live.session_elapsed_min, 0) if live is not None else 0.0,
@@ -881,6 +906,38 @@ class Signals:
         if last is None:
             return -1.0
         return float((midnight.date() - last.astimezone().date()).days)
+
+    def _pages_lately(self, local: datetime) -> List[str]:
+        """The addresses a browser was on lately, the newest first."""
+        since = (local - timedelta(hours=MEETING_PAGE_HOURS)).astimezone(timezone.utc).isoformat()
+        out = []
+        for row in self.db.query("SELECT data FROM raw_events WHERE event_type = "
+                                 "'browser.navigation' AND timestamp >= ? "
+                                 "ORDER BY timestamp DESC LIMIT 40", (since,)):
+            try:
+                out.append(str(json.loads(row["data"] or "{}").get("url") or ""))
+            except ValueError:
+                continue
+        return out
+
+    def _on_now(self, front: Dict[str, str], local: datetime) -> Dict[str, Any]:
+        """What is running and what holds the screen (screen_now.py)."""
+        if time.monotonic() >= self._running_due:
+            self._running = self.programs()
+            self._running_due = time.monotonic() + RUNNING_EVERY_S
+        held, microphone = "", []
+        try:
+            held = self.platform.what_holds_the_screen()
+            microphone = self.platform.microphone_users()
+        except Exception:
+            log.debug("the system could not say what holds the screen", exc_info=True)
+        application, title = front.get("application", ""), front.get("title", "")
+        return {"running": ", ".join(self._running), "full_screen": bool(held),
+                "presenting": screen_now.presenting(application, title, held),
+                "in_meeting": screen_now.in_meeting(
+                    application, title, self._running, microphone,
+                    self._pages_lately(local) if microphone else ()),
+                "microphone_in_use": ", ".join(microphone)}
 
     def _front(self, local: datetime) -> Dict[str, str]:
         row = self.db.query_one(

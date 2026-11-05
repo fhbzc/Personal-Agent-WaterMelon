@@ -25,8 +25,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from ...common.languages import in_display, in_english
 from ...models.base import ModelRequest
 from ...models.manager import ModelUnavailable
+from . import item_links
 from . import task_projects as tp
-from .tasks import Kept, Task, now as task_now
+from . import todo as _todo
+from .tasks import LIVE, Kept, Task, now as task_now
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +39,14 @@ WRITER_LANGUAGE = in_display(
     '"line_display", "title_display" and "summary_display"'
 ) + in_english("everything else: each project line, and each task's title and summary - "
                "they are kept for the agent's own use")
+
+
+#: The newspapers of the last days: how many stories are read, how near one must
+#: be, how many are told. What is told is background, never work of the user's.
+MOST_NEWS, NEWS_SHOWN, NEWS_NEAR = 200, 6, 0.42
+NEWS_HEADER = ("FROM THE USER'S NEWSPAPER OF THE LAST 3 DAYS, the stories nearest this work. They "
+               "may explain what the work refers to and what belongs with what. None is work of "
+               "the user's, and none is a task of its own:\n")
 
 
 def is_scheme_row(task: Any) -> bool:
@@ -59,6 +69,11 @@ class ProjectRound:
         #: the ones looked for among the earlier projects at its end.
         self._named: set = set()
         self._made: set = set()
+        #: What the last stretch was told the user did: naming is told it too.
+        self._users_own = ""
+        #: The newspaper's last days, read once a run; what was told of them.
+        self._news: Optional[List[Tuple[str, List[float]]]] = None
+        self._news_said = ""
         self.report.setdefault("scheme", tp.SCHEME)
         self.report.setdefault("calls", 0)
         self.report["stretches"] = []
@@ -70,6 +85,7 @@ class ProjectRound:
         self.report["states_read"] = sum(len(states) for states, _window in stretches)
         if not stretches:
             self.report["note"] = "No state was written since the last run."
+            self._after_the_users_merge()
             return self.report
         for states, window in stretches:
             if not self.hb._going(self.where):
@@ -81,6 +97,8 @@ class ProjectRound:
         self._name_what_is_new()
         self._dormant()
         self._relink()
+        self._link_what_is_open()
+        self._plan_what_is_active()
         if newest:
             self.hb._processed_to(self.where, newest)
         self.report["round_complete"] = True
@@ -210,10 +228,15 @@ class ProjectRound:
             tasks_of[pid] = self.tasks.of_project(pid, limit=8)
         minutes = tp.worked_minutes(states, window)
         short = tp.short_labels([str(state.id) for state in states], "s")
+        stretch_said = tp.stretch_text(states, minutes, short)
+        self._users_own = self._the_users_own(stretch_said)
+        self._news_said = self._news_like(stretch_said)
         prompt = "\n\n".join(part for part in (
+            self._users_own,
+            self._news_said,
             tp.needing_text(needing, tasks_of, self._named_before(recent), short_of),
             tp.project_list_text(rows, needing, short_of),
-            tp.stretch_text(states, minutes, short)) if part)
+            stretch_said) if part)
         self.hb._at(self.report, "writing the tasks",
                     f"{len(states)} state(s) from {window[0]:%m-%d %H:%M}")
         answer, reply, usage = self._ask(tp.WRITER_SYSTEM, prompt, {"states": len(states)})
@@ -250,6 +273,37 @@ class ProjectRound:
         self._regroup(window[1], lines)
         stretch["seconds"] = round(time.perf_counter() - began, 1)
         return True
+
+    def _the_users_own(self, moment: str) -> str:
+        """What the user did to names and groups, in moments like this one."""
+        retriever = getattr(self.hb, "retriever", None)
+        return retriever.the_users_own(moment, "state_heartbeat") if retriever is not None else ""
+
+    def _news_like(self, moment: str) -> str:
+        """WHAT THE LAST DAYS' NEWSPAPERS SAID THAT BEARS ON THIS (the user, 2026-11-04):
+        the stories nearest what is being grouped - by meaning, no model - as
+        background; "" when none is near, and a run goes on without."""
+        read = getattr(self.hb, "recent_stories", None)
+        embedder = getattr(self.hb, "embedder", None)
+        if self.scope != LIVE or read is None or embedder is None:
+            return ""
+        try:
+            if self._news is None:
+                stories = list(read())[:MOST_NEWS]
+                vectors = embedder.embed([one["text"] for one in stories]) if stories else []
+                self._news = [(f"- {one['title']}: {one['text'][:240]}", list(vector))
+                              for one, vector in zip(stories, vectors or []) if vector]
+            if not self._news:
+                return ""
+            from .hierarchy import cosine
+            asked = list(embedder.embed([moment[:4000]])[0])
+            near = sorted(((cosine(asked, vector), line) for line, vector in self._news),
+                          reverse=True)
+            lines = [line for score, line in near[:NEWS_SHOWN] if score >= NEWS_NEAR]
+        except Exception:
+            log.info("the newspapers could not be read for this run", exc_info=True)
+            return ""
+        return NEWS_HEADER + "\n".join(lines) if lines else ""
 
     def _ask(self, system: str, prompt: str, metadata: Dict[str, Any]
              ) -> Tuple[Optional[Dict[str, Any]], str, Any]:
@@ -318,6 +372,9 @@ class ProjectRound:
                 key = task.get("continues") or task.get("project_id") or task["id"]
                 by.setdefault(key, []).append(task["id"])
             groups = list(by.values())
+        groups = tp.keep_together(groups, {t["id"]: t.get("project_id", "") for t in window},
+                                  [one.id for one in self.kept.live() if is_scheme_row(one)
+                                   and (one.described or {}).get("merged_by_user")])
         minutes = {task["id"]: float(task.get("minutes") or 0.0) for task in window}
         assigned, happened, ended = tp.inherit(groups, previous, minutes, tp.new_project_id)
         project_of = {tid: pid for pid, tids in assigned.items() for tid in tids}
@@ -371,6 +428,7 @@ class ProjectRound:
         model's, written when it is new and again when it has grown; what is
         being worked on in it is its most typical recent task."""
         described = dict(row.described or {})
+        self._the_users_name(described, carried)
         everything = self.tasks.of_project(row.id, limit=1000) or tasks
         known = {task["id"] for task in everything}
         everything = everything + [task for task in tasks if task["id"] not in known]
@@ -458,7 +516,10 @@ class ProjectRound:
         """The model's name and line, put on a project: the name it had kept
         among its earlier names, and how long it had been worked on when it
         was named, which says when it is named again."""
-        title = said.get("title_display") or said.get("title") or ""
+        # A NAME THE USER GAVE IS THEIRS: what it is and where it stands are
+        # still written, what it is called is not.
+        title = "" if described.get("named_by_user") else (
+            said.get("title_display") or said.get("title") or "")
         old = str(described.get("title") or "")
         if described.get("line") and not described.get("title_unnamed"):
             # What it was called, in English, for finding it again later.
@@ -485,6 +546,22 @@ class ProjectRound:
         row.summary_at = task_now()
 
     @staticmethod
+    def _the_users_name(described: Dict[str, Any], earlier: Sequence[Task]) -> None:
+        """A project carrying on one the user named is called what they
+        called it: the work is the same, and the id is not always."""
+        if described.get("named_by_user"):
+            return
+        for one in earlier:
+            said = one.described or {}
+            if said.get("named_by_user") and said.get("title"):
+                described["title"] = said["title"]
+                described["named_by_user"] = True
+                described.pop("title_unnamed", None)
+                described["in_english"] = dict(described.get("in_english") or {},
+                                               title=said["title"])
+                return
+
+    @staticmethod
     def _named_before(projects: Sequence[Task]) -> Dict[str, str]:
         out = {}
         for one in projects:
@@ -506,6 +583,10 @@ class ProjectRound:
             tasks_of = {one.id: self.tasks.of_project(one.id, limit=8) for one in part}
             prompt = tp.needing_text({one.id: one.described["name_due"] for one in part},
                                      tasks_of, self._named_before(part), short_of)
+            if self._news_said:
+                prompt = f"{self._news_said}\n\n{prompt}"
+            if self._users_own:
+                prompt = f"{self._users_own}\n\n{prompt}"
             self.hb._at(self.report, "naming the projects", f"{len(part)} project(s)")
             answer, reply, _usage = self._ask(tp.LINES_SYSTEM, prompt, {"projects": len(part)})
             self.report["naming"].append({"sent": prompt, "reply": reply})
@@ -530,6 +611,57 @@ class ProjectRound:
                 changed.append(one)
             self.kept.save(changed)
 
+    # -- what is still open ----------------------------------------------------------------
+    def _link_what_is_open(self) -> None:
+        """The tasks written: which of them, and which projects, what is still
+        open belongs to. One call, only with something open; a run does not fail
+        for it, and what was linked before stands."""
+        read = getattr(self.hb, "active_items", None)
+        links = getattr(self.hb, "item_links", None)
+        if self.scope != LIVE or read is None or links is None or not self.hb._going(self.where):
+            return
+        try:
+            items = list(read())[:item_links.MOST_ITEMS]
+            projects = sorted((one for one in self._projects_now()
+                               if not (one.described or {}).get("deleted_by_user")),
+                              key=lambda one: one.last_seen, reverse=True)
+            projects = projects[:item_links.MOST_PROJECTS]
+            if not items or not projects:
+                return
+            tasks_of = {one.id: self.tasks.of_project(one.id, limit=item_links.TASKS_EACH)
+                        for one in projects}
+            prompt, of_item, of_project, of_task = item_links.links_text(items, projects, tasks_of)
+            self.hb._at(self.report, "linking what is open", f"{len(items)} open")
+            answer, reply, _usage = self._ask(item_links.LINKS_SYSTEM, prompt,
+                                              {"open": len(items)})
+            self.report["links"] = {"sent": prompt, "reply": reply}
+            if answer:
+                self.report["linked"] = item_links.keep_answer(links, answer, of_item, of_project,
+                                                               of_task)
+        except Exception:
+            log.warning("what is open could not be linked to the work", exc_info=True)
+
+    # -- what is left to do ------------------------------------------------------------------
+    def _plan_what_is_active(self) -> None:
+        """What is left on each active project that changed (task_plan.py). A run does not
+        fail for it, and the lists as they were stand."""
+        if self.scope != LIVE or not self.hb._going(self.where):
+            return
+        from .task_plan import Planner
+        try:
+            Planner(self.hb, self).run(self._projects_now())
+        except Exception:
+            log.warning("what is left to do could not be gone through", exc_info=True)
+
+    def _after_the_users_merge(self) -> None:
+        """With nothing new to read, what the user merged is still gone through: named again,
+        what is open linked to it, and its list made."""
+        if any((one.described or {}).get("plan_due") for one in self._projects_now()):
+            self._name_what_is_new()
+            self._link_what_is_open()
+            self._plan_what_is_active()
+            self.report["round_complete"] = True
+
     # -- coming back ------------------------------------------------------------------------
     def _relink(self) -> None:
         """THE PROJECTS NAMED IN THIS RUN, LOOKED FOR AMONG THE EARLIER ONES
@@ -552,6 +684,7 @@ class ProjectRound:
             return
         earlier = [one for one in self.kept.all(limit=5000) if is_scheme_row(one)
                    and one.id not in live
+                   and not (one.described or {}).get("deleted_by_user")
                    and not (one.retired_at and (one.born_of or {}).get("joined_into"))]
         earlier = [one for one in earlier if self.tasks.of_project(one.id, limit=1)]
         if not earlier:
@@ -681,6 +814,7 @@ class ProjectRound:
                            relinked={"to": holder.id, "how": "continues", "why": why})
         old.retired_at = old.retired_at or task_now()
         described = dict(holder.described or {})
+        self._the_users_name(described, [old])
         name = str((old.described or {}).get("title") or "")
         before = list(described.get("names_before") or [])
         if name and name not in before and name != described.get("title"):
@@ -721,7 +855,9 @@ def project_view(task: Any, run_tasks: Optional[tp.RunTasks] = None,
            "born_of": dict(getattr(task, "born_of", None) or {}),
            "dormant": bool(getattr(task, "archived_at", "")),
            "ended": bool(getattr(task, "retired_at", "")),
-           "in_english": dict(described.get("in_english") or {})}
+           "in_english": dict(described.get("in_english") or {}),
+           "steps": _todo.items(described), "steps_at": str(described.get("todo_at") or ""),
+           "merged_by_user": bool(described.get("merged_by_user"))}
     if run_tasks is not None and how_many_tasks:
         out["tasks"] = [{key: one.get(key) for key in (
             "id", "title", "summary", "title_display", "summary_display", "kind",

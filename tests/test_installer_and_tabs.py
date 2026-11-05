@@ -45,6 +45,8 @@ class TheTabsTests(unittest.TestCase):
         self.assertEqual(result["err"], "")
         # Learning: the user's own tab after Work (2026-10-24), not a debugger's.
         self.assertEqual(result["out"]["tabs"], ["Overview", "Newspaper",
+                                                 # Collections, a tab of its own (2026-11-04).
+                                                 "Collections",
                                                  "Calendar", "Connections", "Work",
                                                  # The Monitor, the user's own (2026-11-03).
                                                  "Learning", "Monitor", "Society", "Chat", "Settings",

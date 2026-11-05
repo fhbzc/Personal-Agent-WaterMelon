@@ -107,6 +107,21 @@ class PlatformActivityProvider(ABC):
         """Map of browser name to local history database path."""
         return {}
 
+    def user_window_image(self) -> Optional[Any]:
+        """A picture of the window the user was in, for the chat and Delegate work:
+        that window alone, never the screen, so that a window they keep from being
+        read cannot be in it beside the one in front. Where a platform cannot pass
+        over this application's own windows, the window in front."""
+        return self.front_window_image()
+
+    def what_holds_the_screen(self) -> str:
+        """"presentation", "fullscreen", or "" - nothing, or the platform cannot say."""
+        return ""
+
+    def microphone_users(self) -> list:
+        """The programs using the microphone now, by name; [] where it cannot say."""
+        return []
+
     def seconds_since_input(self) -> Optional[float]:
         """How long since the keyboard or the mouse was last touched.
 

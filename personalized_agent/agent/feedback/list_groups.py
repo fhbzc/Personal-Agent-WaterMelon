@@ -13,7 +13,9 @@ kept in words - "Renamed the group "Reviews" to "ICLR reviews"" - the 100
 newest of each list (older ones deleted), and handed to the next grouping
 as THE USER'S PREFERENCES, put above everything else (the user: "告诉model
 human的preference 优先"). Only the model is told: the code does not hold
-an item where the user put it.
+an item where the user put it. EACH IS A LESSON TOO (the user, 2026-11-04),
+and a grouping is told the lessons like its items, so what was done to one
+list, or to a project's name, bears on the other.
 
 OTHERS, AND GROUPS OF THEIR OWN (the user, 2026-11-03): what fits no group
 well is in "Others", always last, never renamed or deleted - an item taken
@@ -38,7 +40,7 @@ from ...common.languages import in_display
 
 log = logging.getLogger(__name__)
 
-LISTS = ("todo", "assigned")
+LISTS = ("todo", "assigned", "collection")
 #: The user's changes kept for each list, the newest (the user: "最多留100条
 #: ... 久远的就删掉").
 KEEP_CHANGES = 100
@@ -69,7 +71,8 @@ CREATE INDEX IF NOT EXISTS idx_list_group_changes ON list_group_changes(list, at
 """
 
 WHAT = {"todo": "the user's to-do list - what they mean to do themselves",
-        "assigned": "the work the user handed to their agent to do"}
+        "assigned": "the work the user handed to their agent to do",
+        "collection": "the articles and recommended content the user kept to come back to"}
 
 #: KEEP THE GROUPING THERE IS (the user, 2026-11-03: "尽可能保留之前的分组，除非非常
 #: 有必要，尽可能只把新的或者edit的content放到之前已有的组别里"): told, with each
@@ -98,7 +101,9 @@ the newest last: names they gave, items they put in a group, took out of
 one, or put in a new one. Follow them: keep the names they gave, keep apart
 what they took apart, and group new items the way they would. Where two
 of their changes disagree, the newer wins. An item they put in "{others}"
-stays there unless a newer change says otherwise.
+stays there unless a newer change says otherwise. "what_the_user_did_elsewhere",
+when given, is how they named and grouped other things: group the way it shows,
+after their changes here.
 
 Answer with JSON alone:
 {{"groups": [{{"name": "...", "items": ["<id>", ...]}}, ..., {{"name": "{others}", "items": [...]}}]}}"""
@@ -124,6 +129,9 @@ class ListGroups:
         #: Each list's count of the user's changes to its groups: one made
         #: while a grouping runs is not written over by it.
         self._version: Dict[str, int] = {}
+        #: Set by the application: where what the user does is kept, and found.
+        self.lessons: Any = None
+        self.retriever: Any = None
         with self.db.write() as conn:
             conn.executescript(SCHEMA)
 
@@ -228,9 +236,15 @@ class ListGroups:
             if ident not in before:
                 return "new"
             return "edited" if before[ident] != seen[ident] else ""
+
+        def part_of(ident: str) -> Dict[str, str]:
+            links = getattr(self, "item_links", None)
+            note = links.note(which, ident) if links is not None else ""
+            return {"part_of": note} if note else {}
         handed = {
             "items": [dict({"id": str(one.get("id")), "text": str(one.get("text") or ""),
                             "detail": str(one.get("detail") or "")},
+                           **part_of(str(one.get("id"))),
                            **({"changed": changed(str(one.get("id")))}
                               if changed(str(one.get("id"))) else {})) for one in items],
             # The groups as they are now - only the items still in the list;
@@ -239,6 +253,11 @@ class ListGroups:
                                for group in self._with_others(kept)],
             "the_users_changes_newest_last": [f"{one['at'][:16].replace('T', ' ')} - {one['said']}"
                                               for one in self.changes(which)]}
+        if self.retriever is not None:
+            elsewhere = self.retriever.the_users_own(
+                " ".join(sorted(seen.values()))[:2000], "list_grouping")
+            if elsewhere:
+                handed["what_the_user_did_elsewhere"] = elsewhere
         response = self._models().invoke(ModelRequest(
             messages=[{"role": "user", "content": json.dumps(handed, ensure_ascii=False,
                                                              indent=1)[:60000]}],
@@ -342,6 +361,11 @@ class ListGroups:
             "DELETE FROM list_group_changes WHERE list = ? AND id NOT IN (SELECT id FROM "
             "list_group_changes WHERE list = ? ORDER BY at DESC, rowid DESC LIMIT ?)",
             (which, which, KEEP_CHANGES))
+        if self.lessons is not None:
+            try:
+                self.lessons.the_user_did("moved_list_groups", f"In {WHAT[which]}: {said}")
+            except Exception:
+                log.warning("what the user did could not be kept as a lesson", exc_info=True)
 
     def _text_of(self, which: str, item: str) -> str:
         for one in self._items[which]():

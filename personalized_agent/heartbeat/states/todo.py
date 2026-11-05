@@ -32,7 +32,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 log = logging.getLogger(__name__)
 
 #: What a description holds about its next steps. Written only by `change`.
-KEYS = ("todo", "todo_changes", "todo_note", "todo_at", "todo_asking")
+KEYS = ("todo", "todo_changes", "todo_note", "todo_at", "todo_asking", "todo_log", "plan_due")
 
 #: How many steps the model may give. Next steps, not a plan: a list
 #: longer than this has stopped being what to do next.

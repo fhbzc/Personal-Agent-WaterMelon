@@ -1,0 +1,1002 @@
+"""THREE ICONS BESIDE THE AVATAR (the user, 2026-11-04): To do, Collections, Chat, always out, in
+an arc on the side that faces the screen, and the panels they open at once, with
+no page: chosen items delegated and their outcomes opened, groups folded, words
+zoomed and copied. Everything here is made up."""
+
+from __future__ import annotations
+
+import gc
+import json
+import queue
+import sys
+import time
+import unittest
+from types import SimpleNamespace
+from unittest import mock
+
+import support  # noqa: F401
+from support import TemporaryAgent
+
+from personalized_agent.ui.avatar_buttons import ICON, ChatVine, QuickPanel, vine_path
+from personalized_agent.ui.chat_bubble import beside
+
+try:
+    import tkinter as tk
+    _root = tk.Tk()
+    _root.destroy()
+    del _root
+    gc.collect()
+    HAVE_TK = True
+except Exception:                            # pragma: no cover - no display
+    HAVE_TK = False
+
+AREA = (0, 0, 1920, 1040)
+
+
+
+
+@unittest.skipUnless(HAVE_TK, "no display for Tk here")
+class OnTheScreenTests(unittest.TestCase):
+
+    def setUp(self) -> None:
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.posted = queue.Queue()
+        self.opened, self.done = [], []
+
+    def tearDown(self) -> None:
+        # Tk's objects let go of here, on its own thread: collected on another one
+        # (a worker's), they end the process.
+        self.root.destroy()
+        del self.root
+        gc.collect()
+
+    def _settle(self, seconds=0.3):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            try:
+                while True:
+                    self.posted.get_nowait()()
+            except queue.Empty:
+                pass
+            self.root.update()
+            time.sleep(0.01)
+
+    def _panel(self, sections, **more):
+        return QuickPanel(self.root, "To do", lambda: sections, self.posted.put, lambda text: text,
+                          ("Segoe UI", 11), "Nothing yet.", **more)
+
+    def _said(self, panel):
+        return panel.list.get("1.0", "end")
+
+    def _buttons(self, panel):
+        return [str(one.cget("text")) for one in panel.faces]
+
+    ONE = [{"name": "Coast", "rows": [
+        {"id": "t1", "title": "Measure the gauge", "detail": "Before noon.", "note": "Part of: Tides",
+         "actions": [{"key": "open", "label": "Open the latest outcome"},
+                     {"key": "delegate", "label": "Delegate work"},
+                     {"key": "remove", "label": "Remove", "confirm": True, "changes": True}]}]}]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    @unittest.skipUnless(sys.platform.startswith("win"), "Windows' peek")
+    def test_a_peek_at_another_window_leaves_it_there(self) -> None:
+        from personalized_agent.ui.on_top import stays_through_peek
+        one = tk.Toplevel(self.root)
+        one.overrideredirect(True)
+        one.geometry("50x50+300+300")
+        self.root.update()
+        self.assertTrue(stays_through_peek(one), "the system took it")
+
+
+
+    def test_a_panel_kept_from_a_larger_screen_fits_a_smaller_one(self) -> None:
+        with mock.patch("personalized_agent.ui.avatar_buttons.work_area",
+                        return_value=(0, 0, 500, 400)):
+            panel = self._panel(self.ONE, size=(900, 900))
+            panel.show((300, 100, 128, 128))
+            self._settle(0.1)
+            self.assertLessEqual(panel.window.winfo_width(), 480)
+            self.assertLessEqual(panel.window.winfo_height(), 380)
+
+
+    def test_a_panel_opens_at_once_and_fills_when_its_list_comes(self) -> None:
+        panel = self._panel(self.ONE)
+        began = time.monotonic()
+        panel.show((800, 500, 128, 128))
+        self.assertLess(time.monotonic() - began, 1.0, "no browser to start")
+        self.assertIn("Loading", self._said(panel))
+        self._settle()
+        for words in ("Coast (1)", "Measure the gauge", "Before noon.", "Part of: Tides"):
+            self.assertIn(words, self._said(panel))
+
+    def test_a_group_folds_and_opens_again(self) -> None:
+        panel = self._panel(self.ONE)
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        panel._fold("Coast")
+        self.assertNotIn("Measure the gauge", self._said(panel))
+        self.assertIn("Coast (1)", self._said(panel), "its heading stays, with how many")
+        panel._fold("Coast")
+        self.assertIn("Measure the gauge", self._said(panel))
+
+    def test_a_group_folded_stays_so_when_it_is_opened_again(self) -> None:
+        panel = self._panel(self.ONE)
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        panel._fold("Coast")
+        panel.close()
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        self.assertNotIn("Measure the gauge", self._said(panel))
+
+    def test_its_buttons_are_there_without_a_press(self) -> None:
+        panel = self._panel(self.ONE)
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        self.assertEqual(self._buttons(panel), ["Open the latest outcome", "Delegate work", "Remove"])
+
+    def test_folded_its_buttons_go_with_it(self) -> None:
+        panel = self._panel(self.ONE)
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        panel._fold("Coast")
+        self.assertEqual(self._buttons(panel), [])
+
+    def test_only_the_one_asked_of_says_remove_it(self) -> None:
+        two = [{"name": "", "rows": [dict(self.ONE[0]["rows"][0]),
+                                     dict(self.ONE[0]["rows"][0], id="t2", title="Other")]}]
+        panel = self._panel(two)
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        panel._ask("t2")
+        self.assertEqual(self._buttons(panel).count("Remove it?"), 1)
+        self.assertEqual(self._buttons(panel).count("Remove"), 1)
+
+    def test_remove_asks_first_and_no_changes_nothing(self) -> None:
+        asked = []
+        panel = self._panel(self.ONE, act=lambda action, done: (asked.append(action["key"]), done()))
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        panel._ask("t1")
+        self.assertEqual(self._buttons(panel), ["Open the latest outcome", "Delegate work",
+                                                "Remove it?", "Yes", "No"])
+        self.assertEqual(asked, [], "nothing gone yet")
+        panel._ask("")
+        self.assertIn("Remove", self._buttons(panel))
+        self.assertEqual(asked, [])
+
+    def test_removed_the_list_is_read_again(self) -> None:
+        sections = [dict(self.ONE[0])]
+        panel = QuickPanel(self.root, "To do", lambda: sections, self.posted.put, lambda text: text,
+                           ("Segoe UI", 11), "Nothing yet.",
+                           act=lambda _action, done: (sections.clear(), done()))
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        panel._do(self.ONE[0]["rows"][0], self.ONE[0]["rows"][0]["actions"][2])
+        self._settle()
+        self.assertIn("Nothing yet.", self._said(panel))
+
+    def _long(self):
+        return [{"name": "", "rows": [
+            {"id": f"t{n}", "title": f"To do number {n}", "detail": "Some words about it.",
+             "actions": [{"key": "delegate", "label": "Delegate work"},
+                         {"key": "remove", "label": "Remove", "confirm": True, "changes": True}]}
+            for n in range(40)]}]
+
+    def _top_line(self, panel):
+        return int(panel.list.index("@0,0").split(".")[0])
+
+    def test_pressing_remove_keeps_the_list_where_it_is(self) -> None:
+        panel = self._panel(self._long())
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        panel.list.yview("90.0")
+        self._settle(0.1)
+        before = self._top_line(panel)
+        self.assertGreater(before, 50, "scrolled down")
+        panel._ask("t30")
+        self._settle(0.1)
+        self.assertEqual(self._top_line(panel), before, "Remove it? Yes / No, in place")
+        panel._ask("")
+        self._settle(0.1)
+        self.assertEqual(self._top_line(panel), before)
+
+    def test_removed_the_list_stays_about_where_it_was(self) -> None:
+        sections = self._long()
+        panel = QuickPanel(self.root, "To do", lambda: sections, self.posted.put, lambda text: text,
+                           ("Segoe UI", 11), "Nothing yet.",
+                           act=lambda _action, done: (sections[0]["rows"].pop(30), done()))
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        panel.list.yview("90.0")
+        self._settle(0.1)
+        before = self._top_line(panel)
+        row = sections[0]["rows"][30]
+        panel._do(row, row["actions"][1])
+        self._settle()
+        self.assertEqual(self._top_line(panel), before, "not back at the top")
+
+    def test_buttons_do_not_pile_up_as_it_is_drawn_again(self) -> None:
+        panel = self._panel(self.ONE)
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        for _ in range(5):
+            panel._draw()
+        body = [one for one in panel.list.winfo_children() if isinstance(one, tk.Label)]
+        self.assertEqual(len(body), 3)
+
+    def test_opening_says_so_and_takes_no_second_press(self) -> None:
+        asked, finish = [], []
+
+        def act(action, done):
+            asked.append(action["key"])
+            finish.append(done)
+        panel = self._panel(self.ONE, act=act)
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        row = self.ONE[0]["rows"][0]
+        panel._do(row, row["actions"][0])
+        panel._do(row, row["actions"][0])
+        self.assertEqual(asked, ["open"])
+        self.assertIn("Opening...", self._buttons(panel))
+        finish[0]()
+        self._settle(0.1)
+        self.assertNotIn("Opening...", self._buttons(panel))
+
+    def _open(self, sections, **more):
+        panel = self._panel(sections, **more)
+        panel.show((1000, 300, 128, 128))
+        self._settle(0.1)
+        return panel
+
+    def test_the_keyboard_is_in_its_search_box_as_in_the_chat(self) -> None:
+        panel = self._open(self.ONE, searches=True)
+        self.assertEqual(panel.window.focus_lastfor(), panel.box)
+
+    def test_control_and_the_wheel_zoom_whatever_has_the_keyboard(self) -> None:
+        panel = self._open(self.ONE)
+        panel._wheel(SimpleNamespace(delta=120))
+        self.assertEqual(panel.zoom, 1)
+        panel._wheel(SimpleNamespace(delta=-120))
+        panel._wheel(SimpleNamespace(delta=-120))
+        self.assertEqual(panel.zoom, -1)
+
+    def test_control_minus_makes_its_smallest_words_smaller(self) -> None:
+        panel = self._open(self.ONE)
+        small = panel._sized(-2)
+        was = small.cget("size")
+        panel.zoom_by(-1)
+        self._settle(0.05)
+        self.assertLess(small.cget("size"), was)
+
+    def test_a_key_on_the_search_box_zooms_and_writes_nothing(self) -> None:
+        panel = self._open(self.ONE, searches=True)
+        panel.box.focus_force()
+        self._settle(0.05)
+        panel.box.event_generate("<Control-minus>")
+        self._settle(0.05)
+        self.assertEqual((panel.zoom, panel.box.get()), (-1, ""))
+
+    ADD = {"label": "+ Add a to-do", "fields": ["What to do", "Details"], "keys": ["text", "detail"],
+           "path": "/api/todos/add"}
+
+    def test_adding_posts_what_was_written_and_reads_again(self) -> None:
+        asked, reads = [], []
+
+        def act(action, done):
+            asked.append(action)
+            done()
+        panel = self._panel(self.ONE, act=act, adds=[self.ADD])
+        panel.read = lambda: reads.append(1) or self.ONE
+        panel.show((1000, 300, 128, 128))
+        self._settle(0.1)
+        reads.clear()
+        panel._add(self.ADD)
+        boxes = [one for one in panel.form.winfo_children() if isinstance(one, tk.Entry)]
+        self.assertEqual(len(boxes), 2)
+        boxes[0].insert(0, "Check the gauge")
+        boxes[1].insert(0, "Before noon")
+        self._settle(0.05)
+        boxes[0].event_generate("<Return>")
+        self._settle(0.1)
+        self.assertEqual((asked[0]["path"], asked[0]["body"]),
+                         ("/api/todos/add", {"text": "Check the gauge", "detail": "Before noon"}))
+        self.assertIsNone(panel.form)
+        self.assertTrue(reads, "the list read again")
+
+    def test_nothing_written_nothing_is_added(self) -> None:
+        asked = []
+        panel = self._open(self.ONE, act=lambda action, done: asked.append(action), adds=[self.ADD])
+        panel._add(self.ADD)
+        box = next(one for one in panel.form.winfo_children() if isinstance(one, tk.Entry))
+        self._settle(0.05)
+        box.event_generate("<Return>")
+        self._settle(0.05)
+        self.assertEqual(asked, [])
+        self.assertIsNotNone(panel.form, "still open to write in")
+
+    GROUPED = [{"name": "Coast", "group": "Coast", "keep": True, "rows": [
+        {"id": "a", "title": "Measure the gauge",
+         "actions": [{"key": "move", "label": "Move", "moves": True, "list": "todo"}]}]},
+        {"name": "Empty one", "group": "Empty one", "keep": True, "rows": []},
+        {"name": "Others", "group": "Others", "keep": False, "rows": []}]
+
+    def test_moving_offers_the_other_groups_and_posts_the_one_chosen(self) -> None:
+        asked = []
+
+        def act(action, done):
+            asked.append(action)
+            done()
+        panel = self._open(self.GROUPED, act=act)
+        self.assertEqual(self._buttons(panel), ["Move"])
+        panel._start_moving("a")
+        self.assertEqual(self._buttons(panel), ["Move to…", "Empty one", "Others", "+ Add group", "Cancel"])
+        panel._move_row(panel.sections[0]["rows"][0], panel.sections[0]["rows"][0]["actions"][0], "Empty one")
+        self._settle(0.1)
+        self.assertEqual((asked[0]["path"], asked[0]["body"]),
+                         ("/api/lists/groups/move", {"list": "todo", "item": "a", "to": "Empty one"}))
+        self.assertEqual(panel.moving, "")
+
+    def test_a_group_empty_is_shown_but_not_while_searching(self) -> None:
+        panel = self._open(self.GROUPED, searches=True)
+        self.assertIn("Empty one", self._said(panel))
+        self.assertNotIn("Others", self._said(panel), "Others only with something in it")
+        panel.box.insert(0, "gauge")
+        panel._draw()
+        self.assertNotIn("Empty one", self._said(panel))
+
+    LONG = [{"name": "Coast", "group": "Coast", "rows": [
+        {"id": str(n), "title": f"Thing to do {n}", "actions": [{"key": "a", "label": "Open"}]}
+        for n in range(40)]}]
+
+    def test_the_wheel_glides_and_stops_at_the_top(self) -> None:
+        panel = self._open(self.LONG)
+        self.assertEqual(panel._roll(SimpleNamespace(delta=-120)), "break")
+        first = panel.list.yview()[0]
+        self._settle(0.4)
+        moved = panel.list.yview()[0]
+        self.assertGreater(moved, first, "on, after the first step")
+        self.assertEqual(panel._rolling, 0.0)
+        for _ in range(4):
+            panel._roll(SimpleNamespace(delta=120))
+        self._settle(0.6)
+        self.assertEqual((panel.list.yview()[0], panel._rolling), (0.0, 0.0))
+
+    def test_many_steps_of_zoom_are_drawn_once(self) -> None:
+        panel = self._open(self.LONG)
+        with mock.patch.object(panel, "_draw_zoom", wraps=panel._draw_zoom) as drawn:
+            panel._zoom_due = None
+            for _ in range(5):
+                panel.zoom_by(1)
+            self.assertEqual(panel.zoom, 5)
+
+    def test_it_is_sized_by_its_edges_and_keeps_the_size(self) -> None:
+        told = []
+        panel = self._open(self.ONE, on_size=told.append)
+        window = panel.window
+        width, height = window.winfo_width(), window.winfo_height()
+        panel._edge_start(SimpleNamespace(x_root=500, y_root=500), "se")
+        panel._edge_move(SimpleNamespace(x_root=560, y_root=530))
+        panel._edge_end()
+        self.assertEqual(told, [(width + 60, height + 30)])
+        panel.close()
+        panel.show((1000, 300, 128, 128))
+        self._settle(0.1)
+        self.assertEqual((panel.window.winfo_width(), panel.window.winfo_height()), told[0])
+
+    def test_its_edges_are_at_its_edges_and_cover_nothing(self) -> None:
+        """By where things are on the screen: the sizing was tested by calling it, while the
+        strips stood inside the padding, over the words and the ✕."""
+        panel = self._open(self.ONE, searches=True)
+        window = panel.window
+        self._settle(0.3)                    # moved from out of sight: settled there first
+        x, y = window.winfo_rootx(), window.winfo_rooty()
+        width, height = window.winfo_width(), window.winfo_height()
+        for at in ((x + width - 3, y + height // 2), (x + 3, y + height // 2),
+                   (x + width // 2, y + 3), (x + width // 2, y + height - 3),
+                   (x + width - 3, y + height - 3), (x + 3, y + 3)):
+            self.assertIn(str(self.root.winfo_containing(*at).cget("cursor")),
+                          ("sb_h_double_arrow", "sb_v_double_arrow", "top_left_corner",
+                           "bottom_right_corner"), at)
+        strips = panel.card.master.place_slaves()
+        self.assertEqual(len(strips), 8)
+        for one in strips:
+            for inside in (panel.list, panel.box):
+                apart = (one.winfo_rootx() + one.winfo_width() <= inside.winfo_rootx()
+                         or inside.winfo_rootx() + inside.winfo_width() <= one.winfo_rootx()
+                         or one.winfo_rooty() + one.winfo_height() <= inside.winfo_rooty()
+                         or inside.winfo_rooty() + inside.winfo_height() <= one.winfo_rooty())
+                self.assertTrue(apart, f"{one.cget('cursor')} is over the list or the search box")
+
+    def test_made_ahead_it_opens_with_its_list_already_there(self) -> None:
+        reads = []
+        panel = self._panel(self.ONE)
+        panel.read = lambda: reads.append(1) or self.ONE
+        panel.prepare()
+        self._settle(0.1)
+        self.assertFalse(panel.is_open)
+        self.assertLess(panel.window.winfo_x(), -1000, "out of sight")
+        made = panel.window
+        panel.show((1000, 300, 128, 128))
+        self.assertTrue(panel.is_open)
+        self.assertIs(panel.window, made)
+        self.root.update()
+        self.assertGreater(panel.window.winfo_x(), -1000)
+        self.assertIn("Coast", self._said(panel), "at once, before any read comes back")
+
+    def test_it_comes_on_to_the_screen_the_way_a_press_opens_it(self) -> None:
+        """Through the desktop's own press, the keyboard taken and all, read from the system:
+        drawn out of sight, it said it was open and stayed there."""
+        import ctypes
+        from ctypes import wintypes
+        from personalized_agent.ui.desktop import DesktopAgent
+        panels = {"todo": self._panel(self.ONE, searches=True),
+                  "collection": self._panel(self.ONE, searches=True)}
+        for one in panels.values():
+            one.prepare()
+        self._settle(0.2)
+        desk = SimpleNamespace(_quick_panels=panels, _panel=panels.get, _chat_bubble=None,
+                               config=SimpleNamespace(get=lambda _key, default=None: default),
+                               _beside_box=lambda: (1500, 500, 180, 169))
+        for which, other in (("todo", "collection"), ("collection", "todo"), ("todo", "collection")):
+            DesktopAgent._quick_panel(desk, which)
+            self._settle(0.2)
+            self.assertTrue(panels[which].is_open)
+            self.assertGreater(panels[which].window.winfo_x(), -1000, which)
+            self.assertLess(panels[other].window.winfo_x(), -1000, other)
+            if sys.platform.startswith("win"):
+                rect = wintypes.RECT()
+                ctypes.windll.user32.GetWindowRect(int(panels[which].window.wm_frame(), 16),
+                                                   ctypes.byref(rect))
+                self.assertGreater(rect.left, -1000, "the system's word for it, not Tk's")
+
+    def test_each_panel_keeps_its_own_size_of_words(self) -> None:
+        from personalized_agent.ui.desktop import DesktopAgent
+        kept = {"quick_panel_zoom": 2}
+        config = SimpleNamespace(get=lambda key, default=None: kept.get(key, default),
+                                 set=lambda key, value, internal=False: kept.__setitem__(key, value))
+        desk = SimpleNamespace(_quick_panels={}, root=self.root, config=config, _words=str,
+                               queue=queue.Queue(), _popup_font=lambda: ("Segoe UI", 11),
+                               _panel_act=lambda action, done: done())
+        todo = DesktopAgent._panel(desk, "todo")
+        collection = DesktopAgent._panel(desk, "collection")
+        self.assertEqual((todo.zoom, collection.zoom), (2, 2), "from the one they shared")
+        todo.zoom_to(5)
+        self.assertEqual((kept["quick_panel_zoom_todo"], collection.zoom), (5, 2))
+        desk._quick_panels.clear()
+        self.assertEqual(DesktopAgent._panel(desk, "todo").zoom, 5)
+        self.assertEqual(DesktopAgent._panel(desk, "collection").zoom, 2)
+
+    def test_closed_it_is_kept_clean_for_the_next_time(self) -> None:
+        panel = self._open(self.GROUPED, searches=True, act=lambda action, done: done())
+        panel.box.insert(0, "gauge")
+        panel._start_moving("a")
+        panel._open_form(["Name"], lambda said: None, "Add")
+        panel.close()
+        self._settle(0.05)
+        self.assertFalse(panel.is_open)
+        self.assertEqual((panel.box.get(), panel.moving, panel.form), ("", "", None))
+        self.assertLess(panel.window.winfo_x(), -1000)
+
+    def test_a_list_changed_is_drawn_and_one_the_same_is_not_drawn_again(self) -> None:
+        panel = self._open(self.ONE)
+        with mock.patch.object(panel, "_draw") as drawn:
+            panel._got(self.ONE, quiet=True)
+            drawn.assert_not_called()
+            panel._got(self.GROUPED, quiet=True)
+            drawn.assert_called_once()
+
+    def test_a_group_folds_while_searching(self) -> None:
+        panel = self._open(self.ONE, searches=True)
+        panel.box.insert(0, "gauge")
+        panel._draw()
+        self.assertIn("gauge", self._said(panel).lower())
+        panel._fold("Coast")
+        self.assertNotIn("gauge", self._said(panel).lower().replace("coast", ""))
+        self.assertIn("Coast", self._said(panel))
+        panel.box.delete(0, "end")
+        panel._draw()
+        self.assertIn("gauge", self._said(panel).lower(), "that fold ends with the search")
+
+    def test_it_can_still_be_dragged_by_its_head(self) -> None:
+        panel = self._open(self.ONE)
+        self.assertEqual(panel._move.__code__.co_varnames[:2], ("self", "event"))
+
+    def test_its_words_zoom_and_the_size_is_kept(self) -> None:
+        told = []
+        panel = self._panel(self.ONE, on_zoom=told.append)
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        before = panel._sized(-1).actual("size")
+        panel.zoom_by(2)
+        self._settle(0.05)
+        self.assertEqual(panel._sized(-1).actual("size"), before + 2)
+        panel.zoom_to(0)
+        self._settle(0.05)
+        self.assertEqual(panel._sized(-1).actual("size"), before)
+        self.assertEqual(told, [], "not written at each step")
+        self._settle(0.5)
+        self.assertEqual(told, [0], "written once, when it stops")
+        panel.zoom_to(99)
+        panel.close()
+        self.assertEqual(told[-1], 8, "within reason, and not lost on closing")
+
+    def test_ctrl_plus_and_minus_are_held_by_the_panel(self) -> None:
+        panel = self._panel(self.ONE)
+        panel.show((800, 500, 128, 128))
+        self._settle(0.05)
+        for keys in ("<Control-plus>", "<Control-equal>", "<Control-minus>", "<Control-Key-0>"):
+            self.assertTrue(panel.window.bind(keys), keys)
+
+    def test_what_is_selected_is_what_is_copied(self) -> None:
+        from personalized_agent.ui.on_top import selected_words
+        panel = self._panel(self.ONE)
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        self.assertEqual(selected_words(panel.list), "")
+        panel.list.tag_add("sel", "2.0", "2.7")
+        self.assertEqual(selected_words(panel.list), "Measure")
+        self.assertTrue(panel.list.bind("<Button-3>"), "copied from the right button")
+
+    def test_searched_by_a_word_with_a_folded_group_opened(self) -> None:
+        panel = self._panel([{"name": "All", "rows": [{"title": "Tides"}, {"title": "Bread"}]}],
+                            searches=True)
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        panel._fold("All")
+        panel.box.insert(0, "brea")
+        panel._draw()
+        self.assertIn("Bread", self._said(panel))
+        self.assertNotIn("Tides", self._said(panel))
+
+    def test_with_nothing_it_says_so(self) -> None:
+        panel = self._panel([])
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        self.assertIn("Nothing yet.", self._said(panel))
+
+
+class TheVinesPathTests(unittest.TestCase):
+    AREA = (0, 0, 1920, 1032)
+
+    SIDES = (("right", (1886, 500, 128, 128), (1832, 500, 128, 128)),
+             ("left", (-94, 500, 128, 128), (-40, 500, 128, 128)),
+             ("top", (900, -94, 128, 128), (900, -28, 128, 128)),
+             ("bottom", (900, 998, 128, 128), (900, 948, 128, 128)))
+
+    def test_in_the_middle_between_the_leaves_close_to_the_edge(self) -> None:
+        """Where the leaves are was measured on the frames: 8 to 52 and 75 to 119 along."""
+        for side, tucked, _head in self.SIDES:
+            points, at = vine_path(tucked, side, self.AREA)
+            self.assertEqual(points[3], (at[0] + ICON // 2, at[1] + ICON // 2), "the button at its end")
+            middle = (at[0] + ICON // 2 - tucked[0], at[1] + ICON // 2 - tucked[1])
+            along = middle[0] if side in ("top", "bottom") else middle[1]
+            self.assertEqual(along, 64, f"between the leaves: {side}")
+            from_edge = {"right": 1920 - at[0] - ICON, "left": at[0], "top": at[1],
+                         "bottom": 1032 - at[1] - ICON}[side]
+            self.assertTrue(0 <= from_edge <= 50, (side, from_edge))
+            apart = (at[0] + ICON <= tucked[0] or at[0] >= tucked[0] + 128
+                     or at[1] + ICON <= tucked[1] or at[1] >= tucked[1] + 128)
+            self.assertTrue(apart, f"on the avatar's window, the pointer brings its head out: {side}")
+
+    def test_in_a_corner_or_any_screen_the_button_is_on_it(self) -> None:
+        for area in (self.AREA, (0, 0, 1024, 728), (1920, -200, 3840, 1000), (-1280, 0, 0, 1000)):
+            left, top, right, bottom = area
+            for y in range(top - 90, bottom - 30, 23):
+                for side, x in (("right", right - 34), ("left", left - 94)):
+                    _points, at = vine_path((x, y, 128, 128), side, area)
+                    self.assertTrue(left <= at[0] <= right - ICON and top <= at[1] <= bottom - ICON,
+                                    (area, side, y, at))
+
+    def test_it_grows_out_of_the_avatar_in_every_side(self) -> None:
+        """Under what shows: between the leaves tucked, its body with its head out."""
+        for side, tucked, head in self.SIDES:
+            start = vine_path(tucked, side, self.AREA)[0][0]
+            seen = {"right": (1920 - 34, 1920), "left": (0, 34)}.get(side)
+            if seen:
+                self.assertTrue(seen[0] <= start[0] <= seen[1], (side, start))
+            else:
+                self.assertTrue(0 <= start[1] <= 34 or 998 <= start[1] <= 1032, (side, start))
+            start = vine_path(head, side, self.AREA)[0][0]
+            self.assertEqual(start, (head[0] + 64, head[1] + 64), f"its body: {side}")
+
+    def test_the_button_goes_with_its_head_and_is_not_behind_it(self) -> None:
+        for side, tucked, head in self.SIDES:
+            at = vine_path(head, side, self.AREA)[1]
+            middle = (at[0] + ICON // 2, at[1] + ICON // 2)
+            inside = head[0] < middle[0] < head[0] + 128 and head[1] < middle[1] < head[1] + 128
+            self.assertFalse(inside, (side, at))
+
+    def test_it_grows_from_the_avatar(self) -> None:
+        box = (1886, 500, 128, 128)
+        start = vine_path(box, "right", self.AREA, 0.0)[0]
+        self.assertEqual(len(set(start)), 1, "nothing out yet")
+
+
+@unittest.skipUnless(sys.platform.startswith("win"), "where Ctrl can be asked of the system")
+class TheKeysOnHoverTests(unittest.TestCase):
+
+    def setUp(self) -> None:
+        from personalized_agent.ui.on_top import keys_on_hover
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.window = tk.Toplevel(self.root)
+        self.window.overrideredirect(True)
+        self.window.geometry("100x100+300+300")
+        self.root.update()
+        self.window.winfo_pointerxy = lambda: (350, 350)
+        self.window.focus_force = mock.Mock()
+        self.window.focus_get = lambda: None
+        keys_on_hover(self.window)
+
+    def tearDown(self) -> None:
+        self.root.destroy()
+        del self.window, self.root
+        gc.collect()
+
+    def _settle(self, seconds=0.2):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            self.root.update()
+            time.sleep(0.01)
+
+    def test_the_pointer_passing_takes_no_keyboard(self) -> None:
+        with mock.patch("personalized_agent.ui.on_top.ctrl_down", return_value=False):
+            self.window.event_generate("<Enter>")
+            self._settle()
+        self.window.focus_force.assert_not_called()
+
+    def test_ctrl_down_on_it_takes_the_keyboard(self) -> None:
+        with mock.patch("personalized_agent.ui.on_top.ctrl_down", return_value=True):
+            self.window.event_generate("<Enter>")
+            self._settle()
+        self.window.focus_force.assert_called()
+
+    def test_a_box_in_it_keeps_the_keyboard(self) -> None:
+        self.window.focus_get = lambda: f"{self.window}.box"
+        with mock.patch("personalized_agent.ui.on_top.ctrl_down", return_value=True):
+            self.window.event_generate("<Enter>")
+            self._settle()
+        self.window.focus_force.assert_not_called()
+
+    def test_off_it_it_stops_looking(self) -> None:
+        with mock.patch("personalized_agent.ui.on_top.ctrl_down", return_value=False) as asked:
+            self.window.event_generate("<Enter>")
+            self._settle(0.1)
+            self.window.winfo_pointerxy = lambda: (10, 10)
+            self._settle(0.15)
+            seen = asked.call_count
+            self._settle(0.15)
+        self.assertEqual(asked.call_count, seen)
+
+
+class TheVinesLooksTests(unittest.TestCase):
+
+    def test_a_tendril_curls_in_and_a_leaf_has_its_lobes(self) -> None:
+        from personalized_agent.ui.avatar_buttons import melon_leaf, tendril
+        curl = tendril(50, 50, 0.0)
+        self.assertEqual(len(curl), 38)
+        self.assertLess(max(curl[0::2]) - min(curl[0::2]), 20, "small enough for its window")
+        leaf = melon_leaf(50, 50, 0.0)
+        far = [((x - 50) ** 2 + (y - 50) ** 2) ** 0.5 for x, y in zip(leaf[0::2], leaf[1::2])]
+        self.assertGreater(max(far), 8)
+        self.assertLess(min(far), 5, "cut deep between the lobes")
+
+
+class TheVineOnTheScreenTests(unittest.TestCase):
+
+    def setUp(self) -> None:
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.front = tk.Toplevel(self.root)
+        self.front.overrideredirect(True)
+        self.front.attributes("-topmost", True)
+        self.front.geometry("128x128+1000+300")
+        self.side = [""]
+        self.pressed = []
+        self.box = [(1000, 300, 128, 128)]
+        self.root.update()
+        self.vine = ChatVine(self.root, "Chat", lambda: self.pressed.append(1), lambda: self.box[0],
+                             ("Segoe UI", 11), lambda: self.side[0], self.front)
+
+    def tearDown(self) -> None:
+        self.root.destroy()
+        del self.vine, self.front, self.root
+        gc.collect()
+
+    def _settle(self, seconds=0.5):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            self.root.update()
+            time.sleep(0.01)
+
+    def test_with_all_of_it_showing_there_is_no_vine(self) -> None:
+        self._settle(0.1)
+        self.assertFalse(self.vine.out)
+        self.assertLess(self.vine.icon.window.winfo_x(), -1000)
+        self.assertLess(self.vine.stem.winfo_x(), -1000)
+        self.assertEqual(self.vine.around((1, 2, 3, 4)), (1, 2, 3, 4))
+
+    def test_in_a_side_it_grows_out_and_goes_with_it(self) -> None:
+        self.side[0] = "right"
+        self.box[0] = (1886, 500, 128, 128)
+        self.vine.place()
+        self.assertLess(self.vine.grown, 1.0, "growing")
+        self._settle(0.6)
+        self.assertEqual(self.vine.grown, 1.0)
+        self.assertEqual((self.vine.icon.window.winfo_x(), self.vine.icon.window.winfo_y()), self.vine.at)
+        self.assertGreater(self.vine.stem.winfo_x(), 0)
+        self.assertEqual(self.vine.around((1886, 500, 128, 128))[0], self.vine.at[0])
+        self.side[0] = ""
+        self.vine.place()
+        self._settle(0.1)
+        self.assertLess(self.vine.icon.window.winfo_x(), -1000, "out of the side: gone")
+
+    def test_its_button_is_the_chat(self) -> None:
+        self.side[0] = "left"
+        self.box[0] = (-94, 500, 128, 128)
+        self.vine.place()
+        self._settle(0.6)
+        canvas = self.vine.icon.canvas
+        canvas.event_generate("<Enter>", x=20, y=20)
+        canvas.event_generate("<ButtonPress-1>", x=20, y=20)
+        canvas.event_generate("<ButtonRelease-1>", x=20, y=20)
+        self._settle(0.1)
+        self.assertEqual(self.pressed, [1])
+
+    def test_green_as_the_vine(self) -> None:
+        from personalized_agent.ui import avatar_buttons as ab
+        picture = ab.face()
+        self.assertEqual(picture.size, (ICON, ICON))
+        self.assertEqual(picture.getpixel((0, 0)), ab.KEY, "see-through at its corners")
+        red, green, blue = picture.getpixel((ICON // 2, 6))
+        self.assertGreater(green, red)
+        self.assertGreater(green, blue)
+        self.assertNotEqual(picture.tobytes(), ab.face(lit=True).tobytes())
+
+    @unittest.skipUnless(sys.platform.startswith("win"), "the system's order of windows")
+    def test_the_avatar_is_in_front_of_it(self) -> None:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.WinDLL("user32")
+        user32.GetTopWindow.restype = user32.GetWindow.restype = wintypes.HWND
+        user32.GetTopWindow.argtypes = [wintypes.HWND]
+        user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+        self.side[0] = "right"
+        self.box[0] = (1886, 500, 128, 128)
+        self.vine.place()
+        self._settle(0.6)
+        order, hwnd = [], user32.GetTopWindow(None)
+        while hwnd:
+            order.append(int(hwnd))
+            hwnd = user32.GetWindow(hwnd, 2)
+        at = order.index(int(self.front.wm_frame(), 16))
+        self.assertGreater(order.index(int(self.vine.icon.window.wm_frame(), 16)), at)
+        self.assertGreater(order.index(int(self.vine.stem.wm_frame(), 16)), at)
+
+
+class TheMenuTests(unittest.TestCase):
+
+    def test_to_do_and_collections_are_in_the_avatars_menu_and_the_trays(self) -> None:
+        from pathlib import Path
+        import personalized_agent.ui.desktop as desktop
+        import personalized_agent.ui.tray as tray
+        said = Path(desktop.__file__).read_text(encoding="utf-8")
+        said = said[said.index("def _on_right_click"):said.index("def _delegate_face")]
+        self.assertIn('self._quick_panel("todo")', said)
+        self.assertIn('self._quick_panel("collection")', said)
+        said = Path(tray.__file__).read_text(encoding="utf-8")
+        self.assertIn('_quick_panel("todo")', said)
+        self.assertIn('_quick_panel("collection")', said)
+
+
+class WhatTheyListTests(unittest.TestCase):
+
+    def setUp(self) -> None:
+        self.agent = TemporaryAgent()
+        self.addCleanup(self.agent.cleanup)
+        self.app = self.agent.app
+
+    def test_open_to_dos_in_their_groups_each_to_delegate(self) -> None:
+        first = self.app.todos.add("Measure the gauge", "Before noon")["id"]
+        self.app.todos.add("Buy milk")
+        done = self.app.todos.add("Done already")["id"]
+        self.app.todos.tick(done)
+        self.app.list_groups.add_group("todo", "Coast")
+        self.app.list_groups.move("todo", first, "Coast")
+        said = self.app.quick_sections("todo")
+        self.assertEqual(said[0]["name"], "Coast")
+        row = said[0]["rows"][0]
+        self.assertEqual(row["title"], "Measure the gauge")
+        self.assertEqual([one["key"] for one in row["actions"]], ["delegate", "remove", "move"])
+        self.assertEqual(row["actions"][0]["text"], "Measure the gauge\nBefore noon")
+        self.assertTrue(row["actions"][1]["confirm"])
+        self.assertEqual(row["actions"][1]["path"], "/api/todos/delete")
+        titles = [one["title"] for part in said for one in part["rows"]]
+        self.assertEqual(sorted(titles), ["Buy milk", "Measure the gauge"])
+
+    def test_the_latest_outcome_as_the_overview_finds_it(self) -> None:
+        versions = [{"state": "finished", "run": "r1", "items": [{"n": 0}]},
+                    {"state": "finished", "run": "r2", "items": [{"n": 2}]},
+                    {"state": "ongoing", "run": "r3", "unit": "u"}]
+        action = self.app._work_actions(versions)[0]
+        self.assertEqual((action["path"], action["body"]), ("/api/work/handed/open", {"run": "r2", "n": 2}))
+
+    def test_a_file_it_left_is_opened_in_its_program(self) -> None:
+        action = self.app._work_actions([{"state": "finished", "run": "r1", "result": "/out/a.txt"}])[0]
+        self.assertEqual(action["path"], "/api/work/reveal")
+        self.assertTrue(action["body"]["open"])
+
+    def test_with_nothing_made_the_latest_try(self) -> None:
+        action = self.app._work_actions([{"state": "stopped", "run": "r1", "unit": "u1"},
+                                         {"state": "ongoing", "run": "r2", "unit": "u2"}])[0]
+        self.assertEqual((action["key"], action["unit"], action["run"]), ("try", "u2", "r2"))
+        self.assertEqual(self.app._work_actions([]), [])
+
+    def test_the_work_assigned_is_listed_after_them(self) -> None:
+        self.app.todos.add("Buy milk")
+        assigned = [{"id": "d1", "text": "Plot the tides", "detail": "", "work": {"versions": [
+            {"state": "finished", "run": "r1", "result": "/out/a.txt"}]}}]
+        with mock.patch.object(self.app.drafts, "assigned", return_value=assigned):
+            said = self.app.quick_sections("todo")
+        self.assertEqual(said[-1]["name"], "Work assigned")
+        self.assertEqual(said[-1]["rows"][0]["actions"][0]["key"], "open")
+
+    def test_the_collection_to_read_and_remove(self) -> None:
+        self.app._keep_recommended({"notification_id": "n1", "title": "A fact", "message": "Beds.",
+                                    "url": "https://example.org/b", "reason": "You read of it."})
+        row = self.app.quick_sections("collection")[0]["rows"][0]
+        self.assertEqual((row["title"], row["url"], row["note"]),
+                         ("A fact", "https://example.org/b", "You read of it."))
+        self.assertEqual([one["key"] for one in row["actions"]], ["read", "remove", "move"])
+        self.assertEqual(row["actions"][0]["url"], "https://example.org/b")
+        remove = row["actions"][1]
+        self.assertTrue(remove["confirm"] and remove["changes"])
+        self.assertEqual(remove["body"], {"story": "n1", "keep": False})
+
+    def test_with_no_address_there_is_nothing_to_read(self) -> None:
+        self.app._keep_recommended({"notification_id": "n2", "title": "A fact"})
+        row = self.app.quick_sections("collection")[0]["rows"][0]
+        self.assertEqual([one["key"] for one in row["actions"]], ["remove", "move"])
+
+    def test_nothing_is_nothing(self) -> None:
+        self.assertEqual(self.app.quick_sections("todo"), [])
+
+
+
+
+class OneAtATimeTests(unittest.TestCase):
+
+    class _Open:
+        def __init__(self) -> None:
+            self.is_open, self.closed, self.toggled = True, 0, 0
+
+        def close(self) -> None:
+            self.is_open = False
+            self.closed += 1
+
+        def toggle(self, _near) -> None:
+            self.toggled += 1
+
+        def zoom_to(self, _zoom) -> None:
+            pass
+
+    def _desk(self):
+        from types import SimpleNamespace
+        panels = {"todo": self._Open(), "collection": self._Open()}
+        return SimpleNamespace(_quick_panels=panels, _panel=panels.get,
+                               config=SimpleNamespace(get=lambda _key, default=None: default),
+                               _chat_bubble=self._Open(), _beside_box=lambda: (0, 0, 1, 1))
+
+    def test_a_panel_opened_closes_the_chat_and_the_other_for_good(self) -> None:
+        from personalized_agent.ui.desktop import DesktopAgent
+        desk = self._desk()
+        DesktopAgent._quick_panel(desk, "todo")
+        self.assertEqual(desk._chat_bubble.closed, 1)
+        self.assertEqual(desk._quick_panels["collection"].closed, 1)
+        self.assertEqual(desk._quick_panels["todo"].toggled, 1)
+        self.assertEqual(desk._quick_panels["todo"].closed, 0, "its own press decides that")
+        desk._quick_panels["todo"].close()
+        self.assertFalse(desk._chat_bubble.is_open, "closing it brings nothing back")
+
+    def test_a_chat_already_closed_is_left_alone(self) -> None:
+        from personalized_agent.ui.desktop import DesktopAgent
+        desk = self._desk()
+        desk._chat_bubble.is_open = False
+        DesktopAgent._quick_panel(desk, "collection")
+        self.assertEqual(desk._chat_bubble.closed, 0)
+
+    def test_the_chat_opened_closes_the_panels_however_it_was_opened(self) -> None:
+        import inspect
+
+        from personalized_agent.ui.desktop import DesktopAgent
+        said = inspect.getsource(DesktopAgent.open_chat_bubble)
+        self.assertLess(said.index("_quick_panels"), said.index("bubble.show()"))
+
+
+class TheDraftTests(unittest.TestCase):
+
+    def test_it_is_kept_through_a_restart_and_cleared_by_nothing_else(self) -> None:
+        from types import SimpleNamespace
+
+        from personalized_agent.ui.desktop import DesktopAgent
+        agent = TemporaryAgent()
+        self.addCleanup(agent.cleanup)
+        desk = SimpleNamespace(app=agent.app)
+        self.assertEqual(DesktopAgent._chat_draft(desk), "")
+        DesktopAgent._keep_chat_draft(desk, "Half a thought")
+        self.assertEqual(DesktopAgent._chat_draft(SimpleNamespace(app=agent.app)), "Half a thought")
+        DesktopAgent._keep_chat_draft(desk, "")
+        self.assertEqual(DesktopAgent._chat_draft(desk), "")
+
+
+class ByTheSameCodeTests(unittest.TestCase):
+
+    def test_a_panel_asks_the_applications_own_routes(self) -> None:
+        from personalized_agent.api.server import ApiServer
+        from test_agent_and_api import _free_port
+        agent = TemporaryAgent()
+        self.addCleanup(agent.cleanup)
+        port = _free_port()
+        agent.app.config.set("api_port", port)
+        server = ApiServer(agent.app)
+        server.start()
+        self.addCleanup(server.stop)
+        said = agent.app.notifications.notify("High water", "At noon", kind="proactive")
+        self.assertTrue(agent.app.local_post("/api/notifications/read", {"id": said.id}) is not None)
+        self.assertTrue(agent.app.notifications.get(said.id)["read"])
+        with self.assertRaises(ValueError):
+            agent.app.local_post("/api/work/handed/open", {"run": "no_such_run", "n": 0})
+        self.assertTrue(json.dumps({}))
+
+
+class WhatTheListsOffer(unittest.TestCase):
+    """The panels' lists, from the application."""
+
+    def setUp(self) -> None:
+        self.agent = TemporaryAgent()
+        self.addCleanup(self.agent.cleanup)
+        self.app = self.agent.app
+
+    def test_each_to_do_can_be_moved_and_an_empty_group_stays(self) -> None:
+        todo = self.app.todos.add("Check the gauge")
+        self.app.list_groups.add_group("todo", "Coast")
+        sections = self.app.quick_sections("todo")
+        coast = next(one for one in sections if one.get("group") == "Coast")
+        self.assertEqual((coast["rows"], coast["keep"]), ([], True))
+        row = next(one for section in sections for one in section["rows"] if one["id"] == todo["id"])
+        move = next(one for one in row["actions"] if one["key"] == "move")
+        self.assertEqual((move["moves"], move["list"]), (True, "todo"))
+
+    def _lessons(self, action):
+        return self.app.db.query("SELECT summary FROM lesson_evidence WHERE action = ?", (action,))
+
+    def test_a_to_do_added_and_a_move_are_lessons(self) -> None:
+        from personalized_agent.api.routes import build_routes
+
+        class Ask(dict):
+            def require(self, key):
+                return self[key]
+        routes = build_routes(self.app)
+        said = routes[("POST", "/api/todos/add")](Ask(text="Check the gauge", detail=""))
+        self.assertIn("Check the gauge", self._lessons("added_todo")[0]["summary"])
+        routes[("POST", "/api/lists/groups/move")](Ask(list="todo", item=said["todo"]["id"], to="Coast"))
+        self.assertIn("Coast", self._lessons("moved_list_groups")[-1]["summary"])
+
+
+if __name__ == "__main__":
+    unittest.main()

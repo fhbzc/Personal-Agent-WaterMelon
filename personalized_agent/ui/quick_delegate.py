@@ -11,7 +11,12 @@ plan is drafted from. Only then is the page opened - on the
 piece of work, its context already being collected and its plan drafted, so
 the browser starts while the plan is made rather than before anything is.
 
-Nothing is read from the program that was in front.
+IT LOOKS AS THE AGENT'S OTHER WINDOWS DO (the user, 2026-11-04: "这么老旧的windows框"):
+the chat bubble's card, not the system's title bar and buttons.
+
+IT SEES WHAT IS IN FRONT (the user, 2026-11-04: "应该让他看到屏幕的focus (当然告诉模型work
+可能和屏幕的focus无关)"): the box says what will go with the work, and it can be
+taken off; the model is told it may have nothing to do with it.
 """
 
 from __future__ import annotations
@@ -19,11 +24,14 @@ from __future__ import annotations
 import logging
 import threading
 from pathlib import Path
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
+
+from .chat_bubble import LOOK
+from .on_top import borderless, keys_on_hover, on_release, rounded, stay_on_top
 
 log = logging.getLogger(__name__)
 
-WIDTH, HEIGHT = 540, 420
+WIDTH, HEIGHT = 540, 520
 
 
 class QuickDelegate:
@@ -40,8 +48,74 @@ class QuickDelegate:
         self.window: Any = None
         self.folders: List[str] = []
         self.files: List[str] = []
+        #: What was in front when it was opened; {} once taken off.
+        self.front: Dict[str, str] = {}
+        self._drag = (0, 0)
+        self._sending = False
 
-    # -- shown -------------------------------------------------------------
+    def _read_front(self) -> Dict[str, str]:
+        try:
+            from ..agent.front_screen import front_now
+            return front_now(self.app.db, self.app.config)
+        except Exception:
+            log.debug("what is in front could not be read", exc_info=True)
+            return {}
+
+    # -- drawn -------------------------------------------------------------
+    def _font(self, more: int = 0, weight: str = "normal") -> Any:
+        """Named, so that a zoom changes what is drawn; the same for the same size."""
+        import tkinter.font as tkfont
+        held = self.__dict__.setdefault("_fonts", {})
+        if (more, weight) not in held:
+            held[(more, weight)] = tkfont.Font(
+                root=self.root, family=tkfont.nametofont("TkDefaultFont").actual("family"),
+                size=max(6, 10 + more + self._zoomed()), weight=weight)
+        return held[(more, weight)]
+
+    def _zoomed(self) -> int:
+        """Its own size of words, as every panel has: kept, in no page of Settings."""
+        try:
+            return int(self.app.config.get("delegate_box_zoom", 0) or 0)
+        except (AttributeError, TypeError, ValueError):
+            return 0
+
+    def _zoom(self, step: int) -> str:
+        zoom = max(-4, min(12, self._zoomed() + step)) if step else 0
+        try:
+            self.app.config.set("delegate_box_zoom", zoom, internal=True)
+        except AttributeError:               # nowhere to keep it
+            pass
+        for (more, _weight), font in self.__dict__.get("_fonts", {}).items():
+            font.configure(size=max(6, 10 + more + zoom))
+        return "break"
+
+    def _button(self, parent: Any, words: str, act: Callable[[], None],
+                primary: bool = False) -> Any:
+        import tkinter as tk
+        fill, hover = ((LOOK["primary"], LOOK["primary_hover"]) if primary
+                       else (LOOK["field"], LOOK["outline"]))
+        face = tk.Label(parent, text=words, bg=fill, cursor="hand2", padx=12, pady=5,
+                        fg=LOOK["on_primary"] if primary else LOOK["ink"],
+                        font=self._font(0, "bold" if primary else "normal"), takefocus=1)
+        face.bind("<Enter>", lambda _e: face.configure(bg=hover))
+        face.bind("<Leave>", lambda _e: face.configure(bg=fill))
+        face.bind("<Return>", lambda _e: act())
+        on_release(face, act)
+        return face
+
+    def _label(self, parent: Any, words: str, muted: bool = False, more: int = 0) -> Any:
+        import tkinter as tk
+        return tk.Label(parent, text=words, bg=LOOK["bg"], font=self._font(more),
+                        fg=LOOK["muted"] if muted else LOOK["ink"], justify="left",
+                        wraplength=WIDTH - 44)
+
+    def _field(self) -> Dict[str, Any]:
+        return {"bg": LOOK["field"], "fg": LOOK["ink"], "insertbackground": LOOK["ink"],
+                "relief": "flat", "bd": 0, "highlightthickness": 1,
+                "highlightbackground": LOOK["outline"], "highlightcolor": LOOK["primary"],
+                "selectbackground": LOOK["select"], "selectforeground": LOOK["ink"],
+                "font": self._font()}
+
     def show(self) -> None:
         if self.window is not None:
             try:
@@ -50,52 +124,98 @@ class QuickDelegate:
             except Exception:
                 self.window = None
         import tkinter as tk
-        from tkinter import ttk
         _ = self.words
+        pictures = getattr(self.app, "front_pictures", None)
+        if pictures is not None:
+            pictures.take()                  # before this box covers anything
         self.folders, self.files = [], []
+        self.front = self._read_front()
+        self._sending = False
         window = tk.Toplevel(self.root)
         self.window = window
+        borderless(window)
+        window.attributes("-topmost", True)
+        window.configure(bg=LOOK["outline"])
         window.title(_("Delegate work"))
-        window.resizable(True, True)
-        window.minsize(420, 300)
-        window.protocol("WM_DELETE_WINDOW", self.close)
         # In the middle of the screen the pointer is on.
         x = window.winfo_pointerx() - WIDTH // 2
         y = window.winfo_pointery() - HEIGHT // 2
         window.geometry(f"{WIDTH}x{HEIGHT}+{max(0, x)}+{max(0, y)}")
-        frame = ttk.Frame(window, padding=14)
-        frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text=_("Title")).pack(anchor="w")
-        self.title = ttk.Entry(frame)
-        self.title.pack(fill="x", pady=(4, 10))
-        ttk.Label(frame, text=_("Description")).pack(anchor="w")
-        self.text = tk.Text(frame, height=7, wrap="word", undo=True, relief="solid",
-                            borderwidth=1, padx=6, pady=6)
+        frame = tk.Frame(window, bg=LOOK["bg"], padx=16, pady=12)
+        frame.pack(fill="both", expand=True, padx=1, pady=1)
+        # Its line: what it is, ✕ - moved by it.
+        head = tk.Frame(frame, bg=LOOK["bg"])
+        head.pack(fill="x", pady=(0, 10))
+        dot = tk.Canvas(head, width=10, height=10, bg=LOOK["bg"], highlightthickness=0, bd=0)
+        dot.create_oval(1, 1, 9, 9, fill=LOOK["dot"], outline="")
+        dot.pack(side="left", padx=(0, 7))
+        name = tk.Label(head, text=_("Delegate work"), bg=LOOK["bg"], fg=LOOK["ink"],
+                        font=self._font(1, "bold"))
+        name.pack(side="left")
+        close = tk.Label(head, text="✕", bg=LOOK["bg"], fg=LOOK["muted"], font=self._font(1),
+                         cursor="hand2", padx=4)
+        close.pack(side="right")
+        on_release(close, self.close)
+        for one in (head, dot, name):
+            one.bind("<ButtonPress-1>", self._grab)
+            one.bind("<B1-Motion>", self._move)
+        self._label(frame, _("Title"), muted=True).pack(anchor="w")
+        self.title = tk.Entry(frame, **self._field())
+        self.title.pack(fill="x", pady=(4, 10), ipady=5)
+        self._label(frame, _("Description"), muted=True).pack(anchor="w")
+        self.text = tk.Text(frame, height=6, wrap="word", undo=True, padx=8, pady=6,
+                            **self._field())
         self.text.pack(fill="both", expand=True, pady=(4, 8))
         # Tab out of the description, as in a form - not a tab typed into it.
         self.text.bind("<Tab>", lambda _e: (self.next_button.focus_set(), "break")[1])
-        picks = ttk.Frame(frame)
+        picks = tk.Frame(frame, bg=LOOK["bg"])
         picks.pack(fill="x")
-        ttk.Button(picks, text=_("Add folder"), command=self._add_folder).pack(side="left")
-        ttk.Button(picks, text=_("Add files"), command=self._add_files).pack(side="left", padx=6)
-        self.chosen = ttk.Frame(frame)
+        self._button(picks, _("Add folder"), self._add_folder).pack(side="left")
+        self._button(picks, _("Add files"), self._add_files).pack(side="left", padx=6)
+        self.chosen = tk.Frame(frame, bg=LOOK["bg"])
         self.chosen.pack(fill="x", pady=(6, 0))
-        ttk.Label(frame, text=_("Create collects the context and drafts a plan for you to "
-                                "approve. Nothing runs before you press Start."),
-                  foreground="#6b7280", wraplength=WIDTH - 40, justify="left").pack(
-            anchor="w", pady=(6, 0))
-        self.note = ttk.Label(frame, text="", foreground="#b42318")
+        self.front_row = tk.Frame(frame, bg=LOOK["bg"])
+        self.front_row.pack(fill="x", pady=(6, 0))
+        self._draw_front()
+        self._label(frame, _("Create collects the context and drafts a plan for you to "
+                             "approve. Nothing runs before you press Start."),
+                    muted=True, more=-1).pack(anchor="w", pady=(6, 0))
+        self.note = tk.Label(frame, text="", bg=LOOK["bg"], fg=LOOK["slow"], font=self._font(-1))
         self.note.pack(anchor="w")
-        buttons = ttk.Frame(frame)
+        buttons = tk.Frame(frame, bg=LOOK["bg"])
         buttons.pack(fill="x", pady=(8, 0))
-        self.next_button = ttk.Button(buttons, text=_("Create"), command=self.submit)
+        self.next_button = self._button(buttons, _("Create"), self.submit, primary=True)
         self.next_button.pack(side="right")
-        ttk.Button(buttons, text=_("Cancel"), command=self.close).pack(side="right", padx=6)
-        ttk.Label(buttons, text=_("Ctrl+Enter to create, Esc to close"),
-                  foreground="#6b7280").pack(side="left")
+        self._button(buttons, _("Cancel"), self.close).pack(side="right", padx=6)
+        self._label(buttons, _("Ctrl+Enter to create, Esc to close"), muted=True,
+                    more=-1).pack(side="left")
         window.bind("<Escape>", lambda _e: self.close())
         window.bind("<Control-Return>", lambda _e: (self.submit(), "break")[1])
+        for key, step in (("plus", 1), ("equal", 1), ("KP_Add", 1), ("minus", -1), ("KP_Subtract", -1),
+                          ("0", 0)):
+            window.bind(f"<Control-{key}>", lambda _e, one=step: self._zoom(one))
+        window.bind("<Control-MouseWheel>", lambda event: self._zoom(1 if event.delta > 0 else -1))
+        keys_on_hover(window)
+        self._frame = frame
+        self._fit()
+        rounded(window)
+        stay_on_top(window)
         self._to_front()
+
+    def _fit(self) -> None:
+        """As tall as what is in it, its buttons always on it: folders added and
+        a long title in front make it taller."""
+        window = getattr(self, "window", None)
+        if window is None:
+            return
+        window.update_idletasks()
+        window.geometry(f"{WIDTH}x{self._frame.winfo_reqheight() + 2}")
+
+    def _grab(self, event: Any) -> None:
+        self._drag = (event.x_root - self.window.winfo_x(), event.y_root - self.window.winfo_y())
+
+    def _move(self, event: Any) -> None:
+        self.window.geometry(f"+{event.x_root - self._drag[0]}+{event.y_root - self._drag[1]}")
 
     def _to_front(self) -> None:
         window = self.window
@@ -122,6 +242,25 @@ class QuickDelegate:
             except Exception:
                 pass
 
+    # -- what is in front --------------------------------------------------
+    def _draw_front(self) -> None:
+        for child in self.front_row.winfo_children():
+            child.destroy()
+        said = self.front.get("title") or self.front.get("application") or ""
+        if not said:
+            return
+        words = self.words("On your screen, given as context: {0}").replace("{0}", said[:70])
+        self._label(self.front_row, words, muted=True, more=-1).pack(side="left")
+        off = self._label(self.front_row, "✕", muted=True)
+        off.configure(cursor="hand2")
+        off.pack(side="right")
+        on_release(off, self._without_front)
+
+    def _without_front(self) -> None:
+        self.front = {}
+        self._draw_front()
+        self._fit()
+
     # -- what it is about --------------------------------------------------
     def _add_folder(self) -> None:
         from tkinter import filedialog
@@ -140,16 +279,19 @@ class QuickDelegate:
         self._to_front()
 
     def _draw_chosen(self) -> None:
-        from tkinter import ttk
+        import tkinter as tk
         for child in self.chosen.winfo_children():
             child.destroy()
-        for kind, items in (("folder", self.folders), ("file", self.files)):
+        for items in (self.folders, self.files):
             for one in list(items):
-                row = ttk.Frame(self.chosen)
+                row = tk.Frame(self.chosen, bg=LOOK["bg"])
                 row.pack(fill="x")
-                ttk.Label(row, text=one).pack(side="left")
-                ttk.Button(row, text="×", width=2,
-                           command=lambda i=items, o=one: self._remove(i, o)).pack(side="right")
+                self._label(row, one, more=-1).pack(side="left")
+                off = self._label(row, "✕", muted=True)
+                off.configure(cursor="hand2")
+                off.pack(side="right")
+                on_release(off, lambda i=items, o=one: self._remove(i, o))
+        self._fit()
 
     def _remove(self, items: List[str], one: str) -> None:
         if one in items:
@@ -158,18 +300,27 @@ class QuickDelegate:
 
     # -- handed over -------------------------------------------------------
     def submit(self) -> None:
+        if self._sending:
+            return
         said = self.text.get("1.0", "end").strip()
         title = self.title.get().strip()
         if not (said or title or self.folders or self.files):
             self.note.configure(text=self.words("Say what you want done."))
             return
         folders, files = list(self.folders), list(self.files)
-        self.next_button.configure(state="disabled")
+        front = dict(self.front)
+        self._sending = True
         self.note.configure(text="")
 
         def hand_over() -> None:
             try:
-                draft = self.app.drafts.create(folders=folders, files=files,
+                pictures = getattr(self.app, "front_pictures", None)
+                shot = pictures.latest(title=front.get("title", "")) \
+                    if pictures is not None and front else {}
+                if shot:
+                    front.update(picture=shot["path"], picture_words=shot["words"])
+                options = {"front": front} if front else None
+                draft = self.app.drafts.create(folders=folders, files=files, options=options,
                                                source="shortcut", write_first=True)
                 composed = self.app.drafts.compose(draft["id"], said, title=title)
                 if composed.get("error"):
@@ -185,7 +336,7 @@ class QuickDelegate:
     def _failed(self, message: str) -> None:
         if self.window is None:
             return
-        self.next_button.configure(state="normal")
+        self._sending = False
         self.note.configure(text=message)
 
 

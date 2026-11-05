@@ -223,7 +223,7 @@ class TheRightClickMenuTests(unittest.TestCase):
         agent.tray = type("T", (), {"icon": object()})()
         with mock.patch.object(desktop_module.tk, "Menu", _Menu):
             agent._on_right_click(type("E", (), {"x_root": 1, "y_root": 1})())
-        self.assertEqual(labels, ["Chat", "Overview", "Hide avatar", "-", "Quit"])
+        self.assertEqual(labels, ["Chat", "To do", "Collections", "Overview", "Hide avatar", "-", "Quit"])
 
 
 if __name__ == "__main__":

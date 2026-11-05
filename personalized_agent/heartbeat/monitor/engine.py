@@ -17,6 +17,14 @@ step_monitor - within limits code keeps, whatever an Activator says:
   the user is away;
 - one model asked at a time.
 
+TWO LAYERS (the user, 2026-11-04): Activators, which set something off, and
+BLOCKERS (the rules of quiet), which say when nothing is shown, for EVERY reminder
+whoever raised it. What the Monitor would say of its own accord is not said: its
+moment has passed. Anything else - a calendar reminder, a scam warning, a run's
+result - is still made, and waits: the bubble and the page ask `blocker` before
+they show it, and show it when the blocker is over. Meanwhile a small line says how
+many wait, and the user can open them by hand.
+
 EVERY NOTIFICATION KEEPS WHY IT WAS MADE (the user, 2026-11-03: "模型要记录
 notification决定的context"): the Activator, what it saw - the window, the words,
 the signals - and the model's reason, with the notification; a Bad
@@ -33,11 +41,12 @@ import threading
 import time
 import webbrowser
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from ...common.events.models import new_id, utcnow
 from . import activators as act
-from .builtins import OLD_BREAK, builtins
+from .builtins import OLD_BREAK, OLD_SPAM_THENS, QUIET, SPAM, builtins
 from .signals import Signals
 
 log = logging.getLogger(__name__)
@@ -178,7 +187,8 @@ class Monitor:
 
     def __init__(self, db: Any, config: Any, signals: Signals, notifications: Any = None,
                  questions: Any = None, decider: Any = None, heartbeat: Any = None,
-                 opener: Optional[Callable[[str], Any]] = None) -> None:
+                 opener: Optional[Callable[[str], Any]] = None,
+                 pictures: Optional[Path] = None) -> None:
         self.db = db
         self.config = config
         self.signals = signals
@@ -187,10 +197,19 @@ class Monitor:
         self.decider = decider
         self.heartbeat = heartbeat
         self.opener = opener or webbrowser.open
+        #: Where the notifications' pictures are kept (pictures.py).
+        self.pictures = pictures
+        #: Set by the application: what the user added to their collection.
+        self.keeper: Optional[Callable[[Dict[str, Any]], None]] = None
         self.store = act.ActivatorStore(db)
         with self.db.write() as conn:
             conn.executescript(SCHEMA)
         self.latest: Dict[str, Any] = {}
+        #: The blocker that holds now, by name - "" when none does. Kept at each
+        #: look, so that the window thread can ask without reading the database.
+        self.blocker = ""
+        #: How many reminders wait behind it, as the bubble's owner says.
+        self.reminders_waiting = 0
         self.last_error = ""
         self._lock = threading.RLock()
         self._asking = threading.Lock()
@@ -200,6 +219,9 @@ class Monitor:
         try:
             self.store.seed(builtins())
             self.store.reword("break", OLD_BREAK)
+            self.store.seed_quiet(QUIET)
+            for old in OLD_SPAM_THENS:
+                self.store.retier("spam_risk", old, act.check(SPAM, builtin=True)[0]["then"])
         except Exception:                              # pragma: no cover - seeded next start
             log.warning("the built-in Activators could not be written", exc_info=True)
 
@@ -254,11 +276,13 @@ class Monitor:
         """One look: the windows written, the signals read, each Activator on
         them run."""
         if not self.enabled():
+            self.blocker = ""
             return []
         when = now or datetime.now(timezone.utc)
         self.signals.record_if_due(when)
         snapshot = self.signals.snapshot(when)
         self.latest = snapshot
+        self.blocker = self._quieted()
         fired = []
         for one in self.store.list():
             if one["text_driven"] or not self.allowed(one):
@@ -339,7 +363,8 @@ class Monitor:
         context = {"activator": {"id": activator["id"], "name": activator["name"],
                                  "group": activator["group"], "purpose": activator.get("purpose")},
                    "why": why[:20], "score": score,
-                   "signals": {k: v for k, v in (self.latest or {}).items() if k != "events"},
+                   "signals": {k: v for k, v in (self.latest or {}).items()
+                               if k not in ("events", "running")},
                    "events": list((self.latest or {}).get("events") or [])}
         if window:
             context["window"] = {"title": str(window.get("title") or "")[:200],
@@ -363,6 +388,9 @@ class Monitor:
         try:
             if tier["do"] == "notify":
                 outcome = self._notify(activator, tier, context, firing)
+                if tier.get("and_then"):
+                    self._and_then(activator, tier["and_then"], score, outcome, context, window,
+                                   how, when)
             elif tier["do"] == "queue":
                 outcome = self._queue(activator, score, context, firing, when)
             else:
@@ -373,6 +401,26 @@ class Monitor:
         self._outcome(firing, outcome)
         return dict(outcome, firing=firing)
 
+    def _and_then(self, activator: Dict[str, Any], follow: Dict[str, Any], score: float,
+                  said: Dict[str, Any], context: Dict[str, Any], window: Optional[Dict[str, Any]],
+                  how: str, when: datetime) -> None:
+        """CODE HAS SPOKEN; NOW A MODEL (the user, 2026-11-04: "在调model之前，就可以直接发一个
+        通知 ... 然后模型之后可以精细判断再发通知"). A firing of its own, so that what
+        answers the first stays with the first; not counted against its limits."""
+        firing = new_id("monfire")
+        context = dict(context, said_already={"title": said.get("title"),
+                                              "message": said.get("message")})
+        action = follow["do"] + (":" + follow.get("handler", "")
+                                 if follow["do"] == "ask_model" else "")
+        self.db.execute(
+            "INSERT INTO monitor_firings (id, activator_id, at, how, score, why, action, acted, "
+            "context) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
+            (firing, activator["id"], when.isoformat(), how, score, "after what code said",
+             action, json.dumps(context, ensure_ascii=False, default=str)))
+        outcome = self._queue(activator, score, context, firing, when) if follow["do"] == "queue" \
+            else self._ask(activator, follow, context, firing, window)
+        self._outcome(firing, outcome)
+
     def _outcome(self, firing: str, outcome: Dict[str, Any]) -> None:
         self.db.execute("UPDATE monitor_firings SET outcome = ?, notification_id = ?, "
                         "question_id = ? WHERE id = ?",
@@ -380,10 +428,21 @@ class Monitor:
                          str(outcome.get("notification_id") or ""),
                          str(outcome.get("question_id") or ""), firing))
 
+    def picture_path(self, name: Any) -> Optional[Path]:
+        """A kept picture, by the name the notification carries."""
+        if self.pictures is None or not name:
+            return None
+        path = Path(self.pictures) / Path(str(name)).name
+        return path if path.is_file() else None
+
     def say(self, title: str, message: str, context: Dict[str, Any], firing: str,
-            choices: str = "", links: Optional[List[Dict[str, str]]] = None,
-            why: str = "") -> Dict[str, Any]:
-        """A notification, with why it was made kept in it."""
+            choices: str = "", why: str = "", url: str = "", picture: str = "",
+            content: bool = False, reason: str = "",
+            recommended: bool = False) -> Dict[str, Any]:
+        """A notification, with why it was made kept in it. `content` is what the
+        model sends: answered Read detail, when it has a page, Good to know or
+        Bad notification (the user, 2026-11-04). `reason` is shown with it: why the
+        user is being told; `why` is kept for the model."""
         if self.notifications is None:
             return {"said": False, "why": "nothing to say it with"}
         from ...agent.feedback.templates import REMINDER, SUGGESTION
@@ -391,16 +450,20 @@ class Monitor:
                                 "activator": context["activator"]["name"],
                                 "group": context["activator"]["group"], "why": why,
                                 "context": context},
-                    "links": links or []}
+                    "content": content, "url": url, "picture": picture, "reason": reason,
+                    "recommended": recommended}
         template, question_id = REMINDER, ""
-        if (choices or links) and self.questions is not None:
+        if (choices or content) and self.questions is not None:
             from ...agent.feedback.store import TaskQuestion
             options = ([{"key": "accept", "label": "Take a break", "effect": "complete"},
                         {"key": "decline", "label": "Not now", "effect": "complete"},
                         {"key": "not_today", "label": "Not today", "effect": "complete"}]
                        if choices == "break" else
-                       [{"key": "accept", "label": "Open", "effect": "complete"},
-                        {"key": "decline", "label": "Not now", "effect": "complete"}])
+                       ([{"key": "read_detail", "label": "Read detail", "effect": "complete"}]
+                        if url else [])
+                       + [{"key": "good_to_know", "label": "Good to know", "effect": "complete"}]
+                       + ([{"key": "add_to_collection", "label": "Add to collection",
+                            "effect": "complete"}] if recommended else []))
             for option in options:
                 option["label"] = words(option["label"], self.config)
             asked = self.questions.ask(TaskQuestion(task_id="", kind=SUGGESTION, question=title,
@@ -413,17 +476,23 @@ class Monitor:
         sent = self.notifications.notify(title, message, kind="proactive",
                                          dedupe_key=f"monitor:{firing}", template=template,
                                          metadata=metadata)
-        return {"said": sent is not None, "title": title, "message": message,
+        said = {"said": sent is not None, "title": title, "message": message, "url": url,
+                "picture": picture, "reason": reason,
                 "notification_id": getattr(sent, "id", "") if sent is not None else "",
                 "question_id": question_id}
+        # Now, not when the caller is done: an answer finds its firing by this.
+        self._outcome(firing, said)
+        return said
 
     def _notify(self, activator: Dict[str, Any], tier: Dict[str, Any],
                 context: Dict[str, Any], firing: str) -> Dict[str, Any]:
         signals = context.get("signals") or {}
+        matched = ", ".join(str(one) for one in context.get("why") or [])
+        reason = _filled(words(tier.get("reason", ""), self.config), dict(signals, matched=matched))
         return self.say(words(_filled(tier["title"], signals), self.config),
                         words(_filled(tier.get("message", ""), signals), self.config),
                         context, firing, choices=tier.get("choices", ""),
-                        why="said by the Activator, without a model")
+                        why="said by the Activator, without a model", reason=reason)
 
     def _queue(self, activator: Dict[str, Any], score: float, context: Dict[str, Any],
                firing: str, when: datetime) -> Dict[str, Any]:
@@ -455,7 +524,8 @@ class Monitor:
                 if handler == "evening":
                     said = self.decider.evening(self, activator, context, firing)
                 else:
-                    said = self.decider.recommend(self, activator, tier, context, firing)
+                    said = self.decider.recommend(self, activator, tier, context, firing,
+                                                  recommended=handler == "recommend")
             except Exception as exc:
                 log.warning("the model could not be asked for an Activator", exc_info=True)
                 said = {"error": str(exc)[:300]}
@@ -467,8 +537,9 @@ class Monitor:
 
     # -- the user's answers -------------------------------------------------------------
     def on_answered(self, _topic: str, payload: Any = None) -> None:
-        """An answer to what a firing asked: Open opens what it found; Not now
-        waits twice its cooldown; Not today, until tomorrow."""
+        """An answer to what a firing asked: Read detail opens the page; Good to
+        know settles it; Not now waits twice its cooldown; Not today, until
+        tomorrow."""
         if not isinstance(payload, dict):
             return
         question = str(payload.get("id") or "")
@@ -494,14 +565,14 @@ class Monitor:
         elif answer == "not_today":
             self._set_kv(f"monitor.off_until.{row['activator_id']}",
                          (now.astimezone() + timedelta(days=1)).date().isoformat())
-        elif answer == "accept":
-            for link in (outcome.get("links") or [])[:3]:
-                url = str((link or {}).get("url") or "")
-                if url.startswith(("https://", "http://")):
-                    try:
-                        self.opener(url)
-                    except Exception:
-                        log.info("could not open %s", url[:120], exc_info=True)
+        elif answer == "add_to_collection" and self.keeper is not None:
+            self.keeper(outcome)
+        elif answer == "read_detail" and str(outcome.get("url") or "").startswith(
+                ("https://", "http://")):
+            try:
+                self.opener(outcome["url"])
+            except Exception:
+                log.info("could not open %s", str(outcome["url"])[:120], exc_info=True)
 
     def on_bad(self, notification: Dict[str, Any], said: str = "") -> bool:
         """A notification of the Monitor's called bad: kept WHOLE - what it
@@ -511,6 +582,9 @@ class Monitor:
         monitor = meta.get("monitor")
         if not isinstance(monitor, dict):
             return False
+        if meta.get("question_id") and self.questions is not None:
+            # This is its answer: nothing is left standing to be answered again.
+            self.questions.expire(str(meta["question_id"]))
         self.db.execute(
             "INSERT INTO monitor_bad (id, at, notification_id, activator_id, said, context) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -562,6 +636,7 @@ class Monitor:
                 "quiet": self.store.quiet_rules(),
                 "changes": self.store.changes(limit=80),
                 "waiting": len(self.db.query("SELECT id FROM monitor_hits WHERE judged_at IS NULL")),
+                "blocker": self.blocker, "reminders_waiting": self.reminders_waiting,
                 "windows": self.signals.store.count(),
                 "last_error": self.last_error or self.signals.last_error}
 
