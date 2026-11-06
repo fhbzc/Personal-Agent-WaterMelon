@@ -44,6 +44,9 @@ KEPT_FOR = 60.0
 VISIBLE_FOR = 30.0
 #: What the judging model is shown of the screen.
 MOST_SHOWN = 1500
+#: A window narrower than this is read at twice its size: Chinese at 100% display scale is too small
+#: for the OCR (measured 2026-11-06: nothing of a line at 1000 wide, all of it at 1500).
+READ_LARGER_BELOW = 1500
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS reserve_hits (
@@ -83,7 +86,7 @@ _SPACED = re.compile(r"(?<=[\u2e80-\u9fff])\s+(?=[\u2e80-\u9fff])")
 
 def score_of(keywords: Dict[str, Sequence[str]], text: str) -> Tuple[float, List[str]]:
     """What the words of one item score in `text`, and those that did: each counted once."""
-    text = _SPACED.sub("", text).casefold()
+    text = _SPACED.sub("", " ".join(text.split())).casefold()   # a phrase may wrap over two lines
     score, hit = 0.0, []
     for kind, worth in (("proper", PROPER_WORTH), ("zh", CONCEPT_WORTH), ("en", CONCEPT_WORTH)):
         for word in keywords.get(kind) or []:
@@ -115,7 +118,11 @@ def visible_words(data_dir: Any, activity: Any, window: str) -> Tuple[str, str]:
     try:
         from ...runtime import documents
         image = activity.front_window_image()
-        return (documents.ocr_picture(image) if image is not None else ""), "ocr"
+        if image is None:
+            return "", "ocr"
+        if image.width < READ_LARGER_BELOW:
+            image = image.resize((image.width * 2, image.height * 2))
+        return documents.ocr_picture(image), "ocr"
     except Exception:
         log.debug("what is on the screen could not be read", exc_info=True)
         return "", ""

@@ -32,7 +32,8 @@ class TheWordsTests(unittest.TestCase):
 
     def test_chinese_as_the_ocr_writes_it_with_spaces(self) -> None:
         self.assertEqual(match.score_of(WORDS, "第 0400 条 潮 汐 表 显 示")[1], ["潮汐表"])
-        self.assertEqual(match.score_of(WORDS, "tide  table")[1], [])
+        self.assertEqual(match.score_of(WORDS, "the tide\ntable for May")[1], ["tide table"],
+                         "wrapped over two lines")
 
     def test_by_score(self) -> None:
         self.assertEqual(match.tier_of(match.score_of(WORDS, "a tide table")[0]), "low")
@@ -41,8 +42,12 @@ class TheWordsTests(unittest.TestCase):
             WORDS, "Thistle Harbour tide table 涨潮 潮汐表")[0]), "high")
 
 
+class _Picture:
+    width, height = 2000, 1000
+
+
 class _Activity:
-    def __init__(self, title="Tides - Browser", image=object()):
+    def __init__(self, title="Tides - Browser", image=_Picture()):
         self.title, self.image = title, image
 
     def get_active_window(self):
@@ -126,6 +131,12 @@ class TheMatchTests(unittest.TestCase):
         browser_extension.keep_visible(self.app.data_dir, "Another page", "tide table spring tide")
         words, how = match.visible_words(self.app.data_dir, _Activity(image=None), "Tides")
         self.assertEqual((words, how), ("", "ocr"))
+
+    def test_a_small_window_is_read_larger(self) -> None:
+        from PIL import Image
+        with self._on_screen("words") as read:
+            match.visible_words(self.app.data_dir, _Activity(image=Image.new("RGB", (1000, 700))), "Tides")
+        self.assertEqual(read.call_args.args[0].size, (2000, 1400))
 
     def test_an_old_word_from_the_extension_is_not_taken(self) -> None:
         browser_extension.keep_visible(self.app.data_dir, "Tides", "tide table spring tide")

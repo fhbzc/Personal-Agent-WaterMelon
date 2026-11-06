@@ -288,7 +288,7 @@ class Validator:
         if not str(characters.get("preview") or "").startswith("data:image/png;base64,"):
             raise ValidationError("the built-in avatar package has no idle frames")
         index = self.agent.raw("/")
-        if "Personal Agent WaterMelon" not in index:
+        if "<title>WaterMelon</title>" not in index:
             raise ValidationError("the frontend did not load")
         return f"avatar '{selected}' of {len(names)}, with its idle frames"
 
