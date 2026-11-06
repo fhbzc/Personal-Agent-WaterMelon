@@ -423,7 +423,7 @@ on it. What you start yourself (chat, a piece of work) is counted apart.
 
 ## Install
 
-The newest version is **[v0.3.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.0)**:
+The newest version is **[v0.3.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.0)**. [v0.3.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.1) is a pre-release, on its release page:
 
 > **On Windows, with 0.2.7 or earlier: install this version yourself, once.** Updating from inside the program quit it and never came back - the installer was never started. Run the installer below over your copy: your data and settings stay. From 0.2.8 on, updates are quiet: made ready in the background, used at the next start.
 
@@ -440,6 +440,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.3.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.1) | 2026-11-06 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.1) |
 | [v0.3.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.0) | 2026-11-04 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.0) |
 | [v0.2.20](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) | 2026-11-03 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.20/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.20/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.20/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) |
 | [v0.2.19](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.19) | 2026-11-02 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.19) |
@@ -702,6 +703,26 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.3.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.1) (2026-11-06, a pre-release)
+
+A pre-release: Recommendations are new, and only record for now.
+
+- **Recommendations, a module of their own.** Things worth telling you are made ready ahead, from what the Newspaper left over and from the web, each with its angle, why, how long it stays good and the words that set it off. What you have read is never told. Each answer teaches it, with the whole chain of how that one came about. It can be switched off whole in Settings. In this version it only records what it would have recommended, so that its scores are set from what really happens.
+- **What you can see, not the whole page.** A long page's words run far past the part you are looking at, so matching uses what is on the screen: the browser extension's word where it is there, else the OCR of the window in front.
+- **The look of the page.** WaterMelon by name; the panels down a left side that folds away; Overview's panels level; what was done when as a timeline that folds; what is still open grouped, each with Go to.
+- **One zoom.** Ctrl with + and -, the wheel or a pinch resize the chat, the notifications and the notes together; on a Mac, Command and the trackpad.
+- **The page in its own window.** A double click brings the same window back rather than opening another; on a Mac it is the app's own window.
+- **Links in the chat box** can be opened, and a notification shows all of its words.
+- **The Mac.** Its shortcuts work, and show as a Mac shows them; right-click the Dock icon for To do, Chat and the rest; the avatar comes back after a screen is unplugged; a hidden avatar shows again. The .pkg is gone: the .dmg replaces itself on update and starts at login.
+- **Updates.** New installs have automatic updates ticked (never a pre-release). Going back to an earlier version from Settings; the list shows every version from v0.3.0, pre-releases on asking.
+- **Two languages.** The screens are Chinese and English. Pictures are still read in whatever the system has. On Windows the OCR's languages can be added one by one or all at once, and the installer offers them, ticked.
+- **The avatar.** It parts the leaves as its head comes out of a side, and they struggle when it is caught or held. The vine comes out of the very edge, and in the top of the screen the chat button hangs upside down.
+- **The browser extension** never runs in a private window. Settings notices when it has been removed.
+- **Windows of the app never signed in.** Chrome comes first; Edge is told not to sign them in by itself.
+- **Quitting is quicker.** Everything is told to stop at once, and the time each part takes is logged.
+- **To do.** Edit one; Mark as done once its outcome was opened; what was learned from it is kept.
+- Also: reminders that tell why they were sent; a screen-time count that no longer runs away; WeChat readings not lost as a chat changes; paths read better; the count of windows in the evening report.
 
 ### [v0.3.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.0) (2026-11-04)
 
