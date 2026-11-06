@@ -31,7 +31,9 @@ import sys
 import threading
 import time
 import tkinter as tk
-from typing import Any, Callable, Dict, Optional
+import webbrowser
+from typing import Any, Callable, Dict, List, Optional, Tuple
+from . import sizes
 from .on_top import keys_on_hover, on_release
 
 log = logging.getLogger(__name__)
@@ -40,10 +42,42 @@ log = logging.getLogger(__name__)
 FOLDED = "folded-while-sized"
 
 #: Its colours - the quiet notification bubble's.
-LOOK = {"outline": "#3a4152", "bg": "#1d212b", "ink": "#e9ecf3", "muted": "#9aa3b5",
-        "dot": "#7c9cff", "field": "#262b37", "you": "#b9c6ff", "primary": "#5b7cfa",
-        "primary_hover": "#7190ff", "on_primary": "#ffffff", "select": "#3a4d7a",
-        "fast": "#8ab4ff", "slow": "#ff8f85"}
+LOOK = {"outline": "#313133", "bg": "#181819", "ink": "#ffffff", "muted": "#94979d",
+        "dot": "#4b91ff", "field": "#313133", "field_line": "#48484b", "you": "#9fc3ff",
+        "primary": "#4b91ff",
+        "primary_hover": "#6aa5ff", "on_primary": "#ffffff", "select": "#2d4a7a",
+        "fast": "#8ab4ff", "slow": "#ff8f85", "link": "#6aa5ff"}
+
+#: A LINK IN A REPLY (a classmate's, 2026-11-05: `[words](address)` as it was written, not to be
+#: pressed): as a model writes one, or an address alone. Web pages only; what ends a sentence is
+#: not part of an address.
+LINK = re.compile(r"\[([^\]\n]+)\]\((https?://(?:[^\s()]|\([^\s()]*\))+)\)"
+                  r"|(https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+)", re.IGNORECASE)
+
+
+def links_in(text: str) -> List[Tuple[str, str]]:
+    """The text in order, as (words, address): "" where they are not a link."""
+    parts: List[Tuple[str, str]] = []
+    at = 0
+    for found in LINK.finditer(text):
+        address = found.group(2) or found.group(3)
+        words = found.group(1) or ""
+        left = ""
+        if not words:
+            bare = address.rstrip(".,;:!?'")
+            if bare.endswith(")") and "(" not in bare:
+                bare = bare[:-1]
+            address, left, words = bare, address[len(bare):], bare
+        if found.start() > at:
+            parts.append((text[at:found.start()], ""))
+        parts.append((words, address))
+        if left:
+            parts.append((left, ""))
+        at = found.end()
+    if at < len(text):
+        parts.append((text[at:], ""))
+    return parts
+
 
 #: How long after it is opened the box is fitted to a draft put in it.
 FIT_AFTER_MS = 30
@@ -54,7 +88,7 @@ DRAFT_AFTER_MS = 400
 FRONT_EVERY_MS = 3000
 
 #: How wide it is at the popups' first size, and how tall what was said may
-#: grow before it scrolls.
+#: grow before it scrolls. Every size here is as on sizes.REFERENCE, taken to the screen by `px`.
 WIDTH, SAID_TALLEST = 380, 340
 
 #: The sizes its words can be zoomed to (as the note beside what was handed
@@ -64,7 +98,7 @@ ZOOM_START = 2
 
 #: The smallest it is dragged to; its rim, where its edges are taken; and the
 #: pointer over each edge and corner.
-LEAST, RIM = (300, 160), 5
+LEAST, RIM = (300, 160), 7
 EDGES = {"w": "sb_h_double_arrow", "e": "sb_h_double_arrow", "n": "sb_v_double_arrow",
          "s": "sb_v_double_arrow", "nw": "top_left_corner", "ne": "top_right_corner",
          "sw": "bottom_left_corner", "se": "bottom_right_corner"}
@@ -210,6 +244,7 @@ class ChatBubble:
         #: mentions, on_done)` gives the quick reply; None when it is off.
         self.turn = turn
         self._folds = 0
+        self._links = 0
         #: `send` takes on_text=, and the reply is shown as it is written.
         self.streams = streams
         self.files = files
@@ -238,11 +273,16 @@ class ChatBubble:
         self.on_conversation = on_conversation
         self.window: Any = None
         self.waiting = False
+        #: By the screen (sizes.py): how much larger than written, the least, the rim.
+        self._screen = sizes.scale(root)
+        self._least = (sizes.px(root, LEAST[0]), sizes.px(root, LEAST[1]))
+        self._rim = sizes.px(root, RIM)
         #: The size the user left it at - kept, given back (`on_size`).
         self._size: Optional[tuple] = None
         try:
             if kept_size and len(kept_size) == 2:
-                self._size = (max(LEAST[0], int(kept_size[0])), max(LEAST[1], int(kept_size[1])))
+                self._size = (max(self._least[0], int(kept_size[0])),
+                              max(self._least[1], int(kept_size[1])))
         except (TypeError, ValueError):
             self._size = None
         self.on_size = on_size
@@ -279,6 +319,8 @@ class ChatBubble:
         """Its words at another size - the box, what was said, its line -
         kept for the next time (`on_zoom`)."""
         zoom = min(max(int(zoom), 0), len(ZOOMS) - 1)
+        if not self.is_open:
+            self.zoom = zoom                             # for when it next opens
         if zoom == self.zoom or not self.is_open:
             return
         self.zoom = zoom
@@ -311,7 +353,7 @@ class ChatBubble:
             self._focus()
             return
         self.minimized = False
-        width = self._size[0] if self._size else WIDTH + (self.size - 9) * 20
+        width = self._size[0] if self._size else self._grown(WIDTH)
         window = tk.Toplevel(self.root)
         self.window = window
         from .on_top import borderless
@@ -321,10 +363,12 @@ class ChatBubble:
         # Its outline, its rim - where its edges are taken - then the card.
         rim = tk.Frame(window, bg=LOOK["bg"])
         rim.pack(fill="both", expand=True, padx=1, pady=1)
-        card = tk.Frame(rim, bg=LOOK["bg"], padx=14 - RIM, pady=12 - RIM)
-        card.pack(fill="both", expand=True, padx=RIM, pady=RIM)
+        rim_px = self._rim
+        card = tk.Frame(rim, bg=LOOK["bg"], padx=sizes.px(self.root, 14) - rim_px,
+                        pady=sizes.px(self.root, 12) - rim_px)
+        card.pack(fill="both", expand=True, padx=rim_px, pady=rim_px)
         # Its line: who it is with; the full chat; ✕.
-        head = tk.Frame(card, bg=LOOK["bg"])
+        head = self.head = tk.Frame(card, bg=LOOK["bg"])
         head.pack(fill="x")
         dot = tk.Canvas(head, width=10, height=10, bg=LOOK["bg"], highlightthickness=0, bd=0)
         self._dot = (dot, dot.create_oval(1, 1, 9, 9, fill=LOOK["dot"], outline=""))
@@ -379,8 +423,13 @@ class ChatBubble:
             justify="left", anchor="w")
         self.hint.pack(fill="x", pady=(8, 0))
         # Where the user writes.
-        row = tk.Frame(card, bg=LOOK["field"], padx=10, pady=8)
-        row.pack(fill="x", pady=(10, 0))
+        # ITS EDGE DRAWN (the user, 2026-11-05: a classmate could not see where to write): the
+        # field and the card are all but one colour.
+        row = tk.Frame(card, bg=LOOK["field"], padx=10, pady=8, highlightthickness=1,
+                       highlightbackground=LOOK["field_line"])
+        # ITS ROOM FIRST, at the bottom (the user, 2026-11-05: at large words, with what is on the
+        # screen over two lines, it was squeezed to nothing): what was said has what is left.
+        row.pack(side="bottom", fill="x", pady=(10, 0), after=head)
         self.row = row
         self.front_row = tk.Frame(card, bg=LOOK["bg"])   # while something is in front
         self._front_line = ""
@@ -399,6 +448,10 @@ class ChatBubble:
                            highlightthickness=0, height=1, width=1, undo=True,
                            selectbackground=LOOK["select"])
         self.box.pack(side="left", fill="both", expand=True)
+        self.box.bind("<FocusIn>", lambda _e: row.configure(highlightbackground=LOOK["primary"]),
+                      add="+")
+        self.box.bind("<FocusOut>", lambda _e: row.configure(highlightbackground=LOOK["field_line"]),
+                      add="+")
         self.button = tk.Label(row, text=self.words("Send"), bg=LOOK["primary"],
                                fg=LOOK["on_primary"], font=self._font(-1, "bold"),
                                padx=12, pady=4, cursor="hand2")
@@ -427,13 +480,22 @@ class ChatBubble:
                 window.bind(f"<{modifier}-{key}>", lambda _e, s=step: (self.zoom_by(s), "break")[1])
         for key in ("0", "KP_0"):
             window.bind(f"<{modifier}-{key}>", lambda _e: (self.zoom_to(ZOOM_START), "break")[1])
+        # WITH THE WHEEL TOO (the user, 2026-11-05): it goes by where the pointer is, whatever has
+        # the keyboard. On each Text as well: theirs would scroll it first.
+        for one in (window, self.said, self.box):
+            one.bind(f"<{modifier}-MouseWheel>", self._wheel)
+            one.bind(f"<{modifier}-Button-4>", lambda _e: (self.zoom_by(1), "break")[1])
+            one.bind(f"<{modifier}-Button-5>", lambda _e: (self.zoom_by(-1), "break")[1])
+        # PRESSED, THE KEYBOARD COMES TO IT, so Ctrl + and Ctrl - do. Not for the pointer alone:
+        # Ctrl V in another program with the pointer resting here would be pasted here.
+        window.bind("<Button-1>", self._pressed, add="+")
         self._edges(rim)
         keys_on_hover(window)
         window.update_idletasks()
         self.width = width
         if self._size:
             # As the user left it: what was said fills it.
-            self.said_box.pack(fill="both", expand=True, pady=(8, 0), before=row)
+            self.said_box.pack(fill="both", expand=True, pady=(8, 0))
             self.hint.pack_forget()
             self.hint.pack(fill="x", pady=(8, 0), before=self.said_box)
             window.geometry(f"{self._size[0]}x{self._size[1]}")
@@ -492,7 +554,7 @@ class ChatBubble:
         self._restore = (width, height, x, y)
         self._packed = []
         for widget in self.card.pack_slaves():
-            if widget in (self.said_box, self.hint, self.files_row, self.row):
+            if widget in (self.front_row, self.said_box, self.hint, self.files_row, self.row):
                 info = dict(widget.pack_info())
                 info.pop("in", None)
                 self._packed.append((widget, info))
@@ -511,10 +573,12 @@ class ChatBubble:
         for widget, info in self._packed:
             widget.pack(**info)
         self._packed = []
+        if self.front_row.winfo_children():              # what came in front while it was a bar
+            self._place_front()
         # An answer that came while it was a bar: what was said shown.
         if self.said.get("1.0", "end-1c") and not self.said_box.winfo_ismapped():
             self.hint.pack_forget()
-            self.said_box.pack(fill="both", expand=True, pady=(8, 0), before=self._under_said())
+            self.said_box.pack(fill="both", expand=True, pady=(8, 0))
         self._draw_files()
         self._draw_fold()
         dot, oval = self._dot
@@ -591,11 +655,32 @@ class ChatBubble:
 
     def _edges(self, rim: Any) -> None:
         """Its edges and corners, each a strip of its rim to size it by."""
-        edge_strips(rim, self._edge_start, self._edge_move, self._edge_end)
+        # Corners no larger than the room around the card: over it, they took the box's corners
+        # (the user, 2026-11-05: two black ones, once the box stood out from the ground).
+        edge_strips(rim, self._edge_start, self._edge_move, self._edge_end,
+                    corner=sizes.px(self.root, 12), rim_width=self._rim)
+
+    def _grown(self, written: int) -> int:
+        """A size that goes by the words: by the screen, and more for larger popup words than
+        the screen gives them."""
+        return int(round(written * self._screen + (self.size - 9 * self._screen) * 20))
+
+    def _wheel(self, event: Any) -> str:
+        self.zoom_by(1 if event.delta > 0 else -1)
+        return "break"
+
+    def _pressed(self, _event: Any = None) -> None:
+        try:
+            if self.window.focus_get() is None:
+                self._focus()
+        except (KeyError, tk.TclError):      # a menu's, or gone
+            pass
 
     def _edge_start(self, event: Any, edge: str) -> None:
         if self.minimized:
-            return                                       # a bar is not sized
+            # A bar is not sized: taken by its edge, it is opened to be.
+            self.expand()
+            return
         window = self.window
         self._resizing = (event.x_root, event.y_root, window.winfo_width(),
                           window.winfo_height(), window.winfo_x(), window.winfo_y(), edge)
@@ -631,7 +716,7 @@ class ChatBubble:
     def _edge_move(self, event: Any) -> None:
         if self._resizing is None:
             return
-        width, height, left, top = sized_to(self._resizing, event.x_root, event.y_root)
+        width, height, left, top = sized_to(self._resizing, event.x_root, event.y_root, self._least)
         # Given at most once a frame: every pointer move given at once drew
         # the whole of it again and again - it flickered. AND AS SOON AS THE
         # LAST ONE IS DRAWN, not a fixed wait more (the user, 2026-11-03: it
@@ -882,10 +967,6 @@ class ChatBubble:
             threading.Thread(target=forget, args=([one["id"] for one in files],),
                              name="chat-bubble-file", daemon=True).start()
 
-    def _under_said(self) -> Any:
-        """What comes right under what was said."""
-        return self.files_row if self.files_row.winfo_manager() else self.row
-
     # -- what goes with a message ------------------------------------------------------
     def _watch_front(self) -> None:
         """Read off Tk's thread, while it is open: the user moves on behind it."""
@@ -927,8 +1008,14 @@ class ChatBubble:
                            padx=4, cursor="hand2")
             off.pack(side="right", anchor="n")
             on_release(off, lambda: self._without_front(title))
-            row.pack(fill="x", pady=(8, 0), before=self.row)
+            self._place_front()
         self._fit()
+
+    def _place_front(self) -> None:
+        """RIGHT UNDER ITS HEAD, always (the user, 2026-11-05: over Send one moment, under the
+        chat the next: it went by what happened to be there first). Not on a bar."""
+        if not self.minimized:
+            self.front_row.pack(fill="x", pady=(8, 0), after=self.head)
 
     def _without_front(self, title: str) -> None:
         self.front_off = title
@@ -942,7 +1029,7 @@ class ChatBubble:
         self._thumbs = []
         pictures = tk.Frame(row, bg=LOOK["bg"])
         for one in self.attached:
-            seen = self._thumb(one, THUMB)
+            seen = self._thumb(one, sizes.px(self.root, THUMB))
             if seen is not None:                         # seen before it is sent
                 holder = tk.Frame(pictures, bg=LOOK["bg"])
                 tk.Label(holder, image=seen, bg=LOOK["bg"], bd=0).pack(side="left")
@@ -972,7 +1059,7 @@ class ChatBubble:
             return
         if self.attached or note:
             if not row.winfo_manager():
-                row.pack(fill="x", pady=(8, 0), before=self.row)
+                row.pack(side="bottom", fill="x", pady=(8, 0), after=self.row)
         else:
             row.pack_forget()
         self._fit()
@@ -1023,7 +1110,7 @@ class ChatBubble:
             line.pack(fill="x")
             on_release(line, lambda o=one: self._pick_mention(chosen=o))
         if not row.winfo_manager():
-            row.pack(fill="x", pady=(8, 0), before=self.row)
+            row.pack(side="bottom", fill="x", pady=(8, 0), after=self.row)
             self._fit()
 
     def _hide_mentions(self) -> None:
@@ -1116,10 +1203,33 @@ class ChatBubble:
     def _write_reply(self, text: str, tag: str) -> None:
         """A reply under its name, blue when it is the quick one."""
         self.said.configure(state="normal")
-        self.said.insert("end-1c", text, (tag,) if tag else ())
+        self._write_links("end-1c", text, (tag,) if tag else ())
         self.said.configure(state="disabled")
         self.said.see("end")
         self._fit()
+
+    def _write_links(self, at: str, text: str, tags: Tuple[str, ...]) -> None:
+        """Words at `at`, what is a link in them pressed to open it."""
+        said = self.said
+        said.mark_set("writing", at)
+        for words, address in links_in(text):
+            if not address:
+                said.insert("writing", words, tags)
+                continue
+            self._links += 1
+            link = f"link{self._links}"
+            said.tag_configure(link, foreground=LOOK["link"], underline=True)
+            said.tag_bind(link, "<ButtonRelease-1>", lambda _e, one=address: self._open_link(one))
+            said.tag_bind(link, "<Enter>", lambda _e: said.configure(cursor="hand2"))
+            said.tag_bind(link, "<Leave>", lambda _e: said.configure(cursor="xterm"))
+            said.insert("writing", words, (*tags, link))
+        said.mark_unset("writing")
+
+    def _open_link(self, address: str) -> None:
+        """Not at the end of selecting words. Off this thread: a browser can take its time."""
+        if not self.said.tag_ranges("sel"):
+            threading.Thread(target=webbrowser.open, args=(address,), daemon=True,
+                             name="open-a-link").start()
 
     # -- the full agent's, folded under the quick reply (agent/two_speed.py) ---------------
     def _fold_begin(self, fold: Dict[str, Any]) -> None:
@@ -1164,8 +1274,11 @@ class ChatBubble:
             said.tag_configure(head, foreground=LOOK["slow"], font=self._font(-1, "bold"),
                                underline=True)
             said.tag_configure(body, foreground=LOOK["slow"], elide=True)
-            said.insert(at, "\n" + answer, (body,))
-            said.insert(at, "\n▸ " + title, (head,))
+            said.mark_set("title", at)
+            said.mark_gravity("title", "left")
+            self._write_links(at, "\n" + answer, (body,))
+            said.insert("title", "\n▸ " + title, (head,))
+            said.mark_unset("title")
             said.tag_bind(head, "<Button-1>", lambda _e: self._fold_toggle(body))
             said.tag_bind(head, "<Enter>", lambda _e: said.configure(cursor="hand2"))
             said.tag_bind(head, "<Leave>", lambda _e: said.configure(cursor="xterm"))
@@ -1196,7 +1309,7 @@ class ChatBubble:
         said = self.said
         if not self.said_box.winfo_ismapped() and not self.minimized:
             self.hint.pack_forget()
-            self.said_box.pack(fill="both", expand=True, pady=(8, 0), before=self._under_said())
+            self.said_box.pack(fill="both", expand=True, pady=(8, 0))
         said.configure(state="normal")
         if said.get("1.0", "end-1c"):
             said.insert("end", "\n")
@@ -1238,7 +1351,7 @@ class ChatBubble:
             lines = lines[0] if isinstance(lines, tuple) else lines
             line = max(1, int(self.said.tk.call("font", "metrics", self.said.cget("font"),
                                                 "-linespace")))
-            most = max(3, (SAID_TALLEST + (self.size - 9) * 20) // line)
+            most = max(3, self._grown(SAID_TALLEST) // line)
             self.said.configure(height=max(1, min(int(lines or 1) + 1, most)))
             self.window.update_idletasks()
             # As wide as it was; as tall as it now asks, grown upwards.
@@ -1252,15 +1365,25 @@ class ChatBubble:
 
 
 def edge_strips(rim: Any, start: Callable[[Any, str], None], move: Callable[[Any], None],
-                end: Callable[[Any], None], corner: int = 3 * RIM) -> None:
+                end: Callable[[Any], None], corner: int = 0, rim_width: int = RIM) -> None:
     """Edges and corners of `rim`, each a strip to size a window by."""
+    corner = corner or 3 * rim_width
     for edge, cursor in EDGES.items():
         strip = tk.Frame(rim, bg=LOOK["bg"], cursor=cursor)
+        if edge == "se":
+            # THE ONE THAT SHOWS (the user, 2026-11-05): nothing said a window of no frame can be
+            # sized at all. Three strokes in its corner, as a window's grip has.
+            strip = tk.Canvas(rim, bg=LOOK["bg"], cursor=cursor, highlightthickness=0, bd=0,
+                              width=corner, height=corner)
+            for share in (0.3, 0.55, 0.8):
+                far = round(corner * share)
+                strip.create_line(corner - 2, corner - 2 - far, corner - 2 - far, corner - 2,
+                                  fill=LOOK["muted"])
         place: Dict[str, Any] = {"width": corner, "height": corner}
         if edge in ("w", "e"):
-            place = {"width": RIM, "height": -2 * corner, "relheight": 1, "y": corner}
+            place = {"width": rim_width, "height": -2 * corner, "relheight": 1, "y": corner}
         elif edge in ("n", "s"):
-            place = {"height": RIM, "width": -2 * corner, "relwidth": 1, "x": corner}
+            place = {"height": rim_width, "width": -2 * corner, "relwidth": 1, "x": corner}
         place.update(relx=1.0 if "e" in edge else 0.0,
                      rely=1.0 if edge in ("s", "sw", "se") else 0.0,
                      anchor=("s" if edge in ("s", "sw", "se") else "n")
@@ -1272,23 +1395,23 @@ def edge_strips(rim: Any, start: Callable[[Any, str], None], move: Callable[[Any
         strip.bind("<ButtonPress-1>", lambda e, edge=edge: start(e, edge))
         strip.bind("<B1-Motion>", move)
         strip.bind("<ButtonRelease-1>", end)
-        strip.lift()
+        tk.Misc.lift(strip)                  # a Canvas's own lift is of what is drawn on it
 
 
-def sized_to(began: tuple, x: int, y: int) -> tuple:
+def sized_to(began: tuple, x: int, y: int, least: tuple = LEAST) -> tuple:
     """Where an edge pulled from `began` - (x, y, width, height, left, top, edge) - to x, y
     leaves the window: (width, height, left, top)."""
     x0, y0, width, height, left, top, edge = began
     dx, dy = x - x0, y - y0
     if "e" in edge:
-        width = max(LEAST[0], width + dx)
+        width = max(least[0], width + dx)
     if "w" in edge:
-        grown = max(LEAST[0], width - dx)
+        grown = max(least[0], width - dx)
         left, width = left + width - grown, grown
     if "s" in edge:
-        height = max(LEAST[1], height + dy)
+        height = max(least[1], height + dy)
     if "n" in edge:
-        grown = max(LEAST[1], height - dy)
+        grown = max(least[1], height - dy)
         top, height = top + height - grown, grown
     return width, height, left, top
 
@@ -1304,7 +1427,9 @@ class ScrollBar:
     WIDE = 8
 
     def __init__(self, parent: Any) -> None:
-        self.canvas = tk.Canvas(parent, width=self.WIDE, bg=LOOK["bg"], highlightthickness=0,
+        # height: a Canvas asks for seven centimetres of its own unless told, and that is what took
+        # the room of the box to write in.
+        self.canvas = tk.Canvas(parent, width=self.WIDE, height=1, bg=LOOK["bg"], highlightthickness=0,
                                 bd=0, cursor="arrow")
         self.view = (0.0, 1.0)
         self.text: Any = None

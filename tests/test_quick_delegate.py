@@ -4,6 +4,7 @@ page opened only then, on the piece of work."""
 
 from __future__ import annotations
 
+import gc
 import unittest
 from unittest import mock
 
@@ -51,6 +52,9 @@ class QuickBoxTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.box.close()
         self.root.destroy()
+        # Tk's objects let go of on its own thread: collected on a worker's, they end the process.
+        del self.box, self.root
+        gc.collect()
 
     def _run_posted(self) -> None:
         import time

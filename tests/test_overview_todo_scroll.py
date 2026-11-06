@@ -34,6 +34,85 @@ def GROUPS(source: str) -> str:
             + _function(source, "ovGroupAdder"))
 
 
+class MarkedAsDoneTests(unittest.TestCase):
+
+    def test_offered_once_what_came_of_it_was_opened_on_that_one_alone(self) -> None:
+        engine = _browser()
+        if not engine:
+            self.skipTest("a browser is needed to draw the list")
+        source = (WEB / "app.js").read_text(encoding="utf-8")
+        todos = [{"id": "t1", "text": "Fictional errand: repot the fern"},
+                 {"id": "t2", "text": "Fictional errand: buy tea"}]
+        script = (
+            "window.$=s=>document.querySelector(s);" + ESCAPE
+            + "const delegateState={removing:'',tracking:new Set(),opened:new Set()};"
+            + "const delegateLabel=()=>'Delegate work';"
+            + "let ovTodos=" + json.dumps(todos) + ";let ovTodoDrawn='';"
+            + _function(source, "ovTodoVersions") + _function(source, "ovTodoTracked")
+            + _function(source, "ovTodoWork") + GROUPS(source) + _function(source, "ovTodoBox")
+            + _function(source, "ovPlaceTodos")
+            + "window.addEventListener('load',()=>{const out={};ovPlaceTodos();"
+            "const done=id=>document.querySelector(`[data-todo=\"${id}\"] .ov-todo-done`);"
+            "out.before=Boolean(done('t1'));"
+            "delegateState.opened.add('t1');ovPlaceTodos();"
+            "out.words=done('t1')&&done('t1').textContent;out.other=Boolean(done('t2'));"
+            "const pre=document.createElement('pre');pre.id='out';"
+            "pre.textContent=JSON.stringify(out);document.body.prepend(pre);});")
+        page = ("<!doctype html><html><head><meta charset='utf-8'></head><body>"
+                "<div class='card' id='ov-tasks-card'><aside id='ov-todo' class='ov-todo'></aside></div>"
+                "<script>" + script + "</script></body></html>")
+        stdout, stderr = _run_browser_probe(engine, page)
+        found = re.search(r'<pre id="out">(.*?)</pre>', stdout, re.S)
+        self.assertIsNotNone(found, stderr[-2000:])
+        self.assertEqual(json.loads(found.group(1).replace("&quot;", '"')),
+                         {"before": False, "words": "Mark as done", "other": False})
+
+
+class ATodoEditedTests(unittest.TestCase):
+
+    def test_its_words_in_boxes_left_alone_while_written(self) -> None:
+        engine = _browser()
+        if not engine:
+            self.skipTest("a browser is needed to draw the list")
+        source = (WEB / "app.js").read_text(encoding="utf-8")
+        todos = [{"id": "t1", "text": "Fictional errand: repot the <fern>", "detail": "the big pot"},
+                 {"id": "t2", "text": "Fictional errand: buy tea"}]
+        script = (
+            "window.$=s=>document.querySelector(s);" + ESCAPE
+            + "const delegateState={removing:'',tracking:new Set()};"
+            + "const delegateLabel=()=>'Delegate work';"
+            + "let ovTodos=" + json.dumps(todos) + ";let ovTodoDrawn='';"
+            + _function(source, "ovTodoVersions") + _function(source, "ovTodoTracked")
+            + _function(source, "ovTodoWork") + GROUPS(source) + _function(source, "ovTodoBox")
+            + _function(source, "ovPlaceTodos")
+            + "window.addEventListener('load',()=>{const out={};ovPlaceTodos();"
+            "out.button=document.querySelector('[data-todo=\"t1\"] .ov-todo-edit').textContent;"
+            "delegateState.editing='t1';ovPlaceTodos();"
+            "const text=()=>document.querySelector('[data-todo-edit-text]');"
+            "out.text=text().value;"
+            "out.detail=document.querySelector('[data-todo-edit-detail]').value;"
+            "text().value='half written';ovTodos=ovTodos.slice(0,1);ovPlaceTodos();"
+            "out.kept=text().value;out.rows=document.querySelectorAll('[data-todo]').length;"
+            "delegateState.editing=null;ovPlaceTodos();"
+            "out.closed=document.querySelectorAll('[data-todo-edit-form]').length;"
+            "out.after=document.querySelectorAll('[data-todo]').length;"
+            "const pre=document.createElement('pre');pre.id='out';"
+            "pre.textContent=JSON.stringify(out);document.body.prepend(pre);});")
+        page = ("<!doctype html><html><head><meta charset='utf-8'></head><body>"
+                "<div class='card' id='ov-tasks-card'><aside id='ov-todo' class='ov-todo'></aside></div>"
+                "<script>" + script + "</script></body></html>")
+        stdout, stderr = _run_browser_probe(engine, page)
+        found = re.search(r'<pre id="out">(.*?)</pre>', stdout, re.S)
+        self.assertIsNotNone(found, stderr[-2000:])
+        out = json.loads(found.group(1).replace("&quot;", '"').replace("&lt;", "<").replace("&gt;", ">"))
+        self.assertEqual(out["button"], "Edit")
+        self.assertEqual((out["text"], out["detail"]),
+                         ("Fictional errand: repot the <fern>", "the big pot"))
+        self.assertEqual(out["kept"], "half written", "a redraw leaves what is being written")
+        self.assertEqual(out["rows"], 2, "and the list as it was, until it is done")
+        self.assertEqual((out["closed"], out["after"]), (0, 1))
+
+
 class OverviewTodoScrollTests(unittest.TestCase):
 
     def test_at_its_ends_the_wheel_goes_on_to_the_page(self) -> None:

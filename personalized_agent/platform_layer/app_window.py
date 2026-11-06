@@ -6,12 +6,14 @@ others, with the box over it. What was wanted was the box: so it opens as a
 window of its own, the size of the box, which closes when the box does.
 
 It is the same page - drawn once, tested once - in a browser's "app" mode
-(`--app=URL`): Edge, which every Windows has, or Chrome or Chromium; where
-none is found, the user's own browser opens it as before.
+(`--app=URL`): Chrome where it is there, else Edge, which every Windows has, or
+Chromium; where none is found, the user's own browser opens it as before.
 
 A PROFILE OF ITS OWN (`profile`, in the application's internal folder):
 none of the user's sign-ins, cookies or extensions are in it, and nothing
-of it reaches theirs. It also makes the window a new browser process, the
+of it reaches theirs. EDGE WOULD SIGN IT IN BY ITSELF with the account the
+computer is signed in to, sync off or not (2026-11-05, measured: one account
+without the flag below, none with it), so Chrome comes first and Edge is told not to. It also makes the window a new browser process, the
 only way the asked-for size and place are honoured when the user's browser
 is already open.
 """
@@ -37,14 +39,10 @@ SIZE = (780, 900)
 
 
 def _windows_candidates() -> List[Path]:
-    found = []
-    for base in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles"),
-                 os.environ.get("LOCALAPPDATA")):
-        if not base:
-            continue
-        found += [Path(base) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
-                  Path(base) / "Google" / "Chrome" / "Application" / "chrome.exe"]
-    return found
+    bases = [base for base in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles"),
+                               os.environ.get("LOCALAPPDATA")) if base]
+    return [*(Path(base) / "Google" / "Chrome" / "Application" / "chrome.exe" for base in bases),
+            *(Path(base) / "Microsoft" / "Edge" / "Application" / "msedge.exe" for base in bases)]
 
 
 def _mac_candidates() -> List[Path]:
@@ -81,7 +79,8 @@ def command(program: str, url: str, profile: Path,
     width, height = size
     return [program, f"--app={url}", f"--user-data-dir={profile}",
             f"--window-size={width},{height}",
-            "--no-first-run", "--no-default-browser-check", "--disable-sync"]
+            "--no-first-run", "--no-default-browser-check", "--disable-sync",
+            "--disable-features=msImplicitSignin"]
 
 
 def open_window(url: str, profile: Path, size: Tuple[int, int] = SIZE) -> bool:
@@ -103,6 +102,89 @@ def open_window(url: str, profile: Path, size: Tuple[int, int] = SIZE) -> bool:
         return True
     except Exception:
         log.warning("could not open %s in a window of its own", program, exc_info=True)
+        return False
+
+
+#: THE WHOLE PAGE IN A WINDOW OF ITS OWN (the user, 2026-11-05): the program cannot reach a tab of
+#: the user's browser, so each double click was a tab more. This one it can find, and bring back
+#: as it was left. Its profile is its own too; its title is the page's, alone, which is how it is
+#: told from a tab of the same page ("WaterMelon - Google Chrome").
+PAGE_PROFILE = "page_window"
+PAGE_SIZE = (1400, 900)
+#: On a Mac this is Apple's WebKit instead (ui/mac_panel.py).
+PAGE_TITLE = "WaterMelon"
+#: The window class of Edge and of Chrome.
+BROWSER_WINDOW = "Chrome_WidgetWin_1"
+
+
+def _no_windows_here() -> bool:
+    """Under the tests nothing is opened on the screen of whoever runs them."""
+    return bool(os.environ.get("PA_NO_DIALOGS"))
+
+
+def is_the_page(window_class: str, title: str) -> bool:
+    return window_class == BROWSER_WINDOW and title == PAGE_TITLE
+
+
+def _windows_page() -> Optional[int]:
+    """The handle of the page's window, if it is open."""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    found: List[int] = []
+    call = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def look(handle: int, _extra: int) -> bool:
+        if user32.IsWindowVisible(handle):
+            kind, title = ctypes.create_unicode_buffer(64), ctypes.create_unicode_buffer(64)
+            user32.GetClassNameW(handle, kind, 64)
+            user32.GetWindowTextW(handle, title, 64)
+            if is_the_page(kind.value, title.value):
+                found.append(handle)
+                return False
+        return True
+    user32.EnumWindows(call(look), 0)
+    return found[0] if found else None
+
+
+def bring_back_the_page() -> bool:
+    """The page's window to the front, as it was left; False when it is not open."""
+    if _no_windows_here() or sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        handle = _windows_page()
+        if handle is None:
+            return False
+        user32 = ctypes.windll.user32
+        if user32.IsIconic(handle):
+            user32.ShowWindow(handle, 9)         # SW_RESTORE
+        user32.SetForegroundWindow(handle)
+        return True
+    except Exception:
+        log.debug("the page's window could not be brought back", exc_info=True)
+    return False
+
+
+def open_the_page(url: str, profile: Path) -> bool:
+    """`url` in the page's window; False where no browser here can make one."""
+    if _no_windows_here():
+        return False
+    program = browser()
+    if program is None:
+        return False
+    try:
+        Path(profile).mkdir(parents=True, exist_ok=True)
+        flags = 0
+        if sys.platform == "win32":
+            flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
+                     | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        subprocess.Popen(command(program, url, Path(profile), PAGE_SIZE), close_fds=True,
+                         creationflags=flags, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except Exception:
+        log.warning("could not open the page in a window of its own", exc_info=True)
         return False
 
 

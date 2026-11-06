@@ -239,7 +239,7 @@ class TheRunIsToldTests(unittest.TestCase):
 # The real browser, in real runs
 # ---------------------------------------------------------------------------
 SITE = {
-    "index.html": """<!doctype html><title>Form</title>
+    "index.html": """<!doctype html><meta charset="utf-8"><title>Form</title>
 <h1>Hello</h1>
 <form id=f><input id=name><select id=size><option value=s>S</option>
 <option value=l>L</option></select><button id=go type=button>Go</button></form>

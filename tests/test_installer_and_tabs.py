@@ -92,8 +92,8 @@ class TheInstallerTests(unittest.TestCase):
                 paths = AppPaths.create(resolve_root(root))
                 return ConfigStore(paths.data_dir, path=paths.settings_file)
 
-            self.assertEqual(main(["--root", str(root), "--display-language", "ja"]), 0)
-            self.assertEqual(config().get("display_language"), "ja")
+            self.assertEqual(main(["--root", str(root), "--display-language", "zh"]), 0)
+            self.assertEqual(config().get("display_language"), "zh")
             self.assertNotIn("display_language", config().user_defaults(),
                              "the installer's, not the user's choice")
             config().set("display_language", "zh")         # chosen in Settings

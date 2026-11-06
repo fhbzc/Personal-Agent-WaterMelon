@@ -36,7 +36,7 @@ from typing import Any, Dict, Iterable, List
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "personalized_agent" / "api" / "web"
 TABLES = WEB / "lang"
-LANGUAGES = ("zh", "es", "ja", "ko", "ru", "fr", "de", "it")
+LANGUAGES = ("zh",)
 SCRIPTS = ["app.js", "debugger.js", "chat.js", "chat-debugger.js", "chat-navigation.js",
            "listener-debugger.js"]
 PAGES = ["index.html", "chat.html"]

@@ -712,7 +712,8 @@ class ThroughTheChatTests(unittest.TestCase):
         request = urllib.request.Request(
             f"{self.base}{path}", data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(keyed(self.app, request), timeout=30) as response:
+        # A ceiling: on a full run a request has waited more than thirty seconds for its turn.
+        with urllib.request.urlopen(keyed(self.app, request), timeout=120) as response:
             return json.loads(response.read().decode("utf-8"))
 
     def _upload(self, name, data):

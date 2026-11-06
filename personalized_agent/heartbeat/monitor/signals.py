@@ -150,6 +150,10 @@ SIGNALS: Dict[str, Tuple[str, str]] = {
                                    "like today; empty unknown"),
 }
 
+#: WINDOWS BEING CLOSED (PR #6's): within this many seconds, at least this many fewer than the
+#: most there were, and at least this share of them.
+CLOSING_WITHIN_SECONDS, CLOSING_LEAST_FEWER, CLOSING_SHARE = 180, 4, 0.4
+
 #: THE EVENTS, each said on the look it happened: name -> what it is.
 EVENTS: Dict[str, str] = {
     "day_began": "the first work of the day, after hours away (the computer just opened)",
@@ -160,6 +164,7 @@ EVENTS: Dict[str, str] = {
     "scattered": "the work has turned scattered - many switches",
     "leisure": "turned to something to watch or play, after working",
     "text": "new words appeared in a window (for keyword conditions)",
+    "closing_up": "many windows closed in a few minutes: tidying up, perhaps to stop for the day",
 }
 
 
@@ -235,6 +240,8 @@ class Signals:
         self._relabelled_at = 0.0
         self._habits: Tuple[float, str, Dict[str, Any]] = (0.0, "", {})
         self._born = datetime.now(timezone.utc)
+        self._window_counts: List[Tuple[float, int]] = []
+        self._watched_at: Optional[datetime] = None
         self.last_error = ""
 
     # -- the record ---------------------------------------------------------------------
@@ -249,12 +256,17 @@ class Signals:
             f"SELECT event_type, timestamp, application, data FROM raw_events "
             f"WHERE ({like}) AND timestamp >= ? AND timestamp < ? ORDER BY timestamp",
             (*[p + "%" for p in prefixes], low, high))
-        for kind, opened in (("application.focus%", "application.focused"),
-                             ("presence.%", "presence.away")):
+        # EACH PAIR ON ITS OWN. Presence was one kind here: hands_off is stamped later than the
+        # away it comes with, so it was the last word, the absence under way was not seen,
+        # and days away read as days at the screen (the user, 2026-11-05: 11530 minutes).
+        for kinds, opened in ((("application.focus%",), "application.focused"),
+                              (("presence.away", "presence.back"), "presence.away"),
+                              (("presence.hands_off", "presence.hands_on"), "presence.hands_off")):
+            which = " OR ".join("event_type LIKE ?" for _ in kinds)
             before = self.db.query_one(
                 "SELECT event_type, timestamp, application, data FROM raw_events "
-                "WHERE event_type LIKE ? AND timestamp < ? ORDER BY timestamp DESC LIMIT 1",
-                (kind, low))
+                f"WHERE ({which}) AND timestamp < ? ORDER BY timestamp DESC LIMIT 1",
+                (*kinds, low))
             if before and before["event_type"] == opened:
                 rows.insert(0, before)
         out = []
@@ -266,6 +278,17 @@ class Signals:
                 row["data"] = {}
             out.append(row)
         return out
+
+    def _watched_from(self, until: datetime) -> datetime:
+        """Since when the user's absences have been recorded: before it no break could be
+        seen, so no stretch can be told. `until` where they never have been. The monitor's
+        own gaps do not count: they say the agent was not looking, not that it can tell."""
+        if self._watched_at is None:
+            row = self.db.query_one(
+                "SELECT MIN(timestamp) AS t FROM raw_events WHERE event_type IN "
+                "('presence.away', 'presence.back') AND source != 'monitor'")
+            self._watched_at = _aware(row["t"]) if row and row["t"] else None
+        return self._watched_at or until
 
     def _kv(self, key: str) -> str:
         row = self.db.query_one("SELECT value FROM kv WHERE key = ?", (key,))
@@ -358,9 +381,11 @@ class Signals:
         start = max(start, boundary - timedelta(days=BACKFILL_DAYS))
         if start >= boundary:
             return 0
+        watched = self._watched_from(boundary)
         windows = build_windows(start, boundary, WINDOW_MINUTES, self._events(start, boundary),
-                                Carry.after(tail), self._rules(), self._state_lookup(),
-                                busy=self._agent_at_work(start))
+                                Carry.after(tail).within(watched, start), self._rules(),
+                                self._state_lookup(), busy=self._agent_at_work(start),
+                                watched_from=watched)
         return self.store.add(windows)
 
     def _agent_at_work(self, since: datetime) -> List[Tuple[datetime, datetime]]:
@@ -510,9 +535,12 @@ class Signals:
                 minutes=2 * WINDOW_MINUTES) else None
         cut = max(1, int(math.ceil(elapsed)))
         events = self._events(boundary, local)
+        # To the end of what is built, not to now: that end is up to a minute past it, and that
+        # minute would count as watched where absences never were.
+        watched = self._watched_from(boundary + timedelta(minutes=cut))
         built = build_windows(boundary, boundary + timedelta(minutes=cut), cut, events,
-                              Carry.after(tail), self._rules(), None,
-                              busy=self._agent_at_work(boundary))
+                              Carry.after(tail).within(watched, boundary), self._rules(), None,
+                              busy=self._agent_at_work(boundary), watched_from=watched)
         if not built:
             return None
         live = built[0]
@@ -979,7 +1007,26 @@ class Signals:
         if (now["activity"] == "entertainment" and before.get("activity") != "entertainment"
                 and before.get("mode") in (state_module.WORKING, state_module.SHALLOW)):
             out.append("leisure")
+        if self._closing_up():
+            out.append("closing_up")
         return out
+
+    def _closing_up(self) -> bool:
+        """Many windows closed in the last few minutes, said once for them."""
+        try:
+            count = self.platform.count_windows()
+        except Exception:                                # no platform, or it cannot say
+            count = None
+        if count is None:
+            return False
+        moment = time.monotonic()
+        seen = [one for one in self._window_counts if moment - one[0] <= CLOSING_WITHIN_SECONDS]
+        seen.append((moment, count))
+        most = max(one[1] for one in seen)
+        closed = most - count
+        closing = closed >= CLOSING_LEAST_FEWER and closed >= CLOSING_SHARE * most
+        self._window_counts = [seen[-1]] if closing else seen
+        return closing
 
     def _first_look_today(self, day: str) -> bool:
         """The application started today and nothing was worked before it."""

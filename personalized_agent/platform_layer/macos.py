@@ -125,6 +125,42 @@ class MacActivityProvider(PlatformActivityProvider):
     def window_text_status(self):
         return self._text_reader().status()
 
+    def count_windows(self) -> Optional[int]:
+        """The windows of the programs in the Dock, by what the system says of any window with
+        no permission asked: its owner, layer and size, never its title.
+
+        ALL OF THEM, not those on the screen: going to another Space, hiding a program or
+        minimising takes windows off the screen and would read as closing them. Only closing
+        one takes it out of this count. Programs with no place in the Dock are left out,
+        their hidden windows would make what is closed look a small share."""
+        try:
+            import objc
+            import Quartz
+            from AppKit import NSWorkspace
+        except ImportError:
+            return None
+        try:
+            with objc.autorelease_pool():
+                dock = {int(one.processIdentifier())
+                        for one in NSWorkspace.sharedWorkspace().runningApplications()
+                        if int(one.activationPolicy()) == 0}     # NSApplicationActivationPolicyRegular
+                listed = Quartz.CGWindowListCopyWindowInfo(
+                    Quartz.kCGWindowListOptionAll | Quartz.kCGWindowListExcludeDesktopElements,
+                    Quartz.kCGNullWindowID)
+                found = 0
+                for window in listed or []:
+                    bounds = window.get("kCGWindowBounds") or {}
+                    if (int(window.get("kCGWindowOwnerPID") or 0) in dock
+                            and int(window.get("kCGWindowLayer") or 0) == 0
+                            and float(window.get("kCGWindowAlpha", 1) or 0) > 0
+                            and float(bounds.get("Width") or 0) >= 120
+                            and float(bounds.get("Height") or 0) >= 90):
+                        found += 1
+                return found
+        except Exception:
+            log.debug("could not count the windows", exc_info=True)
+            return None
+
     def seconds_since_input(self) -> Optional[float]:
         try:
             import Quartz

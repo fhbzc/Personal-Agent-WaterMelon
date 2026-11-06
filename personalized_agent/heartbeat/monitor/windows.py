@@ -205,6 +205,14 @@ class Carry:
         return cls(last.session_elapsed_min, last.since_break_min, last.on_task_min,
                    last.main, run * last.minutes, run, last.own_work_min)
 
+    def within(self, watched_from: datetime, start: datetime) -> "Carry":
+        """No longer than absences have been recorded, whatever was stored before they were."""
+        most = max(0.0, (start - watched_from).total_seconds() / 60.0)
+        self.session = min(self.session, most)
+        self.since_break = min(self.since_break, most)
+        self.own_work = min(self.own_work, most)
+        return self
+
 
 def agent_alone_seconds(quiet: List[Interval], busy: List[Tuple[datetime, datetime]],
                         start: datetime, end: datetime) -> float:
@@ -227,6 +235,7 @@ def build_windows(start: datetime, end: datetime, minutes: int,
                   rules: Optional[Dict[str, Tuple[str, ...]]] = None,
                   state_lookup: Optional[Callable[[datetime], Tuple[Optional[str], str]]] = None,
                   busy: Sequence[Tuple[datetime, datetime]] = (),
+                  watched_from: Optional[datetime] = None,
                   ) -> List[Window]:
     """The windows from ``start`` to ``end``, each ``minutes`` long, in order.
 
@@ -242,6 +251,11 @@ def build_windows(start: datetime, end: datetime, minutes: int,
     is a break from work - and not time an agent was at work (``busy``, and
     what a coding assistant said) while their hands were off the machine.
     Hands off alone is no sign: reading is work.
+
+    ``watched_from``: since when absences have been recorded. Before it a window left in front
+    overnight looks like work, so what the windows show stays but no stretch runs: the first
+    build reaches eight days back, and on a machine with no absences in them that read as
+    eight days without a break (the user, 2026-11-05: 11530 minutes).
     """
     carry = carry or Carry()
     focus = focus_intervals(events, rules, until=end)
@@ -295,12 +309,17 @@ def build_windows(start: datetime, end: datetime, minutes: int,
                 carry.session = 0.0
             if carry.away_run >= BREAK_GAP_MIN:
                 carry.since_break = carry.own_work = 0.0
-            worked = minutes * (1.0 - idle)
+            if watched_from is not None and until <= watched_from:
+                carry.session = carry.since_break = carry.own_work = 0.0
+                idle_stretch = True
+            else:
+                idle_stretch = False
+            worked = 0.0 if idle_stretch else minutes * (1.0 - idle)
             carry.session += worked
             carry.since_break += worked
             if main in REST_LABELS:
                 carry.own_work = 0.0                 # resting is a break from work
-            else:
+            elif not idle_stretch:
                 rest = sum(by_label.get(one, 0.0) for one in REST_LABELS)
                 alone = agent_alone_seconds(quiet, agent, here, until)
                 carry.own_work += minutes * max(0.0, active - rest - alone) / seconds

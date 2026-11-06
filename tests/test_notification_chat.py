@@ -3,6 +3,8 @@ answers. A reply the chat closed on comes as a notification. Everything here is 
 
 from __future__ import annotations
 
+import gc
+import sys
 import unittest
 from unittest import mock
 
@@ -62,6 +64,43 @@ class WrittenOnANotificationTests(unittest.TestCase):
 
 class ItsSizeOfWordsTests(unittest.TestCase):
 
+    def test_long_words_are_whole_and_scroll(self) -> None:
+        """The day's report stopped in mid-word at 400 letters, with nowhere to read the rest."""
+        import collections
+        import tkinter as tk
+        from types import SimpleNamespace
+        from personalized_agent.ui.desktop import DesktopAgent
+        root = tk.Tk()
+        root.withdraw()
+        self.addCleanup(gc.collect)
+        self.addCleanup(root.destroy)
+        kept = {}
+        desk = DesktopAgent.__new__(DesktopAgent)
+        desk.root, desk.size = root, 128
+        desk.config = SimpleNamespace(get=lambda key, default=None: kept.get(key, default),
+                                      set=lambda key, value, internal=False: kept.__setitem__(key, value))
+        desk._bubble_queue = collections.deque()
+        desk._bubble, desk._bubble_count, desk._showing = None, None, None
+        desk.app = SimpleNamespace(REMIND_LATER_MINUTES=30)
+        desk._popup_font = lambda: ("Segoe UI", 12)
+        desk._words = lambda text: text
+        desk._fill = lambda text, *args: text.format(*args)
+        desk._avatar_box = lambda: (900, 300, 128, 128)
+        desk._options_for = lambda _question: [{"key": "", "label": "Got it", "primary": True}]
+        desk._blocked = lambda: False
+        text = "Your day: " + "A made-up sentence about the day. " * 120 + "THE END"
+        desk.notify_bubble(text, notification_id="n1", template="passive")
+        root.update()
+
+        def texts(widget):
+            found = [widget] if isinstance(widget, tk.Text) else []
+            for one in widget.winfo_children():
+                found += texts(one)
+            return found
+        said = "".join(one.get("1.0", "end-1c") for one in texts(desk._bubble))
+        self.assertIn("THE END", said, "all of it")
+        self.assertLessEqual(desk._bubble.winfo_height(), root.winfo_screenheight(), "on the screen")
+
     def test_the_pointer_on_it_and_ctrl_minus_draws_it_again_smaller_and_it_is_kept(self) -> None:
         import collections
         import tkinter as tk
@@ -69,6 +108,8 @@ class ItsSizeOfWordsTests(unittest.TestCase):
         from personalized_agent.ui.desktop import DesktopAgent
         root = tk.Tk()
         root.withdraw()
+        # Tk's objects let go of on its own thread: collected on a worker's, they end the process.
+        self.addCleanup(gc.collect)
         self.addCleanup(root.destroy)
         kept = {}
         desk = DesktopAgent.__new__(DesktopAgent)
@@ -91,14 +132,14 @@ class ItsSizeOfWordsTests(unittest.TestCase):
         high = first.winfo_height()
         first.focus_force()
         root.update()
-        first.event_generate("<Control-minus>")
+        first.event_generate("<Command-minus>" if sys.platform == "darwin" else "<Control-minus>")
         root.update()
-        self.assertEqual(kept["notification_zoom"], -1)
+        self.assertEqual(kept["popup_zoom"], -1)
         self.assertIsNot(desk._bubble, first, "drawn again")
         self.assertTrue(desk._bubble.winfo_exists())
         self.assertLessEqual(desk._bubble.winfo_height(), high)
         desk._zoom_bubble(3)
-        self.assertEqual(kept["notification_zoom"], 2)
+        self.assertEqual(kept["popup_zoom"], 2)
         desk._bubble.destroy()
 
 

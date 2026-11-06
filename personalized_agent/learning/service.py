@@ -939,9 +939,11 @@ class Learning:
 
     def halt(self) -> None:
         self._stop.set()
+        # Five seconds for the two together: one after the other they held the way out for ten.
+        until = time.monotonic() + 5
         for thread in (self._clock, self._thread):
             if thread is not None:
-                thread.join(5)
+                thread.join(max(0.0, until - time.monotonic()))
 
     def _loop(self) -> None:
         while not self._stop.wait(LOOKS_EVERY):

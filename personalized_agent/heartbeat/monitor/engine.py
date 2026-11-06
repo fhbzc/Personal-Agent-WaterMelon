@@ -12,9 +12,10 @@ step_monitor - within limits code keeps, whatever an Activator says:
 
 - each Activator's cooldown and most a day; "Not now" waits twice its
   cooldown, "Not today" stops it until tomorrow;
-- the recommendations and breaks together: at most `monitor_most_a_day` a
-  day, `monitor_least_gap_minutes` apart, none in the quiet hours, none while
-  the user is away;
+- recommendations and breaks: none in the quiet hours, none while the user is
+  away; breaks at most `monitor_most_a_day` a day, `monitor_least_gap_minutes`
+  after anything said. RECOMMENDATIONS HAVE NO LIMIT (the user, 2026-11-05: no
+  number a day, no gap): the model is told how many there have been, and judges;
 - one model asked at a time.
 
 TWO LAYERS (the user, 2026-11-04): Activators, which set something off, and
@@ -237,6 +238,8 @@ class Monitor:
             return False
         if activator.get("group") == "calendar":
             return module_on(self.config, "calendar")
+        if activator.get("group") == "recommend" and not module_on(self.config, "recommendation"):
+            return False
         return self.enabled()
 
     def text_rules(self) -> List[ActivatorRule]:
@@ -315,7 +318,7 @@ class Monitor:
         rows = self.db.query("SELECT at FROM monitor_firings WHERE activator_id = ? AND acted = 1 "
                              "AND at >= ? ORDER BY at DESC",
                              (ident, midnight.astimezone(timezone.utc).isoformat()))
-        if len(rows) >= int(activator["most_per_day"]):
+        if activator.get("group") != "recommend" and len(rows) >= int(activator["most_per_day"]):
             return f"{activator['most_per_day']} already today"
         if how == "tick":
             last = self.db.query_one("SELECT MAX(at) AS t FROM monitor_firings WHERE "
@@ -337,11 +340,16 @@ class Monitor:
                 "f.activator_id WHERE f.acted = 1 AND f.at >= ? AND a.data LIKE ? "
                 "ORDER BY f.at DESC", (midnight.astimezone(timezone.utc).isoformat(), '%"group": "re%'))
             spoken = [row for row in spoken]
-            if len(spoken) >= int(self.config.get("monitor_most_a_day", 8)):
-                return "the most for a day already said"
-            if spoken and when - datetime.fromisoformat(spoken[0]["at"]) < timedelta(
-                    minutes=float(self.config.get("monitor_least_gap_minutes", 20))):
-                return "said something too lately"
+            if activator.get("group") == "rest":
+                rests = self.db.query_one(
+                    "SELECT COUNT(*) AS n FROM monitor_firings f JOIN monitor_activators a ON a.id "
+                    "= f.activator_id WHERE f.acted = 1 AND f.at >= ? AND a.data LIKE ?",
+                    (midnight.astimezone(timezone.utc).isoformat(), '%"group": "rest"%'))
+                if int(rests["n"]) >= int(self.config.get("monitor_most_a_day", 8)):
+                    return "the most for a day already said"
+                if spoken and when - datetime.fromisoformat(spoken[0]["at"]) < timedelta(
+                        minutes=float(self.config.get("monitor_least_gap_minutes", 20))):
+                    return "said something too lately"
         return ""
 
     def _quieted(self) -> str:
@@ -428,6 +436,10 @@ class Monitor:
                          str(outcome.get("notification_id") or ""),
                          str(outcome.get("question_id") or ""), firing))
 
+    def recommended_today(self) -> int:
+        """How many have been recommended today: told to the model, kept in the lesson."""
+        return int(self._kv(f"monitor.recommended.{datetime.now().astimezone().date()}") or 0)
+
     def picture_path(self, name: Any) -> Optional[Path]:
         """A kept picture, by the name the notification carries."""
         if self.pictures is None or not name:
@@ -452,6 +464,11 @@ class Monitor:
                                 "context": context},
                     "content": content, "url": url, "picture": picture, "reason": reason,
                     "recommended": recommended}
+        if recommended:
+            metadata["nth_today"] = self.recommended_today() + 1
+            metadata["chain"] = context.get("chain") or {}
+            self._set_kv(f"monitor.recommended.{datetime.now().astimezone().date()}",
+                         str(metadata["nth_today"]))
         template, question_id = REMINDER, ""
         if (choices or content) and self.questions is not None:
             from ...agent.feedback.store import TaskQuestion
@@ -521,8 +538,9 @@ class Monitor:
                 self._outcome(firing, {"skipped": "the model is being asked about another"})
                 return
             try:
-                if handler == "evening":
-                    said = self.decider.evening(self, activator, context, firing)
+                if handler in ("evening", "evening_now"):
+                    said = self.decider.evening(self, activator, context, firing,
+                                                at_once=handler == "evening_now")
                 else:
                     said = self.decider.recommend(self, activator, tier, context, firing,
                                                   recommended=handler == "recommend")

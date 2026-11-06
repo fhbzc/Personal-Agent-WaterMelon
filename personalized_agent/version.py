@@ -11,6 +11,19 @@ APP_NAME = "Personal Agent WaterMelon"
 #: What it was called before (to 1.0.0): its own windows, recorded under
 #: that name, are still its own.
 FORMER_NAMES = ("Personalized Agent",)
+#: THE PAGE'S OWN TITLE, alone or with its browser's name after it. Exactly: "watermelon" among the
+#: names would have left out of the record a page the user reads about the fruit.
+PAGE_TITLE = "WaterMelon"
+
+
+def names_the_agent(application: str, title: str) -> bool:
+    """Whether a window is the agent's own, by what it is called."""
+    import re
+    said = f"{application} {title}".lower()
+    if any(name.lower() in said for name in (APP_NAME, *FORMER_NAMES)):
+        return True
+    return bool(re.fullmatch(re.escape(PAGE_TITLE) + r"(?: [-\u2013\u2014] [^-\u2013\u2014]+)?",
+                             str(title or "").strip()))
 APP_SLUG = "personalized-agent"
 APP_ID = "com.personalizedagent.app"
 #: The name as a file is named - the program, its downloads, the folders it
@@ -27,7 +40,7 @@ APP_DIR_NAME = FILE_NAME
 FORMER_DIR_NAMES = ("PersonalizedAgent",)
 PUBLISHER = "Personal Agent WaterMelon Project"
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 VERSION = __version__
 VERSION_TUPLE = tuple(int(part) for part in __version__.split("."))
 

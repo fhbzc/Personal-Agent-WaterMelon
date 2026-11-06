@@ -1893,18 +1893,10 @@ class TheDisplayLanguageTests(unittest.TestCase):
     def test_changing_it_changes_what_the_agent_is_told(self) -> None:
         self.app.config.set("display_language", "zh")
         self.assertIn("Chinese", self._instruction())
-        self.app.config.set("display_language", "es")
+        self.app.config.set("display_language", "en")
         instruction = self._instruction()
-        self.assertIn("Spanish", instruction)
+        self.assertIn("English", instruction)
         self.assertNotIn("Chinese", instruction)
-        self.app.config.set("display_language", "ja")
-        self.assertIn("Japanese", self._instruction())
-        self.app.config.set("display_language", "ko")
-        self.assertIn("Korean", self._instruction())
-        for code, name in (("ru", "Russian"), ("fr", "French"), ("de", "German"),
-                           ("it", "Italian")):
-            self.app.config.set("display_language", code)
-            self.assertIn(name, self._instruction())
         # The nine, and no other.
         with self.assertRaises(ValueError):
             self.app.config.set("display_language", "pt")
@@ -1987,33 +1979,6 @@ class TheDisplayLanguageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as work:
             config = ConfigStore(data_dir=Path(work))
             self.assertEqual(config.get("display_language"), system_language())
-
-    def test_memory_is_kept_in_english(self) -> None:
-        """Every keyword written and searched in one language - English - so a
-        word is found as it is written; what the user reads follows the
-        display language."""
-        from personalized_agent.common.languages import keyword_languages
-
-        self.assertEqual(keyword_languages(self.app.config.get("language")), ["en"])
-
-    def test_the_language_it_was_written_in_is_always_covered(self) -> None:
-        # What keeps a record findable by quoting it.
-        from personalized_agent.common.languages import BASE, keyword_languages
-
-        self.assertIn(BASE, keyword_languages("zh,ja,ko"))
-
-    def test_it_is_english_whatever_is_asked_for(self) -> None:
-        from personalized_agent.common.languages import keyword_languages
-
-        self.assertEqual(keyword_languages("zh,ja,ko,fr,de,es,pt,ru,it,nl"), ["en"])
-
-    def test_a_single_language_from_before_still_reads(self) -> None:
-        # Installations have one bare code stored, from when it could only be
-        # one. It must not be read as a broken value.
-        from personalized_agent.common.languages import keyword_languages
-
-        self.assertEqual(keyword_languages("zh"), ["en"])
-        self.assertEqual(keyword_languages("zh,en"), ["en"])
 
     def test_what_is_stored_is_tidied(self) -> None:
         from personalized_agent.common.config import schema

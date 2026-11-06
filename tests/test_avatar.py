@@ -621,6 +621,75 @@ class TheRouteTests(unittest.TestCase):
             agent.cleanup()
 
 
+class TheLeavesMoveTests(unittest.TestCase):
+    """Pushed aside as its head comes out; struggling when it is held (the user, 2026-11-05)."""
+
+    def setUp(self) -> None:
+        from personalized_agent.agent.character.watermelon import Watermelon
+        self.rig = Watermelon(scale=2)
+
+    def _changed(self, one, other) -> int:
+        from PIL import ImageChops
+        return sum(ImageChops.difference(one.convert("RGB"), other.convert("RGB"))
+                   .convert("L").point(lambda v: 255 if v > 30 else 0).histogram()[255:])
+
+    def test_at_rest_they_are_as_they_were(self) -> None:
+        from PIL import Image
+        ground = Image.new("RGBA", self.rig.leaves.size, (200, 210, 220, 255))
+        self.assertEqual(self._changed(Image.alpha_composite(ground, self.rig.leaves),
+                                       Image.alpha_composite(ground, self.rig.leaves_moved())), 0)
+
+    def test_its_head_out_they_go_apart_on_every_side(self) -> None:
+        for edge, reach in (("side", 88.0), ("top", 100.0), ("bottom", 84.0)):
+            kinds = dict(grip=1.0, reach=reach, edge=edge, turn=1.0)
+            shut = self.rig.frame("idle", size=128, **kinds)
+            self.assertGreater(self._changed(shut, self.rig.frame("idle", size=128, part=1.0, **kinds)),
+                               200, edge)
+
+    def test_the_mirror_of_it_the_same(self) -> None:
+        from PIL import ImageOps
+        kinds = dict(grip=1.0, reach=88.0, turn=1.0, part=1.0)
+        left = self.rig.frame("idle", size=128, **kinds)
+        self.assertEqual(self._changed(ImageOps.mirror(left),
+                                       self.rig.frame("idle", size=128, facing="right", **kinds)), 0)
+
+    def test_they_sway_past_and_settle(self) -> None:
+        from personalized_agent.ui import avatar_tuck as tuck
+        said = [tuck.parted(at / 100, 0.0, 1.0) for at in range(0, 80, 2)]
+        self.assertEqual(said[0], 0.0)
+        self.assertGreater(max(said), 1.0, "pushed past where they stay")
+        self.assertEqual(said[-1], 1.0)
+        self.assertEqual(tuck.parted(9.0, 1.0, 0.0), 0.0)
+
+    def test_held_the_two_halves_are_out_of_step(self) -> None:
+        from personalized_agent.ui import avatar_tuck as tuck
+        said = [tuck.flail_at(at / 20) for at in range(40)]
+        self.assertGreater(max(one[0] for one in said), 10)
+        self.assertLess(min(one[0] for one in said), -10)
+        self.assertGreater(max(abs(one[0] - one[1]) for one in said), 10)
+        still = self.rig.frame("idle", size=128)
+        self.assertGreater(self._changed(still, self.rig.frame("idle", size=128, flail=(15.0, -12.0))), 100)
+
+    def test_a_mac_shows_the_same_frames(self) -> None:
+        """One drawing for every system: the Mac's native view is handed what `frame` made."""
+        source = (Path(__file__).parent.parent / "personalized_agent" / "ui" / "desktop.py"
+                  ).read_text(encoding="utf-8")
+        self.assertEqual(source.count("rig.frame(mood"), 1)
+        self.assertNotIn("darwin", source[source.index("def _part_on"):source.index("def _peek_on")])
+
+    def test_they_follow_its_head_whatever_brought_it_out(self) -> None:
+        from personalized_agent.ui.desktop import DesktopAgent
+        desktop = DesktopAgent.__new__(DesktopAgent)
+        live = {"peeking": True}
+        self.assertEqual(desktop._part_on(live, 10.0), 0.0, "just starting")
+        self.assertTrue(live["parting"])
+        self.assertEqual(desktop._part_on(live, 11.0), 1.0)
+        self.assertFalse(live["parting"], "no quick frames once they are still")
+        live["peeking"] = False
+        desktop._part_on(live, 12.0)
+        self.assertEqual(desktop._part_on(live, 13.0), 0.0, "and they close behind it")
+
+
 class QuickFramesTests(unittest.TestCase):
     """The frames of a jump, on the smaller canvas."""
 

@@ -302,7 +302,7 @@ class TheLatestOutcomeTests(unittest.TestCase):
             self.skipTest("no browser available to render the page")
         script = (ROOT / "personalized_agent" / "api" / "web" / "app.js").read_text(encoding="utf-8")
         part = script[script.index("/* THE LATEST OUTCOME"):script.index("/* The rows of a to-do's work")]
-        page = """<!doctype html><html><body><script>
+        page = """<!doctype html><html><head><meta charset='utf-8'></head><body><script>
 const XP_HANDED_KIND={};const escapeHtml=(s)=>String(s);</script><script>%s</script>
 <script>window.addEventListener('load',()=>{const finished=(run,version)=>({state:'finished',version,
 run,unit:'u',result:'/out/'+run+'.txt'});
@@ -338,7 +338,7 @@ plan:ovTodoLatest([{state:'drafting'}])});});</script></body></html>""" % part
                              '  const going') if "\r\n" not in script else script.index(
             'document.addEventListener("click", async (event) => {\r\n  const going')
         part = script[start:script.index("/* DELEGATE WORK - and every start")]
-        page = """<!doctype html><html><body><div id="list"></div><script>
+        page = """<!doctype html><html><head><meta charset='utf-8'></head><body><div id="list"></div><script>
 const $=(s)=>document.querySelector(s),$$=(s)=>[...document.querySelectorAll(s)];
 const ovOpening=new Set(),experienceState={},calls=[];let done;
 const gate=new Promise((go)=>{done=go;});
@@ -452,7 +452,7 @@ class TheFruitPictureTests(unittest.TestCase):
         script = (ROOT / "personalized_agent" / "api" / "web" / "app.js").read_text(encoding="utf-8")
         part = script[script.index("function pjHours"):script.index("/* The open project's card")]
         part = part[:part.index("function pjLeastBar")] + part[part.index("function pjWhen"):]
-        page = """<!doctype html><html><body><div id="host"></div><script>
+        page = """<!doctype html><html><head><meta charset='utf-8'></head><body><div id="host"></div><script>
 const escapeHtml=(s)=>String(s);</script><script>%s</script><script>
 window.addEventListener('load',()=>{const day=86400000,now=Date.now();
 const task=(from,to)=>({title:'T',minutes:60,starts_at:new Date(now-from*day).toISOString(),

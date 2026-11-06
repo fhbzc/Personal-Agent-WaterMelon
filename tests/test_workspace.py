@@ -505,3 +505,36 @@ class OnlyTheLastPromptsAreKeptTests(unittest.TestCase):
             self.assertEqual(kept[0]["messages"][0]["content"], "m8")
         finally:
             agent.cleanup()
+
+
+class PathsInASentenceTests(unittest.TestCase):
+    """Only what a path is read as. How work is grouped is not asked here."""
+
+    def _files(self, said: str):
+        from personalized_agent.heartbeat.states import workspace
+        return workspace.read([said]).get("files")
+
+    def test_a_chinese_mark_ends_it(self) -> None:
+        self.assertEqual(self._files("打开了 /home/me/agentpedia/notes.md，然后继续"),
+                         ["/home/me/agentpedia/notes.md"])
+
+    def test_a_bracket_with_no_partner_ends_it(self) -> None:
+        self.assertEqual(self._files("看 /home/me/agentpedia/（含 agent 的部分"),
+                         ["/home/me/agentpedia"])
+        self.assertEqual(self._files("（见 /home/me/agentpedia/a.md）"),
+                         ["/home/me/agentpedia/a.md"])
+
+    def test_a_folder_keeps_the_brackets_of_its_name(self) -> None:
+        self.assertEqual(self._files("C:\\论文（终稿）\\a.docx"), ["c:/论文（终稿）/a.docx"])
+        self.assertEqual(self._files("C:\\work\\file(1).pdf"), ["c:/work/file(1).pdf"])
+        self.assertEqual(self._files("C:\\书【二】\\《序》.docx"), ["c:/书【二】/《序》.docx"])
+
+    def test_a_home_relative_path_is_a_path(self) -> None:
+        self.assertEqual(self._files("me@cluster:~/tide_tables/run.py"),
+                         ["/home/~/tide_tables/run.py"])
+
+    def test_an_absolute_paths_folders_are_absolute(self) -> None:
+        from personalized_agent.heartbeat.states import workspace
+        self.assertEqual(workspace.ancestors("/home/me/agentpedia/x.py"),
+                         ["/home/me/agentpedia", "/home/me", "/home"])
+        self.assertEqual(workspace.ancestors("c:/work/a/b.md"), ["c:/work/a", "c:/work", "c:"])

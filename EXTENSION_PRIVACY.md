@@ -1,6 +1,6 @@
 # Personal Agent WaterMelon - browser extension privacy policy
 
-*As of 2 November 2026.*
+*As of 5 November 2026.*
 
 The Personal Agent WaterMelon browser extension (Chrome, Firefox) puts
 **Delegate work** on the browser's right-click menu, and hands what was
@@ -8,11 +8,15 @@ right-clicked to the Personal Agent WaterMelon app on the same computer.
 
 ## What it reads, and when
 
-- **Only when you pick Delegate work, and only that tab:** the page's address
-  and title, the text you selected, the link or picture you right-clicked, and
-  the page's visible text.
-- **Nothing at any other time.** It has no script in your pages, no access to
-  every site, and does not follow your browsing.
+- **When you pick Delegate work, and only that tab:** the page's address and
+  title, the text you selected, the link or picture you right-clicked, and the
+  page's visible text.
+- **While you read a page (from version 0.0.3):** a moment after the page stops
+  moving, the title of the tab in front and the words now inside its window.
+  It uses this to tell what you are looking at, so that a recommendation fits.
+  It needs a script in http and https pages. It does not read what you type in
+  a field, and it keeps only the latest: each report replaces the one before.
+- **Never in a private window.** The extension does not run there at all.
 
 ## What it tells the app by itself
 

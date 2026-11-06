@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -108,6 +109,23 @@ class GroupingTests(Base):
         self.assertEqual(self.groups.view("todo", self.items["todo"])["groups"][0]["items"],
                          ["t1", "t2", "t4"])
         self.assertEqual(len(self.model.asked), 2)
+
+    def test_a_grouping_ending_as_the_list_is_looked_at_is_not_asked_for_again(self) -> None:
+        """The look compared what it saw before it had the lock: a grouping that ended in
+        between was taken for one still to do, and the model was asked once more for nothing."""
+        self.groups.group("todo")
+        self.items["todo"].append({"id": "t4", "text": "Review paper 40 for the workshop"})
+        with self.groups._lock:                  # as a grouping holds it to keep what it found
+            looking = threading.Thread(target=self.groups.notice,
+                                       args=("todo", self.items["todo"]))
+            looking.start()
+            time.sleep(0.3)                      # it has come as far as the lock
+            kept = self.groups._kept("todo")
+            self.groups._keep("todo", kept["groups"], kept["loose"],
+                              {str(one["id"]): lg._words(one) for one in self.items["todo"]})
+        looking.join(5)
+        self.assertFalse(looking.is_alive())
+        self.assertNotIn("todo", self.groups._timers, "nothing is left to group")
 
     def test_the_grouping_there_is_kept_only_the_new_and_edited_placed(self) -> None:
         # The user, 2026-11-03: keep the groups as they were unless really

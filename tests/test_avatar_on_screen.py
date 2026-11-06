@@ -135,6 +135,82 @@ class PutBackOnAScreenTests(unittest.TestCase):
         self.assertEqual((window.alpha, window.at), (1.0, "120x120+300+300"))
         self.assertFalse(agent.character_hidden)
 
+    def test_on_a_mac_the_system_says_which_screens_there_are(self) -> None:
+        """Hidden on a large display, shown on a small one: Tk is not asked."""
+        window = _Window(0, 0)
+        small = [(0, 0, 1440, 900)]
+        with mock.patch.object(desktop_module.sys, "platform", "darwin"),                 mock.patch.object(desktop_module, "_mac_screens", return_value=small):
+            self.assertTrue(desktop_module._on_a_screen(window, 1400, 800))
+            self.assertFalse(desktop_module._on_a_screen(window, 3000, 1400), "the large one has gone")
+        two = small + [(1440, -200, 3360, 880)]
+        with mock.patch.object(desktop_module.sys, "platform", "darwin"),                 mock.patch.object(desktop_module, "_mac_screens", return_value=two):
+            self.assertTrue(desktop_module._on_a_screen(window, 3000, 100), "on the second one")
+
+    def _where_it_stays(self, x, y, screens=((0, 0, 1920, 1080),)):
+        window = _Window(x, y)
+        agent = _desktop(window)
+        agent.size = 128
+        with mock.patch.object(desktop_module.sys, "platform", "darwin"), \
+                mock.patch.object(desktop_module, "_mac_screens", return_value=list(screens)):
+            agent._keep_on_screen()
+        return window.placed
+
+    def test_in_a_side_it_is_left_where_it_is(self) -> None:
+        from personalized_agent.ui import avatar_tuck as tuck
+        sides = tuck.Sides(0, 1920, True, True, 0, 1080, True, True)
+        for side in ("left", "right", "top", "bottom"):
+            x, y = tuck.tucked_at(side, 800, 500, 128, sides)
+            self.assertEqual(self._where_it_stays(x, y), [], side)
+
+    def test_in_a_corner_of_the_screen_with_as_much_showing_it_is_left(self) -> None:
+        self.assertEqual(self._where_it_stays(1886, 1046), [], "a square as large as a side shows")
+        self.assertEqual(self._where_it_stays(-94, -94), [])
+
+    def test_a_few_pixels_showing_is_lost(self) -> None:
+        for x, y in ((1916, 500), (-124, 500), (800, -124), (800, 1076), (1916, 1076)):
+            self.assertEqual(self._where_it_stays(x, y), ["home"], (x, y))
+
+    def test_across_two_screens_it_is_on_them(self) -> None:
+        two = ((0, 0, 1440, 900), (1440, 0, 3360, 1080))
+        self.assertEqual(self._where_it_stays(1400, 300, two), [])
+
+    def test_the_dock_finds_one_that_is_not_hidden_too(self) -> None:
+        window = _Window(5200, 900)
+        agent = _desktop(window)
+        agent.open_url = lambda _path: None
+        with mock.patch.object(desktop_module.sys, "platform", "darwin"), \
+                mock.patch.object(desktop_module, "_mac_screens", return_value=[(0, 0, 1440, 900)]):
+            agent._dock_pressed()
+        self.assertEqual(window.placed, ["home"])
+        self.assertFalse(agent.character_hidden)
+
+    def test_in_a_side_the_vine_stays_and_hidden_it_goes_and_comes_back(self) -> None:
+        window = _Window(300, 300)
+        agent = _desktop(window)
+        told = []
+        agent._chat_vine = mock.Mock(place=lambda: told.append(agent._vine_side()))
+        agent._tucked = "right"
+        self.assertEqual(agent._vine_side(), "right", "in a side: leaves, vine and button stay")
+        with mock.patch.object(desktop_module.sys, "platform", "win32"), \
+                mock.patch.object(desktop_module, "_on_a_screen", return_value=True):
+            agent.toggle_character()
+            agent.toggle_character()
+        self.assertEqual(told, ["", "right"], "told at once, each way")
+
+    def test_the_dock_brings_a_hidden_avatar_back(self) -> None:
+        window = _Window(300, 300)
+        agent = _desktop(window)
+        opened = []
+        agent.open_url = opened.append
+        with mock.patch.object(desktop_module.sys, "platform", "win32"), \
+                mock.patch.object(desktop_module, "_on_a_screen", return_value=True):
+            agent.toggle_character()
+            agent._dock_pressed()
+            self.assertFalse(agent.character_hidden, "out it comes")
+            agent._dock_pressed()
+        self.assertFalse(agent.character_hidden, "shown, it is not hidden by it")
+        self.assertEqual(opened, ["/#overview", "/#overview"])
+
     def test_on_a_mac_clear_only_on_the_tk_it_was_seen_on(self) -> None:
         # Without the native view (PR #5): on 8.6.16 a clear window showed
         # the character's text, not its picture.

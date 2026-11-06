@@ -73,6 +73,29 @@ class TheWorkIsDividedByTimeTests(unittest.TestCase):
         self.assertEqual(kept["test_a.SlowTests"], 7.5)
 
 
+class AFailedItemIsRunAgainAloneTests(unittest.TestCase):
+
+    def _again(self, runner, codes, seconds=5.0):
+        said = iter(codes)
+        with mock.patch.object(runner, "run_item",
+                               side_effect=lambda *_: (next(said), "=" * 20 + " why", 1.0, 1, {})) as item:
+            return runner.run_again([("a", ["a"], seconds)], None), item
+
+    def test_passing_alone_is_said_and_does_not_fail_the_run(self) -> None:
+        (failed, passed), _item = self._again(_runner(), [0])
+        self.assertEqual((failed, passed), ([], ["a"]))
+
+    def test_failing_alone_is_a_failure(self) -> None:
+        (failed, passed), _item = self._again(_runner(), [1])
+        self.assertEqual((failed, passed), (["a"], []))
+
+    def test_one_that_ran_out_its_time_is_not_run_again(self) -> None:
+        runner = _runner()
+        (failed, _passed), item = self._again(runner, [0], runner.ITEM_SECONDS)
+        self.assertEqual(failed, ["a"])
+        item.assert_not_called()
+
+
 class AnItemNeverHoldsTheRunTests(unittest.TestCase):
     """v0.2.24 on the build machine: six hours on one item, and nothing said."""
 

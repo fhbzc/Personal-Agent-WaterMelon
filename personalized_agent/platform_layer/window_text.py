@@ -149,6 +149,12 @@ _PLACEHOLDER = "\ufffc"
 #: in how many readings IN A ROW a program must have been seen standing still
 #: before it is read within bounds - two, so that a page busy once with its
 #: own work does not lose its reading - and for how many days after.
+#: WECHAT'S CHAT NAME, READ AGAIN (the user, 2026-11-05: "等 0.5 秒重读一次 ... 0.5秒读不到，再0.5秒再读").
+#: As a chat changes its name's label is 0x0 for under 0.4 s (measured 2026-11-05), and a reading
+#: is made just then, because what is on the screen has changed: 84 readings of 3,300 were
+#: lost so, one with a contact's answer in it. What the label says then is not trusted:
+#: it may be the chat being left.
+WECHAT_NAME_WAITS = (0.5, 0.5)
 STILL_SECONDS = 0.3
 STILL_READINGS = 2
 STILL_DAYS = 7
@@ -399,7 +405,20 @@ class WindowTextReader:
         except Exception:
             before = None
         try:
-            return self._wechat_frame(handle)
+            found = self._wechat_frame(handle)
+            for pause in WECHAT_NAME_WAITS:
+                if found is None or found[1].get("layout_reason") != "chat_header_not_readable":
+                    break
+                time.sleep(pause)
+                # Only of the window in front: the picture is of the screen, and says whose
+                # each message is.
+                if int(user32.GetForegroundWindow() or 0) != int(handle):
+                    break
+                again = self._wechat_frame(handle)
+                if again is None:
+                    break
+                found = again
+            return found
         except Exception as exc:
             self.last_error = f"WeChat's messages could not be read: {exc}"[:200]
             return None

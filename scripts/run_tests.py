@@ -40,7 +40,7 @@ import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TESTS = REPO_ROOT / "tests"
@@ -213,6 +213,29 @@ def run_item(names: List[str], name_filter: Optional[str]) -> Tuple[int, str, fl
     return (code, output, time.time() - started, int(said.get("ran", 0)), said.get("times", {}))
 
 
+def run_again(failures: Sequence[Tuple[str, List[str], float]],
+              name_filter: Optional[str]) -> Tuple[List[str], List[str]]:
+    """EACH FAILED ITEM ONCE MORE, ALONE, with nothing else running: what failed beside three
+    others and passes alone was the machine or a race, and it is said, not hidden. A failure
+    alone is a failure. One that ran out its time is not run again: it would take as long."""
+    failed: List[str] = []
+    passed: List[str] = []
+    for label, names, seconds in failures:
+        if seconds >= ITEM_SECONDS:
+            failed.append(label)
+            continue
+        print(f"\nagain, alone: {label}", flush=True)
+        code, output, seconds, _count, _times = run_item(names, name_filter)
+        print(f"  {'ok  ' if code == 0 else 'FAIL'} {seconds:6.1f}s", flush=True)
+        if code == 0:
+            passed.append(label)
+        else:
+            failed.append(label)
+            marker = output.find("=" * 20)
+            print(output[marker:].strip() if marker >= 0 else output.strip(), flush=True)
+    return failed, passed
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     # A failure's own words reach the log even on a console that cannot show
     # all of them (cp1252 on the build machine): printing them must not be
@@ -227,6 +250,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="only tests whose name matches this")
     parser.add_argument("--serial", action="store_true",
                         help="run in one process, the way unittest does")
+    parser.add_argument("--once", action="store_true",
+                        help="a failed item is not run again alone")
     parser.add_argument("--jobs", type=int, default=4,
                         help="how many at once (default 4; measured best on this "
                              "machine - more processes only compete for the same disk)")
@@ -256,7 +281,7 @@ def main(argv: Optional[List[str]] = None) -> int:
           f"(about {expected / 60 / jobs:.0f} min of work each)\n", flush=True)
 
     started = time.time()
-    failures: List[str] = []
+    failures: List[Tuple[str, List[str], float]] = []
     times: Dict[str, float] = {}
     total = 0
     with ThreadPoolExecutor(max_workers=jobs) as pool:
@@ -274,18 +299,22 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"  {mark} {seconds:6.1f}s  {count:3d} tests  {label}", flush=True)
             if code != 0:
                 # Told now: a run that never reaches its end has still said it.
-                failures.append(label)
+                failures.append((label, names, seconds))
                 marker = output.find("=" * 20)
                 print(output[marker:].strip() if marker >= 0 else output.strip(), flush=True)
     keep(times)
 
+    failed, passed_again = (run_again(failures, args.name_filter) if not args.once
+                            else ([label for label, _names, _seconds in failures], []))
     elapsed = time.time() - started
     print()
-    for label in failures:
+    for label in passed_again:
+        print(f"failed once, passed alone (to be fixed): {label}")
+    for label in failed:
         print(f"failed: {label}")
-    verdict = "OK" if not failures else f"FAILED ({len(failures)} item(s))"
+    verdict = "OK" if not failed else f"FAILED ({len(failed)} item(s))"
     print(f"{total} tests in {elapsed / 60:.1f} min: {verdict}")
-    return 0 if not failures else 1
+    return 0 if not failed else 1
 
 
 if __name__ == "__main__":

@@ -105,7 +105,7 @@ class LookedAtWithoutAskingTests(unittest.TestCase):
                          sys.platform == "darwin")
 
 
-PAGE = """<!doctype html><html><body>
+PAGE = """<!doctype html><html><head><meta charset='utf-8'></head><body>
 <div id="mac-permissions-card" hidden><div id="mac-permissions-list"></div></div>
 <div id="macperm-banner" hidden><span id="macperm-text"></span></div>
 <script>window.__posts=[];

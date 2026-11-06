@@ -47,6 +47,16 @@ class TodoList:
              row["notification_id"], row["task_id"]))
         return self.get(row["id"]) or row
 
+    def edit(self, todo_id: str, text: str, detail: str = "") -> Optional[Dict[str, Any]]:
+        """Its words, as the user wrote them; None when there is no such to-do."""
+        there = self.get(todo_id)
+        if there is None or there.get("deleted_at"):
+            return None
+        self.db.execute("UPDATE todo_items SET text = ?, detail = ? WHERE id = ?",
+                        (str(text or "").strip()[:300] or there["text"],
+                         str(detail or "").strip()[:1000], todo_id))
+        return self.get(todo_id)
+
     def get(self, todo_id: str) -> Optional[Dict[str, Any]]:
         row = self.db.query_one("SELECT * FROM todo_items WHERE id = ?", (todo_id,))
         return dict(row) if row is not None else None

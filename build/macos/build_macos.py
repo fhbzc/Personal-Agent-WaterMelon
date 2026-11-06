@@ -1,12 +1,9 @@
 """macOS release build (sections 99, 103, 105).
 
-Produces ``dist/macos/Personal Agent WaterMelon.app``; when ``hdiutil`` is
-available, ``dist/macos/PersonalAgentWaterMelon.dmg``; and when ``pkgbuild`` and
-``productbuild`` are, ``dist/macos/PersonalAgentWaterMelon.pkg`` - an installer that
-asks, as a choice ticked by default, whether the agent starts when the user
-signs in (the only page of the macOS Installer that can ask: Installation
-Type). The program makes it so itself (``--autostart on|off``): the same
-LaunchAgent and setting as Settings > General.
+Produces ``dist/macos/Personal Agent WaterMelon.app`` and, when ``hdiutil`` is available,
+``dist/macos/PersonalAgentWaterMelon.dmg``. THE .DMG ALONE (the user, 2026-11-05): dragged in, the
+application is the user's and can replace itself; a .pkg's belongs to the system, and could only
+tell of an update. It starts when the user signs in unless Settings > General says not.
 
 The bundle declares the permissions the agent actually needs - Apple Events for
 active-application detection, accessibility usage, notifications - instead of
@@ -49,7 +46,6 @@ from build.common import (  # noqa: E402
 TARGET = "macos"
 BUNDLE_NAME = APP_NAME
 #: The application as it was named before (to 1.0.0): replaced by this one.
-FORMER_BUNDLE_NAMES = ("Personalized Agent",)
 HERE = Path(__file__).resolve().parent
 
 USAGE_DESCRIPTIONS = {
@@ -237,7 +233,7 @@ def notarize(path: Path) -> None:
 
 
 def notarized(path: Path) -> bool:
-    """The .dmg or .pkg notarized and its ticket stapled, when Apple's
+    """The .dmg notarized and its ticket stapled, when Apple's
     Developer ID signs it (MACOS_NOTARY_PROFILE set): one opened from a
     download is not stopped by Gatekeeper, with the network off too."""
     if not os.environ.get("MACOS_NOTARY_PROFILE") or not path.exists():
@@ -272,84 +268,6 @@ def build_dmg(app: Path) -> Path | None:
     return published
 
 
-#: Run as root by the Installer: the program is run as the user at the
-#: console, whose LaunchAgent and settings these are.
-_AS_THE_USER = """#!/bin/sh
-# The application as it was named before is replaced by this one: left,
-# its sign-in entry would be another copy's.
-for FORMER in {former}; do
-  [ "$FORMER" = "{bundle}" ] || rm -rf "/Applications/$FORMER.app"
-done
-USER_NAME=$(stat -f%Su /dev/console)
-[ -z "$USER_NAME" ] || [ "$USER_NAME" = "root" ] && exit 0
-sudo -u "$USER_NAME" "/Applications/{bundle}.app/Contents/MacOS/{bundle}" --autostart {state} || true
-exit 0
-"""
-
-_DISTRIBUTION = """<?xml version="1.0" encoding="utf-8"?>
-<installer-gui-script minSpecVersion="2">
-  <title>{name}</title>
-  <options customize="always" require-scripts="false" hostArchitectures="arm64,x86_64"/>
-  <domains enable_localSystem="true"/>
-  <choices-outline>
-    <line choice="app"/>
-    <line choice="autostart"/>
-  </choices-outline>
-  <choice id="app" title="{name}" enabled="false" selected="true"
-          description="The application, in /Applications.">
-    <pkg-ref id="{app_id}"/>
-  </choice>
-  <choice id="autostart" title="Start {name} when I sign in" start_selected="true"
-          description="The agent starts when you sign in to this Mac. It can be changed later in Settings &gt; General.">
-    <pkg-ref id="{app_id}.autostart"/>
-  </choice>
-  <pkg-ref id="{app_id}" version="{version}">app.pkg</pkg-ref>
-  <pkg-ref id="{app_id}.autostart" version="{version}">autostart.pkg</pkg-ref>
-</installer-gui-script>
-"""
-
-
-def build_pkg(app: Path) -> Path | None:
-    """An installer whose choices end with starting at sign-in, ticked."""
-    if not (which("pkgbuild") and which("productbuild")):
-        print("note: pkgbuild/productbuild not found - skipping the .pkg.")
-        return None
-    staging = staging_dir(TARGET)
-    work = staging / "pkg"
-    scripts_off, scripts_on = work / "scripts-app", work / "scripts-autostart"
-    for folder, state in ((scripts_off, "off"), (scripts_on, "on")):
-        folder.mkdir(parents=True)
-        script = folder / "postinstall"
-        script.write_text(_AS_THE_USER.format(
-            bundle=BUNDLE_NAME, state=state,
-            former=" ".join(f'"{one}"' for one in FORMER_BUNDLE_NAMES)), encoding="utf-8")
-        script.chmod(0o755)
-    # The application first, saying "off"; then, if ticked, "on" - so a
-    # choice left unticked is not turned on by the program's own default.
-    run(["pkgbuild", "--component", str(app), "--install-location", "/Applications",
-         "--identifier", APP_ID, "--version", __version__,
-         "--scripts", str(scripts_off), str(work / "app.pkg")])
-    run(["pkgbuild", "--nopayload", "--identifier", f"{APP_ID}.autostart",
-         "--version", __version__, "--scripts", str(scripts_on), str(work / "autostart.pkg")])
-    distribution = work / "distribution.xml"
-    distribution.write_text(_DISTRIBUTION.format(name=APP_NAME, app_id=APP_ID,
-                                                 version=__version__), encoding="utf-8")
-    product = staging / f"{FILE_NAME}.pkg"
-    command = ["productbuild", "--distribution", str(distribution),
-               "--package-path", str(work), str(product)]
-    identity = os.environ.get("MACOS_INSTALLER_IDENTITY")
-    if identity:
-        command[1:1] = ["--sign", identity, "--timestamp"]
-    run(command)
-    if not product.exists():
-        return None
-    if identity:
-        notarized(product)
-    published = publish_file(product, dist_dir(TARGET) / f"{FILE_NAME}.pkg")
-    remove_tree(staging, description="staging directory")
-    return published
-
-
 def build() -> int:
     require_native_platform(TARGET)
     ensure_pyinstaller()
@@ -361,9 +279,6 @@ def build() -> int:
     dmg = build_dmg(app)
     if dmg:
         artifacts.append(dmg)
-    pkg = build_pkg(app)
-    if pkg:
-        artifacts.append(pkg)
     write_build_manifest(TARGET, artifacts)
     print("\nmacOS build complete:")
     for artifact in artifacts:

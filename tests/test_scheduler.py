@@ -742,6 +742,25 @@ class NothingAsksFirstTests(unittest.TestCase):
         fields.update(over)
         return self.app.scheduler.create_task(ScheduledTask(**fields))
 
+    def _told_because(self, **over):
+        import json
+        fields = dict(title="Water the fern", description="It is dry.", scheduled_at=utcnow(),
+                      execution_type="notification",
+                      task_payload={"message": "Water the fern", "notify_user": True})
+        fields.update(over)
+        self.app.scheduler.create_task(ScheduledTask(**fields))
+        self.app.scheduler.tick()
+        row = self.app.db.query_one("SELECT metadata FROM notifications ORDER BY created_at DESC")
+        return json.loads(row["metadata"]).get("reason")
+
+    def test_a_reminder_of_the_agents_says_why_without_the_names_of_its_records(self) -> None:
+        said = self._told_because(created_by="heartbeat",
+                                  reason="You said it looked dry (event_152df2c572c1469c), at noon.")
+        self.assertEqual(said, "You said it looked dry, at noon.")
+
+    def test_one_of_the_users_own_says_none(self) -> None:
+        self.assertEqual(self._told_because(created_by="user"), "")
+
     def test_a_task_that_says_ask_first_runs_at_its_time(self) -> None:
         task = self._guarded()
         self.assertNotIn("approval", task.task_payload)

@@ -236,12 +236,31 @@ class EachSystemsOcrTests(unittest.TestCase):
         from personalized_agent.platform_layer import ocr
         windows = ocr.WindowsOcr()
         with mock.patch.object(ocr.subprocess, "Popen") as launch:
-            said = windows.add(["zh", "ja"])
+            said = windows.add(["zh", "en"])
         self.assertTrue(said["started"])
         command = " ".join(launch.call_args.args[0])
         self.assertIn("-Verb RunAs", command)
         self.assertIn("Language.OCR~~~zh-CN~0.0.1.0", command)
-        self.assertIn("Language.OCR~~~ja-JP~0.0.1.0", command)
+        self.assertIn("Language.OCR~~~en-US~0.0.1.0", command)
+
+    def test_what_is_read_is_more_than_what_is_offered(self) -> None:
+        """The screens speak two languages; a picture is read in whatever the system can."""
+        from personalized_agent.platform_layer import ocr
+        windows = ocr.WindowsOcr()
+        listed = mock.Mock(stdout=b"LANG en-US\nLANG ja-JP\nPREFER en-US\n")
+        with mock.patch.object(ocr, "_powershell", return_value=listed):
+            self.assertEqual(windows.installed(), ["en", "ja"])
+            status = windows.status() if windows.available() else None
+        self.assertFalse(windows.can_add("ja"), "only the two are offered")
+        if status is not None:
+            self.assertEqual([one["code"] for one in status["languages"]], ["en", "zh"])
+        mac = ocr.MacVisionOcr()
+        told = mock.Mock()
+        told.supportedRecognitionLanguagesAndReturnError_.return_value = (
+            ["en-US", "zh-Hans", "ja-JP", "ko-KR", "fr-FR", "de-DE", "es-ES", "it-IT", "ru-RU"], None)
+        with mock.patch.object(ocr.MacVisionOcr, "available", return_value=True), \
+                mock.patch.object(ocr.MacVisionOcr, "_request", return_value=told):
+            self.assertEqual(len(mac.installed()), 9, "a Mac reads them all")
 
     def test_linux_says_what_the_system_must_add(self) -> None:
         from personalized_agent.platform_layer import ocr

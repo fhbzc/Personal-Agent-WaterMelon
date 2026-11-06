@@ -39,17 +39,11 @@ PLACES = (r"Software\Classes\*\shell", r"Software\Classes\Directory\shell",
 #: What each place passes: the item clicked, or the folder being shown.
 ARGUMENT = {PLACES[0]: "%1", PLACES[1]: "%1", PLACES[2]: "%V", PLACES[3]: "%V"}
 #: The words, in each display language - then the icon.
-LABELS = {"en": "Delegate work", "zh": "委托工作", "es": "Delegar trabajo",
-          "ru": "Поручить работу", "fr": "Déléguer une tâche", "de": "Arbeit delegieren",
-          "it": "Delega un lavoro",
-          "ja": "作業を任せる", "ko": "작업 맡기기"}
+LABELS = {"en": "Delegate work", "zh": "委托工作"}
 #: "Add to learning": on a file and a folder only.
 LEARN_VERB = "PersonalizedAgent.Learn"
 LEARN_PLACES = PLACES[:2]
-LEARN_LABELS = {"en": "Add to learning", "zh": "加入学习", "es": "Añadir al aprendizaje",
-                "ru": "Добавить в обучение", "fr": "Ajouter à l'apprentissage",
-                "de": "Zum Lernen hinzufügen", "it": "Aggiungi all'apprendimento",
-                "ja": "学習に追加", "ko": "학습에 추가"}
+LEARN_LABELS = {"en": "Add to learning", "zh": "加入学习"}
 
 
 def available() -> bool:

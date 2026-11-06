@@ -20,8 +20,7 @@
 (() => {
   // The languages the screens can be shown in, and the locale their dates
   // and times are written in.
-  const LOCALES = { zh: "zh-CN", es: "es-ES", ja: "ja-JP", ko: "ko-KR", ru: "ru-RU",
-                    fr: "fr-FR", de: "de-DE", it: "it-IT" };
+  const LOCALES = { zh: "zh-CN" };
   const ATTRIBUTES = ["placeholder", "title", "aria-label", "label"];
   // Where the words are the user's or the agent's, never the application's.
   const LEAVE = ".msg-text, .chat-message, .fu-body, .cx-summary, .xp-live-text, .lesson-card-words, .xp-added-words, textarea, pre, code";

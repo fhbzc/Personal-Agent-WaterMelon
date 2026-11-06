@@ -8,6 +8,7 @@ import html
 import re
 import sys
 import unittest
+from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -2554,6 +2555,9 @@ class PopupTextSizeTests(unittest.TestCase):
         from personalized_agent.ui.desktop import DesktopAgent
         stand_in = DesktopAgent.__new__(DesktopAgent)
         stand_in.config = self.app.config
+        # The size a screen as big as the reference one gives (ui/sizes.py).
+        stand_in.root = SimpleNamespace(winfo_screenwidth=lambda: 1463,
+                                        winfo_screenheight=lambda: 823)
         return stand_in
 
     def test_the_size_is_a_setting_with_an_explanation(self) -> None:

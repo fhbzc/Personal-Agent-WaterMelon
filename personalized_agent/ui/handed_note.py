@@ -15,9 +15,8 @@ As the user asked for it:
     with Copy to copy it again; on the right how it is used and what to
     check. Each side scrolls on its own, the wheel the side it is over;
     wider than the screen, both are narrowed.
-  - EACH SIDE ZOOMED ON ITS OWN: its own - and +, and Ctrl +, Ctrl -, Ctrl 0
-    and Ctrl with the wheel for the side the pointer is over (else the side
-    last pressed in) - each kept for the next note. One ✕ closes both.
+  - ZOOMED WHOLE, WITH EVERY OTHER WINDOW OF THE AGENT'S (the user, 2026-11-05): - and +, and
+    Ctrl +, Ctrl -, Ctrl 0 and Ctrl with the wheel. One ✕ closes both.
     Zoomed, nothing is built again (the user, 2026-11-01): each side's words
     are in fonts of its own, named in Tk, and a zoom only sizes them.
   - NEVER TALLER THAN THE SCREEN: past that, each side scrolls - a thin bar
@@ -58,13 +57,14 @@ from __future__ import annotations
 import sys
 import tkinter as tk
 from typing import Any, Callable, Dict, List, Optional
+from . import sizes
 from .on_top import on_release
 
 #: Its colours: the agent's dark bubbles', with the amber of what to mind.
-PALETTE = {"edge": "#3a4152", "bar": "#262b37", "bg": "#1d212b", "ink": "#e9ecf3",
-           "muted": "#9aa3b5", "accent": "#eba55a", "on_accent": "#1d212b",
-           "hover": "#323848", "ticked": "#5fbf8f", "thumb": "#4a5266", "thumb_on": "#6a7389",
-           "select": "#3a4d7a"}
+PALETTE = {"edge": "#313133", "bar": "#232325", "bg": "#181819", "ink": "#ffffff",
+           "muted": "#94979d", "accent": "#4b91ff", "on_accent": "#ffffff",
+           "hover": "#313133", "ticked": "#5fbf8f", "thumb": "#48484b", "thumb_on": "#6a6a6e",
+           "select": "#2d4a7a"}
 
 #: The smallest it can be dragged to, and a side's narrowest.
 LEAST, SIDE_LEAST = (320, 200), 160
@@ -119,6 +119,11 @@ class HandedNote:
         self.words = words
         self.family = family
         self.size = max(8, int(size or 10))
+        # By the screen (sizes.py): the words come so from the desktop's popup font.
+        self._screen = sizes.scale(root)
+        self._least = (sizes.px(root, LEAST[0]), sizes.px(root, LEAST[1]))
+        self._side_least = sizes.px(root, SIDE_LEAST)
+        self._rim = sizes.px(root, RIM)
         given = zoom if isinstance(zoom, dict) else {side: zoom for side in SIDES}
         self.zooms: Dict[str, int] = {
             side: min(max(int(given.get(side, ZOOM_START)), 0), len(ZOOMS) - 1)
@@ -141,7 +146,7 @@ class HandedNote:
         try:
             if kept_size and len(kept_size) == 2 and min(int(kept_size[0]),
                                                           int(kept_size[1])) > 0:
-                self._size = (max(LEAST[0], int(kept_size[0])), max(LEAST[1], int(kept_size[1])))
+                self._size = (max(self._least[0], int(kept_size[0])), max(self._least[1], int(kept_size[1])))
         except (TypeError, ValueError):
             pass
         try:
@@ -191,6 +196,10 @@ class HandedNote:
         for key in ("0", "KP_0"):
             window.bind(f"<{modifier}-{key}>",
                         lambda _e: self.zoom_to(self._side_now(), ZOOM_START))
+        from .on_top import PINCH
+        if PINCH:                            # two fingers, as every window of the agent's
+            from .touch_zoom import listen
+            window.after(120, lambda: listen(window, PINCH[0]))
         window.bind("<Escape>", lambda _e: self.close())
         # Pressed anywhere in it, it takes the keys - never before: what was
         # just opened beside it keeps them. (A window's binding is every
@@ -253,8 +262,8 @@ class HandedNote:
             window.update_idletasks()
             bar = self._bar_frame
             width = min(self._unfolded_size[0], self._px(FOLDED_WIDEST),
-                        max(bar.winfo_reqwidth() + 2 + 2 * RIM, self._px(240)))
-            height = bar.winfo_reqheight() + 2 + 2 * RIM
+                        max(bar.winfo_reqwidth() + 2 + 2 * self._rim, self._px(240)))
+            height = bar.winfo_reqheight() + 2 + 2 * self._rim
             window.geometry(f"{width}x{height}+{max(0, right - width)}+{top}")
         except tk.TclError:                              # pragma: no cover - closed meanwhile
             pass
@@ -302,7 +311,7 @@ class HandedNote:
         zoom = min(max(zoom, 0), len(ZOOMS) - 1)
         if side not in self.zooms or zoom == self.zooms[side] or self.window is None:
             return
-        self.zooms[side] = zoom
+        self.zooms = {one: zoom for one in self.zooms}
         self._last_side = side
         if self.on_zoom is not None:
             self.on_zoom(side, zoom)
@@ -335,7 +344,7 @@ class HandedNote:
         return side or self._last_side or next(iter(self._areas), "how")
 
     def _px(self, value: float) -> int:
-        return int(round(value * self._scale))
+        return int(round(value * self._scale * self._screen))
 
     def _points(self, whose: str, more: int) -> int:
         zoom = self.zoom if whose == "chrome" else self.zooms.get(whose, ZOOM_START)
@@ -417,33 +426,33 @@ class HandedNote:
         self._seen(False)
         window.geometry("")
         item = self.note.get("item") or {}
-        sides = ([("item", int(LEFT_WIDTH * ZOOMS[self.zooms["item"]]))]
+        sides = ([("item", int(LEFT_WIDTH * self._screen * ZOOMS[self.zooms["item"]]))]
                  if item.get("text") or item.get("meta") or item.get("parts") else []) \
-            + [("how", int(WIDTH * ZOOMS[self.zooms["how"]]))]
+            + [("how", int(WIDTH * self._screen * ZOOMS[self.zooms["how"]]))]
         # Wider than the screen: every side narrowed alike.
         room_wide = window.winfo_screenwidth() - 2 * RIGHT
-        around = (len(sides) - 1) * DIVIDER + 2 + 2 * RIM
+        around = (len(sides) - 1) * DIVIDER + 2 + 2 * self._rim
         whole = sum(one for _side, one in sides)
         if whole + around > room_wide:
             sides = [(side, int(one * (room_wide - around) / whole)) for side, one in sides]
             whole = sum(one for _side, one in sides)
         if self._size is not None:
             # The width the user dragged it to, shared out as the sides were.
-            want = max(LEAST[0], min(self._size[0], room_wide)) - around
-            sides = [(side, max(SIDE_LEAST, int(one * want / whole))) for side, one in sides]
+            want = max(self._least[0], min(self._size[0], room_wide)) - around
+            sides = [(side, max(self._side_least, int(one * want / whole))) for side, one in sides]
             whole = sum(one for _side, one in sides)
         if self._split is not None and len(sides) == 2:
             # Shared as the line between them was dragged.
-            left = min(max(SIDE_LEAST, int(whole * self._split)), max(SIDE_LEAST,
-                                                                      whole - SIDE_LEAST))
-            sides = [(sides[0][0], left), (sides[1][0], max(SIDE_LEAST, whole - left))]
+            left = min(max(self._side_least, int(whole * self._split)), max(self._side_least,
+                                                                      whole - self._side_least))
+            sides = [(sides[0][0], left), (sides[1][0], max(self._side_least, whole - left))]
         width = sum(one for _side, one in sides) + around
         self._scale, self._ctx = ZOOMS[self.zoom], "chrome"
         # Its outline, then its rim - where its edges are taken - then the card.
         rim = tk.Frame(window, bg=PALETTE["bg"])
         rim.pack(fill="both", expand=True, padx=1, pady=1)
         card = tk.Frame(rim, bg=PALETTE["bg"])
-        card.pack(fill="both", expand=True, padx=RIM, pady=RIM)
+        card.pack(fill="both", expand=True, padx=self._rim, pady=self._rim)
         self._edges(rim)
         bar = self._bar(card)
         foot = self._foot(card)
@@ -464,7 +473,7 @@ class HandedNote:
             # The sides share the width by weight - as they were made, as the
             # line between them was dragged - whatever the width is.
             middle.columnconfigure(column, weight=max(1, wide), uniform="sides",
-                                   minsize=SIDE_LEAST)
+                                   minsize=self._side_least)
             self._columns[side] = column
             column += 1
             self._areas[side] = pane
@@ -497,7 +506,7 @@ class HandedNote:
         self._fit_texts()
         window.update_idletasks()
         room = window.winfo_screenheight() - TOP - BOTTOM \
-            - bar.winfo_reqheight() - foot.winfo_reqheight() - 2 - 2 * RIM
+            - bar.winfo_reqheight() - foot.winfo_reqheight() - 2 - 2 * self._rim
 
         def natural(one: tuple) -> int:
             if one[0] == "item":
@@ -505,8 +514,8 @@ class HandedNote:
                     else one[3].winfo_reqheight()
             return one[4].winfo_reqheight()
         if self._size is not None:
-            shown = max(60, min(max(LEAST[1], self._size[1]) - bar.winfo_reqheight()
-                                - foot.winfo_reqheight() - 2 - 2 * RIM, room))
+            shown = max(60, min(max(self._least[1], self._size[1]) - bar.winfo_reqheight()
+                                - foot.winfo_reqheight() - 2 - 2 * self._rim, room))
         else:
             shown = max(60, min(max(natural(one) for one in panes), room))
         for one in panes:
@@ -550,7 +559,7 @@ class HandedNote:
         for strip in self._strips:
             strip.lift()
         window.update_idletasks()
-        height = bar.winfo_reqheight() + shown + foot.winfo_reqheight() + 2 + 2 * RIM
+        height = bar.winfo_reqheight() + shown + foot.winfo_reqheight() + 2 + 2 * self._rim
         right, y = self._place or (window.winfo_screenwidth() - RIGHT, TOP)
         x = max(0, min(right - width, window.winfo_screenwidth() - width))
         y = max(0, min(y, window.winfo_screenheight() - height - BOTTOM // 2))
@@ -699,11 +708,11 @@ class HandedNote:
     def _edges(self, rim: Any) -> None:
         """Its edges and corners, each a strip of its rim to size it by."""
         self._strips, self._strip_places = [], []
-        corner = 3 * RIM
+        corner = 3 * self._rim
         for edge, cursor in EDGES.items():
             strip = tk.Frame(rim, bg=PALETTE["bg"], cursor=cursor)
-            wide = corner if len(edge) == 2 or edge in "ns" else RIM
-            high = corner if len(edge) == 2 or edge in "we" else RIM
+            wide = corner if len(edge) == 2 or edge in "ns" else self._rim
+            high = corner if len(edge) == 2 or edge in "we" else self._rim
             place: Dict[str, Any] = {"width": wide, "height": high}
             if edge in "we":
                 place.update(height=-2 * corner, relheight=1, y=corner)
@@ -740,14 +749,14 @@ class HandedNote:
         x0, y0, width, height, left, top, edge = self._resizing
         dx, dy = event.x_root - x0, event.y_root - y0
         if "e" in edge:
-            width = max(LEAST[0], width + dx)
+            width = max(self._least[0], width + dx)
         if "w" in edge:
-            grown = max(LEAST[0], width - dx)
+            grown = max(self._least[0], width - dx)
             left, width = left + width - grown, grown
         if "s" in edge:
-            height = max(LEAST[1], min(height + dy, self.window.winfo_screenheight() - TOP))
+            height = max(self._least[1], min(height + dy, self.window.winfo_screenheight() - TOP))
         if "n" in edge:
-            grown = max(LEAST[1], height - dy)
+            grown = max(self._least[1], height - dy)
             top, height = top + height - grown, grown
         self._sized_once_a_frame(f"{width}x{height}+{left}+{top}")
 
@@ -777,9 +786,9 @@ class HandedNote:
             return
         start = left.winfo_rootx()
         whole = right.winfo_rootx() + right.winfo_width() - start - DIVIDER
-        if whole <= 2 * SIDE_LEAST:
+        if whole <= 2 * self._side_least:
             return
-        at = min(max(event.x_root - start, SIDE_LEAST), whole - SIDE_LEAST)
+        at = min(max(event.x_root - start, self._side_least), whole - self._side_least)
         self._split = at / whole
         weight = 1000
         self._middle.columnconfigure(self._columns["item"], weight=max(1, int(weight * self._split)))
@@ -810,8 +819,8 @@ class HandedNote:
         if self._resizing is None:
             return
         x, y, width, height = self._resizing
-        width = max(LEAST[0], width + event.x_root - x)
-        height = max(LEAST[1], min(height + event.y_root - y,
+        width = max(self._least[0], width + event.x_root - x)
+        height = max(self._least[1], min(height + event.y_root - y,
                                    self.window.winfo_screenheight() - TOP))
         self._sized_once_a_frame(f"{width}x{height}")
 

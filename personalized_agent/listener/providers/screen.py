@@ -43,7 +43,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ...common.events.models import ListenerEvent, new_id, parse_iso
 from ...platform_layer import get_platform
 from ...platform_layer.window_text import is_wechat_application
-from ...version import APP_NAME, FORMER_NAMES
+from ...version import names_the_agent
 from ..core.provider import ListenerProvider, NotOnThisMachine, PluginManifest
 from ..core.manager import STOPPING_GRACE_SECONDS
 from . import fast_reading
@@ -624,8 +624,7 @@ class ScreenProvider(ListenerProvider):
         """
         if reading.pid and reading.pid == os.getpid():
             return True
-        said = f"{reading.application} {reading.title}".lower()
-        return any(name.lower() in said for name in (APP_NAME, *FORMER_NAMES))
+        return names_the_agent(reading.application, reading.title)
 
     def _excluded(self, application: str, title: str) -> bool:
         """Windows the user has said not to read.

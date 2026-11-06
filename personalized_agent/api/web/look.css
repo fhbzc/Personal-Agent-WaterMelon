@@ -1,0 +1,243 @@
+/* THE LOOK, IN THE MANNER OF MUSE (the user, 2026-11-05: "我的display 要参考 https://muse.ai ... 重做",
+   "muse的layout panel切换不是在左边吗"): one quiet ground; the panels listed down the left; large
+   words in a medium weight and grey ones under them; pills for what is pressed; deep rounded
+   surfaces for what stands apart; room between. Its colours are the page's own names, so what is
+   written for the rest of the application follows without being told. Loaded after styles.css. */
+
+:root {
+  --bg: #f7f7f8;
+  --panel: #ffffff;
+  --surface: #ffffff;
+  --field: #ececee;
+  --ink: #101012;
+  --muted: #66696f;
+  --line: #e2e2e5;
+  --accent: #0064d4;
+  --heading-bright: #101012;
+  --side: 288px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #181819;
+    --panel: #232325;
+    --surface: #232325;
+    --field: #313133;
+    --ink: #ffffff;
+    --muted: #94979d;
+    --line: #313133;
+    --accent: #4b91ff;
+    --heading-bright: #ffffff;
+  }
+}
+
+/* (#tabs, never `nav`: the chat's list, the Newspaper's pages and Society's views are `nav`s too.) */
+/* THE PANELS DOWN THE LEFT, on the page's own ground. Fixed, so that nothing else on the page has
+   to make room for it but `main`. */
+body:has(#tabs) > header {
+  position: fixed; inset: 0 auto 0 0; width: var(--side); box-sizing: border-box;
+  display: flex; flex-direction: column; align-items: stretch; gap: 18px;
+  padding: 24px 16px 16px; background: var(--bg); border-bottom: 0;
+  overflow-y: auto; scrollbar-width: thin;
+}
+body:has(#tabs) > header h1 {
+  font-size: 24px; font-weight: 500; letter-spacing: 0; line-height: 1.25; padding: 0 14px;
+}
+body:has(#tabs) > main { margin: 0 0 0 var(--side); max-width: none; }
+#tabs { flex-direction: column; flex-wrap: nowrap; gap: 2px; }
+#tabs button {
+  border: 0; border-radius: 14px; padding: 11px 14px; font-size: 16px; text-align: left; width: 100%;
+}
+#tabs button:hover { background: var(--field); color: var(--ink); }
+#tabs button.active { background: var(--field); color: var(--ink); font-weight: 500; }
+/* What is for whoever develops the agent: under the rest, apart. An installed build has none. */
+#tabs button[data-tab="debugger"] {
+  margin-top: 12px; position: relative;
+}
+#tabs button[data-tab="debugger"]::before {
+  content: ""; position: absolute; left: 12px; right: 12px; top: -7px;
+  border-top: 1px solid var(--line);
+}
+body:has(#tabs) .pill {
+  margin: auto 0 0; background: var(--field); border: 0; border-radius: 14px; padding: 7px 12px;
+  flex: none; overflow-wrap: anywhere;
+}
+/* FOLDED AWAY (app.js), its button left at the top left, the page taking the room. */
+#side-toggle {
+  position: fixed; z-index: 11; top: 22px; left: calc(var(--side) - 52px); width: 36px; height: 36px;
+  padding: 0; border: 0; border-radius: 10px; background: transparent; color: var(--muted);
+  cursor: pointer; font-size: 16px; line-height: 1;
+}
+#side-toggle:hover { background: var(--field); color: var(--ink); }
+#side-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+html.side-closed #side-toggle { left: 12px; }
+html.side-closed body:has(#tabs) > header { display: none; }
+html.side-closed body:has(#tabs) > main { margin-left: 0; padding-left: 58px; }
+/* Too narrow to spare the room: along the top, as it was, and nothing to fold. */
+@media (max-width: 860px) {
+  #side-toggle { display: none; }
+  html.side-closed body:has(#tabs) > header { display: flex; }
+  html.side-closed body:has(#tabs) > main { padding-left: 24px; }
+  body:has(#tabs) > header {
+    position: sticky; inset: 0 auto auto 0; width: auto; flex-direction: row; flex-wrap: wrap;
+    align-items: center; gap: 8px 12px; padding: 10px 16px; overflow: visible;
+  }
+  body:has(#tabs) > main { margin-left: 0; }
+  #tabs { flex-direction: row; flex-wrap: wrap; }
+  #tabs button { width: auto; padding: 7px 12px; }
+  body:has(#tabs) .pill { margin-left: auto; margin-top: 0; }
+}
+
+/* What is pressed and written in, on every page: pills, and deep fields. */
+button { border-radius: 999px; }
+input, select, textarea { border-radius: 12px; }
+.card { border: 0; border-radius: 20px; }
+
+/* THE OVERVIEW: nothing drawn around a panel; its ground is the page's. */
+#overview { --panel: var(--bg); }
+
+/* The page: a measure to read in, and room. */
+#overview { max-width: 1360px; margin: 0 auto; padding: 28px 16px 96px; }
+
+/* NOTHING DRAWN AROUND A PANEL: what separates them is the room between. */
+#overview .card {
+  background: transparent; border: 0; border-radius: 0; padding: 0; margin: 0 0 72px;
+}
+#overview .card:last-child { margin-bottom: 0; }
+
+/* Words. */
+#overview .card > h3,
+#ov-tasks-card .ov-head,
+#overview .dbg-timeline-head > strong {
+  color: var(--heading-bright); font-size: clamp(26px, 2.6vw, 40px); line-height: 1.15;
+  font-weight: 500; letter-spacing: 0; text-transform: none; margin: 0 0 10px;
+}
+#ov-tasks-card .ov-head-count { color: var(--muted); font-weight: 400; }
+#overview .muted { color: var(--muted); font-size: 14px; line-height: 1.5; }
+
+/* What is pressed: pills, filled and without a line. Under :where, so as to weigh nothing: what a
+   button says of itself (a group's title, a small tool) is not overruled from here. */
+:where(#overview) button {
+  border: 0; border-radius: 999px; padding: 9px 18px; font-weight: 500;
+  transition: filter .12s ease, background-color .12s ease;
+}
+:where(#overview) button:hover { filter: brightness(1.08); }
+:where(#overview) button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+:where(#overview) button.secondary { background: var(--field); color: var(--ink); border: 0; }
+:where(#overview) button.small { padding: 5px 12px; font-size: 13px; }
+
+/* What is written in: a deep field, no line until it has the keyboard. */
+#overview input:not([type="checkbox"]):not([type="radio"]), #overview select, #overview textarea {
+  background: var(--field); border: 1px solid transparent; border-radius: 14px; padding: 9px 13px;
+}
+#overview input:focus, #overview select:focus, #overview textarea:focus {
+  outline: 0; border-color: var(--accent);
+}
+#overview input[type="checkbox"], #overview input[type="radio"] { accent-color: var(--accent); }
+
+/* Projects, and To do and Work assigned beside it: the two lists stand apart on a surface. */
+/* THE THREE LEVEL AND AS TALL AS EACH OTHER (the user, 2026-11-05), Projects on a surface as the
+   lists are, and its heading theirs. */
+#ov-tasks-card .ov-tasks-top { gap: 20px; margin-bottom: 28px; align-items: stretch; }
+#ov-tasks-card .ov-tasks-intro {
+  background: var(--surface); border-radius: 24px; padding: 20px 22px;
+}
+#ov-tasks-card .ov-tasks-intro .ov-head { font-size: 20px; line-height: 1.3; margin: 0; }
+#overview .ov-todo {
+  background: var(--surface); border: 0; border-radius: 24px; padding: 20px 22px;
+}
+#ov-tasks-card .ov-tasks-top > .ov-todo { padding-top: 20px; }
+#ov-tasks-card .ov-todo .ov-head { font-size: 20px; line-height: 1.3; margin: 0; }
+#overview .ov-round-now { margin: 14px 0 12px; }
+#overview .ov-todo-list { max-height: min(420px, 55vh); }
+#overview .ov-todo-item { border-radius: 14px; }
+/* A group's title at the left, where its to-dos begin. */
+#overview .ov-group-head { border-bottom-color: var(--line); padding-left: 0; padding-right: 0; }
+
+/* A project: a surface of its own. */
+#overview .pj-card {
+  background: var(--surface); border-width: 0 0 0 4px; border-radius: 24px; padding: 20px 24px;
+}
+#overview .sb-card-title { font-size: 20px; font-weight: 500; }
+
+/* Token usage: its head a line to read, the chart on a surface. */
+#overview .dbg-tokens { border-top: 0; }
+#overview .dbg-timeline-head { padding: 0 0 14px; background: transparent; border: 0; flex-wrap: wrap; }
+#overview .dbg-timeline-head > strong { flex: 1 0 100%; margin: 0; }
+#overview .dbg-tokens-body { background: var(--surface); border-radius: 24px; padding: 20px 22px; }
+
+/* The lessons package. */
+#ov-lessons-card .ov-lp-buttons { margin: 18px 0 8px; gap: 10px; }
+#overview .ov-lp-load { border-top-color: var(--line); }
+
+/* When, and what: a timeline. A line down the left, a point at each stretch, the days on the line;
+   small words, the times level. */
+#overview .pj-tasks { padding-left: 0; margin-top: 16px; }
+#overview .pj-tasks > .event-label {
+  display: list-item; width: auto; margin: 0; font-size: 12px; color: var(--muted); cursor: pointer;
+}
+#overview .pj-tasks ul {
+  position: relative; list-style: none; margin: 8px 0 0 5px; padding: 0 0 0 18px;
+  border-left: 2px solid var(--line); font-size: 13px; line-height: 1.4;
+}
+#overview .pj-tasks li { position: relative; margin: 0; border: 0; }
+#overview .pj-tasks .muted { font-size: 12px; }
+#overview .pj-tasks li.pj-day {
+  padding: 10px 0 2px; font-size: 12px; font-weight: 600; color: var(--ink);
+}
+#overview .pj-tasks li.pj-day:first-child { padding-top: 0; }
+#overview .pj-tasks li.pj-stretch {
+  display: grid; grid-template-columns: 112px minmax(0, 1fr) auto auto;
+  gap: 2px 12px; align-items: baseline; padding: 4px 0;
+}
+/* The point, on the line. */
+#overview .pj-tasks li.pj-stretch::before {
+  content: ""; position: absolute; left: -24px; top: 9px; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface);
+}
+#overview .pj-tasks li.pj-day::before {
+  content: ""; position: absolute; left: -23px; top: 14px; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 2px var(--surface);
+}
+#overview .pj-tasks li.pj-day:first-child::before { top: 4px; }
+#overview .pj-when { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+#overview .pj-what { min-width: 0; overflow-wrap: anywhere; }
+#overview .pj-tasks li.pj-stretch button { padding: 2px 9px; font-size: 11px; }
+@media (max-width: 640px) {
+  #overview .pj-tasks li.pj-stretch { grid-template-columns: minmax(0, 1fr) auto; }
+  #overview .pj-when { grid-column: 1 / -1; }
+}
+
+/* Still open: by kind, in the timeline's small words, each with its way there. */
+#overview .pj-open { display: block; margin-top: 16px; font-size: 13px; line-height: 1.4; }
+#overview .pj-open > .event-label { display: block; width: auto; font-size: 12px; color: var(--muted); }
+#overview .pj-open-kind { margin: 14px 0 3px; font-size: 15px; font-weight: 600; color: var(--ink); }
+#overview .pj-open-kind .muted { font-size: 13px; font-weight: 400; }
+#overview .pj-open ul { list-style: none; margin: 0; padding: 0; }
+#overview .pj-open li {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: start;
+  margin: 0; padding: 5px 0;
+}
+#overview .pj-open-text { min-width: 0; overflow-wrap: anywhere; }
+#overview .pj-open-detail { font-size: 12px; margin-top: 1px; }
+#overview .pj-open li button { padding: 2px 10px; font-size: 11px; white-space: nowrap; }
+
+/* WHAT CAME OF WORK DELEGATED, under a to-do (the user, 2026-11-05: four columns in a list this
+   narrow left its words one letter wide): each version in its own rows - its number, what it
+   says across the whole width, its buttons under that. */
+#overview .ov-todo-versions { display: block; margin: 6px 0 2px; padding: 0; list-style: none; }
+#overview .ov-todo-version {
+  display: grid; grid-template-columns: 26px auto minmax(0, 1fr); gap: 4px 8px; align-items: start;
+  padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; line-height: 1.4;
+}
+#overview .ov-todo-version > span { font-size: 13px; align-self: start; }
+#overview .ov-todo-v { grid-column: 1; color: var(--muted); }
+#overview .ov-todo-where { grid-column: 2 / -1; min-width: 0; }
+#overview .ov-todo-open { grid-column: 2; display: flex; flex-wrap: wrap; gap: 6px; justify-self: start; }
+#overview .ov-todo-drop { grid-column: 3; justify-self: start; }
+#overview .ov-todo-open:empty, #overview .ov-todo-drop:empty { display: none; }
+#overview .ov-todo-version .ov-todo-controls { display: flex; gap: 6px; margin: 0; }
+#overview .ov-todo-version button,
+#overview .ov-todo-version .ov-todo-open button,
+#overview .ov-todo-version .ov-todo-open .ov-todo-controls button {
+  width: auto; flex: none; padding: 3px 10px; font-size: 12px;
+}

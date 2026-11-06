@@ -105,6 +105,54 @@ class CarriedOnWhereItStoppedTests(unittest.TestCase):
         self.assertIsNone(updater.status()["download"], "said no more once done")
         self.assertFalse((target.parent / up.UNDER_WAY).exists())
 
+    def test_here_whole_already_it_is_not_fetched_again(self) -> None:
+        server = self._serve(1 << 30)
+        updater = up.Updater(_Config(), Path(self.work.name))
+        target = updater.download(server.release(), "windows", name=NAME, shown=False)
+        asked = len(server.asked)
+        again = up.Updater(_Config(), Path(self.work.name))         # as after a restart
+        self.assertEqual(again.download(server.release(), "windows", name=NAME, shown=False), target)
+        self.assertEqual(len(server.asked), asked, "nothing came down")
+        self.assertEqual(target.read_bytes(), self.payload)
+        self.assertFalse((target.parent / up.UNDER_WAY).exists())
+        self.assertIsNone(again.status().get("download"))
+
+    def test_here_but_not_what_it_should_be_it_is_fetched_again(self) -> None:
+        server = self._serve(1 << 30)
+        updater = up.Updater(_Config(), Path(self.work.name))
+        target = updater.download(server.release(), "windows", name=NAME, shown=False)
+        target.write_bytes(b"something else")
+        asked = len(server.asked)
+        updater.download(server.release(), "windows", name=NAME, shown=False)
+        self.assertGreater(len(server.asked), asked)
+        self.assertEqual(target.read_bytes(), self.payload, "whole, and checked")
+
+    def _made_ready(self, tag):
+        """make_ready with what is around it made up: is what came down still there after?"""
+        from personalized_agent.platform_layer import quiet_update as quiet
+        folder = Path(self.work.name)
+        updater = up.Updater(_Config(), folder)
+        came = updater.folder / tag / "came.zip"
+        came.parent.mkdir(parents=True)
+        came.write_bytes(b"zip")
+
+        def unpacked(_archive, _live, target, **_kept):
+            target.mkdir(parents=True)
+            (target / "program.exe").write_bytes(b"exe")
+            return {"linked": 0, "written": 1}
+        with mock.patch.object(updater, "download", return_value=came), \
+                mock.patch.object(quiet, "live_root", return_value=folder / "live"), \
+                mock.patch.object(quiet, "place", return_value=folder / ".update"), \
+                mock.patch.object(quiet, "unpack_beside", side_effect=unpacked):
+            updater.make_ready({"tag": tag, "notes": "", "page": ""}, "windows")
+        return came.exists()
+
+    def test_the_older_one_gone_back_to_stays_for_the_next_time(self) -> None:
+        self.assertTrue(self._made_ready("v0.0.1"))
+
+    def test_a_newer_one_goes_once_it_is_ready(self) -> None:
+        self.assertFalse(self._made_ready("v9.9.9"))
+
     def test_stopped_it_is_kept_and_carried_on_after_the_agent_is_opened_again(self) -> None:
         # Half comes down, then nothing more: it stops, keeping what came.
         half = len(self.payload) // 2
@@ -253,7 +301,7 @@ class SaidAsDownloadingTests(unittest.TestCase):
         script = (ROOT / "personalized_agent" / "api" / "web" / "app.js").read_text(encoding="utf-8")
         start = script.index("/* A DOWNLOAD UNDER WAY")
         end = script.index("/* MACOS PERMISSIONS (Settings > Privacy)")
-        page = """<!doctype html><html><body>
+        page = """<!doctype html><html><head><meta charset='utf-8'></head><body>
 <p id="updates-status"></p><div id="updates-versions"></div>
 <script>const $=(s)=>document.querySelector(s);const clock=(t)=>t.slice(0,10);
 const toast=()=>{};const api={post:async()=>({}),get:async()=>({})};</script>
@@ -380,7 +428,7 @@ class EachStepSaidWithItsVersionTests(unittest.TestCase):
         script = (ROOT / "personalized_agent" / "api" / "web" / "app.js").read_text(encoding="utf-8")
         start = script.index("/* A DOWNLOAD UNDER WAY")
         end = script.index("/* MACOS PERMISSIONS (Settings > Privacy)")
-        page = """<!doctype html><html><body>
+        page = """<!doctype html><html><head><meta charset='utf-8'></head><body>
 <p id="updates-status"></p><div id="updates-versions"></div>
 <script>const $=(s)=>document.querySelector(s);const clock=(t)=>t.slice(0,10);
 const toast=()=>{};let asked=0;

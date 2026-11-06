@@ -373,6 +373,10 @@ class TheRoundCarriesTasksOnTests(unittest.TestCase):
 
     def test_a_round_reads_only_what_is_new(self) -> None:
         self._first()
+        # Only a round that had its vectors draws the line; without one the round below reads
+        # "since the beginning", which says nothing of why (seen on full runs, not yet explained).
+        self.assertTrue(self.app.config.get("state_processed_until"),
+                        f"the first round drew no line; the embedder says {self.beat.embedder.status()}")
         self._write(["Editing the weighting paper's abstract."],
                     "C:/work/weighting-paper", hours_ago=0.1)
         report = self.beat.run_once(trigger="manual_debug")

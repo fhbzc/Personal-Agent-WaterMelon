@@ -276,6 +276,93 @@ class PreReleasesTests(unittest.TestCase):
         self.assertIn("A newer pre-release can be chosen below.", script)
 
 
+class GoingBackTests(unittest.TestCase):
+    """Older versions from v0.3.0 on, to go back to: chosen only by the user. (Here from 0.2.0,
+    this being a version the list is older than.)"""
+
+    def make(self, mode: str, listed) -> None:
+        self.work = tempfile.TemporaryDirectory()
+        self.addCleanup(self.work.cleanup)
+        self.told, self.installed = [], []
+        self.config = _Config(updates=mode)
+        self.config.set = self.config.__setitem__
+        self.updater = up.Updater(self.config, Path(self.work.name),
+                                  notify=lambda *a, **k: self.told.append(a[0]),
+                                  working=lambda: False)
+        self.updater.quit = lambda: None
+        patches = [mock.patch.object(up, "how_installed", return_value="windows"),
+                   mock.patch.object(up, "published_releases", return_value=listed),
+                   mock.patch.object(up, "BACK_AS_FAR_AS", (0, 2, 0)),
+                   mock.patch.object(self.updater, "download",
+                                     side_effect=lambda release, kind, **k: Path("setup.exe")),
+                   mock.patch.object(self.updater, "install",
+                                     side_effect=lambda *a: self.installed.append(a[2])),
+                   mock.patch("personalized_agent.platform_layer.quiet_update.can_make_ready",
+                              return_value=False)]
+        for one in patches:
+            one.start()
+            self.addCleanup(one.stop)
+
+    def test_listed_as_older_never_installed_by_itself(self) -> None:
+        self.make("install", [_release("v0.2.5"), _release("v0.1.9")])
+        said = self.updater.once()
+        self.assertEqual([(one["tag"], one["older"]) for one in said["versions"]],
+                         [("v0.2.5", True)], "nothing from before the oldest")
+        self.assertEqual(self.installed, [])
+
+    def test_this_version_is_not_among_them(self) -> None:
+        self.make("ask", [_release("v" + up.__version__), _release("v0.2.5")])
+        self.assertEqual([one["tag"] for one in self.updater.once()["versions"]], ["v0.2.5"])
+
+    def test_chosen_it_is_installed_and_installing_by_itself_is_turned_off(self) -> None:
+        self.make("install", [_release("v0.2.5")])
+        said = self.updater.install_now("v0.2.5")
+        self.assertEqual(said["mode"], "ask", "at once: the page shows it")
+        self.assertEqual(self.config["updates"], "ask", "in the setting every version reads")
+        self.updater.once()
+        self.assertEqual(self.installed, ["v0.2.5"])
+
+    def test_a_newer_one_chosen_leaves_the_setting_as_it_is(self) -> None:
+        self.make("install", [_release("v9.1.0"), _release("v9.0.0")])
+        self.updater.install_now("v9.0.0")
+        self.assertEqual(self.config["updates"], "install")
+
+    def test_not_looking_or_telling_stays_as_it_was(self) -> None:
+        self.make("ask", [_release("v0.2.5")])
+        self.updater.install_now("v0.2.5")
+        self.assertEqual(self.config["updates"], "ask")
+
+    def test_gone_back_a_newer_one_is_told_and_comes_only_when_asked(self) -> None:
+        left = up.__version__
+        self.make("install", [_release("v0.2.5")])
+        self.updater.install_now("v0.2.5")
+        # As it stands on the version gone back to, the one left now being newer.
+        with mock.patch.object(up, "published_releases", return_value=[_release("v" + left)]), \
+                mock.patch.object(up, "is_newer", lambda tag, current=None: (
+                    up.version_of(tag) > up.version_of(current or "0.2.5"))):
+            self.updater.state["asked_to_install"] = None
+            self.updater.once()
+            self.assertEqual(self.installed, [], "not by itself")
+            self.assertEqual(len(self.told), 1, "told")
+            self.updater.install_now()
+            self.updater.once()
+            self.assertEqual(self.installed, ["v" + left], "asked for, it comes")
+
+    def test_one_made_ready_to_go_back_to_stays_ready(self) -> None:
+        from personalized_agent.platform_layer import quiet_update as quiet
+        with tempfile.TemporaryDirectory() as work:
+            folder = Path(work)
+            part = folder / "part"
+            part.mkdir()
+            said = {"tag": "v0.2.5", "kind": "windows", "dir": str(folder / "v0.2.5"),
+                    "parts": [str(part)], "live_parts": [str(part)]}
+            with mock.patch.object(up, "BACK_AS_FAR_AS", (0, 2, 0)):
+                quiet._write(folder / quiet.STAGED, dict(said, back=True))
+                self.assertEqual(quiet.staged(folder)["tag"], "v0.2.5")
+                quiet._write(folder / quiet.STAGED, said)
+                self.assertIsNone(quiet.staged(folder), "older, and not chosen to be")
+
+
 class _Answer(io.BytesIO):
     def __enter__(self):
         return self
@@ -382,7 +469,7 @@ class InstalledOnceTheProgramHasGoneTests(unittest.TestCase):
         script = (ROOT / "personalized_agent" / "api" / "web" / "app.js").read_text(encoding="utf-8")
         start = script.index("/* WHAT IS NEW, once, after an update")
         end = script.index("/* MACOS PERMISSIONS (Settings > Privacy)")
-        page = """<!doctype html><html><body>
+        page = """<!doctype html><html><head><meta charset='utf-8'></head><body>
 <dialog id="update-notes"><h3 id="update-notes-title"></h3><p id="update-notes-from"></p>
 <div id="update-notes-text"></div><a id="update-notes-page"></a>
 <button id="update-notes-close"></button></dialog>
@@ -453,7 +540,7 @@ class CheckNowTests(unittest.TestCase):
         script = (ROOT / "personalized_agent" / "api" / "web" / "app.js").read_text(encoding="utf-8")
         start = script.index("/* UPDATES (Settings > General)")
         end = script.index("/* MACOS PERMISSIONS (Settings > Privacy)")
-        page = """<!doctype html><html><body>
+        page = """<!doctype html><html><head><meta charset='utf-8'></head><body>
 <p id="updates-status"></p><div id="updates-versions"></div>
 <script>const $=(s)=>document.querySelector(s);const clock=(t)=>t.slice(0,10);
 const toast=()=>{};const api={post:async()=>({}),get:async()=>({})};</script>
@@ -476,6 +563,24 @@ out.link=$('.update-version-action a').href;
 renderUpdates({current:'0.2.0',mode:'ask',checked_at:'y',newer:true,latest:'v9.1.0',
   versions:[v('v9.1.0','The newest.'),v('v9.0.0','The one before.')]});
 out.kept=box().value;
+renderUpdateVersions.chosen='';
+const many={current:'0.3.1',mode:'ask',checked_at:'z',versions:[
+  Object.assign(v('v9.2.0','Trying.'),{prerelease:true}),v('v9.1.0','The newest.'),
+  Object.assign(v('v0.3.0','Before.'),{older:true,can_install:true})]};
+renderUpdates(many);
+out.formal=options();out.warnedNot=$('.update-version p.muted').hidden;
+const tick=$('.update-version-pre input');tick.checked=true;tick.dispatchEvent(new Event('change'));
+out.withPre=options();
+box().value='v0.3.0';box().dispatchEvent(new Event('change'));
+out.warned=$('.update-version p.muted').hidden;
+out.goBack=$('.update-version-action button').textContent;
+out.offWhenAsked=$('.update-version-off').hidden;
+renderUpdates(Object.assign({},many,{mode:'install'}));
+out.offWhenInstalling=$('.update-version-off').hidden;
+out.offWords=$('.update-version-off').textContent;
+box().value='v9.1.0';box().dispatchEvent(new Event('change'));
+out.offForANewerOne=$('.update-version-off').hidden;
+renderUpdateVersions.pre=false;
 renderUpdates({current:'0.2.0',mode:'ask',doing:'checking',versions:[]});
 out.looking=$('#updates-status').textContent;
 }catch(e){err=String(e&&e.stack?e.stack:e);}
@@ -495,12 +600,24 @@ document.title=JSON.stringify({err,out});});</script></body></html>""" % script[
         out = said["out"]
         self.assertEqual(out["before"], ["Not looked for yet - press Check now"])
         self.assertTrue(out["beforeOff"])
-        self.assertEqual(out["none"], ["No newer version"])
+        self.assertEqual(out["none"], ["No other version"])
         self.assertEqual(out["two"], ["Version v9.1.0 (2026-11-01)", "Version v9.0.0 (2026-11-01)"])
         self.assertEqual(out["notes"], "The newest.")
         self.assertEqual(out["chosen"], "The one before.")
         self.assertEqual(out["link"], "https://example.org/v9.0.0")
         self.assertEqual(out["kept"], "v9.0.0", "the one chosen stays chosen")
+        self.assertEqual(out["formal"], ["Version v9.1.0 (2026-11-01)",
+                                         "Version v0.3.0, older than this one (2026-11-01)"])
+        self.assertTrue(out["warnedNot"], "a newer one needs no warning")
+        self.assertEqual(out["withPre"], ["Version v9.2.0, a pre-release (2026-11-01)",
+                                          "Version v9.1.0 (2026-11-01)",
+                                          "Version v0.3.0, older than this one (2026-11-01)"])
+        self.assertFalse(out["warned"], "an older one is said to be")
+        self.assertEqual(out["goBack"], "Go back to this version")
+        self.assertTrue(out["offWhenAsked"], "nothing is turned off: it is not installing by itself")
+        self.assertFalse(out["offWhenInstalling"], "said before it is chosen")
+        self.assertIn("turns off installing by itself", out["offWords"])
+        self.assertTrue(out["offForANewerOne"])
         self.assertIn("Looking for newer versions", out["looking"])
 
 
@@ -521,10 +638,42 @@ class ChosenInSettingsTests(unittest.TestCase):
         for mode in up.MODES:
             self.assertRegex(script, rf"\n  {mode}: \"")
 
+    def _new_here(self, kind, chosen=False):
+        from types import SimpleNamespace
+        from unittest import mock
+        said = {}
+        config = SimpleNamespace(user_chose=lambda _key: chosen, set=said.__setitem__)
+        with mock.patch.object(up, "how_installed", return_value=kind):
+            up.Updater.installed_just_now(SimpleNamespace(config=config))
+        return said
+
+    def test_a_new_install_with_no_installers_page_has_them_by_itself(self) -> None:
+        self.assertEqual(self._new_here("macos"), {"updates": "install"})
+        self.assertEqual(self._new_here("appimage"), {"updates": "install"})
+
+    def test_not_what_the_user_chose_nor_what_cannot_replace_itself(self) -> None:
+        self.assertEqual(self._new_here("macos", chosen=True), {})
+        self.assertEqual(self._new_here(""), {}, "a .deb, an old .pkg, from source")
+        self.assertEqual(self._new_here("windows"), {}, "its installer's page says")
+
+    def test_nobody_already_installed_is_changed(self) -> None:
+        from unittest import mock
+        from support import TemporaryAgent
+        from personalized_agent.app import AgentApplication
+        made = TemporaryAgent()
+        self.addCleanup(made.cleanup)
+        made.app.db.close() if hasattr(made.app.db, "close") else None
+        with mock.patch.object(up.Updater, "installed_just_now") as told:
+            AgentApplication(root=made.dir / "root")
+        told.assert_not_called()
+        with mock.patch.object(up.Updater, "installed_just_now") as told:
+            AgentApplication(root=made.dir / "another")
+        told.assert_called_once()
+
     def test_the_installer_asks_ticked_and_hands_it_on(self) -> None:
         script = (ROOT / "build" / "windows" / "installer.iss").read_text(encoding="utf-8-sig")
         task = next(line for line in script.splitlines() if line.startswith('Name: "autoupdate"'))
-        self.assertIn("Flags: unchecked", task, "unticked by default")
+        self.assertNotIn("unchecked", task, "ticked by default")
         self.assertIn('Parameters: "--updates install"', script)
         self.assertRegex(script, r'"--updates install".*Tasks: autoupdate; Check: not AnUpdate')
         self.assertRegex(script, r'"--updates ask".*Tasks: not autoupdate; Check: not AnUpdate')
@@ -532,9 +681,33 @@ class ChosenInSettingsTests(unittest.TestCase):
         self.assertRegex(script, r'\[InstallDelete\][^\[]*\{app\}\\\.update')
         self.assertRegex(script, r'\[UninstallDelete\][^\[]*\{app\}\\_internal')
         lines = script.replace("\r\n", "\n")
-        for code in ("en", "zh", "es", "ja", "ko", "ru", "fr", "de", "it"):
+        for code in ("en", "zh"):
             for key in ("AutoUpdate", "UpdatesGroup"):
                 self.assertIn(f"\n{code}.{key}=", lines, (code, key))
+
+    def test_the_installer_adds_the_pictures_languages_ticked(self) -> None:
+        script = (ROOT / "build" / "windows" / "installer.iss").read_text(encoding="utf-8-sig")
+        task = next(line for line in script.splitlines() if line.startswith('Name: "ocrlanguages"'))
+        self.assertNotIn("unchecked", task, "ticked by default")
+        self.assertRegex(script, r'"--add-ocr".*Tasks: ocrlanguages; Check: \(not AnUpdate\) and '
+                                 r'\(not WizardSilent\)')
+        for code in ("en", "zh"):
+            self.assertIn(f"\n{code}.OcrLanguages=", script.replace("\r\n", "\n"))
+
+    def test_only_the_missing_languages_are_asked_for(self) -> None:
+        from personalized_agent import __main__ as entry
+        from personalized_agent.platform_layer import ocr
+        reader = mock.Mock()
+        reader.available.return_value = True
+        reader.can_add.return_value = True
+        reader.installed.return_value = ["en"]
+        with mock.patch.object(ocr, "current", return_value=reader):
+            self.assertEqual(entry.main(["--add-ocr"]), 0)
+            reader.add.assert_called_once_with(["zh"])
+            reader.add.reset_mock()
+            reader.installed.return_value = ["en", "zh", "ja"]
+            self.assertEqual(entry.main(["--add-ocr"]), 0)
+            reader.add.assert_not_called()
 
     def test_the_option_the_installer_runs_keeps_the_choice(self) -> None:
         from personalized_agent.__main__ import main

@@ -81,10 +81,12 @@ STORE_IDS: Tuple[str, ...] = (
 #: only when the extension itself changes (its files, its manifest, its words),
 #: and only then uploaded to the stores again, which take a higher one each
 #: time. The agent's updates leave it as it is.
-EXTENSION_VERSION = "0.0.2"    # 0.0.2: says how it was installed ("here"),
+EXTENSION_VERSION = "0.0.3"    # 0.0.2: says how it was installed ("here"),
                                # and says "here" every six hours (alarms)
+                               # 0.0.3: says what can be seen of a page (visible.js);
+                               # never in a private window
 #: The files of the extension, as they are in resources/browser_extension.
-FILES = ("background.js", "help.html", "help.js", "opening.html", "opening.js")
+FILES = ("background.js", "help.html", "help.js", "opening.html", "opening.js", "visible.js")
 FLAVORS = ("chromium", "firefox")
 ICON_SIZES = (16, 32, 48, 128)
 
@@ -109,66 +111,6 @@ WORDS: Dict[str, Dict[str, str]] = {
            "help_do": "打开 Personal Agent WaterMelon，进入 设置 > 通用，点“安装浏览器扩展”。"
                       "它会把这个浏览器连接到这台电脑上的 agent。",
            "help_then": "然后再在网页上右键，选“委托工作”。"},
-    "ja": {"opening": "開いています…",
-           "delegate": "作業を任せる",
-           "learn": "学習",
-           "description": "ブラウザーの中の Personal Agent WaterMelon。右クリックメニューから、ページ、テキスト、リンク、画像をエージェントに渡せます。",
-           "help_head": "エージェントはまだこのブラウザーにつながっていません",
-           "help_do": "Personal Agent WaterMelon を開き、設定 > 全般 で「ブラウザー拡張機能をインストール」を"
-                      "押してください。このブラウザーがこのコンピューターのエージェントにつながります。",
-           "help_then": "そのあと、もう一度ページを右クリックして「作業を任せる」を選んでください。"},
-    "ko": {"opening": "여는 중…",
-           "delegate": "작업 맡기기",
-           "learn": "학습",
-           "description": "브라우저 속 Personal Agent WaterMelon - 오른쪽 클릭 메뉴에서 페이지, 텍스트, 링크, 그림을 에이전트에게 건넵니다.",
-           "help_head": "에이전트가 아직 이 브라우저에 연결되지 않았습니다",
-           "help_do": "Personal Agent WaterMelon을 열고 설정 > 일반에서 \"브라우저 확장 프로그램 설치\"를 "
-                      "누르세요. 이 브라우저가 이 컴퓨터의 에이전트에 연결됩니다.",
-           "help_then": "그런 다음 페이지를 다시 오른쪽 클릭하고 \"작업 맡기기\"를 고르세요."},
-    "de": {"opening": "Wird geöffnet…",
-           "delegate": "Arbeit delegieren",
-           "learn": "Lernen",
-           "description": "Ihr Personal Agent WaterMelon im Browser - geben Sie ihm Seiten, Texte, Links und Bilder über das Kontextmenü.",
-           "help_head": "Der Agent ist noch nicht mit diesem Browser verbunden",
-           "help_do": "Öffnen Sie Personal Agent WaterMelon, dann Einstellungen > Allgemein, und "
-                      "drücken Sie \"Browser-Erweiterung installieren\". Das verbindet diesen "
-                      "Browser mit dem Agenten auf diesem Computer.",
-           "help_then": "Dann klicken Sie die Seite wieder mit rechts an und wählen Arbeit delegieren."},
-    "fr": {"opening": "Ouverture…",
-           "delegate": "Déléguer une tâche",
-           "learn": "Apprendre",
-           "description": "Votre Personal Agent WaterMelon dans le navigateur : confiez-lui pages, textes, liens et images depuis le menu du clic droit.",
-           "help_head": "L'agent n'est pas encore relié à ce navigateur",
-           "help_do": "Ouvrez Personal Agent WaterMelon, puis Paramètres > Général, et appuyez sur "
-                      "« Installer l'extension du navigateur ». Elle relie ce navigateur à l'agent "
-                      "de cet ordinateur.",
-           "help_then": "Puis faites de nouveau un clic droit sur la page et choisissez Déléguer une tâche."},
-    "es": {"opening": "Abriendo…",
-           "delegate": "Delegar trabajo",
-           "learn": "Aprender",
-           "description": "Tu Personal Agent WaterMelon en el navegador: pásale páginas, textos, enlaces e imágenes desde el menú del clic derecho.",
-           "help_head": "El agente aún no está conectado a este navegador",
-           "help_do": "Abre Personal Agent WaterMelon, ve a Ajustes > General y pulsa \"Instalar la "
-                      "extensión del navegador\". Conecta este navegador con el agente de este equipo.",
-           "help_then": "Luego vuelve a hacer clic derecho en la página y elige Delegar trabajo."},
-    "it": {"opening": "Apertura…",
-           "delegate": "Delega un lavoro",
-           "learn": "Impara",
-           "description": "Il tuo Personal Agent WaterMelon nel browser: affidagli pagine, testi, link e immagini dal menu del clic destro.",
-           "help_head": "L'agente non è ancora collegato a questo browser",
-           "help_do": "Apri Personal Agent WaterMelon, vai su Impostazioni > Generale e premi "
-                      "\"Installa l'estensione del browser\". Collega questo browser all'agente su "
-                      "questo computer.",
-           "help_then": "Poi fai di nuovo clic destro sulla pagina e scegli Delega un lavoro."},
-    "ru": {"opening": "Открывается…",
-           "delegate": "Поручить работу",
-           "learn": "Изучить",
-           "description": "Ваш Personal Agent WaterMelon в браузере: передавайте ему страницы, текст, ссылки и картинки из контекстного меню.",
-           "help_head": "Агент ещё не подключён к этому браузеру",
-           "help_do": "Откройте Personal Agent WaterMelon, затем Настройки > Общие, и нажмите "
-                      "«Установить расширение браузера». Оно подключит этот браузер к агенту на "
-                      "этом компьютере.",
-           "help_then": "Затем снова щёлкните страницу правой кнопкой и выберите «Поручить работу»."},
 }
 
 
@@ -203,10 +145,14 @@ def manifest(flavor: str, version: str = EXTENSION_VERSION) -> Dict[str, Any]:
         # the browser shows no one, so the update adding it is not paused.
         "permissions": ["contextMenus", "nativeMessaging", "activeTab", "scripting", "storage",
                         "alarms"],
-        # NO SCRIPT IN EVERY PAGE, NO ACCESS TO EVERY SITE (the user,
-        # 2026-11-01: selected text in a page is the right-click's too): the
-        # page right-clicked is read once Delegate work is picked (activeTab).
+        # A SCRIPT IN EVERY PAGE, FOR WHAT CAN BE SEEN OF IT (the user, 2026-11-05, in place of
+        # 2026-11-01's none): it goes to the user's own agent on this computer, nowhere else.
+        "content_scripts": [{"matches": ["http://*/*", "https://*/*"], "js": ["visible.js"],
+                             "run_at": "document_idle"}],
         "icons": {str(size): f"icons/{size}.png" for size in ICON_SIZES},
+        # NEVER IN A PRIVATE WINDOW (the user, 2026-11-05): what is opened there is meant to leave
+        # nothing behind, and with this the browser does not even ask.
+        "incognito": "not_allowed",
     }
     if flavor == "firefox":
         said["background"] = {"scripts": ["background.js"]}
@@ -582,6 +528,59 @@ ROWS = (("chrome", "Chrome", ("Google Chrome", "Brave", "Vivaldi", "Opera")),
         ("firefox", "Firefox", ("Firefox",)))
 
 
+def _browser_homes(key: str, platform: str = sys.platform) -> List[Path]:
+    """Where each browser of a row keeps its profiles."""
+    home = Path.home()
+    if platform == "win32":
+        local, roaming = Path(os.environ.get("LOCALAPPDATA") or home), Path(os.environ.get("APPDATA") or home)
+        if key == "firefox":
+            return [roaming / "Mozilla" / "Firefox" / "Profiles"]
+        return [local / "Google" / "Chrome" / "User Data",
+                local / "BraveSoftware" / "Brave-Browser" / "User Data",
+                local / "Vivaldi" / "User Data", roaming / "Opera Software"]
+    if platform == "darwin":
+        support = home / "Library" / "Application Support"
+        if key == "firefox":
+            return [support / "Firefox" / "Profiles"]
+        return [support / "Google" / "Chrome", support / "BraveSoftware" / "Brave-Browser",
+                support / "Vivaldi", support / "com.operasoftware.Opera"]
+    if key == "firefox":
+        return [home / ".mozilla" / "firefox"]
+    config = home / ".config"
+    return [config / "google-chrome", config / "BraveSoftware" / "Brave-Browser",
+            config / "vivaldi", config / "opera"]
+
+
+def _on_disk(key: str) -> Optional[bool]:
+    """WHETHER THE STORES' EXTENSION IS STILL IN ITS BROWSER'S FOLDERS (the user, 2026-11-05: removed
+    from Chrome, the page still called it installed - a removed extension says nothing). Only that
+    its folder is there; nothing in it is read. None: no such browser's folders to look in."""
+    homes = [home for home in _browser_homes(key) if home.is_dir()]
+    if not homes:
+        return None
+    if key == "firefox":
+        return any(next(home.glob(f"*/extensions/{FIREFOX_ID}.xpi"), None) for home in homes)
+    return any(next(home.glob(f"*/Extensions/{one}"), None) or (home / "Extensions" / one).is_dir()
+               for home in homes for one in STORE_IDS)
+
+
+def keep_visible(data_dir: Path, title: str, text: str) -> None:
+    """What can be seen of the page in front, as the extension says: the last word only, on this
+    computer, for the recommendations' match (heartbeat/monitor/match.py)."""
+    import time
+    path = folder(data_dir) / "visible.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(path, {"at": time.time(), "title": str(title)[:300], "text": str(text)[:6000]})
+
+
+def visible_report(data_dir: Path) -> Dict[str, Any]:
+    try:
+        said = json.loads((folder(data_dir) / "visible.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return said if isinstance(said, dict) else {}
+
+
 def _seen(data_dir: Path, name: str = "store_seen.json") -> Dict[str, float]:
     try:
         said = json.loads((folder(data_dir) / name).read_text(encoding="utf-8"))
@@ -604,6 +603,8 @@ def browsers(data_dir: Path) -> List[Dict[str, Any]]:
     out = []
     for key, name, said_as in ROWS:
         last = max([seen[one] for one in said_as if one in seen] or [0.0])
+        if last and _on_disk(key) is False:
+            last = 0.0
         state = "installed" if last >= since else "quiet" if last else "absent"
         out.append({"key": key, "name": name, "installed": state == "installed",
                     "state": state, "seen_at": last or None,
@@ -694,4 +695,5 @@ def reveal(path: str, platform: str = sys.platform) -> bool:
 
 __all__ = ["HOST", "KEY", "CHROMIUM_ID", "FIREFOX_ID", "STORE_IDS", "EXTENSION_VERSION", "package", "keep_current", "open_store", "from_store", "install", "remove", "status",
            "prepare", "register", "connected", "manifest", "host_manifest", "launcher",
-           "open_extensions_page", "reveal", "extension_id", "WORDS"]
+           "open_extensions_page", "reveal", "extension_id", "WORDS", "keep_visible",
+           "visible_report"]

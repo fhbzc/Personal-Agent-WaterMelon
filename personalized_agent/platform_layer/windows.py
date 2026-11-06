@@ -254,6 +254,42 @@ class WindowsActivityProvider(PlatformActivityProvider):
             return None
         return (rect.left, rect.top, rect.right, rect.bottom)
 
+    def count_windows(self) -> Optional[int]:
+        """The windows on the taskbar: visible, titled, owned by no other window, not a tool
+        window, and not hidden by the shell (other desktops, suspended store apps)."""
+        if self._user32 is None:
+            return None
+        import ctypes
+        from ctypes import wintypes
+        user32 = self._user32
+        found = [0]
+        GWL_EXSTYLE, WS_EX_TOOLWINDOW, GW_OWNER, DWMWA_CLOAKED = -20, 0x80, 4, 14
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def each(hwnd, _):
+            try:
+                if not user32.IsWindowVisible(hwnd) or user32.GetWindow(hwnd, GW_OWNER):
+                    return True
+                if user32.GetWindowTextLengthW(hwnd) == 0:
+                    return True
+                if user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW:
+                    return True
+                cloaked = wintypes.DWORD(0)
+                if ctypes.windll.dwmapi.DwmGetWindowAttribute(
+                        hwnd, DWMWA_CLOAKED, ctypes.byref(cloaked),
+                        ctypes.sizeof(cloaked)) == 0 and cloaked.value:
+                    return True
+                found[0] += 1
+            except Exception:
+                pass
+            return True
+        try:
+            user32.EnumWindows(each, 0)
+        except Exception:
+            log.debug("could not count the windows", exc_info=True)
+            return None
+        return found[0]
+
     def what_holds_the_screen(self) -> str:
         """Windows' own word (SHQueryUserNotificationState): a slide show, or a
         film or game over the whole screen."""

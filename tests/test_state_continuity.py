@@ -1294,7 +1294,12 @@ class WhatTheFirstRoundLooksAtTests(unittest.TestCase):
         from personalized_agent.agent.states.store import State
 
         self._write(REPLICATION + WATCHING, days_ago=2)
-        self._run()
+        first = self._run()
+        # Only a round that had its vectors draws the line. Without this a round that had
+        # none reads as "since the beginning" further down, which says nothing of why.
+        self.assertTrue(self.app.config.get("state_processed_until"),
+                        f"the first round drew no line: {first.get('note')!r}, "
+                        f"the embedder says {self.beat.embedder.status()}")
         # Written now, as a state is: what a round reads as new is what was
         # written since it last read.
         for title, detail in MORE_REPLICATION:

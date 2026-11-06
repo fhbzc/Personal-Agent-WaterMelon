@@ -108,9 +108,7 @@ SETTINGS = {
 OCR = {"engine": "Windows OCR", "available": True, "downloading": {}, "languages": [
     {"code": "en", "name": "English", "installed": True, "can_add": False},
     {"code": "zh", "name": "Chinese", "installed": False, "can_add": True},
-    {"code": "es", "name": "Spanish", "installed": False, "can_add": True},
-    {"code": "ja", "name": "Japanese", "installed": False, "can_add": True},
-    {"code": "ko", "name": "Korean", "installed": False, "can_add": True}]}
+    {"code": "ja", "name": "Japanese", "installed": False, "can_add": True}]}
 
 
 def _modules():
@@ -460,22 +458,21 @@ class SettingsViewsTests(unittest.TestCase):
         self.assertEqual(out["sent"], [{"values": {"module_calendar_enabled": False}}])
 
     def test_display_says_which_languages_pictures_are_read_in(self) -> None:
-        """Display: the five languages, each supported or not yet - each not
-        yet with a tick of its own, and only the ticked ones downloaded, when
-        the button is pressed."""
+        """Display: each language supported or not yet; one not yet downloaded on its own, or
+        all of them with one press."""
         steps = (
             "click(document.querySelector('#tabs button[data-tab=\"settings\"]'));"
             "await loadSettings();await loadOcr();await wait();"
             "const card=document.querySelector('#ocr-card');"
             "out.inDisplay=!!card.closest('[data-settings-pane=\"display\"]');"
             "out.text=text(card);"
+            "out.boxes=card.querySelectorAll('input[type=checkbox]').length;"
             "out.unsent=window.__posts.filter(x=>x.p==='/api/ocr/add').length;"
-            "const btn=card.querySelector('[data-ocr-add]');out.idle=btn.disabled;"
-            "out.ticks=[...card.querySelectorAll('[data-ocr-code]')].map(b=>b.dataset.ocrCode);"
-            "for(const c of ['zh','ja']){const b=card.querySelector(`[data-ocr-code=\"${c}\"]`);"
-            "b.checked=true;b.dispatchEvent(new Event('change',{bubbles:true}));}"
-            "out.ready=!btn.disabled;out.says=btn.textContent;"
-            "click(btn);await wait();"
+            "const btns=()=>[...card.querySelectorAll('[data-ocr-add]')];"
+            "out.says=btns().map(b=>b.textContent.trim());"
+            "click(btns()[0]);await wait();"
+            "await loadOcr();await wait();"
+            "click(btns()[2]);await wait();"
             "out.sent=window.__posts.filter(x=>x.p==='/api/ocr/add').map(x=>x.body);")
         result = _render(self.engine, steps)
         self.assertEqual(result["err"], "")
@@ -483,12 +480,10 @@ class SettingsViewsTests(unittest.TestCase):
         self.assertTrue(out["inDisplay"])
         self.assertIn("supported English", out["text"])
         self.assertIn("not yet Chinese", out["text"])
-        self.assertEqual(out["ticks"], ["zh", "es", "ja", "ko"], "English is here already")
-        self.assertTrue(out["idle"], "nothing ticked, nothing to download")
-        self.assertTrue(out["ready"])
-        self.assertEqual(out["says"], "Download 2 languages")
+        self.assertEqual(out["boxes"], 0, "nothing to tick")
+        self.assertEqual(out["says"], ["Download", "Download", "Download all languages"])
         self.assertEqual(out["unsent"], 0, "nothing added until asked")
-        self.assertEqual(out["sent"], [{"codes": ["zh", "ja"]}])
+        self.assertEqual(out["sent"], [{"codes": ["zh"]}, {"codes": ["zh", "ja"]}])
 
     def test_times_in_the_users_time_zone(self) -> None:
         """A moment the agent wrote down in UTC is shown in this computer's

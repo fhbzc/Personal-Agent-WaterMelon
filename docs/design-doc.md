@@ -1067,6 +1067,9 @@ Resetting a setting means undoing the user's choice: their default for it is for
 
 # 12.2 The Language the User Works In
 <!-- number: 12.2 | label: 12.2 | id: s12-2 | page: 15 -->
+<!-- note: Amended 2026-11-05: the screens speak Chinese and English; what is read stays wide. -->
+
+*Amended 2026-11-05:* THE SCREENS SPEAK CHINESE AND ENGLISH (the user: "display languagde 只支持中文和英文"). Another chosen before is read as English. What the agent READS stays wide: the OCR reads every language the system has, a Mac all of them; passwords are hidden, scams found and other people answered in any language. On Windows the OCR's language is one of the system's parts, offered one by one or all at once, and ticked by default at install: the one administrator's yes the installation asks for.
 
 The agent's memory is kept in English, whatever language the user speaks: its notes to itself, the natures it learns and the keywords it finds things by. One language is what makes comparison possible - the embedding model reads English only, and a word is found only as it is written. The user's language is the display language (below), and what the user reads is written in it.
 
@@ -7747,6 +7750,8 @@ Personalized-Agent.pkg
 
 The .pkg is an installer whose Installation Type page asks whether the agent starts when the user signs in (ticked by default, through a LaunchAgent). A release gives both stable names (section 117).
 
+*Amended 2026-11-05:* THE .PKG IS GONE (the user: "如果.dmg和.pkg 一个能自动一个不能，为什么要留着.pkg 呢"): the .dmg alone is released; it replaces itself on update, and starts at login by default on a new install.
+
 *Amended 2026-10-16:* the .dmg is the macOS download offered first: the application dragged from it into Applications is the user's own, so it can replace itself with a newer version, where the one the .pkg installs belongs to the system and could not without a password. Starting at sign-in is then the program's own setting, on by default, as it is for the portable folders. And the permissions macOS asks for one at a time - Full Disk Access, Accessibility, control of System Events, Screen Recording - are listed together in Settings > Privacy, each looked at without asking, each with what it is for and a button to its own pane of System Settings, Full Disk Access first because it also covers the Desktop, Documents and Downloads folders; the Overview says so while one that a switch which is on needs is missing.
 
 *Amended 2026-10-16:* UPDATES. Once a day, and when asked, the program reads this project's published releases - never a commit, a merge, a draft or a pre-release, so a release marked pre-release reaches nobody. By default (Settings > General > Updates) the user is told, and shown every version newer than theirs with what each says of itself, and installs the one they choose - never an older one, which may not read what a newer one wrote. Installing by itself is off by default, in Settings and in the Windows installer's box, because a release that turned out broken would otherwise reach everyone within a day; chosen, the newest is installed by itself. A version being installed is downloaded into the data folder, checked against the release's own SHA256SUMS.txt - one that does not match is deleted and never run - and installed, never while a piece of work is running: on Windows the installer runs silently once the program has quit, keeping the program folder, the data folder, the language and the user's own start at sign-in, and starts the new version; on macOS the application from the .dmg is replaced; a Linux AppImage replaces itself. Or nothing is looked for at all. A copy that cannot replace itself - run from source, a portable folder, a .deb, the .pkg's application - is only told. The new version opens with what is new: the release's own description, in a window shown until it is closed.
@@ -9434,6 +9439,9 @@ The tables are kept whole by a check, not by memory: `scripts/interface_words.py
 
 # 135. The Monitor
 <!-- number: 135 | label: 135. | id: s135 | page: 149 -->
+<!-- note: Amended 2026-11-05: the reserve, matched on what can be seen; the chain as a lesson. -->
+
+*Amended 2026-11-05:* THE RESERVE (the user's design; heartbeat/monitor/reserve.py and match.py), the module Recommendations, which can be switched off whole. What may be recommended is made ready AHEAD, from what an issue of the Newspaper left over and from the web: the model writes each one's angle, why, how long it stays good and the words that set it off - names once, concepts in Chinese and in English. No vectors. Past its time the model says whether to extend it. The reserve is kept deep, up to 100, because most of it is never set off. What the user has read is marked at each heartbeat and never told. WHAT IS ON THE SCREEN is matched on what they can SEE: the browser extension's word where it is there, else the OCR of the window in front, else nothing. Very high, it is sent without a model; in the middle a model with a short prompt and no tools says yes or no; first it is only recorded, to set the scores. No limit a day and no gap: the model is told how many there have been. EVERY ANSWER IS A LESSON HOLDING THE WHOLE CHAIN - how it was made, what set it off, which of the day it was - and those lessons are the context the next time it prepares content and words; they keep the words that matched, never the screen's.
 <!-- note: 2026-11-04: new - the user asked for the Monitor's own chapter. -->
 
 *Modules: `heartbeat/monitor/` (`signals.py`, `screen_now.py`, `activators.py`, `builtins.py`, `engine.py`, `decide.py`, `pictures.py`, `evidence.py`, `tools.py`), `heartbeat/core/triggers.py`, `common/notifications.py`, `tests/test_monitor.py`.*

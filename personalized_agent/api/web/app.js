@@ -11061,6 +11061,15 @@ async function refreshShortcuts() {
   renderShortcuts();
 }
 
+/* The keys as this computer calls them: a Mac's own names, sent with the shortcuts (hotkeys.py). */
+function shortcutName(key) {
+  return ((shortcutEdit.said || {}).names || {})[key] || key;
+}
+
+function shortcutWords(combo) {
+  return String(combo || "").split("+").map(shortcutName).join(" + ");
+}
+
 function shortcutKeys(combo) {
   const keys = document.createElement("span");
   keys.classList.add("shortcut-keys");
@@ -11071,7 +11080,7 @@ function shortcutKeys(combo) {
   }
   combo.split("+").forEach((one) => {
     const key = document.createElement("kbd");
-    key.textContent = one;
+    key.textContent = shortcutName(one);
     keys.appendChild(key);
   });
   return keys;
@@ -11193,7 +11202,7 @@ document.addEventListener("keydown", (event) => {
   if (!key) return;                         // a modifier alone: wait for the key
   const combo = [event.ctrlKey && "Ctrl", event.altKey && "Alt", event.shiftKey && "Shift",
     event.metaKey && "Win", key].filter(Boolean).join("+");
-  saveShortcut({ key: shortcutEdit.recording, combo }, `Shortcut set: ${combo}`);
+  saveShortcut({ key: shortcutEdit.recording, combo }, `Shortcut set: ${shortcutWords(combo)}`);
 }, true);
 
 document.addEventListener("click", (event) => {
@@ -11213,7 +11222,10 @@ document.addEventListener("click", (event) => {
   if (back) {
     const one = ((shortcutEdit.said || {}).shortcuts || [])
       .find((s) => s.key === back.dataset.shortcutDefault);
-    if (one) saveShortcut({ key: one.key, combo: one.default }, `Shortcut set: ${one.default}`);
+    if (one) {
+      saveShortcut({ key: one.key, combo: one.default },
+        `Shortcut set: ${shortcutWords(one.default)}`);
+    }
   }
 });
 
@@ -11567,29 +11579,30 @@ function renderUpdateRestart(said) {
   row.appendChild(button);
 }
 
-/* THE VERSION TO UPDATE TO: a box of every version newer than this one,
-   newest first - empty, it says there is none, or that none was looked for
-   yet - with what the chosen one says of itself and its own button: the
-   user installs the one they choose. Never an older one - it may not read
-   what a newer one wrote. */
+/* THE VERSION TO INSTALL: a box of the versions to choose from, newest first - empty, it says
+   there is none, or that none was looked for yet - with what the chosen one says of itself and
+   its own button: the user installs the one they choose. Older ones from v0.3.0 on are there
+   to go back to (the user, 2026-11-04: "default是只显示正式版，选择之后可以也显示pre-release版"),
+   said to be older, since one may not read everything a newer one wrote. */
 function renderUpdateVersions(said) {
   const host = $("#updates-versions");
   if (!host) return;
   host.innerHTML = "";
   if (said.mode === "off") return;
-  const versions = said.versions || [];
+  const all = said.versions || [];
+  const versions = renderUpdateVersions.pre ? all : all.filter((one) => !one.prerelease);
   const row = document.createElement("div");
   row.classList.add("update-version");
   const head = document.createElement("div");
   head.classList.add("update-version-head");
   const label = document.createElement("label");
   label.htmlFor = "updates-version";
-  label.textContent = "Version to update to";
+  label.textContent = "Version to install";
   const box = document.createElement("select");
   box.id = "updates-version";
   if (!versions.length) {
     const none = document.createElement("option");
-    none.textContent = said.checked_at ? "No newer version" : "Not looked for yet - press Check now";
+    none.textContent = said.checked_at ? "No other version" : "Not looked for yet - press Check now";
     box.appendChild(none);
     box.disabled = true;
   }
@@ -11597,7 +11610,9 @@ function renderUpdateVersions(said) {
     const option = document.createElement("option");
     option.value = one.tag;
     // A PRE-RELEASE said to be one: chosen only ever by the user.
-    const name = one.prerelease ? `Version ${one.tag}, a pre-release` : `Version ${one.tag}`;
+    const name = one.older && one.prerelease ? `Version ${one.tag}, an older pre-release`
+      : one.older ? `Version ${one.tag}, older than this one`
+        : one.prerelease ? `Version ${one.tag}, a pre-release` : `Version ${one.tag}`;
     option.textContent = one.published ? `${name} (${clock(one.published)})` : name;
     box.appendChild(option);
   });
@@ -11607,6 +11622,27 @@ function renderUpdateVersions(said) {
   }
   head.append(label, box);
   row.appendChild(head);
+  const showing = document.createElement("label");
+  showing.classList.add("update-version-pre");
+  const ticked = document.createElement("input");
+  ticked.type = "checkbox";
+  ticked.checked = Boolean(renderUpdateVersions.pre);
+  ticked.addEventListener("change", () => {
+    renderUpdateVersions.pre = ticked.checked;
+    renderUpdateVersions(said);
+  });
+  showing.append(ticked, document.createTextNode(" Show pre-releases"));
+  row.appendChild(showing);
+  const warning = document.createElement("p");
+  warning.classList.add("muted");
+  warning.textContent = "An older version may not read everything this one wrote.";
+  row.appendChild(warning);
+  // SAID BEFORE IT IS CHOSEN (the user, 2026-11-05): going back turns off installing by itself.
+  const turnsOff = document.createElement("p");
+  turnsOff.classList.add("muted", "update-version-off");
+  turnsOff.textContent = "Going back turns off installing by itself: new versions are still "
+    + "looked for and you are told, and you install them yourself.";
+  row.appendChild(turnsOff);
   const chosen = () => versions.find((one) => one.tag === box.value);
   const action = document.createElement("span");
   action.classList.add("update-version-action");
@@ -11621,6 +11657,8 @@ function renderUpdateVersions(said) {
     const one = chosen();
     action.innerHTML = "";
     notes.hidden = !one;
+    warning.hidden = !(one && one.older);
+    turnsOff.hidden = !(one && one.older && said.mode === "install");
     if (!one) return;
     renderUpdateVersions.chosen = one.tag;
     text.textContent = one.notes || "This release says nothing more about itself.";
@@ -11628,13 +11666,22 @@ function renderUpdateVersions(said) {
       const install = document.createElement("button");
       install.type = "button";
       install.classList.add("small");
-      install.textContent = "Install this version";
+      install.textContent = one.older ? "Go back to this version" : "Install this version";
       install.addEventListener("click", async () => {
         try {
-          renderUpdates(await api.post("/api/updates/install", { version: one.tag }));
+          const turnedOff = one.older && said.mode === "install";
+          const now = await api.post("/api/updates/install", { version: one.tag });
+          renderUpdates(now);
           // QUIETLY, LIKE EVERY UPDATE: made ready in the background, used
           // from the next start - or at once, with Restart now.
           toast(`Getting version ${one.tag} ready in the background`);
+          if (turnedOff) {
+            // The choice above shows what it now is, and a Save does not write the old one back.
+            const mode = $('[data-key="updates"]');
+            if (mode) mode.value = now.mode;
+            toast("Installing by itself is now off: you will be told of new versions "
+              + "and install them yourself.");
+          }
           refreshUpdatesUntilReady();
         } catch (err) {
           toast(err.message, "error");
@@ -12237,23 +12284,24 @@ function renderOcr(said) {
   if (!host) return;
   const languages = said.languages || [];
   const going = (said.downloading || {}).running;
-  // Each language not yet here and that can be added: a tick of its own, so
-  // only the ones wanted are downloaded.
+  // EACH ONE ON ITS OWN, AND ALL OF THEM WHEN THERE ARE SEVERAL (the user, 2026-11-05): however
+  // many languages the list comes to hold.
   const pick = (one) => !one.installed && one.can_add;
+  const wanting = languages.filter(pick);
+  const stops = going ? " disabled" : "";
   host.innerHTML = `${said.available ? `<p class="muted">Read with ${
       escapeHtml(said.engine || "")}.</p>`
     : `<p class="ocr-none">This computer has no OCR it can use yet: a model that reads
        text only cannot read pictures.</p>`}
-    <ul class="ocr-list">${languages.map((one) => `<li>${pick(one)
-      ? `<label class="ocr-pick"><input type="checkbox" data-ocr-code="${escapeHtml(one.code)}"${
-          going ? " disabled" : ""}>` : ""}
+    <ul class="ocr-list">${languages.map((one) => `<li>
       <span class="badge ${one.installed ? "ok" : "warn"}">${one.installed
-        ? "supported" : "not yet"}</span> ${escapeHtml(one.name)}${pick(one) ? "</label>" : ""}</li>`)
+        ? "supported" : "not yet"}</span> ${escapeHtml(one.name)}${pick(one)
+        ? ` <button type="button" class="small" data-ocr-add data-codes="${
+            escapeHtml(one.code)}"${stops}>${going ? "Downloading…" : "Download"}</button>` : ""}</li>`)
       .join("")}</ul>
-    ${languages.some(pick) ? `<button type="button" class="small" data-ocr-add disabled>${going
-      ? "Downloading…" : "Download the ticked languages"}</button>
-      <span class="muted ocr-pick-note">Tick the ones you want - each is downloaded on its
-        own.</span>` : ""}
+    ${wanting.length > 1 ? `<button type="button" class="small" data-ocr-add data-codes="${
+      escapeHtml(wanting.map((one) => one.code).join(","))}"${stops}>${
+      going ? "Downloading…" : "Download all languages"}</button>` : ""}
     ${said.how ? `<p class="muted ocr-how">${escapeHtml(said.how)}</p>` : ""}
     ${(said.downloading || {}).note ? `<p class="muted">${escapeHtml(said.downloading.note)}</p>`
       : ""}
@@ -12261,26 +12309,11 @@ function renderOcr(said) {
       escapeHtml(said.downloading.error)}</p>` : ""}`;
 }
 
-function ocrTicked() {
-  return $$("#ocr-languages [data-ocr-code]:checked").map((box) => box.dataset.ocrCode);
-}
-
-document.addEventListener("change", (event) => {
-  if (!event.target.closest?.("#ocr-languages [data-ocr-code]")) return;
-  const add = $("#ocr-languages [data-ocr-add]");
-  const ticked = ocrTicked();
-  if (!add) return;
-  add.disabled = !ticked.length;
-  add.textContent = ticked.length
-    ? `Download ${ticked.length === 1 ? "1 language" : `${ticked.length} languages`}`
-    : "Download the ticked languages";
-});
-
 document.addEventListener("click", async (event) => {
+  // ALL OF THEM AT ONCE (the user, 2026-11-05): one yes from the administrator for the lot.
   const add = event.target.closest?.("[data-ocr-add]");
   if (!add) return;
-  const codes = ocrTicked();
-  if (!codes.length) return;
+  const codes = add.dataset.codes.split(",");
   add.disabled = true;
   try {
     const said = await api.post("/api/ocr/add", { codes });
@@ -12390,17 +12423,40 @@ const PRIVACY_LISTENING = {
 const settingsEdit = { pending: {}, labels: {}, hostOf: {} };
 
 /* The page's header is sticky and its height changes with the window (its
-   tabs wrap): kept as --header-h, for what sits just under it. */
+   tabs wrap): kept as --header-h, for what sits just under it. Down the left of the page
+   (look.css) nothing sits under it. */
 (() => {
   // A page with no document to measure (a script read on its own) has none.
   if (typeof document === "undefined" || typeof document.querySelector !== "function") return;
   const header = document.querySelector("body > header, header");
   if (!header || !document.documentElement) return;
   const said = () => document.documentElement.style.setProperty(
-    "--header-h", `${header.offsetHeight}px`);
+    "--header-h", getComputedStyle(header).position === "fixed" ? "0px"
+      : `${header.offsetHeight}px`);
   said();
   if (typeof ResizeObserver === "function") new ResizeObserver(said).observe(header);
   else window.addEventListener("resize", said);
+})();
+
+/* THE PANELS' LIST FOLDS AWAY (the user, 2026-11-05), as the chat's own list does: its button stays
+   at the top left, and it is left as it was the next time, in this browser. */
+(() => {
+  if (typeof document === "undefined" || typeof document.getElementById !== "function") return;
+  const toggle = document.getElementById("side-toggle");
+  if (!toggle) return;
+  const said = () => {
+    const closed = document.documentElement.classList.contains("side-closed");
+    const words = closed ? "Open the sidebar" : "Close the sidebar";
+    toggle.setAttribute("aria-label", words);
+    toggle.title = words;
+    toggle.setAttribute("aria-expanded", String(!closed));
+  };
+  toggle.addEventListener("click", () => {
+    const closed = document.documentElement.classList.toggle("side-closed");
+    try { localStorage.setItem("side-closed", String(closed)); } catch (_) { /* kept for this page */ }
+    said();
+  });
+  said();
 })();
 
 function settingsPendingIn(hostId) {
@@ -20100,70 +20156,9 @@ document.addEventListener("change", async (event) => {
   box.disabled = false;
 });
 
-/* EVERY PANEL ITS OWN SIZE OF WORDS (the user, 2026-11-04: "每个panel都支持单独的字体size缩放，并且作为
-   implicit setting保存"): Ctrl with the wheel, or with + - and 0, the pointer on it; the rest of the
-   page stays as it is. Kept by the application, in no page of Settings, a moment after it
-   stops; a panel drawn again takes its size back. */
-// Projects, Work assigned and To do are panels of their own, though they share a card; the
-// head of Projects and its picture are the one panel. An event opened is one too.
-const PANEL_OF_WORDS = ".card, .pj-card, #chat, #ov-todo, #ov-assigned, .ov-tasks-intro, #ov-tasks, "
-  + "#event-detail";
-const panelZooms = {};
-const panelZoomSaves = {};
-
-function panelKey(panel) {
-  if (panel.classList.contains("pj-card")) return "project-card";
-  if (panel.matches(".ov-tasks-intro, #ov-tasks")) return "ov-projects";
-  if (panel.id) return panel.id;
-  const tab = panel.closest(".tab");
-  return `${tab ? tab.id : "page"}:${tab ? [...tab.querySelectorAll(".card")].indexOf(panel) : 0}`;
-}
-
-function showPanelZooms() {
-  $$(PANEL_OF_WORDS).forEach((panel) => {
-    const zoom = panelZooms[panelKey(panel)];
-    panel.style.zoom = zoom && zoom !== 1 ? String(zoom) : "";
-  });
-}
-
-function zoomPanel(panel, to) {
-  const key = panelKey(panel);
-  const zoom = Math.round(Math.min(2.2, Math.max(0.7, to)) * 100) / 100;
-  panelZooms[key] = zoom;
-  showPanelZooms();
-  clearTimeout(panelZoomSaves[key]);
-  panelZoomSaves[key] = setTimeout(() => {
-    api.post("/api/panel_zooms", { panel: key, zoom }).catch(() => {});
-  }, 500);
-}
-
-document.addEventListener("wheel", (event) => {
-  const panel = event.ctrlKey && event.target.closest && event.target.closest(PANEL_OF_WORDS);
-  if (!panel) return;
-  event.preventDefault();
-  zoomPanel(panel, (panelZooms[panelKey(panel)] || 1) + (event.deltaY < 0 ? 0.1 : -0.1));
-}, { passive: false });
-
-document.addEventListener("keydown", (event) => {
-  if (!event.ctrlKey || !["+", "=", "-", "0"].includes(event.key)) return;
-  const panel = [...document.querySelectorAll(":hover")].reverse()
-    .find((one) => one.matches(PANEL_OF_WORDS));
-  if (!panel) return;
-  event.preventDefault();
-  const now = panelZooms[panelKey(panel)] || 1;
-  zoomPanel(panel, event.key === "0" ? 1 : now + (event.key === "-" ? -0.1 : 0.1));
-});
-
-(() => {
-  let due = null;
-  new MutationObserver(() => {
-    if (due === null) due = setTimeout(() => { due = null; showPanelZooms(); }, 120);
-  }).observe(document.documentElement, { childList: true, subtree: true });
-  api.get("/api/panel_zooms").then((said) => {
-    Object.assign(panelZooms, said.zooms || {});
-    showPanelZooms();
-  }).catch(() => {});
-})();
+/* THE PAGE ZOOMS AS A PAGE (the user, 2026-11-05: "不要每个panel独立，而是和Muse一样的缩放逻辑"): Ctrl +,
+   Ctrl -, Ctrl 0 and Ctrl with the wheel are the browser's own, for all of it at once, and it
+   remembers them. Nothing here stands between. */
 
 /* DROPPED ON ANOTHER (the user, 2026-11-04: "把一个task放到另一个task上，然后这个task暂时会空一行出现在另一个
    task底下 ... 我点确定之后就正常生效"): held under it, a step in, until Confirm. Nothing is
@@ -20267,15 +20262,82 @@ document.addEventListener("dragend", () => {
    and work assigned, as the state heartbeat linked them. */
 const PJ_OPEN_KINDS = { notification: "Notification", todo: "To do", assigned: "Work assigned" };
 
+/* STILL OPEN, BY KIND (the user, 2026-11-05: "同一类的放在一起，并且有go to 按钮可以到对应的界面"). */
 function pjOpenItems(one) {
   const items = one.open_items || [];
   if (!items.length) return "";
-  return `<div class="sb-card-part pj-open"><span class="event-label">Still open</span>
-    <ul>${items.map((item) => `<li><span class="muted">${
-      escapeHtml(PJ_OPEN_KINDS[item.kind] || item.kind)}</span> ${escapeHtml(item.text || "")}${
+  const kinds = [...new Set(["todo", "assigned", "notification", ...items.map((item) => item.kind)])];
+  const groups = kinds.map((kind) => {
+    const mine = items.filter((item) => item.kind === kind);
+    if (!mine.length) return "";
+    return `<p class="pj-open-kind">${escapeHtml(PJ_OPEN_KINDS[kind] || kind)}
+      <span class="muted">${mine.length}</span></p>
+    <ul>${mine.map((item) => `<li><span class="pj-open-text">${escapeHtml(item.text || "")}${
       item.detail ? `<span class="muted pj-open-detail">${escapeHtml(item.detail)}</span>` : ""
-    }</li>`).join("")}</ul></div>`;
+    }</span><button type="button" class="small secondary" data-pj-go="${escapeHtml(String(item.id))}"
+      data-pj-go-kind="${escapeHtml(String(kind))}">Go to</button></li>`).join("")}</ul>`;
+  }).join("");
+  return `<div class="sb-card-part pj-open"><span class="event-label">Still open</span>${groups}</div>`;
 }
+
+/* A NOTIFICATION, TO READ IT (the user, 2026-11-05: shown again with its buttons, it could only be
+   put off or closed): its entry on the calendar where it came from one, on the day it was told;
+   else its words alone. Nothing is answered by looking. */
+async function pjGoToNotification(id, button) {
+  const said = await api.get("/api/notifications?limit=200");
+  const found = (said.notifications || []).find((one) => one.id === id);
+  if (!found) {
+    toast("This notification is no longer waiting");
+    return;
+  }
+  let meta = {};
+  try {
+    meta = typeof found.metadata === "string" ? JSON.parse(found.metadata || "{}")
+      : (found.metadata || {});
+  } catch (_) { /* its words, then */ }
+  if (meta.task_id) {
+    const day = startOfDay(new Date(found.created_at));
+    calendarState.selected = day;
+    calendarState.anchor = day;
+    await loadCalendar();
+    const task = (calendarState.tasks || []).find((one) => one.id === meta.task_id
+      || one.occurrence_of === meta.task_id);
+    if (task) {
+      document.querySelector('#tabs button[data-tab="calendar"]')?.click();
+      await loadCalendar();
+      const chip = document.querySelector(`#calendar-surface [data-task="${CSS.escape(task.id)}"]`);
+      chip?.scrollIntoView({ block: "center" });
+      openTask(task.id, chip || document.querySelector("#calendar-surface"));
+      return;
+    }
+  }
+  openPopover(button, `<div class="event-head"><strong>${escapeHtml(found.title || "")}</strong></div>
+    <div class="event-detail-body"><p>${escapeHtml(found.message || "")}</p></div>`);
+}
+
+/* WHERE IT IS: a to-do or work assigned, its line on this page, marked for a moment (its list, in
+   a group folded away); a notification, to be read. */
+async function pjGoTo(kind, id, button) {
+  if (kind === "notification") {
+    await pjGoToNotification(id, button);
+    return;
+  }
+  const line = document.querySelector(`#ov-tasks-card [data-todo="${CSS.escape(id)}"]`);
+  const place = line || document.querySelector(kind === "assigned" ? "#ov-assigned" : "#ov-todo");
+  if (!place) return;
+  place.scrollIntoView({ block: "center", behavior: "smooth" });
+  place.classList.remove("xp-ref-flash");
+  void place.offsetWidth;                  // begun again, if it was marked a moment ago
+  place.classList.add("xp-ref-flash");
+}
+
+document.addEventListener("click", (event) => {
+  const go = event.target.closest && event.target.closest("[data-pj-go]");
+  if (!go) return;
+  event.preventDefault();
+  event.stopPropagation();
+  pjGoTo(go.dataset.pjGoKind, go.dataset.pjGo, go).catch((err) => toast(err.message, "error"));
+});
 
 /* THE USER'S OWN SAY, on a project's card and on each of its tasks. A name
    they write stays: later runs still say what it is and where it stands. What
@@ -20291,15 +20353,41 @@ function pjUserSay(kind, id, name) {
   </span>`;
 }
 
+/* WHEN, AND WHAT (the user, 2026-11-05: "Tasks (15) 改成在哪个时间段做什么（就是你现在鼠标放到一个地方出现的内容）"):
+   what a stroke of the picture says under the pointer, written out, the time first. The end's
+   day only when it is another. */
+function pjStretch(task) {
+  const start = Date.parse(task.starts_at || "");
+  const end = Date.parse(task.ends_at || "");
+  if (Number.isNaN(start) || Number.isNaN(end)) return pjWhen(task.starts_at || task.ends_at);
+  const clock = (at) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (clock(start) === clock(end)) return clock(start);
+  const sameDay = new Date(start).toDateString() === new Date(end).toDateString();
+  return `${clock(start)} - ${sameDay ? clock(end) : pjWhen(task.ends_at)}`;
+}
+
+/* A TIMELINE (the user, 2026-11-05: "没有那种时间轴的感觉"): newest first, each day said once, a
+   line down the left and a point at each stretch (look.css). */
 function pjTaskList(one) {
-  const tasks = one.tasks || [];
+  const at = (task) => Date.parse(task.starts_at || task.ends_at || "") || 0;
+  const tasks = [...(one.tasks || [])].sort((a, b) => at(b) - at(a));
   if (!tasks.length) return "";
-  return `<details class="pj-tasks" data-sb-open="pj-tasks-${escapeHtml(String(one.id))}">
-    <summary>Tasks (${tasks.length})</summary>
-    <ul>${tasks.map((task) => {
-      const title = task.title_display || task.title || "";
-      return `<li><span>${escapeHtml(title)}</span> ${pjUserSay("task", task.id, title)}</li>`;
-    }).join("")}</ul>
+  let day = "";
+  const rows = tasks.map((task) => {
+    const title = task.title_display || task.title || "";
+    const today = at(task) ? new Date(at(task)).toLocaleDateString([], { month: "short",
+                                                                         day: "numeric" }) : "";
+    const head = today && today !== day ? `<li class="pj-day">${escapeHtml(today)}</li>` : "";
+    day = today || day;
+    return `${head}<li class="pj-stretch"><span class="pj-when">${escapeHtml(pjStretch(task))}</span>
+      <span class="pj-what">${escapeHtml(title)}</span>
+      <span class="muted">${pjHours(task.minutes)}</span>
+      ${pjUserSay("task", task.id, title)}</li>`;
+  }).join("");
+  // Open at first; shut, it stays shut as the page is drawn again (stateBeatRemember).
+  return `<details class="pj-tasks" open data-sb-open="pj-tasks-${escapeHtml(String(one.id))}">
+    <summary class="event-label">What was done when</summary>
+    <ul>${rows}</ul>
   </details>`;
 }
 
@@ -21073,15 +21161,28 @@ function ovTodoBox() {
   // with a Yes first - not ticked and kept.
   const open = ovTodos.filter((one) => !one.done_at);
   const asking = delegateState.removing;
-  const items = ovGroupedItems("todo", open, (one) => `<li class="ov-todo-item" data-todo="${escapeHtml(one.id)}">
+  const items = ovGroupedItems("todo", open, (one) => delegateState.editing === one.id
+    ? `<li class="ov-todo-item" data-todo="${escapeHtml(one.id)}">
+    <form class="ov-todo-add-form" data-todo-edit-form>
+      <input type="text" data-todo-edit-text maxlength="300" placeholder="What to do" value="${
+        escapeHtml(one.text)}">
+      <input type="text" data-todo-edit-detail maxlength="1000" placeholder="Details (optional)" value="${
+        escapeHtml(one.detail || "")}">
+      <span class="ov-todo-add-buttons"><button type="submit" class="small">Save</button>
+        <button type="button" class="small secondary" data-todo-edit-cancel>Cancel</button></span>
+    </form></li>`
+    : `<li class="ov-todo-item" data-todo="${escapeHtml(one.id)}">
     <span class="ov-todo-text">${escapeHtml(one.text)}</span>${
       one.detail ? `<span class="muted ov-todo-detail">${escapeHtml(one.detail)}</span>` : ""}${
       ovPartOf(one)}
-    <span class="ov-todo-actions">${ovTodoWork(one)}
+    <span class="ov-todo-actions">${ovTodoWork(one)}${
+      delegateState.opened && delegateState.opened.has(one.id)
+        ? ` <button type="button" class="small ov-todo-done">Mark as done</button>` : ""}
     ${asking === one.id ? `<span class="ov-todo-confirm">Remove it?
         <button type="button" class="small danger ov-todo-yes">Yes</button>
         <button type="button" class="small secondary ov-todo-no">No</button></span>`
-      : `<button type="button" class="small secondary ov-todo-delete">Remove</button>`}${
+      : `<button type="button" class="small secondary ov-todo-edit">Edit</button>
+        <button type="button" class="small secondary ov-todo-delete">Remove</button>`}${
       ovGroups.todo ? ` <button type="button" class="small secondary" data-group-move="${
         escapeHtml(one.id)}" data-group-list="todo">Move</button>` : ""}
     </span>${ovTodoTracked(one)}</li>`);
@@ -21131,6 +21232,8 @@ function ovPlaceTodos() {
   }
   const html = ovTodoBox();
   if (ovTodoDrawn === html && main.firstChild) return;
+  // Being edited, it is left as it is: what is being written stays.
+  if (delegateState.editing && main.querySelector("[data-todo-edit-form]")) return;
   const list = main.querySelector(".ov-todo-list");
   const scrolled = list ? list.scrollTop : 0;
   // The heading on its line, beside the button; the rest under the box.
@@ -21206,6 +21309,36 @@ document.addEventListener("submit", async (event) => {
     await loadTodos();
   } catch (err) { toast(err.message, "error"); }
   button.disabled = false;
+});
+
+/* A TO-DO'S WORDS CHANGED: saved; the server groups the list again, and the page follows. */
+document.addEventListener("submit", async (event) => {
+  const form = event.target.closest && event.target.closest("[data-todo-edit-form]");
+  if (!form) return;
+  event.preventDefault();
+  const text = form.querySelector("[data-todo-edit-text]").value.trim();
+  if (!text) {
+    form.querySelector("[data-todo-edit-text]").focus();
+    return;
+  }
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await api.post("/api/todos/edit", { id: form.closest("[data-todo]").dataset.todo, text,
+      detail: form.querySelector("[data-todo-edit-detail]").value.trim() });
+    delegateState.editing = null;
+    await loadTodos();
+  } catch (err) {
+    toast(err.message, "error");
+    button.disabled = false;
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !event.target.closest
+      || !event.target.closest("[data-todo-edit-form]")) return;
+  delegateState.editing = null;
+  ovPlaceTodos();
 });
 
 document.addEventListener("click", (event) => {
@@ -21289,6 +21422,13 @@ document.addEventListener("click", async (event) => {
       } else {
         await api.post("/api/work/reveal", { run: result.dataset.todoRun,
                                              path: result.dataset.todoResult, open: true });
+      }
+      const row = result.closest("[data-todo]");
+      if (row) {
+        delegateState.opened.add(row.dataset.todo);
+        ovTodoOpenedKeep();
+        ovTodoDrawn = "";
+        ovPlaceTodos();
       }
     } catch (err) {
       toast(err.message, "error");
@@ -21408,7 +21548,17 @@ document.addEventListener("click", async (event) => {
    agent; it collects the context (in a process of its own) and drafts a
    high-level plan, which the user reads, changes as they like, and starts -
    or cancels. Nothing runs before Start. */
-const delegateState = { draft: null, timer: null, icon: "", folders: [],
+/* THE TO-DOS WHOSE OUTCOME WAS OPENED (the user, 2026-11-05): each then has Mark as done. Remembered
+   here only: it says what to offer, and the list is the same without it. */
+function ovTodoOpenedKept() {
+  try { return new Set(JSON.parse(localStorage.getItem("ovTodoOpened") || "[]")); }
+  catch (_err) { return new Set(); }
+}
+function ovTodoOpenedKeep() {
+  try { localStorage.setItem("ovTodoOpened", JSON.stringify([...delegateState.opened])); }
+  catch (_err) { /* offered until the page is opened again */ }
+}
+const delegateState = { draft: null, timer: null, icon: "", folders: [], opened: ovTodoOpenedKept(),
                         tracking: new Set(), collapsed: new Set() };     // the to-dos whose work is opened out
 
 /* SOLO: the box alone, in a window of its own (platform_layer/app_window.py) -
@@ -22118,7 +22268,22 @@ document.addEventListener("click", async (event) => {
   const item = event.target.closest(".ov-todo-item[data-todo]");
   if (!item) return;
   // × asks first; Yes removes it, No leaves it.
-  if (event.target.closest(".ov-todo-delete")) {
+  if (event.target.closest(".ov-todo-edit")) {
+    delegateState.editing = item.dataset.todo;
+    ovPlaceTodos();
+    const box = $(`[data-todo="${CSS.escape(item.dataset.todo)}"] [data-todo-edit-text]`);
+    if (box) box.focus();
+  } else if (event.target.closest("[data-todo-edit-cancel]")) {
+    delegateState.editing = null;
+    ovPlaceTodos();
+  } else if (event.target.closest(".ov-todo-done")) {
+    try {
+      await api.post("/api/todos/done", { id: item.dataset.todo });
+      delegateState.opened.delete(item.dataset.todo);
+      ovTodoOpenedKeep();
+    } catch (err) { toast(err.message, "error"); }
+    loadTodos();
+  } else if (event.target.closest(".ov-todo-delete")) {
     delegateState.removing = item.dataset.todo;
     ovPlaceTodos();
   } else if (event.target.closest(".ov-todo-no")) {

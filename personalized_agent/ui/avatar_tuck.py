@@ -56,6 +56,29 @@ LEAP_GATHER, LEAP_AIR = 0.18, 0.60
 LEAP_BACK, LEAP_PAST = 0.06, 0.10
 
 
+#: ITS HEAD COMING OUT, THE LEAVES PUSHED ASIDE (the user, 2026-11-05: "你要拨动那个叶子"): how
+#: long they take, swaying past and settling.
+PART_SECONDS = 0.7
+#: HELD, THEY STRUGGLE (the user, 2026-11-05: "叶子摆动挣扎（被抓包的感觉）"): how far they
+#: swing, in degrees, how many times a second, and how far out of step the two halves are.
+FLAIL_DEGREES, FLAIL_PER_SECOND, FLAIL_OUT_OF_STEP = 17.0, 3.1, 2.2
+
+
+def parted(seconds: float, start: float, to: float) -> float:
+    """How far apart the leaves are, this long after they began to move from `start` to `to`."""
+    into = seconds / PART_SECONDS
+    if into >= 1:
+        return to
+    return start + (to - start) * (1 - math.exp(-5 * into) * math.cos(9 * into))
+
+
+def flail_at(seconds: float) -> Tuple[float, float]:
+    """Each half's swing, in degrees: never quite in time, so that it looks like a struggle."""
+    beat = 2 * math.pi * FLAIL_PER_SECOND * seconds
+    return (FLAIL_DEGREES * math.sin(beat),
+            FLAIL_DEGREES * math.sin(beat * 1.17 + FLAIL_OUT_OF_STEP))
+
+
 class Leap(NamedTuple):
     """A moment of jumping out: how far along, 0 in the side and 1 landed; how
     high, of the most; and its squash, below 1 flat."""

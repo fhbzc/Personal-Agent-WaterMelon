@@ -334,6 +334,8 @@ class ApiAccessTests(unittest.TestCase):
         fake.open_url = lambda fragment="/": desktop.DesktopAgent.open_url(fake, fragment)
         # Opened off the window's thread (2026-10-26) - here, at once.
         fake._off_this_thread = lambda what, name="": what()
+        # The page's own window, where there is no browser to make one: a tab.
+        fake._open_the_page = lambda: desktop.webbrowser.open(self.app.sign_in_url("/#overview"))
         with mock.patch.object(desktop.webbrowser, "open", opened.append):
             desktop.DesktopAgent.open_url(fake, "/#overview")
             desktop.DesktopAgent.open_chat(fake, "hello there")

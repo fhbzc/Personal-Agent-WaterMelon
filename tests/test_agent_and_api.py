@@ -167,7 +167,8 @@ class ApiTests(unittest.TestCase):
         self.agent.cleanup()
 
     def get(self, path: str):
-        with urllib.request.urlopen(keyed(self.app, f"{self.base}{path}"), timeout=30) as response:
+        # A ceiling: on a full run a request has waited more than thirty seconds for its turn.
+        with urllib.request.urlopen(keyed(self.app, f"{self.base}{path}"), timeout=120) as response:
             return json.loads(response.read().decode("utf-8"))
 
     def post(self, path: str, payload: dict):
@@ -254,8 +255,7 @@ class ApiTests(unittest.TestCase):
     def test_static_ui_is_served(self) -> None:
         with urllib.request.urlopen(f"{self.base}/", timeout=10) as response:
             body = response.read().decode("utf-8")
-        from personalized_agent.version import APP_NAME
-        self.assertIn(f"<title>{APP_NAME}</title>", body)
+        self.assertIn("<title>WaterMelon</title>", body)
 
     def test_settings_roundtrip(self) -> None:
         payload = self.get("/api/settings")
@@ -353,7 +353,10 @@ class ApiTests(unittest.TestCase):
         started = time.perf_counter()
         self.get("/api/debugger")
         elapsed = time.perf_counter() - started
-        self.assertLess(elapsed, 8.0, f"/api/debugger took {elapsed:.1f}s")
+        # About four seconds on a quiet machine, the first time: imports and starting Codex's
+        # command, more than twice that on a full run. A call blocked on the network
+        # waits ten minutes (CALL_TIMEOUT_SECONDS), so this still catches it.
+        self.assertLess(elapsed, 30.0, f"/api/debugger took {elapsed:.1f}s")
 
     def test_debugger_snapshot_shape(self) -> None:
         snapshot = self.get("/api/debugger")

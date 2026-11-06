@@ -19,13 +19,6 @@ it was written, in the language it was written in; it is only the way *in* that
 has to exist in the user's language. So records carry **keywords in more than
 one language**, and the index holds all of them.
 
-Eight, and why a limit at all
------------------------------
-Every additional language is more keywords on every record, a larger index, and
-more of each round's reply spent on them. Eight is enough to cover the
-languages a desktop user is realistically working in, and small enough that the
-cost of carrying the choice stays bounded.
-
 The default is the system's own language when it is one of these, because an
 agent that has to be configured before it can find anything is one that looks
 broken on first use.
@@ -59,8 +52,9 @@ LANGUAGES: Dict[str, Dict[str, str]] = {
 CODES = tuple(LANGUAGES)
 
 #: THE LANGUAGES THE AGENT SPEAKS TO THE USER IN, for now: what the display
-#: language may be set to. Another, set before, is read as English.
-DISPLAY_CODES = ("zh", "en", "es", "ja", "ko", "ru", "fr", "de", "it")
+#: language may be set to. Another, set before, is read as English. Chinese and English alone
+#: (the user, 2026-11-05): the tables of the others are in the history, from v0.3.0.
+DISPLAY_CODES = ("zh", "en")
 
 #: What records are written in when nothing says otherwise. Keywords are always
 #: carried in this as well as in the user's language, so that a record stays
@@ -202,63 +196,6 @@ def display_instruction(config: Any) -> str:
 #: word is found only as it is written.
 PINNED_LANGUAGES: List[str] = ["en"]
 
-#: How many languages a record's keywords may be written in.
-#:
-#: Every additional one is more keywords on every record, a larger index, and
-#: more of each round's reply spent producing them. Eight covers the languages
-#: a desktop user is realistically working in and keeps the cost of the choice
-#: bounded (section 12.2).
-MAX_KEYWORD_LANGUAGES = 8
-
-
-def chosen_languages(value: Any) -> List[str]:
-    """The languages a setting names, in the order they were chosen.
-
-    Accepts what the setting actually holds - a comma-separated string from
-    the multi-select, a list, or a single code from before it could be more
-    than one - because all three exist on disk somewhere.
-    """
-    if value is None:
-        return []
-    if isinstance(value, str):
-        parts = [piece.strip() for piece in value.replace(";", ",").split(",")]
-    elif isinstance(value, (list, tuple, set)):
-        parts = [str(piece).strip() for piece in value]
-    else:
-        parts = [str(value).strip()]
-    out: List[str] = []
-    for piece in parts:
-        if not piece:
-            continue
-        code = normalise(piece)
-        if code not in out:
-            out.append(code)
-    return out[:MAX_KEYWORD_LANGUAGES]
-
-
-def keyword_languages(value: Any) -> List[str]:
-    """The languages a record's keywords should be written in.
-
-    Two, fixed: the language records are written in, and the language the
-    user asks in. The first keeps a record findable by quoting it; the second
-    is how they will actually look for it.
-
-    Fixed rather than chosen because the template vocabulary is written out by
-    hand and has to be right in every language it claims, and a translation
-    nobody checked is worse than none. ``PINNED_LANGUAGES`` is the whole of
-    that decision.
-
-    More than one because a person is not monolingual on a schedule. Someone
-    who writes error reports in Chinese and reads papers in English searches
-    in both, and a record indexed only under one of them is missing exactly
-    half the time - which is not an error anyone sees, only an answer
-    assembled without the memory it should have had.
-    """
-    # Fixed for now, whatever is stored. The argument is still taken and the
-    # rest of the path still handles a list of any length, so lifting this is
-    # a one-line change rather than a redesign.
-    del value
-    return list(PINNED_LANGUAGES)
 
 
 # -- which language a model writes in: said in one way, at the call ---------------------------
@@ -363,7 +300,6 @@ def in_english(what: str) -> Language:
 
 
 __all__ = ["LANGUAGES", "CODES", "BASE", "DEFAULT", "normalise",
-           "system_language", "name_of", "label_of", "keyword_languages",
-           "chosen_languages", "display_language", "display_instruction",
-           "MAX_KEYWORD_LANGUAGES", "PINNED_LANGUAGES", "Language", "in_display",
+           "system_language", "name_of", "label_of", "display_language",
+           "display_instruction", "PINNED_LANGUAGES", "Language", "in_display",
            "in_english", "DISPLAY", "INTERNAL", "EVERYTHING_READ", "needs_english_copy"]

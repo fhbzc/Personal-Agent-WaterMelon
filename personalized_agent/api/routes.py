@@ -705,11 +705,11 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
 
     @route("POST", "/api/updates/install")
     def updates_install(request: Any) -> Any:
-        """The user's "Install this version" - one of the newer ones listed."""
+        """The user's "Install this version" - one of those listed, newer or to go back to."""
         version = str(request.get("version") or "")
         listed = {one.get("tag") for one in app.updater.status().get("versions") or []}
         if version and version not in listed:
-            raise ApiError("that version is not one of the newer releases", 404)
+            raise ApiError("that version is not one of those listed", 404)
         return app.updater.install_now(version)
 
     @route("GET", "/api/permissions")
@@ -3189,18 +3189,6 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         groups = list(request.require("groups"))
         return _user_say(lambda: app.state_heartbeat.merge_and_update(groups))
 
-    @route("GET", "/api/panel_zooms")
-    def panel_zooms(_request: Any) -> Any:
-        """Each panel's size of words (app.js): a setting no page shows."""
-        return {"zooms": dict(app.config.get("panel_zooms", {}) or {})}
-
-    @route("POST", "/api/panel_zooms")
-    def panel_zoom(request: Any) -> Any:
-        said = dict(app.config.get("panel_zooms", {}) or {})
-        said[str(request.require("panel"))[:120]] = min(2.2, max(0.7, float(request.require("zoom"))))
-        app.config.set("panel_zooms", said, internal=True)
-        return {"zooms": said}
-
     @route("POST", "/api/state_heartbeat/project/step")
     def state_project_step(request: Any) -> Any:
         return _user_say(lambda: app.state_heartbeat.tick_step(
@@ -3851,6 +3839,32 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             log.warning("what the user did could not be kept as a lesson", exc_info=True)
         return {"ok": True, "todo": todo}
 
+    @route("POST", "/api/todos/edit")
+    def todos_edit(request: Any) -> Any:
+        """ITS WORDS CHANGED (the user, 2026-11-04: "你的to do 要能够edit title 和detail (edit了之后
+        自动触发regroup)"): grouped again at once, not when the list is next looked at, and a
+        lesson, as what they add is."""
+        ident = str(request.require("id"))
+        text = str(request.get("text") or "").strip()
+        detail = str(request.get("detail") or "").strip()
+        if not text:
+            raise ApiError("a to-do needs its words", 400)
+        before = app.todos.get(ident)
+        todo = app.todos.edit(ident, text, detail)
+        if todo is None:
+            raise ApiError("no such to-do", 404)
+        if (before["text"], before["detail"]) == (todo["text"], todo["detail"]):
+            return {"ok": True, "todo": todo}
+        try:
+            app.lessons.the_user_did(
+                "edited_todo", f'Reworded a to-do: "{before["text"][:200]}" - '
+                f'{before["detail"][:200]!r} became "{todo["text"][:200]}" - '
+                f'{todo["detail"][:200]!r}.')
+        except Exception:
+            log.warning("what the user did could not be kept as a lesson", exc_info=True)
+        app.list_groups.notice("todo", app.todos.open())
+        return {"ok": True, "todo": todo}
+
     @route("POST", "/api/todos/tick")
     def todos_tick(request: Any) -> Any:
         done = request.get("done")
@@ -3860,10 +3874,36 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             raise ApiError("no such to-do", 404)
         return {"ok": True, "todo": todo}
 
+    def _todo_gone(todo: Dict[str, Any], how: str, action: str) -> None:
+        """What every to-do leaving the list has after it: a lesson, its list grouped again, and
+        the model's look at what it leaves behind (agent/feedback/after_todo.py)."""
+        try:
+            app.lessons.the_user_did(action, f'A to-do {how} by the user: "{todo["text"][:300]}".')
+        except Exception:
+            log.warning("what the user did could not be kept as a lesson", exc_info=True)
+        app.list_groups.notice("todo", app.todos.open())
+        app.after_todo.check(todo, how)
+
     @route("POST", "/api/todos/delete")
     def todos_delete(request: Any) -> Any:
-        if not app.todos.delete(str(request.require("id"))):
+        ident = str(request.require("id"))
+        todo = app.todos.get(ident)
+        if not app.todos.delete(ident):
             raise ApiError("no such to-do", 404)
+        _todo_gone(todo, "removed", "removed_todo")
+        return {"ok": True}
+
+    @route("POST", "/api/todos/done")
+    def todos_done(request: Any) -> Any:
+        """MARK AS DONE (the user, 2026-11-05: "用户mark as done 之后直接删掉这个to do"): said by the
+        user once they have opened what came of it, the one way the agent can know an email
+        went - and the to-do goes at once."""
+        ident = str(request.require("id"))
+        todo = app.todos.tick(ident, done=True, by="user")
+        if todo is None:
+            raise ApiError("no such to-do", 404)
+        app.todos.delete(ident)
+        _todo_gone(todo, "done", "done_todo")
         return {"ok": True}
 
     @route("POST", "/api/notifications/chat")

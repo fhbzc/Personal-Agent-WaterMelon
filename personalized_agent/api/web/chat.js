@@ -564,6 +564,37 @@ $("#chat-form").addEventListener("submit", async (event) => {
 });
 
 
+/* A LINK IN A REPLY (a classmate's, 2026-11-05: `[words](address)` as it was written): as a model
+   writes one, or an address alone, opened in a tab of its own. Web pages only; what ends a
+   sentence is not part of an address. As ui/chat_bubble.py reads them. */
+const CHAT_LINK = /\[([^\]\n]+)\]\((https?:\/\/(?:[^\s()]|\([^\s()]*\))+)\)|(https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+)/gi;
+
+function writeWithLinks(element, text) {
+  element.replaceChildren();
+  const words = (some) => { if (some) element.append(document.createTextNode(some)); };
+  let at = 0;
+  for (const found of String(text).matchAll(CHAT_LINK)) {
+    let address = found[2] || found[3];
+    let left = "";
+    if (!found[2]) {
+      let bare = address.replace(/[.,;:!?']+$/, "");
+      if (bare.endsWith(")") && !bare.includes("(")) bare = bare.slice(0, -1);
+      left = address.slice(bare.length);
+      address = bare;
+    }
+    words(String(text).slice(at, found.index));
+    const link = document.createElement("a");
+    link.href = address;
+    link.target = "_blank";
+    link.relList.add("noopener", "noreferrer");
+    link.textContent = found[1] || address;
+    element.append(link);
+    words(left);
+    at = found.index + found[0].length;
+  }
+  words(String(text).slice(at));
+}
+
 function appendMessage(role, text, messageId = "") {
   const el = document.createElement("div");
   el.className = `msg ${role}`;
@@ -572,7 +603,9 @@ function appendMessage(role, text, messageId = "") {
     // it - and "Ask about" appears. The answers sit under it, one level deep.
     el.dataset.message = messageId;
     el.innerHTML = `<div class="msg-text"></div><div class="followups"></div>`;
-    el.querySelector(".msg-text").textContent = text;
+    writeWithLinks(el.querySelector(".msg-text"), text);
+  } else if (role === "assistant") {
+    writeWithLinks(el, text);
   } else {
     el.textContent = text;
   }

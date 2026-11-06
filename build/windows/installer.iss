@@ -67,142 +67,52 @@ ShowLanguageDialog=yes
 [Languages]
 Name: "en"; MessagesFile: "compiler:Default.isl"
 Name: "zh"; MessagesFile: "ChineseSimplified.isl"
-Name: "es"; MessagesFile: "compiler:Languages\Spanish.isl"
-Name: "ja"; MessagesFile: "compiler:Languages\Japanese.isl"
-Name: "ko"; MessagesFile: "compiler:Languages\Korean.isl"
-Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
-Name: "fr"; MessagesFile: "compiler:Languages\French.isl"
-Name: "de"; MessagesFile: "compiler:Languages\German.isl"
-Name: "it"; MessagesFile: "compiler:Languages\Italian.isl"
 
 [CustomMessages]
 en.AutoUpdate=Install updates by themselves
 zh.AutoUpdate=自动安装更新
-es.AutoUpdate=Instalar las actualizaciones automáticamente
-ja.AutoUpdate=アップデートを自動でインストールする
-ko.AutoUpdate=업데이트 자동 설치
-ru.AutoUpdate=Устанавливать обновления автоматически
-fr.AutoUpdate=Installer les mises à jour automatiquement
-de.AutoUpdate=Updates automatisch installieren
-it.AutoUpdate=Installa gli aggiornamenti automaticamente
 en.UpdatesGroup=Updates:
 zh.UpdatesGroup=更新：
-es.UpdatesGroup=Actualizaciones:
-ja.UpdatesGroup=アップデート:
-ko.UpdatesGroup=업데이트:
-ru.UpdatesGroup=Обновления:
-fr.UpdatesGroup=Mises à jour :
-de.UpdatesGroup=Updates:
-it.UpdatesGroup=Aggiornamenti:
+en.OcrLanguages=Read Chinese and English in pictures (Windows asks for an administrator's yes, once)
+zh.OcrLanguages=识别图片中的中文和英文（Windows 会请求一次管理员确认）
+en.OcrGroup=Pictures:
+zh.OcrGroup=图片：
 en.StartAtLogin=Start %1 when I sign in
 zh.StartAtLogin=登录时启动 %1
-es.StartAtLogin=Iniciar %1 al iniciar sesión
-ja.StartAtLogin=サインイン時に %1 を起動する
-ko.StartAtLogin=로그인할 때 %1 시작
-ru.StartAtLogin=Запускать %1 при входе в систему
-fr.StartAtLogin=Démarrer %1 à l'ouverture de session
-de.StartAtLogin=%1 bei der Anmeldung starten
-it.StartAtLogin=Avvia %1 all'accesso
 en.StartAtLoginTaken=Another copy of %1 already starts when you sign in:%n%2%n%nUntick "Start %1 when I sign in" to finish, or turn it off in that copy first.
 zh.StartAtLoginTaken=已经有另一个 %1 设置了登录时启动：%n%2%n%n请取消勾选“登录时启动 %1”后再点完成，或者先在那个程序里关掉它。
-es.StartAtLoginTaken=Otra copia de %1 ya se inicia al iniciar sesión:%n%2%n%nDesmarca «Iniciar %1 al iniciar sesión» para terminar, o desactívalo primero en esa copia.
-ja.StartAtLoginTaken=別の %1 がすでにサインイン時に起動するよう設定されています：%n%2%n%n完了するには「サインイン時に %1 を起動する」のチェックを外すか、先にそちらで無効にしてください。
-ko.StartAtLoginTaken=다른 %1이(가) 이미 로그인할 때 시작되도록 설정되어 있습니다:%n%2%n%n마치려면 "로그인할 때 %1 시작" 선택을 해제하거나, 먼저 그쪽에서 끄세요.
-ru.StartAtLoginTaken=Другая копия %1 уже запускается при входе в систему:%n%2%n%nСнимите флажок «Запускать %1 при входе в систему», чтобы завершить, или сначала отключите его в той копии.
-fr.StartAtLoginTaken=Une autre copie de %1 démarre déjà à l'ouverture de session :%n%2%n%nDécochez « Démarrer %1 à l'ouverture de session » pour terminer, ou désactivez-le d'abord dans cette copie.
-de.StartAtLoginTaken=Eine andere Kopie von %1 startet bereits bei der Anmeldung:%n%2%n%nEntfernen Sie das Häkchen bei „%1 bei der Anmeldung starten“, um abzuschließen, oder schalten Sie es zuerst in jener Kopie aus.
-it.StartAtLoginTaken=Un'altra copia di %1 si avvia già all'accesso:%n%2%n%nTogli la spunta da «Avvia %1 all'accesso» per finire, oppure disattivalo prima in quella copia.
 en.DataTitle=Where to keep your data
 zh.DataTitle=数据保存位置
-es.DataTitle=Dónde guardar tus datos
-ja.DataTitle=データの保存先
-ko.DataTitle=데이터 저장 위치
-ru.DataTitle=Где хранить данные
-fr.DataTitle=Où conserver vos données
-de.DataTitle=Speicherort Ihrer Daten
-it.DataTitle=Dove conservare i dati
 en.DataDescription=Everything %1 learns and makes is kept in one folder.
 zh.DataDescription=%1 学到和产出的一切都保存在一个文件夹里。
-es.DataDescription=Todo lo que %1 aprende y crea se guarda en una carpeta.
-ja.DataDescription=%1 が学んだことと作ったものはすべて 1 つのフォルダーに保存されます。
-ko.DataDescription=%1이(가) 배우고 만드는 모든 것은 한 폴더에 보관됩니다.
-ru.DataDescription=Всё, что %1 узнаёт и создаёт, хранится в одной папке.
-fr.DataDescription=Tout ce que %1 apprend et crée est conservé dans un seul dossier.
-de.DataDescription=Alles, was %1 lernt und erstellt, liegt in einem Ordner.
-it.DataDescription=Tutto ciò che %1 impara e crea è conservato in una cartella.
 en.DataPrompt=Choose the folder for your data (workspace and internal). A different folder is a different agent, with its own calendar, contacts and keys. It cannot be changed later from the program. Choose an empty folder, or one that holds only an earlier Personal Agent WaterMelon's data.
 zh.DataPrompt=选择保存数据的文件夹（workspace 和 internal）。不同的文件夹就是不同的助手，各有自己的日历、联系人和密钥。安装后不能在程序里更改。请选择空文件夹，或者只有之前 Personal Agent WaterMelon 数据的文件夹。
-es.DataPrompt=Elige la carpeta para tus datos (workspace e internal). Otra carpeta es otro agente, con su propio calendario, contactos y claves. No se puede cambiar después desde el programa. Elige una carpeta vacía o una que solo contenga datos de un Personal Agent WaterMelon anterior.
-ja.DataPrompt=データ（workspace と internal）を保存するフォルダーを選んでください。フォルダーが違えば別のエージェントになり、カレンダー・連絡先・キーもそれぞれ別です。あとからプログラム内では変更できません。空のフォルダー、または以前の Personal Agent WaterMelon のデータだけがあるフォルダーを選んでください。
-ko.DataPrompt=데이터(workspace, internal)를 보관할 폴더를 선택하세요. 폴더가 다르면 다른 에이전트이며 캘린더, 연락처, 키도 따로입니다. 나중에 프로그램에서 바꿀 수 없습니다. 빈 폴더나 이전 Personal Agent WaterMelon의 데이터만 있는 폴더를 선택하세요.
-ru.DataPrompt=Выберите папку для данных (workspace и internal). Другая папка — это другой агент со своим календарём, контактами и ключами. Позже в программе её изменить нельзя. Выберите пустую папку или папку только с данными прежнего Personal Agent WaterMelon.
-fr.DataPrompt=Choisissez le dossier de vos données (workspace et internal). Un autre dossier est un autre agent, avec son propre calendrier, ses contacts et ses clés. Il ne peut pas être changé ensuite depuis le programme. Choisissez un dossier vide, ou qui ne contient que les données d'un Personal Agent WaterMelon précédent.
-de.DataPrompt=Wählen Sie den Ordner für Ihre Daten (workspace und internal). Ein anderer Ordner ist ein anderer Agent mit eigenem Kalender, eigenen Kontakten und Schlüsseln. Er kann später im Programm nicht geändert werden. Wählen Sie einen leeren Ordner oder einen, der nur Daten eines früheren Personal Agent WaterMelon enthält.
-it.DataPrompt=Scegli la cartella per i dati (workspace e internal). Una cartella diversa è un agente diverso, con calendario, contatti e chiavi propri. Non può essere cambiata dopo dal programma. Scegli una cartella vuota o che contenga solo i dati di un Personal Agent WaterMelon precedente.
 en.DataExisting=This folder already has data of %1:%n%n%2%n%nUse the data that is already there?%n%nChoose No to pick another folder.
 zh.DataExisting=这个文件夹里已经有 %1 的数据：%n%n%2%n%n要使用已有的数据吗？%n%n选“否”可以选择别的文件夹。
-es.DataExisting=Esta carpeta ya tiene datos de %1:%n%n%2%n%n¿Usar los datos que ya están ahí?%n%nElige No para escoger otra carpeta.
-ja.DataExisting=このフォルダーにはすでに %1 のデータがあります：%n%n%2%n%nこのデータを使いますか？%n%n別のフォルダーを選ぶには「いいえ」を選んでください。
-ko.DataExisting=이 폴더에는 이미 %1의 데이터가 있습니다:%n%n%2%n%n기존 데이터를 사용할까요?%n%n다른 폴더를 고르려면 '아니요'를 선택하세요.
-ru.DataExisting=В этой папке уже есть данные %1:%n%n%2%n%nИспользовать эти данные?%n%nВыберите «Нет», чтобы указать другую папку.
-fr.DataExisting=Ce dossier contient déjà des données de %1:%n%n%2%n%nUtiliser les données qui s'y trouvent?%n%nChoisissez Non pour prendre un autre dossier.
-de.DataExisting=Dieser Ordner enthält bereits Daten von %1:%n%n%2%n%nDie vorhandenen Daten verwenden?%n%nWählen Sie Nein, um einen anderen Ordner zu wählen.
-it.DataExisting=Questa cartella contiene già dati di %1:%n%n%2%n%nUsare i dati già presenti?%n%nScegli No per indicare un'altra cartella.
 en.DataProgramFiles=Choose a folder you can write to. This one needs administrator rights, and %1 works as you, without them.
 zh.DataProgramFiles=请选择一个你可以写入的文件夹。这个文件夹需要管理员权限才能写入，而 %1 以你的身份运行，没有这个权限。
-es.DataProgramFiles=Elige una carpeta en la que puedas escribir. Esta requiere permisos de administrador, y %1 funciona como tú, sin ellos.
-ja.DataProgramFiles=書き込みできるフォルダーを選んでください。このフォルダーへの書き込みには管理者権限が必要ですが、%1 は管理者権限なしであなたとして動作します。
-ko.DataProgramFiles=쓸 수 있는 폴더를 선택하세요. 이 폴더는 관리자 권한이 있어야 쓸 수 있는데, %1은(는) 관리자 권한 없이 사용자 권한으로 실행됩니다.
-ru.DataProgramFiles=Выберите папку, в которую можно писать. Для этой нужны права администратора, а %1 работает от вашего имени, без них.
-fr.DataProgramFiles=Choisissez un dossier où vous pouvez écrire. Celui-ci exige des droits d'administrateur, et %1 fonctionne en votre nom, sans eux.
-de.DataProgramFiles=Wählen Sie einen Ordner, in den Sie schreiben können. Für diesen sind Administratorrechte nötig, und %1 läuft als Sie, ohne diese Rechte.
-it.DataProgramFiles=Scegli una cartella in cui puoi scrivere. Questa richiede diritti di amministratore, e %1 funziona come te, senza di essi.
 en.DataFound=These folders already hold data of %1 (last used, size). Choose one to use it again:
 zh.DataFound=以下文件夹里已经有 %1 的数据（最后使用时间、大小）。选择一个即可继续使用：
-es.DataFound=Estas carpetas ya tienen datos de %1 (último uso, tamaño). Elige una para volver a usarla:
-ja.DataFound=次のフォルダーにはすでに %1 のデータがあります（最終使用日時、サイズ）。もう一度使うフォルダーを選んでください：
-ko.DataFound=다음 폴더에 이미 %1의 데이터가 있습니다(마지막 사용, 크기). 다시 사용할 폴더를 선택하세요:
-ru.DataFound=В этих папках уже есть данные %1 (последнее использование, размер). Выберите одну, чтобы снова её использовать:
-fr.DataFound=Ces dossiers contiennent déjà des données de %1 (dernière utilisation, taille). Choisissez-en un pour le réutiliser :
-de.DataFound=Diese Ordner enthalten bereits Daten von %1 (zuletzt verwendet, Größe). Wählen Sie einen, um ihn weiter zu verwenden:
-it.DataFound=Queste cartelle contengono già dati di %1 (ultimo uso, dimensione). Scegline una per usarla di nuovo:
 en.DataHoldsProgram=The data folder cannot be the program's own folder, or a folder the program is installed in:%n%n%1%n%nChoose another folder, for example a "data" folder inside the program's folder.
 zh.DataHoldsProgram=数据文件夹不能是程序本身的文件夹，也不能是包含程序的文件夹：%n%n%1%n%n请选择别的文件夹，例如程序文件夹里的 "data" 文件夹。
-es.DataHoldsProgram=La carpeta de datos no puede ser la carpeta del programa ni una carpeta que lo contenga:%n%n%1%n%nElige otra carpeta, por ejemplo una carpeta "data" dentro de la del programa.
-ja.DataHoldsProgram=データフォルダーには、プログラム自体のフォルダーや、プログラムが入っているフォルダーは使えません：%n%n%1%n%n別のフォルダー（たとえばプログラムのフォルダー内の "data" フォルダー）を選んでください。
-ko.DataHoldsProgram=데이터 폴더는 프로그램 자체의 폴더나 프로그램이 설치된 폴더를 포함하는 폴더일 수 없습니다:%n%n%1%n%n다른 폴더를 선택하세요. 예: 프로그램 폴더 안의 "data" 폴더.
-ru.DataHoldsProgram=Папка данных не может быть папкой самой программы или папкой, в которой программа установлена:%n%n%1%n%nВыберите другую папку, например папку "data" внутри папки программы.
-fr.DataHoldsProgram=Le dossier de données ne peut pas être le dossier du programme, ni un dossier qui le contient :%n%n%1%n%nChoisissez un autre dossier, par exemple un dossier "data" dans celui du programme.
-de.DataHoldsProgram=Der Datenordner darf weder der Ordner des Programms sein noch ein Ordner, der es enthält:%n%n%1%n%nWählen Sie einen anderen Ordner, zum Beispiel einen Ordner "data" im Ordner des Programms.
-it.DataHoldsProgram=La cartella dei dati non può essere la cartella del programma né una cartella che lo contiene:%n%n%1%n%nScegli un'altra cartella, per esempio una cartella "data" dentro quella del programma.
 en.DataEmpty=Choose a folder for your data.
 en.DataNotOnly=%1 already holds other things (%2).%n%nThe data folder must be empty, or hold only an earlier %3's data (workspace and internal): everything in it belongs to the agent and is never listened to, so work kept there would go unseen.%n%nChoose an empty folder.
 zh.DataEmpty=请选择保存数据的文件夹。
 zh.DataNotOnly=%1 里已经有别的东西（%2）。%n%n数据文件夹必须是空的，或者只有之前 %3 的数据（workspace 和 internal）：里面的一切都属于助手，而且永远不会被监听，放在那里的工作就看不到了。%n%n请选择一个空文件夹。
-es.DataEmpty=Elige una carpeta para tus datos.
-es.DataNotOnly=%1 ya contiene otras cosas (%2).%n%nLa carpeta de datos debe estar vacía o contener solo datos de un %3 anterior (workspace e internal): todo lo que hay en ella pertenece al agente y nunca se escucha, así que el trabajo guardado ahí pasaría desapercibido.%n%nElige una carpeta vacía.
-ja.DataEmpty=データの保存先フォルダーを選んでください。
-ja.DataNotOnly=%1 にはすでに別のもの（%2）があります。%n%nデータフォルダーは空か、以前の %3 のデータ（workspace と internal）だけを含む必要があります。中身はすべてエージェントのものとして扱われ、監視されないため、そこに置いた作業は記録されません。%n%n空のフォルダーを選んでください。
-ko.DataEmpty=데이터를 보관할 폴더를 선택하세요.
-ko.DataNotOnly=%1에는 이미 다른 것이 있습니다(%2).%n%n데이터 폴더는 비어 있거나 이전 %3의 데이터(workspace, internal)만 있어야 합니다. 그 안의 모든 것은 에이전트의 것으로 보고 감지하지 않으므로, 거기 둔 작업은 보이지 않게 됩니다.%n%n빈 폴더를 선택하세요.
-ru.DataEmpty=Выберите папку для данных.
-ru.DataNotOnly=В %1 уже есть другое (%2).%n%nПапка данных должна быть пустой или содержать только данные прежнего %3 (workspace и internal): всё в ней принадлежит агенту и не отслеживается, поэтому работа, хранящаяся там, останется незамеченной.%n%nВыберите пустую папку.
-fr.DataEmpty=Choisissez un dossier pour vos données.
-fr.DataNotOnly=%1 contient déjà d'autres éléments (%2).%n%nLe dossier de données doit être vide, ou ne contenir que les données d'un %3 précédent (workspace et internal): tout ce qu'il contient appartient à l'agent et n'est jamais écouté, donc le travail qui s'y trouve passerait inaperçu.%n%nChoisissez un dossier vide.
-de.DataEmpty=Wählen Sie einen Ordner für Ihre Daten.
-de.DataNotOnly=%1 enthält bereits andere Dinge (%2).%n%nDer Datenordner muss leer sein oder nur Daten eines früheren %3 enthalten (workspace und internal): Alles darin gehört dem Agenten und wird nie beobachtet, sodass dort abgelegte Arbeit unbemerkt bliebe.%n%nWählen Sie einen leeren Ordner.
-it.DataEmpty=Scegli una cartella per i dati.
-it.DataNotOnly=%1 contiene già altre cose (%2).%n%nLa cartella dei dati deve essere vuota o contenere solo i dati di un %3 precedente (workspace e internal): tutto ciò che contiene appartiene all'agente e non viene mai osservato, quindi il lavoro tenuto lì passerebbe inosservato.%n%nScegli una cartella vuota.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 ; UPDATES are had by themselves only if this is ticked; otherwise the user is
-; told and chooses the version (platform_layer/updater.py) - unticked by
-; default (the user, 2026-10-27). Either way an update is a quiet one: made
+; told and chooses the version (platform_layer/updater.py) - ticked by default
+; (the user, 2026-11-05: new installs only; an update keeps the user's own choice, below;
+; pre-releases are never had by themselves). Either way an update is a quiet one: made
 ; ready in the background, used from the next start, taken back by itself if
 ; it does not start (platform_layer/quiet_update.py). A reinstall remembers
 ; the box as it was left.
-Name: "autoupdate"; Description: "{cm:AutoUpdate}"; GroupDescription: "{cm:UpdatesGroup}"; Flags: unchecked
+Name: "autoupdate"; Description: "{cm:AutoUpdate}"; GroupDescription: "{cm:UpdatesGroup}"
+; THE LANGUAGES PICTURES ARE READ IN, ticked (the user, 2026-11-05): Windows' own parts, so its
+; administrator's yes, once. The installation itself still needs none; a no costs nothing.
+Name: "ocrlanguages"; Description: "{cm:OcrLanguages}"; GroupDescription: "{cm:OcrGroup}"
 
 [Files]
 Source: "{#MySourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -238,6 +148,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--display-language {language}"; Flags: runhidden waituntilterminated runasoriginaluser
 ; How updates are taken, as the box on the tasks page was left - not in an
 ; update, which keeps the user's own choice.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--add-ocr"; Flags: runhidden nowait runasoriginaluser; Tasks: ocrlanguages; Check: (not AnUpdate) and (not WizardSilent)
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--updates install"; Flags: runhidden waituntilterminated runasoriginaluser; Tasks: autoupdate; Check: not AnUpdate
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--updates ask"; Flags: runhidden waituntilterminated runasoriginaluser; Tasks: not autoupdate; Check: not AnUpdate
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--autostart on"; Description: "{cm:StartAtLogin,{#MyAppName}}"; Flags: postinstall runhidden waituntilterminated runasoriginaluser; Check: not AnUpdate

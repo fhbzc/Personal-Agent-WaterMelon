@@ -5,6 +5,7 @@ over it, done. The notification's own hover colours are left as they are."""
 
 from __future__ import annotations
 
+import gc
 import unittest
 
 import support  # noqa: F401
@@ -27,7 +28,6 @@ class PressedFeelTests(unittest.TestCase):
     def setUp(self) -> None:
         self.root = tk.Tk()
         self.root.geometry("+0+0")
-        self.addCleanup(self.root.destroy)
         self.done = []
         self.face = tk.Label(self.root, text="Got it", bg="#2f6fd6", padx=20, pady=10)
         self.face.pack()
@@ -36,6 +36,12 @@ class PressedFeelTests(unittest.TestCase):
         self.face.bind("<Leave>", lambda _e: self.face.configure(bg="#2f6fd6"))
         on_release(self.face, lambda: self.done.append(True))
         self.root.update()
+
+    def tearDown(self) -> None:
+        # Tk's objects let go of on its own thread: collected on a worker's, they end the process.
+        self.root.destroy()
+        del self.face, self.root
+        gc.collect()
 
     def bg(self) -> str:
         return str(self.face.cget("bg")).lower()

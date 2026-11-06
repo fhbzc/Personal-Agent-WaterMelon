@@ -149,6 +149,16 @@ def is_newer(tag: str, current: str = __version__) -> bool:
     return bool(theirs and ours and theirs > ours)
 
 
+#: THE OLDEST THAT CAN BE GONE BACK TO (the user, 2026-11-04: "会显示所有v0.3.0之后的版本，允许回滚
+#: 下载某个"): before it, no version knew it might be gone back to.
+BACK_AS_FAR_AS = (0, 3, 0)
+
+
+def can_go_back_to(tag: str, current: str = __version__) -> bool:
+    theirs, ours = version_of(tag), version_of(current)
+    return bool(theirs and ours and BACK_AS_FAR_AS <= theirs < ours)
+
+
 def how_installed() -> str:
     """"windows", "macos" or "appimage" when this copy can replace itself,
     else "" - and then it is only told."""
@@ -261,6 +271,14 @@ class Updater:
         self._for_you = False
 
     # -- the choice -----------------------------------------------------------
+    def installed_just_now(self) -> None:
+        """A NEW INSTALL HAS ITS UPDATES BY ITSELF (the user, 2026-11-05), where no installer's page
+        says so (a .dmg dragged in, an AppImage) and it can replace itself. Called on the first
+        start of a data folder only: nobody already installed is changed, and a choice the user
+        has made is theirs. Windows' is the box on its installer's page."""
+        if how_installed() in ("macos", "appimage") and not self.config.user_chose("updates"):
+            self.config.set("updates", "install")
+
     def mode(self) -> str:
         chosen = str(self.config.get("updates", DEFAULT_MODE) or DEFAULT_MODE)
         return chosen if chosen in MODES else DEFAULT_MODE
@@ -315,7 +333,15 @@ class Updater:
         return self.status()
 
     def install_now(self, version: str = "") -> Dict[str, Any]:
-        """The user's "Install this version" - the newest when none is said."""
+        """The user's "Install this version" - the newest when none is said.
+
+        GOING BACK TURNS OFF INSTALLING BY ITSELF (the user, 2026-11-05: "一旦是回滚的 ... 自动取消
+        自动安装设置，改成自动detect 提醒，用户手动安装"), or the newer one would come straight
+        back. In the setting, which every version reads, v0.3.0 too; and now rather than at
+        the change of version, so a newer one out meanwhile does not replace what was made
+        ready. Settings says so before it is chosen."""
+        if version and can_go_back_to(version) and self.mode() == "install":
+            self.config.set("updates", "ask")
         self._set(asked_to_install=str(version or "") or True)
         self._wake.set()
         return self.status()
@@ -376,6 +402,8 @@ class Updater:
         releases = [one for one in listed if not one["prerelease"]]
         newer = [one for one in releases if is_newer(one["tag"])]
         offered = [one for one in listed if is_newer(one["tag"])]
+        # What the user may choose: those, and the older ones to go back to.
+        choosable = [one for one in listed if is_newer(one["tag"]) or can_go_back_to(one["tag"])]
         kind = how_installed()
 
         def installable(release: Dict[str, Any]) -> bool:
@@ -391,21 +419,22 @@ class Updater:
                   latest=(newest or (releases[0] if releases else {})).get("tag", ""),
                   newer=bool(newer), page=newest["page"] if newest else "", doing="",
                   can_install=bool(newest and installable(newest)),
-                  # Every version newer than this one, each to be chosen -
-                  # pre-releases among them, said to be.
+                  # Every version to be chosen - pre-releases among them and
+                  # older ones, said to be.
                   versions=[{"tag": one["tag"], "published": one["published"],
                              "notes": one["notes"], "page": one["page"],
                              "prerelease": one["prerelease"],
-                             "can_install": installable(one)} for one in offered])
-        if not offered:
-            return self.status()
+                             "older": not is_newer(one["tag"]),
+                             "can_install": installable(one)} for one in choosable])
         asked = self.state.get("asked_to_install")
+        if not offered and not (asked and asked is not True):
+            return self.status()
         if carried_on is not None and not (asked and asked is not True
                                            and asked != carried_on["tag"]):
             chosen: Optional[Dict[str, Any]] = carried_on
         elif asked and asked is not True:
             # The one the user chose - a pre-release only ever so.
-            chosen = next((one for one in offered if one["tag"] == asked), None)
+            chosen = next((one for one in choosable if one["tag"] == asked), None)
         elif newest and (self.mode() == "install" or asked):
             chosen = newest
         else:
@@ -493,8 +522,16 @@ class Updater:
                 if old.is_dir() and old.name != tag:
                     shutil.rmtree(old, ignore_errors=True)
         here.mkdir(parents=True, exist_ok=True)
-        (here / UNDER_WAY).write_text(json.dumps({"tag": tag, "name": name}), encoding="utf-8")
         target = here / name
+        # HERE WHOLE ALREADY (the user, 2026-11-05: "好像每次都要重新下载"): the program closed
+        # while it was being unpacked left it here, and only a `.part` was looked for, so
+        # all of it came down again. Checked as anything that comes down is.
+        if target.exists():
+            if _hashed(target)[0].hexdigest() == expected:
+                self._set(download=None)
+                return target
+            target.unlink()
+        (here / UNDER_WAY).write_text(json.dumps({"tag": tag, "name": name}), encoding="utf-8")
         partial = here / (name + ".part")
         # What came down before - this time, or before the agent was opened
         # again - is kept and carried on from.
@@ -668,8 +705,12 @@ class Updater:
         quiet._write(self.folder / quiet.STAGED, {
             "tag": tag, "kind": kind, "dir": str(target),
             "parts": [str(one) for one in parts], "live_parts": [str(one) for one in live_parts],
-            "notes": release.get("notes", ""), "page": release.get("page", "")})
-        shutil.rmtree(self.folder / tag, ignore_errors=True)
+            "notes": release.get("notes", ""), "page": release.get("page", ""),
+            "back": not is_newer(tag)})
+        # What came down goes - but for an older one, kept to go back to it again with no
+        # download: one at most, the next download lets it go.
+        if is_newer(tag):
+            shutil.rmtree(self.folder / tag, ignore_errors=True)
         self._set(doing="", ready=tag, ready_notes=release.get("notes", ""))
 
     def take_up_now(self) -> None:

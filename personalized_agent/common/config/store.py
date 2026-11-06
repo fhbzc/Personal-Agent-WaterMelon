@@ -394,6 +394,10 @@ class ConfigStore:
         return applied
 
     # -- helpers ------------------------------------------------------------
+    def user_chose(self, key: str) -> bool:
+        """Whether this is a value the user has chosen, not a default of ours."""
+        return key in self._user_defaults
+
     def lines(self, key: str) -> List[str]:
         """Read a multiline setting as a list of trimmed, non empty lines."""
         raw = self.get(key) or ""

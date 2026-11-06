@@ -1052,6 +1052,12 @@ class ConnectionsRound:
                    and one.get("vector")],
             disliked=[one["vector"] for one in examples if one["action"] == "less"
                       and one.get("vector")])
+        reserve = getattr(self, "reserve", None)
+        if reserve is not None:
+            try:
+                reserve.from_the_issue(stories, picked, seen)
+            except Exception:
+                log.warning("what the issue left over was not kept", exc_info=True)
         return picked, paper
 
     def _needs(self, used: Dict[str, int], work: str, today: str) -> List[Dict[str, Any]]:

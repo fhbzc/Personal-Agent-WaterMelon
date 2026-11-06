@@ -76,6 +76,11 @@ HANGING_FACE_Y = 78
 TUCK_SHIFT = 30
 #: How far past the side of the screen the leaves holding on to it go.
 GRIP_PAST = 4
+#: PARTED (the user, 2026-11-05: "感觉是拨开叶子丛出现的"): its head coming out, each half of the
+#: bed goes aside by this much and swings by this many degrees, its tips round the head.
+PART_APART, PART_SWING = 10.0, 24.0
+#: Where each half of the bed turns from: its stems.
+LEFT_STEMS, RIGHT_STEMS = (50.0, 97.0), (78.0, 97.0)
 
 #: What the page needs to draw the same face (api: GET /api/characters).
 RIG = {"kind": NAME, "box": 128, "eyes": [list(one) for one in EYES], "mouth": list(MOUTH),
@@ -350,7 +355,8 @@ class Watermelon:
               hop: float = 0.0, size: int = 128, facing: str = "left",
               smile: Any = None, tuck: float = 0.0, lean: float = 0.0,
               grip: float = 0.0, reach: float = 34.0, edge: str = "side",
-              turn: float = 0.0) -> Any:
+              turn: float = 0.0, part: float = 0.0,
+              flail: Tuple[float, float] = (0.0, 0.0)) -> Any:
         """One frame, `size` pixels square. `squash` below 1 flattens the
         body on the ground and above 1 stretches it; `hop` lifts it.
         `facing`: "left", as it is drawn, or "right" - the whole of it turned
@@ -370,7 +376,7 @@ class Watermelon:
         from PIL import Image, ImageOps
         if facing == "right":
             turned = self.frame(mood, (-look[0], look[1]), blink, t, squash, hop, size, "left",
-                                smile, tuck, -lean, grip, reach, edge, turn)
+                                smile, tuck, -lean, grip, reach, edge, turn, part, flail)
             return ImageOps.mirror(turned)
         body = self.body.copy()
         if turn:
@@ -414,7 +420,8 @@ class Watermelon:
             shift = int(tuck * TUCK_SHIFT * self.scale)
             layer.paste(body, {"top": (0, -shift), "bottom": (0, shift)}.get(edge, (shift, 0)), body)
             body = layer
-        leaves = self.leaves_at(grip, reach, edge) if grip else self.leaves
+        leaves = self.leaves_moved(part, flail) if part or any(flail) else self.leaves
+        leaves = self.leaves_at(grip, reach, edge, leaves) if grip else leaves
         # On end it is as tall as they are: they hold on in front of it.
         out = Image.alpha_composite(body, leaves) if turn > 0.5 else \
             Image.alpha_composite(leaves, body)
@@ -422,7 +429,26 @@ class Watermelon:
         return out.resize((size, size), Image.LANCZOS) if size != n else out
 
 
-    def leaves_at(self, grip: float, reach: float, edge: str = "side") -> Any:
+    def leaves_moved(self, part: float = 0.0, flail: Tuple[float, float] = (0.0, 0.0)) -> Any:
+        """The two halves of the bed moved on their stems: `part`, 0 to 1 and a little past it as
+        they sway, apart for its head; `flail`, degrees, each half's own, held and struggling.
+        No leaf crosses the middle, so the picture is cut there - a package's too."""
+        from PIL import Image
+        n, scale = self.leaves.size[0], self.scale
+        out = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+        halves = (((0, 0, n // 2, n), LEFT_STEMS, 1, flail[0]),
+                  ((n // 2, 0, n, n), RIGHT_STEMS, -1, flail[1]))
+        for box, stems, way, more in halves:
+            half = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+            half.paste(self.leaves.crop(box), box[:2])
+            half = half.rotate(way * part * PART_SWING + more, resample=Image.BILINEAR,
+                               center=(stems[0] * scale, stems[1] * scale))
+            moved = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+            moved.paste(half, (-way * int(part * PART_APART * scale), 0))
+            out = Image.alpha_composite(out, moved)
+        return out
+
+    def leaves_at(self, grip: float, reach: float, edge: str = "side", leaves: Any = None) -> Any:
         """The leaves turned from their bed to lie along a side of the screen,
         `reach` units in - their stems past it, as if holding on. At the top
         they are as they grow, stems up; at the bottom, turned over."""
@@ -430,7 +456,8 @@ class Watermelon:
         n, scale = self.leaves.size[0], self.scale
         turn = {"side": -90, "top": 0, "bottom": 180}[edge]
         middle = (n / 2, n / 2)
-        turned = self.leaves.rotate(turn * grip, resample=Image.BILINEAR, center=middle)
+        turned = (self.leaves if leaves is None else leaves).rotate(
+            turn * grip, resample=Image.BILINEAR, center=middle)
         box = self._leaf_boxes.get(edge)
         if box is None:                  # the same for every frame at that edge
             box = self._leaf_boxes[edge] = self.leaves.rotate(

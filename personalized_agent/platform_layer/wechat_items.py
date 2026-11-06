@@ -119,9 +119,37 @@ def _bubble_in(fill: Any, region: Sequence[int], low: int, high: int) -> Optiona
     return (first + left, upper + top, last + left, lower + top, colour)
 
 
+def _steady_avatar(picture: Any, box: Sequence[int]) -> Optional[str]:
+    """RECORDED ONLY, to be compared (the user, 2026-11-05: "先只记录、不改变分组"; scripts/
+    wechat_avatar_compare.py). `_avatar`'s fingerprint is 8 bits off for one pixel of shift, and
+    its limit is 5, so one person read as five. This one looks at the middle of the picture,
+    averaged to 6 x 6: measured on made-up pictures, 6 of 36 bits at two pixels of shift, and
+    18 between different pictures. Nothing decides by it yet."""
+    from PIL import Image
+    x, y, w, h = map(int, box)
+    if w < 12 or h < 12 or not 0.9 <= w / h <= 1.1:
+        return None                           # part of one: not fit to be compared
+    dx, dy = round(w * .15), round(h * .15)
+    crop = picture.crop((x + dx, y + dy, x + w - dx, y + h - dy)).resize((6, 6), Image.Resampling.BOX)
+    grey = list(crop.convert("L").getdata())
+    mean = sum(grey) / len(grey)
+    bits = 0
+    for one in grey:
+        bits = (bits << 1) | (one > mean)
+    colors = list(crop.getdata())
+    average = (int(sum(c[i] for c in colors) / len(colors)) // 32 for i in range(3))
+    return f"{bits:09x}:" + ",".join(map(str, average))
+
+
 def _edge_avatar(picture: Any, fill: Any, region: Sequence[int], low: int, high: int,
                  side: str, extent: int, background) -> Optional[str]:
-    """The avatar at one edge of a message's band: the first block of
+    box = _edge_box(fill, region, low, high, side, extent, background)
+    return _avatar(picture, box) if box else None
+
+
+def _edge_box(fill: Any, region: Sequence[int], low: int, high: int, side: str, extent: int,
+              background) -> Optional[List[int]]:
+    """Where the avatar is at one edge of a message's band: the first block of
     pixels unlike the background from that edge inward, if it is square -
     so a photograph sent beside it is not taken for part of it."""
     import numpy as np
@@ -152,7 +180,7 @@ def _edge_avatar(picture: Any, fill: Any, region: Sequence[int], low: int, high:
     if not .7 <= (last - first) / max(1, rows[-1] + 1 - rows[0]) <= 1.4:
         return None
     x0 = first + left if side == "left" else region[2] - extent + first
-    return _avatar(picture, [x0, a + top + int(rows[0]), last - first, int(rows[-1]) + 1 - int(rows[0])])
+    return [x0, a + top + int(rows[0]), last - first, int(rows[-1]) + 1 - int(rows[0])]
 
 
 def parse_wechat_items(image: Any, chat: Sequence[float], items: List[Dict[str, Any]],
@@ -179,7 +207,7 @@ def parse_wechat_items(image: Any, chat: Sequence[float], items: List[Dict[str, 
             ("\n".join(str(item.get("text") or "") for item in items)).encode("utf-8")
             + picture.tobytes()[::97], digest_size=16).hexdigest(),
         "layout_status": "unrecognized", "layout_reason": "message_list_not_found",
-        "peer_name": None, "peer_avatar": None, "self_avatar": None,
+        "peer_name": None, "peer_avatar": None, "peer_avatar_steady": None, "self_avatar": None,
         "conversation_type": "unknown", "messages": [],
         "capture_scope": "visible_text_only", "completeness_status": "partial",
         "unresolved_text": "", "diagnostics": {"list_items": len(items), "bubble_candidates": 0}}
@@ -195,7 +223,13 @@ def parse_wechat_items(image: Any, chat: Sequence[float], items: List[Dict[str, 
                 and y + hh <= top + 2):
             names.append((y, x, said))
     if not names:
+        # THE WORDS KEPT, whose they are not said (wechat_store marks them so): a contact's answer
+        # was lost here with the reading (2026-11-04).
         result["layout_reason"] = "chat_header_not_readable"
+        result["unresolved_text"] = "\n".join(
+            str(item.get("text") or "").strip() for item in sorted(
+                items, key=lambda one: (one.get("box") or (0, 0))[1])
+            if str(item.get("text") or "").strip())[:16000]
         return result
     name = sorted(names)[0][2][:200]
     result["peer_name"] = name
@@ -249,6 +283,10 @@ def parse_wechat_items(image: Any, chat: Sequence[float], items: List[Dict[str, 
             continue
         if role == "other" and other_avatar:
             result["peer_avatar"] = result["peer_avatar"] or other_avatar
+            # Only of a message whole in the list: one cut by its top has part of an avatar.
+            if not result["peer_avatar_steady"] and y >= top:
+                box_now = _edge_box(fill, region, int(low), int(high), "left", extent, background)
+                result["peer_avatar_steady"] = _steady_avatar(picture, box_now) if box_now else None
         if role == "self" and self_avatar:
             result["self_avatar"] = result["self_avatar"] or self_avatar
         a, b, c, d = box

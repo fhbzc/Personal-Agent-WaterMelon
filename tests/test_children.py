@@ -172,6 +172,17 @@ class TheInputIsThereBeforeItIsReadTests(unittest.TestCase):
     READ_LATE = ("import sys, time; time.sleep(3.5); data = sys.stdin.buffer.read(); "
                  "print(len(data))")
 
+    def setUp(self) -> None:
+        # A FOLDER OF ITS OWN: in the shared one, a file another test process has in use at
+        # that moment looked like one left behind here.
+        import tempfile
+        from unittest import mock
+        folder = tempfile.TemporaryDirectory(prefix="pa-children-")
+        self.addCleanup(folder.cleanup)
+        held = mock.patch.object(tempfile, "tempdir", folder.name)
+        held.start()
+        self.addCleanup(held.stop)
+
     def _left(self):
         import glob
         import tempfile

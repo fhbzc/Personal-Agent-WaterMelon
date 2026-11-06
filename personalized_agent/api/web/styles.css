@@ -2450,6 +2450,10 @@ main:has(> #xdebug.active) { max-width: none; }
   gap: 8px; margin: 0 0 6px; }
 #ov-tasks-card .ov-todo-headrow .ov-head { margin: 0; }
 .ov-todo-add-open { width: auto; flex: none; }
+label.update-version-pre { display: inline-flex; flex-direction: row; align-items: center; gap: 6px;
+  margin: 6px 0; }
+label.update-version-pre input[type="checkbox"] { width: 16px; height: 16px; margin: 0; padding: 0;
+  flex: none; }
 .ov-todo-add { margin: 0 0 8px; }
 .ov-todo-add button { width: auto; }
 .ov-todo-add-form { display: grid; gap: 6px; }
@@ -3827,12 +3831,6 @@ body.chat-window .chat-only { height: 100vh; height: 100dvh; padding: 12px; box-
 .ocr-list { list-style: none; padding: 0; margin: 6px 0 10px; display: flex; flex-wrap: wrap;
   gap: 6px 14px; }
 .ocr-none { font-weight: 600; }
-/* A language not yet here: ticked on its own, for the download. */
-.ocr-pick { flex-direction: row; align-items: center; gap: 6px; font-size: inherit;
-  color: inherit; cursor: pointer; }
-.ocr-pick input[type="checkbox"] { width: 16px; height: 16px; margin: 0; padding: 0;
-  accent-color: var(--accent); }
-.ocr-pick-note { margin-left: 8px; }
 
 /* Waiting for a time: each open one, and those lately settled. */
 .pending-list { list-style: none; padding: 0; margin: 6px 0; display: grid; gap: 8px; }
@@ -4749,3 +4747,6 @@ label.delegate-see-tries input { width: auto; margin: 3px 3px 3px 4px; flex: non
 .mon-quiet li { display: flex; align-items: center; gap: 10px; padding: 3px 0; }
 .mon-quiet button { width: auto; padding: 1px 8px; font-size: .8rem; }
 .mon-undo { width: auto; margin-left: 6px; padding: 0 7px; font-size: .75rem; }
+
+/* A link in a reply (chat.js, writeWithLinks). */
+.msg.assistant a { color: var(--accent); text-decoration: underline; overflow-wrap: anywhere; }

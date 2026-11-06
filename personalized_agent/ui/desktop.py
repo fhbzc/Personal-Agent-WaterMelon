@@ -30,9 +30,10 @@ import time
 import tkinter as tk
 import urllib.parse
 import webbrowser
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..common import chooser, interface_words
+from . import sizes
 from .on_top import on_release
 
 log = logging.getLogger(__name__)
@@ -73,8 +74,29 @@ STATE_COLORS = {
 }
 
 
+def _mac_screens() -> List[Tuple[int, int, int, int]]:
+    """A Mac's screens as they are now, the main one first: (left, top, right, bottom), counted as
+    Tk counts. ASKED OF THE SYSTEM, not of Tk (a classmate's Mac, 2026-11-05: hidden on a large
+    display, shown on a small one, it was nowhere): Tk knows one screen, and second-hand. Empty
+    where it cannot be asked."""
+    try:
+        import AppKit
+        screens = AppKit.NSScreen.screens()
+        height = screens[0].frame().size.height
+        frames = [one.frame() for one in screens]
+        return [(int(one.origin.x), int(height - one.origin.y - one.size.height),
+                 int(one.origin.x + one.size.width), int(height - one.origin.y)) for one in frames]
+    except Exception:            # pragma: no cover - asked of a Mac
+        return []
+
+
 def _on_a_screen(window: Any, x: int, y: int) -> bool:
     """Whether a point is on a screen that is there now - any of them."""
+    if sys.platform == "darwin":
+        screens = _mac_screens()
+        if screens:
+            return any(left <= x < right and top <= y < bottom
+                       for left, top, right, bottom in screens)
     if sys.platform.startswith("win"):
         try:
             import ctypes
@@ -102,8 +124,8 @@ def _on_a_screen(window: Any, x: int, y: int) -> bool:
 #: its background - and a button drawn as "edge behind, background in front"
 #: therefore wrote its label in its own background colour. The OK on a passive
 #: notice is always the primary button, so it was always the invisible one.
-QUIET_BUBBLE = {"bg": "#20242e", "fg": "#e7eaf2", "edge": "#20242e",
-                "accent": "#3d475c", "on_accent": "#f2f5fb"}
+QUIET_BUBBLE = {"bg": "#181819", "fg": "#ffffff", "edge": "#313133",
+                "accent": "#313133", "on_accent": "#ffffff"}
 
 #: The agent raising something of its own accord (section 7.4). Warmer, with a
 #: visible edge, and it borrows the amber already used for the notification
@@ -122,9 +144,9 @@ EMPHATIC_BUBBLE = {"bg": "#2b2519", "fg": "#f4e6cf", "edge": "#eba55a",
 #: over its words; its buttons flat and rounded - the one to press filled -
 #: and "a bad one" a quiet link. The agent's own word keeps its warm amber.
 BUBBLE_LOOK = {
-    False: {"outline": "#3a4152", "bg": "#1d212b", "ink": "#e9ecf3", "muted": "#9aa3b5",
-            "dot": "#7c9cff", "button": "#2a303d", "button_hover": "#353c4c",
-            "primary": "#5b7cfa", "primary_hover": "#7190ff", "on_primary": "#ffffff"},
+    False: {"outline": "#313133", "bg": "#181819", "ink": "#ffffff", "muted": "#94979d",
+            "dot": "#4b91ff", "button": "#313133", "button_hover": "#3d3d40",
+            "primary": "#4b91ff", "primary_hover": "#6aa5ff", "on_primary": "#ffffff"},
     True: {"outline": "#eba55a", "bg": "#2a2418", "ink": "#f6ead6", "muted": "#c9b391",
            "dot": "#eba55a", "button": "#3a3122", "button_hover": "#4a3f2c",
            "primary": "#eba55a", "primary_hover": "#f3b874", "on_primary": "#2a2418"},
@@ -235,6 +257,42 @@ def _extension_browsers(app: Any) -> set:
         return seen_processes(app.data_dir)
     except Exception:
         return set()
+
+
+#: How much of the screen a notification's words take before they scroll.
+WORDS_SHARE_OF_SCREEN = 0.45
+#: How far two fingers open or close for one step of zoom.
+PINCH_STEP = 0.12
+
+
+def zoom_popups(desk: Any, step: int) -> None:
+    """ONE ZOOM FOR EVERY WINDOW OF THE AGENT'S (the user, 2026-11-05: "不要每个panel独立，而是和Muse一样的
+    缩放逻辑"): what one is zoomed to, all are - and the next to open. A hidden setting."""
+    from .chat_bubble import ZOOM_START
+    step = sizes.within_zoom(step)
+    if step == sizes.popup_zoom(desk.config):
+        return
+    try:
+        desk.config.set("popup_zoom", step, internal=True)
+    except Exception:                        # pragma: no cover - the windows still follow
+        log.debug("the windows' zoom could not be kept", exc_info=True)
+    chat, note = getattr(desk, "_chat_bubble", None), getattr(desk, "_handed_note", None)
+    told = [getattr(desk, "_redraw_bubble", None)]
+    if chat is not None:
+        told.append(lambda: chat.zoom_to(ZOOM_START + step))
+    if note is not None and note.zooms:
+        told.append(lambda: note.zoom_to(next(iter(note.zooms)), ZOOM_START + step))
+    told += [lambda one=one: one.zoom_to(step)
+             for one in (getattr(desk, "_quick_panels", None) or {}).values()]
+    quick = getattr(desk, "_quick", None)
+    if quick is not None:
+        told.append(lambda: quick.show_zoom(step))
+    for one in told:
+        try:
+            if one is not None:
+                one()
+        except Exception:                    # one window's trouble is not the others'
+            log.debug("a window could not be zoomed", exc_info=True)
 
 
 class DesktopAgent:
@@ -372,8 +430,7 @@ class DesktopAgent:
         icon alone: with many icons there, a Mac with a notch hides the ones
         that do not fit, and the agent had no way in that could be seen."""
         try:
-            self.root.createcommand("::tk::mac::ReopenApplication",
-                                    lambda *_args: self.open_url("/#overview"))
+            self.root.createcommand("::tk::mac::ReopenApplication", self._dock_pressed)
         except Exception:      # pragma: no cover - asked of a Mac's Tk
             log.info("no Dock reopen on this Tk", exc_info=True)
         try:
@@ -382,10 +439,64 @@ class DesktopAgent:
                 NSApplicationActivationPolicyRegular)
         except Exception:      # pragma: no cover - asked of a Mac
             log.info("no Dock icon on this Mac", exc_info=True)
+        self._dock_menu()
+        self._pinch_zooms()
+
+    def _pinch_zooms(self) -> None:
+        """TWO FINGERS ON A MAC'S TRACKPAD zoom every window, as Command + and - do (the user,
+        2026-11-05). Tk has no such event: the system's is listened to, in this program only."""
+        try:
+            import AppKit
+            pinched = {"by": 0.0}
+
+            def heard(event: Any) -> Any:
+                pinched["by"] += float(event.magnification())
+                if abs(pinched["by"]) >= PINCH_STEP:
+                    step = 1 if pinched["by"] > 0 else -1
+                    pinched["by"] = 0.0
+                    self.queue.put(("call", lambda: zoom_popups(
+                        self, sizes.popup_zoom(self.config) + step)))
+                return event
+            self._pinch_watch = AppKit.NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+                AppKit.NSEventMaskMagnify, heard)
+        except Exception:      # pragma: no cover - asked of a Mac
+            log.info("no pinch to zoom here", exc_info=True)
+
+    def _dock_menu(self) -> None:
+        """What a right click on it offers: the avatar's menu, each done on the window's thread."""
+        if sys.platform != "darwin":
+            return
+        from . import macos_dock
+        say = self._words
+
+        def later(work: Any) -> Any:
+            return lambda: self.queue.put(("call", work))
+        macos_dock.show([
+            (say("Chat"), later(self.open_chat_bubble)),
+            (say("To do"), later(lambda: self._quick_panel("todo"))),
+            (say("Collections"), later(lambda: self._quick_panel("collection"))),
+            (say("Overview"), later(lambda: self.open_url("/#overview"))),
+            (say("Show avatar" if self.character_hidden else "Hide avatar"),
+             later(self.toggle_character))])
+
+    def _dock_pressed(self, *_args: Any) -> None:
+        """THE WAY BACK FOR A HIDDEN AVATAR that does not need the menu bar (a classmate's Mac,
+        2026-11-05: hidden, it could not be brought back; a Mac with a notch hides the icons that
+        do not fit, and that icon was the only way)."""
+        if self.character_hidden:
+            self.toggle_character()
+        else:
+            # Not hidden and still not to be seen: the press finds it all the same.
+            self._keep_on_screen()
+            self.agent_window.lift()
+        self.open_url("/#overview")
 
     def _place_bottom_right(self) -> None:
         screen_width = self.agent_window.winfo_screenwidth()
         screen_height = self.agent_window.winfo_screenheight()
+        screens = _mac_screens() if sys.platform == "darwin" else []
+        if screens:
+            screen_width, screen_height = screens[0][2], screens[0][3]
         x = screen_width - self.size - 60
         y = screen_height - self.size - 120
         self.agent_window.geometry(f"{self.size}x{self.size}+{x}+{y}")
@@ -691,6 +802,13 @@ class DesktopAgent:
             if live.get("tuck") or live.get("grip"):
                 side = getattr(self, "_tucked", "") or getattr(self, "_beside", "")
                 more["edge"] = side if side in ("top", "bottom") else "side"
+            if getattr(self._rig, "TUCKS", False):
+                from . import avatar_tuck
+                part = self._part_on(live, now)
+                if part:
+                    more["part"] = part
+                if carried or caught:
+                    more["flail"] = avatar_tuck.flail_at(now)
             if live.get("grip"):
                 more.update(grip=live["grip"], reach=self._reach(live))
                 # Jumping out, it turns upright in the air.
@@ -720,8 +838,8 @@ class DesktopAgent:
         self._animate_job = self.root.after(
             max(1, self.SLIDE_FRAME_MS - int((time.monotonic() - now) * 1000))
             if live.get("slide")
-            else 33 if live.get("turn") or live.get("smiling")
-            or live.get("sneak") else 80 if carried    # its frames must not hold the drag up
+            else 33 if live.get("turn") or live.get("smiling") or live.get("sneak")
+            or live.get("parting") else 80 if carried    # its frames must not hold the drag up
             else 50 if busy or caught or leaning else 160, self._animate)
 
     #: Going in or coming out, a frame this often, in milliseconds, the drawing included.
@@ -780,6 +898,20 @@ class DesktopAgent:
         lean += (wanted - lean) * 0.4
         live["lean"] = 0.0 if abs(lean) < 0.2 and not wanted else lean
         return live["lean"]
+
+    def _part_on(self, live: Dict[str, Any], now: float) -> float:
+        """How far apart the leaves are: its head out, pushed aside; back in, closing behind it -
+        whatever brought it out or in."""
+        from . import avatar_tuck
+        wanted = 1.0 if live.get("peeking") else 0.0
+        if wanted != live.get("part_to", 0.0):
+            live.update(part_to=wanted, part_from=float(live.get("part") or 0.0), part_at=now,
+                        parting=True)
+        if live.get("parting"):
+            live["part"] = avatar_tuck.parted(now - live["part_at"], live["part_from"], wanted)
+            if now - live["part_at"] >= avatar_tuck.PART_SECONDS:
+                live["parting"] = False
+        return float(live.get("part") or 0.0)
 
     def _peek_on(self, live: Dict[str, Any]) -> None:
         """In the side, the pointer on its leaf: its head out, to look; the
@@ -1066,7 +1198,6 @@ class DesktopAgent:
         if self._click_job is not None:
             self.root.after_cancel(self._click_job)
             self._click_job = None
-        # A new page of the agent each time (the user's choice).
         self.open_url("/#overview")
 
     #: THE AVATAR'S MENU, and the tray's (the user's choice): the chat, To do and Collections
@@ -1128,8 +1259,15 @@ class DesktopAgent:
         return faces[size]
 
     def _start_selection_watch(self) -> None:
-        """Delegate work beside selected text (ui/selection.py) - Windows."""
+        """Delegate work beside selected text (ui/selection.py) - Windows. The shortcuts and the
+        panels first: after that line they were Windows' too, and a Mac had neither (2026-11-05)."""
         from . import selection
+        self._start_shortcuts()
+        self._start_avatar_buttons()
+        # Two fingers on a touch screen: handed on, as it is heard within the system's message.
+        from . import on_top
+        on_top.PINCH[:] = [lambda step: self.queue.put(("call", lambda: zoom_popups(
+            self, sizes.popup_zoom(self.config) + step)))]
         if not selection.available():
             return
         self._selection = selection.SelectionWatch(
@@ -1138,8 +1276,6 @@ class DesktopAgent:
             # Settings > Shortcuts: the button can be turned off.
             wanted=lambda: bool(self.app.config.get("delegate_selection_button", True)))
         self._selection.start()
-        self._start_shortcuts()
-        self._start_avatar_buttons()
 
     def _start_avatar_buttons(self) -> None:
         """The vine out of the side, and the panels of the avatar's menu made ahead."""
@@ -1148,12 +1284,17 @@ class DesktopAgent:
         try:
             self._chat_vine = ChatVine(self.root, self._words("Chat"), self.toggle_chat_bubble,
                                        self._avatar_box, self._popup_font(),
-                                       lambda: getattr(self, "_tucked", ""), self.agent_window)
+                                       self._vine_side, self.agent_window)
             # It moves as the avatar moves: sliding into a side, its head coming out.
             self.agent_window.bind("<Configure>", self._chat_vine.place, add="+")
             self.root.after(1500, self._prepare_panels)
         except Exception:                    # the avatar goes on without it
             log.exception("the vine out of the avatar could not be drawn")
+
+    def _vine_side(self) -> str:
+        """The side the vine comes out of. In a side the leaves, the vine and its button stay on
+        the screen; HIDDEN, ALL OF IT GOES (the user, 2026-11-05), and it comes back as it was."""
+        return "" if self.character_hidden else getattr(self, "_tucked", "")
 
     def _prepare_panels(self) -> None:
         """Both panels made out of sight, soon after the start."""
@@ -1193,12 +1334,7 @@ class DesktopAgent:
                 lambda: self.app.quick_sections(which),
                 lambda fn: self.queue.put(("call", fn)), self._words, self._popup_font(),
                 self._words("Nothing yet."), searches=True, act=self._panel_act,
-                # Its words' size its own, as the chat's is (the user, 2026-11-04); the one
-                # size the two had until then is where each starts.
-                zoom=int(self.config.get(f"quick_panel_zoom_{which}",
-                                         self.config.get("quick_panel_zoom", 0)) or 0),
-                on_zoom=lambda zoom: self.config.set(f"quick_panel_zoom_{which}", int(zoom),
-                                                     internal=True),
+                zoom=sizes.popup_zoom(self.config), on_zoom=lambda zoom: zoom_popups(self, zoom),
                 adds=adds, size=self.config.get(f"quick_panel_size_{which}", None) or None,
                 on_size=lambda size: self.config.set(f"quick_panel_size_{which}",
                                                      [int(size[0]), int(size[1])], internal=True))
@@ -1242,10 +1378,17 @@ class DesktopAgent:
         try:
             self.app.shortcuts = Shortcuts(self.app.config,
                                            {"delegate_work": self._delegate_by_shortcut,
-                                            "open_chat": self._chat_by_shortcut})
+                                            "open_chat": self._chat_by_shortcut},
+                                           on_main=self._on_the_main_thread)
             self.app.shortcuts.start()
         except Exception:
             log.exception("the keyboard shortcuts could not be held")
+
+    def _on_the_main_thread(self, work: Any) -> None:
+        if threading.current_thread() is threading.main_thread():
+            work()
+        else:
+            self.queue.put(("call", work))
 
     def _delegate_by_shortcut(self) -> None:
         """The shortcut pressed: the quick Delegate work box, empty, on the
@@ -1445,6 +1588,13 @@ class DesktopAgent:
         tray = getattr(self, "tray", None)
         if tray is not None:
             tray.refresh_menu()
+        vine = getattr(self, "_chat_vine", None)
+        if vine is not None:
+            vine.place()                         # at once, not at its next look
+        try:
+            self._dock_menu()
+        except Exception:        # its words a moment out of date: nothing else is the worse
+            log.debug("the Dock's menu could not be told", exc_info=True)
 
     def _toggle_on_a_mac(self) -> None:
         """Hidden and shown on a Mac without withdrawing it: a borderless
@@ -1483,13 +1633,16 @@ class DesktopAgent:
         try:
             self.agent_window.update_idletasks()
             x, y = self.agent_window.winfo_x(), self.agent_window.winfo_y()
-            # ANY OF IT ON A SCREEN is on a screen: beside the side, its middle
-            # may well be past it (the user, 2026-11-04: left at the side, it
-            # was taken for lost and sent home), and in the side it is meant
-            # to be.
-            far = self.size - 1
+            # AS MUCH OF IT AS SHOWS IN A SIDE is on a screen: beside the side, its middle may
+            # well be past it (the user, 2026-11-04: left at the side, it was taken for lost and
+            # sent home), and in the side it is meant to be. Less is lost (2026-11-05: a corner
+            # of a few pixels counted, after a change of screen): a square that large at one of
+            # its corners, asked by the square's inner corner.
+            from .avatar_tuck import PEEK
+            near = max(1, int(self.size * PEEK) - 3)
+            far = self.size - 1 - near
             if not any(_on_a_screen(self.agent_window, x + across, y + down)
-                       for across in (0, far) for down in (0, far)):
+                       for across in (near, far) for down in (near, far)):
                 log.info("the avatar was off every screen (at %s,%s): put back", x, y)
                 self._place_bottom_right()
                 self.agent_window.deiconify()
@@ -1536,7 +1689,25 @@ class DesktopAgent:
         # this one opening and for two minutes - so the tray, the menu, the
         # chat and every "#tab" open the page signed in, and none of them
         # leaves a link behind that would sign anyone else in later.
+        if fragment == "/#overview":
+            self._off_this_thread(self._open_the_page)
+            return
         self._off_this_thread(lambda: webbrowser.open(self.app.sign_in_url(fragment)))
+
+    def _open_the_page(self) -> None:
+        """THE PAGE IN ONE WINDOW, BROUGHT BACK AS IT WAS LEFT (the user, 2026-11-05: each double
+        click was one more tab). No browser to make that window: a tab, as before."""
+        from . import mac_panel
+        from ..platform_layer import app_window
+        if sys.platform == "darwin" and mac_panel.available():
+            # Apple's WebKit, whatever browser the Mac has: on the main thread.
+            self.queue.put(("call", self._open_the_page_on_a_mac))
+            return
+        if app_window.bring_back_the_page():
+            return
+        url = self.app.sign_in_url("/#overview")
+        if not app_window.open_the_page(url, self.app.paths.data_dir / app_window.PAGE_PROFILE):
+            webbrowser.open(url)
 
     def open_box(self, fragment: str) -> None:
         """The Delegate work box alone, in a window of its own - not the
@@ -1544,6 +1715,14 @@ class DesktopAgent:
         from ..platform_layer import app_window
         self._off_this_thread(lambda: app_window.open_page(
             self.app.sign_in_url(fragment), self.app.paths.data_dir / app_window.PROFILE))
+
+    def _open_the_page_on_a_mac(self) -> None:
+        from . import mac_panel
+        if mac_panel.bring_back_the_page():
+            return
+        url = self.app.sign_in_url("/#overview")
+        if not mac_panel.open_the_page(url):
+            webbrowser.open(url)
 
     # -- conversation -------------------------------------------------------
     def open_chat_bubble(self) -> None:
@@ -1568,29 +1747,19 @@ class DesktopAgent:
                 self._conversation_id = conversation
             self.open_chat()
         # ITS SIZE as the user left it last (the user, 2026-11-01).
-        try:
-            kept = [int(one) for one in self.config.get("chat_bubble_size", []) or []]
-        except (TypeError, ValueError):
-            kept = []
+        kept = sizes.kept(self.root, self.config.get("chat_bubble_size", []) or [])
 
         def sized(size: tuple) -> None:
             try:
-                self.config.set("chat_bubble_size", [int(size[0]), int(size[1])], internal=True)
+                self.config.set("chat_bubble_size", sizes.share(self.root, size), internal=True)
             except Exception:                    # pragma: no cover - this one keeps it
                 log.debug("the chat bubble's size could not be kept", exc_info=True)
-        # ITS ZOOM (Ctrl + / Ctrl -), as the user left it last - a hidden
-        # setting (the user, 2026-11-02: kept, not shown in Settings).
+        # ITS ZOOM (Ctrl + / Ctrl -): every window's, a hidden setting (`zoom_popups`).
         from .chat_bubble import ZOOM_START
-        try:
-            zoom = int(self.config.get("chat_bubble_zoom", ZOOM_START))
-        except (TypeError, ValueError):
-            zoom = ZOOM_START
+        zoom = ZOOM_START + sizes.popup_zoom(self.config)
 
         def zoomed(step: int) -> None:
-            try:
-                self.config.set("chat_bubble_zoom", int(step), internal=True)
-            except Exception:                    # pragma: no cover - this one keeps it
-                log.debug("the chat bubble's zoom could not be kept", exc_info=True)
+            zoom_popups(self, step - ZOOM_START)
         self._chat_bubble = ChatBubble(
             self.root, name=self.app.avatar_name(), family=font[0], size=font[1],
             send=lambda *said, **more: self._said_in_the_bubble(*said, **more),
@@ -1694,7 +1863,7 @@ class DesktopAgent:
             size = 9
         # A window sized for text cannot survive an absurd value, and the
         # setting is the sort of thing that gets a stray keystroke.
-        return ("Segoe UI", max(7, min(24, size)))
+        return ("Segoe UI", sizes.px(self.root, max(7, min(24, size))))
 
     # -- hover readout (section 7.5) ----------------------------------------
     #: The readout opens once the pointer has rested on the avatar this long
@@ -2079,19 +2248,10 @@ class DesktopAgent:
         if old is not None:
             old.close()
         font = self._popup_font()
-        # Each side's zoom its own, kept for the next note.
-        zooms = {}
-        for side in SIDES:
-            try:
-                zooms[side] = int(self.config.get(f"handed_note_zoom_{side}", ZOOM_START))
-            except (TypeError, ValueError):
-                zooms[side] = ZOOM_START
+        zooms = {side: ZOOM_START + sizes.popup_zoom(self.config) for side in SIDES}
 
-        def kept(side: str, step: int) -> None:
-            try:
-                self.config.set(f"handed_note_zoom_{side}", step, internal=True)
-            except Exception:                    # pragma: no cover - this note keeps it
-                log.debug("the note's zoom could not be kept", exc_info=True)
+        def kept(_side: str, step: int) -> None:
+            zoom_popups(self, step - ZOOM_START)
         def save(words: str) -> Any:
             """Saved where the work keeps it (WorkRuns.save_handed) - True,
             else why not, in words."""
@@ -2105,10 +2265,7 @@ class DesktopAgent:
                 return "It is working on it again - save once it is done; copy it so it is not lost"
             return said is not None
         # ITS SIZE AND ITS SIDES' SHARE as the user left the last note's.
-        try:
-            size = [int(one) for one in self.config.get("handed_note_size", []) or []]
-        except (TypeError, ValueError):
-            size = []
+        size = sizes.kept(self.root, self.config.get("handed_note_size", []) or []) or []
         try:
             split = self.config.get("handed_note_split", None)
             split = float(split) if split not in (None, "") else None
@@ -2117,7 +2274,7 @@ class DesktopAgent:
 
         def laid_out(size: tuple, split: Any) -> None:
             try:
-                self.config.set("handed_note_size", [int(size[0]), int(size[1])], internal=True)
+                self.config.set("handed_note_size", sizes.share(self.root, size), internal=True)
                 if split is not None:
                     self.config.set("handed_note_split", round(float(split), 4), internal=True)
             except Exception:                    # pragma: no cover - this note keeps it
@@ -2202,18 +2359,21 @@ class DesktopAgent:
         self._waiting_line = line
 
     def _copyable(self, parent: Any, text: str, font: tuple, ink: str, look: Dict[str, str],
-                  wide: int) -> Any:
+                  wide: int, tallest: int = 0) -> Any:
         """Words that look like a label and can be selected and copied: Ctrl+C,
-        Ctrl+A, or the right button for all of them."""
+        Ctrl+A, or the right button for all of them. `tallest`, in pixels: past it they scroll,
+        with a bar."""
         import tkinter.font as tkfont
         measured = tkfont.Font(font=font)
         chars = max(1, wide // max(1, measured.measure("0")))
         # Its height by the font: a Text not yet on the screen counts its lines at
         # a width of nothing, and a bubble came out taller than the screen.
-        box = tk.Text(parent, wrap="word", font=font, bg=look["bg"], fg=ink, relief="flat", bd=0,
-                      highlightthickness=0, padx=0, pady=0, cursor="xterm", takefocus=0,
-                      height=lines_of(text, measured.measure, chars * measured.measure("0")),
-                      width=chars,
+        lines = lines_of(text, measured.measure, chars * measured.measure("0"))
+        shown = max(3, tallest // max(1, measured.metrics("linespace"))) if tallest else lines
+        holder = tk.Frame(parent, bg=look["bg"]) if lines > shown else None
+        box = tk.Text(holder or parent, wrap="word", font=font, bg=look["bg"], fg=ink, relief="flat",
+                      bd=0, highlightthickness=0, padx=0, pady=0, cursor="xterm", takefocus=0,
+                      height=min(lines, shown), width=chars,
                       selectbackground=look["button_hover"], selectforeground=look["ink"],
                       inactiveselectbackground=look["button_hover"])
         box.insert("1.0", text)
@@ -2226,7 +2386,14 @@ class DesktopAgent:
         box.bind("<Button-1>", lambda _e: box.focus_force(), add="+")
         box.bind("<Control-a>", everything)
         with_copy(box, self._words("Copy"), whole=text)
-        return box
+        if holder is None:
+            return box
+        from .chat_bubble import ScrollBar
+        bar = ScrollBar(holder)
+        box.configure(yscrollcommand=bar.shown)
+        bar.scrolls(box)
+        box.pack(side="left", fill="both", expand=True)
+        return holder
 
     def _bubble_chat(self, parent: Any, item: Dict[str, Any], look: Dict[str, str],
                      font: tuple) -> None:
@@ -2327,7 +2494,7 @@ class DesktopAgent:
         width = 340 + (points - 9) * 20
         # The outline is the window behind the card: tk draws no outline on an
         # overrideredirect window, so the edge has to be something with a size.
-        frame = tk.Frame(bubble, bg=look["bg"], padx=16, pady=12)
+        frame = tk.Frame(bubble, bg=look["bg"], padx=20, pady=16)
         frame.pack(fill="both", expand=True, padx=1, pady=1)
 
         # What it is, and how many wait behind it.
@@ -2352,7 +2519,9 @@ class DesktopAgent:
         self._refresh_bubble_count()
 
         # Its title in bold over its words - a notification is "title: words".
-        text = item["text"][:400]
+        # WHOLE (the user, 2026-11-05: the day's report stopped in mid-word at 400 letters, with
+        # nowhere to read the rest): past a part of the screen, its words scroll.
+        text = item["text"]
         title, words = "", text
         if item.get("notification_id") and ": " in text:
             title, words = text.split(": ", 1)
@@ -2361,7 +2530,9 @@ class DesktopAgent:
             self._copyable(frame, title, (family, points + 1, "bold"), look["ink"], look,
                            width - 34).pack(fill="x", pady=(8, 0))
         self._copyable(frame, words, (family, points), look["ink"] if not title else look["muted"],
-                       look, width - 34).pack(fill="x", pady=(4 if title else 8, 0))
+                       look, width - 34,
+                       tallest=int(bubble.winfo_screenheight() * WORDS_SHARE_OF_SCREEN)
+                       ).pack(fill="x", pady=(4 if title else 8, 0))
         # WHY IT IS TOLD (the user, 2026-11-04).
         if item.get("reason"):
             self._copyable(frame, self._words("Why: {0}").replace("{0}", item["reason"]),
@@ -2636,15 +2807,14 @@ class DesktopAgent:
         bubble.bind(f"<{modifier}-MouseWheel>", lambda event: zoomed(1 if event.delta > 0 else -1))
 
     def _bubble_zoom(self) -> int:
-        try:
-            return int(self.config.get("notification_zoom", 0) or 0)
-        except (AttributeError, TypeError, ValueError):
-            return 0
+        return sizes.popup_zoom(getattr(self, "config", None))
 
     def _zoom_bubble(self, step: int) -> None:
+        zoom_popups(self, self._bubble_zoom() + step)
+
+    def _redraw_bubble(self) -> None:
         """The notification shown drawn again at the new size."""
         shown = self._showing
-        self.config.set("notification_zoom", max(-4, min(12, self._bubble_zoom() + step)), internal=True)
         if shown is None or self._bubble is None:
             return
         self._bubble.destroy()

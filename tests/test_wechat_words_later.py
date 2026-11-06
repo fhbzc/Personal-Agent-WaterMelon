@@ -123,7 +123,8 @@ class TheScreenReaderTakesItInLaterTests(unittest.TestCase):
         provider._look()
         self.assertLess(time.monotonic() - began, 1.0, "the words were not waited for")
         self.assertEqual(self.seen, [])
-        self.assertEqual(provider.get_status()["wechat_words_later"]["waiting"], 0)
+        # Taken up by its own thread, which has to have had its turn: asked at once, it may not.
+        _until(self, lambda: provider.get_status()["wechat_words_later"]["waiting"] == 0)
         gate.set()
         _until(self, lambda: self.seen)
         [event] = self.seen

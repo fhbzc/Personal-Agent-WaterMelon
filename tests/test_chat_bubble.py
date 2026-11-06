@@ -25,6 +25,9 @@ except Exception:                                  # pragma: no cover - no displ
 from personalized_agent.ui import chat_bubble as cb
 
 
+MOD = "Command" if sys.platform == "darwin" else "Control"
+
+
 class BesideTheAvatarTests(unittest.TestCase):
     """The user, 2026-11-01: a bubble comes up beside the avatar."""
 
@@ -255,6 +258,54 @@ class TheBubbleTests(unittest.TestCase):
         bubble._draw_front({"title": "Notes - Word"})
         self.assertEqual(bubble.front_off, "", "another window: told again")
         self.assertTrue(bubble.front_row.winfo_children())
+
+    def test_what_is_on_the_screen_is_right_under_its_head_whatever_came_first(self) -> None:
+        front = {"title": "Tide tables - Chrome", "address": "https://example.com/tides"}
+        bubble = self._bubble(lambda *_a, **_k: {}, front=lambda: dict(front))
+        self._settle(0.3)
+        place = lambda: bubble.card.pack_slaves().index(bubble.front_row)
+        self.assertEqual(place(), 1, "before anything was said")
+        bubble._write("You", "you", "Hello")
+        self.root.update()
+        self.assertEqual(place(), 1, "with something said under it")
+        self.assertLess(place(), bubble.card.pack_slaves().index(bubble.said_box))
+        bubble._draw_front({"title": ""})
+        self.assertNotIn(bubble.front_row, bubble.card.pack_slaves())
+        bubble._draw_front({"title": "Notes - Word"})
+        self.assertEqual(place(), 1, "come back when something was already said")
+
+    def test_on_a_bar_it_is_not_there_and_back_it_is(self) -> None:
+        front = {"title": "Tide tables - Chrome"}
+        bubble = self._bubble(lambda *_a, **_k: {}, front=lambda: dict(front))
+        self._settle(0.3)
+        bubble.minimize()
+        self.root.update()
+        self.assertNotIn(bubble.front_row, bubble.card.pack_slaves())
+        bubble.expand()
+        self.root.update()
+        self.assertEqual(bubble.card.pack_slaves().index(bubble.front_row), 1)
+
+    def test_the_box_to_write_in_is_always_there(self) -> None:
+        """At large words in a window the user sized, what is on the screen over two lines and the
+        hint over two, it was squeezed to nothing, under an empty space."""
+        front = {"title": "A window with a long title, as a terminal has - " * 3}
+        bubble = self._bubble(lambda *_a, **_k: {}, front=lambda: dict(front), kept_size=(420, 240))
+        self._settle(0.3)
+        bubble._draw_front(dict(front))
+        self.root.update()
+        for _ in range(3):
+            self.assertTrue(bubble.row.winfo_ismapped())
+            self.assertGreaterEqual(bubble.row.winfo_height(), bubble.row.winfo_reqheight())
+            self.assertLessEqual(bubble.row.winfo_y() + bubble.row.winfo_height(),
+                                 bubble.card.winfo_height())
+            bubble._write("You", "you", "A made-up question " * 8)
+            self.root.update()
+        bubble.minimize()
+        self.root.update()
+        bubble.expand()
+        self.root.update()
+        self.assertTrue(bubble.row.winfo_ismapped(), "and after a bar")
+        self.assertGreaterEqual(bubble.row.winfo_height(), bubble.row.winfo_reqheight())
 
     def test_what_was_not_sent_is_kept_when_it_is_closed(self) -> None:
         kept = []
@@ -862,8 +913,6 @@ class TheBubbleTests(unittest.TestCase):
         self.assertFalse(bubble.row.winfo_ismapped())
         self.assertEqual(bubble.window.winfo_y() + bubble.window.winfo_height(), bottom,
                          "its bottom where it was")
-        bubble._edge_start(SimpleNamespace(x_root=500, y_root=500), "se")
-        self.assertIsNone(bubble._resizing, "a bar is not sized")
         # An answer that comes meanwhile: the bar stays a bar, its dot lit.
         bubble._write("Fern", "agent", "And the tomatoes too.")
         self.root.update()
@@ -884,6 +933,65 @@ class TheBubbleTests(unittest.TestCase):
         self.assertTrue(bubble.minimized, "Escape minimises - nothing is lost by it")
         bubble.close()
         self.assertIsNone(bubble.conversation_id, "closed: the next is a new conversation")
+
+    def test_ctrl_and_the_wheel_zoom_it_wherever_the_pointer_is(self) -> None:
+        bubble = self._bubble(lambda text, c: "Noted.")
+        start = bubble.zoom
+        # Bound on each, and handled there: a Text's own wheel would scroll it first. (Tk gives a
+        # made-up wheel event to the keyboard's window, so the binding is what can be read here.)
+        for one in (bubble.window, bubble.said, bubble.box):
+            self.assertTrue(one.bind(f"<{MOD}-MouseWheel>"), one)
+        self.assertEqual(bubble._wheel(SimpleNamespace(delta=120)), "break")
+        self.assertEqual(bubble.zoom, start + 1)
+        bubble._wheel(SimpleNamespace(delta=-120))
+        self.assertEqual(bubble.zoom, start)
+
+    def test_where_to_write_can_be_seen(self) -> None:
+        bubble = self._bubble(lambda text, c: "Noted.")
+        self.assertEqual(int(bubble.row.cget("highlightthickness")), 1)
+        bubble.box.event_generate("<FocusOut>")
+        self.root.update()
+        self.assertEqual(bubble.row.cget("highlightbackground"), cb.LOOK["field_line"])
+        bubble.box.event_generate("<FocusIn>")
+        self.root.update()
+        self.assertEqual(bubble.row.cget("highlightbackground"), cb.LOOK["primary"])
+        bubble.box.event_generate("<FocusOut>")
+        self.root.update()
+        self.assertEqual(bubble.row.cget("highlightbackground"), cb.LOOK["field_line"])
+
+    def test_its_corner_shows_it_can_be_sized(self) -> None:
+        bubble = self._bubble(lambda text, c: "Noted.")
+        rim = bubble.window.winfo_children()[0]
+        grips = [one for one in rim.winfo_children() if isinstance(one, tk.Canvas)]
+        self.assertEqual(len(grips), 1)
+        self.assertEqual(grips[0].cget("cursor"), cb.EDGES["se"])
+        self.assertEqual(len(grips[0].find_all()), 3)
+
+    def test_its_corners_lie_over_nothing_in_it(self) -> None:
+        """Over the box they showed as two black corners, once it stood out from the ground."""
+        bubble = self._bubble(lambda text, c: "Noted.")
+        self.root.update()
+        rim = bubble.window.winfo_children()[0]
+
+        def box(one):
+            return (one.winfo_rootx(), one.winfo_rooty(), one.winfo_rootx() + one.winfo_width(),
+                    one.winfo_rooty() + one.winfo_height())
+        row = box(bubble.row)
+        strips = [one for one in rim.winfo_children() if one.winfo_manager() == "place"]
+        self.assertEqual(len(strips), len(cb.EDGES))
+        for one in strips:
+            left, top, right, bottom = box(one)
+            self.assertFalse(left < row[2] and right > row[0] and top < row[3] and bottom > row[1],
+                             (one.cget("cursor"), box(one), row))
+
+    def test_a_bar_taken_by_its_edge_opens(self) -> None:
+        bubble = self._bubble(lambda text, c: "Noted.")
+        bubble.minimize()
+        self.root.update()
+        bubble._edge_start(SimpleNamespace(x_root=0, y_root=0), "se")
+        self.root.update()
+        self.assertFalse(bubble.minimized)
+        self.assertIsNone(bubble._resizing, "opened, not sized by the same press")
 
     def test_the_desktop_opens_one_and_keeps_its_size(self) -> None:
         from personalized_agent.ui.desktop import DesktopAgent
@@ -908,11 +1016,13 @@ class TheBubbleTests(unittest.TestCase):
         DesktopAgent.open_chat_bubble(fake)
         self.assertIs(fake._chat_bubble, first, "one bubble - pressed again, written in again")
         first.on_size((500, 360))
-        self.assertEqual(kept["chat_bubble_size"], [500, 360])
-        # ITS ZOOM, a hidden setting: opened at it, each new one kept.
+        from personalized_agent.ui import sizes
+        self.assertEqual(kept["chat_bubble_size"], sizes.share(self.root, (500, 360)), "its share")
+        self.assertEqual(sizes.kept(self.root, kept["chat_bubble_size"]), (500, 360))
+        # ITS ZOOM, a hidden setting: the older one of its own read, every window's kept.
         self.assertEqual(first.zoom, 4)
         first.zoom_by(1)
-        self.assertEqual(kept["chat_bubble_zoom"], 5)
+        self.assertEqual(kept["popup_zoom"], 3)
         first.close()
 
 

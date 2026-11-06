@@ -82,6 +82,10 @@ def answer(message: Dict[str, Any], data_dir: Path,
         mark_seen(data_dir, str(message.get("browser") or ""),
                   store=from_store(caller, str(message.get("install") or "")))
         return {"ok": True}
+    if kind == "visible":
+        from .browser_extension import keep_visible
+        keep_visible(data_dir, str(message.get("title") or ""), str(message.get("text") or ""))
+        return {"ok": True}
     if kind in ("delegate", "learn"):
         picked = message.get("picked")
         if not isinstance(picked, dict):

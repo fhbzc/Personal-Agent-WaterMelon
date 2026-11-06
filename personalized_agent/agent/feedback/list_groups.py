@@ -185,9 +185,13 @@ class ListGroups:
         """An item added, gone or reworded since the last grouping: a new
         one, in a few seconds."""
         seen = {str(one.get("id")): _words(one) for one in items}
-        if seen == self._kept(which)["seen"] or not self._allowed():
+        if not self._allowed():
             return
         with self._lock:
+            # Compared HERE, under the lock a grouping keeps its result under: before it, a
+            # grouping ending in between was taken for one still to do, and asked for again.
+            if seen == self._kept(which)["seen"]:
+                return
             if self._running.get(which):
                 self._again[which] = True
                 return

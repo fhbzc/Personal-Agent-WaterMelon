@@ -61,7 +61,7 @@ class DeletedWithEverythingInItTests(unittest.TestCase):
         self.assertEqual(missing.exception.status, 404)
 
 
-PAGE = """<!doctype html><html><body>
+PAGE = """<!doctype html><html><head><meta charset='utf-8'></head><body>
 <div class="chat-layout"><div class="chat-workspace">
 <button data-chat-sidebar-open></button><span data-chat-title></span>
 <input id="chat-input"></div></div>

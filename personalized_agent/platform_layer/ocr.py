@@ -11,8 +11,8 @@ none sending a picture anywhere (runtime/documents.py reads with it).
     application's own Python - no administrator; or Tesseract, if the
     system has it, with the languages installed for it.
 
-A picture is read in every language there is of the five the application
-speaks, and the reading that is most of its own script kept: Chinese read
+A picture is read in every language there is of those it can be (READS),
+and the reading that is most of its own script kept: Chinese read
 by the Chinese engine, English by the English - whichever comes first in
 the system's own list.
 """
@@ -35,9 +35,12 @@ from typing import Any, Dict, List, Optional
 log = logging.getLogger(__name__)
 
 #: The languages read: the five the application speaks.
-LANGUAGES = (("en", "English"), ("zh", "Chinese"), ("es", "Spanish"), ("ja", "Japanese"),
-             ("ko", "Korean"), ("ru", "Russian"), ("fr", "French"), ("de", "German"),
-             ("it", "Italian"))
+LANGUAGES = (("en", "English"), ("zh", "Chinese"))
+#: WHAT A PICTURE CAN BE READ IN, a longer list than the above (the user, 2026-11-05): what is on the
+#: screen is in whatever language it is, whichever the application speaks. A Mac reads them all;
+#: elsewhere those the system already has are read, and only the two above are offered.
+READS = LANGUAGES + (("es", "Spanish"), ("ja", "Japanese"), ("ko", "Korean"), ("ru", "Russian"),
+                     ("fr", "French"), ("de", "German"), ("it", "Italian"))
 #: How long what is installed is believed before it is asked again.
 KNOWN_FOR = 600.0
 
@@ -171,8 +174,7 @@ $stream.Dispose()
 """
 
 #: The optional part of Windows for each language's OCR.
-_WINDOWS_PARTS = {"en": "en-US", "zh": "zh-CN", "es": "es-ES", "ja": "ja-JP", "ko": "ko-KR",
-                  "ru": "ru-RU", "fr": "fr-FR", "de": "de-DE", "it": "it-IT"}
+_WINDOWS_PARTS = {"en": "en-US", "zh": "zh-CN"}
 
 
 def _powershell(script: str, env: Optional[Dict[str, str]] = None,
@@ -199,7 +201,7 @@ class WindowsOcr(Ocr):
         lines = done.stdout.decode("utf-8", "replace").splitlines()
         tags = [line[5:].strip() for line in lines if line.startswith("LANG ")]
         prefer = [_code_of(line[7:].strip()) for line in lines if line.startswith("PREFER ")]
-        wanted = [code for code, _name in LANGUAGES]
+        wanted = [code for code, _name in READS]
         self._tags = {}
         for tag in tags:
             code = _code_of(tag)
@@ -278,7 +280,7 @@ class MacVisionOcr(Ocr):
             return []
         supported, _error = self._request().supportedRecognitionLanguagesAndReturnError_(None)
         codes = {_code_of(str(tag)) for tag in supported or []}
-        return [code for code, _name in LANGUAGES if code in codes]
+        return [code for code, _name in READS if code in codes]
 
     def read(self, path: str) -> str:
         import Vision
@@ -332,7 +334,7 @@ class LinuxOcr(Ocr):
         codes = set(self._tesseract_languages())
         if self._rapid():
             codes |= {"en", "zh"}
-        return [code for code, _name in LANGUAGES if code in codes]
+        return [code for code, _name in READS if code in codes]
 
     def read(self, path: str) -> str:
         readings: Dict[str, str] = {}
@@ -402,5 +404,5 @@ def current() -> Ocr:
     return _current
 
 
-__all__ = ["current", "Ocr", "WindowsOcr", "MacVisionOcr", "LinuxOcr", "LANGUAGES",
+__all__ = ["current", "Ocr", "WindowsOcr", "MacVisionOcr", "LinuxOcr", "LANGUAGES", "READS",
            "script_score", "best_reading"]

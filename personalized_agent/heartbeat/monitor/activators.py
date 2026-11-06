@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS monitor_quiet (
 
 GROUPS = ("recommend", "risk", "calendar", "rest", "other")
 DOES = ("notify", "ask_model", "queue")
-HANDLERS = ("recommend", "judge", "calendar", "evening")
+HANDLERS = ("recommend", "judge", "calendar", "evening", "evening_now")
 #: What may come after a notify, once it is said (`and_then`).
 FOLLOWS = ("ask_model", "queue")
 OPS = ("<", "<=", ">", ">=", "==", "!=", "contains")
@@ -90,7 +90,7 @@ MOST_ACTIVATORS = 60
 #: language"): those code can tell by their script, and the rest by name.
 SCRIPTS = {"Chinese": re.compile(r"[一-鿿]"), "Japanese": re.compile(r"[぀-ヿ]"),
            "Korean": re.compile(r"[가-힯]"), "Russian": re.compile(r"[Ѐ-ӿ]")}
-LANGUAGES = "English, Chinese, Japanese, Korean, German, French, Spanish, Italian and Russian"
+LANGUAGES = "English and Chinese"
 
 #: How the model is told to write them - Chat's tools and step_monitor alike.
 RULES_FOR_THE_MODEL = f"""HOW TO WRITE AN ACTIVATOR (the Monitor) - code runs it, not you:
@@ -102,7 +102,8 @@ RULES_FOR_THE_MODEL = f"""HOW TO WRITE AN ACTIVATOR (the Monitor) - code runs it
   matters asks for grouping, history or paths.
 - "then" says what is done by score, highest "min_score" first: "notify" (said at
   once, in the "title" and "message" you give - {{signal_name}} is put in),
-  "ask_model" with "handler" "recommend" and a "brief", or "evening", or "queue"
+  "ask_model" with "handler" "recommend" and a "brief", or "evening" (the report of the day,
+  asked first), or "evening_now" (written without asking), or "queue"
   (judged at the next heartbeat).
 - A "notify" MAY ALSO HAVE, when it should not wait for a model: "reason" (shown under it;
   {{matched}} is what set it off) and "and_then", what comes once it is said:

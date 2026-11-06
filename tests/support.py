@@ -96,6 +96,14 @@ class TemporaryAgent:
         self.app.agent.runtime = self.app.runtime
         # Runs in this process: the tests give them their own models.
         self.app.work.in_subprocess = False
+        # A CEILING, NOT A WAIT. The real reading model shares the machine with the other test
+        # processes, and a round that gets no vectors draws no line and reads differently
+        # after it: that is what a slow machine costs a user's round, not what a test is about.
+        # A real model is never asked behind a test's back: tests of it call `run` themselves.
+        self.app.after_todo.allowed = lambda: False
+        embedder = getattr(self.app.state_heartbeat, "embedder", None)
+        if embedder is not None:
+            embedder.ANSWER_SECONDS = 600
         # ROOM FOR EVERY RUN: whether one waits its turn is the tests' of
         # the governor and the pool (test_work_processes, test_delegate,
         # test_resources_and_room) - not how busy the computer running the

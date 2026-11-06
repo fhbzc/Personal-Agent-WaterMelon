@@ -103,8 +103,8 @@ class TheNoteTests(unittest.TestCase):
         note.close()
         self.assertIsNone(note.window)
 
-    def test_each_side_zoomed_on_its_own_and_kept(self) -> None:
-        """The user, 2026-11-01: the two sides zoomed apart; one ✕ for both."""
+    def test_zoomed_whole_and_kept(self) -> None:
+        """The user, 2026-11-05: no zoom of each panel's own; one ✕ for both."""
         note = self._note(dict(NOTE, item=EMAIL))
         built = []
         rebuild = note._build
@@ -115,28 +115,27 @@ class TheNoteTests(unittest.TestCase):
         before = (points(email), points(how))
         note.zoom_by(1, "item")
         self.root.update()
-        self.assertEqual(note.zooms, {"item": hn.ZOOM_START + 1, "how": hn.ZOOM_START})
+        self.assertEqual(note.zooms, {"item": hn.ZOOM_START + 1, "how": hn.ZOOM_START + 1})
         self.assertGreater(points(email), before[0], "its words larger")
-        self.assertEqual(points(how), before[1], "the other side's as they were")
+        self.assertGreater(points(how), before[1], "and the other side's")
         self.assertEqual(built, [], "nothing built again (the user: no refresh)")
         note.zoom_by(-1, "how")
         note.zoom_by(-1, "how")
-        self.assertEqual(note.zooms["how"], hn.ZOOM_START - 2)
-        self.assertEqual(self.zooms, [("item", 3), ("how", 1), ("how", 0)],
+        self.assertEqual(note.zooms, {"item": hn.ZOOM_START - 1, "how": hn.ZOOM_START - 1})
+        self.assertEqual(self.zooms, [("item", 3), ("how", 2), ("how", 1)],
                          "each told, to be kept for the next")
-        # Ctrl and the keys: the side last pressed in - the pointer, wherever
-        # the real one happens to be, taken as over neither side.
+        # Ctrl and the keys.
         note.window.winfo_containing = lambda x, y: None
         note.window.focus_force()
         note._pressed(SimpleNamespace(widget=note._areas["item"]))
         note.window.event_generate(f"<{MOD}-Key-0>")
         self.root.update()
-        self.assertEqual(note.zooms, {"item": hn.ZOOM_START, "how": hn.ZOOM_START - 2})
-        # Ctrl and the wheel: the side it is over.
+        self.assertEqual(note.zooms, {"item": hn.ZOOM_START, "how": hn.ZOOM_START})
+        # Ctrl and the wheel.
         words = note._panes[1][0]
         words.event_generate("<MouseWheel>", delta=120, state=0x0004, x=10, y=10)
         self.root.update()
-        self.assertEqual(note.zooms["how"], hn.ZOOM_START - 1)
+        self.assertEqual(note.zooms["how"], hn.ZOOM_START + 1)
         note.close()
 
     def test_never_taller_than_the_screen_and_what_it_says_scrolls(self) -> None:
@@ -609,14 +608,14 @@ class OneThatFailsIsSkippedTests(unittest.TestCase):
 class OpenedThroughTheDesktopTests(unittest.TestCase):
     """The way it comes up: opened on the page, published, queued, shown."""
 
-    def test_from_the_bus_to_the_screen_each_sides_zoom_kept(self) -> None:
+    def test_from_the_bus_to_the_screen_at_the_one_zoom(self) -> None:
         import queue
         from personalized_agent.ui.desktop import DesktopAgent
         root = tk.Tk()
         root.withdraw()
         self.addCleanup(gc.collect)                    # on Tk's thread (TheNoteTests.tearDown)
         self.addCleanup(root.destroy)
-        kept = {"handed_note_zoom_item": 4, "handed_note_zoom_how": 1}
+        kept = {"popup_zoom": 2}
         config = SimpleNamespace(get=lambda key, default=None: kept.get(key, default),
                                  set=lambda key, value, internal=False: kept.update({key: value}))
         saved = []
@@ -633,16 +632,18 @@ class OpenedThroughTheDesktopTests(unittest.TestCase):
         DesktopAgent._show_handed_note(fake, payload)
         root.update()
         note = fake._handed_note
-        self.assertEqual(note.zooms, {"item": 4, "how": 1}, "opened at the zooms kept")
+        self.assertEqual(note.zooms, {"item": 4, "how": 4}, "opened at the zoom kept")
         note.zoom_by(1, "how")
-        self.assertEqual(kept["handed_note_zoom_how"], 2)
-        self.assertEqual(kept["handed_note_zoom_item"], 4)
+        self.assertEqual(kept["popup_zoom"], 3)
+        self.assertEqual(note.zooms, {"item": 5, "how": 5}, "the whole of it")
         note = fake._handed_note
         note._save()
         self.assertEqual(saved, [("run_7", 1, EMAIL["text"])], "saved to its run and item")
+        from personalized_agent.ui import sizes
         note.on_layout((700, 400), 0.4)
         self.assertEqual((kept["handed_note_size"], kept["handed_note_split"]),
-                         ([700, 400], 0.4), "its size and share kept for the next note")
+                         (sizes.share(fake.root, (700, 400)), 0.4),
+                         "its size, as a share of the screen, and its sides' kept for the next note")
         DesktopAgent._show_handed_note(fake, payload)
         self.assertEqual((fake._handed_note._size, fake._handed_note._split), ((700, 400), 0.4))
         note = fake._handed_note

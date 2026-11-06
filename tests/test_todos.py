@@ -5,6 +5,7 @@ or by the agent's to-do step when it sees one done."""
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from support import TemporaryAgent
 
@@ -119,6 +120,25 @@ class AddToTodoTests(unittest.TestCase):
         from personalized_agent.api.errors import ApiError
         with self.assertRaises(ApiError):
             routes[("POST", "/api/todos/add")](_Ask(text="   "))
+        # Its words changed (the user, 2026-11-04): grouped again at once, and a lesson.
+        with mock.patch.object(self.app.list_groups, "notice") as notice, \
+                mock.patch.object(self.app.lessons, "the_user_did") as lesson:
+            said = routes[("POST", "/api/todos/edit")](_Ask(id=mine["id"], text=" Water the palms ",
+                                                            detail=""))["todo"]
+            self.assertEqual((said["text"], said["detail"]), ("Water the palms", ""))
+            notice.assert_called_once()
+            self.assertEqual(notice.call_args.args[0], "todo")
+            self.assertEqual(lesson.call_args.args[0], "edited_todo")
+            self.assertIn("Water the ferns", lesson.call_args.args[1])
+            self.assertIn("Water the palms", lesson.call_args.args[1])
+            routes[("POST", "/api/todos/edit")](_Ask(id=mine["id"], text="Water the palms", detail=""))
+            notice.assert_called_once()                  # nothing changed, nothing to do
+        with self.assertRaises(ApiError):
+            routes[("POST", "/api/todos/edit")](_Ask(id=mine["id"], text="  "))
+        with self.assertRaises(ApiError) as missing:
+            routes[("POST", "/api/todos/edit")](_Ask(id="nope", text="x"))
+        self.assertEqual(missing.exception.status, 404)
+        self.assertEqual(self.app.todos.get(mine["id"])["text"], "Water the palms")
         self.assertEqual(routes[("GET", "/api/notifications")](_Ask())["remind_later_minutes"],
                          30)
 

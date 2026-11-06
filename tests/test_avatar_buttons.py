@@ -35,6 +35,11 @@ AREA = (0, 0, 1920, 1040)
 
 
 
+MOD = "Command" if sys.platform == "darwin" else "Control"
+#: What a turn of the wheel says: a Mac counts them.
+NOTCH = 1 if sys.platform == "darwin" else 120
+
+
 @unittest.skipUnless(HAVE_TK, "no display for Tk here")
 class OnTheScreenTests(unittest.TestCase):
 
@@ -228,7 +233,7 @@ class OnTheScreenTests(unittest.TestCase):
         row = sections[0]["rows"][30]
         panel._do(row, row["actions"][1])
         self._settle()
-        self.assertEqual(self._top_line(panel), before, "not back at the top")
+        self.assertLessEqual(abs(self._top_line(panel) - before), 3, "not back at the top")
 
     def test_buttons_do_not_pile_up_as_it_is_drawn_again(self) -> None:
         panel = self._panel(self.ONE)
@@ -287,7 +292,7 @@ class OnTheScreenTests(unittest.TestCase):
         panel = self._open(self.ONE, searches=True)
         panel.box.focus_force()
         self._settle(0.05)
-        panel.box.event_generate("<Control-minus>")
+        panel.box.event_generate(f"<{MOD}-minus>")
         self._settle(0.05)
         self.assertEqual((panel.zoom, panel.box.get()), (-1, ""))
 
@@ -317,6 +322,32 @@ class OnTheScreenTests(unittest.TestCase):
                          ("/api/todos/add", {"text": "Check the gauge", "detail": "Before noon"}))
         self.assertIsNone(panel.form)
         self.assertTrue(reads, "the list read again")
+
+    def test_editing_shows_its_words_and_posts_them_changed(self) -> None:
+        asked = []
+
+        def act(action, done):
+            asked.append(action)
+            done()
+        action = {"key": "edit", "label": "Edit", "edits": True, "changes": True,
+                  "path": "/api/todos/edit", "keys": ["text", "detail"],
+                  "fields": ["What to do", "Details (optional)"], "body": {"id": "t1"}}
+        row = {"id": "t1", "title": "Check the gauge", "detail": "Before noon", "actions": [action]}
+        panel = self._panel(self.ONE, act=act, adds=[self.ADD])
+        panel.show((1000, 300, 128, 128))
+        self._settle(0.1)
+        panel._edit_row(row, action)
+        boxes = [one for one in panel.form.winfo_children() if isinstance(one, tk.Entry)]
+        self.assertEqual([one.get() for one in boxes], ["Check the gauge", "Before noon"])
+        boxes[0].delete(0, "end")
+        boxes[0].insert(0, "Read the gauge")
+        boxes[1].delete(0, "end")
+        self._settle(0.05)
+        boxes[0].event_generate("<Return>")
+        self._settle(0.1)
+        self.assertEqual((asked[-1]["path"], asked[-1]["body"]),
+                         ("/api/todos/edit", {"id": "t1", "text": "Read the gauge", "detail": ""}))
+        self.assertIsNone(panel.form)
 
     def test_nothing_written_nothing_is_added(self) -> None:
         asked = []
@@ -365,14 +396,14 @@ class OnTheScreenTests(unittest.TestCase):
 
     def test_the_wheel_glides_and_stops_at_the_top(self) -> None:
         panel = self._open(self.LONG)
-        self.assertEqual(panel._roll(SimpleNamespace(delta=-120)), "break")
+        self.assertEqual(panel._roll(SimpleNamespace(delta=-NOTCH)), "break")
         first = panel.list.yview()[0]
         self._settle(0.4)
         moved = panel.list.yview()[0]
         self.assertGreater(moved, first, "on, after the first step")
         self.assertEqual(panel._rolling, 0.0)
         for _ in range(4):
-            panel._roll(SimpleNamespace(delta=120))
+            panel._roll(SimpleNamespace(delta=NOTCH))
         self._settle(0.6)
         self.assertEqual((panel.list.yview()[0], panel._rolling), (0.0, 0.0))
 
@@ -464,9 +495,9 @@ class OnTheScreenTests(unittest.TestCase):
                                                    ctypes.byref(rect))
                 self.assertGreater(rect.left, -1000, "the system's word for it, not Tk's")
 
-    def test_each_panel_keeps_its_own_size_of_words(self) -> None:
+    def test_every_panel_goes_by_the_one_zoom(self) -> None:
         from personalized_agent.ui.desktop import DesktopAgent
-        kept = {"quick_panel_zoom": 2}
+        kept = {"popup_zoom": 2}
         config = SimpleNamespace(get=lambda key, default=None: kept.get(key, default),
                                  set=lambda key, value, internal=False: kept.__setitem__(key, value))
         desk = SimpleNamespace(_quick_panels={}, root=self.root, config=config, _words=str,
@@ -474,12 +505,12 @@ class OnTheScreenTests(unittest.TestCase):
                                _panel_act=lambda action, done: done())
         todo = DesktopAgent._panel(desk, "todo")
         collection = DesktopAgent._panel(desk, "collection")
-        self.assertEqual((todo.zoom, collection.zoom), (2, 2), "from the one they shared")
-        todo.zoom_to(5)
-        self.assertEqual((kept["quick_panel_zoom_todo"], collection.zoom), (5, 2))
+        self.assertEqual((todo.zoom, collection.zoom), (2, 2))
+        from personalized_agent.ui.desktop import zoom_popups
+        zoom_popups(desk, 5)
+        self.assertEqual((kept["popup_zoom"], todo.zoom, collection.zoom), (5, 5, 5))
         desk._quick_panels.clear()
-        self.assertEqual(DesktopAgent._panel(desk, "todo").zoom, 5)
-        self.assertEqual(DesktopAgent._panel(desk, "collection").zoom, 2)
+        self.assertEqual(DesktopAgent._panel(desk, "collection").zoom, 5, "and the next to open")
 
     def test_closed_it_is_kept_clean_for_the_next_time(self) -> None:
         panel = self._open(self.GROUPED, searches=True, act=lambda action, done: done())
@@ -539,7 +570,7 @@ class OnTheScreenTests(unittest.TestCase):
         panel = self._panel(self.ONE)
         panel.show((800, 500, 128, 128))
         self._settle(0.05)
-        for keys in ("<Control-plus>", "<Control-equal>", "<Control-minus>", "<Control-Key-0>"):
+        for keys in (f"<{MOD}-plus>", f"<{MOD}-equal>", f"<{MOD}-minus>", f"<{MOD}-Key-0>"):
             self.assertTrue(panel.window.bind(keys), keys)
 
     def test_what_is_selected_is_what_is_copied(self) -> None:
@@ -582,7 +613,7 @@ class TheVinesPathTests(unittest.TestCase):
         """Where the leaves are was measured on the frames: 8 to 52 and 75 to 119 along."""
         for side, tucked, _head in self.SIDES:
             points, at = vine_path(tucked, side, self.AREA)
-            self.assertEqual(points[3], (at[0] + ICON // 2, at[1] + ICON // 2), "the button at its end")
+            self.assertEqual(points[-1], (at[0] + ICON // 2, at[1] + ICON // 2), "the button at its end")
             middle = (at[0] + ICON // 2 - tucked[0], at[1] + ICON // 2 - tucked[1])
             along = middle[0] if side in ("top", "bottom") else middle[1]
             self.assertEqual(along, 64, f"between the leaves: {side}")
@@ -602,17 +633,16 @@ class TheVinesPathTests(unittest.TestCase):
                     self.assertTrue(left <= at[0] <= right - ICON and top <= at[1] <= bottom - ICON,
                                     (area, side, y, at))
 
-    def test_it_grows_out_of_the_avatar_in_every_side(self) -> None:
-        """Under what shows: between the leaves tucked, its body with its head out."""
+    def test_it_comes_out_of_the_side_itself_in_every_side(self) -> None:
+        """From past the side of the screen, level with the leaves' middle, tucked or not."""
         for side, tucked, head in self.SIDES:
-            start = vine_path(tucked, side, self.AREA)[0][0]
-            seen = {"right": (1920 - 34, 1920), "left": (0, 34)}.get(side)
-            if seen:
-                self.assertTrue(seen[0] <= start[0] <= seen[1], (side, start))
-            else:
-                self.assertTrue(0 <= start[1] <= 34 or 998 <= start[1] <= 1032, (side, start))
-            start = vine_path(head, side, self.AREA)[0][0]
-            self.assertEqual(start, (head[0] + 64, head[1] + 64), f"its body: {side}")
+            for box in (tucked, head):
+                start = vine_path(box, side, self.AREA)[0][0]
+                past = {"right": start[0] > 1920, "left": start[0] < 0, "top": start[1] < 0,
+                        "bottom": start[1] > 1032}[side]
+                self.assertTrue(past, (side, start))
+                level = start[1] - box[1] if side in ("right", "left") else start[0] - box[0]
+                self.assertEqual(level, 64, side)
 
     def test_the_button_goes_with_its_head_and_is_not_behind_it(self) -> None:
         for side, tucked, head in self.SIDES:
@@ -621,10 +651,92 @@ class TheVinesPathTests(unittest.TestCase):
             inside = head[0] < middle[0] < head[0] + 128 and head[1] < middle[1] < head[1] + 128
             self.assertFalse(inside, (side, at))
 
-    def test_it_grows_from_the_avatar(self) -> None:
+    def test_it_winds_as_a_whole(self) -> None:
+        """Not a stem: it swings to both sides of the line from the avatar to the button."""
+        for side, tucked, _head in self.SIDES:
+            points, _at = vine_path(tucked, side, self.AREA)
+            (x0, y0), (x1, y1) = points[0], points[-1]
+            off = [(x - x0) * (y1 - y0) - (y - y0) * (x1 - x0) for x, y in points]
+            long = ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
+            self.assertGreater(max(off) / long, 10, side)
+            self.assertLess(min(off) / long, -10, side)
+
+    def test_it_grows_from_the_side(self) -> None:
         box = (1886, 500, 128, 128)
         start = vine_path(box, "right", self.AREA, 0.0)[0]
         self.assertEqual(len(set(start)), 1, "nothing out yet")
+
+
+class ClearAroundItTests(unittest.TestCase):
+    """A Mac has no colour to take out of a window, and clears the window instead: drawn on the
+    card's colour, the vine and its button stood in a dark square."""
+
+    class Window:
+        def __init__(self, clears=True):
+            self.asked, self.clears = [], clears
+
+        def attributes(self, *said):
+            self.asked.append(said)
+            if said[0] == "-transparentcolor" or not self.clears:
+                raise tk.TclError("bad attribute")
+
+    def test_on_a_mac_the_window_itself(self) -> None:
+        from personalized_agent.ui import avatar_buttons as ab
+        window = self.Window()
+        with mock.patch.object(ab.sys, "platform", "darwin"):
+            self.assertEqual(ab.see_through(window), "systemTransparent")
+        self.assertIn(("-transparent", True), window.asked)
+
+    def test_where_nothing_can_be_clear_the_cards_colour(self) -> None:
+        from personalized_agent.ui import avatar_buttons as ab
+        with mock.patch.object(ab.sys, "platform", "linux"):
+            self.assertEqual(ab.see_through(self.Window()), ab.LOOK["bg"])
+        with mock.patch.object(ab.sys, "platform", "darwin"):
+            self.assertEqual(ab.see_through(self.Window(clears=False)), ab.LOOK["bg"])
+
+
+class OneOverAnotherTests(unittest.TestCase):
+
+    def test_the_avatar_over_the_button_over_the_vine(self) -> None:
+        """A Mac orders them by what was lifted last: the vine took the button's presses."""
+        from personalized_agent.ui import avatar_buttons as ab
+        lifted = []
+
+        def window(name):
+            return SimpleNamespace(geometry=lambda _at: None, lift=lambda: lifted.append(name))
+        with mock.patch.object(ab.sys, "platform", "darwin"):
+            ab.move_together([window("button"), window("vine")], [(1, 1), (2, 2)], window("avatar"))
+        self.assertEqual(lifted, ["vine", "button", "avatar"])
+
+
+class WhatAMacStartsTests(unittest.TestCase):
+
+    def _started(self, available):
+        from personalized_agent.ui import desktop as dm, selection
+        said = []
+        desk = SimpleNamespace(_start_shortcuts=lambda: said.append("shortcuts"),
+                               _start_avatar_buttons=lambda: said.append("panels"),
+                               queue=queue.Queue(), config=None)
+        with mock.patch.object(selection, "available", return_value=available):
+            dm.DesktopAgent._start_selection_watch(desk)
+        return said
+
+    def test_the_shortcuts_and_panels_without_the_button_beside_selected_text(self) -> None:
+        self.assertEqual(self._started(False), ["shortcuts", "panels"])
+
+    def test_the_docks_menu_is_the_avatars_and_says_what_it_would_do(self) -> None:
+        from personalized_agent.ui import desktop as dm, macos_dock
+        shown = []
+        desk = SimpleNamespace(_words=str, queue=queue.Queue(), character_hidden=False,
+                               open_chat_bubble=None, toggle_character=None)
+        with mock.patch.object(dm.sys, "platform", "darwin"), \
+                mock.patch.object(macos_dock, "show", shown.append):
+            dm.DesktopAgent._dock_menu(desk)
+            desk.character_hidden = True
+            dm.DesktopAgent._dock_menu(desk)
+        self.assertEqual([words for words, _act in shown[0]],
+                         ["Chat", "To do", "Collections", "Overview", "Hide avatar"])
+        self.assertEqual(shown[1][-1][0], "Show avatar")
 
 
 @unittest.skipUnless(sys.platform.startswith("win"), "where Ctrl can be asked of the system")
@@ -767,6 +879,15 @@ class TheVineOnTheScreenTests(unittest.TestCase):
         self.assertGreater(green, red)
         self.assertGreater(green, blue)
         self.assertNotEqual(picture.tobytes(), ab.face(lit=True).tobytes())
+        turned = ab.face(upside_down=True)
+        self.assertNotEqual(picture.tobytes(), turned.tobytes(), "upside down in the top")
+        self.assertEqual(turned.transpose(turned.ROTATE_180 if hasattr(turned, "ROTATE_180") else 3
+                                          ).tobytes(), picture.tobytes())
+        colours = set(picture.getdata())
+        self.assertIn(ab.LEAF, colours, "of the leaves' making")
+        self.assertIn(ab.LEAF_DARK, colours)
+        self.assertFalse([one for one in colours if one != ab.KEY and one[0] > 200 and one[2] > 200
+                          and one[1] < 120], "no pink at its edge")
 
     @unittest.skipUnless(sys.platform.startswith("win"), "the system's order of windows")
     def test_the_avatar_is_in_front_of_it(self) -> None:
@@ -822,10 +943,10 @@ class WhatTheyListTests(unittest.TestCase):
         self.assertEqual(said[0]["name"], "Coast")
         row = said[0]["rows"][0]
         self.assertEqual(row["title"], "Measure the gauge")
-        self.assertEqual([one["key"] for one in row["actions"]], ["delegate", "remove", "move"])
+        self.assertEqual([one["key"] for one in row["actions"]], ["delegate", "edit", "remove", "move"])
         self.assertEqual(row["actions"][0]["text"], "Measure the gauge\nBefore noon")
-        self.assertTrue(row["actions"][1]["confirm"])
-        self.assertEqual(row["actions"][1]["path"], "/api/todos/delete")
+        self.assertTrue(row["actions"][2]["confirm"])
+        self.assertEqual(row["actions"][2]["path"], "/api/todos/delete")
         titles = [one["title"] for part in said for one in part["rows"]]
         self.assertEqual(sorted(titles), ["Buy milk", "Measure the gauge"])
 

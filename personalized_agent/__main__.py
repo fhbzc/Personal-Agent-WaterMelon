@@ -580,6 +580,21 @@ def _set_display_language(root: Path | None, code: str) -> int:
     return 0
 
 
+def _add_ocr() -> int:
+    """`--add-ocr`: what the installer runs when its box stays ticked - the languages of the
+    screens the OCR has not got yet, after the one yes Windows asks for. Nothing is asked when
+    they are all here, and an answer of no is no failure of the installation."""
+    from .platform_layer.ocr import LANGUAGES, current
+
+    ocr = current()
+    wanting = [code for code, _name in LANGUAGES
+               if code not in ocr.installed() and ocr.can_add(code)] if ocr.available() else []
+    if wanting:
+        ocr.add(wanting)
+    print(f"Languages asked for: {', '.join(wanting) or 'none'}.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args_in = list(sys.argv[1:] if argv is None else argv)
     _certificates_carried()
@@ -655,6 +670,8 @@ def main(argv: list[str] | None = None) -> int:
                         dest="display_language",
                         help="the language the agent is shown in, kept as the setting; "
                              "then exit (the installer, in the language it was run in)")
+    parser.add_argument("--add-ocr", action="store_true", dest="add_ocr",
+                        help="add the languages pictures are read in that are missing")
     parser.add_argument("--updates", choices=("install", "ask", "off"), default=None,
                         help="how new versions are taken - installed by themselves, "
                              "asked first, or not looked for; then exit (the installer)")
@@ -699,6 +716,8 @@ def main(argv: list[str] | None = None) -> int:
         return _set_autostart(args.root or args.data_dir, args.autostart == "on")
     if args.display_language:
         return _set_display_language(args.root or args.data_dir, args.display_language)
+    if args.add_ocr:
+        return _add_ocr()
     if args.updates:
         return _set_updates(args.root or args.data_dir, args.updates)
     if args.delegate is not None:

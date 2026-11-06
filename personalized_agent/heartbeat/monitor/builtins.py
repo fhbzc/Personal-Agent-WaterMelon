@@ -8,8 +8,8 @@
   at once, a middling one judged at the next heartbeat (step_monitor);
 - the moments to recommend (PR #6's): the day begun, back from an absence,
   new work, a project come back to after days, the work scattered, a rest;
-- a break after a long stretch, and the evening report after a long day (by
-  the hours worked and the time - not by windows being closed).
+- a break after a long stretch, and the evening report after a long day: asked by the
+  hours worked and the time, and sent at once when many windows are closed that evening.
 
 Those three - spam and the two calendar ones - are PROTECTED from the start:
 the model may change none of them until the user lifts it. The model may
@@ -189,6 +189,13 @@ def builtins() -> List[Dict[str, Any]]:
                           {"signal": "worked_today_minutes", "op": ">=", "value": 240}]},
          "then": [{"do": "ask_model", "handler": "evening"}],
          "cooldown_minutes": 60, "most_per_day": 3},
+        {"builtin": "evening_closing", "name": "Closing up for the evening", "group": "rest",
+         "purpose": "Many windows closed after a long day: the report of the day, before they go.",
+         "when": {"all": [{"event": "closing_up"},
+                          {"signal": "hour", "op": ">=", "value": 18},
+                          {"signal": "worked_today_minutes", "op": ">=", "value": 240}]},
+         "then": [{"do": "ask_model", "handler": "evening_now"}],
+         "cooldown_minutes": 60, "most_per_day": 1},
     ]
 
 

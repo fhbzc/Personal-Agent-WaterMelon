@@ -45,6 +45,49 @@ class HeldTests(unittest.TestCase):
 
     COMBO = "Ctrl+Alt+Shift+F24"          # held by nothing anyone uses
 
+    def test_a_mac_calls_them_its_own_names(self) -> None:
+        from unittest import mock
+        from personalized_agent.platform_layer import hotkeys
+        with mock.patch.object(hotkeys.sys, "platform", "darwin"):
+            self.assertEqual(hotkeys.names()["Win"], "\u2318 Command")
+            self.assertEqual(hotkeys.names()["Alt"], "\u2325 Option")
+            with self.assertRaises(hotkeys.ShortcutError) as said:
+                hotkeys.parse("Shift+D")
+            self.assertIn("Command", str(said.exception))
+            self.assertNotIn("Win", str(said.exception))
+            self.assertEqual(hotkeys.parse("command+option+d")[0], "Alt+Win+D")
+        with mock.patch.object(hotkeys.sys, "platform", "win32"):
+            self.assertEqual(hotkeys.names(), {})
+
+    def test_a_press_on_a_mac_is_read_by_the_name_the_system_gives_it(self) -> None:
+        """Asked as "hkid" the system answered -9870, and every press did nothing."""
+        import ctypes
+        from unittest import mock
+        from personalized_agent.platform_layer import hotkeys
+        done = []
+
+        class Carbon:
+            @staticmethod
+            def GetEventParameter(_event, name, kind, _got, _size, _used, said):
+                if name != hotkeys._four("----") or kind != hotkeys._four("hkid"):
+                    return -9870
+                ctypes.cast(said, ctypes.POINTER(hotkeys._MacHotkeyId)).contents.id = 7
+                return 0
+        with mock.patch.dict(hotkeys._MAC, {"carbon": Carbon, "pressed": {7: lambda: done.append(1)}}):
+            hotkeys._mac_pressed(None, None, None)
+        self.assertEqual(done, [1])
+
+    def test_every_key_a_shortcut_ends_in_has_its_code_on_a_mac(self) -> None:
+        from personalized_agent.platform_layer import hotkeys
+        for key in [*"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", "Space", "Delete", "Home", "End",
+                    "PageUp", "PageDown", "Left", "Up", "Right", "Down",
+                    *[f"F{n}" for n in range(1, 21)]]:
+            self.assertIn(hotkeys.parse(f"Ctrl+{key}")[2], hotkeys.MAC_KEYS, key)
+        self.assertEqual(len(set(hotkeys.MAC_KEYS.values())), len(hotkeys.MAC_KEYS), "one code each")
+        self.assertEqual(hotkeys.MAC_KEYS[ord("D")], 2)
+        self.assertEqual(hotkeys.MAC_KEYS[ord("C")], 8)
+        self.assertEqual(hotkeys.MAC_KEYS[ord("0")], 29)
+
     @unittest.skipUnless(sys.platform == "win32", "Windows holds these with the system")
     def test_held_and_a_second_holder_refused(self) -> None:
         from personalized_agent.platform_layer.hotkeys import Shortcuts, ShortcutError

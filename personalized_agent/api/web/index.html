@@ -12,18 +12,21 @@
      is; "color-scheme" tells the browser the same. -->
 <meta name="darkreader-lock">
 <meta name="color-scheme" content="light dark">
-<title>Personal Agent WaterMelon</title>
+<title>WaterMelon</title>
 <!-- THE DELEGATE WORK BOX ALONE, from its first frame: marked before the
      page is drawn, so the rest of it never shows while app.js loads -
      opened from the shortcut, it looked like the home page first. -->
 <script>if (/[?&]solo=delegate(&|$)/.test(location.search)) document.documentElement.classList.add("delegate-solo");
-if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classList.add("learn-solo");</script>
+if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classList.add("learn-solo");
+/* The panels' list folded away as it was left, from the first frame (app.js). */
+try { if (localStorage.getItem("side-closed") === "true") document.documentElement.classList.add("side-closed"); } catch (_) { /* open, then */ }</script>
 <link rel="stylesheet" href="/styles.css">
 <link rel="stylesheet" href="/listener-debugger.css">
+<link rel="stylesheet" href="/look.css">
 </head>
 <body>
 <header>
-  <h1>Personal Agent&nbsp;WaterMelon</h1>
+  <h1>WaterMelon</h1>
   <nav id="tabs">
     <button data-tab="overview" class="active">Overview</button>
     <button data-tab="recommend">Newspaper</button>
@@ -57,6 +60,9 @@ if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classL
   </nav>
     <div id="status-pill" class="pill">connecting…</div>
 </header>
+
+<button type="button" id="side-toggle" aria-label="Close the sidebar" title="Close the sidebar"
+  aria-controls="tabs" aria-expanded="true">&#9776;</button>
 
 <main>
   <!-- ------------------------------------------------------- Overview -->

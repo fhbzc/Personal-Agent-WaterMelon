@@ -59,6 +59,9 @@ it says.
   detail, Good to know or Bad notification - so it need not be important, only
   worth a look; what they answer teaches you what to send.
 - Do not send what is vague, generic or a guess: then "send": false.
+- A WINDOW'S TITLE IS A LABEL, NOT WHAT THEY ARE DOING: a terminal running a coding assistant
+  keeps its session's first request as its title for weeks of other work. Say nothing is going on
+  from a title alone: only what the window's words or their recent work show as well.
 - One thing. Look it up on the web when that helps. Real pages only - never
   invent an address.
 - The message says the thing itself, so it is worth reading alone. Add "url"
@@ -81,7 +84,10 @@ Answer with JSON alone:
 EVENING_SYSTEM = """You write the user's evening report of their day, from the windows of
 time and the work recorded: what they worked on and for how long, what moved,
 what is left open for tomorrow - and, against their usual days, anything
-unusual. A few short lines, warm and plain, in the user's display language.
+unusual. A few short lines, warm and plain, in the user's display language. A window's title is
+a label: a terminal keeps its session's first request as its title for weeks of other work.
+ONLY WHAT TODAY'S LINES SHOW HAPPENED TODAY: the work still open is from any day, and may not have
+been touched - a talk, a meeting or a thread in it did not "come up today" for being on that list.
 Answer with the report's text alone."""
 
 STEP_SYSTEM = """You are the step of the agent heartbeat that looks after the MONITOR: the
@@ -292,6 +298,8 @@ class Decider:
             "WHAT WAS LEARNED OF HOW THEY WORK, like this moment:\n"
             + ("\n".join(f"- {one}" for one in self._experience(query)) or "-"),
             "LATELY SAID BY THE MONITOR:\n" + ("\n".join(self._recent_said(monitor)) or "-"),
+            f"RECOMMENDED TO THEM TODAY SO FAR: {getattr(monitor, 'recommended_today', int)()}. "
+            "There is no limit: judge whether one more is worth it, after those.",
             "LESSONS ABOUT THEIR NOTIFICATIONS AND WHAT WAS RECOMMENDED TO THEM, in the "
             "newspaper and in moments like this - the rules, and what they did:\n"
             + (self.lessons_for(query) or "None learned yet."),
@@ -335,13 +343,19 @@ class Decider:
         return f"monitor.evening.{day}"
 
     def evening(self, monitor: Any, activator: Dict[str, Any], context: Dict[str, Any],
-                firing: str) -> Dict[str, Any]:
-        """Asked first; at the fixed time, written then; done once a day."""
+                firing: str, at_once: bool = False) -> Dict[str, Any]:
+        """Asked first; at the fixed time, written then; done once a day. `at_once`: they are
+        closing up, and there will be no one to ask; Not today still holds."""
         local = datetime.now(timezone.utc).astimezone()
         day = local.date().isoformat()
         state = monitor._kv(self._evening_key(day))
         if state in ("done", "declined"):
             return {"skipped": f"the evening report is {state} today"}
+        if at_once:
+            if state == "writing":
+                return {"skipped": "the evening report is being written"}
+            monitor._set_kv(self._evening_key(day), "writing")
+            return self.write_evening(monitor, context, firing)
         fixed = str(self.config.get("monitor_evening_fixed_time", "21:00") or "21:00")
         if state == "fixed":
             if local.strftime("%H:%M") < fixed:
@@ -413,7 +427,8 @@ class Decider:
                  "BY PROJECT OR KIND OF WORK (minutes):\n" + "\n".join(
                      f"- {name}: {minutes:.0f}" for name, minutes in
                      sorted(by_project.items(), key=lambda kv: -kv[1])[:12]),
-                 "THE WORK GOING ON:\n" + ("\n".join(f"- {one}" for one in self._tasks()) or "-"),
+                 "WORK STILL OPEN, FROM ANY DAY - NOT WHAT HAPPENED TODAY:\n"
+                 + ("\n".join(f"- {one}" for one in self._tasks()) or "-"),
                  "THEIR USUAL DAYS:\n" + self.signals.habits_text()]
         text = self._ask(EVENING_SYSTEM, "\n\n".join(parts), EVENING_TASK, max_tokens=900).strip()
         monitor._set_kv(self._evening_key(local.date().isoformat()), "done")

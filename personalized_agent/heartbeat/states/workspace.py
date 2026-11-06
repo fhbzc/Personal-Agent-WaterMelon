@@ -36,13 +36,23 @@ from urllib.parse import urlsplit
 
 log = logging.getLogger(__name__)
 
+#: What ends a path inside a sentence besides white space: the marks a Chinese sentence carries,
+#: since one runs straight on after a path. Brackets are not here: a folder may have them
+#: (`_within_its_brackets`).
+_PATH_STOP = "\\s'\"<>|?*，。、；：！？\u3000“”‘’"
+
 #: A Windows or POSIX path, as it appears inside a sentence.
 _PATH = re.compile(
     # The drive letter must stand ALONE. Without the lookbehind the
     # "s" of "https://" is a drive and every web address reads as a
     # file path, which is how `s://chatgpt.com` became a workspace.
-    r"(?:(?<![A-Za-z])[A-Za-z]:[\\/][^\s'\"<>|?*]+"
-    r"|(?:/(?:home|Users|mnt|opt|srv|var|etc)/[^\s'\"<>|?*]+))")
+    rf"(?:(?<![A-Za-z])[A-Za-z]:[\\/][^{_PATH_STOP}]+"
+    rf"|(?:/(?:home|Users|mnt|opt|srv|var|etc)/[^{_PATH_STOP}]+)"
+    # A home-relative path, as a remote session writes it: `me@server:~/tide_tables`.
+    rf"|(?:(?<![\w/~])~/[^{_PATH_STOP}]+))")
+
+#: Brackets a folder or a file may have in its name.
+_BRACKETS = {"(": ")", "（": "）", "【": "】", "《": "》", "「": "」", "『": "』"}
 
 #: A URL, with or without its scheme.
 _URL = re.compile(
@@ -91,9 +101,28 @@ A_WAY_THROUGH = ("google.com", "www.google.com", "bing.com",
                  "duckduckgo.com", "baidu.com", "t.co", "localhost")
 
 
+def _within_its_brackets(said: str) -> str:
+    """A path up to its first bracket with no partner. `C:/论文（终稿）/a.docx` and `file(1).pdf`
+    have them in their names (the user, 2026-11-04: "难道directory里不能有中文括号什么的吗");
+    in `/home/me/x/（含 agent` and `(见 /home/me/x）` the sentence does."""
+    closers = set(_BRACKETS.values())
+    waiting: List[Tuple[str, int]] = []
+    for at, one in enumerate(said):
+        if one in _BRACKETS:
+            waiting.append((_BRACKETS[one], at))
+        elif one in closers:
+            if not waiting or waiting[-1][0] != one:
+                return said[:waiting[0][1] if waiting else at]
+            waiting.pop()
+    return said[:waiting[0][1]] if waiting else said
+
+
 def _tidy_path(said: str) -> str:
-    """A path as a comparable key: one separator, no case, no trailing mark."""
-    path = said.replace("\\", "/").rstrip("/.,;:)\"'")
+    """A path as a comparable key: one separator, no case, no trailing mark. `~/x` is read as
+    under `/home/~`, a home folder like any other."""
+    path = _within_its_brackets(said.replace("\\", "/")).rstrip("/.,;:)\"'")
+    if path.startswith("~/"):
+        path = "/home/~" + path[1:]
     return path.lower()
 
 
@@ -280,10 +309,12 @@ def ancestors(key: str) -> List[str]:
     if "/" not in key:
         return []
     parts = [one for one in key.split("/") if one]
+    # An absolute path's folders are absolute too.
+    lead = "/" if key.startswith("/") else ""
     out = []
     # Drop the leaf: the key itself is not its own ancestor.
     for depth in range(len(parts) - 1, 0, -1):
-        out.append("/".join(parts[:depth]))
+        out.append(lead + "/".join(parts[:depth]))
     return out
 
 

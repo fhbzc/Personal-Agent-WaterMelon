@@ -2668,6 +2668,10 @@ class AgentHeartbeat:
             # Activators reprogrammed when it is needed. Its failure is not
             # this round's either.
             report["step_monitor"] = self._monitor_step()
+            # THE RESERVE (heartbeat/monitor/reserve.py, the user, 2026-11-05): what the user has
+            # read marked not to be told, each time; a model asked only when it is due.
+            report["step_reserve"] = self._reserve_step(
+                asks=not report.get("blocked") and not self._stop.is_set())
             return self._finish(report)
         finally:
             span = getattr(self, "_span", None)
@@ -2690,6 +2694,17 @@ class AgentHeartbeat:
             return step() or {}
         except Exception as exc:
             log.warning("the Monitor's step failed", exc_info=True)
+            return {"error": str(exc)[:300]}
+
+    def _reserve_step(self, asks: bool = True) -> Dict[str, Any]:
+        """`asks`: a model that is away this round is not asked again."""
+        step = getattr(self, "reserve_step", None)
+        if step is None:
+            return {}
+        try:
+            return step(asks) or {}
+        except Exception as exc:
+            log.warning("the reserve's step failed", exc_info=True)
             return {"error": str(exc)[:300]}
 
     def _state_round_if_due(self) -> Dict[str, Any]:

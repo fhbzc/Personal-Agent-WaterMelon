@@ -128,7 +128,7 @@ class TheDesktopsWordsTests(unittest.TestCase):
     def test_a_long_text_with_many_places_is_matched_at_once(self) -> None:
         from personalized_agent.common import interface_words as words
         started = time.monotonic()
-        words.translated("x " * 400 + "and nothing of ours", "de")
+        words.translated("x " * 400 + "and nothing of ours", "zh")
         self.assertLess(time.monotonic() - started, 1.0)
 
 
@@ -140,16 +140,16 @@ class ThePageTests(unittest.TestCase):
             self.skipTest("no browser available to render the page")
 
     def _render(self, steps: str) -> dict:
-        page = ("<!doctype html><html><body>"
+        page = ("<!doctype html><html><head><meta charset='utf-8'></head><body>"
                 "<button id=b>Quit</button>"
                 "<div class=msg-text>Quit</div>"
                 "<textarea id=t placeholder=\"Say what you want done, as you would to a colleague\">"
                 "Quit</textarea><p id=p></p></body></html>")
-        table = json.loads((WEB / "lang" / "de.json").read_text(encoding="utf-8"))
+        table = json.loads((WEB / "lang" / "zh.json").read_text(encoding="utf-8"))
         harness = (
             "<script>const TABLE=" + json.dumps(table) + ";"
             "window.fetch=(u)=>Promise.resolve({ok:true,json:()=>Promise.resolve("
-            "String(u).startsWith('/lang/')?TABLE:{values:{display_language:'de'}})});</script>"
+            "String(u).startsWith('/lang/')?TABLE:{values:{display_language:'zh'}})});</script>"
             "<script>" + (WEB / "i18n.js").read_text(encoding="utf-8") + "</script>"
             "<script>window.addEventListener('load',async()=>{let err='';const out={};"
             "const wait=(ms)=>new Promise(r=>setTimeout(r,ms||150));"
@@ -185,7 +185,7 @@ class ThePageTests(unittest.TestCase):
         result = self._render(steps)
         self.assertEqual(result["err"], "")
         out = result["out"]
-        self.assertEqual(out["button"], "Beenden")
+        self.assertEqual(out["button"], "退出")
         self.assertEqual(out["mine"], "Quit")
         self.assertEqual(out["typed"], "Quit")
         self.assertNotIn("colleague", out["placeholder"])
@@ -193,8 +193,8 @@ class ThePageTests(unittest.TestCase):
         self.assertIn("2", out["every"])
         self.assertTrue(out["long"])
         self.assertLess(out["ms"], 500)
-        self.assertEqual(out["lang"], "de-DE")
-        self.assertEqual(out["date"], "Oktober")
+        self.assertEqual(out["lang"], "zh-CN")
+        self.assertEqual(out["date"], "十月")
 
 
 if __name__ == "__main__":

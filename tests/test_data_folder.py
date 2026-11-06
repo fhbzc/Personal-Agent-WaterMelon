@@ -73,7 +73,7 @@ class WhereTheDataFolderIsTests(unittest.TestCase):
         self.assertIn("NeedsAdmin(Dir)", script)
         for system_folder in ("{commonpf}", "{commonpf32}", "{win}", "{commonappdata}"):
             self.assertIn(f"Under(Folder, ExpandConstant('{system_folder}'))", script)
-        for code in ("en", "zh", "es", "ja", "ko", "ru", "fr", "de", "it"):
+        for code in ("en", "zh"):
             for key in ("DataTitle", "DataPrompt", "DataExisting", "DataProgramFiles"):
                 self.assertIn(f"\n{code}.{key}=", script.replace("\r\n", "\n"), (code, key))
 
@@ -122,7 +122,7 @@ class TheFoldersFoundAreOfferedTests(unittest.TestCase):
             self.assertIn(place, found, place)
         offer = self._body("procedure Offer(Dir: String);")
         self.assertIn("HasAgentData", offer)
-        for code in ("en", "zh", "es", "ja", "ko", "ru", "fr", "de", "it"):
+        for code in ("en", "zh"):
             self.assertIn(f"\n{code}.DataFound=", self.script, code)
 
     def test_the_standard_folders_are_the_programs_own(self) -> None:
@@ -165,7 +165,7 @@ class UninstallingNeverTakesTheDataTests(unittest.TestCase):
         self.assertIn("CustomMessage('DataHoldsProgram')", check)
         # Before the question about using the data already there.
         self.assertLess(check.index("DataHoldsProgram"), check.index("DataExisting"))
-        for code in ("en", "zh", "es", "ja", "ko", "ru", "fr", "de", "it"):
+        for code in ("en", "zh"):
             self.assertIn(f"\n{code}.DataHoldsProgram=", self.script, code)
 
     def test_uninstalling_keeps_every_folder_with_data_in_it(self) -> None:
@@ -376,7 +376,7 @@ class OnlyAnAgentsOwnFolderTests(unittest.TestCase):
         script = (ROOT / "build" / "windows" / "installer.iss").read_text(encoding="utf-8-sig")
         self.assertIn("function OtherThings(Dir: String): String;", script)
         self.assertIn("OtherThings(Dir) <> ''", script)
-        for code in ("en", "zh", "es", "ja", "ko", "ru", "fr", "de", "it"):
+        for code in ("en", "zh"):
             self.assertIn(f"\n{code}.DataNotOnly=", script.replace("\r\n", "\n"), code)
 
 

@@ -136,7 +136,8 @@ class JobsTests(_Base):
         self.assertEqual(ended, {}, "a job ended at once - why it ended")
         refused = self.tools.call("run_python", {"background": True, "code": "print(1)"})
         self.assertIn("jobs are running already", refused.get("error", ""), refused)
-        self.tools.stop_jobs()
+        # A ceiling, not a wait: on a full run three ending took longer than the usual fifteen.
+        self.tools.stop_jobs(wait=60.0)
         # Each stopped - and one that is not, said with how it ended.
         not_stopped = {one["job"]: (status(one), {
             key: str(value)[:600] for key, value in

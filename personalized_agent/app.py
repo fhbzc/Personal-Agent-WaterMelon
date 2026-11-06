@@ -97,6 +97,8 @@ class AgentApplication:
         self.config.set("workspace_root", str(self.paths.workspace_dir), internal=True)
 
         # -- storage --------------------------------------------------------
+        # Asked before it is made: there being none yet is what a new install is.
+        new_here = not self.paths.database_file.exists()
         self.db = Database(self.paths.database_file)
         # Section 14.35, as amended: what the agent spends is written down, so
         # that "is this getting more expensive" survives a restart. Attached
@@ -399,8 +401,15 @@ class AgentApplication:
                                pictures=self.paths.data_dir / "notification_pictures")
         self.monitor_decider.item_links = self.item_links
         self.monitor.keeper = self._keep_recommended
-        self.triggers.rules = self.monitor.text_rules
+        self.triggers.rules = lambda: [*self.monitor.text_rules(), self.reserve_rule]
         self.heartbeat.monitor_step = lambda: self.monitor_decider.step(self.monitor)
+        from .heartbeat.monitor.reserve import Reserve
+        self.reserve = Reserve(self.db, self.config)
+        self.heartbeat.reserve_step = lambda asks=True: self.reserve.step(self.monitor_decider,
+                                                                          asks=asks)
+        from .heartbeat.monitor.match import ReserveRule
+        self.reserve_rule = ReserveRule(self.reserve, self.monitor, self.monitor_decider,
+                                        self.data_dir, self.platform.activity)
         self.bus.subscribe("feedback.answered", self.monitor.on_answered)
         # EVERY ANSWER LEARNED FROM (the user, 2026-11-03): a question's here;
         # a notification's own buttons where they are pressed (`learn_answer`).
@@ -428,6 +437,7 @@ class AgentApplication:
         # CUSTOMIZED RECOMMENDATION: an issue recommends from what was read,
         # at the times of day the user chose - its own clock.
         self.connections_round.reading = self.reading
+        self.connections_round.reserve = self.reserve
         self.connections_round.embedder = getattr(self.state_heartbeat, "embedder", None)
         self.connections_round.retriever = self.lesson_retriever
         from .heartbeat.connections.schedule import IssueClock
@@ -563,6 +573,9 @@ class AgentApplication:
         self.list_groups.lessons = self.lessons
         self.list_groups.retriever = self.lesson_retriever
         self.list_groups.item_links = self.item_links
+        from .agent.feedback.after_todo import AfterTodo
+        self.after_todo = AfterTodo(self.db, lambda: self.models, self.scheduler, self.todos,
+                                    allowed=lambda: _modules.enabled(self.config, "tasks"))
 
         # UPDATES from the project's published releases (platform_layer/
         # updater.py): never while a piece of work runs. `quit` is set by
@@ -572,6 +585,8 @@ class AgentApplication:
                                notify=self.notifications.notify,
                                working=lambda: bool(self.work.going_now()),
                                away=self._seconds_away)
+        if new_here:
+            self.updater.installed_just_now()
 
         # -- protocol -------------------------------------------------------
         self.app_registry = ApplicationRegistry(self.db)
@@ -934,6 +949,9 @@ class AgentApplication:
         part_of = self.item_links.note("notification", str(shown.get("id") or ""))
         if part_of:
             summary += f" {part_of}"
+        if (shown.get("metadata") or {}).get("recommended"):
+            from .heartbeat.monitor.reserve import chain_line
+            summary += f" {chain_line(shown.get('metadata'))}"
         try:
             source = str(shown.get("id") or (question or {}).get("id") or "")
             kind = "recommendations" if (shown.get("metadata") or {}).get("recommended") \
@@ -1034,10 +1052,12 @@ class AgentApplication:
         task = self.scheduler.store.get(task_id) if task_id else None
         self.notifications.mark_read(notification_id)
         if (shown.get("metadata") or {}).get("recommended"):
+            from .heartbeat.monitor.reserve import chain_line
             self.lessons.record("recommendations", f"bad:{notification_id}",
                                 f'The agent recommended "{shown.get("title") or ""}": '
                                 f'{str(shown.get("message") or "")[:400]} - the user called it a '
-                                "bad notification.", action="bad_notification", reason=said)
+                                f"bad notification. {chain_line(shown.get('metadata'))}",
+                                action="bad_notification", reason=said)
         # One of the Monitor's: kept whole with why it was made (engine.on_bad).
         try:
             self.monitor.on_bad(shown, said)
@@ -1137,6 +1157,11 @@ class AgentApplication:
                     {"key": "delegate", "label": shown("Delegate work", self.config),
                      "todo": one["id"], "text": "\n".join(
                          part for part in (one.get("text"), one.get("detail")) if part)},
+                    {"key": "edit", "label": shown("Edit", self.config), "edits": True,
+                     "changes": True, "path": "/api/todos/edit", "keys": ["text", "detail"],
+                     "fields": [shown("What to do", self.config),
+                                shown("Details (optional)", self.config)],
+                     "body": {"id": one["id"]}},
                     {"key": "remove", "label": shown("Remove", self.config), "confirm": True,
                      "changes": True, "path": "/api/todos/delete", "body": {"id": one["id"]}},
                     moved]
@@ -1681,16 +1706,29 @@ class AgentApplication:
             closing = _threading.Thread(target=self._close_work, args=(why,),
                                         name="close-work", daemon=True)
             closing.start()
-            self.updater.stop()
-            self.work.governor.stop()
+            # ALL TOLD AT ONCE (the user, 2026-11-05: quitting held for 18 seconds): each was told
+            # only when the one before it had been waited for, up to five seconds each.
+            for loop in (self.state_heartbeat, self.heartbeat):
+                loop._stop.set()
+                loop._interval_changed.set()
+
+            before: Dict[str, float] = {}
+
+            def timed(name: str, part: Any) -> None:
+                began_part = _time.perf_counter()
+                part()
+                before[name] = round(_time.perf_counter() - began_part, 3)
+
+            timed("Updater", self.updater.stop)
+            timed("Governor", self.work.governor.stop)
             # The learning clock told first, at once: it must not read a run
             # the closing stops as finished - that run is carried on at the
             # next start. Then the state heartbeat, first to be waited for:
             # a round in flight holds the way out.
-            self.learning.halt()
+            timed("Learning", self.learning.halt)
             # A build going is ended: what it read is kept, and the next one
             # does not read it again.
-            self.local_index.halt()
+            timed("LocalIndex", self.local_index.halt)
             for component in (self.state_heartbeat, self.monitor,
                               self.issue_clock, self.triggers,
                               self.housekeeping,
@@ -1702,6 +1740,7 @@ class AgentApplication:
                 except Exception:
                     log.exception("component shutdown failed")
                 spent[name] = round(_time.perf_counter() - began, 3)
+            spent.update(before)
             closing.join(CLOSE_SECONDS + 5)
             spent["WorkRuns"] = round(_time.perf_counter() - began_work, 3)
             if self.api is not None:

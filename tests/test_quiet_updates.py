@@ -166,7 +166,7 @@ class TheWindowsHelperRunsTests(unittest.TestCase):
                                         self.result, self.ready_file, "v9.0.0", self.live)
         helper.write_text(text.replace(quiet.UNINSTALL_KEY, "HKCU:\\NoSuchKeyForThisTest"),
                           encoding="utf-8-sig")
-        steps = Path(str(self.result) + ".log")
+        steps = self.steps = Path(str(self.result) + ".log")
         try:
             # A CI machine is slower than a desk's: minutes, not seconds.
             subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy",
@@ -185,12 +185,16 @@ class TheWindowsHelperRunsTests(unittest.TestCase):
 
     def test_up_in_time_it_is_kept(self) -> None:
         port = _free_port()
+        # UP UNTIL THE HELPER HAS SAID, not for so many seconds: on a loaded build machine it
+        # first looked after a program up for twenty had ended (v0.3.0's first build).
         said = self._run(f"""
-import socket, time
+import os, socket, time
 s = socket.socket(); s.bind(("127.0.0.1", {port})); s.listen(1)
-time.sleep(20)
+end = time.time() + 280
+while time.time() < end and not os.path.exists({str(self.result)!r}):
+    time.sleep(0.2)
 """, port, 90)
-        self.assertTrue(said["ok"], said)
+        self.assertTrue(said["ok"], f"{said}\n{self.steps.read_text(encoding='utf-8-sig')}")
         self.assertEqual((self.live / "_internal" / "version.txt").read_text(encoding="utf-8"),
                          "new")
         self.assertEqual((self.live / ".update" / "previous" / "_internal" / "version.txt")

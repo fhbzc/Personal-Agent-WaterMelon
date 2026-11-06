@@ -146,6 +146,8 @@ class TellingThemApartTests(unittest.TestCase):
                                     {"text": "Example Friend", "box": (320, 200, 100, 30)}])
         self.assertEqual((frame["layout_status"], frame["layout_reason"]),
                          ("unrecognized", "chat_header_not_readable"))
+        self.assertEqual(frame["messages"], [], "whose it is cannot be said")
+        self.assertEqual(frame["unresolved_text"], "Example", "but the words are kept")
         self.assertEqual(frame["messages"], [])
 
     def test_a_page_that_is_not_a_conversation(self):

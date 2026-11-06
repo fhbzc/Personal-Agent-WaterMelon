@@ -45,6 +45,13 @@ MODULES: List[Dict[str, str]] = [
              "Connections is on, what your contacts have been doing.",
      "off": "No issue is made and nothing read is kept, so no one is looked up on the web "
             "either. \"Make an issue now\" still works."},
+    {"key": "recommendation", "setting": "module_recommendation_enabled",
+     "name": "Recommendations",
+     "what": "Things worth telling you, made ready ahead from what the Newspaper left over and "
+             "from the web, and told at a moment that suits, each with why. What you answer "
+             "teaches it what to recommend. It runs on the Monitor.",
+     "off": "Nothing is recommended by itself and no model is asked for it. The Newspaper and "
+            "the Monitor's other work go on."},
     {"key": "monitor", "setting": "module_monitor_enabled", "name": "Monitor",
      "what": "The real-time signals - what you are doing, since when, how busy, your habits "
              "- and the Activators run on them: spam and scam warnings, recommendations at "
@@ -93,7 +100,9 @@ TASK_MODULE = {
     "heartbeat:same_notification": "calendar",
     "heartbeat_trigger": "calendar",
     # THE MONITOR (heartbeat/monitor/): a recommendation, the evening report, its step.
-    "monitor_recommend": "monitor",
+    "monitor_recommend": "recommendation",
+    "recommendation_prepare": "recommendation",
+    "recommendation_judge": "recommendation",
     "monitor_evening": "monitor",
     # The moment said again in English before its lessons are looked for.
     "monitor_lessons_query": "monitor",

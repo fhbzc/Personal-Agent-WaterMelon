@@ -197,12 +197,13 @@ class ThePanelsSizeTests(_WithWork):
                 return self[key]
         return build_routes(self.app), Ask
 
-    def test_each_kept_apart_by_the_application_and_within_reason(self) -> None:
-        routes, Ask = self._routes()
-        routes[("POST", "/api/panel_zooms")](Ask(panel="project-card", zoom=1.4))
-        routes[("POST", "/api/panel_zooms")](Ask(panel="monitor:0", zoom=9))
-        said = routes[("GET", "/api/panel_zooms")](Ask())["zooms"]
-        self.assertEqual(said, {"project-card": 1.4, "monitor:0": 2.2})
+    def test_the_page_zooms_as_a_page_with_nothing_of_ours_between(self) -> None:
+        routes, _Ask = self._routes()
+        self.assertNotIn(("POST", "/api/panel_zooms"), routes)
+        from support import ROOT
+        source = (ROOT / "personalized_agent" / "api" / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn("panelZooms", source)
+        self.assertNotIn("style.zoom", source)
 
     def test_no_page_of_settings_shows_a_size_of_words(self) -> None:
         from personalized_agent.common.config import schema

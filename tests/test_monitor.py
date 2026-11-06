@@ -10,6 +10,7 @@ import json
 import threading
 import time
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -111,7 +112,8 @@ class MonitorTests(unittest.TestCase):
     def test_the_built_in_ones_three_protected(self) -> None:
         listed = {one["builtin"]: one for one in self.store.list()}
         for key in ("invitation", "time_agreed", "spam_risk", "day_began", "back", "new_work",
-                    "project_return", "scattered", "leisure", "break", "evening"):
+                    "project_return", "scattered", "leisure", "break", "evening",
+                    "evening_closing"):
             self.assertIn(key, listed)
         self.assertEqual({key for key, one in listed.items() if one["protected"]},
                          {"invitation", "time_agreed", "spam_risk"})
@@ -508,6 +510,10 @@ class MonitorTests(unittest.TestCase):
     def test_the_model_is_asked_for_the_line(self) -> None:
         from personalized_agent.heartbeat.monitor import decide
         self.assertIn('"reason"', decide.RECOMMEND_SYSTEM)
+        # A terminal's title stayed for two months and was taken for the work (2026-11-05).
+        self.assertIn("A WINDOW'S TITLE IS A LABEL", decide.RECOMMEND_SYSTEM)
+        # A talk on the open list was reported as today's (2026-11-05).
+        self.assertIn("ONLY WHAT TODAY'S LINES SHOW", decide.EVENING_SYSTEM)
         self.assertIn('"reason"', decide.STEP_SYSTEM)
 
     def test_good_to_know_opens_nothing_and_holds_nothing_back(self) -> None:
@@ -981,6 +987,163 @@ class TheUsersOwnWorkTests(unittest.TestCase):
         busy = [(self.START, self.START + timedelta(minutes=30))]
         windows = self._windows([self._focus("Code", "garden.py", 0), *self._hands(5, 25)], busy)
         self.assertAlmostEqual(windows[-1].since_break_min, 30, delta=0.5)
+
+    def _with_events(self, events, ticks=(0,)):
+        """What the signals make of a made-up history, as the running agent looks every so often."""
+        from datetime import timedelta
+        from personalized_agent.data_manage.storage.raw_store import RawStore
+        from personalized_agent.heartbeat.monitor import signals as sig
+        agent = TemporaryAgent()
+        self.addCleanup(agent.cleanup)
+        made = agent.app.monitor_signals
+        RawStore(made.db).add_events(events)
+        made._set_kv(sig.ALIVE_KEY, self.now.isoformat())
+        said = []
+        for minutes in ticks:
+            when = self.now + timedelta(minutes=minutes)
+            made.record_if_due(when)
+            live = made.live_window(when)
+            said.append(live.since_break_min if live is not None else 0.0)
+        return said, made.store.last(2000)
+
+    def _focused(self, at):
+        from personalized_agent.common.events.models import ListenerEvent
+        return ListenerEvent(event_type="application.focused", source="application",
+                             application="Notes", timestamp=at,
+                             data={"window_title": "A note", "activation_time": at.isoformat()})
+
+    def _ended(self, at, seconds):
+        from personalized_agent.common.events.models import ListenerEvent
+        return ListenerEvent(event_type="application.focus_ended", source="application",
+                             application="Notes", timestamp=at,
+                             data={"window_title": "A note", "duration_seconds": seconds,
+                                   "deactivation_time": at.isoformat()})
+
+    def _presence(self, kind, at):
+        from personalized_agent.common.events.models import ListenerEvent
+        return ListenerEvent(event_type=f"presence.{kind}", source="application", timestamp=at,
+                             data={})
+
+    def test_days_away_are_not_at_the_screen_when_hands_off_came_after(self) -> None:
+        """hands_off is stamped later than the away it comes with: it hid the absence under way."""
+        from datetime import datetime, timedelta, timezone
+        self.now = datetime.now(timezone.utc).replace(microsecond=0)
+        left = self.now - timedelta(days=3)
+        said, _rows = self._with_events(
+            [self._focused(left - timedelta(hours=1)), self._presence("back", left - timedelta(hours=1)),
+             self._presence("away", left), self._presence("hands_off", left + timedelta(minutes=3))],
+            ticks=(0, 15, 30))
+        self.assertLess(max(said), 90, "an hour before leaving at most, not three days")
+
+    def test_before_absences_were_recorded_no_stretch_runs(self) -> None:
+        """The first build reaches eight days back: 11530 minutes "without a break"."""
+        from datetime import datetime, timedelta, timezone
+        self.now = datetime.now(timezone.utc).replace(microsecond=0)
+        day = timedelta(days=1)
+        events = []
+        for back in range(10, 0, -1):
+            start = self.now - back * day
+            events += [self._focused(start),
+                       self._ended(start + day - timedelta(minutes=1), 86340.0)]
+        began = self.now - timedelta(minutes=40)
+        said, rows = self._with_events(events + [self._presence("back", began)])
+        # Forty minutes, and the window they began in counted whole.
+        self.assertLessEqual(max(said), 55, "only since they have been")
+        self.assertLessEqual(max(one.since_break_min for one in rows), 55)
+        self.assertGreater(len(rows), 700, "what the windows show stays")
+
+    def test_where_absences_were_never_recorded_no_stretch_is_told(self) -> None:
+        from datetime import datetime, timedelta, timezone
+        self.now = datetime.now(timezone.utc).replace(microsecond=0)
+        start = self.now - timedelta(days=2)
+        said, rows = self._with_events([self._focused(start),
+                                        self._ended(self.now - timedelta(minutes=1), 172740.0)])
+        self.assertEqual(max(said), 0)
+        self.assertEqual(max(one.since_break_min for one in rows), 0)
+
+    def _on_a_mac(self, windows, programs=((1, 0),), fails=False):
+        """count_windows with the Mac's libraries made up: this runs on any system."""
+        import contextlib
+        import sys
+        import types
+        from personalized_agent.platform_layer.macos import MacActivityProvider
+        objc = types.SimpleNamespace(autorelease_pool=contextlib.nullcontext)
+        running = [mock.Mock(**{"processIdentifier.return_value": pid,
+                                "activationPolicy.return_value": policy})
+                   for pid, policy in programs]
+        appkit = types.SimpleNamespace(NSWorkspace=mock.Mock(**{
+            "sharedWorkspace.return_value.runningApplications.return_value": running}))
+        quartz = types.SimpleNamespace(
+            kCGWindowListOptionAll=0, kCGWindowListExcludeDesktopElements=16, kCGNullWindowID=0,
+            CGWindowListCopyWindowInfo=mock.Mock(
+                side_effect=OSError("no") if fails else None, return_value=windows))
+        with mock.patch.dict(sys.modules, {"objc": objc, "AppKit": appkit, "Quartz": quartz}):
+            said = MacActivityProvider.count_windows(object.__new__(MacActivityProvider))
+        return said, quartz
+
+    @staticmethod
+    def _window(pid=1, layer=0, alpha=1.0, width=800, height=600):
+        return {"kCGWindowOwnerPID": pid, "kCGWindowLayer": layer, "kCGWindowAlpha": alpha,
+                "kCGWindowBounds": {"X": 0, "Y": 0, "Width": width, "Height": height}}
+
+    def test_on_a_mac_the_windows_of_the_programs_in_the_dock(self) -> None:
+        one = self._window
+        said, _quartz = self._on_a_mac(
+            [one(), one(), one(pid=2), one(layer=25), one(alpha=0), one(width=20), one(height=20)],
+            programs=((1, 0), (2, 1)))
+        self.assertEqual(said, 2, "not a helper's, a menu's, an unseen or a tiny one")
+
+    def test_on_a_mac_another_space_is_not_closing_them(self) -> None:
+        _said, quartz = self._on_a_mac([])
+        quartz.CGWindowListCopyWindowInfo.assert_called_once_with(16, 0)   # all, not on screen only
+
+    def test_on_a_mac_that_cannot_say_it_says_nothing(self) -> None:
+        self.assertIsNone(self._on_a_mac([], fails=True)[0])
+
+    def _counted(self, counts):
+        from personalized_agent.heartbeat.monitor import signals as sig
+        made = object.__new__(sig.Signals)
+        made._window_counts = []
+        made.platform = mock.Mock()
+        said = []
+        for at, count in counts:
+            made.platform.count_windows.return_value = count
+            with mock.patch.object(sig.time, "monotonic", return_value=float(at)):
+                said.append(made._closing_up())
+        return said
+
+    def test_many_windows_closed_is_said_once(self) -> None:
+        self.assertEqual(self._counted([(0, 10), (60, 9), (120, 5), (130, 5), (140, 5)]),
+                         [False, False, True, False, False])
+
+    def test_a_few_closed_or_closed_slowly_is_nothing(self) -> None:
+        self.assertEqual(self._counted([(0, 20), (60, 15)]), [False, False], "a small share")
+        self.assertEqual(self._counted([(0, 10), (120, 9), (240, 8), (360, 7), (480, 6)]),
+                         [False] * 5, "over a long while")
+
+    def test_where_it_cannot_be_said_it_is_nothing(self) -> None:
+        self.assertEqual(self._counted([(0, None), (10, None)]), [False, False])
+
+    def test_closing_up_of_an_evening_sends_the_report_unasked(self) -> None:
+        from personalized_agent.heartbeat.monitor import builtins as made, decide
+        one = next(one for one in made.builtins() if one["builtin"] == "evening_closing")
+        self.assertEqual(one["then"][0]["handler"], "evening_now")
+        kept = {}
+        monitor = mock.Mock()
+        monitor._kv.side_effect = lambda key: kept.get(key, "")
+        monitor._set_kv.side_effect = kept.__setitem__
+        decider = object.__new__(decide.Decider)
+        decider.config = {}
+        with mock.patch.object(decider, "write_evening", return_value={"sent": True}) as wrote:
+            self.assertEqual(decider.evening(monitor, one, {}, "f1", at_once=True), {"sent": True})
+            wrote.assert_called_once()
+            self.assertEqual(decider.evening(monitor, one, {}, "f2", at_once=True),
+                             {"skipped": "the evening report is being written"})
+            for key in list(kept):
+                kept[key] = "declined"
+            self.assertIn("skipped", decider.evening(monitor, one, {}, "f3", at_once=True),
+                          "Not today holds")
+            wrote.assert_called_once()
 
     def test_two_reminders_the_work_one_sooner(self) -> None:
         from personalized_agent.heartbeat.monitor import builtins as made

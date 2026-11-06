@@ -7,7 +7,7 @@ on Windows and Linux asking twice changes nothing."""
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import Any, List
 
 
 def borderless(window: Any) -> None:
@@ -70,6 +70,10 @@ def ctrl_down() -> bool:
         return False
 
 
+#: What two fingers on a touch screen do, for every window (ui/desktop.py says): told +1 or -1.
+PINCH: List[Any] = []
+
+
 def keys_on_hover(window: Any) -> None:
     """THE POINTER ON IT AND CTRL DOWN, THE KEYS GO TO IT (the user, 2026-11-04: "所有的panel缩放都支持鼠标+
     ctrl +-"): a window has them only once it has the keyboard. Not for the pointer alone: passing
@@ -112,6 +116,19 @@ def keys_on_hover(window: Any) -> None:
             watching["on"] = True
             watch()
     window.bind("<Enter>", came_in, add="+")
+
+    def already_on_it() -> None:
+        # MADE UNDER THE POINTER, it is told of no <Enter> until the pointer moves: a notification
+        # is drawn anew at each zoom, and took one step and no more (2026-11-05).
+        try:
+            if window.winfo_exists() and inside():
+                came_in()
+        except Exception:                                # gone meanwhile
+            pass
+    window.after(60, already_on_it)
+    if PINCH:
+        from .touch_zoom import listen
+        window.after(120, lambda: listen(window, PINCH[0]))
 
 
 def selected_words(widget: Any) -> str:

@@ -42,7 +42,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ...common.events.models import ListenerEvent
 from ...platform_layer import get_platform
-from ...version import APP_NAME, FORMER_NAMES
+from ...version import names_the_agent
 from ..core.manager import STOPPING_GRACE_SECONDS
 from ..core.provider import ListenerProvider, PluginManifest
 
@@ -243,8 +243,7 @@ class ScreenshotProvider(ListenerProvider):
             return False
         if pid and pid == os.getpid():
             return False
-        said = f"{application} {title}".lower()
-        if any(name.lower() in said for name in (APP_NAME, *FORMER_NAMES)):
+        if names_the_agent(application, title):
             return False
         haystack = f"{application} {title}".lower()
         for pattern in self.config.lines("listener_screen_excluded_applications"):

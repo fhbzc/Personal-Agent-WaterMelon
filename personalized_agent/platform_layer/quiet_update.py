@@ -209,13 +209,16 @@ def skip(folder: Path, tag: str) -> None:
 
 def staged(folder: Path) -> Optional[Dict[str, Any]]:
     """The version made ready, when it is still there and newer than this
-    one - else None (and what is left of it forgotten)."""
+    one, or older and chosen to go back to - else None (and what is left of
+    it forgotten)."""
     said = _read(folder / STAGED)
     if not isinstance(said, dict):
         return None
-    from .updater import is_newer
+    from .updater import can_go_back_to, is_newer
     parts = [Path(one) for one in said.get("parts") or []]
-    if not parts or not all(one.exists() for one in parts) or not is_newer(str(said.get("tag"))) \
+    tag = str(said.get("tag"))
+    wanted = is_newer(tag) or (said.get("back") and can_go_back_to(tag))
+    if not parts or not all(one.exists() for one in parts) or not wanted \
             or said.get("tag") in skipped(folder):
         forget_staged(folder, said)
         return None

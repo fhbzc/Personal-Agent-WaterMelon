@@ -118,6 +118,11 @@ class PlatformActivityProvider(ABC):
         """"presentation", "fullscreen", or "" - nothing, or the platform cannot say."""
         return ""
 
+    def count_windows(self) -> Optional[int]:
+        """How many application windows are open - the ones a user would close - or None where
+        the platform cannot say. Many closed in a few minutes is the user tidying up."""
+        return None
+
     def microphone_users(self) -> list:
         """The programs using the microphone now, by name; [] where it cannot say."""
         return []

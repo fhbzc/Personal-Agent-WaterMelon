@@ -738,7 +738,7 @@ V2 = {"id": "v2", "label": "Round 1: The notes", "kind": "round", "branch": "mai
       "contract": {"goal": "THE CONTRACT AT V2", "scope": ["the notes"], "out_of_scope": [],
                    "instructions": [], "deliverables": []},
       "slides": {"status": "made", "count": 1,
-                 "page": "<!doctype html><title>s</title><section class='slide'>V2 SLIDE</section>"}}
+                 "page": "<!doctype html><meta charset='utf-8'><title>s</title><section class='slide'>V2 SLIDE</section>"}}
 
 
 class TheVersionTreeTests(_PanelBase):

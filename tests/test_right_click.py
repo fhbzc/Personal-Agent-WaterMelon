@@ -14,6 +14,7 @@ import json
 import struct
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -284,9 +285,41 @@ class ExtensionTests(unittest.TestCase):
     def setUp(self) -> None:
         self._data = tempfile.TemporaryDirectory()
         self.data = Path(self._data.name)
+        # Never this computer's own browsers.
+        homes = mock.patch.object(extension, "_browser_homes", return_value=[])
+        self.homes = homes.start()
+        self.addCleanup(homes.stop)
 
     def tearDown(self) -> None:
         self._data.cleanup()
+
+    def _heard(self, *names: str) -> None:
+        extension.folder(self.data).mkdir(parents=True, exist_ok=True)
+        (extension.folder(self.data) / "store_seen.json").write_text(
+            json.dumps({name: time.time() for name in names}), encoding="utf-8")
+
+    def test_removed_from_its_browser_it_is_not_installed(self) -> None:
+        """A removed extension says nothing: its folder is looked for."""
+        self._heard("Google Chrome", "Firefox")
+        browser = self.data / "browser"
+        self.homes.return_value = [browser]
+        store = browser / "Default" / "Extensions" / extension.STORE_IDS[0]
+        store.mkdir(parents=True)
+        (browser / "p" / "extensions").mkdir(parents=True)
+        (browser / "p" / "extensions" / f"{extension.FIREFOX_ID}.xpi").write_text("x")
+        rows = {one["key"]: one for one in extension.browsers(self.data)}
+        self.assertEqual(rows["chrome"]["state"], "installed")
+        self.assertEqual(rows["firefox"]["state"], "installed")
+        store.rmdir()
+        (browser / "p" / "extensions" / f"{extension.FIREFOX_ID}.xpi").unlink()
+        rows = {one["key"]: one for one in extension.browsers(self.data)}
+        self.assertEqual(rows["chrome"]["state"], "absent")
+        self.assertEqual(rows["firefox"]["state"], "absent")
+
+    def test_no_folders_to_look_in_and_its_word_stands(self) -> None:
+        self._heard("Google Chrome")
+        rows = {one["key"]: one for one in extension.browsers(self.data)}
+        self.assertEqual(rows["chrome"]["state"], "installed")
 
     def test_its_id_is_fixed_by_its_key(self) -> None:
         self.assertEqual(extension.CHROMIUM_ID, "ppndbddcegnoelabjaacahmkcnmodddp")
@@ -306,10 +339,10 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(chromium["version"], extension.EXTENSION_VERSION)
         self.assertRegex(extension.EXTENSION_VERSION, r"^\d+\.\d+\.\d+$")
         self.assertIn("nativeMessaging", chromium["permissions"])
-        # No script in every page, no access to every site: the store's
-        # strictest review and the install's warning are not needed.
+        # A script in every page, for what can be seen of it (the user, 2026-11-05).
         for one in (chromium, firefox):
-            self.assertNotIn("content_scripts", one)
+            self.assertEqual(one["content_scripts"][0]["js"], ["visible.js"])
+            self.assertNotIn("<all_urls>", one["content_scripts"][0]["matches"])
             self.assertNotIn("host_permissions", one)
         for flavor in folders.values():
             for name in ("background.js", "help.html", "help.js", "icons/128.png",
@@ -318,8 +351,9 @@ class ExtensionTests(unittest.TestCase):
         words = json.loads((Path(folders["chromium"]) / "_locales/zh_CN/messages.json")
                            .read_text("utf-8"))
         self.assertEqual(words["delegate"]["message"], "委托工作")
-        self.assertEqual(set(extension.WORDS), {"en", "zh", "ja", "ko", "de", "fr", "es",
-                                                "it", "ru"})
+        self.assertEqual(set(extension.WORDS), {"en", "zh"})
+        for flavor in ("chromium", "firefox"):
+            self.assertEqual(extension.manifest(flavor)["incognito"], "not_allowed")
         for words in extension.WORDS.values():
             self.assertEqual(set(words), set(extension.WORDS["en"]))
         # THE BOX AT ONCE (the user, 2026-11-02): only the agent's own page
@@ -503,7 +537,8 @@ class ExtensionTests(unittest.TestCase):
         # Every six hours while the browser runs - "alarms", shown to no one.
         self.assertIn('ext.alarms.create("here", { periodInMinutes: HERE_EVERY_MINUTES })', code)
         self.assertIn("alarms", extension.manifest("chromium")["permissions"])
-        self.assertEqual(extension.EXTENSION_VERSION.split()[0], "0.0.2")
+        self.assertGreaterEqual(tuple(int(one) for one in extension.EXTENSION_VERSION.split(".")),
+                                (0, 0, 2))
 
     def test_the_host_is_told_who_calls(self) -> None:
         from personalized_agent import __main__ as entry

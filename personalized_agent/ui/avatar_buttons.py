@@ -23,7 +23,9 @@ import tkinter as tk
 import tkinter.font as tkfont
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
-from .chat_bubble import RIM as EDGE, LOOK, ScrollBar, beside, edge_strips, sized_to, work_area
+from ..agent.character.watermelon import LEAF, LEAF_DARK, LEAF_VEIN, OUTLINE
+from . import sizes
+from .chat_bubble import LEAST, RIM as EDGE, LOOK, ScrollBar, beside, edge_strips, sized_to, work_area
 from .on_top import (borderless, keys_on_hover, on_release, rounded, stay_on_top, stays_through_peek,
                      with_copy)
 
@@ -39,19 +41,23 @@ PARKED = -32000
 AREA_FOR_SECONDS = 5.0
 #: The button's side; how far its middle stands past the avatar's window, level with the middle of
 #: the leaves (the user, 2026-11-04: "chat应该是整体在4个叶子中间的感觉") and all of it outside that
-#: window: on it, the pointer going to the button brought the head out. Where the
-#: vine starts, tucked: this far in, between the leaves; how much shows then, and how much
-#: more until it starts from its body. How far the vine bows out.
-ICON, PAST, STEM_IN, TUCKED_OUT, HEAD_MORE, BOW = 44, 30, 26, 34, 50, 4
+#: window: on it, the pointer going to the button brought the head out. Where the vine starts:
+#: this far past the side of the screen, so that no end of it shows there.
+ICON, PAST, BEYOND = 44, 30, 4
+#: IT WINDS AS A WHOLE (the user, 2026-11-04: "西瓜藤也是整体就是弯弯绕绕的，而不是现在整体像一个茎秆一样的"):
+#: how far it swings to each side, how many times, and the points it is drawn through.
+SWING, SWINGS, VINE_POINTS = 19, 1.5, 36
 #: How often it grows, and in how many steps.
 GROW_EVERY_MS, GROW_STEPS = 16, 10
 #: Not a colour of the icons: what is see-through around them, where a window can be.
 SEE_THROUGH = "#ff00fe"
 KEY = (255, 0, 254)
-#: The button's green, lit from above; lighter under the pointer; the rim; its mark. The vine.
-GREEN_TOP, GREEN_LIT, GREEN_LOW = (128, 196, 92), (156, 216, 118), (66, 142, 62)
-RIM, INK = (34, 92, 44), (246, 255, 240)
-VINE, VINE_DARK = "#5aa845", "#2f6b2a"
+#: OF THE LEAVES' MAKING (the user, 2026-11-04: "chat框的质感和绿叶的质感不一样"): their very
+#: colours, flat, the half from the light darker, an outline and veins. Lighter under the
+#: pointer. The button's mark.
+LEAF_LIT, INK = tuple(min(255, one + 30) for one in LEAF), (246, 255, 240)
+VINE, VINE_DARK, VINE_LINE = ("#%02x%02x%02x" % one for one in (LEAF, LEAF_DARK, OUTLINE))
+VINE_VEIN = "#%02x%02x%02x" % LEAF_VEIN
 PANEL_WIDTH, PANEL_TALLEST = 400, 520
 #: The most the words grow or shrink, in points.
 MOST_ZOOM = 8
@@ -69,34 +75,35 @@ WHEEL_PIXELS, ROLL_EVERY_MS, ROLL_SHARE = 72, 12, 0.3
 def vine_path(box: tuple, side: str, area: tuple, grown: float = 1.0) -> Tuple[List[Tuple[int, int]],
                                                                                Tuple[int, int]]:
     """The vine of an avatar in a `side`: the four points of its curve and where the button's corner
-    is. IT GROWS OUT OF THE AVATAR (the user, 2026-11-04: "藤应该是从西瓜上长出来") and the button is in
-    the middle of it, between the leaves, going with it as its head comes out; on the screen
-    whatever. `grown`, 0 to 1: how far it has come."""
+    is. IT COMES OUT OF THE SIDE ITSELF (the user, 2026-11-05: "chat的藤，没有从边框出来"), between the
+    leaves; the avatar is in front of it, so with its head out it comes from behind the melon
+    (2026-11-04: "藤应该是从西瓜上长出来"). The button is in the middle of it, going with it as its
+    head comes out; on the screen whatever. `grown`, 0 to 1: how far it has come."""
     x, y, width, height = box
     left, top, right, bottom = area
     middle_x, middle_y = x + width // 2, y + height // 2
     half = ICON // 2
     if side == "right":
-        seen, stem = right - x, (x + STEM_IN, middle_y)
-        end, bow = (x - PAST, middle_y), (0, -BOW)
+        start, end = (right + BEYOND, middle_y), (x - PAST, middle_y)
     elif side == "left":
-        seen, stem = x + width - left, (x + width - STEM_IN, middle_y)
-        end, bow = (x + width + PAST, middle_y), (0, -BOW)
+        start, end = (left - BEYOND, middle_y), (x + width + PAST, middle_y)
     elif side == "top":
-        seen, stem = y + height - top, (middle_x, y + height - STEM_IN)
-        end, bow = (middle_x, y + height + PAST), (BOW, 0)
+        start, end = (middle_x, top - BEYOND), (middle_x, y + height + PAST)
     else:
-        seen, stem = bottom - y, (middle_x, y + STEM_IN)
-        end, bow = (middle_x, y - PAST), (BOW, 0)
+        start, end = (middle_x, bottom + BEYOND), (middle_x, y - PAST)
     end = (min(max(end[0], left + half), right - half), min(max(end[1], top + half), bottom - half))
-    out = min(1.0, max(0.0, (seen - TUCKED_OUT) / HEAD_MORE))
-    start = (int(stem[0] + (middle_x - stem[0]) * out), int(stem[1] + (middle_y - stem[1]) * out))
     tip = (int(start[0] + (end[0] - start[0]) * grown), int(start[1] + (end[1] - start[1]) * grown))
 
+    long = math.hypot(tip[0] - start[0], tip[1] - start[1]) or 1.0
+    across = (-(tip[1] - start[1]) / long, (tip[0] - start[0]) / long)
+
     def along(share: float) -> Tuple[int, int]:
-        return (int(start[0] + (tip[0] - start[0]) * share + bow[0] * grown),
-                int(start[1] + (tip[1] - start[1]) * share + bow[1] * grown))
-    return [start, along(0.35), along(0.7), tip], (end[0] - half, end[1] - half)
+        # Nothing at either end: it starts in the side and comes to the button's middle.
+        swung = SWING * grown * math.sin(2 * math.pi * SWINGS * share) * math.sin(math.pi * share) ** 0.5
+        return (int(start[0] + (tip[0] - start[0]) * share + across[0] * swung),
+                int(start[1] + (tip[1] - start[1]) * share + across[1] * swung))
+    middle_points = [along(step / VINE_POINTS) for step in range(1, VINE_POINTS)]
+    return [start] + middle_points + [tip], (end[0] - half, end[1] - half)
 
 
 _DEFERRED: List[Any] = []
@@ -140,6 +147,10 @@ def move_together(windows: Sequence[Any], spots: Sequence[Tuple[int, int]],
     for window, (x, y) in zip(windows, spots):
         window.geometry(f"+{x}+{y}")
     if under is not None:
+        # In the order the system is told above: left to itself the vine lay over its button on a
+        # Mac, and took every press of it (2026-11-05).
+        for window in reversed(windows):
+            window.lift()
         under.lift()
 
 
@@ -165,6 +176,18 @@ def melon_leaf(x: float, y: float, angle: float, size: float = 9.0) -> List[floa
     return out
 
 
+def _veined(draw: Any, side: int, scale: int) -> None:
+    """The button's ground as a leaf's: the half from the light darker, the midrib from
+    corner to corner, the side veins going out of it towards the tip."""
+    draw.polygon([(0, side), (side, 0), (side, side)], fill=LEAF_DARK)
+    width = max(1, int(scale * 0.9))
+    draw.line([(0, side), (side, 0)], fill=LEAF_VEIN, width=width)
+    for share in (0.2, 0.4, 0.6, 0.8):
+        x, y = side * share, side * (1 - share)
+        for tip in ((x, y - side * 0.3), (x + side * 0.3, y)):
+            draw.line([(x, y), tip], fill=LEAF_VEIN, width=max(1, int(scale * 0.6)))
+
+
 def _mark(draw: Any, scale: int) -> None:
     """A speech bubble, on a grid of 50."""
     def at(*points: float) -> List[float]:
@@ -172,42 +195,55 @@ def _mark(draw: Any, scale: int) -> None:
     draw.rounded_rectangle(at(12, 14, 38, 32), radius=7 * scale, fill=INK)
     draw.polygon(at(18, 29, 16, 39, 27, 31), fill=INK)
     for x in (19, 25, 31):
-        draw.ellipse(at(x - 1.9, 21.1, x + 1.9, 24.9), fill=GREEN_LOW)
+        draw.ellipse(at(x - 1.9, 21.1, x + 1.9, 24.9), fill=LEAF_DARK)
 
 
-def face(lit: bool = False) -> Any:
-    """The button as a picture: a green disc, lit from above, with a darker rim. Its edge
-    is whole pixels - a window has no half see-through ones - so the rim hides the
-    steps. None without Pillow."""
+def face(lit: bool = False, upside_down: bool = False) -> Any:
+    """The button as a picture: a disc of leaf, outlined as a leaf is. Its edge is whole pixels
+    - a window has no half see-through ones - so the outline hides the steps. None without
+    Pillow. `upside_down`: as the avatar hangs out of the top of the screen."""
     try:
         from PIL import Image, ImageDraw
     except ImportError:
         return None
     scale = 4
     side = ICON * scale
-    top, low = (GREEN_LIT if lit else GREEN_TOP), GREEN_LOW
-    ground = Image.new("RGB", (side, side))
-    pen = ImageDraw.Draw(ground)
-    for y in range(side):
-        share = y / side
-        pen.line((0, y, side, y), fill=tuple(int(a + (b - a) * share) for a, b in zip(top, low)))
-    shine = Image.new("L", (side, side), 0)
-    ImageDraw.Draw(shine).ellipse((side * .16, side * .05, side * .84, side * .46), fill=70)
-    ground.paste((255, 255, 255), mask=shine)
+    ground = Image.new("RGB", (side, side), LEAF_LIT if lit else LEAF)
+    _veined(ImageDraw.Draw(ground), side, scale)
     _mark(ImageDraw.Draw(ground), scale)
     disc = Image.new("L", (side, side), 0)
     ImageDraw.Draw(disc).ellipse((scale, scale, side - scale, side - scale), fill=255)
     rim = Image.new("L", (side, side), 0)
     ImageDraw.Draw(rim).ellipse((scale, scale, side - scale, side - scale), outline=255,
                                 width=int(2.2 * scale))
-    ground.paste(RIM, mask=rim)
-    out = Image.new("RGB", (side, side), KEY)
+    ground.paste(OUTLINE, mask=rim)
+    # Round the outline's own colour, not the see-through one: made smaller, the two would mix
+    # at the edge into a pink no window takes for see-through.
+    out = Image.new("RGB", (side, side), OUTLINE)
     out.paste(ground, mask=disc)
     small = out.resize((ICON, ICON), Image.LANCZOS)
     edge = disc.resize((ICON, ICON), Image.LANCZOS).point(lambda one: 255 if one >= 128 else 0)
     whole = Image.new("RGB", (ICON, ICON), KEY)
     whole.paste(small, mask=edge)
-    return whole
+    return whole.transpose(Image.ROTATE_180) if upside_down else whole
+
+
+def see_through(window: Any) -> str:
+    """`window` made clear around what is drawn on it, and the ground to draw on. By a colour where
+    there is one to take out (Windows); A MAC HAS NONE BUT CLEARS THE WINDOW ITSELF (the user,
+    2026-11-05); elsewhere the card's colour."""
+    try:
+        window.attributes("-transparentcolor", SEE_THROUGH)
+        return SEE_THROUGH
+    except tk.TclError:
+        pass
+    if sys.platform == "darwin":
+        try:
+            window.attributes("-transparent", True)
+            return "systemTransparent"
+        except tk.TclError:
+            log.debug("this window cannot be clear", exc_info=True)
+    return LOOK["bg"]
 
 
 class _Icon:
@@ -218,19 +254,25 @@ class _Icon:
         self.window = tk.Toplevel(root)
         self.window.overrideredirect(True)
         self.window.attributes("-topmost", True)
-        ground = SEE_THROUGH
-        try:
-            self.window.attributes("-transparentcolor", SEE_THROUGH)
-        except tk.TclError:              # no such thing here: a square, in the card's colour
-            ground = LOOK["bg"]
+        ground = see_through(self.window)
         self.window.configure(bg=ground)
         self.canvas = tk.Canvas(self.window, width=ICON, height=ICON, bg=ground, bd=0,
                                 highlightthickness=0, cursor="hand2")
         self.canvas.pack()
         self.faces = self._faces(ground)
-        self.shown = self.canvas.create_image(0, 0, anchor="nw", image=self.faces[0]) \
-            if self.faces else self.canvas.create_oval(
-                1, 1, ICON - 2, ICON - 2, fill="#80c45c", outline="#225c2c", width=2)
+        self.marks: List[Tuple[Any, Tuple[int, ...]]] = []
+        self.lit = self.upside_down = False
+        if self.faces:
+            self.shown = self.canvas.create_image(0, 0, anchor="nw", image=self.faces[0])
+        else:
+            # DRAWN, where there is no picture to show: on a Mac a clear window shows no picture,
+            # only what is drawn (measured 2026-11-05, Tk 8.6.16). A speech bubble on a leaf's green.
+            self.shown = self.canvas.create_oval(2, 2, ICON - 3, ICON - 3, fill=VINE,
+                                                 outline=VINE_LINE, width=2)
+            mark = "#%02x%02x%02x" % INK
+            for make, spots in ((self.canvas.create_oval, (11, 12, 33, 29)),
+                                (self.canvas.create_polygon, (15, 25, 13, 35, 24, 28))):
+                self.marks.append((make(*spots, fill=mark, outline=""), spots))
         self.tip: Any = None
         self.canvas.bind("<Enter>", self._over)
         self.canvas.bind("<Leave>", self._off)
@@ -242,9 +284,11 @@ class _Icon:
         try:
             from PIL import ImageTk
             out = []
+            if not ground.startswith("#"):       # a clear window shows none: it is drawn
+                return []
             colour = tuple(int(ground[at:at + 2], 16) for at in (1, 3, 5))
-            for lit in (False, True):
-                picture = face(lit)
+            for lit, upside_down in ((False, False), (True, False), (False, True), (True, True)):
+                picture = face(lit, upside_down)
                 if picture is None:
                     return []
                 if colour != KEY:                # no see-through here: on the card's colour
@@ -259,9 +303,23 @@ class _Icon:
             log.debug("the icons could not be drawn", exc_info=True)
             return []
 
-    def _lit(self, on: bool) -> None:
+    def turn(self, upside_down: bool) -> None:
+        """UPSIDE DOWN IN THE TOP OF THE SCREEN, as the avatar is (the user, 2026-11-05)."""
+        if upside_down == self.upside_down:
+            return
+        self.upside_down = upside_down
         if self.faces:
-            self.canvas.itemconfigure(self.shown, image=self.faces[1 if on else 0])
+            self._lit(self.lit)
+        for item, spots in self.marks:
+            self.canvas.coords(item, *[ICON - 1 - one if upside_down else one for one in spots])
+
+    def _lit(self, on: bool) -> None:
+        self.lit = on
+        if self.faces:
+            self.canvas.itemconfigure(self.shown,
+                                      image=self.faces[(1 if on else 0) + (2 if self.upside_down else 0)])
+        else:
+            self.canvas.itemconfigure(self.shown, fill="#%02x%02x%02x" % LEAF_LIT if on else VINE)
 
     def _over(self, _event: Any = None) -> None:
         self._lit(True)
@@ -293,11 +351,7 @@ class ChatVine:
         self.stem = tk.Toplevel(root)
         self.stem.overrideredirect(True)
         self.stem.attributes("-topmost", True)
-        ground = SEE_THROUGH
-        try:
-            self.stem.attributes("-transparentcolor", SEE_THROUGH)
-        except tk.TclError:              # no such thing here: on the card's colour
-            ground = LOOK["bg"]
+        ground = see_through(self.stem)
         self.stem.configure(bg=ground)
         self.canvas = tk.Canvas(self.stem, bg=ground, highlightthickness=0, bd=0)
         self.canvas.pack(fill="both", expand=True)
@@ -364,13 +418,14 @@ class ChatVine:
             self.place()
 
     def _draw(self, side: str) -> None:
+        self.icon.turn(side == "top")
         box = self.avatar()
         points, self.at = vine_path(box, side, self._screen(box), self.grown)
         full = self.grown >= 1.0
         if (points, self.at, full) == self._drawn:
             return
         self._drawn = (points, self.at, full)
-        pad = 20
+        pad = 26
         left = min(one[0] for one in points) - pad
         top = min(one[1] for one in points) - pad
         width = max(one[0] for one in points) + pad - left
@@ -378,20 +433,25 @@ class ChatVine:
         self.stem.geometry(f"{width}x{height}")
         self.canvas.delete("all")
         flat = [value for x, y in points for value in (x - left, y - top)]
+        # Outlined as the leaves are: the dark line, the green on it.
+        self.canvas.create_line(*flat, smooth=True, width=5, fill=VINE_LINE, capstyle="round")
         self.canvas.create_line(*flat, smooth=True, width=3, fill=VINE, capstyle="round")
         # AS A MELON'S VINE GROWS (the user, 2026-11-04): a thin stem, a curling tendril on one side
         # and a lobed leaf on the other, once it has come that far.
         if self.grown > 0.5:
-            across = math.atan2(flat[7] - flat[1], flat[6] - flat[0]) + math.pi / 2
-            x, y = flat[2], flat[3]
-            self.canvas.create_line(*tendril(x, y, across), smooth=True, width=2, fill=VINE,
+            across = math.atan2(flat[-1] - flat[1], flat[-2] - flat[0]) + math.pi / 2
+            at = 2 * (len(points) * 2 // 5)
+            x, y = flat[at], flat[at + 1]
+            self.canvas.create_line(*tendril(x, y, across), smooth=True, width=2, fill=VINE_DARK,
                                     capstyle="round")
-            x, y = flat[4], flat[5]
+            at = 2 * (len(points) * 3 // 5)
+            x, y = flat[at], flat[at + 1]
             self.canvas.create_line(x, y, x - 5 * math.cos(across), y - 5 * math.sin(across),
-                                    width=2, fill=VINE)
-            self.canvas.create_polygon(*melon_leaf(x - 12 * math.cos(across), y - 12 * math.sin(across),
-                                                   across + math.pi),
-                                       fill=VINE, outline=VINE_DARK)
+                                    width=2, fill=VINE_LINE)
+            x, y = x - 12 * math.cos(across), y - 12 * math.sin(across)
+            self.canvas.create_polygon(*melon_leaf(x, y, across + math.pi), fill=VINE, outline=VINE_LINE)
+            self.canvas.create_line(x + 7 * math.cos(across), y + 7 * math.sin(across),
+                                    x - 7 * math.cos(across), y - 7 * math.sin(across), fill=VINE_VEIN)
         spot = self.at if full else (PARKED, PARKED)
         move_together([self.icon.window, self.stem], [spot, (left, top)], self.front)
 
@@ -577,7 +637,8 @@ class QuickPanel:
     def _edge_move(self, event: Any) -> None:
         if self._resizing is None:
             return
-        width, height, left, top = sized_to(self._resizing, event.x_root, event.y_root)
+        least = (sizes.px(self.root, LEAST[0]), sizes.px(self.root, LEAST[1]))
+        width, height, left, top = sized_to(self._resizing, event.x_root, event.y_root, least)
         self._asked_geometry = f"{width}x{height}+{left}+{top}"
         if self._geometry_due is None:       # once a frame, as the chat does
             self._geometry_due = self.window.after_idle(self._give_geometry)
@@ -649,8 +710,10 @@ class QuickPanel:
         return one
 
     # -- adding, as on the Overview ------------------------------------------------------
-    def _open_form(self, hints: Sequence[str], go: Callable[[List[str]], None], yes: str) -> None:
-        """Boxes over the list; the first must be filled. Enter is yes, Esc is no."""
+    def _open_form(self, hints: Sequence[str], go: Callable[[List[str]], None], yes: str,
+                   values: Sequence[str] = ()) -> None:
+        """Boxes over the list, with `values` in them; the first must be filled. Enter is yes,
+        Esc is no."""
         self._close_form()
         form = self.form = tk.Frame(self.card, bg=LOOK["bg"])
         form.pack(fill="x", pady=(8, 0), before=self.body)
@@ -666,7 +729,9 @@ class QuickPanel:
         def no_pressed(_event: Any = None) -> str:
             self._close_form()
             return "break"
-        for box in boxes:
+        for box, value in zip(boxes, list(values) + [""] * len(boxes)):
+            box.insert(0, value)
+            box.hinted()
             box.pack(fill="x", ipady=4, pady=(0, 4))
             box.bind("<Return>", yes_pressed)
             box.bind("<Escape>", no_pressed)
@@ -691,6 +756,14 @@ class QuickPanel:
             self._do({"id": "panel"}, {"key": add["keys"][0], "path": add["path"], "body": body,
                                        "changes": True})
         self._open_form(add["fields"], go, self.words("Add"))
+
+    def _edit_row(self, row: Dict[str, Any], action: Dict[str, Any]) -> None:
+        """Its words, in the boxes they were added in."""
+        def go(said: List[str]) -> None:
+            body = dict(action.get("body") or {}, **dict(zip(action["keys"], said)))
+            self._do(row, dict(action, body=body))
+        self._open_form(action["fields"], go, self.words("Save"),
+                        [str(row.get("title") or ""), str(row.get("detail") or "")])
 
     # -- moved from group to group ---------------------------------------------------------
     def _groups(self) -> List[Tuple[str, str]]:
@@ -740,8 +813,10 @@ class QuickPanel:
         # they stood inside it, over the words and the ✕ (the user, 2026-11-04).
         rim = tk.Frame(window, bg=LOOK["bg"])
         rim.pack(fill="both", expand=True, padx=1, pady=1)
-        card = self.card = tk.Frame(rim, bg=LOOK["bg"], padx=14 - EDGE, pady=10 - EDGE)
-        card.pack(fill="both", expand=True, padx=EDGE, pady=EDGE)
+        edge = sizes.px(self.root, EDGE)
+        card = self.card = tk.Frame(rim, bg=LOOK["bg"], padx=sizes.px(self.root, 14) - edge,
+                                    pady=sizes.px(self.root, 10) - edge)
+        card.pack(fill="both", expand=True, padx=edge, pady=edge)
         head = tk.Frame(card, bg=LOOK["bg"])
         head.pack(fill="x")
         dot = tk.Canvas(head, width=10, height=10, bg=LOOK["bg"], highlightthickness=0, bd=0)
@@ -786,16 +861,18 @@ class QuickPanel:
         with_copy(self.list, self.words("Copy"))
         self._keys(window)
         # Its corners no wider than the margin: a larger one stood over the ✕.
-        edge_strips(rim, self._edge_start, self._edge_move, self._edge_end, corner=2 * EDGE)
+        edge_strips(rim, self._edge_start, self._edge_move, self._edge_end,
+                    corner=sizes.px(self.root, 10), rim_width=edge)
         self._write([("group", self.words("Loading…"), None)])
-        window.geometry(f"{PANEL_WIDTH}x{PANEL_TALLEST}+{PARKED}+{PARKED}")
+        window.geometry(f"{sizes.px(window, PANEL_WIDTH)}x{sizes.px(window, PANEL_TALLEST)}"
+                        f"+{PARKED}+{PARKED}")
         rounded(window)
         stay_on_top(window)
 
     def _fit(self, near: tuple) -> None:
         window = self.window
         window.update_idletasks()
-        size = self.size or (PANEL_WIDTH, PANEL_TALLEST)
+        size = self.size or (sizes.px(window, PANEL_WIDTH), sizes.px(window, PANEL_TALLEST))
         area = work_area(window, near) or (0, 0, window.winfo_screenwidth(),
                                            window.winfo_screenheight())
         # What fits that screen, as it is: kept from a larger one, or a small one.
@@ -889,6 +966,8 @@ class QuickPanel:
                 out.append((self.words("Cancel"), lambda: self._start_moving(""), ""))
             elif action.get("moves"):
                 out.append((action["label"], lambda: self._start_moving(ident), ""))
+            elif action.get("edits"):
+                out.append((action["label"], lambda a=action: self._edit_row(row, a), ""))
             elif action.get("confirm") and self.asking == ident:
                 out.append((self.words("Remove it?"), None, "said"))
                 out.append((self.words("Yes"), lambda a=action: self._do(row, a), "danger"))

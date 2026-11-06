@@ -291,14 +291,14 @@ SETTINGS_SCHEMA: List[SettingField] = [
                  "asks on its last page."),
     SettingField("updates", "Updates", "choice", "ask", "General",
                  "New versions, from this project's published releases on GitHub "
-                 "(never a merge or a pre-release). By default you are told, and "
-                 "choose which newer version to have; or the newest is had by "
-                 "itself; or nothing is looked for. Either way it is made ready in "
+                 "(never a merge or a pre-release). The newest is had by itself, as the "
+                 "installer has it ticked; or you are told, and choose which version "
+                 "to have; or nothing is looked for. Either way it is made ready in "
                  "the background and used from the next start, or when you have "
                  "been away a while and no work is running - a restart of seconds, "
                  "or at once with Restart now; one that does not start is taken back "
                  "by itself. Where this copy cannot replace itself - run from "
-                 "source, a portable folder, the macOS .pkg - you are only told.",
+                 "source, a portable folder - you are only told.",
                  choices=["ask", "install", "off"]),
     SettingField("display_language", "Display language", "choice",
                  _default_display(), "General",
@@ -781,18 +781,26 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
                  "looked up on the web with it.", hidden=True),
     SettingField("module_experience_enabled", "Work learning", "bool", True, "Modules",
                  "Work natures grouped and learned from by themselves.", hidden=True),
+    SettingField("module_recommendation_enabled", "Recommendations", "bool", True, "Modules",
+                 "What is worth telling you, made ready ahead and told at a moment that suits.",
+                 hidden=True),
     SettingField("module_monitor_enabled", "Monitor", "bool", True, "Modules",
                  "The real-time signals and the Activators run on them.", hidden=True),
     # THE MONITOR (heartbeat/monitor/, the user, 2026-11-03).
     SettingField("monitor_tick_seconds", "Look at what you are doing every (s)", "int", 10,
                  "Monitor", "How often the signals are read and the Activators run.",
                  minimum=5, maximum=120),
-    SettingField("monitor_most_a_day", "Most recommendations and breaks a day", "int", 8,
-                 "Monitor", "However many moments there are, no more than this many said a day.",
+    SettingField("monitor_most_a_day", "Most breaks a day", "int", 8,
+                 "Monitor", "However many moments there are, no more breaks than this a day. "
+                 "Recommendations have no limit: whether to send one is the model's judgement.",
                  minimum=1, maximum=50),
     SettingField("monitor_least_gap_minutes", "Least time between two (min)", "int", 20,
-                 "Monitor", "A recommendation or a break is never said sooner than this after "
-                 "the last.", minimum=1, maximum=600),
+                 "Monitor", "A break is never suggested sooner than this after anything said.",
+                 minimum=1, maximum=600),
+    SettingField("recommendation_record_only", "Only record what would be recommended", "bool",
+                 True, "Monitor", "What is on your screen is matched against what is kept ready, "
+                 "and each match kept, without anything being sent or any model asked - to set "
+                 "the scores from what really happens."),
     SettingField("monitor_recommend_search", "Look recommendations up on the web", "bool", True,
                  "Monitor", "The model may search the public web for what it recommends; only "
                  "the words of the search are sent."),

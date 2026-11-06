@@ -136,6 +136,16 @@ def verification_plan(task: ScheduledTask) -> Dict[str, Any]:
     }
 
 
+def _why_told(task: ScheduledTask) -> str:
+    """Why the agent added it, as the user reads it. Most keep it on the task itself, where it was
+    not looked for: 157 of 161 came with none (2026-11-05). Without the names of its records."""
+    from ...common.reason import BY_USER, NOT_RECORDED, USER_ADDED
+    said = str(task.metadata.get("rationale") or "")
+    if not said and task.created_by != BY_USER and task.reason not in (USER_ADDED, NOT_RECORDED):
+        said = str(task.reason or "")
+    return re.sub(r"\s*\(?\b(?:event|state|rec)_[0-9a-f]{8,}\)?", "", said).strip()[:300]
+
+
 @dataclass
 class ExecutionOutcome:
     """What an execution returned, and what should become of the task.
@@ -249,7 +259,7 @@ class TaskExecutor:
             metadata={"task_id": task.id, "source": "scheduler",
                       # WHY THE AGENT ADDED IT, shown with it (the user, 2026-11-04);
                       # one the user added themselves has none.
-                      "reason": str(task.metadata.get("rationale") or "")[:300]},
+                      "reason": _why_told(task)},
             template=template, question=self._reply_for(task),
         )
         self._ask_whether_it_was_worth_it(task)
