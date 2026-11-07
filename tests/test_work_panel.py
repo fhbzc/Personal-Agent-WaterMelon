@@ -906,15 +906,18 @@ class StartedBeforeItsPlanTests(_PanelBase):
             "click(document.querySelector('#delegate-add-folder'));await wait(300);"
             "out.added=text(document.querySelector('#delegate-folders ul'));"
             # the header stays in sight as the box is scrolled
-            "const form=document.querySelector('#delegate-form');form.scrollTop=400;await wait(100);"
+            "const form=document.querySelector('#delegate-form');form.style.maxHeight='240px';"
+            "form.scrollTop=400;await wait(100);"
             "out.headerTop=Math.round(document.querySelector('#delegate-title').getBoundingClientRect().top"
             "-form.getBoundingClientRect().top);out.scrolled=form.scrollTop;"
             "out.startOn=!document.querySelector('#delegate-start').disabled"
             "&&!document.querySelector('#delegate-start').hidden;"
-            "const m=document.querySelector('[data-delegate-limit=\"minutes\"]');m.value='12';"
+            "out.noLimits=!document.querySelector('[data-delegate-limit]');"
+            "out.noPackages=!document.querySelector('[name=\"delegate-packages\"]');"
+            "const m=document.querySelector('[data-delegate-sound]');m.checked=true;"
             "m.dispatchEvent(new Event('change',{bubbles:true}));"
             # a poll redraws the wait - the settings stay as changed
-            "await wait(1200);out.kept=document.querySelector('[data-delegate-limit=\"minutes\"]').value;"
+            "await wait(1200);out.kept=document.querySelector('[data-delegate-sound]').checked;"
             "click(document.querySelector('#delegate-start'));await wait(400);"
             "out.closed=!document.querySelector('#delegate').open;"
             "out.started=window.__posts.filter(p=>p.p==='/api/work/drafts/start').map(p=>p.body);")
@@ -927,7 +930,8 @@ class StartedBeforeItsPlanTests(_PanelBase):
         self.assertEqual(out["suggested"], "not drafted yet")
         self.assertIn("Collecting the context", out["waiting"])
         self.assertTrue(out["startOn"])
-        self.assertEqual(out["kept"], "12")
+        self.assertTrue(out["kept"])
+        self.assertTrue(out["noLimits"] and out["noPackages"], "nothing to set for these")
         self.assertTrue(out["closed"])
         start = out["started"][0]
         # Where it works, chosen before any plan, with the settings.
@@ -938,7 +942,8 @@ class StartedBeforeItsPlanTests(_PanelBase):
         self.assertLessEqual(abs(out["headerTop"]), 2, "Delegate work stays at the top")
         self.assertIn("Nothing given", out["folders"])
         self.assertEqual((start["id"], start["plan"]), ("draft_9", {"way": "auto"}))
-        self.assertEqual(start["options"]["limits"]["minutes"], 12)
+        self.assertNotIn("limits", start["options"])
+        self.assertNotIn("packages", start["options"])
         self.assertEqual(start["folders"], ["D:/work/club/notes.md"])
 
     def test_no_create_a_draft_saved_and_a_box_that_floats(self) -> None:
@@ -959,7 +964,6 @@ class StartedBeforeItsPlanTests(_PanelBase):
             "out.modal=dialog.matches(':modal');"
             # a saved draft opens with what it was saved with
             "out.way=(document.querySelector('input[name=\"delegate-way\"]:checked')||{}).value;"
-            "out.minutes=document.querySelector('[data-delegate-limit=\"minutes\"]').value;"
             "const title=document.querySelector('#delegate-title');"
             "const r=title.getBoundingClientRect();"
             "title.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,clientX:r.left+5,clientY:r.top+5}));"
@@ -984,14 +988,13 @@ class StartedBeforeItsPlanTests(_PanelBase):
         self.assertFalse(out["create"])
         self.assertTrue(out["save"])
         self.assertFalse(out["modal"], "the page behind stays to be read")
-        self.assertEqual((out["way"], out["minutes"]), ("quick", "5"))
+        self.assertEqual(out["way"], "quick")
         self.assertTrue(out["movedLeft"], out["moved"])
         self.assertTrue(out["closed"])
         self.assertTrue(out["cancelClosed"])
         self.assertEqual(out["cancelled"], 0, "Cancel leaves a saved draft as it was saved")
         saved = out["saved"][0]
-        self.assertEqual((saved["id"], saved["options"]["way"], saved["options"]["limits"]),
-                         ("draft_7", "quick", {"minutes": 5}))
+        self.assertEqual((saved["id"], saved["options"]["way"]), ("draft_7", "quick"))
         self.assertIn("Drafts", out["drafts"])
         self.assertIn("Club reply", out["drafts"])
         self.assertIn("Remove", out["drafts"])

@@ -114,6 +114,11 @@ class PlatformActivityProvider(ABC):
         over this application's own windows, the window in front."""
         return self.front_window_image()
 
+    def watch_front(self, told: Any) -> Optional[Any]:
+        """Call `told` the moment another window or program comes to the front, and give back what
+        stops it. None where the platform has no way to say: it is then only looked at."""
+        return None
+
     def what_holds_the_screen(self) -> str:
         """"presentation", "fullscreen", or "" - nothing, or the platform cannot say."""
         return ""

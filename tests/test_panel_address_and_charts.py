@@ -21,13 +21,13 @@ class ThePageTests(unittest.TestCase):
 
     def test_the_panel_is_in_the_address(self) -> None:
         said = _render(self.engine, {}, (
-            "click(document.querySelector('#tabs button[data-tab=\"experience\"]'));await wait();"
+            "click(document.querySelector('#tabs button[data-tab=\"monitor\"]'));await wait();"
             "out.work=location.hash;"
             "click(document.querySelector('#tabs button[data-tab=\"recordlog\"]'));await wait();"
             "out.log=location.hash;"
             "out.length=history.length;"))
         self.assertEqual(said["err"], "", said["err"])
-        self.assertEqual(said["out"]["work"], "#experience")
+        self.assertEqual(said["out"]["work"], "#monitor")
         self.assertEqual(said["out"]["log"], "#recordlog")
         # Replaced, not a trail of entries.
         self.assertLessEqual(said["out"]["length"], 2)

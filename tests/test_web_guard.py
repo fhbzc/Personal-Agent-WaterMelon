@@ -35,6 +35,49 @@ def _guard() -> WebGuard:
     return guard
 
 
+class WhatIsHeldTests(unittest.TestCase):
+    """The user, 2026-11-06: no search carries what is private in a mail or a chat."""
+
+    def setUp(self) -> None:
+        self.guard = WebGuard()
+        self.guard.hold("Dear Ada Marlow, the Thistle Harbour survey closes on 2026-03-11. "
+                        "Call me on 7741902. 潮汐观测站明天下午开会讨论预算", ["王小明"])
+
+    def _refused(self, query):
+        self.assertIn("private", self.guard.check_query(query) or "", query)
+
+    def test_a_whole_name_in_any_case(self) -> None:
+        self._refused("Ada Marlow")
+        self._refused("ada marlow publications")
+        self._refused("thistle harbour tide tables")
+
+    def test_a_contact_in_any_script(self) -> None:
+        self._refused("王小明 研究")
+
+    def test_a_long_number_but_not_a_year(self) -> None:
+        self._refused("who has 7741902")
+        self.assertIsNone(self.guard.check_query("tide tables 2026"))
+
+    def test_a_phrase_copied_out(self) -> None:
+        self._refused("survey closes on 2026 where")
+        self._refused("观测站明天下午开会")
+
+    def test_any_mail_address(self) -> None:
+        self._refused("ada@example.org")
+
+    def test_the_subject_in_general_words(self) -> None:
+        for query in ("tide tables for small harbours", "survey response rates", "潮汐 预算 方法"):
+            self.assertIsNone(self.guard.check_query(query), query)
+
+    def test_a_client_of_its_own_is_held_too(self) -> None:
+        said = self.guard.hook({"hook_event_name": "PreToolUse", "tool_name": "WebSearch",
+                                "tool_input": {"query": "ada marlow"}})
+        self.assertEqual(said["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_nothing_held_nothing_refused(self) -> None:
+        self.assertIsNone(WebGuard().check_query("Ada Marlow 7741902"))
+
+
 class TheFiveWaysTests(unittest.TestCase):
 
     def test_a_page_is_opened_only_where_nothing_of_the_users_can_travel(self) -> None:

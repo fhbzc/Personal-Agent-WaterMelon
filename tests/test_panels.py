@@ -28,6 +28,14 @@ SEP = os.sep
 PROJ = SEP.join(["C:", "proj", "demo"])
 
 
+
+def _written_with_links(web: Path) -> str:
+    """What the page takes from chat.js for its notifications: chat.js comes before app.js there."""
+    source = (web / "chat.js").read_text(encoding="utf-8")
+    start = source.index("const CHAT_LINK")
+    return source[start:source.index("function appendMessage(", start)]
+
+
 class ActivityAggregationTests(unittest.TestCase):
     """Section 9: the overview must report periods, not running totals."""
 
@@ -3531,11 +3539,12 @@ class LessonsPanelTests(unittest.TestCase):
             "return Promise.resolve({ok:true,status:200,statusText:'OK',"
             "headers:{get:()=>null},"
             "json:()=>Promise.resolve(STUB[p]||{})});};</script>"
+            "<script>" + _written_with_links(web) + "</script>"
             "<script>" + (web / "app.js").read_text(encoding="utf-8") + "</script>"
-            "<script>window.addEventListener('load',async()=>{let err='';"
+            "<script>window.addEventListener('load',async()=>{let err='';let more={};"
             "const wait=()=>new Promise(r=>setTimeout(r,60));"
             "try{" + steps + "}catch(e){err=e.message;}"
-            "document.title=JSON.stringify({err,"
+            "document.title=JSON.stringify({err,more,"
             "lessons:document.querySelector('#lessons-kinds').textContent"
             ".split(/[^!-~]+/).join(' ').trim(),"
             "toasts:[...document.querySelectorAll('#toast .toast-item')]"
@@ -3674,6 +3683,89 @@ class LessonsPanelTests(unittest.TestCase):
         sent = [json.loads(p["b"]) for p in gone["posted"]
                 if p["p"] == "/api/lessons/delete"]
         self.assertEqual(sent, [{"kind": "notifications", "id": "calact_1"}])
+
+    def test_what_waits_is_listed_by_title_and_opens_in_place(self) -> None:
+        result = self._run(
+            "const real=api.get;api.get=async(p,...r)=>p.startsWith('/api/notifications')"
+            "?{blocked:'',remind_later_minutes:30,notifications:["
+            "{id:'k1',title:'Harbour tables',message:'New tables',kind:'proactive',"
+            "metadata:{level:'collapse',reason:'For your survey'}},"
+            "{id:'k2',title:'Update ready',message:'A new version',kind:'info',"
+            "metadata:{level:'collapse'}}]}:real(p,...r);"
+            "await pollNotifications();await wait();"
+            "const line=document.querySelector('#toast-waiting');"
+            "const said=line.textContent;const before=document.querySelectorAll('.toast-notification').length;"
+            "line.click();await wait();"
+            "const rows=[...document.querySelectorAll('.toast-waiting-row')];"
+            "const titles=rows.map(r=>r.querySelector('summary').textContent);"
+            "rows[0].open=true;await wait();"
+            "const opened=rows[0].textContent;"
+            "[...rows[0].querySelectorAll('button')].find(b=>b.textContent.startsWith('Got it')).click();"
+            "await wait();await wait();"
+            "const last=document.querySelector('.toast-waiting-row');"
+            "more={said,before,titles,opened,left:document.querySelectorAll('.toast-waiting-row').length,"
+            "lastOpen:last.open,lastSaid:last.textContent};")
+        more = result["more"]
+        self.assertEqual(more["said"], "2 waiting")
+        self.assertEqual(more["before"], 0, "no toast for what waits")
+        self.assertEqual(more["titles"], ["Harbour tables", "Update ready"])
+        self.assertIn("For your survey", more["opened"])
+        self.assertEqual(more["left"], 1, "answered, it goes from the list")
+        self.assertTrue(more["lastOpen"], "the one left is open")
+        self.assertIn("A new version", more["lastSaid"])
+        self.assertTrue([p for p in result["posted"] if p["p"] == "/api/notifications/read"
+                         and "k1" in p["b"]])
+
+    def test_one_alone_opens_with_the_list(self) -> None:
+        result = self._run(
+            "const real=api.get;api.get=async(p,...r)=>p.startsWith('/api/notifications')"
+            "?{blocked:'',remind_later_minutes:30,notifications:["
+            "{id:'k1',title:'Harbour tables',message:'New tables',kind:'proactive',"
+            "metadata:{level:'collapse',reason:'For your survey'}}]}:real(p,...r);"
+            "await pollNotifications();await wait();"
+            "document.querySelector('#toast-waiting').click();await wait();await wait();"
+            "const row=document.querySelector('.toast-waiting-row');"
+            "more={open:row.open,said:row.textContent};")
+        self.assertTrue(result["more"]["open"])
+        self.assertIn("New tables", result["more"]["said"])
+
+    def test_an_address_in_a_notification_is_a_link(self) -> None:
+        result = self._run(
+            "const real=api.get;api.get=async(p,...r)=>p.startsWith('/api/notifications')"
+            "?{blocked:'',remind_later_minutes:30,notifications:["
+            "{id:'k1',title:'Your call',message:'Join: meet.google.com/abc-defg-hij <b>now</b>',"
+            "kind:'proactive',trigger:'A meeting invitation',"
+            "metadata:{level:'pop',reason:'For your survey'}}]}:real(p,...r);"
+            "await pollNotifications();await wait();"
+            "const item=document.querySelector('.toast-notification');"
+            "const link=item.querySelector('a');"
+            "more={href:link.getAttribute('href'),words:link.textContent,target:link.target,"
+            "bold:item.querySelectorAll('b').length,said:item.textContent,"
+            "why:item.querySelector('.toast-why').textContent};")
+        said = result["more"].pop("said")
+        self.assertEqual(result["more"].pop("why"), "Why: For your survey")
+        self.assertIn(".toast-why { font-style: italic;",
+                      (ROOT / "personalized_agent" / "api" / "web" / "styles.css").read_text(encoding="utf-8"))
+        self.assertEqual(result["more"], {"href": "https://meet.google.com/abc-defg-hij",
+                                          "words": "meet.google.com/abc-defg-hij",
+                                          "target": "_blank", "bold": 0})
+        self.assertIn("Trigger: A meeting invitation", said)
+
+    def test_a_risk_comes_through_a_blocker_and_the_rest_wait(self) -> None:
+        result = self._run(
+            "const real=api.get;api.get=async(p,...r)=>p.startsWith('/api/notifications')"
+            "?{blocked:'In a meeting',remind_later_minutes:30,notifications:["
+            "{id:'r1',title:'Possible scam',message:'Do not pay',kind:'proactive',"
+            "metadata:{level:'pop',through:true}},"
+            "{id:'p1',title:'Dentist',message:'At three',kind:'proactive',metadata:{level:'pop'}}]}"
+            ":real(p,...r);"
+            "await pollNotifications();await wait();"
+            "more={shown:[...document.querySelectorAll('.toast-notification')].map(t=>t.textContent),"
+            "line:document.querySelector('#toast-waiting').textContent};")
+        more = result["more"]
+        self.assertEqual(len(more["shown"]), 1)
+        self.assertIn("Possible scam", more["shown"][0])
+        self.assertEqual(more["line"], "1 waiting")
 
     def test_a_notification_can_be_called_a_bad_one(self) -> None:
         result = self._run(
@@ -4301,9 +4393,10 @@ class TokenUsageChartTests(unittest.TestCase):
         self.assertTrue(result["more"]["daysShown"])
         self.assertRegex(result["more"]["asked"][0], r"days=30&east=-?\d+")
         self.assertIn("over the last 7 days", result["note"])
-        # The last day: heartbeat 7000 and chat 300, by their modules' names.
+        # The last day, by their modules' names, in what it cost: shown first (the user, 2026-11-06).
+        self.assertEqual(result["metric"], "estimated_cost")
         self.assertIn("Activity and states", result["more"]["tip"])
-        self.assertIn("Activityandstates7k", result["more"]["tip"].replace(" ", ""))
+        self.assertIn("Activityandstates$0.0070", result["more"]["tip"].replace(" ", ""))
         self.assertIn("42 calls", result["note"])
 
     def test_every_kind_that_runs_its_own_and_only_past_twenty_eight_other(self) -> None:

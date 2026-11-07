@@ -112,7 +112,7 @@ class MonitorTests(unittest.TestCase):
     def test_the_built_in_ones_three_protected(self) -> None:
         listed = {one["builtin"]: one for one in self.store.list()}
         for key in ("invitation", "time_agreed", "spam_risk", "day_began", "back", "new_work",
-                    "project_return", "scattered", "leisure", "break", "evening",
+                    "new_text", "leisure", "break", "evening",
                     "evening_closing"):
             self.assertIn(key, listed)
         self.assertEqual({key for key, one in listed.items() if one["protected"]},
@@ -121,6 +121,45 @@ class MonitorTests(unittest.TestCase):
         self.store.delete(listed["leisure"]["id"], "chat", "the user rests without the agent")
         from personalized_agent.heartbeat.monitor.builtins import builtins
         self.assertEqual(self.store.seed(builtins()), 0)
+
+    def test_back_to_a_project_is_gone(self) -> None:
+        from personalized_agent.heartbeat.monitor import signals as sg
+        self.assertNotIn("project_return", [one["builtin"] for one in self.store.list()])
+        self.assertNotIn("project_return", sg.EVENTS)
+        with self.assertRaises(ValueError):
+            act.check(dict(GARDEN, when={"event": "project_return"}))
+        looked = SimpleNamespace(_previous={"project_id": "p1"}, _closing_up=lambda: False)
+        said = sg.Signals._events_of(looked, {
+            "present": False, "back_after_minutes": 0, "date": "2026-03-11", "project_id": "p2",
+            "project_days_since": 3.0, "depth": "", "activity": "", "mode": ""})
+        self.assertEqual(said, ["project_changed"])
+
+    def test_nothing_for_scattered_work(self) -> None:
+        from personalized_agent.heartbeat.monitor import signals as sg
+        self.assertNotIn("scattered", [one["builtin"] for one in self.store.list()])
+        self.assertNotIn("scattered", sg.EVENTS)
+        with self.assertRaises(ValueError):
+            act.check(dict(GARDEN, when={"event": "scattered"}))
+        looked = SimpleNamespace(_previous={"project_id": "p1", "depth": ""}, _closing_up=lambda: False)
+        said = sg.Signals._events_of(looked, {
+            "present": False, "back_after_minutes": 0, "date": "2026-03-11", "project_id": "p1",
+            "project_days_since": 0.0, "depth": "scattered", "activity": "", "mode": ""})
+        self.assertEqual(said, [])
+
+    def test_one_kept_from_before_is_taken_away_and_stays_away(self) -> None:
+        from personalized_agent.heartbeat.monitor.builtins import GONE
+        ident, _warnings = self.store.add(dict(GARDEN, when={"event": "project_changed"}), "built in",
+                                          "built in", builtin="project_return")
+        other, _warnings = self.store.add(dict(GARDEN, name="Scattered", when={"event": "back"}),
+                                          "built in", "built in", builtin="scattered")
+        self.assertIn(ident, [one["id"] for one in self.store.list()])
+        self.monitor._write_builtins()
+        self.assertNotIn(ident, [one["id"] for one in self.store.list()])
+        self.assertNotIn(other, [one["id"] for one in self.store.list()])
+        self.assertEqual(self.store.changes(ident)[0]["why"], GONE["project_return"])
+        self.assertEqual(self.store.changes(other)[0]["why"], GONE["scattered"])
+        self.monitor._write_builtins()
+        self.assertEqual(len([one for one in self.store.changes(ident) if one["op"] == "delete"]), 1)
 
     def test_a_protected_one_is_never_changed_by_the_model(self) -> None:
         spam = self._builtin("spam_risk")
@@ -399,6 +438,8 @@ class MonitorTests(unittest.TestCase):
         one._blocked = lambda: DesktopAgent._blocked(one)
         one._watch_the_blockers = lambda: DesktopAgent._watch_the_blockers(one)
         one._show_next_bubble = lambda: shown.append(list(one._bubble_queue))
+        one._next_bubble = lambda: DesktopAgent._next_bubble(one)
+        one._look_for_work_waiting = lambda: None
 
         def close():
             one._bubble = one._showing = None
@@ -1145,6 +1186,80 @@ class TheUsersOwnWorkTests(unittest.TestCase):
                           "Not today holds")
             wrote.assert_called_once()
 
+    def _evening(self):
+        from personalized_agent.heartbeat.monitor import decide
+        agent = TemporaryAgent()
+        self.addCleanup(agent.cleanup)
+        kept = {}
+        monitor = SimpleNamespace(
+            _kv=lambda key: kept.get(key, ""), _set_kv=kept.__setitem__,
+            questions=agent.app.questions, notifications=agent.app.notifications,
+            say=mock.Mock(return_value={"said": True}))
+        decider = object.__new__(decide.Decider)
+        decider.config = agent.app.config
+        decider.tasks = None
+        decider.signals = SimpleNamespace(store=SimpleNamespace(since=lambda _at: []),
+                                          habits_text=lambda: "")
+        decider._ask = mock.Mock(return_value="A made-up day.")
+        one = {"id": "act_evening", "name": "The evening report", "group": "rest"}
+        context = {"signals": {"worked_today_minutes": 360}}
+        return monitor, decider, one, context
+
+    def _answer(self, decider, monitor):
+        return decider.on_evening_answer(monitor, {"id": "f1", "context": "{}"}, "accept")
+
+    def test_the_evening_question_is_not_asked_again_while_it_waits(self) -> None:
+        """The user, 2026-11-06: asked at 18:20 and at 21:00, Now on both, and two reports."""
+        monitor, decider, one, context = self._evening()
+        self.assertTrue(decider.evening(monitor, one, context, "f1")["asked"])
+        self.assertIn("skipped", decider.evening(monitor, one, context, "f2"))
+        self.assertEqual(len(monitor.notifications.waiting()), 1)
+
+    def test_dismissed_unanswered_it_may_be_asked_again(self) -> None:
+        monitor, decider, one, context = self._evening()
+        decider.evening(monitor, one, context, "f1")
+        monitor.notifications.mark_read(monitor.notifications.waiting()[0]["id"])
+        self.assertTrue(decider.evening(monitor, one, context, "f2")["asked"])
+
+    def test_now_pressed_twice_writes_one_report(self) -> None:
+        monitor, decider, _one, _context = self._evening()
+        self._answer(decider, monitor)
+        self._answer(decider, monitor)
+        decider._ask.assert_called_once()
+        monitor.say.assert_called_once()
+
+    def test_now_pressed_while_it_is_being_written_writes_no_other(self) -> None:
+        monitor, decider, _one, _context = self._evening()
+        writing, go = threading.Event(), threading.Event()
+
+        def slowly(*_args, **_kwargs):
+            writing.set()
+            go.wait(5)
+            return "A made-up day."
+        decider._ask.side_effect = slowly
+        first = threading.Thread(target=self._answer, args=(decider, monitor))
+        first.start()
+        self.assertTrue(writing.wait(5))
+        self._answer(decider, monitor)
+        go.set()
+        first.join(5)
+        decider._ask.assert_called_once()
+
+    def test_written_nothing_is_left_to_answer(self) -> None:
+        monitor, decider, one, context = self._evening()
+        asked = decider.evening(monitor, one, context, "f1")
+        decider.write_evening(monitor, {}, "f2")
+        self.assertEqual(monitor.notifications.waiting(), [])
+        self.assertEqual(monitor.questions.get(asked["question_id"]).status, "expired")
+
+    def test_not_written_it_can_be_asked_for_again(self) -> None:
+        monitor, decider, _one, _context = self._evening()
+        decider._ask.side_effect = [RuntimeError("no model"), "A made-up day."]
+        with self.assertRaises(RuntimeError):
+            self._answer(decider, monitor)
+        self._answer(decider, monitor)
+        monitor.say.assert_called_once()
+
     def test_two_reminders_the_work_one_sooner(self) -> None:
         from personalized_agent.heartbeat.monitor import builtins as made
         every = {one["builtin"]: one for one in made.BUILTINS} if hasattr(made, "BUILTINS") else {
@@ -1210,6 +1325,249 @@ class TaskAndHowTests(unittest.TestCase):
         self.assertEqual(signals.task_in("project_garden", {}, set()), ("", ""), "nothing says which")
 
 
+class ALotOfNewTextTests(unittest.TestCase):
+    """The user, 2026-11-06: a lot of text unlike the words of late sets it off, and a model decides."""
+
+    WHEN = {"new_text": {"least_chars": 800, "unlike": 0.9, "minutes": 30}}
+    NEW = " ".join(f"harbourword{n}" for n in range(100))
+    KNOWN = {f"knownword{n}" for n in range(300)}
+
+    def _fires(self, text=NEW, where="page", known=None):
+        known = self.KNOWN if known is None else known
+        return act.evaluate(self.WHEN, {"text": text, "where": where,
+                                        "recent_words": lambda _minutes: known})[0]
+
+    def test_a_lot_of_it_unlike_the_words_of_late(self) -> None:
+        self.assertTrue(self._fires())
+
+    def test_a_little_is_nothing(self) -> None:
+        self.assertFalse(self._fires(self.NEW[:400]))
+
+    def test_much_like_the_words_of_late_is_nothing(self) -> None:
+        words = {f"harbourword{n}" for n in range(20)}
+        self.assertFalse(self._fires(known=self.KNOWN | words))
+
+    def test_not_a_terminal(self) -> None:
+        self.assertFalse(self._fires(where="terminal"))
+
+    def test_mail_and_chats_too(self) -> None:
+        for where in ("email", "chat", "other"):
+            self.assertTrue(self._fires(where=where), where)
+
+    def test_with_little_to_hold_it_against_it_is_nothing(self) -> None:
+        self.assertFalse(self._fires(known={"tide"}))
+
+    def test_what_shows_a_password_is_nothing(self) -> None:
+        with mock.patch("personalized_agent.runtime.documents.shows_credentials", return_value=True):
+            self.assertFalse(self._fires())
+
+    def test_says_how_it_was_set_off(self) -> None:
+        said = act.evaluate(self.WHEN, {"text": self.NEW, "where": "page",
+                                        "recent_words": lambda _minutes: self.KNOWN})[2]
+        self.assertIn("100% of the words unlike the last 30 minutes", said[0])
+
+    def test_only_a_built_in_one_may_ask_this(self) -> None:
+        with self.assertRaises(ValueError):
+            act.check(dict(GARDEN, when=self.WHEN))
+
+
+class ALotOfNewTextInTheMonitorTests(unittest.TestCase):
+
+    def setUp(self) -> None:
+        self.agent = TemporaryAgent()
+        self.addCleanup(self.agent.cleanup)
+        self.monitor = self.agent.app.monitor
+        self.one = next(one for one in self.monitor.store.list() if one["builtin"] == "new_text")
+        self.rows = 0
+
+    def _read(self, seconds_ago, text) -> None:
+        self.rows += 1
+        self.monitor.db.execute(
+            "INSERT INTO raw_events (id, event_type, source, timestamp, application, data, metadata, "
+            "processed) VALUES (?, 'screen.text', 'test', ?, 'firefox.exe', ?, '{}', 0)",
+            (f"e{self.rows}", (datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)).isoformat(),
+             json.dumps({"text": text})))
+
+    def test_it_asks_a_model_which_may_send_nothing(self) -> None:
+        self.assertTrue(self.one["text_driven"])
+        self.assertEqual(self.one["group"], "recommend")
+        self.assertEqual((self.one["then"][0]["do"], self.one["then"][0]["handler"]),
+                         ("ask_model", "recommend"))
+        self.assertIn("send nothing", self.one["then"][0]["brief"])
+
+    def test_the_words_of_late_leave_out_the_very_latest_and_the_long_ago(self) -> None:
+        self._read(3, "justread")
+        self._read(120, "tidetable")
+        self._read(3600, "longago")
+        self.assertEqual(self.monitor.recent_words(30), {"tidetable"})
+
+    def test_read_again_only_now_and_then(self) -> None:
+        self._read(120, "tidetable")
+        self.monitor.recent_words(30)
+        self._read(120, "harbour")
+        self.assertEqual(self.monitor.recent_words(30), {"tidetable"})
+
+    def test_once_an_hour_across_all_windows(self) -> None:
+        now = datetime.now(timezone.utc)
+        self.monitor.latest = {"present": True}
+        self.assertEqual(self.monitor._held(self.one, "text", now), "")
+        self.monitor.db.execute(
+            "INSERT INTO monitor_firings (id, activator_id, at, how, score, why, action, acted, context) "
+            "VALUES ('f1', ?, ?, 'text', 0, '', 'ask_model:recommend', 1, '{}')",
+            (self.one["id"], (now - timedelta(minutes=20)).isoformat()))
+        self.assertEqual(self.monitor._held(self.one, "text", now), "in its cooldown")
+
+
+class WhatASearchMayCarryTests(unittest.TestCase):
+    """The user, 2026-11-06: mail and chats may set it off, and their words stay out of a search."""
+
+    def setUp(self) -> None:
+        self.agent = TemporaryAgent()
+        self.addCleanup(self.agent.cleanup)
+        self.app = self.agent.app
+
+    def _guard_for(self, where):
+        decider, kept = self.app.monitor_decider, []
+
+        def asked(*_args, guard=None, **_more):
+            kept.append(guard)
+            return '{"send": false}'
+
+        one = next(a for a in self.app.monitor.store.list() if a["builtin"] == "new_text")
+        context = {"activator": {"name": one["name"]}, "signals": {}, "why": [], "window": {
+            "title": "Inbox", "where": where, "new_text": "Dear Ada Marlow, invoice 7741902 is due",
+            "text": ""}}
+        with mock.patch.object(decider, "_ask", side_effect=asked):
+            decider.recommend(self.app.monitor, one, one["then"][0], context, "f1")
+        return kept[0]
+
+    def test_of_mail_a_name_and_a_number_are_refused(self) -> None:
+        guard = self._guard_for("email")
+        self.assertIn("private", guard.check_query("ada marlow invoice"))
+        self.assertIn("private", guard.check_query("what is 7741902"))
+        self.assertIsNone(guard.check_query("how invoices fall due"))
+
+    def test_of_a_page_its_own_words_may_be_searched(self) -> None:
+        self.assertIsNone(self._guard_for("page").check_query("Ada Marlow invoice 7741902"))
+
+    def test_the_model_is_told(self) -> None:
+        from personalized_agent.heartbeat.monitor.decide import RECOMMEND_SYSTEM
+        self.assertIn("A SEARCH LEAVES THIS COMPUTER", RECOMMEND_SYSTEM)
+
+
+class AVideoInFocusTests(unittest.TestCase):
+    """The user, 2026-11-06: which window is on top says what they are at, not what an assistant
+    is doing in a folder."""
+
+    NOW = datetime(2026, 3, 11, 18, 10, tzinfo=timezone.utc)
+
+    def setUp(self) -> None:
+        self.agent = TemporaryAgent()
+        self.addCleanup(self.agent.cleanup)
+        self.made = self.agent.app.monitor_signals
+        self.rows = 0
+
+    def _focus(self, seconds_ago, title, application="firefox.exe") -> None:
+        self.rows += 1
+        self.made.db.execute(
+            "INSERT INTO raw_events (id, event_type, source, timestamp, application, data, metadata, "
+            "processed) VALUES (?, 'application.focused', 'test', ?, ?, ?, '{}', 0)",
+            (f"e{self.rows}", (self.NOW - timedelta(seconds=seconds_ago)).isoformat(), application,
+             json.dumps({"window_title": title})))
+
+    def test_watching_for_a_while(self) -> None:
+        self._focus(120, "notes.txt - Notepad", "notepad.exe")
+        self._focus(40, "Tide tables explained - YouTube")
+        self.assertTrue(self.made._watching(self.NOW))
+
+    def test_a_glance_is_not_watching(self) -> None:
+        self._focus(120, "notes.txt - Notepad", "notepad.exe")
+        self._focus(10, "Tide tables explained - YouTube")
+        self.assertFalse(self.made._watching(self.NOW))
+
+    def test_one_video_after_another_is_one_stretch(self) -> None:
+        self._focus(120, "notes.txt - Notepad", "notepad.exe")
+        self._focus(50, "Tide tables explained - YouTube")
+        self._focus(5, "Spring tides - YouTube")
+        self.assertTrue(self.made._watching(self.NOW))
+
+    def test_back_at_work_it_is_over(self) -> None:
+        self._focus(300, "Tide tables explained - YouTube")
+        self._focus(10, "notes.txt - Notepad", "notepad.exe")
+        self.assertFalse(self.made._watching(self.NOW))
+
+    def test_nothing_seen_is_not_watching(self) -> None:
+        self.assertFalse(self.made._watching(self.NOW))
+
+    def _placed(self, paths_say="harbour") -> SimpleNamespace:
+        live = SimpleNamespace(start=self.NOW - timedelta(minutes=5), minutes=5, project_id="", project="")
+        self.made._labelling = {"started_in": {}, "matcher": None, "index": None}
+        with mock.patch.object(self.made, "_place_by_paths", return_value=(paths_say, "Harbour")) as paths, \
+                mock.patch.object(self.made, "_place_by_words", return_value=("", "")) as words:
+            self.made._place_live(live, [], self.NOW, self.NOW)
+        live.asked = (paths.called, words.called)
+        return live
+
+    def test_the_paths_stand_aside(self) -> None:
+        self._focus(40, "Tide tables explained - YouTube")
+        live = self._placed()
+        self.assertEqual((live.project_id, live.asked), ("", (False, False)))
+
+    def test_elsewhere_the_paths_speak(self) -> None:
+        self._focus(40, "notes.txt - Notepad", "notepad.exe")
+        live = self._placed()
+        self.assertEqual((live.project_id, live.asked), ("harbour", (True, False)))
+
+    def test_the_words_on_the_screen_place_nothing_under_way(self) -> None:
+        self._focus(40, "notes.txt - Notepad", "notepad.exe")
+        self.assertEqual((self._placed(paths_say="").project_id), "")
+
+
+class WhatAWindowTeachesTests(unittest.TestCase):
+    """The user, 2026-11-06: of what is in a window, the model says what belongs to which."""
+
+    START = datetime(2026, 3, 11, 17, 15, tzinfo=timezone.utc)
+
+    def _index(self):
+        from personalized_agent.heartbeat.monitor.projects import ProjectIndex
+        a, b = self.START.isoformat(), (self.START + timedelta(minutes=15)).isoformat()
+        rows = {"state_projects": [{"id": "p1", "name": "Harbour", "tasks": '["t1"]'}],
+                "state_tasks": [{"id": "t1", "members": '["s1"]', "described": "{}", "archived_at": ""}],
+                "FROM states": [
+                    {"id": "s1", "title": "Survey", "detail": "", "starts_at": a, "ends_at": b,
+                     "metadata": json.dumps({"sources": ["WindowsTerminal.exe window 'Tide work'"]})},
+                    {"id": "s2", "title": "The week", "detail": "", "starts_at": a, "ends_at": b,
+                     "metadata": json.dumps({"sources": [
+                         "firefox.exe window 'Calendar - Week of March 9 \u2014 Mozilla Firefox'",
+                         "https://example.org/watch/1"]})},
+                    {"id": "s3", "title": "Old", "detail": "", "starts_at": a, "ends_at": b,
+                     "metadata": "{}"}]}
+        db = SimpleNamespace(query=lambda sql, _args=(): next(
+            found for key, found in rows.items() if key in sql))
+        return ProjectIndex(db, self.START, self.START + timedelta(minutes=15))
+
+    def test_what_only_another_state_names_teaches_nothing_of_this_one(self) -> None:
+        window = SimpleNamespace(start=self.START, minutes=15)
+        items = {"t:tide work": 300.0, "t:calendar - week of march 9 — mozilla firefox": 500.0,
+                 "t:unnamed": 30.0,
+                 "h:example.org": 30.0}
+        self.assertEqual(self._index().taught(window, "p1", items),
+                         {"t:tide work": 300.0, "t:unnamed": 30.0, "h:example.org": 30.0})
+
+    def test_a_window_elsewhere_is_as_it_was(self) -> None:
+        window = SimpleNamespace(start=self.START + timedelta(hours=3), minutes=15)
+        items = {"t:calendar - week of march 9": 500.0}
+        self.assertEqual(self._index().taught(window, "p1", items), items)
+
+    def test_what_a_source_names(self) -> None:
+        from personalized_agent.heartbeat.monitor.operations import named_in
+        self.assertEqual(named_in("firefox.exe window 'Tides \u2014 Mozilla Firefox'"), {"t:tides — mozilla firefox"})
+        self.assertEqual(named_in("https://example.org/watch/1"), set())
+        said = named_in("C:\\Survey\\scripts\\fetch.py")
+        self.assertLessEqual({"f:c:/survey/scripts/fetch.py", "d:survey/scripts", "p:fetch.py"}, said)
+        self.assertEqual(named_in(""), {"f:"})
+
+
 class PlacedByWordsTests(unittest.TestCase):
     """THE USER, 2026-11-03: the events are in every language - a window is
     placed by the words it shares with each piece of work, not by an English
@@ -1221,6 +1579,74 @@ class PlacedByWordsTests(unittest.TestCase):
                          {"raised", "beds", "drainage", "plan"})
         self.assertTrue({"菜园", "园排", "排水"} <= words_of("菜园排水计划"))
         self.assertNotIn("google", words_of("Google Chrome"), "a program's name says nothing")
+
+
+class ScatteredIsTheirOwnTests(unittest.TestCase):
+    def _signals(self, rates):
+        agent = TemporaryAgent()
+        self.addCleanup(agent.cleanup)
+        signals = agent.app.monitor_signals
+        now = datetime.now(timezone.utc)
+        windows = [Window(start=now - timedelta(hours=1), minutes=15, main="work", switch_rate=rate)
+                   for rate in rates]
+        return signals, now, mock.patch.object(signals.store, "since", return_value=windows)
+
+    def test_the_top_quarter_of_their_own_weeks(self) -> None:
+        signals, now, kept = self._signals(range(1, 101))
+        with kept:
+            self.assertEqual(signals.scattered_at(now), 75)
+
+    def test_read_once_a_while_not_at_every_look(self) -> None:
+        signals, now, kept = self._signals(range(1, 101))
+        with kept as since:
+            signals.scattered_at(now)
+            signals.scattered_at(now)
+        self.assertEqual(since.call_count, 1)
+
+    def test_too_few_windows_say_nothing_of_them(self) -> None:
+        signals, now, kept = self._signals([200] * 10)
+        with kept:
+            self.assertEqual(signals.scattered_at(now), 12)
+
+    def test_the_look_goes_by_it(self) -> None:
+        signals, now, kept = self._signals(range(1, 101))
+        live = Window(start=now, minutes=15, main="work", switch_rate=60.0)
+        with kept, mock.patch.object(signals, "live_window", return_value=live):
+            self.assertNotEqual(signals.snapshot(now)["depth"], "scattered", "ordinary for them")
+            live.switch_rate = 90.0
+            self.assertEqual(signals.snapshot(now)["depth"], "scattered")
+
+
+class AGlanceIsNotASwitchTests(unittest.TestCase):
+    def test_only_a_stay_of_two_seconds_counts_as_a_focus_change(self) -> None:
+        from personalized_agent.heartbeat.monitor import windows as ws
+        start = datetime(2026, 11, 5, 9, tzinfo=timezone.utc)
+
+        def stay(at, seconds):
+            ended = start + timedelta(seconds=at + seconds)
+            return {"event_type": "application.focus_ended", "timestamp": ended.isoformat(),
+                    "application": "Tides", "data": {"deactivation_time": ended.isoformat(),
+                                                     "duration_seconds": seconds,
+                                                     "window_title": "Tide tables"}}
+        events = [stay(0, 300), stay(300, 0.5), stay(301, 1.9), stay(303, 2.0), stay(305, 595)]
+        window = ws.build_windows(start, start + timedelta(minutes=15), 15, events)[0]
+        self.assertEqual(window.switch_rate, 3 * 4, "three stays in a quarter of an hour")
+
+
+class WhatIsInFrontOnThePanelTests(unittest.TestCase):
+    def test_read_as_it_is_asked_for_not_as_at_the_last_look(self) -> None:
+        agent = TemporaryAgent()
+        self.addCleanup(agent.cleanup)
+        monitor = agent.app.monitor
+        self.assertEqual(monitor.status()["signals"], {}, "nothing looked at yet: not half of it")
+        monitor.latest = {"mode": "working", "application": "Old", "title": "Old window"}
+        agent.app.db.execute(
+            "INSERT INTO raw_events (id, timestamp, source, event_type, application, data) "
+            "VALUES ('e1', ?, 'application', 'application.focused', 'Tides', ?)",
+            (datetime.now(timezone.utc).isoformat(), json.dumps({"window_title": "Tide tables"})))
+        said = monitor.status()["signals"]
+        self.assertEqual((said["application"], said["title"], said["mode"]),
+                         ("Tides", "Tide tables", "working"))
 
 
 if __name__ == "__main__":

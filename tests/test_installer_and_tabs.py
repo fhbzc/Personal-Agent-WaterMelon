@@ -47,7 +47,7 @@ class TheTabsTests(unittest.TestCase):
         self.assertEqual(result["out"]["tabs"], ["Overview", "Newspaper",
                                                  # Collections, a tab of its own (2026-11-04).
                                                  "Collections",
-                                                 "Calendar", "Connections", "Work",
+                                                 "Calendar", "Connections",
                                                  # The Monitor, the user's own (2026-11-03).
                                                  "Learning", "Monitor", "Society", "Chat", "Settings",
                                                  "Record log"])

@@ -122,7 +122,8 @@ class TheNoteTests(unittest.TestCase):
         note.zoom_by(-1, "how")
         note.zoom_by(-1, "how")
         self.assertEqual(note.zooms, {"item": hn.ZOOM_START - 1, "how": hn.ZOOM_START - 1})
-        self.assertEqual(self.zooms, [("item", 3), ("how", 2), ("how", 1)],
+        start = hn.ZOOM_START
+        self.assertEqual(self.zooms, [("item", start + 1), ("how", start), ("how", start - 1)],
                          "each told, to be kept for the next")
         # Ctrl and the keys.
         note.window.winfo_containing = lambda x, y: None
@@ -632,10 +633,12 @@ class OpenedThroughTheDesktopTests(unittest.TestCase):
         DesktopAgent._show_handed_note(fake, payload)
         root.update()
         note = fake._handed_note
-        self.assertEqual(note.zooms, {"item": 4, "how": 4}, "opened at the zoom kept")
+        self.assertEqual(note.zooms, {"item": hn.ZOOM_START + 2, "how": hn.ZOOM_START + 2},
+                         "opened at the zoom kept")
         note.zoom_by(1, "how")
         self.assertEqual(kept["popup_zoom"], 3)
-        self.assertEqual(note.zooms, {"item": 5, "how": 5}, "the whole of it")
+        self.assertEqual(note.zooms, {"item": hn.ZOOM_START + 3, "how": hn.ZOOM_START + 3},
+                         "the whole of it")
         note = fake._handed_note
         note._save()
         self.assertEqual(saved, [("run_7", 1, EMAIL["text"])], "saved to its run and item")

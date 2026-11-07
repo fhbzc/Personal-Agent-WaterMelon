@@ -18,6 +18,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from .operations import named_in
 from .types import Window
 
 log = logging.getLogger(__name__)
@@ -80,12 +81,15 @@ class ProjectIndex:
         #: What every state in the range says, whether or not the grouping has
         #: reached it: the user's own project words are looked for in it.
         self._texts: List[Tuple[datetime, datetime, str]] = []
+        #: What each state says it rests on, with the unit it is in ("" for none).
+        self._named: List[Tuple[datetime, datetime, Any]] = []
         try:
             self._load(db, start, end, scope)
         except Exception:                  # no grouping yet is not an error
             log.debug("the projects could not be read", exc_info=True)
         self._span_slots = _by_slot(self._spans)
         self._task_slots = _by_slot(self._task_spans)
+        self._named_slots = _by_slot(self._named)
 
     def _load(self, db: Any, start: datetime, end: datetime, scope: str) -> None:
         project_of_task: Dict[str, str] = {}
@@ -125,16 +129,37 @@ class ProjectIndex:
         # A day either side of the range, compared as text: the stamps are ISO,
         # so a date prefix sorts correctly whatever offset they carry.
         margin = (start - timedelta(days=1)).date().isoformat()
-        for row in db.query("SELECT id, title, detail, starts_at, ends_at FROM states "
+        for row in db.query("SELECT id, title, detail, starts_at, ends_at, metadata FROM states "
                             "WHERE ends_at >= ? ORDER BY starts_at", (margin,)):
             a, b = _when(row["starts_at"]), _when(row["ends_at"])
             if not (a and b and b > start and a < end):
                 continue
             self._texts.append((a, b, f"{row['title'] or ''} {row['detail'] or ''}"))
             project = project_of_state.get(row["id"])
+            try:
+                sources = json.loads(row["metadata"] or "{}").get("sources") or []
+            except (TypeError, ValueError, AttributeError):
+                sources = []
+            names = {item for source in sources for item in named_in(source)}
+            if names:
+                self._named.append((a, b, (project or "", names)))
             if project:
                 self._spans.append((a, b, project))
                 self._task_spans.append((a, b, task_of_state[row["id"]]))
+
+    def taught(self, window: Window, kind: str, items: Dict[str, float]) -> Dict[str, float]:
+        """WHAT A WINDOW TEACHES OF ITS UNIT (the user, 2026-11-06: "让他判断这个grouping里哪些是不作数的").
+        A window has one unit, and what else went on in it is not that unit's: the model says as much
+        in the states, each naming what it rests on. What only the states of something else name
+        teaches nothing of this one; what none name is as it was."""
+        end = window.start + timedelta(minutes=window.minutes)
+        named: Dict[str, set] = {}
+        for a, b, (unit, names) in _near(self._named, self._named_slots, window.start, end):
+            if a < end and b > window.start:
+                for item in names:
+                    named.setdefault(item, set()).add(unit)
+        return {item: seconds for item, seconds in items.items()
+                if item not in named or kind in named[item]}
 
     def text_of(self, window: Window) -> str:
         """What the states that overlap the window say, joined."""

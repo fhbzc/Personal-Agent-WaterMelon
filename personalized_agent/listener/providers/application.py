@@ -21,6 +21,12 @@ from ..core.manager import STOPPING_GRACE_SECONDS
 
 log = logging.getLogger(__name__)
 
+#: TOLD BY THE SYSTEM (the user, 2026-11-06: it took two seconds to show). Another window in front
+#: is looked at this long after, so that a window only passed through while switching is not one
+#: more stretch. What the system says nothing of - a browser's tab, a title - and the user being
+#: away are still looked at every `listener_poll_interval_seconds`.
+SETTLE_SECONDS = 0.25
+
 
 class ApplicationProvider(ListenerProvider):
     provider_id = "application"
@@ -32,6 +38,8 @@ class ApplicationProvider(ListenerProvider):
         self.platform = platform or get_platform()
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
+        self._told = threading.Event()
+        self._stop_watching: Any = None
         self._current: Optional[Dict[str, Any]] = None
         self._polls = 0
         self._platform_error: Optional[str] = None
@@ -49,12 +57,30 @@ class ApplicationProvider(ListenerProvider):
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
+        self._told.clear()
         self._thread = threading.Thread(target=self._loop, name="listener-application",
                                         daemon=True)
         self._thread.start()
+        self._watch_front()
+
+    def _watch_front(self) -> None:
+        watch = getattr(self.platform.activity, "watch_front", None)
+        if watch is None:
+            return
+        try:
+            self._stop_watching = watch(self._told.set)
+        except Exception:                    # looked at, as where the system cannot say
+            log.info("cannot be told what comes to the front", exc_info=True)
 
     def stop(self) -> None:
         self._stop.set()
+        self._told.set()
+        if self._stop_watching is not None:
+            try:
+                self._stop_watching()
+            except Exception:
+                log.debug("could not stop being told what comes to the front", exc_info=True)
+            self._stop_watching = None
         if self._thread:
             self._thread.join(timeout=STOPPING_GRACE_SECONDS)
         self._close_current()
@@ -66,7 +92,8 @@ class ApplicationProvider(ListenerProvider):
                 self._poll()
             except Exception as exc:  # a permission failure must not kill the listener
                 self.record_error(str(exc)[:200])
-            self._stop.wait(max(0.5, interval))
+            if self._told.wait(max(0.5, interval)) and not self._stop.wait(SETTLE_SECONDS):
+                self._told.clear()
 
     # -- polling ------------------------------------------------------------
     def _poll(self) -> None:

@@ -817,6 +817,15 @@ PAUSED_STEPS = ("step_nature",)
 #: process - what happened between that review and the agent being closed
 #: is read by the next one, not lost.
 SUMMARISED_UNTIL = "heartbeat_summarised_until"
+#: WHAT A LATE LOOK WROTE, for the notifications step of the next ordinary round (the user,
+#: 2026-11-06: a reminder to send a message came up an hour and a half after it was sent). A late
+#: look writes states and nothing else, and each ordinary round reads only its own stretch, so
+#: what was read late reached no step that could close a notification.
+READ_LATE = "heartbeat_read_late"
+#: The most kept for it, the latest: with the step off, nothing clears them.
+READ_LATE_MOST = 40
+#: What is said of each of them.
+READ_LATE_EVIDENCE = 3
 #: Closed for longer than this, the stretch from before is read ON ITS OWN -
 #: a late look, soon after the agent starts - rather than run together with
 #: what happens after, across a gap the reader could not see.
@@ -1278,6 +1287,8 @@ class StateFloor:
         #: The notifications already on the calendar, for the step that adds
         #: them - None for every other step, which is not shown the section.
         self.scheduled: Optional[List[str]] = None
+        #: The states late looks wrote since this step last ran, as lines.
+        self.read_late: List[str] = []
         #: The calendar nature - what the user's own adds, disables and
         #: deletes say about the notifications they want - for the step that
         #: adds them. None for every other step.
@@ -1388,6 +1399,16 @@ class StateFloor:
                 "about the same thing at a nearby time is a duplicate.",
                 "",
                 "\n".join(self.scheduled) or "None.",
+            ])
+        if self.read_late:
+            sections.append([
+                f"READ LATE, {len(self.read_late)}",
+                "States written from a stretch read after it had passed, which this step has not "
+                "seen. They are not this window. What one shows may be what a listed notification "
+                "asks for, already done: a line is a summary, so open it by its id for what it "
+                "rests on, and disable the notification if it is done.",
+                "",
+                "\n".join(self.read_late),
             ])
         if self.pending is not None:
             sections.append([
@@ -2382,6 +2403,7 @@ class AgentHeartbeat:
                             # to add beside, and to disable from.
                             found.scheduled = self._notifications_ahead(
                                 with_checks=True)
+                            found.read_late = self._read_late_lines()
                             # And what is waiting for a time (pending.py).
                             waiting = getattr(self, "pending", None)
                             if waiting is not None:
@@ -2540,6 +2562,8 @@ class AgentHeartbeat:
                                          written_by=writers.get("step_state"))
             if written:
                 report["states_written"] = written
+                if self._window_fixed is not None:
+                    self._keep_read_late(written)
             # HOW FAR THE SUMMARIES GOT - only when step one answered. A
             # review the model never answered moves nothing on, so the next
             # one reads its stretch as well.
@@ -2616,6 +2640,9 @@ class AgentHeartbeat:
             closed = self._close_notifications(task_id, payload.get("closed"))
             if closed:
                 report["notifications_closed"] = closed
+            # Seen by the step: an answer was had, so they were in front of it.
+            if "step_notify" in writers and self.config.get(READ_LATE, None):
+                self.config.set(READ_LATE, [], internal=True)
 
             # And what step 3 found new details for, filled in.
             updated = self._update_notifications(task_id, payload.get("updated"),
@@ -2735,6 +2762,25 @@ class AgentHeartbeat:
             return {"run": False, "why": f"It could not be asked: {exc}"}
 
     # -- step 1: the state calendar (section 34.1, as amended) --------------
+    def _keep_read_late(self, written: List[Dict[str, Any]]) -> None:
+        kept = [str(one) for one in (self.config.get(READ_LATE, None) or [])]
+        kept += [str(one["id"]) for one in written if one.get("id")]
+        self.config.set(READ_LATE, kept[-READ_LATE_MOST:], internal=True)
+
+    def _read_late_lines(self) -> List[str]:
+        """Each state a late look wrote, with its id, what it says and what it was seen by."""
+        ids = self.config.get(READ_LATE, None) or []
+        if not ids or self.states is None:
+            return []
+        lines = []
+        for state in sorted(self.states.by_ids(ids), key=lambda one: str(one.starts_at)):
+            evidence = (state.metadata or {}).get("evidence") or []
+            lines.append(f"[{state.id}] {_day(state.starts_at)} .. {_day(state.ends_at) or 'open'}  "
+                         f"{state.title}"
+                         + (f"\n    {state.detail}" if state.detail else "")
+                         + "".join(f"\n    seen: {one}" for one in evidence[:READ_LATE_EVIDENCE]))
+        return lines
+
     def _write_states(self, task_id: str, requested: Any,
                       looked_at: Optional[Dict[str, Any]] = None,
                       written_by: Optional[Dict[str, str]] = None,
@@ -3303,9 +3349,10 @@ class AgentHeartbeat:
         return check
 
     def _add_notifications(self, task_id: str, entries: Any,
-                           report: Optional[Dict[str, Any]] = None
+                           report: Optional[Dict[str, Any]] = None, trigger: str = ""
                            ) -> List[Dict[str, Any]]:
-        """Each notification step 3 asked for, as a task on the calendar.
+        """Each notification step 3 asked for, as a task on the calendar. `trigger`: the Monitor's,
+        when one set this off, said on the notification when its time comes.
 
         A notification task, set to interrupt, carrying which of the two
         kinds it is: when its time comes the scheduler pops it up with that
@@ -3413,6 +3460,7 @@ class AgentHeartbeat:
                     # there, beside the reason it gave.
                     metadata={"created_by": "heartbeat",
                               "heartbeat_task": task_id,
+                              **({"trigger": trigger} if trigger else {}),
                               # The lessons it follows: the user's next move
                               # on it says whether they were right.
                               "lessons_used": [str(one) for one in

@@ -261,6 +261,8 @@ def _extension_browsers(app: Any) -> set:
 
 #: How much of the screen a notification's words take before they scroll.
 WORDS_SHARE_OF_SCREEN = 0.45
+#: The bar beside them: the strip that takes the mouse and the thumb drawn in it, as on sizes.REFERENCE.
+BAR_WIDE, BAR_THUMB = 16, 8
 #: How far two fingers open or close for one step of zoom.
 PINCH_STEP = 0.12
 
@@ -386,6 +388,7 @@ class DesktopAgent:
         self._own_panel_for_the_box()
         self.app.bus.subscribe("notification.created", self._on_notification)
         self.app.bus.subscribe("agent.proactive_message", self._on_proactive)
+        self.app.bus.subscribe("agent.speaking", self._on_speaking)
         self.app.bus.subscribe("character.changed", self._on_character_changed)
         self.app.bus.subscribe("work.handed_opened", self._on_handed_opened)
         self.root.after(120, self._drain_queue)
@@ -475,6 +478,7 @@ class DesktopAgent:
             (say("Chat"), later(self.open_chat_bubble)),
             (say("To do"), later(lambda: self._quick_panel("todo"))),
             (say("Collections"), later(lambda: self._quick_panel("collection"))),
+            (say("Waiting notifications"), later(lambda: self._quick_panel("waiting"))),
             (say("Overview"), later(lambda: self.open_url("/#overview"))),
             (say("Show avatar" if self.character_hidden else "Hide avatar"),
              later(self.toggle_character))])
@@ -1211,6 +1215,8 @@ class DesktopAgent:
         menu.add_command(label=say("Chat"), command=self.open_chat_bubble)
         menu.add_command(label=say("To do"), command=lambda: self._quick_panel("todo"))
         menu.add_command(label=say("Collections"), command=lambda: self._quick_panel("collection"))
+        menu.add_command(label=say("Waiting notifications"),
+                         command=lambda: self._quick_panel("waiting"))
         for panel in getattr(self, "_quick_panels", {}).values():
             panel.prepare()                  # what they will show, read while the menu is open
         menu.add_command(label=say("Overview"), command=lambda: self.open_url("/#overview"))
@@ -1319,23 +1325,26 @@ class DesktopAgent:
         from .avatar_buttons import QuickPanel
         panel = self._quick_panels.get(which)
         if panel is None:
-            todo = which == "todo"
+            todo, waiting = which == "todo", which == "waiting"
             group = {"label": self._words("+ Add group"), "keys": ["name"],
                      "fields": [self._words("The new group's name")],
                      "path": "/api/lists/groups/add", "fixed": {"list": which}}
-            adds = [group]
+            adds = [] if waiting else [group]
             if todo:
                 adds.insert(0, {"label": self._words("+ Add a to-do"), "keys": ["text", "detail"],
                                 "fields": [self._words("What to do"),
                                            self._words("Details (optional)")],
                                 "path": "/api/todos/add"})
             panel = self._quick_panels[which] = QuickPanel(
-                self.root, self._words("To do" if todo else "Collections"),
+                self.root, self._words("To do" if todo else "Waiting notifications" if waiting
+                                       else "Collections"),
                 lambda: self.app.quick_sections(which),
                 lambda fn: self.queue.put(("call", fn)), self._words, self._popup_font(),
-                self._words("Nothing yet."), searches=True, act=self._panel_act,
+                self._words("Nothing is waiting." if waiting else "Nothing yet."), searches=True,
+                act=self._panel_act,
                 zoom=sizes.popup_zoom(self.config), on_zoom=lambda zoom: zoom_popups(self, zoom),
-                adds=adds, size=self.config.get(f"quick_panel_size_{which}", None) or None,
+                adds=adds, closes_emptied=waiting,
+                size=self.config.get(f"quick_panel_size_{which}", None) or None,
                 on_size=lambda size: self.config.set(f"quick_panel_size_{which}",
                                                      [int(size[0]), int(size[1])], internal=True))
         return panel
@@ -1352,9 +1361,6 @@ class DesktopAgent:
                         f"/?solo=delegate#delegate={draft['id']}")))
                 elif action["key"] == "read":
                     webbrowser.open(action["url"])
-                elif action["key"] == "try":
-                    self.queue.put(("call", lambda: self.open_url(
-                        f"/#work={action['unit']}:{action.get('run') or ''}")))
                 else:
                     self.app.local_post(action["path"], action["body"])
             except Exception as exc:
@@ -1703,11 +1709,18 @@ class DesktopAgent:
             # Apple's WebKit, whatever browser the Mac has: on the main thread.
             self.queue.put(("call", self._open_the_page_on_a_mac))
             return
-        if app_window.bring_back_the_page():
-            return
-        url = self.app.sign_in_url("/#overview")
-        if not app_window.open_the_page(url, self.app.paths.data_dir / app_window.PAGE_PROFILE):
-            webbrowser.open(url)
+        if not app_window.OPENING.acquire(blocking=False):
+            return                                   # it is on its way
+        try:
+            if app_window.bring_back_the_page():
+                return
+            url = self.app.sign_in_url("/#overview")
+            if app_window.open_the_page(url, self.app.paths.data_dir / app_window.PAGE_PROFILE):
+                app_window.wait_for_the_page()
+            else:
+                webbrowser.open(url)
+        finally:
+            app_window.OPENING.release()
 
     def open_box(self, fragment: str) -> None:
         """The Delegate work box alone, in a window of its own - not the
@@ -2110,6 +2123,14 @@ class DesktopAgent:
         elif kind == "answer":
             self.set_state("talking")
             self.root.after(2500, lambda: self.set_state("idle"))
+        elif kind == "speaking":
+            self._speak_for(float(payload))
+        elif kind == "waiting":
+            self._show_waiting()
+        elif kind == "panels":
+            for panel in getattr(self, "_quick_panels", {}).values():
+                if panel.is_open:
+                    panel._read_it(quiet=True)
         elif kind == "notification":
             self.set_state("notification")
             if isinstance(payload, dict):
@@ -2122,7 +2143,9 @@ class DesktopAgent:
                                    picture=payload.get("picture", ""),
                                    conversation=payload.get("conversation", ""),
                                    reason=payload.get("reason", ""),
-                                   recommended=bool(payload.get("recommended")))
+                                   trigger=payload.get("trigger", ""),
+                                   recommended=bool(payload.get("recommended")),
+                                   through=bool(payload.get("through")))
             else:                       # a plain string, from elsewhere
                 self.notify_bubble(str(payload))
             self.root.after(4000, lambda: self.set_state("idle"))
@@ -2140,11 +2163,17 @@ class DesktopAgent:
 
     # -- bus subscriptions --------------------------------------------------
     def _on_notification(self, _topic: str, payload: Any) -> None:
+        from ..common.notifications import told_from
         text = f"{payload.get('title')}: {payload.get('message')}"
         # A notification raised alongside a question carries its id, so the
         # bubble can offer that question's own buttons rather than a bare
         # acknowledgement that settles nothing.
         metadata = payload.get("metadata") or {}
+        if payload.get("kind") == "approval":        # an open list has its answers to show now
+            self.queue.put(("panels", None))
+        if metadata.get("level") == "collapse":      # no bubble: one more in the waiting list
+            self.queue.put(("waiting", None))
+            return
         question_id = str(metadata.get("question_id") or "")
         self.queue.put(("notification", {
             "text": text, "question_id": question_id,
@@ -2153,8 +2182,25 @@ class DesktopAgent:
             "content": bool(metadata.get("content")),
             "picture": str(metadata.get("picture") or ""),
             "conversation": str(metadata.get("chat_conversation") or ""),
-            "reason": str(metadata.get("reason") or ""),
-            "recommended": bool(metadata.get("recommended"))}))
+            "reason": str(metadata.get("reason") or ""), "trigger": told_from(metadata),
+            "recommended": bool(metadata.get("recommended")),
+            "through": bool(metadata.get("through"))}))
+
+    def _on_speaking(self, _topic: str, payload: Any) -> None:
+        self.queue.put(("speaking", float((payload or {}).get("seconds") or 1.0)))
+
+    def _speak_for(self, seconds: float) -> None:
+        """Its mouth goes while a reply comes out, and stops when no more does."""
+        due = getattr(self, "_speech_due", None)
+        if due is not None:
+            self.root.after_cancel(due)
+        self.set_state("talking")
+        self._speech_due = self.root.after(int(seconds * 1000), self._spoken)
+
+    def _spoken(self) -> None:
+        self._speech_due = None
+        if self.state == "talking":
+            self.set_state("idle")
 
     def _on_proactive(self, _topic: str, payload: Any) -> None:
         self.queue.put(("proactive", str(payload.get("message", ""))))
@@ -2170,7 +2216,8 @@ class DesktopAgent:
                       question_id: str = "", notification_id: str = "",
                       template: str = "", content: bool = False,
                       picture: str = "", conversation: str = "", reason: str = "",
-                      recommended: bool = False) -> None:
+                      recommended: bool = False, through: bool = False,
+                      trigger: str = "") -> None:
         """Queue something to say beside the character.
 
         Everything the agent raises of its own accord arrives this way. It used
@@ -2198,7 +2245,8 @@ class DesktopAgent:
         item = {"text": text, "emphasis": emphasis, "question_id": question_id,
                 "notification_id": notification_id, "template": template,
                 "content": content, "picture": picture, "conversation": conversation,
-                "reason": reason, "recommended": recommended}
+                "reason": reason, "recommended": recommended, "through": through,
+                "trigger": trigger}
         if not self._merge_bubble(item):
             self._bubble_queue.append(item)
         self._show_next_bubble()
@@ -2297,28 +2345,46 @@ class DesktopAgent:
         collapsed into a small line saying how many, to be opened by hand, and
         comes by itself when it is over. One on the screen when it begins, as
         slides go up, goes back to the head of the line, unanswered."""
+        self._look_for_work_waiting()
         if not self._blocker():
             self._bubbles_opened = False
-            self._hide_waiting()
             self._show_next_bubble()
         elif self._bubbles_opened:
             if self._bubble is None and not self._bubble_queue:
                 self._bubbles_opened = False     # all read: the next ones wait again
-        else:
-            if self._bubble is not None and self._showing is not None:
-                self._bubble_queue.appendleft(self._showing)
-                self._close_bubble()
-            self._show_waiting()
+        elif self._bubble is not None and self._showing is not None \
+                and not self._showing.get("through"):
+            self._bubble_queue.appendleft(self._showing)
+            self._close_bubble()
+        self._show_waiting()
         monitor = getattr(self.app, "monitor", None)
         if monitor is not None:
             monitor.reminders_waiting = len(self._bubble_queue) if self._blocker() else 0
         self.root.after(self.BLOCKERS_EVERY_MS, self._watch_the_blockers)
 
+    def _look_for_work_waiting(self) -> None:
+        """Off Tk's thread: a run is asked, in its own process, and one look at a time."""
+        if getattr(self, "_looking_for_work", False):
+            return
+        self._looking_for_work = True
+
+        def look() -> None:
+            try:
+                self.app.tell_work_waiting()
+            except Exception:                # the next look catches up
+                log.debug("could not ask what work waits for", exc_info=True)
+            finally:
+                self._looking_for_work = False
+        threading.Thread(target=look, name="work-waiting", daemon=True).start()
+
     def _open_waiting(self) -> None:
-        """Pressed: what waits, one at a time, as any bubble."""
+        """Pressed: what a blocker held, one at a time, as any bubble; what was kept in the list,
+        the list."""
         self._bubbles_opened = True
         self._hide_waiting()
         self._show_next_bubble()
+        if self.app.notifications.waiting_count():
+            self._quick_panel("waiting")
 
     def _hide_waiting(self) -> None:
         line, self._waiting_line = self._waiting_line, None
@@ -2330,7 +2396,12 @@ class DesktopAgent:
 
     def _show_waiting(self) -> None:
         """The small line beside the avatar: how many wait. It takes no focus."""
-        count = len(self._bubble_queue)
+        kept = self.app.notifications.waiting_count()
+        count = kept + (len(self._bubble_queue) if self._blocked() else 0)
+        panel = getattr(self, "_quick_panels", {}).get("waiting")
+        if panel is not None and panel.is_open and kept != getattr(self, "_waiting_kept", kept):
+            panel._read_it(quiet=True)
+        self._waiting_kept = kept
         if not count:
             self._hide_waiting()
             return
@@ -2347,8 +2418,8 @@ class DesktopAgent:
         line.configure(bg=look["outline"])
         font = self._popup_font()
         self._waiting_label = tk.Label(line, text=said, bg=look["bg"], fg=look["ink"],
-                                       font=(font[0], max(8, font[1] - 1)), padx=10, pady=4,
-                                       cursor="hand2")
+                                       font=(font[0], sizes.zoomed(font[1] - 1, self._bubble_zoom())),
+                                       padx=10, pady=4, cursor="hand2")
         self._waiting_label.pack(padx=1, pady=1)
         on_release(self._waiting_label, self._open_waiting)
         line.update_idletasks()
@@ -2362,8 +2433,10 @@ class DesktopAgent:
                   wide: int, tallest: int = 0) -> Any:
         """Words that look like a label and can be selected and copied: Ctrl+C,
         Ctrl+A, or the right button for all of them. `tallest`, in pixels: past it they scroll,
-        with a bar."""
+        with a bar. An address in them is a link (the user, 2026-11-06: a call's, to be joined)."""
         import tkinter.font as tkfont
+        from .chat_bubble import links_in, write_links
+        written, text = text, "".join(words for words, _address in links_in(text))
         measured = tkfont.Font(font=font)
         chars = max(1, wide // max(1, measured.measure("0")))
         # Its height by the font: a Text not yet on the screen counts its lines at
@@ -2376,7 +2449,7 @@ class DesktopAgent:
                       height=min(lines, shown), width=chars,
                       selectbackground=look["button_hover"], selectforeground=look["ink"],
                       inactiveselectbackground=look["button_hover"])
-        box.insert("1.0", text)
+        write_links(box, "1.0", written, (), look["primary_hover"])
         box.configure(state="disabled")
 
         def everything(_event: Any = None) -> str:
@@ -2389,7 +2462,8 @@ class DesktopAgent:
         if holder is None:
             return box
         from .chat_bubble import ScrollBar
-        bar = ScrollBar(holder)
+        bar = ScrollBar(holder, wide=sizes.px(parent, BAR_WIDE), thumb=sizes.px(parent, BAR_THUMB),
+                        bg=look["bg"], ink=look["muted"], hot=look["ink"])
         box.configure(yscrollcommand=bar.shown)
         bar.scrolls(box)
         box.pack(side="left", fill="both", expand=True)
@@ -2404,7 +2478,7 @@ class DesktopAgent:
         row.pack(fill="x", pady=(8, 0))
         box = tk.Entry(row, bg=look["button"], fg=look["ink"], insertbackground=look["ink"],
                        relief="flat", bd=0, highlightthickness=0, cursor="xterm",
-                       font=(font[0], max(8, font[1] - 1)))
+                       font=(font[0], max(sizes.SMALLEST_WORDS, font[1] - 1)))
         box.pack(side="left", fill="x", expand=True)
         hint = self._words("Tell the agent for next time...")
         box.insert(0, hint)
@@ -2424,7 +2498,8 @@ class DesktopAgent:
         box.bind("<Button-1>", begin, add="+")
         box.bind("<Return>", send)
         go = tk.Label(row, text=self._words("Send"), bg=look["button"], fg=look["ink"],
-                      font=(font[0], max(8, font[1] - 1), "bold"), cursor="hand2", padx=4)
+                      font=(font[0], max(sizes.SMALLEST_WORDS, font[1] - 1), "bold"), cursor="hand2",
+                      padx=4)
         go.pack(side="right")
         on_release(go, send)
 
@@ -2470,11 +2545,22 @@ class DesktopAgent:
             log.debug("a notification's picture could not be drawn", exc_info=True)
             return None
 
+    def _next_bubble(self) -> Optional[Dict[str, Any]]:
+        """The next in line. While a blocker holds, only what comes through it (the user,
+        2026-11-06: a scam warning is not held for a meeting)."""
+        if not self._blocked():
+            return self._bubble_queue.popleft() if self._bubble_queue else None
+        for one in self._bubble_queue:
+            if one.get("through"):
+                self._bubble_queue.remove(one)
+                return one
+        return None
+
     def _show_next_bubble(self) -> None:
         """Draw the next bubble, if the last one has been dealt with."""
-        if self._bubble is not None or not self._bubble_queue or self._blocked():
+        item = None if self._bubble is not None else self._next_bubble()
+        if item is None:
             return
-        item = self._bubble_queue.popleft()
         self._showing = item
         look = RECOMMENDED_LOOK if item.get("recommended") else BUBBLE_LOOK[bool(item["emphasis"])]
         options = self._options_for(item["question_id"])
@@ -2486,7 +2572,7 @@ class DesktopAgent:
         font = self._popup_font()
         # ITS OWN SIZE OF WORDS, as every panel has (the user, 2026-11-04: "鼠标放上去ctrl +-缩放就行"):
         # Ctrl with + and - or the wheel, kept, shown in no Settings.
-        family, points = font[0], max(6, font[1] + self._bubble_zoom())
+        family, points = font[0], sizes.zoomed(font[1], self._bubble_zoom())
         font = (family, points) + tuple(font[2:])
         self._zoom_keys(bubble)
         # The bubble is sized from the text, not fixed: a larger font in a
@@ -2508,13 +2594,13 @@ class DesktopAgent:
             "Notification" if item.get("content") else "Question" if item["question_id"] else \
             "Notification" if item.get("notification_id") else "From your agent"
         tk.Label(head, text=self._words(kind), bg=look["bg"], fg=look["muted"],
-                 font=(family, max(7, points - 2), "bold")).pack(side="left")
+                 font=(family, max(sizes.SMALLEST_WORDS, points - 2), "bold")).pack(side="left")
         # How many are behind this one. Without it, answering reads as having
         # done nothing when the next bubble appears in the same place. The
         # label is made even when the count is zero, because more may arrive
         # while this one is still waiting to be answered.
         self._bubble_count = tk.Label(head, text="", bg=look["bg"], fg=look["muted"],
-                                      font=(family, max(7, points - 2)))
+                                      font=(family, max(sizes.SMALLEST_WORDS, points - 2)))
         self._bubble_count.pack(side="right")
         self._refresh_bubble_count()
 
@@ -2536,12 +2622,17 @@ class DesktopAgent:
         # WHY IT IS TOLD (the user, 2026-11-04).
         if item.get("reason"):
             self._copyable(frame, self._words("Why: {0}").replace("{0}", item["reason"]),
-                           (family, max(8, points - 1), "italic"), look["muted"], look,
+                           (family, max(sizes.SMALLEST_WORDS, points - 1), "italic"), look["muted"], look,
                            width - 34).pack(fill="x", pady=(6, 0))
+        # WHAT SET IT OFF (the user, 2026-11-06).
+        if item.get("trigger"):
+            self._copyable(frame, self._words("Trigger: {0}").replace(
+                "{0}", self._words(item["trigger"])), (family, max(sizes.SMALLEST_WORDS, points - 1)),
+                look["muted"], look, width - 34).pack(fill="x", pady=(4, 0))
         part_of = self._bubble_part_of(item.get("notification_id", ""))
         if part_of:
             tk.Label(frame, text=part_of, bg=look["bg"], fg=look["muted"],
-                     font=(family, max(7, points - 2)), wraplength=width - 34, justify="left",
+                     font=(family, max(sizes.SMALLEST_WORDS, points - 2)), wraplength=width - 34, justify="left",
                      anchor="w").pack(fill="x", pady=(6, 0))
         picture = self._bubble_picture(item.get("picture", ""), width - 34)
         if picture is not None:
@@ -2563,7 +2654,8 @@ class DesktopAgent:
                            else (look["button"], look["button_hover"]))
             face = tk.Label(buttons, text=words, bg=fill,
                             fg=look["on_primary"] if primary else look["ink"],
-                            font=(family, max(8, points - 1), "bold" if primary else "normal"),
+                            font=(family, max(sizes.SMALLEST_WORDS, points - 1),
+                                  "bold" if primary else "normal"),
                             padx=12, pady=5, cursor="hand2",
                             anchor="w" if stacked else "center",
                             wraplength=width - 60 if stacked else 0, justify="left")
@@ -2606,7 +2698,7 @@ class DesktopAgent:
         if item.get("notification_id"):
             from ..agent.feedback.templates import BAD_LABEL
             bad = tk.Label(frame, text=self._words(BAD_LABEL), bg=look["bg"], fg=look["muted"],
-                           font=(family, max(7, points - 2), "underline"), cursor="hand2",
+                           font=(family, max(sizes.SMALLEST_WORDS, points - 2), "underline"), cursor="hand2",
                            wraplength=width - 34, justify="left", anchor="w")
             bad.bind("<Enter>", lambda _e: bad.configure(fg=look["ink"]))
             bad.bind("<Leave>", lambda _e: bad.configure(fg=look["muted"]))

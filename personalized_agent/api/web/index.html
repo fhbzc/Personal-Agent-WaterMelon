@@ -33,7 +33,6 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
     <button data-tab="collections">Collections</button>
     <button data-tab="calendar">Calendar</button>
     <button data-tab="connections">Connections</button>
-    <button data-tab="experience">Work</button>
     <button data-tab="learning">Learning</button>
     <button data-tab="monitor">Monitor</button>
     <button data-tab="society">Society</button>
@@ -52,6 +51,7 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
     <button data-tab="naturedebug">Nature debugger</button>
     <button data-tab="connectiondebug">Connection debugger</button>
     <button data-tab="readingdebug">Reading debugger</button>
+    <button data-tab="recommenddebug">Recommendation debugger</button>
     <button data-tab="languagedebug">Language debugger</button>
     <button data-tab="listenerdebug">Listener debugger</button>
     <button data-tab="chatdebug">Chat debugger</button>
@@ -134,7 +134,7 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
               <option value="total_tokens">total tokens</option>
               <option value="input_tokens">input tokens</option>
               <option value="output_tokens">output tokens</option>
-              <option value="estimated_cost">estimated cost</option>
+              <option value="estimated_cost" selected>estimated cost</option>
             </select>
           </label>
           <span class="muted" id="dbg-tokens-note"></span>
@@ -287,6 +287,31 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
         and - for the agent's - the start of what its model was asked and answered. The
         whole of each call is kept in a file and opens here.</p>
       <div id="cdbg-list"><p class="muted">Reading&hellip;</p></div>
+    </div>
+  </section>
+
+  <!-- WHAT IS KEPT READY TO RECOMMEND, the words that set each off, and what matched
+       (recommendation-debugger.js, debugger/recommendation.py). -->
+  <section id="recommenddebug" class="tab">
+    <div class="rd-shell">
+      <div class="rd-head rec-head">
+        <div><h2>Recommendation debugger</h2>
+          <p class="muted">What is kept ready to recommend, the words that set each off, and what
+            matched. Reading this changes nothing and asks no model.</p></div>
+        <button type="button" class="small secondary" id="rec-read">Read again</button>
+      </div>
+      <section class="card"><h3>Now</h3>
+        <div id="rec-now"><p class="muted">Reading&hellip;</p></div></section>
+      <section class="card">
+        <div class="rd-section-head"><h3>Candidates</h3>
+          <select id="rec-state" aria-label="Which candidates"></select>
+          <input type="search" id="rec-find" placeholder="Find a word" aria-label="Find a word">
+        </div>
+        <div id="rec-items" class="rd-scroll"></div></section>
+      <section class="card"><h3>Matches</h3>
+        <div id="rec-hits" class="rd-scroll"></div></section>
+      <section class="card"><h3>What was learned from your answers</h3>
+        <div id="rec-learned" class="rd-scroll"></div></section>
     </div>
   </section>
 
@@ -563,6 +588,9 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
     </div>
   </section>
 
+  <!-- NO WORK PANEL (the user, 2026-11-06): work is followed and opened from To do and Work assigned
+       on the Overview. No button leads here; what is drawn here is drawn by the code the Work
+       debugger shares. -->
   <section id="experience" class="tab">
     <div class="xp-head">
       <strong>Work</strong>
@@ -1504,6 +1532,7 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
 <script src="/debugger.js"></script>
 <script src="/chat-debugger.js"></script>
 <script src="/listener-debugger.js"></script>
+<script src="/recommendation-debugger.js"></script>
 <!-- AN UPDATE SEEN THROUGH: stays while the agent is closed (app.js). -->
 <section id="update-follow" class="update-follow" role="status" aria-live="polite" hidden></section>
 </body>

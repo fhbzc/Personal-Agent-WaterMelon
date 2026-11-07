@@ -440,6 +440,99 @@ class AssistantContentIsActuallyWithheldTests(unittest.TestCase):
             self._recorded(listener_assistant_content_tools="Claude Code"),
             ["hold", "keep"])
 
+class ToldWhatComesToTheFrontTests(unittest.TestCase):
+    def _provider(self, **more):
+        from personalized_agent.listener.providers import application as module
+        seen = []
+        window = SimpleNamespace(application="Tides", title="One", pid=1, executable="tides")
+
+        class Activity:
+            def get_active_window(self):
+                seen.append(time.monotonic())
+                return window
+
+        for key, value in more.items():
+            setattr(Activity, key, value)
+        platform = SimpleNamespace(name="test", activity=Activity(), capabilities=lambda: SimpleNamespace(
+            active_application=True))
+        provider = module.ApplicationProvider(SimpleNamespace(get=lambda _k, default=None: 60.0), platform)
+        provider._emit = lambda _event: None
+        self.addCleanup(provider.stop)
+        return provider, seen
+
+    def _until(self, check, seconds=3.0):
+        ends = time.monotonic() + seconds
+        while time.monotonic() < ends and not check():
+            time.sleep(0.01)
+        return check()
+
+    def test_told_it_looks_at_once_not_at_the_next_look(self) -> None:
+        told = []
+        provider, seen = self._provider(watch_front=lambda _self, call: told.append(call))
+        provider.start()
+        self.assertTrue(self._until(lambda: len(seen) == 1 and told), "the first look")
+        told[0]()
+        self.assertTrue(self._until(lambda: len(seen) == 2), "told, with a minute to the next look")
+
+    def test_where_the_system_cannot_say_it_goes_on_looking(self) -> None:
+        provider, seen = self._provider(watch_front=lambda _self, _call: None)
+        provider.start()
+        self.assertTrue(self._until(lambda: len(seen) == 1))
+        provider.stop()
+
+    def test_stopped_it_is_no_longer_told(self) -> None:
+        stopped = []
+        provider, _seen = self._provider(watch_front=lambda _self, _call: lambda: stopped.append(1))
+        provider.start()
+        provider.stop()
+        self.assertEqual(stopped, [1])
+
+    def test_a_system_that_fails_to_say_stops_nothing(self) -> None:
+        def fails(_self, _call):
+            raise OSError("no")
+        provider, seen = self._provider(watch_front=fails)
+        provider.start()
+        self.assertTrue(self._until(lambda: len(seen) == 1))
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows' own word")
+    def test_windows_says_so_of_a_window_of_ours(self) -> None:
+        import tkinter as tk
+        from personalized_agent.platform_layer.windows import WindowsActivityProvider
+        told = threading.Event()
+        stop = WindowsActivityProvider().watch_front(told.set)
+        self.assertIsNotNone(stop)
+        self.addCleanup(stop)
+        root = tk.Tk()
+        self.addCleanup(root.destroy)
+        root.geometry("120x60+40+40")
+        root.update()
+        root.focus_force()
+        ends = time.monotonic() + 3
+        while time.monotonic() < ends and not told.is_set():
+            root.update()
+            time.sleep(0.02)
+        self.assertTrue(told.is_set())
+
+    def test_a_mac_says_so_by_its_notification_centre(self) -> None:
+        import contextlib
+        from personalized_agent.platform_layer.macos import MacActivityProvider
+        center = SimpleNamespace(added=[], removed=[])
+        center.addObserverForName_object_queue_usingBlock_ = (
+            lambda name, _o, _q, block: center.added.append((name, block)) or "observer")
+        center.removeObserver_ = center.removed.append
+        workspace = SimpleNamespace(notificationCenter=lambda: center)
+        appkit = SimpleNamespace(NSWorkspace=SimpleNamespace(sharedWorkspace=lambda: workspace),
+                                 NSWorkspaceDidActivateApplicationNotification="activated")
+        objc = SimpleNamespace(autorelease_pool=contextlib.nullcontext)
+        told = []
+        with mock.patch.dict(sys.modules, {"AppKit": appkit, "objc": objc}):
+            stop = MacActivityProvider.watch_front(object(), lambda: told.append(1))
+        name, block = center.added[0]
+        block("what was said")
+        stop()
+        self.assertEqual((name, told, center.removed), ("activated", [1], ["observer"]))
+
+
 if __name__ == "__main__":
     unittest.main()
 

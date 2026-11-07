@@ -3271,8 +3271,12 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             limit=request.int_param("limit", 50),
             unread_only=str(request.get("unread", "false")).lower() == "true")
         part_of = app.item_links.of_many("notification", [one["id"] for one in rows])
+        from ..common.interface_words import shown as in_their_words
+        from ..common.notifications import told_from
         return {
-            "notifications": [dict(one, associated=part_of.get(one["id"], [])) for one in rows],
+            "notifications": [dict(one, associated=part_of.get(one["id"], []),
+                                   trigger=in_their_words(told_from(one.get("metadata")), app.config))
+                              for one in rows],
             # How long "Remind me in ..." waits, so the button can say it.
             "remind_later_minutes": app.REMIND_LATER_MINUTES,
             # A blocker holds every reminder: they wait, unread, until it is over.
@@ -3922,6 +3926,20 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             raise ApiError("notification not found", 404)
         return {"ok": True, "lesson": lesson}
 
+    @route("POST", "/api/notifications/answer")
+    def notifications_answer(request: Any) -> Any:
+        """An answer given in the waiting list, as on the bubble: the notification is done with."""
+        ident = str(request.require("id"))
+        try:
+            question = app.feedback.answer(str(request.require("question")),
+                                           str(request.require("answer")), notification_id=ident)
+        except ValueError as exc:
+            raise ApiError(str(exc)) from exc
+        if question is None:
+            raise ApiError("question not found", 404)
+        app.notifications.mark_read(ident)
+        return {"ok": True}
+
     @route("POST", "/api/notifications/read")
     def notifications_read(request: Any) -> Any:
         if request.get("all"):
@@ -4139,6 +4157,12 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             if getattr(app, "chat_debugger", None) is None:
                 app.chat_debugger = ChatDebugger(app)
             return app.chat_debugger
+
+    # ------------------------------------------------ recommendation debugger
+    @route("GET", "/api/debugger/recommendation")
+    def recommendation_debugger(_request: Any) -> Any:
+        from ..debugger.recommendation import report
+        return report(app)
 
     # ---------------------------------------------------- resource debugger
     # What the application costs the computer, as it goes: its processes'

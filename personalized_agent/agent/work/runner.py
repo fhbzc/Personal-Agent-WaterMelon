@@ -8643,6 +8643,17 @@ class Run:
             else:
                 messages.append({"role": "user", "content": self._monitored(ALONE_GO_ON)})
 
+    def _hand_over_its_report(self) -> None:
+        """WORK ENDS WITH SOMETHING TO OPEN (the user, 2026-11-06). Done with nothing handed over
+        and no file made, what it found is in its report alone: that is the answer. Files made
+        are opened by their folder (`Delegate._made_by`)."""
+        made = [one for one in self.plan.get("changed_files") or [] if Path(one).exists()]
+        report = str(self.plan.get("last_report") or "").strip()
+        if report and not made and not self.plan.get("handed"):
+            self.plan["handed"] = handed.kept([], {
+                "kind": "answer", "title": _clip(self.unit.get("name") or "Answer", 200),
+                "text": report[:handed.LONG], "at": _now()})
+
     def _wrap_up_alone(self, ended: str) -> None:
         """The single model's end: how it ended, what is next if it is not
         done, and its report - the run's final word, as it wrote it."""
@@ -8652,6 +8663,7 @@ class Run:
                        "thorough": NEEDS_THOROUGH}.get(ended, NOT_FINISHED)
         if finished:
             self.plan["phase"] = "done"
+            self._hand_over_its_report()
         else:
             self.plan["todo"] = {"open": [], "blocked": [], "interrupted": {},
                                  "next": [one for one in [self.plan.get("next")] if one],
@@ -10508,6 +10520,7 @@ class Run:
             self._readme(finished)
         if finished:
             self.plan["phase"] = "done"
+            self._hand_over_its_report()
             root, _cards = self._tree()
             self.store.update_card(root["id"], {"status": "done",
                                                 "status_why": "the reviewer accepted it"})

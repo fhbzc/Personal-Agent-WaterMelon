@@ -8,6 +8,7 @@ import pathlib
 import time
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 from support import ROOT, TemporaryAgent
 
@@ -1413,6 +1414,79 @@ class AStateSaysWhyTheAgentBelievesItTests(unittest.TestCase):
 
         state = self._write(reasoning="")
         self.assertEqual(state.reason, NOT_RECORDED)
+
+
+class WhatWasReadLateReachesTheNotificationsTests(unittest.TestCase):
+    """The user, 2026-11-06: sent at 14:51, reminded at 16:30, and the agent had read it at 15:13."""
+
+    def setUp(self) -> None:
+        self.agent = TemporaryAgent()
+        self.addCleanup(self.agent.cleanup)
+        self.beat = self.agent.app.heartbeat
+        self.config = self.agent.app.config
+        self.asked = []
+
+    def _round(self, payload, late=False):
+        asked = self.asked
+
+        class Reply:
+            text = json.dumps(payload)
+
+        self.beat.models = type("M", (), {
+            "invoke": lambda s, request, **k: (asked.append(request), Reply())[1],
+            "resolve": lambda s, *a, **k: type("R", (), {"to_dict": lambda x: {}})(),
+            "check_availability": lambda s, *a, **k: type("A", (), {
+                "available": True, "to_dict": lambda x: {}, "state": None})()})()
+        now = datetime.now(timezone.utc)
+        self.beat._window_fixed = (now - timedelta(hours=2), now - timedelta(hours=1)) if late else None
+        try:
+            return self.beat.run_once(trigger="manual_debug")
+        finally:
+            self.beat._window_fixed = None
+
+    def _late_state(self):
+        report = self._round({"states": [{
+            "title": "Sent the tide tables to the harbour office", "detail": "The message went.",
+            "about": "user", "evidence": ["the channel shows it sent at 2:51 PM"]}]}, late=True)
+        return report["states_written"][0]["id"]
+
+    def _notify(self, report):
+        return next(one for one in report["steps"] if one["id"] == "step_notify")
+
+    def test_a_late_look_still_writes_states_and_nothing_else(self) -> None:
+        report = self._round({"states": [{"title": "T", "detail": "D", "about": "user"}]}, late=True)
+        self.assertEqual([one["id"] for one in report["steps"]], ["step_state"])
+
+    def test_the_next_round_is_given_them_with_what_they_rest_on(self) -> None:
+        ident = self._late_state()
+        said = self._notify(self._round({"states": []}))["context"]
+        self.assertIn("READ LATE, 1", said)
+        self.assertIn(ident, said)
+        self.assertIn("Sent the tide tables", said)
+        self.assertIn("sent at 2:51 PM", said)
+
+    def test_only_the_notifications_step_is_given_them(self) -> None:
+        self._late_state()
+        report = self._round({"states": []})
+        for one in report["steps"]:
+            if one["id"] != "step_notify":
+                self.assertNotIn("READ LATE", one.get("context") or "", one["id"])
+
+    def test_given_once(self) -> None:
+        self._late_state()
+        self._round({"states": []})
+        self.assertNotIn("READ LATE", self._notify(self._round({"states": []}))["context"])
+
+    def test_kept_until_the_step_has_answered(self) -> None:
+        ident = self._late_state()
+        with mock.patch.object(_heartbeat_module, "_step_on", lambda _config, step: step != "step_notify"):
+            self._round({"states": []})
+        self.assertEqual(self.config.get(_heartbeat_module.READ_LATE, None), [ident])
+
+    def test_the_most_kept(self) -> None:
+        self.beat._keep_read_late([{"id": f"s{n}"} for n in range(_heartbeat_module.READ_LATE_MOST + 5)])
+        kept = self.config.get(_heartbeat_module.READ_LATE, None)
+        self.assertEqual((len(kept), kept[-1]), (_heartbeat_module.READ_LATE_MOST, f"s{_heartbeat_module.READ_LATE_MOST + 4}"))
 
 
 class TheLastRunSurvivesARefreshTests(unittest.TestCase):

@@ -25,6 +25,8 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
@@ -115,6 +117,12 @@ PAGE_SIZE = (1400, 900)
 PAGE_TITLE = "WaterMelon"
 #: The window class of Edge and of Chrome.
 BROWSER_WINDOW = "Chrome_WidgetWin_1"
+#: ONE WINDOW, HOWEVER MANY DOUBLE CLICKS (the user, 2026-11-06: two in a row made two): a browser
+#: takes seconds to start and the window is known by its title only once the page has loaded, so a
+#: second double click found nothing and opened another. Held while one is coming; asked again
+#: meanwhile, nothing more is done. How long it is waited for, where it can be seen and where not.
+OPENING = threading.Lock()
+OPENING_SECONDS, UNSEEN_SECONDS = 15.0, 3.0
 
 
 def _no_windows_here() -> bool:
@@ -164,6 +172,22 @@ def bring_back_the_page() -> bool:
     except Exception:
         log.debug("the page's window could not be brought back", exc_info=True)
     return False
+
+
+def wait_for_the_page() -> None:
+    """Until the window just asked for is there, or it is not coming."""
+    if _no_windows_here():
+        return
+    seen = sys.platform == "win32"
+    end = time.monotonic() + (OPENING_SECONDS if seen else UNSEEN_SECONDS)
+    while time.monotonic() < end:
+        try:
+            if seen and _windows_page() is not None:
+                return
+        except Exception:
+            log.debug("the page's window could not be looked for", exc_info=True)
+            return
+        time.sleep(0.2)
 
 
 def open_the_page(url: str, profile: Path) -> bool:

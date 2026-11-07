@@ -26,7 +26,9 @@ there is something for it:
            cases (or the user's own word) bear the new version out. Refused
            once: asked again with why; refused twice: the rewrite stands
            beside the reason as its RIVAL, until the evidence tells them
-           apart (`compete`).
+           apart (`compete`). Whatever context a judgment is from, this is
+           the model's to say: each judgment is shown with its context (the
+           user, 2026-11-06), and a reason changed by an answer says so.
   ABDUCE   judgments no reason explains, together: a reason that explains
            them all - falsifiable, as deep as can still fail - or that one
            belongs to a reason already kept.
@@ -44,7 +46,9 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from . import from_lessons
 from .match import coverage, fits_its_cases
+from .vocab import OF_THE_ANSWERS
 from .store import WEIGHT, LearningStore, dumps, now
 from .vocab import DIMENSIONS, OBJECT, Vocabulary
 
@@ -53,6 +57,9 @@ log = logging.getLogger(__name__)
 #: Judgments explained in one call; reasons shown with them, at most.
 EXPLAIN_BATCH = 25
 REASONS_SHOWN = 15
+#: Answers guessed at once, what a guess is told of, and how many judgments of each reason a motive
+#: stands on.
+PREDICT_MOST, PREDICT_REASONS, ACROSS_EVIDENCE = 30, 40, 6
 #: A rewrite keeps at least this share of the evidence that is not the
 #: user's own word.
 KEEP_SHARE = 0.8
@@ -71,7 +78,7 @@ RIVAL_DAYS = 90
 SAME_SHARE = 0.5
 
 REASON_SHAPE = """{"statement": "one sentence: why the user judges so",
- "aspect": "requirement | output | evaluation | habit",
+ "aspect": "requirement | output | evaluation | habit | attention | timing",
  "condition": {"dims": {"deliverable": ["deliverable:..."], "presentation": ["..."]},
                "excluded": {"purpose": ["purpose:..."]},
                "text": "in words: when it holds"},
@@ -85,8 +92,9 @@ EXPLAIN_PROMPT = """WHICH OF THE USER'S REASONS EXPLAIN THESE NEW JUDGMENTS OF T
 Below are REASONS already kept about why the user judges their work as they
 do - each with its id, when it holds, what it predicts, how much bears on
 it and when it was first and last seen - and NEW JUDGMENTS: what the user
-decided or changed in a piece of work, with the case it was in (what kind
-of thing, for whom, how presented) and its date.
+decided or changed in a piece of work, or how they answered what their agent
+told them, with the case it was in (what kind of thing, for whom, how
+presented), the context it was in and its date.
 
 For each judgment say:
   - explained_by: the reasons that, applied to this case, would lead to
@@ -107,6 +115,11 @@ REVISE_PROMPT = """A REASON OF THE USER'S IS CONTRADICTED. WHAT IS TRUE?
 Below is a REASON - why the user judges so, when it holds, what it
 predicts - with the EVIDENCE it rests on (dated), and NEW JUDGMENTS that
 conflict with it. Other reasons kept are listed by one line each.
+
+Each judgment says the context it was in: which piece of their work, or their
+answer to what their agent told them. What they do in one context may say
+nothing of another: weigh that, and change the reason only if this truly bears
+on it.
 
 Choose ONE:
   "a" - its condition does not hold for the new case: it is a BOUNDARY. Say
@@ -149,7 +162,9 @@ ABDUCE_PROMPT = """WHY DOES THE USER JUDGE SO? FIND THE REASONS BEHIND THESE JUD
 Below are judgments of the user's that no reason kept explains yet - what
 they decided or changed, in which case (what kind of thing, for whom, how
 presented), when, in their words where they gave them - and the reasons
-already kept, one line each.
+already kept, one line each. Some are answers to what their agent told them,
+with the moment they came at: what deserves their attention, and when. A reason
+may reach across those and their work.
 
   - A judgment that one of the kept reasons does explain after all: say so
     in "belongs".
@@ -168,6 +183,30 @@ Return ONLY this JSON object:
  "reasons": [{...one reason..., "stated": false, "explains": ["J-..."]}]}
 where each reason is:
 """ + REASON_SHAPE
+
+PREDICT_PROMPT = """WHAT WILL THE USER ANSWER? Below is what the agent told them, each with the
+moment it came at, and what is known of them. For each, say how they answered: "positive" (took it
+up: accepted, read more, kept it, put it on a list, glad to know), "neutral" (saw it, no complaint),
+"negative" (called it bad, deleted it) or "later" (the moment was wrong).
+
+Return ONLY this JSON object: {"answers": {"<id>": "positive"}}"""
+
+ACROSS_PROMPT = """WHAT DRIVES THIS USER, ACROSS WHAT THEY DO? Below are the reasons kept of why they
+judge as they do, each said to be from their work or from their answers to the agent, and the
+principles of their work. Find what the separate contexts do not show alone:
+
+  - a MOTIVE: one thing that explains reasons from at least two different contexts - as deep as can
+    still be shown wrong, not "you value quality". Say where it would fail.
+  - a TENSION: two reasons from different contexts that pull apart, and which one wins when. Do not
+    smooth it over.
+
+Never judge their life or what they should want: this is what they do, and it may be wrong. Leave
+out what is only one context, what a kept motive already says, and what you cannot back.
+
+Return ONLY this JSON object: {"motives": [{"statement": "one sentence", "kind": "motive | tension",
+ "explains": ["R-..."], "condition": {"text": "in words: when it holds"},
+ "fails_when": "what would show it wrong",
+ "predictions": [{"text": "in words"}]}]}"""
 
 SAME_PROMPT = """ARE THESE TWO REASONS OF THE USER'S THE SAME REASON?
 
@@ -227,12 +266,21 @@ class Reasons:
         return (f"{case.get('title', '')} [{', '.join(t for v in (case.get('facets') or {}).values() for t in v)}]",
                 case.get("facets") or {})
 
+    def _context(self, case_id: str) -> str:
+        """Where a case was, for the model to weigh a judgment by."""
+        case = self.store.case(case_id) or {}
+        if case.get("unit_id") == from_lessons.UNIT:
+            return "their answer to what their agent told them"
+        unit = self.store.unit(case.get("unit_id", "")) or {}
+        return f'their work, "{unit.get("title") or ""}"'
+
     def _judgment_line(self, judgment: Dict[str, Any]) -> str:
         case, _facets = self._case_line(judgment["case_id"])
         said = f' said: "{judgment["said"]}"' if judgment.get("said") else ""
         why = f" why: {judgment['why']}" if judgment.get("why") else ""
         return (f"{judgment['id']} ({judgment.get('at') or '?'}, {judgment['strength']}) "
-                f"in case {judgment['case_id']} {case}: {judgment['aspect']} / "
+                f"in case {judgment['case_id']} {case}, context: "
+                f"{self._context(judgment['case_id'])}: {judgment['aspect']} / "
                 f"{judgment['object']}{(' / ' + judgment['item']) if judgment.get('item') else ''}"
                 f" -> {judgment['direction']}.{said}{why}")
 
@@ -589,7 +637,7 @@ class Reasons:
             "why": why, "before": {key: reason.get(key) for key in (
                 "statement", "condition", "objects", "predictions", "since")},
             "until": change_at if choice == "e" else "",
-            "set_aside": sorted(set_aside)}]
+            "set_aside": sorted(set_aside), "on_answers": self._on_answers(reason, news)}]
         for key in ("statement", "aspect", "condition", "objects", "predictions"):
             if version.get(key) or key == "predictions":
                 reason[key] = version[key]
@@ -631,6 +679,11 @@ class Reasons:
         self.store.save_reason(reason)
         rival = self.store.reason(rid)
         rival["rival"], rival["rival_since"] = reason["id"], now()
+        on_answers = self._on_answers(reason, news)
+        if on_answers:
+            rival["history"] = list(rival.get("history") or []) + [{
+                "at": now(), "what": "a rival", "why": str(said.get("why") or "")[:400],
+                "before": {"statement": reason["statement"]}, "on_answers": on_answers}]
         self.store.save_reason(rival)
         self.report["rivals"] += 1
         return "rival"
@@ -835,8 +888,104 @@ class Reasons:
                 self.report["terms_split"] += 1
 
     # -- one update's reasoning ---------------------------------------------------
+    # -- every lesson, not only the work (from_lessons.py) ---------------------
+    def _context_of(self, reason_id: str) -> set:
+        """Where a reason comes from: the work, or the kind of thing the user answered."""
+        out = set()
+        for row in self.db.query(
+                "SELECT c.unit_id AS unit, c.title AS title FROM learn_links l JOIN learn_judgments j "
+                "ON j.id = l.judgment_id JOIN learn_cases c ON c.id = j.case_id WHERE l.reason_id = ? "
+                "AND l.role = 'supports'", (reason_id,)):
+            out.add(str(row["title"]).split(":")[0] if row["unit"] == from_lessons.UNIT else "work")
+        return out
+
+    def _on_answers(self, reason: Dict[str, Any], news: Sequence[Dict[str, Any]]) -> List[str]:
+        """What the user answered that changed a reason of their work: the model's to do, and kept
+        with the reason so that it can be read (the Recommendation debugger)."""
+        if reason.get("aspect") in OF_THE_ANSWERS:
+            return []
+        cases = [self.store.case(one["case_id"]) or {} for one in news]
+        out = sorted({one.get("title", "") for one in cases if one.get("unit_id") == from_lessons.UNIT})
+        if out:
+            self.report["changed_on_an_answer"] += 1
+        return out
+
+    def predict(self, taken: Sequence[Dict[str, Any]]) -> None:
+        """WHETHER THE REASONS TELL ANYTHING (the user's plan, 2026-11-06): what they answered,
+        guessed before it is learned from - with what is known of why they judge so, and with only
+        the answers before. Kept, to be read against what they did."""
+        rated = [one for one in taken if from_lessons.ANSWERS.get(one["action"], ("", "", "", ""))[3]]
+        rated = rated[-PREDICT_MOST:]
+        if not rated:
+            return
+        shown = "\n".join(f'{one["id"]}: {from_lessons.before_the_answer(one)}' for one in rated)
+        known = sorted(self.store.reasons(("active",)),
+                       key=lambda one: one.get("aspect") not in OF_THE_ANSWERS)
+        reasons = "\n".join(f"- {one['statement']}" for one in known[:PREDICT_REASONS])
+        earlier = [dict(one) for one in self.db.query(
+            "SELECT summary, action FROM lesson_evidence WHERE kind IN ('notifications', "
+            "'recommendations') AND at < ? ORDER BY at DESC LIMIT 12", (rated[0]["at"],))]
+        cases = "\n".join(f"- {one['action']}: {str(one['summary'])[:240]}" for one in earlier)
+        said = {}
+        for name, known_of_them in (("with_reasons", f"WHY THEY JUDGE AS THEY DO:\n{reasons}\n\n"
+                                                     f"WHAT THEY DID BEFORE:\n{cases}"),
+                                    ("without", f"WHAT THEY DID BEFORE:\n{cases}")):
+            answer = self.ask("reasons", PREDICT_PROMPT, f"{known_of_them}\n\nTOLD THEM:\n{shown}",
+                              1500, "what they would answer")
+            said[name] = (answer or {}).get("answers") or {}
+        at = now()
+        for one in rated:
+            self.db.execute(
+                "INSERT OR IGNORE INTO learn_predictions (evidence_id, shown, with_reasons, without, "
+                "actual, at) VALUES (?, ?, ?, ?, ?, ?)",
+                (one["id"], from_lessons.before_the_answer(one)[:300],
+                 str(said["with_reasons"].get(one["id"]) or ""), str(said["without"].get(one["id"]) or ""),
+                 from_lessons.ANSWERS[one["action"]][3], at))
+        self.report["predicted"] += len(rated)
+
+    def across(self) -> None:
+        """WHAT DRIVES THEM, ACROSS THE CONTEXTS (the user, 2026-11-06: "在不同context下综合判断一个
+        人的动机"): one call, when anything was learned from their answers. A motive or a tension
+        stands on reasons from at least two contexts, and on the judgments under them, and is
+        tested as any reason is. It is a hypothesis: never said to the user, and it goes with what
+        it came of."""
+        reasons = self.store.reasons(("active", "candidate"))
+        contexts = {one["id"]: self._context_of(one["id"]) for one in reasons}
+        if not any(where - {"work"} for where in contexts.values()):
+            return
+        lines = [f"{one['id']} [{', '.join(sorted(contexts[one['id']])) or 'work'}]: {one['statement']}"
+                 for one in reasons]
+        principles = [str(row["statement"]) for row in self.db.query(
+            "SELECT statement FROM experience_patterns WHERE layer = 'principle'")]
+        said = self.ask("reasons", ACROSS_PROMPT, "REASONS:\n" + "\n".join(lines)
+                        + "\n\nPRINCIPLES OF THEIR WORK:\n" + "\n".join(f"- {one}" for one in principles),
+                        4000, "what drives them")
+        if not said or said.get("_failed"):
+            self.report["across_failed"] += 1
+            return
+        kept = {one["statement"] for one in self.store.reasons()}
+        for one in said.get("motives") or []:
+            if not isinstance(one, dict):
+                continue
+            ids = [rid for rid in one.get("explains") or [] if rid in contexts]
+            where = set().union(*(contexts[rid] for rid in ids)) if ids else set()
+            statement = " ".join(str(one.get("statement") or "").split())
+            if len(where) < 2 or not statement or statement in kept:
+                continue
+            judgments: List[str] = []
+            for rid in ids:
+                judgments += [row["id"] for row in self.store.evidence(rid)
+                              if row["role"] == "supports"][-ACROSS_EVIDENCE:]
+            if str(one.get("kind")) == "tension":
+                statement = f"In tension: {statement}"
+            self._new_reason(dict(one, statement=statement, aspect="motive"), judgments, stated=False)
+
     def run(self, first_learning: bool, stopped: Optional[Callable[[], bool]] = None
             ) -> Dict[str, Any]:
+        taken = from_lessons.take(self.db)
+        self.report["lessons_taken"] = len(taken)
+        if taken and (stopped is None or not stopped()):
+            self.predict(taken)
         news = self.store.judgments("state = 'new' ORDER BY at")
         if news:
             conflicts = self.explain(news)
@@ -846,6 +995,8 @@ class Reasons:
                 self.revise(rid, ids)
         if stopped is None or not stopped():
             self.abduce()
+        if taken and (stopped is None or not stopped()):
+            self.across()
         if stopped is None or not stopped():
             self.compete()
         if first_learning and (stopped is None or not stopped()):

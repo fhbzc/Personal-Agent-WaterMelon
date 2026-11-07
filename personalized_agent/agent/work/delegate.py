@@ -607,7 +607,7 @@ class Drafts:
             return {"error": "it was started already"}
         kept = dict(draft.get("options") or {})
         kept.update({k: v for k, v in (options or {}).items()
-                     if k in ("limits", "packages", "sound", "unconfined", "way", "see_tries")})
+                     if k in ("sound", "unconfined", "way", "see_tries")})
         kept["saved"] = True
         values: Dict[str, Any] = {"options": kept}
         if folders is not None:
@@ -690,7 +690,8 @@ class Drafts:
             failed = options.get("start_failed") or {}
             if row["status"] in (COLLECTING, DRAFTING, READY, FAILED) \
                     and not options.get("start_when_ready") and not failed:
-                continue                     # a draft kept - Work lists those
+                if not options.get("saved"):
+                    continue                 # being written in the box: not one of the list yet
             said: Dict[str, Any] = {"draft": draft["id"], "version": 1,
                                     "state": "ongoing" if draft["status"] == STARTING
                                     or options.get("start_when_ready") else "drafting"}
@@ -798,20 +799,26 @@ class Drafts:
                         said["back_to"] = _resumes_from(run_dir, head).get("label", "")
                 except Exception:          # the button says less, not wrong
                     pass
-            return dict(said, state="stopped")
-        # WHAT IT HANDED TO THE USER first (handed.py) - opened as it is
-        # meant to be: an email in their mail, an event in their calendar.
-        items = (run.get("plan") or {}).get("handed") or []
+            return dict(said, state="stopped", **self._made_by(run, unit_id))
         said["ended"] = str(run.get("ended_at") or "")
+        return dict(said, state="finished", **self._made_by(run, unit_id))
+
+    def _made_by(self, run: Dict[str, Any], unit_id: str) -> Dict[str, Any]:
+        """WHAT THERE IS TO OPEN (the user, 2026-11-06: "必须必须有open deliverable"), stopped or
+        finished: there is no Work panel to go and look in. What it handed to the user first
+        (handed.py) - opened as it is meant to be: an email in their mail, an event in their
+        calendar - else the deck's deliverable, else its folder. Only a folder that has gone
+        leaves nothing."""
+        work = self.app.work
+        items = (run.get("plan") or {}).get("handed") or []
         if items:
             # WHAT IT IS, before it is opened: each thing handed over - its
             # kind and what it is called, a file's or folder's name.
-            return dict(said, state="finished",
-                        handed=str(items[0].get("title") or items[0].get("kind") or ""),
-                        items=[{"n": n, "kind": str(one.get("kind") or ""),
-                                "title": str(one.get("title") or ""),
-                                "name": Path(str(one.get("path"))).name if one.get("path") else ""}
-                               for n, one in enumerate(items[:8])])
+            return {"handed": str(items[0].get("title") or items[0].get("kind") or ""),
+                    "items": [{"n": n, "kind": str(one.get("kind") or ""),
+                               "title": str(one.get("title") or ""),
+                               "name": Path(str(one.get("path"))).name if one.get("path") else ""}
+                              for n, one in enumerate(items[:8])]}
         made = [str(one.get("location") or "") for one in
                 ((run.get("plan") or {}).get("deck") or {}).get("deliverables") or []
                 if isinstance(one, dict)]
@@ -822,10 +829,9 @@ class Drafts:
         for one in made + [output, str(run.get("folder") or "")]:
             found = work.readable_by(run["id"], one) if one else None
             if found is not None:
-                return dict(said, state="finished", result=one,
-                            result_kind="folder" if found.is_dir() else "file",
-                            result_name=found.name)
-        return dict(said, state="finished", result="")
+                return {"result": one, "result_kind": "folder" if found.is_dir() else "file",
+                        "result_name": found.name}
+        return {"result": ""}
 
     def _set(self, draft_id: str, **values: Any) -> None:
         sets = ", ".join(f"{name} = ?" for name in values) + ", updated_at = ?"
@@ -1075,7 +1081,7 @@ class Drafts:
             way = str((plan or {}).get("way") or "auto")
             kept = dict(draft.get("options") or {},
                         **{k: v for k, v in (options or {}).items()
-                           if k in ("limits", "packages", "sound", "unconfined", "see_tries")},
+                           if k in ("sound", "unconfined", "see_tries")},
                         start_when_ready={"way": way, "at": _now(),
                                           # where it works, as the box said it
                                           **({"folders": [str(one) for one in folders]}
@@ -1235,7 +1241,7 @@ class Drafts:
         given_options = options or {}
         options = dict(draft.get("options") or {},
                        **{k: v for k, v in given_options.items()
-                          if k in ("limits", "packages", "sound", "unconfined", "see_tries")})
+                          if k in ("sound", "unconfined", "see_tries")})
         # A PLAN THE USER NEVER SAW (started before it was drafted, by itself
         # once it was - `_wait_then_start`): said so to the work. Started from
         # the box, its plan in front of them, it is theirs again.
@@ -1291,10 +1297,10 @@ class Drafts:
             else []
         said = work.start(unit, instruction_of(draft, approved, folders, earlier=earlier,
                                               unseen=bool(options.get("plan_unseen"))),
-                          limits=options.get("limits") or {},
-                          # Auto unless the user chose Ask (2026-10-27); where the
-                          # system does not confine installs, asked all the same.
-                          packages=options.get("packages") or "auto",
+                          # NOTHING TO SET (the user, 2026-11-06): no limits, whatever a draft
+                          # saved before kept; packages by themselves, and where the system
+                          # does not confine installs, asked all the same.
+                          limits={}, packages="auto",
                           sound=options.get("sound"),
                           way=approved["way"],
                           **({"unconfined": True} if options.get("unconfined") else {}),
@@ -1503,7 +1509,7 @@ def _said_as_them(person: Dict[str, Any], text: str) -> bool:
 def _names_said(names: List[str]) -> List[str]:
     """How a person may be named in the records: each of their names whole,
     and - written in letters - its last part, the family name ("Quillfeather";
-    a first name alone is too many people's); a name in characters (曾安)
+    a first name alone is too many people's); a name in characters (沈清禾)
     only whole."""
     out: List[str] = []
     for one in names:

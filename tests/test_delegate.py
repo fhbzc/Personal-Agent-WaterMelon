@@ -328,7 +328,8 @@ class DraftsTests(unittest.TestCase):
         draft = self.app.drafts.create(text="Summarise this", collect=False)
         self.assertEqual(draft["status"], COLLECTING)
         said = self.app.drafts.start_apart(draft["id"], plan={"way": "auto"},
-                                           options={"limits": {"minutes": 7}, "sound": True})
+                                           options={"limits": {"minutes": 7}, "packages": "ask",
+                                                    "sound": True})
         self.assertTrue(said["when_ready"])
         time.sleep(0.3)
         self.assertEqual(started, [], "not before its plan is drafted")
@@ -339,8 +340,9 @@ class DraftsTests(unittest.TestCase):
             time.sleep(0.05)
         kept = self.app.drafts.get(draft["id"])
         self.assertEqual(kept["status"], STARTED)
-        self.assertEqual((started[0]["way"], started[0]["limits"], started[0]["sound"]),
-                         ("quick", {"minutes": 7}, True), "the plan's way, the user's settings")
+        self.assertEqual((started[0]["way"], started[0]["limits"], started[0]["packages"],
+                          started[0]["sound"]), ("quick", {}, "auto", True),
+                         "the plan's way, no limits, packages by themselves, the user's settings")
         self.assertNotIn("start_when_ready", kept["options"])
         # A way chosen overrides the plan's; cancelled while waiting, it never starts.
         draft = self.app.drafts.create(text="Summarise this", collect=False)
@@ -403,9 +405,9 @@ class DraftsTests(unittest.TestCase):
         kept = said["draft"]
         self.assertEqual(kept["status"], COLLECTING, "the instruction taken, as Create took it")
         self.assertEqual(collected, [draft["id"]])
-        self.assertEqual((kept["options"]["instruction"], kept["options"]["way"],
-                          kept["options"]["limits"], kept["folders"]),
-                         ("As a table", "quick", {"minutes": 9}, [str(self.folder)]))
+        self.assertEqual((kept["options"]["instruction"], kept["options"]["way"], kept["folders"]),
+                         ("As a table", "quick", [str(self.folder)]))
+        self.assertNotIn("limits", kept["options"])
         self.assertTrue(kept["options"]["saved"])
         self.assertEqual([one["id"] for one in self.app.drafts.saved()], [draft["id"]])
         # Its plan changed and saved again: the user's.

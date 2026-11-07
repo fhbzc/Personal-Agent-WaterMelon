@@ -94,19 +94,35 @@ class TheMatchTests(unittest.TestCase):
         self.assertFalse(self.rule.match("x", said, "terminal"))
         self.assertFalse(self.rule.match("x", "a tide table", "page"), "low")
 
-    def test_first_it_only_records_and_no_model_is_asked(self) -> None:
+    def test_a_match_is_sent_and_kept_with_what_was_done_with_it(self) -> None:
         with self._on_screen("tide table and spring tide"):
             said = self.rule.act("Tides", "browser", "", "")
-        self.assertEqual(said["recorded"], self.item)
-        self.assertEqual(self.model.asked, [])
-        self.assertEqual(self.reserve.get(self.item)["status"], rs.READY)
+        self.assertTrue(said["said"])
+        self.assertEqual(self.reserve.get(self.item)["status"], rs.TOLD)
         hit = self._hits()[0]
-        self.assertEqual((hit["tier"], hit["done"], hit["seen_by"]), ("middle", "recorded", "ocr"))
+        self.assertEqual((hit["tier"], hit["done"], hit["seen_by"]), ("middle", "sent", "ocr"))
 
     def test_out_of_sight_it_does_not_match(self) -> None:
         with self._on_screen("the top of the page, nothing about the sea"):
             said = self.rule.act("Tides", "browser", "tide table spring tide far below", "")
         self.assertEqual(said["skipped"], "not in what they can see")
+        self.assertEqual(self._hits(), [])
+
+    def test_stopped_at_what_they_can_see_it_leaves_a_trace(self) -> None:
+        with self._on_screen("the top of the page, nothing about the sea"):
+            self.rule.act("Tides", "browser", "", "tide table and spring tide")
+        hit = self._hits()[0]
+        self.assertEqual((hit["done"], hit["seen_by"]), ("not in what they can see", "ocr"))
+        self.assertEqual(self.reserve.get(self.item)["status"], rs.READY, "nothing was told")
+
+    def test_what_could_not_be_read_leaves_a_trace_too(self) -> None:
+        with self._on_screen(""):
+            self.rule.act("Tides", "browser", "", "tide table and spring tide")
+        self.assertEqual(self._hits()[0]["done"], "what they can see is not known")
+
+    def test_new_words_that_never_matched_leave_none(self) -> None:
+        with self._on_screen("the top of the page"):
+            self.rule.act("Tides", "browser", "", "something else altogether")
         self.assertEqual(self._hits(), [])
 
     def test_what_they_can_see_not_known_it_does_not_match(self) -> None:
@@ -145,11 +161,7 @@ class TheMatchTests(unittest.TestCase):
             self.assertEqual(match.visible_words(self.app.data_dir, _Activity(), "Tides"),
                              ("the ocr's words", "ocr"))
 
-    def _sending(self) -> None:
-        self.app.config.set("recommendation_record_only", False)
-
     def test_in_the_middle_a_model_is_asked_with_no_tools_and_a_short_prompt(self) -> None:
-        self._sending()
         with self._on_screen("tide table and spring tide password: hunter2"):
             said = self.rule.act("Tides", "browser", "", "")
         self.assertTrue(said["said"])
@@ -162,7 +174,6 @@ class TheMatchTests(unittest.TestCase):
         self.assertEqual(self.reserve.get(self.item)["status"], rs.TOLD)
 
     def test_the_model_saying_no_sends_nothing_and_it_stays_ready(self) -> None:
-        self._sending()
         self.model.answer = {"yes": False}
         with self._on_screen("tide table and spring tide"):
             self.rule.act("Tides", "browser", "", "")
@@ -170,7 +181,6 @@ class TheMatchTests(unittest.TestCase):
         self.assertEqual(self._hits()[0]["done"], "the model said no")
 
     def test_very_high_it_is_sent_without_a_model_says_why_and_keeps_the_chain(self) -> None:
-        self._sending()
         with self._on_screen("Thistle Harbour tide table spring tide 涨潮"):
             said = self.rule.act("Tides", "browser", "", "")
         self.assertEqual(self.model.asked, [])
@@ -185,20 +195,17 @@ class TheMatchTests(unittest.TestCase):
         self.assertEqual(meta["url"], PAGE)
 
     def test_told_once(self) -> None:
-        self._sending()
         with self._on_screen("Thistle Harbour tide table spring tide 涨潮"):
             self.rule.act("Tides", "browser", "", "")
             self.assertEqual(self.rule.act("Tides", "browser", "", "")["skipped"],
                              "not in what they can see")
 
     def test_read_in_the_meantime_it_is_not_sent(self) -> None:
-        self._sending()
         with mock.patch.object(self.reserve, "still_fresh", return_value=False), \
                 self._on_screen("Thistle Harbour tide table spring tide 涨潮"):
             self.assertIn("skipped", self.rule.act("Tides", "browser", "", ""))
 
     def test_a_rule_of_quiet_holds_it(self) -> None:
-        self._sending()
         self.app.monitor.latest = {"present": False}
         with self._on_screen("tide table and spring tide"):
             self.assertEqual(self.rule.act("Tides", "browser", "", "")["held"], "the user is away")

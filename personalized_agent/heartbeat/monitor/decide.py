@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -40,6 +41,10 @@ log = logging.getLogger(__name__)
 
 RECOMMEND_TASK = "monitor_recommend"
 EVENING_TASK = "monitor_evening"
+#: What the evening report's question is kept as, to be known in the waiting list.
+EVENING_ASKED = "the evening report, asked first"
+#: Two presses seconds apart come on two threads, and one report is written.
+_EVENING_TAKEN = threading.Lock()
 STEP_TASK = "heartbeat:step_monitor"
 #: The moment said again in English before its lessons are looked for.
 QUERY_TASK = "monitor_lessons_query"
@@ -64,6 +69,12 @@ it says.
   from a title alone: only what the window's words or their recent work show as well.
 - One thing. Look it up on the web when that helps. Real pages only - never
   invent an address.
+- A SEARCH LEAVES THIS COMPUTER, and its words go to whoever runs the search. Search the public
+  subject in general words: never a person's name, a mail address, a number, an account, words
+  copied from a mail or a chat, or anything that says who the user is or what they are dealing
+  with. "grant deadlines for small nonprofits", not who wrote about which grant. If only private
+  words would find it, do without the search. A search refused for this is to be rewritten in
+  general words, not retried.
 - The message says the thing itself, so it is worth reading alone. Add "url"
   when a page has the detail. Add "image" when a picture says something: the
   address of a picture, or "page" for the picture the url's page shows of itself.
@@ -72,6 +83,10 @@ it says.
   display language, saying what you saw and why you are telling them this - "You
   turned to a video on cancer cells, so here is a light fact on the same subject".
   "why" is your own note, kept for you.
+- It waits in a list they open when they choose. Add "pop": true only when it is worth
+  interrupting them now, because it will not be worth as much later. The lessons say how that went.
+- What is said to be "why they judge so" is a hypothesis about them: use it to choose what to send
+  and from what angle. Never tell them their motives, and never judge how they live.
 - Follow the LESSONS about the user's notifications, and learn from what they
   did in moments like this: not what they called bad, not at a moment they
   put off.
@@ -136,6 +151,9 @@ def _json(text: str) -> Dict[str, Any]:
 
 class Decider:
     """The model's part of the Monitor."""
+
+    #: The record of every link recommended (reserve.py), set by the application.
+    reserve: Any = None
 
     def __init__(self, db: Any, config: Any, models: Any, signals: Signals,
                  lessons: Any = None, experience: Optional[Callable[[str], List[str]]] = None,
@@ -275,6 +293,18 @@ class Decider:
         return url, picture
 
     # -- 1. a recommendation ------------------------------------------------------------
+    @staticmethod
+    def _contacts_in(monitor: Any, text: str) -> List[str]:
+        keeper = getattr(getattr(monitor, "heartbeat", None), "connections", None)
+        if keeper is None:
+            return []
+        try:
+            from ..connections.people import names_in
+            return names_in(keeper, text)
+        except Exception:
+            log.warning("the contacts in a window could not be read", exc_info=True)
+            return []
+
     def recommend(self, monitor: Any, activator: Dict[str, Any], tier: Dict[str, Any],
                   context: Dict[str, Any], firing: str, recommended: bool = True) -> Dict[str, Any]:
         query = self._query(context)
@@ -321,6 +351,10 @@ class Decider:
                             "back: do not repeat it, send only what adds to it.")
         searches = bool(self.config.get("monitor_recommend_search", True))
         guard = WebGuard()
+        # A public page may be searched for by its own words; a mail or a chat may not.
+        if window and window.get("where") != "page":
+            read = f'{window.get("new_text") or ""}\n{window.get("text") or ""}'
+            guard.hold(read, self._contacts_in(monitor, read))
         answer = _json(self._ask(RECOMMEND_SYSTEM, "\n\n".join(parts), RECOMMEND_TASK,
                                  web=searches, guard=guard))
         if not answer.get("send") or not str(answer.get("title") or "").strip():
@@ -331,16 +365,36 @@ class Decider:
             title, message = self._second_look(title, message, first)
         else:
             url, picture = self._sent_with(monitor, answer, guard)
+        keeps = self.reserve if recommended and url else None
+        if keeps is not None and keeps.told_before(url):
+            return {"sent": False, "why": "that very link was told or read before"}
         context = dict(context, model_why=str(answer.get("why") or "")[:600])
         said = monitor.say(title, message,
                            context, firing, why=str(answer.get("why") or "")[:600],
                            url=url, picture=picture, content=True, recommended=recommended,
-                           reason=str(answer.get("reason") or answer.get("why") or "")[:300])
+                           reason=str(answer.get("reason") or answer.get("why") or "")[:300],
+                           pops=answer.get("pop") is True)
+        if keeps is not None and said.get("said"):
+            keeps.told_link(title, url, str(said.get("notification_id") or ""))
         return dict(said, why=answer.get("why"))
 
     # -- 2. the evening report ---------------------------------------------------------
     def _evening_key(self, day: str) -> str:
         return f"monitor.evening.{day}"
+
+    def _evening_asks(self, monitor: Any) -> List[Dict[str, Any]]:
+        """ITS QUESTION, WHERE IT STILL WAITS (the user, 2026-11-06: asked at 18:20 and again at 21:00,
+        both answered Now, and two reports came)."""
+        return [one for one in monitor.notifications.waiting()
+                if (one["metadata"].get("monitor") or {}).get("why") == EVENING_ASKED]
+
+    def _take_evening(self, monitor: Any, day: str) -> bool:
+        """The report is this one's to write: no other is, and none has been."""
+        with _EVENING_TAKEN:
+            if monitor._kv(self._evening_key(day)) in ("writing", "done"):
+                return False
+            monitor._set_kv(self._evening_key(day), "writing")
+            return True
 
     def evening(self, monitor: Any, activator: Dict[str, Any], context: Dict[str, Any],
                 firing: str, at_once: bool = False) -> Dict[str, Any]:
@@ -351,20 +405,25 @@ class Decider:
         state = monitor._kv(self._evening_key(day))
         if state in ("done", "declined"):
             return {"skipped": f"the evening report is {state} today"}
+        if state == "writing":
+            return {"skipped": "the evening report is being written"}
         if at_once:
-            if state == "writing":
+            if not self._take_evening(monitor, day):
                 return {"skipped": "the evening report is being written"}
-            monitor._set_kv(self._evening_key(day), "writing")
             return self.write_evening(monitor, context, firing)
         fixed = str(self.config.get("monitor_evening_fixed_time", "21:00") or "21:00")
         if state == "fixed":
             if local.strftime("%H:%M") < fixed:
                 return {"skipped": f"waiting for {fixed}"}
+            if not self._take_evening(monitor, day):
+                return {"skipped": "the evening report is being written"}
             return self.write_evening(monitor, context, firing)
         if state.startswith("later:") and state[6:] > datetime.now(timezone.utc).isoformat():
             return {"skipped": "asked to wait"}
         if monitor.questions is None or monitor.notifications is None:
             return self.write_evening(monitor, context, firing)
+        if self._evening_asks(monitor):
+            return {"skipped": "the evening report's question is waiting"}
         from ...agent.feedback.store import TaskQuestion
         from ...agent.feedback.templates import SUGGESTION
         from ...common.interface_words import shown
@@ -386,10 +445,10 @@ class Decider:
         question = getattr(asked, "id", "") or ""
         sent = monitor.notifications.notify(
             title, message, kind="proactive", dedupe_key=f"monitor:{firing}", template=SUGGESTION,
-            metadata={"question_id": question,
+            level="collapse", metadata={"question_id": question,
                       "monitor": {"firing": firing, "activator_id": activator["id"],
                                   "activator": activator["name"], "group": activator["group"],
-                                  "why": "the evening report, asked first", "context": context}})
+                                  "why": EVENING_ASKED, "context": context}})
         monitor._set_kv(self._evening_key(day), "asked")
         return {"asked": True, "question_id": question, "title": title,
                 "notification_id": getattr(sent, "id", "") if sent is not None else ""}
@@ -399,8 +458,8 @@ class Decider:
         day = local.date().isoformat()
         if answer == "accept":
             context = json.loads(row.get("context") or "{}")
-            monitor._set_kv(self._evening_key(day), "writing")
-            self.write_evening(monitor, context, row["id"])
+            if self._take_evening(monitor, day):
+                self.write_evening(monitor, context, row["id"])
         elif answer == "later":
             monitor._set_kv(self._evening_key(day), "later:" + (
                 datetime.now(timezone.utc) + timedelta(minutes=float(
@@ -430,8 +489,18 @@ class Decider:
                  "WORK STILL OPEN, FROM ANY DAY - NOT WHAT HAPPENED TODAY:\n"
                  + ("\n".join(f"- {one}" for one in self._tasks()) or "-"),
                  "THEIR USUAL DAYS:\n" + self.signals.habits_text()]
-        text = self._ask(EVENING_SYSTEM, "\n\n".join(parts), EVENING_TASK, max_tokens=900).strip()
-        monitor._set_kv(self._evening_key(local.date().isoformat()), "done")
+        key = self._evening_key(local.date().isoformat())
+        try:
+            text = self._ask(EVENING_SYSTEM, "\n\n".join(parts), EVENING_TASK, max_tokens=900).strip()
+        except Exception:
+            monitor._set_kv(key, "")                     # not written: it may be asked for again
+            raise
+        monitor._set_kv(key, "done")
+        if monitor.notifications is not None:
+            for one in self._evening_asks(monitor):      # nothing is left to answer
+                monitor.notifications.mark_read(one["id"])
+                if monitor.questions is not None and one["metadata"].get("question_id"):
+                    monitor.questions.expire(one["metadata"]["question_id"])
         if not text:
             return {"sent": False, "why": "nothing written"}
         from ...common.interface_words import shown

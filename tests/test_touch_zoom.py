@@ -87,6 +87,54 @@ class ThePageInOneWindowTests(unittest.TestCase):
             dm.DesktopAgent._open_the_page(desk)
         tab.assert_called_once_with("http://here/#overview")
 
+    def test_two_double_clicks_make_one_window_while_it_is_coming(self) -> None:
+        import threading
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest import mock
+        from personalized_agent.platform_layer import app_window as aw
+        from personalized_agent.ui import desktop as dm
+        desk = SimpleNamespace(app=SimpleNamespace(sign_in_url=lambda path: "http://here" + path,
+                                                   paths=SimpleNamespace(data_dir=Path("data"))))
+        coming, go_on = threading.Event(), threading.Event()
+
+        def still_coming() -> None:
+            coming.set()
+            go_on.wait(5)
+        with mock.patch.object(aw, "bring_back_the_page", return_value=False), \
+                mock.patch.object(aw, "open_the_page", return_value=True) as opened, \
+                mock.patch.object(aw, "wait_for_the_page", side_effect=still_coming), \
+                mock.patch.object(dm.webbrowser, "open") as tab:
+            first = threading.Thread(target=dm.DesktopAgent._open_the_page, args=(desk,))
+            first.start()
+            self.assertTrue(coming.wait(5))
+            dm.DesktopAgent._open_the_page(desk)
+            self.assertEqual(opened.call_count, 1, "the second finds it on its way")
+            go_on.set()
+            first.join(5)
+            dm.DesktopAgent._open_the_page(desk)
+            self.assertEqual(opened.call_count, 2, "shut again later, it is opened again")
+        tab.assert_not_called()
+        self.assertFalse(aw.OPENING.locked())
+
+    def test_it_is_waited_for_until_it_is_there_and_no_longer(self) -> None:
+        from unittest import mock
+        from personalized_agent.platform_layer import app_window as aw
+        with mock.patch.dict(aw.os.environ, {"PA_NO_DIALOGS": ""}), \
+                mock.patch.object(aw.sys, "platform", "win32"), \
+                mock.patch.object(aw.time, "sleep"), \
+                mock.patch.object(aw, "_windows_page", side_effect=[None, None, 7]) as looked:
+            aw.wait_for_the_page()
+        self.assertEqual(looked.call_count, 3)
+        ticks = iter([0.0, 1.0, aw.OPENING_SECONDS + 1])
+        with mock.patch.dict(aw.os.environ, {"PA_NO_DIALOGS": ""}), \
+                mock.patch.object(aw.sys, "platform", "win32"), \
+                mock.patch.object(aw.time, "sleep"), \
+                mock.patch.object(aw.time, "monotonic", side_effect=lambda: next(ticks)), \
+                mock.patch.object(aw, "_windows_page", return_value=None) as looked:
+            aw.wait_for_the_page()
+        self.assertEqual(looked.call_count, 1, "a window that never comes does not hold the next")
+
     def test_chrome_first_and_never_signed_in_or_synced(self) -> None:
         from pathlib import Path
         from unittest import mock
@@ -113,6 +161,20 @@ class TheAgentKnowsItsOwnPageTests(unittest.TestCase):
         for title in ("WaterMelon", "WaterMelon - Google Chrome", "WaterMelon \u2014 Mozilla Firefox",
                       f"Conversation - {APP_NAME}"):
             self.assertTrue(names_the_agent("Browser", title), title)
+
+    def test_its_pages_on_this_machine_with_their_address(self) -> None:
+        from personalized_agent.version import APP_NAME, names_the_agent
+        self.assertTrue(names_the_agent(
+            "firefox.exe", f"http://127.0.0.1:8756 - Delegate work - {APP_NAME} \u2014 Mozilla Firefox"))
+        self.assertTrue(names_the_agent(f"{APP_NAME}.exe", "Anything"))
+
+    def test_never_what_only_holds_its_name(self) -> None:
+        from personalized_agent.version import APP_NAME, names_the_agent
+        for title in ("Meet - Personalized Agent \u2014 Mozilla Firefox",
+                      "Personalized Agent - Google Docs", f"Notes on {APP_NAME} - Google Docs",
+                      f"{APP_NAME} - Google Search - Google Chrome",
+                      "fhbzc/Personalized_agent \u2014 Mozilla Firefox"):
+            self.assertFalse(names_the_agent("firefox.exe", title), title)
 
     def test_never_a_page_about_the_fruit(self) -> None:
         from personalized_agent.version import names_the_agent

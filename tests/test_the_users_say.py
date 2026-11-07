@@ -309,6 +309,7 @@ run,unit:'u',result:'/out/'+run+'.txt'});
 document.title=JSON.stringify({
 both:ovTodoLatest([finished('r1',1),finished('r2',2),{state:'ongoing',run:'r3',unit:'u'}]),
 none:ovTodoLatest([{state:'stopped',run:'r1',unit:'u1'},{state:'ongoing',run:'r2',unit:'u2'}]),
+stopped:ovTodoLatest([{state:'stopped',run:'r1',unit:'u1',result:'/out/r1',result_kind:'folder'}]),
 plan:ovTodoLatest([{state:'drafting'}])});});</script></body></html>""" % part
         with tempfile.TemporaryDirectory() as work:
             path = Path(work) / "latest.html"
@@ -324,8 +325,8 @@ plan:ovTodoLatest([{state:'drafting'}])});});</script></body></html>""" % part
         self.assertIn('data-todo-run="r2"', said["both"])
         self.assertIn('data-todo-result="/out/r2.txt"', said["both"])
         self.assertIn("Open the latest outcome", said["both"])
-        self.assertIn('data-todo-open-run="r2"', said["none"])
-        self.assertIn("See the latest try in Work", said["none"])
+        self.assertEqual(said["none"], "", "there is no Work panel to send them to")
+        self.assertIn('data-todo-result="/out/r1"', said["stopped"], "what a stopped one made opens")
         self.assertEqual(said["plan"], "")
 
     def test_opening_says_so_and_opens_once_though_the_list_is_drawn_anew(self) -> None:

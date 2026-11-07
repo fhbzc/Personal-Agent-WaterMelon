@@ -305,6 +305,16 @@ def named(store: ConnectionsStore, events: Any, activity_text: str) -> str:
     return "\n".join(lines[:MOST_NAMED])
 
 
+def names_in(store: ConnectionsStore, text: str) -> List[str]:
+    """The names, in every form they go by, of the contacts named in a text."""
+    hay = name_key(text)
+    out: List[str] = []
+    for person in store.people():
+        if _named_in(person, hay):
+            out += [person["name"], *(person.get("aliases") or []), *(person.get("called") or [])]
+    return out
+
+
 def _line(person: Dict[str, Any]) -> str:
     said = [f"[{person['id']}] {person['name']}"]
     if person["aliases"]:

@@ -7,7 +7,7 @@
   spam risk detection ... 要用keyword based detection"): a high score said
   at once, a middling one judged at the next heartbeat (step_monitor);
 - the moments to recommend (PR #6's): the day begun, back from an absence,
-  new work, a project come back to after days, the work scattered, a rest;
+  new work, a lot of new text, a rest;
 - a break after a long stretch, and the evening report after a long day: asked by the
   hours worked and the time, and sent at once when many windows are closed that evening.
 
@@ -124,6 +124,13 @@ SPAM = {"builtin": "spam_risk", "protected": True, "name": "Spam and scam risk",
         "cooldown_minutes": 30, "most_per_day": 20}
 
 
+#: TAKEN OUT (the user, 2026-11-06): the project under way is read too unsurely for "back to a
+#: project after days". Fired 4 times in eight real days, wrong all 4; the one real return was missed.
+GONE = {"project_return": "the user had it deleted: wrong each time it fired",
+        # The user, 2026-11-06: "工作零散时，不需要推荐".
+        "scattered": "the user had it deleted: nothing is to be recommended for scattered work"}
+
+
 def _recommend(builtin: str, name: str, purpose: str, when: Dict[str, Any], brief: str,
                cooldown: float, most: int) -> Dict[str, Any]:
     return {"builtin": builtin, "name": name, "group": "recommend", "purpose": purpose,
@@ -151,17 +158,13 @@ def builtins() -> List[Dict[str, Any]]:
                    "A piece of work never worked on before: what bears on it.",
                    {"event": "new_work"},
                    "They have begun new work: what would help them start it.", 60, 4),
-        _recommend("project_return", "Back to a project after days",
-                   "A project opened again after days: what it is and where it stood.",
-                   {"event": "project_return"},
-                   "They are back to this project after days: what it is, where it stood, what "
-                   "is new about it.", 120, 3),
-        _recommend("scattered", "The work turns scattered",
-                   "Many switches in a stretch of work: an idea, or something related.",
-                   {"all": [{"event": "scattered"},
-                            {"signal": "since_break_minutes", "op": ">=", "value": 30}]},
-                   "Their work has turned scattered: one idea or one related thing that could "
-                   "help - or nothing.", 90, 2),
+        # At these lines, on eight real days of screens: about 6 a day, a model asked for each.
+        _recommend("new_text", "A lot of new text",
+                   "A lot of text has come up, unlike what was on the screen of late.",
+                   {"new_text": {"least_chars": 800, "unlike": 0.9, "minutes": 30}},
+                   "A lot of new text has come up, unlike what they were reading of late. Read it. "
+                   "If one thing would really add to it, tell them. If not, send nothing: most of "
+                   "the time that is the answer.", 60, 6),
         _recommend("leisure", "A rest",
                    "Turned to something to watch after working: one light thing, never work.",
                    {"all": [{"event": "leisure"},

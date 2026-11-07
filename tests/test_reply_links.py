@@ -16,7 +16,9 @@ from support import ROOT
 from test_chat_debugger_ui import _browser, _run_browser_probe
 
 from personalized_agent.ui import chat_bubble as cb
+from personalized_agent.ui.avatar_buttons import QuickPanel
 from personalized_agent.ui.chat_bubble import links_in
+from personalized_agent.ui.desktop import BUBBLE_LOOK, DesktopAgent
 
 WEB = ROOT / "personalized_agent" / "api" / "web"
 
@@ -45,6 +47,19 @@ class ReadingThemTests(unittest.TestCase):
     def test_only_web_pages(self) -> None:
         for text in ("[run](javascript:alert(1))", "[a file](file:///c:/a.txt)", "plain [words] (here)"):
             self.assertEqual(links_in(text), [(text, "")])
+
+    def test_an_address_without_its_beginning(self) -> None:
+        text = "Join on Google Meet: meet.google.com/abc-defg-hij."
+        self.assertEqual(links_in(text), [
+            ("Join on Google Meet: ", ""),
+            ("meet.google.com/abc-defg-hij", "https://meet.google.com/abc-defg-hij"), (".", "")])
+        self.assertEqual(links_in("加入 zoom.us/j/123。然后"),
+                         [("加入 ", ""), ("zoom.us/j/123", "https://zoom.us/j/123"), ("。然后", "")])
+
+    def test_what_only_looks_like_one_is_not(self) -> None:
+        for text in ("docs/design-doc.md", "see notes.txt/old", "tests/support.py", "version 1.2/3",
+                     "ada@example.org/a", "/srv/example.org/a", "example.org", "a.b"):
+            self.assertEqual(links_in(text), [(text, "")], text)
 
     def test_no_words_lost(self) -> None:
         text = "a [b](https://x.org) c https://y.org, d"
@@ -98,6 +113,55 @@ class InTheChatBoxTests(unittest.TestCase):
         self.assertIn(fold["body"], said.tag_names(f"{link}.first"), "folded with what it is in")
 
 
+class InANotificationTests(unittest.TestCase):
+    """The user, 2026-11-06: a call's address in a notification, to be pressed."""
+
+    SAID = "Your meeting runs at 3. Join on Google Meet: meet.google.com/abc-defg-hij"
+    ADDRESS = "https://meet.google.com/abc-defg-hij"
+
+    def setUp(self) -> None:
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.addCleanup(self._gone)
+        self.bound = {}
+        keep = mock.patch.object(tk.Text, "tag_bind", lambda _box, tag, sequence, press:
+                                 self.bound.__setitem__((tag, sequence), press))
+        keep.start()
+        self.addCleanup(keep.stop)
+
+    def _gone(self) -> None:
+        self.root.destroy()
+        del self.root
+        gc.collect()
+
+    def _pressed(self, box: tk.Text) -> list:
+        link = next(one for one in box.tag_names() if one.startswith("link"))
+        self.assertEqual(box.get(f"{link}.first", f"{link}.last"), "meet.google.com/abc-defg-hij")
+        opened = []
+        with mock.patch.object(cb.threading, "Thread", lambda target, args, **_more: SimpleNamespace(
+                start=lambda: opened.append(args[0]))):
+            self.bound[(link, "<ButtonRelease-1>")](None)
+        return opened
+
+    def test_in_its_bubble(self) -> None:
+        look = dict(BUBBLE_LOOK[False])
+        desk = SimpleNamespace(_words=lambda text: text)
+        box = DesktopAgent._copyable(desk, self.root, self.SAID, ("Segoe UI", 10), "#ffffff", look, 300)
+        self.assertEqual(box.get("1.0", "end-1c"), self.SAID)
+        self.assertEqual(box.cget("state"), "disabled")
+        self.assertEqual(self._pressed(box), [self.ADDRESS])
+
+    def test_in_the_waiting_list(self) -> None:
+        panel = QuickPanel(self.root, "Waiting", lambda: [], lambda fn: fn(), lambda text: text,
+                           ("Segoe UI", 10), "Nothing is waiting.")
+        self.addCleanup(panel.close)
+        panel._build()
+        panel._got([{"name": "", "rows": [{"id": "n", "title": "Your meeting", "detail": self.SAID,
+                                           "actions": []}]}])
+        self.assertIn(self.SAID, panel.list.get("1.0", "end"))
+        self.assertEqual(self._pressed(panel.list), [self.ADDRESS])
+
+
 class InTheChatPageTests(unittest.TestCase):
 
     def test_a_link_and_nothing_written_as_markup(self) -> None:
@@ -107,7 +171,8 @@ class InTheChatPageTests(unittest.TestCase):
         source = (WEB / "chat.js").read_text(encoding="utf-8")
         start = source.index("const CHAT_LINK")
         written = source[start:source.index("function appendMessage(", start)]
-        text = "See [the <b>filing</b>](https://example.org/a) and [run](javascript:alert(1)) at https://b.org."
+        text = ("See [the <b>filing</b>](https://example.org/a) and [run](javascript:alert(1)) at "
+                "https://b.org. Or meet.google.com/abc-defg-hij.")
         script = (written + "window.addEventListener('load',()=>{const box=document.createElement('div');"
                   "writeWithLinks(box," + json.dumps(text) + ");"
                   "const links=[...box.querySelectorAll('a')];"
@@ -124,7 +189,9 @@ class InTheChatPageTests(unittest.TestCase):
         self.assertEqual(out["links"][0], ["the <b>filing</b>", "https://example.org/a", "_blank",
                                            "noopener noreferrer"])
         self.assertEqual(out["links"][1][1], "https://b.org")
-        self.assertEqual(len(out["links"]), 2, "a web page's or none")
+        self.assertEqual(out["links"][2][:2], ["meet.google.com/abc-defg-hij",
+                                               "https://meet.google.com/abc-defg-hij"])
+        self.assertEqual(len(out["links"]), 3, "a web page's or none")
         self.assertIn("[run](javascript:alert(1))", out["text"])
 
 

@@ -198,7 +198,7 @@ class TheWayInThePlanTests(unittest.TestCase):
         kw = started[0]
         self.assertEqual(kw["way"], "quick")
         self.assertEqual((kw["limits"], kw["packages"], kw["sound"]),
-                         ({"minutes": 5}, "ask", True))
+                         ({}, "auto", True), "nothing to set: whatever a draft saved is left")
         # The user's instruction is not a setting the box sends.
         self.assertNotEqual(app.drafts.get(draft["id"])["options"].get("instruction"), "x")
         # The user chose the other way: theirs.

@@ -116,7 +116,8 @@ class FrontPictures:
 
     def _drawn_and_kept(self, done: threading.Event) -> None:
         try:
-            image = self.activity.user_window_image(itself_only=True)
+            title = str((self.front() or {}).get("title") or "")
+            image = self.activity.user_window_image(itself_only=True, title=title)
         except Exception:
             log.debug("the window could not be taken", exc_info=True)
             image = None

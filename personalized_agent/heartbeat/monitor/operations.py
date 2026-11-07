@@ -233,6 +233,32 @@ def window_items(events: Sequence[Dict[str, Any]], intervals: Sequence[Any],
     return {item: min(cap, seconds) for item, seconds in found.items()}
 
 
+#: A source as a state gives a window: `firefox.exe window 'Its title'`.
+_SOURCE_WINDOW = re.compile(r"""^\S+ window ['"](.*)['"]$""")
+
+
+def named_in(source: str) -> Set[str]:
+    """THE OPERATIONS A STATE'S SOURCE NAMES, written as `window_items` writes them. A page's address
+    names none: one page of a site is not the site, and taken so, one video made the whole of it
+    a single project's."""
+    text = str(source or "").strip()
+    found = _SOURCE_WINDOW.match(text)
+    if found:
+        title = clean_title(found.group(1))
+        return {"t:" + title} if title else set()
+    if _SCHEME.match(text.lower()):
+        return set()
+    path = text.lower().replace("\\", "/")
+    parts = [part for part in path.split("/") if part]
+    out = {"f:" + path} | {"p:" + part for part in parts}
+    if len(parts) >= 2:
+        out.add("d:" + "/".join(parts[:-1][-2:]))
+    title = clean_title(text)
+    if title:
+        out.add("t:" + title)
+    return out
+
+
 def _as_operations(items: Union[Mapping[str, float], Iterable[str]]) -> Operations:
     """Operations as seconds; a bare set of names stands for a minute each."""
     if isinstance(items, Mapping):

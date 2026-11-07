@@ -492,7 +492,7 @@ class Updater:
             self.notify(f"{APP_NAME} {tag} is available",
                         f"You have {__version__}. Settings > General updates it.",
                         kind="info", dedupe_key=f"update-{tag}",
-                        action_hint=page, metadata={"update": tag})
+                        action_hint=page, metadata={"update": tag}, level="collapse")
         except Exception:  # pragma: no cover - a notice
             log.debug("could not tell of the update", exc_info=True)
 
@@ -945,7 +945,7 @@ class Updater:
             self.notify(f"Updated to {__version__}",
                         f"{APP_NAME} was updated from {said.get('from')}. "
                         f"What is new is shown when you open it.",
-                        kind="info", dedupe_key=f"updated-{__version__}")
+                        kind="info", dedupe_key=f"updated-{__version__}", level="collapse")
             said["told"] = True
             marker.write_text(json.dumps(said), encoding="utf-8")
         except Exception:  # pragma: no cover - a notice

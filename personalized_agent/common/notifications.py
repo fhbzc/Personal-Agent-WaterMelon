@@ -28,10 +28,38 @@ from .events.models import Notification, iso, json_dump
 
 log = logging.getLogger(__name__)
 
+#: WHAT IT CAME FROM WHEN NO TRIGGER OF THE MONITOR SENT IT: who put it on the calendar, or that.
+NOT_A_TRIGGER = {"heartbeat": "None: the heartbeat's round", "agent": "None: the chat",
+                 "user": "None: you added it", "scheduler": "None: scheduled on the calendar"}
+NOT_A_TRIGGER_AT_ALL = "None: sent by the application"
+
+
+def told_from(metadata: Any) -> str:
+    """WHICH TRIGGER OF THE MONITOR A NOTIFICATION CAME FROM (the user, 2026-11-06: said on each one),
+    or that none did and what did instead."""
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata or "{}")
+        except ValueError:
+            metadata = {}
+    metadata = metadata if isinstance(metadata, dict) else {}
+    named = (metadata.get("monitor") or {}).get("activator") or metadata.get("trigger")
+    if named:
+        return str(named)
+    return NOT_A_TRIGGER.get(str(metadata.get("made_by") or metadata.get("source") or ""),
+                             NOT_A_TRIGGER_AT_ALL)
+
 #: The kind of notification the agent raises of its own accord, as opposed to
 #: the ones the system raises about itself (a failure, a sign-in, a warning).
 #: Only these carry a template: the others are not decisions the user judges.
 PROACTIVE = "proactive"
+
+#: TWO LEVELS (the user, 2026-11-06): shown at once, or kept in the waiting list - a line beside the
+#: avatar says how many, and it is opened by hand. A notification pops unless its sender says
+#: otherwise, and what goes wrong and what the agent is stuck on pop whatever is said.
+POP, COLLAPSE = "pop", "collapse"
+ALWAYS_POP = ("error", "warning", "approval")
+_LEVEL_OF_ROW = "CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.level') END"
 
 
 def _templates():
@@ -43,6 +71,9 @@ ALL_TEMPLATES, REMINDER, template_of = _templates()
 
 
 class NotificationService:
+    #: What the user is doing now, kept with what is shown (set by the application).
+    moment_now: Any = None
+
     def __init__(self, db: Any, config: Any, bus: Any = None, platform: Any = None) -> None:
         self.db = db
         self.config = config
@@ -105,10 +136,17 @@ class NotificationService:
         force: bool = False,
         template: Optional[str] = None,
         question: Optional[Dict[str, Any]] = None,
+        level: str = POP,
     ) -> Optional[Notification]:
         if not bool(self.config.get("notifications_enabled", True)) and not force:
             return None
         metadata = dict(metadata or {})
+        metadata["level"] = COLLAPSE if level == COLLAPSE and kind not in ALWAYS_POP else POP
+        if self.moment_now is not None:
+            try:
+                metadata.setdefault("moment", self.moment_now())
+            except Exception:
+                log.debug("what the user was doing could not be read", exc_info=True)
         if kind == PROACTIVE:
             # Section 52.6, as amended: an interruption the agent chose to
             # raise is one of the two templates, so that it arrives with the
@@ -251,6 +289,23 @@ class NotificationService:
         for row in rows:
             row["read"] = bool(row["read"])
         return rows
+
+    def waiting(self, limit: int = 200) -> List[Dict[str, Any]]:
+        """What is kept in the waiting list and not yet dealt with, the newest first."""
+        rows = self.db.query(f"SELECT * FROM notifications WHERE read = 0 AND {_LEVEL_OF_ROW} = ? "
+                             "ORDER BY created_at DESC LIMIT ?", (COLLAPSE, int(limit)))
+        for row in rows:
+            row["read"] = False
+            try:
+                row["metadata"] = json.loads(row.get("metadata") or "{}")
+            except (TypeError, ValueError):
+                row["metadata"] = {}
+        return rows
+
+    def waiting_count(self) -> int:
+        row = self.db.query_one("SELECT COUNT(*) AS n FROM notifications WHERE read = 0 AND "
+                                f"{_LEVEL_OF_ROW} = ?", (COLLAPSE,))
+        return int(row["n"]) if row is not None else 0
 
     def get(self, notification_id: str) -> Optional[Dict[str, Any]]:
         row = self.db.query_one("SELECT * FROM notifications WHERE id = ?",

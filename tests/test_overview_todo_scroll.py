@@ -46,7 +46,8 @@ class MarkedAsDoneTests(unittest.TestCase):
         script = (
             "window.$=s=>document.querySelector(s);" + ESCAPE
             + "const delegateState={removing:'',tracking:new Set(),opened:new Set()};"
-            + "const delegateLabel=()=>'Delegate work';"
+            + "const delegateLabel=()=>'Delegate work';const ovAsks={};"
+            + "const xpLiveAsk=(run,ask)=>'<div>'+run+': '+ask.what+'</div>';"
             + "let ovTodos=" + json.dumps(todos) + ";let ovTodoDrawn='';"
             + _function(source, "ovTodoVersions") + _function(source, "ovTodoTracked")
             + _function(source, "ovTodoWork") + GROUPS(source) + _function(source, "ovTodoBox")
@@ -80,7 +81,8 @@ class ATodoEditedTests(unittest.TestCase):
         script = (
             "window.$=s=>document.querySelector(s);" + ESCAPE
             + "const delegateState={removing:'',tracking:new Set()};"
-            + "const delegateLabel=()=>'Delegate work';"
+            + "const delegateLabel=()=>'Delegate work';const ovAsks={};"
+            + "const xpLiveAsk=(run,ask)=>'<div>'+run+': '+ask.what+'</div>';"
             + "let ovTodos=" + json.dumps(todos) + ";let ovTodoDrawn='';"
             + _function(source, "ovTodoVersions") + _function(source, "ovTodoTracked")
             + _function(source, "ovTodoWork") + GROUPS(source) + _function(source, "ovTodoBox")
@@ -136,7 +138,8 @@ class OverviewTodoScrollTests(unittest.TestCase):
         script = (
             "window.$=s=>document.querySelector(s);" + ESCAPE
             + "const delegateState={removing:'',tracking:new Set()};"
-            + "const delegateLabel=()=>'Delegate work';"
+            + "const delegateLabel=()=>'Delegate work';const ovAsks={};"
+            + "const xpLiveAsk=(run,ask)=>'<div>'+run+': '+ask.what+'</div>';"
             + "let ovTodos=" + json.dumps(todos) + ";let ovTodoDrawn='';"
             + _function(source, "ovTodoVersions") + _function(source, "ovTodoTracked")
             + _function(source, "ovTodoWork") + GROUPS(source) + _function(source, "ovTodoBox")
@@ -211,7 +214,8 @@ class ATodosWorkIsTrackedTests(unittest.TestCase):
             "window.$=s=>document.querySelector(s);" + ESCAPE
             + "const localStamp=s=>'10:00';const workGoing={byUnit:" + json.dumps(going) + "};"
             + "const delegateState={removing:'',tracking:new Set()};"
-            + "const delegateLabel=()=>'Delegate work';"
+            + "const delegateLabel=()=>'Delegate work';const ovAsks={};"
+            + "const xpLiveAsk=(run,ask)=>'<div>'+run+': '+ask.what+'</div>';"
             + "let ovTodos=" + json.dumps(todos) + ";let ovTodoDrawn='';"
             + "const OV_TODO_STATE={going:'going',paused:'paused',waiting_for_you:'waiting for you'};"
             + "const XP_GOES_BACK={interrupted:'the application closed while it was going',"
@@ -221,7 +225,7 @@ class ATodosWorkIsTrackedTests(unittest.TestCase):
               "file:'File',folder:'Folder',answer:'Answer'};"
             + "".join(_function(source, name) for name in (
                 "ovTodoVersions", "ovTodoGoing", "ovTodoControls", "ovTodoWhere", "ovTodoWork", "ovTodoMade",
-                "ovTodoLatest",
+                "ovTodoLatest", "ovTodoOpen", "ovTodoAsks",
                 "ovTodoTracked", "ovTodoBox",
                 "ovPlaceTodos")) + GROUPS(source)
             + "window.addEventListener('load',()=>{const out={};ovPlaceTodos();"
@@ -237,6 +241,8 @@ class ATodosWorkIsTrackedTests(unittest.TestCase):
             "out.rows=rows();"
             "workGoing.byUnit.u2={run:'r2',state:'waiting_for_you',activity:''};ovPlaceTodos();"
             "out.live=rows()[1];"
+            "ovAsks.r2=[{what:'May it install tides?'}];ovPlaceTodos();"
+            "out.asked=document.querySelector('.ov-todo-asks').textContent;delete ovAsks.r2;"
             "workGoing.byUnit.u2={run:'r2',state:'paused',activity:'',pause_asked:true};ovPlaceTodos();"
             "out.paused=rows()[1];"
             "workGoing.byUnit.u2={run:'r2',state:'going',activity:'',stopping:true};ovPlaceTodos();"
@@ -246,6 +252,10 @@ class ATodosWorkIsTrackedTests(unittest.TestCase):
             "out.ended=Array.from(document.querySelectorAll('[data-todo=\"t3\"] .ov-todo-version'))"
             ".map(r=>Array.from(r.children).map(c=>c.textContent.replace(/\s+/g,' ').trim()).join(' | '));"
             "out.back=document.querySelector('[data-todo-run-continue=\"r6\"]').title;"
+            "ovTodos[1].work.versions[0].result='/out/r5';ovTodos[1].work.versions[0].result_kind='folder';"
+            "ovPlaceTodos();"
+            "out.stoppedOpens=document.querySelector('[data-todo=\"t3\"] .ov-todo-version .ov-todo-result').textContent;"
+            "delete ovTodos[1].work.versions[0].result;ovPlaceTodos();"
             "delegateState.removingVersion='d1';ovPlaceTodos();"
             "out.asking=document.querySelector('.ov-todo-confirm').textContent.replace(/\\s+/g,' ').trim();"
             "out.plain=document.querySelector('[data-todo=\"t2\"]').textContent.includes('V');"
@@ -270,23 +280,25 @@ class ATodosWorkIsTrackedTests(unittest.TestCase):
         # Remove on each - not on one going.
         self.assertEqual(out["rows"], [
             "V3 | its plan, for you to check | Open the plan | Remove",
-            "V2 | going - writing the reply | PauseStopFollow it in Work | ",
+            "V2 | going - writing the reply | PauseStop | ",
             "V1 | finished 10:00 - Email · Reply to the club | Open the email | Remove",
             " | File · notes.docx | Open the file | "])
         self.assertEqual(out["lined"], 1)
-        self.assertEqual(out["live"], "V2 | waiting for you | PauseStopFollow it in Work | ")
+        self.assertEqual(out["live"], "V2 | waiting for you | PauseStop | ")
         # RUN FROM ITS ROW, as in Work (the user, 2026-10-26): Resume when it
         # is paused; while it wraps up, only Stop now.
-        self.assertEqual(out["paused"], "V2 | paused | ResumeStopFollow it in Work | ")
-        self.assertEqual(out["stopping"], "V2 | going | Stop nowFollow it in Work | ")
+        self.assertEqual(out["paused"], "V2 | paused | ResumeStop | ")
+        self.assertEqual(out["stopping"], "V2 | going | Stop now | ")
         self.assertEqual(out["wired"], "r2", "the run it stops")
         # ENDED, AND ABLE TO GO ON - from the to-do too: Continue, back to
         # its last save point for one that did not stop cleanly, as its
         # title says (the user, 2026-10-28: no Resume beside Continue).
         self.assertEqual(out["ended"], [
-            "V2 | did not stop cleanly - it failed before it could stop | ContinueSee it in Work | Remove",
-            "V1 | stopped: not finished | ContinueSee it in Work | Remove"])
+            "V2 | did not stop cleanly - it failed before it could stop | Continue | Remove",
+            "V1 | stopped: not finished | Continue | Remove"])
         self.assertIn("after round 1: the page", out["back"])
+        self.assertEqual(out["asked"], "r2: May it install tides?", "asked on its row")
+        self.assertEqual(out["stoppedOpens"], "Open the folder", "what one that stopped made")
         # Removing asks first.
         self.assertEqual(out["asking"], "Remove V1? Yes No")
         self.assertFalse(out["plain"], "a to-do never handed over has no versions")
@@ -310,7 +322,8 @@ class EachGroupFoldsTests(unittest.TestCase):
         script = (
             "window.$=s=>document.querySelector(s);" + ESCAPE
             + "const delegateState={removing:'',tracking:new Set()};"
-            + "const delegateLabel=()=>'Delegate work';"
+            + "const delegateLabel=()=>'Delegate work';const ovAsks={};"
+            + "const xpLiveAsk=(run,ask)=>'<div>'+run+': '+ask.what+'</div>';"
             + "let ovTodos=" + json.dumps(todos) + ";let ovTodoDrawn='';"
             + _function(source, "ovTodoVersions") + _function(source, "ovTodoTracked")
             + _function(source, "ovTodoWork") + GROUPS(source) + _function(source, "ovTodoBox")

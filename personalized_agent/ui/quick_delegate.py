@@ -71,7 +71,7 @@ class QuickDelegate:
         if (more, weight) not in held:
             held[(more, weight)] = tkfont.Font(
                 root=self.root, family=tkfont.nametofont("TkDefaultFont").actual("family"),
-                size=max(6, sizes.px(self.root, 10 + more) + self._zoomed()), weight=weight)
+                size=sizes.zoomed(sizes.px(self.root, 10 + more), self._zoomed()), weight=weight)
         return held[(more, weight)]
 
     def _zoomed(self) -> int:
@@ -90,7 +90,7 @@ class QuickDelegate:
     def show_zoom(self, zoom: int) -> None:
         """Its words at that step: another window was zoomed, or this one."""
         for (more, _weight), font in self.__dict__.get("_fonts", {}).items():
-            font.configure(size=max(6, 10 + more + zoom))
+            font.configure(size=sizes.zoomed(sizes.px(self.root, 10 + more), zoom))
 
     def _button(self, parent: Any, words: str, act: Callable[[], None],
                 primary: bool = False) -> Any:

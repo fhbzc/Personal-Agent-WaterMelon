@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any, Dict, List, Sequence
 
 log = logging.getLogger(__name__)
@@ -53,7 +54,9 @@ they come first.
 #: The moments said again, the newest kept.
 MOST_REWRITTEN = 64
 #: The types with examples and rules of this form.
-TYPES = ("notifications", "connections", "general")
+TYPES = ("notifications", "recommendations", "connections", "general")
+#: How long what was learned of why the user judges as they do is read once for.
+REASONS_FOR_SECONDS = 600.0
 #: How like the moment another type's lesson must be, by meaning.
 OTHERS_AT = 0.25
 #: What is shown of an example's exact content.
@@ -80,8 +83,36 @@ class LessonRetriever:
         self._vectors: Dict[str, List[float]] = {}
         self._by_meaning = False
         self._rewritten: Dict[str, str] = {}
+        self._reasons: List[Dict[str, Any]] = []
+        self._reasons_at = 0.0
 
     # -- what there is -------------------------------------------------------------------
+    def _learned_reasons(self) -> List[Dict[str, Any]]:
+        """WHY THE USER JUDGES AS THEY DO (learning/reasons.py), found as a lesson is, for every
+        decision (the user, 2026-11-06): each with when it holds. What they turned off is not
+        given. Hypotheses: a decision leans on them, and never tells the user their motives."""
+        if self._reasons_at and time.monotonic() - self._reasons_at < REASONS_FOR_SECONDS:
+            return self._reasons
+        out: List[Dict[str, Any]] = []
+        try:
+            from ...learning.find import Finder
+            from ...learning.from_lessons import learned_from
+            finder = Finder(self.engine.db)
+            for reason in finder.store.reasons(("active",)):
+                if not finder._giveable(reason):
+                    continue
+                when = str((reason.get("condition") or {}).get("text") or "")
+                source = learned_from(finder.store, reason["id"], most=2)
+                out.append({"id": reason["id"], "kind": "why they judge so", "state": "active",
+                            "statement": f"{reason['statement']}" + (f" (When: {when})" if when else "")
+                            + (f" {source}" if source else ""),
+                            "confidence": 0.7 if reason.get("source") == "inferred" else 0.85,
+                            "pinned": False, "cases": len(finder.store.evidence(reason["id"]))})
+        except Exception:
+            log.debug("what was learned of the user's reasons could not be read", exc_info=True)
+        self._reasons, self._reasons_at = out, time.monotonic()
+        return out
+
     def _rules(self, kinds: Sequence[str]) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
         for kind in kinds:
@@ -94,6 +125,7 @@ class LessonRetriever:
         out = self._rules([one for one in TYPES if one not in kinds])
         if "work" in kinds:
             return out
+        out.extend(self._learned_reasons())
         out.extend(self.engine.rules("work", ("active",)))
         try:
             for one in self.engine.groups("work").get("principles") or []:
@@ -211,7 +243,7 @@ class LessonRetriever:
         found = self.retrieve(kinds, moment, rules, examples, rewrite_task)
         lines: List[str] = []
         for rule in found["rules"]:
-            cases = self.engine._cases(rule["id"])
+            cases = rule["cases"] if "cases" in rule else self.engine._cases(rule["id"])
             how = ("follow" if rule["state"] == "active" and (
                 rule["confidence"] >= 0.8 or rule["pinned"]) else
                 "lean on it" if rule["state"] == "active" else "a possible rule, still forming")

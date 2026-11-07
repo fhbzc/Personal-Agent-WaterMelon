@@ -27,6 +27,9 @@ DIMENSIONS = ("deliverable", "audience", "presentation", "purpose", "environment
 OBJECT = "object"
 #: What kind of thing a judgment or reason says.
 ASPECTS = ("requirement", "output", "evaluation", "habit")
+#: Of what the user answers, not of their work: never read from work. Whoever is given one is told
+#: which answers it came of (`from_lessons.learned_from`), and judges for itself.
+OF_THE_ANSWERS = ("attention", "timing", "motive")
 ASPECT_WORDS = {
     "requirement": "something the work must also have or do",
     "output": "the form, content or style of the output",
@@ -40,7 +43,7 @@ FIXED: Dict[str, Dict[str, Sequence[str]]] = {
         "document": ("paper", "report", "proposal", "letter", "notes", "handout",
                      "review", "thesis"),
         "visual material": ("slides", "poster", "figure", "chart", "video", "diagram"),
-        "message": ("email", "chat message", "post"),
+        "message": ("email", "chat message", "post", "notification", "recommendation"),
         "code": ("web app", "script", "library", "notebook", "interface", "tests"),
         "data": ("table", "dataset", "analysis"),
         "form": (),
@@ -74,6 +77,7 @@ FIXED: Dict[str, Dict[str, Sequence[str]]] = {
         "numbers and units": (), "names and files": (), "what is covered": (),
         "correctness and checks": (), "steps of the work": (), "tools used": (),
         "delivery and sharing": (), "privacy and data": (), "timing": (),
+        "interruptions": (), "what is recommended": (), "people": (), "how work is listed": (),
     },
 }
 

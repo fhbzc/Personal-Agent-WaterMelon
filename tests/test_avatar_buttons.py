@@ -564,7 +564,7 @@ class OnTheScreenTests(unittest.TestCase):
         self.assertEqual(told, [0], "written once, when it stops")
         panel.zoom_to(99)
         panel.close()
-        self.assertEqual(told[-1], 8, "within reason, and not lost on closing")
+        self.assertEqual(told[-1], 7, "the one zoom's most, and not lost on closing")
 
     def test_ctrl_plus_and_minus_are_held_by_the_panel(self) -> None:
         panel = self._panel(self.ONE)
@@ -735,7 +735,7 @@ class WhatAMacStartsTests(unittest.TestCase):
             desk.character_hidden = True
             dm.DesktopAgent._dock_menu(desk)
         self.assertEqual([words for words, _act in shown[0]],
-                         ["Chat", "To do", "Collections", "Overview", "Hide avatar"])
+                         ["Chat", "To do", "Collections", "Waiting notifications", "Overview", "Hide avatar"])
         self.assertEqual(shown[1][-1][0], "Show avatar")
 
 
@@ -962,10 +962,13 @@ class WhatTheyListTests(unittest.TestCase):
         self.assertEqual(action["path"], "/api/work/reveal")
         self.assertTrue(action["body"]["open"])
 
-    def test_with_nothing_made_the_latest_try(self) -> None:
-        action = self.app._work_actions([{"state": "stopped", "run": "r1", "unit": "u1"},
+    def test_what_one_that_stopped_made_is_opened_too(self) -> None:
+        action = self.app._work_actions([{"state": "stopped", "run": "r1", "result": "/out"},
                                          {"state": "ongoing", "run": "r2", "unit": "u2"}])[0]
-        self.assertEqual((action["key"], action["unit"], action["run"]), ("try", "u2", "r2"))
+        self.assertEqual(action["body"]["run"], "r1")
+
+    def test_with_nothing_made_nothing_to_press(self) -> None:
+        self.assertEqual(self.app._work_actions([{"state": "ongoing", "run": "r2", "unit": "u2"}]), [])
         self.assertEqual(self.app._work_actions([]), [])
 
     def test_the_work_assigned_is_listed_after_them(self) -> None:

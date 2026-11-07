@@ -129,6 +129,14 @@ class ItsOwnWindowTests(unittest.TestCase):
         from personalized_agent.agent import front_picture
         self.assertNotIn("ImageGrab", inspect.getsource(front_picture))
 
+    def test_the_window_the_user_was_in_not_the_bar_over_it(self) -> None:
+        from personalized_agent.platform_layer.windows import WindowsActivityProvider as Windows
+        bar, call = (1, "a", "Firefox \u2014 Sharing Indicator"), (2, "b", "Meet - Harbour survey")
+        self.assertEqual(Windows.the_window_meant([bar, call], "Meet - Harbour survey"), (2, "b"))
+        self.assertEqual(Windows.the_window_meant([bar, call], "Gone by now"), (1, "a"))
+        self.assertEqual(Windows.the_window_meant([bar, call], ""), (1, "a"))
+        self.assertIsNone(Windows.the_window_meant([], "Meet"))
+
     def test_elsewhere_it_is_the_window_in_front(self) -> None:
         from personalized_agent.platform_layer.base import PlatformActivityProvider
         one = SimpleNamespace(front_window_image=lambda: "the window")
@@ -203,8 +211,8 @@ class TakenBehindThePressTests(unittest.TestCase):
         import threading
         release, asked = threading.Event(), []
 
-        def drawn(itself_only=False):
-            asked.append(itself_only)
+        def drawn(itself_only=False, title=""):
+            asked.append((itself_only, title))
             release.wait(5)
             return Image.new("RGB", (64, 64), "#336699")
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
@@ -214,12 +222,12 @@ class TakenBehindThePressTests(unittest.TestCase):
             self.assertLess(time.monotonic() - began, 0.5, "the press goes on")
             release.set()
             self.assertEqual(pictures.latest(title="Tides")["words"], "tide table")
-            self.assertEqual(asked, [True], "what it draws, not what is on the screen")
+            self.assertEqual(asked, [(True, "Tides")], "what it draws, of the window the user was in")
 
     def test_a_window_that_draws_nothing_leaves_no_picture(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             pictures = self._pictures(folder, SimpleNamespace(
-                draws_windows=True, user_window_image=lambda itself_only=False: None))
+                draws_windows=True, user_window_image=lambda itself_only=False, title="": None))
             pictures.take()
             self.assertEqual(pictures.latest(), {})
 

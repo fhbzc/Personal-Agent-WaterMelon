@@ -83,8 +83,7 @@ EDGES = {"w": "sb_h_double_arrow", "e": "sb_h_double_arrow", "n": "sb_v_double_a
 MEASURED_MOST = 20000
 
 #: The sizes a side can be zoomed to, and the one it starts at.
-ZOOMS = (0.8, 0.9, 1.0, 1.1, 1.25, 1.4, 1.6, 1.8, 2.0, 2.25)
-ZOOM_START = 2
+ZOOMS, ZOOM_START = sizes.ZOOMS, sizes.ZOOM_START
 
 #: The sides: what was handed over ("item"), how to use it ("how").
 SIDES = ("item", "how")
@@ -348,7 +347,7 @@ class HandedNote:
 
     def _points(self, whose: str, more: int) -> int:
         zoom = self.zoom if whose == "chrome" else self.zooms.get(whose, ZOOM_START)
-        return max(7, int(round((self.size + more) * ZOOMS[zoom])))
+        return max(sizes.SMALLEST_WORDS, int(round((self.size + more) * ZOOMS[zoom])))
 
     def _font(self, more: int = 0, weight: str = "normal") -> str:
         """A font of the part being made (`_ctx`: a side, or the bar and the

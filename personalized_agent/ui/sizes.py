@@ -19,11 +19,24 @@ MOST = 2.5
 
 #: ONE ZOOM FOR EVERY WINDOW OF THE AGENT'S (the user, 2026-11-05: "不要每个panel独立，而是和Muse一样的
 #: 缩放逻辑"), in steps from where they start: as far as the chat's steps go either way.
-ZOOM_LEAST, ZOOM_MOST = -2, 7
+ZOOM_LEAST, ZOOM_MOST = -7, 7
+#: What each step makes of their words, and the step they start at.
+ZOOMS = (0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4, 1.6, 1.8, 2.0, 2.25)
+ZOOM_START = 7
+#: The smallest words any of them is zoomed to, in points (the user, 2026-11-06: smaller than it was).
+SMALLEST_WORDS = 5
+#: Where the chat's own steps started, when each window kept its own zoom.
+_CHAT_STARTED_AT = 2
 
 
 def within_zoom(step: Any) -> int:
     return max(ZOOM_LEAST, min(ZOOM_MOST, int(step)))
+
+
+def zoomed(points: float, step: Any) -> int:
+    """WORDS AT A STEP, BY SHARE AND NOT BY POINTS TAKEN OFF (the user, 2026-11-06: a notification
+    would go no smaller): text set large on a large screen is 26 points, and five steps took 5 off."""
+    return max(SMALLEST_WORDS, int(round(points * ZOOMS[ZOOM_START + within_zoom(step)])))
 
 
 def popup_zoom(config: Any) -> int:
@@ -31,7 +44,7 @@ def popup_zoom(config: Any) -> int:
     try:
         said = config.get("popup_zoom", None)
         if said is None:
-            said = int(config.get("chat_bubble_zoom", -ZOOM_LEAST)) + ZOOM_LEAST
+            said = int(config.get("chat_bubble_zoom", _CHAT_STARTED_AT)) - _CHAT_STARTED_AT
         return within_zoom(said)
     except (AttributeError, TypeError, ValueError):
         return 0
@@ -72,5 +85,5 @@ def kept(widget: Any, said: Any) -> Optional[Tuple[int, int]]:
     return int(first), int(second)
 
 
-__all__ = ["REFERENCE", "MOST", "ZOOM_LEAST", "ZOOM_MOST", "within_zoom", "popup_zoom", "scale",
+__all__ = ["REFERENCE", "MOST", "ZOOM_LEAST", "ZOOM_MOST", "SMALLEST_WORDS", "ZOOMS", "ZOOM_START", "within_zoom", "zoomed", "popup_zoom", "scale",
            "px", "share", "kept"]

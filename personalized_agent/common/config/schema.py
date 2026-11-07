@@ -797,10 +797,6 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
     SettingField("monitor_least_gap_minutes", "Least time between two (min)", "int", 20,
                  "Monitor", "A break is never suggested sooner than this after anything said.",
                  minimum=1, maximum=600),
-    SettingField("recommendation_record_only", "Only record what would be recommended", "bool",
-                 True, "Monitor", "What is on your screen is matched against what is kept ready, "
-                 "and each match kept, without anything being sent or any model asked - to set "
-                 "the scores from what really happens."),
     SettingField("monitor_recommend_search", "Look recommendations up on the web", "bool", True,
                  "Monitor", "The model may search the public web for what it recommends; only "
                  "the words of the search are sent."),

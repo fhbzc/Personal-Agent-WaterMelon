@@ -21,6 +21,7 @@ from __future__ import annotations
 import copy
 import logging
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from ..chat_files import ALONE
@@ -37,6 +38,10 @@ from .tools import ToolRegistry, build_registry, result_to_text
 from ...scheduler.core.given import now_line
 
 log = logging.getLogger(__name__)
+
+#: How long the avatar goes on talking after the last words written; the most for a reply that came
+#: all at once.
+STREAM_SECONDS, MOST_SPOKEN_SECONDS = 1.5, 4.0
 
 SYSTEM_PROMPT = """You are {agent_name}, a personal desktop agent for one user.
 
@@ -265,6 +270,7 @@ class AgentCore:
                 if after_quick.get("reply"):
                     asked += FULL_NOTE.format(reply=after_quick["reply"], correction=CORRECTION,
                                               nothing=NOTHING_TO_ADD)
+            began = time.monotonic()
             result = self.run_instruction(
                 asked, {"conversation_id": conversation_id, "origin": origin,
                         "earlier": earlier, "said": text, "on_text": on_text,
@@ -283,6 +289,8 @@ class AgentCore:
                 result["did"] = after_quick["did"](result) if after_quick.get("did") else {}
                 if result["did"]:
                     layer["did"] = result["did"]
+            if self._spoke_at < began:           # not written as it came: it comes out now
+                self.speaks_whole(result["answer"])
             said = self.conversations.add_message(
                 conversation_id, "assistant", result["answer"],
                 metadata={**layer, "task_id": result["task_id"],
@@ -452,6 +460,27 @@ class AgentCore:
             self.observability.task_text(task_id, text)
         if callable(told):
             told(text)
+            self.speaks(STREAM_SECONDS)
+
+    #: WHEN A REPLY LAST CAME OUT, for the avatar's mouth (the user, 2026-11-06: it talks while a
+    #: reply comes out, the quick one or the full one, and stops when it ends).
+    _spoke_at = 0.0
+
+    def speaks(self, seconds: float) -> None:
+        """A reply is coming out: said for this long. As it is written, a word comes many times a
+        second, and once in a while is enough to say so."""
+        now = time.monotonic()
+        if seconds <= STREAM_SECONDS and now - self._spoke_at < STREAM_SECONDS / 3:
+            return
+        self._spoke_at = now
+        bus = getattr(self, "bus", None)
+        if bus is not None:
+            bus.publish("agent.speaking", {"seconds": seconds})
+
+    def speaks_whole(self, text: Any) -> None:
+        """A reply that came out all at once: for about as long as it takes to read aloud."""
+        if str(text or "").strip():
+            self.speaks(max(MOST_SPOKEN_SECONDS / 4, min(MOST_SPOKEN_SECONDS, len(str(text)) / 30)))
 
     def _step(self, task_id: str, stage: str, detail: str = "") -> None:
         """Say what is happening now, for whoever is waiting on the answer.

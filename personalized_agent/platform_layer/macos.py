@@ -87,6 +87,22 @@ class MacActivityProvider(PlatformActivityProvider):
     def get_active_application(self) -> Optional[str]:
         return self.get_active_window().application
 
+    def watch_front(self, told):
+        """The system's word that another program became active. Delivered on the main thread, as
+        the avatar's loop runs it. Between the windows of one program it says nothing: those are
+        still looked at."""
+        try:
+            import objc
+            from AppKit import NSWorkspace, NSWorkspaceDidActivateApplicationNotification
+            with objc.autorelease_pool():
+                center = NSWorkspace.sharedWorkspace().notificationCenter()
+                observer = center.addObserverForName_object_queue_usingBlock_(
+                    NSWorkspaceDidActivateApplicationNotification, None, None, lambda _said: told())
+        except Exception:
+            log.info("cannot be told what comes to the front", exc_info=True)
+            return None
+        return lambda: center.removeObserver_(observer)
+
     def peek_foreground_application(self) -> Optional[str]:
         """Cheap focus hint for chat sampling; never reads window contents."""
         import objc

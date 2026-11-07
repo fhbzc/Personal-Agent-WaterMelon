@@ -487,7 +487,7 @@ class Learning:
         # Units no longer listed are marked gone - kept, not read.
         wanted = {one["id"] for one in units}
         for old in self.store.units():
-            if old["id"] not in wanted and old["state"] != "gone":
+            if old["id"] not in wanted and old["state"] != "gone" and old.get("kind") != "lessons":
                 old["state"] = "gone"
                 self.store.save_unit(old)
         # How much each has, and the order - looked at without keeping a

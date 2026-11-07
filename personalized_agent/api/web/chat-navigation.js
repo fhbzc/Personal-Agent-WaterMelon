@@ -32,11 +32,13 @@ window.createChatNavigation = function ({ api, onOpen }) {
       <button type="button" class="chat-new" data-new-topic><span aria-hidden="true">＋</span> New topic</button>
     </div>
     <div class="chat-sidebar-scroll">
-      <div class="chat-section-label" data-pinned-label hidden>Pinned</div>
-      <nav class="chat-pinned" aria-label="Pinned"></nav>
-      <div class="chat-section-label chat-topics-label">Topics</div>
+      <button type="button" class="chat-section-label chat-topics-label" data-fold="topics"
+              aria-expanded="true"><span class="chat-fold-mark" aria-hidden="true">▾</span>
+        <span>Topics</span></button>
       <div class="chat-topics" aria-label="Topics"></div>
-      <div class="chat-section-label">Chats</div>
+      <button type="button" class="chat-section-label" data-fold="chats"
+              aria-expanded="true"><span class="chat-fold-mark" aria-hidden="true">▾</span>
+        <span>Chats</span></button>
       <nav class="chat-history" aria-label="Conversations"></nav>
     </div>
     <div class="chat-nav-status muted" role="status" aria-live="polite"></div>`;
@@ -52,13 +54,82 @@ window.createChatNavigation = function ({ api, onOpen }) {
   // without this script the conversation keeps the whole width.
   layout.classList.add("has-sidebar");
 
+  // ITS WIDTH IS THE USER'S (2026-11-06): its edge dragged, or the arrow keys on it, kept for next
+  // time; a double click puts it back. The most is in the stylesheet, as a share of the layout,
+  // so that a narrower window does not lose the conversation to a width chosen on a wider one.
+  const SIDEBAR_LEAST = 180, SIDEBAR_MOST_SHARE = 0.6, SIDEBAR_KEY = "chat-sidebar-width";
+  const grip = document.createElement("div");
+  grip.className = "chat-sidebar-grip";
+  grip.tabIndex = 0;
+  grip.setAttribute("role", "separator");
+  grip.setAttribute("aria-orientation", "vertical");
+  grip.setAttribute("aria-label", "Width of the sidebar");
+  grip.title = "Drag to change the width; a double click puts it back";
+  sidebar.append(grip);
+  function sidebarTo(width, keep = true) {
+    const most = Math.max(SIDEBAR_LEAST, layout.clientWidth * SIDEBAR_MOST_SHARE);
+    const shown = Math.round(Math.max(SIDEBAR_LEAST, Math.min(most, width)));
+    layout.style.setProperty("--chat-sidebar-width", `${shown}px`);
+    if (keep) {
+      try { localStorage.setItem(SIDEBAR_KEY, String(shown)); } catch (_) { /* kept for this page only */ }
+    }
+    try {
+      if (typeof window.layoutFollowUps === "function") window.layoutFollowUps();
+    } catch (_) { /* the page is still loading */ }
+  }
+  try {
+    const kept = Number(localStorage.getItem(SIDEBAR_KEY));
+    if (kept > 0) layout.style.setProperty("--chat-sidebar-width", `${Math.max(SIDEBAR_LEAST, kept)}px`);
+  } catch (_) { /* a private window */ }
+  let dragged = null;
+  grip.addEventListener("pointerdown", (event) => {
+    dragged = { x: event.clientX, width: sidebar.getBoundingClientRect().width };
+    grip.setPointerCapture(event.pointerId);
+    grip.classList.add("dragged");
+    event.preventDefault();
+  });
+  grip.addEventListener("pointermove", (event) => {
+    if (dragged) sidebarTo(dragged.width + event.clientX - dragged.x, false);
+  });
+  const dropped = (event) => {
+    if (!dragged) return;
+    sidebarTo(dragged.width + event.clientX - dragged.x);
+    dragged = null;
+    grip.classList.remove("dragged");
+  };
+  grip.addEventListener("pointerup", dropped);
+  grip.addEventListener("pointercancel", dropped);
+  grip.addEventListener("dblclick", () => {
+    layout.style.removeProperty("--chat-sidebar-width");
+    try { localStorage.removeItem(SIDEBAR_KEY); } catch (_) { /* kept for this page only */ }
+  });
+  grip.addEventListener("keydown", (event) => {
+    const step = { ArrowLeft: -16, ArrowRight: 16 }[event.key];
+    if (!step) return;
+    sidebarTo(sidebar.getBoundingClientRect().width + step);
+    event.preventDefault();
+  });
+
   const $s = (selector) => sidebar.querySelector(selector);
   const mobile = window.matchMedia("(max-width: 700px)");
   const route = () => new URLSearchParams(location.search);
   const state = { conversations: [], conversation: null, topics: [], editing: "",
     // A new chat started under a topic: put there once its first message made it.
     pendingTopic: "", open: new Set(),
-    busy: false, request: 0, loading: false, initialized: false };
+    busy: false, request: 0, loading: false, initialized: false,
+    // Topics and Chats, each folded by its label (the user, 2026-11-06), kept for next time.
+    folded: new Set() };
+  try {
+    state.folded = new Set(JSON.parse(localStorage.getItem("chat-list-folded") || "[]"));
+  } catch (_) { /* a private window */ }
+  sidebar.querySelectorAll("[data-fold]").forEach((label) => {
+    label.addEventListener("click", () => {
+      const part = label.dataset.fold;
+      if (!state.folded.delete(part)) state.folded.add(part);
+      try { localStorage.setItem("chat-list-folded", JSON.stringify([...state.folded])); } catch (_) { /* this page only */ }
+      render();
+    });
+  });
   let desktopOpen = true;
   let drawerOpen = false;
   try { desktopOpen = localStorage.getItem("chat-sidebar-collapsed") !== "true"; } catch (_) { /* private window */ }
@@ -131,6 +202,7 @@ window.createChatNavigation = function ({ api, onOpen }) {
       // Not `data-conversation`: that is the row's own button, which is
       // what anything looking a conversation up in the list must find.
       line.dataset.line = conversation.id;
+      line.classList.toggle("pinned", Boolean(conversation.pinned_at));
       const button = row(conversation.title || "New chat", state.conversation === conversation.id,
         () => openConversation(conversation.id));
       button.dataset.conversation = conversation.id;
@@ -233,6 +305,7 @@ window.createChatNavigation = function ({ api, onOpen }) {
   async function startTopic(conversationId = "") {
     // A new topic - its name asked in place, then its context to write.
     state.editing = `new:${conversationId}`;
+    state.folded.delete("topics");
     render();
     $s("[data-topic-name]")?.focus();
   }
@@ -297,13 +370,16 @@ window.createChatNavigation = function ({ api, onOpen }) {
     return form;
   }
 
+  const pinnedFirst = (list) => [...list.filter((one) => one.pinned_at),
+    ...list.filter((one) => !one.pinned_at)];
+
   function renderTopics(host) {
     host.replaceChildren();
     if (state.editing.startsWith("new:")) host.appendChild(topicForm(null, state.editing.slice(4)));
     for (const topic of state.topics) {
       const section = document.createElement("section");
       section.className = "chat-topic";
-      const chats = state.conversations.filter((one) => one.project_id === topic.id && !one.pinned_at);
+      const chats = pinnedFirst(state.conversations.filter((one) => one.project_id === topic.id));
       const open = state.open.has(topic.id) || chats.some((one) => one.id === state.conversation);
       const head = document.createElement("div");
       head.className = "chat-topic-head";
@@ -335,10 +411,12 @@ window.createChatNavigation = function ({ api, onOpen }) {
         said.textContent = topic.context;
         section.appendChild(said);
       }
-      if (open) {
+      // Pinned, it stays in sight under its topic with the topic folded.
+      const shown = open ? chats : chats.filter((one) => one.pinned_at);
+      if (open || shown.length) {
         const list = document.createElement("div");
         list.className = "chat-topic-chats";
-        historyRows(list, chats, "No conversations in this topic yet");
+        historyRows(list, shown, "No conversations in this topic yet");
         section.appendChild(list);
       }
       host.appendChild(section);
@@ -432,18 +510,21 @@ window.createChatNavigation = function ({ api, onOpen }) {
     if (title) title.textContent = current?.title || "New chat";
     const list = $s(".chat-history");
     list.replaceChildren();
-    // PINNED, above the rest; then every other conversation, those once
-    // filed under a project too: one list.
-    const pinned = state.conversations.filter((one) => one.pinned_at);
-    const pinnedList = $s(".chat-pinned");
-    pinnedList.replaceChildren();
-    $s("[data-pinned-label]").hidden = !pinned.length;
-    historyRows(pinnedList, pinned, "");
+    // PINNED, ON TOP OF ITS OWN PART (the user, 2026-11-06): a chat's among the chats, one under
+    // a topic under that topic. Every other conversation, those once filed under a project too,
+    // is a chat.
     renderTopics($s(".chat-topics"));
     const known = new Set(state.topics.map((one) => one.id));
-    historyRows(list, state.conversations.filter((one) => !one.pinned_at
-      && !(one.project_id && known.has(one.project_id))),
-      pinned.length || state.topics.length ? "" : "No conversations yet");
+    historyRows(list, pinnedFirst(state.conversations.filter(
+      (one) => !(one.project_id && known.has(one.project_id)))),
+      state.topics.length ? "" : "No conversations yet");
+    for (const [part, host] of [["topics", ".chat-topics"], ["chats", ".chat-history"]]) {
+      const folded = state.folded.has(part);
+      $s(host).hidden = folded;
+      const label = $s(`[data-fold="${part}"]`);
+      label.setAttribute("aria-expanded", String(!folded));
+      label.querySelector(".chat-fold-mark").textContent = folded ? "▸" : "▾";
+    }
   }
 
   async function refresh() {

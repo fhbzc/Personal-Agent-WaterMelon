@@ -476,11 +476,11 @@ class ReferencesTests(_Base):
 
 class ThePanelTests(unittest.TestCase):
 
-    def test_learning_is_a_tab_of_its_own_after_work(self) -> None:
+    def test_learning_is_a_tab_of_its_own(self) -> None:
         web = Path(__file__).resolve().parents[1] / "personalized_agent" / "api" / "web"
         html = (web / "index.html").read_text(encoding="utf-8")
         tabs = html[html.index('<nav id="tabs"') if '<nav id="tabs"' in html else 0:]
-        self.assertLess(tabs.index('data-tab="experience"'), tabs.index('data-tab="learning"'))
+        self.assertIn('data-tab="learning"', tabs)
         section = html[html.index('<section id="learning"'):]
         self.assertIn('id="xp-learn"', section[:section.index("</section>")])
         work = html[html.index('<section id="experience"'):]

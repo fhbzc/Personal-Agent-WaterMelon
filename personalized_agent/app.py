@@ -405,6 +405,9 @@ class AgentApplication:
         self.heartbeat.monitor_step = lambda: self.monitor_decider.step(self.monitor)
         from .heartbeat.monitor.reserve import Reserve
         self.reserve = Reserve(self.db, self.config)
+        self.monitor_decider.reserve = self.reserve
+        self.notifications.moment_now = self._moment_now
+        self.lessons.moment_now = self._moment_now
         self.heartbeat.reserve_step = lambda asks=True: self.reserve.step(self.monitor_decider,
                                                                           asks=asks)
         from .heartbeat.monitor.match import ReserveRule
@@ -534,6 +537,9 @@ class AgentApplication:
         from .heartbeat.monitor.tools import add_tools as _monitor_tools
         _monitor_tools(self.agent.tools, self.monitor,
                        lambda: getattr(self, "lesson_retriever", None))
+        # WHAT WAS ON THE SCREEN, by time: asked for, never given with a message.
+        from .agent.screen_history import add_tools as _screen_history_tools
+        _screen_history_tools(self.agent.tools, self.db, self.config)
         # FILES AND PICTURES ATTACHED IN CHAT, kept in the agent's own folder.
         from .agent.chat_files import ChatFiles, add_tools as _chat_file_tools
         self.chat_files = ChatFiles(self.paths.data_dir / "chat_files", prepares=True)
@@ -958,6 +964,7 @@ class AgentApplication:
                 else "notifications"
             return self.lessons.record(
                 kind, f"answer:{source}:{answer}", summary, action=answer,
+                moment=(shown.get("metadata") or {}).get("moment"),
                 reason=str(said or "")[:1000], weight=None if said else self.WEAK_ANSWERS.get(answer),
                 content=json.dumps({"notification": shown or None, "question": question,
                                     "answer": answer, "means": meaning}, ensure_ascii=False,
@@ -1057,7 +1064,8 @@ class AgentApplication:
                                 f'The agent recommended "{shown.get("title") or ""}": '
                                 f'{str(shown.get("message") or "")[:400]} - the user called it a '
                                 f"bad notification. {chain_line(shown.get('metadata'))}",
-                                action="bad_notification", reason=said)
+                                action="bad_notification", reason=said,
+                                moment=(shown.get("metadata") or {}).get("moment"))
         # One of the Monitor's: kept whole with why it was made (engine.on_bad).
         try:
             self.monitor.on_bad(shown, said)
@@ -1114,11 +1122,11 @@ class AgentApplication:
             raise ValueError(str(said.get("error") or said or exc)) from exc
 
     def _work_actions(self, versions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """What came of a piece of work, as the Overview offers it: the newest finished
-        version's outcome; none made yet, the newest try."""
+        """What came of a piece of work, as the Overview offers it: the newest outcome there is,
+        of one finished or stopped."""
         from .common.interface_words import shown
         for one in reversed(versions):
-            if one.get("state") != "finished":
+            if one.get("state") not in ("finished", "stopped"):
                 continue
             label = shown("Open the latest outcome", self.config)
             if one.get("items"):
@@ -1127,15 +1135,104 @@ class AgentApplication:
             if one.get("result"):
                 return [{"key": "open", "label": label, "path": "/api/work/reveal",
                          "body": {"run": one.get("run"), "path": one["result"], "open": True}}]
-        going = next((one for one in reversed(versions) if one.get("unit")), None)
-        return [{"key": "try", "label": shown("See the latest try in Work", self.config),
-                 "unit": going["unit"], "run": going.get("run") or ""}] if going else []
+        return []
+
+    def _asks_of(self, run: str) -> List[Dict[str, Any]]:
+        """What a run going asks of the user now: to approve a command or an install, or what to
+        do about its model. A run is in a process of its own: it is asked."""
+        said = self.work.live(run, 1 << 31, calls=1 << 31)
+        return list((said or {}).get("pending") or [])
+
+    def _work_asks(self, versions: List[Dict[str, Any]]) -> Tuple[List[str], List[Dict[str, Any]]]:
+        """WORK STATUS SAYS WHAT IT WAITS FOR (the user, 2026-11-06): what a piece of work going
+        asks, in words, and the buttons that answer it. Answered, the work goes on."""
+        from .common.interface_words import shown
+        notes: List[str] = []
+        actions: List[Dict[str, Any]] = []
+        for one in versions:
+            if one.get("state") != "ongoing" or not one.get("run"):
+                continue
+            for ask in self._asks_of(str(one["run"])):
+                said = ": ".join(str(part) for part in (ask.get("title"), ask.get("what")) if part)
+                notes.append(shown("Waiting for you: {0}", self.config).replace("{0}", said))
+                if ask.get("why"):
+                    notes.append(shown("Why: {0}", self.config).replace("{0}", str(ask["why"])))
+                model = ask.get("kind") == "model"
+                for allow, words in ((True, "Try again now" if model else "Approve"),
+                                     (False, "End the run" if model else "Deny")):
+                    actions.append({"key": f"ask:{ask.get('id')}:{int(allow)}", "changes": True,
+                                    "label": shown(words, self.config), "path": "/api/work/approve",
+                                    "body": {"run": one["run"], "request": ask.get("id"),
+                                             "allow": allow}})
+        return notes, actions
+
+    def tell_work_waiting(self) -> None:
+        """WORK STOPPED ON THE USER IS NOT LEFT SILENT: told once for each thing it asks, whichever
+        window is open (the user's order, 2026-11-06: what the agent is stuck on pops). Answered
+        under Work status."""
+        from .common.interface_words import shown
+        told = self.__dict__.setdefault("_work_waits_told", set())
+        for one in self.work.run_states():
+            if one.get("debug") or one.get("state") != "waiting_for_you":
+                continue
+            for ask in self._asks_of(str(one["run"])):
+                ident = str(ask.get("id") or "")
+                if ident in told:
+                    continue
+                told.add(ident)
+                said = ": ".join(str(part) for part in (ask.get("title"), ask.get("what")) if part)
+                self.notifications.notify(
+                    shown("Work is waiting for you", self.config),
+                    f'{said}\n{shown("Answer it under Work status, in To do.", self.config)}',
+                    kind="approval", dedupe_key=f"work-waits-{ident}")
+
+    def _waiting_sections(self) -> List[Dict[str, Any]]:
+        """THE WAITING LIST (the user, 2026-11-06: "用列表，显示各种标题，我可以expand"): each by its
+        title, and opened, its words, why it was told and its answers."""
+        from .agent.feedback.templates import BAD_LABEL, GOT_IT
+        from .common.interface_words import shown
+        from .common.notifications import told_from
+        parts: Dict[str, List[Dict[str, Any]]] = {"Recommended content": [], "Reminders": [],
+                                                  "Other": []}
+        for one in self.notifications.waiting():
+            ident, meta = str(one["id"]), one["metadata"]
+            asked = str(meta.get("question_id") or "")
+            question = self.questions.get(asked) if asked else None
+            if question is not None and question.status == "pending":
+                actions = [{"key": f"answer:{option.get('key')}", "changes": True,
+                            "label": shown(str(option.get("label") or ""), self.config),
+                            "path": "/api/notifications/answer",
+                            "body": {"id": ident, "question": asked, "answer": option.get("key")}}
+                           for option in question.options]
+            else:
+                actions = [{"key": "got_it", "label": shown(GOT_IT, self.config), "changes": True,
+                            "path": "/api/notifications/read", "body": {"id": ident}}]
+            actions.append({"key": "bad", "label": shown(BAD_LABEL, self.config), "changes": True,
+                            "path": "/api/notifications/bad", "body": {"id": ident}})
+            why = str(meta.get("reason") or "")
+            part = "Recommended content" if meta.get("recommended") else \
+                "Reminders" if one.get("kind") == "proactive" else "Other"
+            parts[part].append({
+                "id": ident, "title": str(one.get("title") or ""), "folds": True,
+                "detail": str(one.get("message") or ""), "url": str(meta.get("url") or ""),
+                "why": shown("Why: {0}", self.config).replace("{0}", why) if why else "",
+                "note": shown("Trigger: {0}", self.config).replace(
+                    "{0}", shown(told_from(meta), self.config)),
+                "actions": actions})
+        # ONE ALONE IS OPEN (the user, 2026-11-06): there is nothing to choose between.
+        waiting = [row for rows in parts.values() for row in rows]
+        if len(waiting) == 1:
+            waiting[0]["folds"] = False
+        return [{"name": shown(name, self.config), "rows": rows}
+                for name, rows in parts.items() if rows]
 
     def quick_sections(self, which: str) -> List[Dict[str, Any]]:
         """What a panel beside the avatar lists (ui/avatar_buttons.py), in the groups
         the list has: "todo" - with the work assigned, as the Overview has it beside
         To do - or "collection"."""
         from .common.interface_words import shown
+        if which == "waiting":
+            return self._waiting_sections()
         todo = which == "todo"
         items = [dict(one) for one in self.todos.open()] if todo else self.collection_items()
         part_of = self.item_links.of_many("todo", [one["id"] for one in items]) if todo else {}
@@ -1153,7 +1250,9 @@ class AgentApplication:
                     "url": str(one.get("url") or "")}
             if kind == "todo":
                 versions = (came.get(one["id"]) or {}).get("versions") or []
-                said["actions"] = self._work_actions(versions) + [
+                notes, asks = self._work_asks(versions)
+                said["note"] = "\n".join(filter(None, [*notes, note]))
+                said["actions"] = asks + self._work_actions(versions) + [
                     {"key": "delegate", "label": shown("Delegate work", self.config),
                      "todo": one["id"], "text": "\n".join(
                          part for part in (one.get("text"), one.get("detail")) if part)},
@@ -1166,7 +1265,10 @@ class AgentApplication:
                      "changes": True, "path": "/api/todos/delete", "body": {"id": one["id"]}},
                     moved]
             elif kind == "assigned":
-                said["actions"] = self._work_actions((one.get("work") or {}).get("versions") or [])
+                versions = (one.get("work") or {}).get("versions") or []
+                notes, asks = self._work_asks(versions)
+                said["note"] = "\n".join(filter(None, [*notes, note]))
+                said["actions"] = asks + self._work_actions(versions)
             else:
                 said["actions"] = ([{"key": "read", "label": shown("Read the source", self.config),
                                      "url": said["url"]}] if said["url"] else []) + [
@@ -1230,6 +1332,11 @@ class AgentApplication:
         return out
 
     # -- what the Monitor's decisions are given (heartbeat/monitor/decide.py) ----------
+    def _moment_now(self) -> Dict[str, Any]:
+        """What the user is doing, as a lesson keeps it (heartbeat/lessons/moment.py)."""
+        from .heartbeat.lessons.moment import moment_of
+        return moment_of(self.monitor.latest, self.monitor.recommended_today())
+
     def _monitor_tasks(self) -> List[str]:
         """The work going on: the tasks worked on lately, with where each stands."""
         from .heartbeat.states.tasks import Kept

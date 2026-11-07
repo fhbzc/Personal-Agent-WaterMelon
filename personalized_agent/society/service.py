@@ -699,7 +699,7 @@ class SocietyService:
             try:
                 name = (self.contact(peer) or {}).get("name") or peer
                 notifications.notify("Society", f"{name}: {_text(text, 300)}",
-                                     dedupe_key=f"society-note-{peer}-{at}")
+                                     dedupe_key=f"society-note-{peer}-{at}", level="collapse")
             except Exception:
                 log.debug("the society note was not notified", exc_info=True)
 

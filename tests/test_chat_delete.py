@@ -166,5 +166,66 @@ class TheMenuOnEachRowTests(unittest.TestCase):
         self.assertEqual(out["rows"], ["Planning the garden"])
 
 
+LIST_PAGE = """<!doctype html><html><head><meta charset='utf-8'>
+<style>[hidden]{display:none!important}</style></head><body>
+<div class="chat-layout"><div class="chat-workspace">
+<button data-chat-sidebar-open></button><span data-chat-title></span>
+<input id="chat-input"></div></div>
+<script>
+const said={conversations:[{id:'c1',title:'Loose'},{id:'c2',title:'Loose and pinned',pinned_at:'x'},
+ {id:'c3',title:'In a topic',project_id:'t1'},{id:'c4',title:'In a topic and pinned',project_id:'t1',pinned_at:'x'}]};
+const api={get:async(p)=>p==='/api/conversations'?said:p==='/api/chat/projects'?{projects:[{id:'t1',name:'Seeds'}]}
+ :{conversation_id:p.split('=')[1],messages:[]},post:async()=>({})};</script>
+<script>%s</script>
+<script>window.addEventListener('load',async()=>{let err='';const out={};
+const wait=()=>new Promise(r=>setTimeout(r,150));
+const rows=(s)=>[...document.querySelectorAll(s+' button.chat-nav-row[data-conversation]')].map(b=>b.textContent);
+const seen=(s)=>{const one=document.querySelector(s);return !!one&&one.offsetParent!==null;};
+try{const nav=createChatNavigation({api,onOpen:()=>{}});await nav.activate();await wait();
+out.pinnedList=!!document.querySelector('.chat-pinned');
+out.foldedTopic=rows('.chat-topics');out.chats=rows('.chat-history');
+document.querySelector('.chat-topic-name').click();await wait();
+out.openTopic=rows('.chat-topics');
+const label=(p)=>document.querySelector('[data-fold="'+p+'"]');
+label('chats').click();await wait();
+out.chatsFolded=[seen('.chat-history'),label('chats').getAttribute('aria-expanded'),seen('.chat-topics')];
+out.kept=localStorage.getItem('chat-list-folded');
+label('chats').click();label('topics').click();await wait();
+out.topicsFolded=[seen('.chat-topics'),seen('.chat-history')];
+document.querySelector('[data-new-topic]').click();await wait();
+out.formShows=seen('.chat-topic-form');
+}catch(e){err=String(e&&e.stack?e.stack:e);}
+document.title=JSON.stringify({err,out});});</script></body></html>"""
+
+
+class TheListsPartsTests(unittest.TestCase):
+
+    def test_pins_stay_in_their_part_and_each_part_folds(self) -> None:
+        kind, engine = _javascript_engine()
+        if kind != "chrome":
+            self.skipTest("no browser available to render the page")
+        script = (WEB / "chat-navigation.js").read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as work:
+            page = Path(work) / "chat.html"
+            page.write_text(LIST_PAGE % script, encoding="utf-8")
+            done = subprocess.run(
+                [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                 f"--user-data-dir={work}/profile", "--virtual-time-budget=10000",
+                 "--dump-dom", page.as_uri()],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        said = json.loads(re.search(r"<title>(.*?)</title>", done.stdout, re.S).group(1)
+                          .replace("&quot;", '"').replace("&amp;", "&"))
+        self.assertEqual(said["err"], "")
+        out = said["out"]
+        self.assertFalse(out["pinnedList"], "no list of pins of its own")
+        self.assertEqual(out["chats"], ["Loose and pinned", "Loose"], "on top of the chats")
+        self.assertEqual(out["foldedTopic"], ["In a topic and pinned"], "in sight, its topic folded")
+        self.assertEqual(out["openTopic"], ["In a topic and pinned", "In a topic"])
+        self.assertEqual(out["chatsFolded"], [False, "false", True])
+        self.assertEqual(out["kept"], '["chats"]')
+        self.assertEqual(out["topicsFolded"], [False, True])
+        self.assertTrue(out["formShows"], "a new topic opens Topics")
+
+
 if __name__ == "__main__":
     unittest.main()

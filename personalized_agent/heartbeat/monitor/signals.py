@@ -7,7 +7,7 @@ named SIGNALS - the time, whether the user is there, how busy, since when they
 work today, how long this stretch and since the last break, the project of the
 window in front, and the HABITS of the last weeks - and into EVENTS, the
 moments something changed (the day began, back after an absence, a new piece
-of work, a project come back to after days, the work scattered, a rest).
+of work, a rest).
 
 The Activators (activators.py) are written against these names, and the model
 is shown the list (`describe`). Nothing here reads what is on the screen but
@@ -81,12 +81,20 @@ COMMON_WORDS = {"the", "and", "for", "with", "from", "new", "tab", "page", "home
                 "http", "https", "www", "com", "org", "html", "file", "files", "folder",
                 "window", "windows", "document", "documents", "project", "work", "task"}
 PATH_NAME_LEAST = 6
+#: WHILE A VIDEO HAS THE FOCUS THIS LONG, the paths say nothing of what the user is at (the user,
+#: 2026-11-06, "看哪个窗口在上"): a coding assistant working in a folder is not the user working
+#: there. A glance at one, shorter than this, leaves the project as it was.
+WATCHING_SECONDS = 30.0
+#: How far back the focus is read for that: titles change as videos follow one another.
+WATCHING_LOOKS_BACK = 20
 _NAME_SPLIT = re.compile(r"\s+[-–—|]\s+|[\\/]")
 #: The windows are placed again at most so often (the grouping moves slowly).
 RELABEL_EVERY_S = 300
 #: HABITS are read over this many weeks, and asked again at most so often.
 HABIT_DAYS = 28
 HABIT_EVERY_S = 600
+#: How far back what is scattered for this user is read from.
+SCATTERED_DAYS = 14
 HABIT_LEAST_DAYS = 3
 
 #: The programs running are read at most so often.
@@ -160,8 +168,6 @@ EVENTS: Dict[str, str] = {
     "back": "back at the computer after an absence (back_after_minutes says how long)",
     "project_changed": "the window in front is now another project",
     "new_work": "a piece of work never worked on before today has begun",
-    "project_return": "back to a project after days (project_days_since says how many)",
-    "scattered": "the work has turned scattered - many switches",
     "leisure": "turned to something to watch or play, after working",
     "text": "new words appeared in a window (for keyword conditions)",
     "closing_up": "many windows closed in a few minutes: tidying up, perhaps to stop for the day",
@@ -239,6 +245,7 @@ class Signals:
         self._labelling: Optional[Dict[str, Any]] = None
         self._relabelled_at = 0.0
         self._habits: Tuple[float, str, Dict[str, Any]] = (0.0, "", {})
+        self._scattered: Tuple[float, Optional[float]] = (0.0, None)
         self._born = datetime.now(timezone.utc)
         self._window_counts: List[Tuple[float, int]] = []
         self._watched_at: Optional[datetime] = None
@@ -444,8 +451,8 @@ class Signals:
         told: Dict[datetime, str] = {}
         if work and any(classes.values()):
             matcher = ProjectMatcher()
-            matcher.learn((classes[w.start], items[w.start], w.start)
-                          for w in work if classes[w.start])
+            matcher.learn((classes[w.start], index.taught(w, classes[w.start], items[w.start]),
+                           w.start) for w in work if classes[w.start])
             for w in work:
                 if classes[w.start]:
                     continue
@@ -455,9 +462,8 @@ class Signals:
                     if found[0] in index.units:
                         out[w.start] = (found[0], index.names.get(found[0], ""))
                         told[w.start] = "history"
-        # WRITTEN AS IT IS READ LIVE (the user, 2026-11-03): a window the
-        # grouping has not reached goes by the same ways as the one under way
-        # - its paths, then its words; the grouping corrects it when it comes.
+        # A window the grouping has not reached goes by its paths, then its
+        # words (the user, 2026-11-03); the grouping corrects it when it comes.
         words = self.__dict__.get("_seen_words", {})
         for w in work:
             if classes.get(w.start) or w.start in out:
@@ -545,14 +551,34 @@ class Signals:
             return None
         live = built[0]
         if live.main != AWAY:
-            self._place_live(live, events, boundary + timedelta(minutes=cut))
+            self._place_live(live, events, boundary + timedelta(minutes=cut), local)
         midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
         assign_units(self.store.since(midnight) + [live], lambda w: (w.project_id, w.project))
         return live
 
-    def _place_live(self, live: Window, events: List[Dict[str, Any]], end: datetime) -> None:
-        """Its project: what the placed windows teach, then the same working path
-        as work already found, then - the last way - what the titles mean."""
+    def _watching(self, now: datetime) -> bool:
+        """Whether a video has had the focus, one after another, for WATCHING_SECONDS."""
+        began = None
+        for row in self.db.query(
+                "SELECT timestamp, application, data FROM raw_events WHERE event_type = "
+                "'application.focused' AND timestamp <= ? ORDER BY timestamp DESC LIMIT ?",
+                (now.astimezone(timezone.utc).isoformat(), WATCHING_LOOKS_BACK)):
+            try:
+                title = str(json.loads(row["data"] or "{}").get("window_title") or "")
+            except ValueError:
+                title = ""
+            if label_for(str(row["application"] or ""), title, self._rules()) != "entertainment":
+                break
+            began = _aware(row["timestamp"])
+        return began is not None and (now - began).total_seconds() >= WATCHING_SECONDS
+
+    def _place_live(self, live: Window, events: List[Dict[str, Any]], end: datetime,
+                    now: Optional[datetime] = None) -> None:
+        """Its project: what the placed windows teach, then the same working path as work already
+        found - not while a video has the focus. NOT WHAT THE WORDS ON THE SCREEN MEAN (the user,
+        2026-11-06): a calendar lists every matter of the week, and none of them is what is being
+        done. Replayed, the words placed 5 windows of 277 here, 4 of them wrongly: none is better
+        than the wrong one."""
         if self._labelling is None:
             self.relabel()
         state = self._labelling or {"started_in": {}, "matcher": None, "index": None}
@@ -568,17 +594,16 @@ class Signals:
                 live.project_id, live.project = found[0], index.names.get(found[0], "")
                 self._live = {"how": "history", "items": items, "seen": seen}
                 return
-        for said, how in (("paths", self._place_by_paths),
-                          ("words", lambda found: self._place_by_words(found, seen))):
-            try:
-                unit, name = how(items)
-            except Exception:
-                log.debug("the window could not be placed", exc_info=True)
-                unit, name = "", ""
-            if unit:
-                live.project_id, live.project = unit, name
-                self._live = {"how": said, "items": items, "seen": seen}
-                return
+        if self._watching(now or end):
+            return
+        try:
+            unit, name = self._place_by_paths(items)
+        except Exception:
+            log.debug("the window could not be placed", exc_info=True)
+            unit, name = "", ""
+        if unit:
+            live.project_id, live.project = unit, name
+            self._live = {"how": "paths", "items": items, "seen": seen}
 
     @staticmethod
     def _name_key(text: str) -> str:
@@ -750,6 +775,16 @@ class Signals:
             return ""
 
     # -- habits ---------------------------------------------------------------------------
+    def scattered_at(self, now: datetime) -> float:
+        """How many focus changes an hour is scattered for this user, from their own weeks. The
+        line was written and never used: a fixed 12, past which 65 in 100 windows of real work were
+        (measured 2026-11-06), said nothing."""
+        held_at, line = self._scattered
+        if line is None or time.monotonic() - held_at >= HABIT_EVERY_S:
+            line = state_module.scattered_line(self.store.since(now - timedelta(days=SCATTERED_DAYS)))
+            self._scattered = (time.monotonic(), line)
+        return line
+
     def habits(self, now: Optional[datetime] = None) -> Dict[str, Any]:
         """WEEKS OF HABITS (the user, 2026-11-03): over the last four weeks, on
         days like today - when work begins, how long a stretch runs before a
@@ -844,7 +879,8 @@ class Signals:
             when = now or datetime.now(timezone.utc)
             local = when.astimezone()
             live = self.live_window(when)
-            mode_state = state_module.infer_state(live) if live is not None else None
+            mode_state = (state_module.infer_state(live, self.scattered_at(when))
+                          if live is not None else None)
             try:
                 idle = self.idle()
             except Exception:
@@ -998,12 +1034,8 @@ class Signals:
             out.append("day_began")
         if now["project_id"] and now["project_id"] != before.get("project_id"):
             out.append("project_changed")
-            if now["project_days_since"] >= 2:
-                out.append("project_return")
             if now["project_days_since"] < 0:
                 out.append("new_work")
-        if now["depth"] == state_module.SCATTERED and before.get("depth") != state_module.SCATTERED:
-            out.append("scattered")
         if (now["activity"] == "entertainment" and before.get("activity") != "entertainment"
                 and before.get("mode") in (state_module.WORKING, state_module.SHALLOW)):
             out.append("leisure")

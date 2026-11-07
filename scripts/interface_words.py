@@ -38,7 +38,7 @@ WEB = ROOT / "personalized_agent" / "api" / "web"
 TABLES = WEB / "lang"
 LANGUAGES = ("zh",)
 SCRIPTS = ["app.js", "debugger.js", "chat.js", "chat-debugger.js", "chat-navigation.js",
-           "listener-debugger.js"]
+           "listener-debugger.js", "recommendation-debugger.js"]
 PAGES = ["index.html", "chat.html"]
 REGEX_BEFORE = set("(,=:[!&|?{};+-*%<>~^")
 ATTRS = ("title", "placeholder", "aria-label", "label", "alt")

@@ -143,6 +143,107 @@ class ItsSizeOfWordsTests(unittest.TestCase):
         desk._bubble.destroy()
 
 
+class ItsBarAndItsSmallestWordsTests(unittest.TestCase):
+    """The user, 2026-11-06: the bar on the right could not be hit, and the words went no smaller."""
+
+    def _desk(self, points, step):
+        import collections
+        import tkinter as tk
+        from types import SimpleNamespace
+        from personalized_agent.ui.desktop import DesktopAgent
+        root = tk.Tk()
+        root.withdraw()
+        self.addCleanup(gc.collect)
+        self.addCleanup(root.destroy)
+        kept = {"popup_zoom": step}
+        desk = DesktopAgent.__new__(DesktopAgent)
+        desk.root, desk.size = root, 128
+        desk.config = SimpleNamespace(get=lambda key, default=None: kept.get(key, default),
+                                      set=lambda key, value, internal=False: kept.__setitem__(key, value))
+        desk._bubble_queue = collections.deque()
+        desk._bubble, desk._bubble_count, desk._showing = None, None, None
+        desk.app = SimpleNamespace(REMIND_LATER_MINUTES=30)
+        desk._popup_font = lambda: ("Segoe UI", points)
+        desk._words = lambda text: text
+        desk._fill = lambda text, *args: text.format(*args)
+        desk._avatar_box = lambda: (900, 300, 128, 128)
+        desk._options_for = lambda _question: [{"key": "", "label": "Got it", "primary": True}]
+        desk._blocked = lambda: False
+        desk.notify_bubble("Your day: " + "A made-up sentence about the day. " * 120,
+                           notification_id="n1", template="passive",
+                           reason="For your survey", trigger="The evening report")
+        root.update()
+        return desk
+
+    def _all(self, widget, kind):
+        found = [widget] if isinstance(widget, kind) else []
+        for one in widget.winfo_children():
+            found += self._all(one, kind)
+        return found
+
+    def _bar(self, desk):
+        """Its thumb comes once Tk has counted the lines, a moment after the card is up."""
+        import time
+        import tkinter as tk
+        bar = self._all(desk._bubble, tk.Canvas)[-1]
+        until = time.monotonic() + 5
+        while not bar.find_all() and time.monotonic() < until:
+            desk.root.update()
+            time.sleep(0.01)
+        return bar
+
+    def _sizes(self, desk):
+        import tkinter as tk
+        import tkinter.font as tkfont
+        return [tkfont.Font(root=desk.root, font=one.cget("font")).actual("size")
+                for one in self._all(desk._bubble, (tk.Text, tk.Label))]
+
+    def test_the_bar_is_pressed_anywhere_on_its_strip(self) -> None:
+        import tkinter as tk
+        from personalized_agent.ui import sizes
+        from personalized_agent.ui.desktop import BAR_WIDE
+        desk = self._desk(12, 0)
+        bar = self._bar(desk)
+        box = next(one for one in self._all(desk._bubble, tk.Text) if float(one.yview()[1]) < 1.0)
+        self.assertEqual(bar.winfo_width(), sizes.px(bar, BAR_WIDE))
+        self.assertGreaterEqual(bar.winfo_width(), 16)
+        bar.event_generate("<ButtonPress-1>", x=0, y=bar.winfo_height() - 2)
+        bar.event_generate("<ButtonRelease-1>", x=0, y=bar.winfo_height() - 2)
+        desk.root.update()
+        self.assertGreater(box.yview()[0], 0.0, "at the far edge from the thumb")
+
+    def test_the_bar_is_seen_on_its_card_and_lit_under_the_pointer(self) -> None:
+        import tkinter as tk
+        from personalized_agent.ui.desktop import BUBBLE_LOOK
+        look = BUBBLE_LOOK[False]
+        desk = self._desk(12, 0)
+        bar = self._bar(desk)
+        self.assertEqual(bar.cget("bg"), look["bg"])
+        thumb = bar.find_all()[0]
+        self.assertEqual(bar.itemcget(thumb, "fill"), look["muted"])
+        bar.event_generate("<Enter>", x=1, y=1)
+        desk.root.update()
+        self.assertEqual(bar.itemcget(bar.find_all()[0], "fill"), look["ink"])
+
+    def test_large_words_go_by_share(self) -> None:
+        said = self._sizes(self._desk(26, -5))
+        self.assertEqual(max(abs(one) for one in said), 14, "a title of 13 and one, not 21")
+
+    def test_every_part_of_it_goes_down_with_the_words(self) -> None:
+        from personalized_agent.ui import sizes
+        said = [abs(one) for one in self._sizes(self._desk(12, sizes.ZOOM_LEAST))]
+        self.assertLessEqual(max(said), sizes.SMALLEST_WORDS + 1)
+
+    def test_the_steps_as_they_were_stay_where_they_were(self) -> None:
+        from personalized_agent.ui import chat_bubble, handed_note, sizes
+        self.assertEqual(sizes.ZOOMS[sizes.ZOOM_START], 1.0)
+        self.assertEqual(sizes.ZOOMS[sizes.ZOOM_START - 5], 0.5, "where the chat's least was")
+        self.assertEqual(sizes.ZOOM_START + sizes.ZOOM_LEAST, 0)
+        self.assertEqual(sizes.ZOOM_START + sizes.ZOOM_MOST, len(sizes.ZOOMS) - 1)
+        self.assertIs(chat_bubble.ZOOMS, sizes.ZOOMS)
+        self.assertIs(handed_note.ZOOMS, sizes.ZOOMS)
+
+
 class AReplyTheChatClosedOnTests(unittest.TestCase):
 
     def test_it_comes_as_a_notification_opened_in_the_chat(self) -> None:

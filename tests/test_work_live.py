@@ -820,7 +820,7 @@ class ARunWaitingOnItsModelOnThePageTests(unittest.TestCase):
         self.assertEqual(out["badges"], ["waiting for you: the model", ""])
         self.assertIn("resets at 23:50", out["badgeTitle"])
         # On the tabs: one of yours waits, one of the debugger's.
-        self.assertEqual(sorted(out["tabs"]), ["experience:1 waiting", "xdebug:1 waiting"])
+        self.assertEqual(sorted(out["tabs"]), ["overview:1 waiting", "xdebug:1 waiting"])
         self.assertIn("Claude Code: usage limit reached", out["card"])
         self.assertIn("You have hit your session limit", out["card"])
         self.assertIn("Resets at", out["card"])

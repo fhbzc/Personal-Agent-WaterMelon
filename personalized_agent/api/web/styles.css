@@ -218,6 +218,10 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
 .badge.ok { color: var(--ok); border-color: var(--ok); }
 .badge.warn { color: var(--warn); border-color: var(--warn); }
 .badge.err { color: var(--err); border-color: var(--err); }
+/* What waits: each by its title, opened in place. */
+#toast-waiting-list { display: grid; gap: 4px; max-height: 60vh; overflow-y: auto; padding: 8px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.toast-waiting-row > summary { cursor: pointer; font-size: 13px; }
 #toast { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column;
   gap: 8px; z-index: 40; }
 .toast-item { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent);
@@ -3018,6 +3022,7 @@ button.xp-calls-key:focus-visible { outline: 2px solid var(--accent, currentColo
 .event-edit [hidden] { display: none !important; }
 .event-edit-buttons { display: flex; gap: 8px; }
 .toast-notification { display: grid; gap: 6px; }
+.toast-why { font-style: italic; font-size: .88em; }
 .toast-notification .toast-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
 .toast-recommended { border-left-color: #2e9e83; background: color-mix(in srgb, #2e9e83 14%, var(--panel)); }
 .col-search { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 12px 0; }
@@ -3063,6 +3068,10 @@ button.xp-calls-key:focus-visible { outline: 2px solid var(--accent, currentColo
   background: var(--panel); border: 1px solid var(--line);
   border-left: 3px solid var(--accent); border-radius: 8px; padding: 6px 8px; }
 #chat-log.fu-margin-mode .fu-form .fu-input { flex-basis: 100%; }
+/* A note's right edge: dragged, the notes are as wide as the user wants them. */
+.fu-grip { display: none; }
+#chat-log.fu-margin-mode .fu-grip { display: block; position: absolute; top: 0; bottom: 0; right: -10px;
+  width: 12px; cursor: col-resize; touch-action: none; }
 mark.fu-anchor { background: color-mix(in srgb, var(--accent) 22%, transparent);
   color: inherit; border-radius: 3px; padding: 0 1px; }
 mark.fu-anchor.fu-active { background: color-mix(in srgb, var(--accent) 42%, transparent); }
@@ -3119,7 +3128,7 @@ mark.fu-anchor.fu-active { background: color-mix(in srgb, var(--accent) 42%, tra
    is unaffected by the column beside it. */
 .chat-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px;
   height: 74vh; min-height: 320px; }
-.chat-layout.has-sidebar { grid-template-columns: 248px minmax(0, 1fr); }
+.chat-layout.has-sidebar { grid-template-columns: min(var(--chat-sidebar-width, 248px), 60%) minmax(0, 1fr); }
 .chat-layout.has-sidebar.sidebar-collapsed { grid-template-columns: minmax(0, 1fr); }
 .chat-workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .chat-workspace .chat-card { flex: 1; height: auto; min-height: 0; margin-bottom: 0; }
@@ -3128,8 +3137,17 @@ mark.fu-anchor.fu-active { background: color-mix(in srgb, var(--accent) 42%, tra
 .chat-toolbar { display: flex; align-items: center; gap: 10px; min-height: 36px;
   margin-bottom: 8px; color: var(--muted); }
 .chat-toolbar [data-chat-title] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-sidebar { display: flex; flex-direction: column; min-height: 0; min-width: 0;
+.chat-sidebar { position: relative; display: flex; flex-direction: column; min-height: 0; min-width: 0;
   padding: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+/* Its edge, in the gap beside it: dragged, the sidebar is as wide as the user wants it. */
+.chat-sidebar-grip { position: absolute; top: 0; bottom: 0; right: -13px; width: 12px;
+  cursor: col-resize; touch-action: none; border-radius: 6px; }
+.chat-sidebar-grip::after, .fu-grip::after { content: ""; position: absolute; top: 12px; bottom: 12px;
+  left: 5px; width: 2px; border-radius: 1px; background: transparent; }
+.chat-sidebar-grip:hover::after, .chat-sidebar-grip:focus-visible::after,
+.chat-sidebar-grip.dragged::after, .fu-grip:hover::after, .fu-grip:focus-visible::after,
+.fu-grip.dragged::after { background: var(--accent); }
+.chat-sidebar-grip:focus-visible, .fu-grip:focus-visible { outline: none; }
 .chat-sidebar-head { display: flex; align-items: center; justify-content: space-between;
   padding: 0 4px 8px; }
 .chat-nav-icon { background: transparent; color: var(--muted); padding: 5px 8px; flex-shrink: 0; }
@@ -3146,10 +3164,17 @@ mark.fu-anchor.fu-active { background: color-mix(in srgb, var(--accent) 42%, tra
      overlays it), it covered each row's menu at the right edge. */
   padding-right: 12px; scrollbar-gutter: stable; }
 /* As wide as the list and no wider, whatever a title says. */
-.chat-history, .chat-pinned { min-width: 0; }
+.chat-history { min-width: 0; }
 /* Topics, Chats: larger than the conversations' names (13px) - the user, 2026-11-03. */
 .chat-section-label { display: flex; align-items: center; justify-content: space-between;
   padding: 8px 8px 6px; font-size: 15px; font-weight: 700; color: var(--ink); }
+/* A label that folds what is under it. */
+button.chat-section-label { justify-content: flex-start; gap: 6px; width: 100%; background: transparent;
+  border: 0; border-radius: 6px; text-align: left; cursor: pointer; }
+button.chat-section-label:hover { background: var(--bg); }
+.chat-fold-mark { width: 12px; flex: none; color: var(--muted); }
+/* Pinned: at the top of its part, and marked. */
+.chat-nav-line.pinned button.chat-nav-row::before { content: "\1F4CC"; margin-right: 4px; font-size: 11px; }
 button.chat-general { background: transparent; width: 100%; text-align: left; border-radius: 8px; }
 button.chat-general:hover { background: var(--bg); }
 .chat-sidebar nav { display: flex; flex-direction: column; gap: 2px; }
@@ -3203,6 +3228,7 @@ input.chat-nav-rename { flex: 1; min-width: 0; font-size: 13px; padding: 5px 8px
   .chat-sidebar { position: fixed; inset: 0 auto 0 0; width: min(290px, 85vw);
     height: 100dvh; z-index: 101; border-radius: 0;
     padding: max(14px, env(safe-area-inset-top)) 12px max(14px, env(safe-area-inset-bottom)); }
+  .chat-sidebar-grip { display: none; }
   .chat-sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 100;
     background: rgb(0 0 0 / 35%); border-radius: 0; padding: 0; }
   body:has(.sidebar-drawer-open) { overflow: hidden; }
@@ -4019,6 +4045,13 @@ button.danger-text:not(:disabled) { color: var(--danger-ink); }
 .rd-tip-value { margin-left: auto; padding-left: 12px; font-weight: 600;
   font-variant-numeric: tabular-nums; }
 .rd-scroll { overflow-x: auto; }
+/* The recommendation debugger. */
+.rec-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.rec-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.rec-table th, .rec-table td { padding: 7px 8px; border-bottom: 1px solid var(--line);
+  text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.rec-words { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 4px; }
+.rec-word { padding: 1px 6px; border-radius: 6px; background: var(--soft, rgba(127,127,127,.12)); }
 .rd-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .rd-table th, .rd-table td { padding: 3px 8px; text-align: left; border-bottom: 1px solid var(--line); }
 .rd-table thead th { color: var(--muted); font-weight: 600; }
@@ -4133,7 +4166,6 @@ button.danger-text:not(:disabled) { color: var(--danger-ink); }
   border-bottom: 1px solid var(--line); }
 .pj-axis { height: 22px; border-bottom: none; font-size: 0.95em; color: var(--muted); }
 .pj-tick { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
-.pj-grid { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--line); }
 .pj-juice-defs { position: absolute; }
 .pj-smear { position: absolute; inset: 0; overflow: visible; }
 .pj-wash { opacity: 0.2; }

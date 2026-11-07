@@ -146,6 +146,16 @@ def _why_told(task: ScheduledTask) -> str:
     return re.sub(r"\s*\(?\b(?:event|state|rec)_[0-9a-f]{8,}\)?", "", said).strip()[:300]
 
 
+def _made_by(task: ScheduledTask) -> Dict[str, str]:
+    """What put it on the calendar, said with it: the trigger of the Monitor, whose window it was
+    read from, or who else. One from before the trigger was kept says only that one did."""
+    written_in = str(task.metadata.get("heartbeat_task") or "")
+    trigger = str(task.metadata.get("trigger") or "")
+    if not trigger and written_in.startswith("trigger"):
+        trigger = "A calendar trigger"
+    return {"made_by": str(task.created_by or ""), **({"trigger": trigger} if trigger else {})}
+
+
 @dataclass
 class ExecutionOutcome:
     """What an execution returned, and what should become of the task.
@@ -259,7 +269,7 @@ class TaskExecutor:
             metadata={"task_id": task.id, "source": "scheduler",
                       # WHY THE AGENT ADDED IT, shown with it (the user, 2026-11-04);
                       # one the user added themselves has none.
-                      "reason": _why_told(task)},
+                      "reason": _why_told(task), **_made_by(task)},
             template=template, question=self._reply_for(task),
         )
         self._ask_whether_it_was_worth_it(task)
@@ -433,7 +443,7 @@ class TaskExecutor:
         if _wants_notification(task):
             self.notifications.notify(
                 task.title, answer[:500], kind="proactive",
-                metadata={"task_id": task.id},
+                metadata={"task_id": task.id, **_made_by(task)},
                 template=REMINDER, question=self._reply_for(task),
             )
             self._ask_whether_it_was_worth_it(task)
@@ -455,7 +465,7 @@ class TaskExecutor:
             self.notifications.notify(
                 task.title, response.text[:500], kind="proactive",
                 template=REMINDER, question=self._reply_for(task),
-                metadata={"task_id": task.id},
+                metadata={"task_id": task.id, **_made_by(task)},
             )
             self._ask_whether_it_was_worth_it(task)
         return ExecutionOutcome(True, response.text[:2000],

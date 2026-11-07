@@ -232,6 +232,7 @@ ADDED_COLUMNS = (
     ("lesson_evidence", "category", "TEXT NOT NULL DEFAULT ''"),
     ("lesson_evidence", "content", "TEXT NOT NULL DEFAULT ''"),
     ("lesson_evidence", "english", "TEXT NOT NULL DEFAULT ''"),
+    ("lesson_evidence", "moment", "TEXT NOT NULL DEFAULT ''"),
     # A chat topic's shared context (the user, 2026-11-03).
     ("chat_projects", "context", "TEXT DEFAULT ''"),
     # The collection's folders (the user, 2026-11-03).
@@ -1252,7 +1253,8 @@ CREATE TABLE IF NOT EXISTS lesson_evidence (
     outcome_of   TEXT NOT NULL DEFAULT '',
     category     TEXT NOT NULL DEFAULT '',   -- its class, in English
     content      TEXT NOT NULL DEFAULT '',   -- exactly what it was, kept
-    english      TEXT NOT NULL DEFAULT ''    -- what happened, for finding it
+    english      TEXT NOT NULL DEFAULT '',   -- what happened, for finding it
+    moment       TEXT NOT NULL DEFAULT ''    -- what the user was doing then (lessons/moment.py)
 );
 CREATE INDEX IF NOT EXISTS lesson_evidence_kind ON lesson_evidence (kind, processed_at);
 CREATE TABLE IF NOT EXISTS lesson_rules (

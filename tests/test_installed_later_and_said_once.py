@@ -103,7 +103,9 @@ class SaidOnceAndNotReadyTests(unittest.TestCase):
         stub = {"/api/notifications": {"notifications": [
                     {"id": "n1", "title": "A reminder", "message": "Send the draft",
                      "kind": "proactive", "metadata": {}}]}}
-        steps = ("speaksInBubble=true;await pollNotifications();await wait();"
+        # chat.js's: this page is drawn without it.
+        steps = ("window.writeWithLinks=(el,words)=>{el.textContent=words;};"
+                 "speaksInBubble=true;await pollNotifications();await wait();"
                  "out.cards=document.querySelectorAll('.toast-notification').length;"
                  "out.read=window.__posts.filter(p=>p.p==='/api/notifications/read').length;"
                  "speaksInBubble=false;await pollNotifications();await wait();"

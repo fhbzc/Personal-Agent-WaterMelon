@@ -6801,6 +6801,16 @@
   "blocks": [
    {
     "type": "p",
+    "text": "*Amended 2026-11-06:* WHAT COMES TO THE FRONT IS TOLD, on Windows and on a Mac: the system says so and the window is looked at a quarter of a second later, so that one only passed through while switching is not recorded. On a Mac this is between programs. What the system says nothing of - a browser's tab, a title, the windows of one program on a Mac - and whether the user is away are still looked at every two seconds, as is everything on Linux.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-06:* THE AGENT'S OWN WINDOWS ARE KNOWN BY THEIR EXACT TITLES, not by holding its name: a call named after the project went unread as the agent's own. The picture taken for the chat is of the window the user was last in, found by its title, not of whatever stands on top: a browser's bar saying the screen is being shared was taken in place of the call. And the chat may ask what was on the screen in a stretch of time (`screen_history`): nothing of it goes with a message unasked, and it is held to what holds today, the excluded windows, the agent's own and any text showing a password left out.",
+    "amended": true
+   },
+   {
+    "type": "p",
     "text": "The Listener should capture application usage."
    },
    {
@@ -6850,7 +6860,9 @@
     "type": "p",
     "text": "**Current activity does not wait behind churn.** There is no backlog: each heartbeat reads the window since the last one, whole, and a window too large for one review is read in turns, oldest first."
    }
-  ]
+  ],
+  "amendment_note": "Amended 2026-11-06: told by the system what comes to the front.",
+  "amended": true
  },
  {
   "number": "21",
@@ -16878,7 +16890,42 @@
   "blocks": [
    {
     "type": "p",
-    "text": "*Amended 2026-11-05:* THE RESERVE (the user's design; heartbeat/monitor/reserve.py and match.py), the module Recommendations, which can be switched off whole. What may be recommended is made ready AHEAD, from what an issue of the Newspaper left over and from the web: the model writes each one's angle, why, how long it stays good and the words that set it off - names once, concepts in Chinese and in English. No vectors. Past its time the model says whether to extend it. The reserve is kept deep, up to 100, because most of it is never set off. What the user has read is marked at each heartbeat and never told. WHAT IS ON THE SCREEN is matched on what they can SEE: the browser extension's word where it is there, else the OCR of the window in front, else nothing. Very high, it is sent without a model; in the middle a model with a short prompt and no tools says yes or no; first it is only recorded, to set the scores. No limit a day and no gap: the model is told how many there have been. EVERY ANSWER IS A LESSON HOLDING THE WHOLE CHAIN - how it was made, what set it off, which of the day it was - and those lessons are the context the next time it prepares content and words; they keep the words that matched, never the screen's.",
+    "text": "*Amended 2026-11-05:* THE RESERVE (the user's design; heartbeat/monitor/reserve.py and match.py), the module Recommendations, which can be switched off whole. What may be recommended is made ready AHEAD, from what an issue of the Newspaper left over and from the web: the model writes each one's angle, why, how long it stays good and the words that set it off - names once, concepts in Chinese and in English. No vectors. Past its time the model says whether to extend it. The reserve is kept deep, up to 100, because most of it is never set off. What the user has read is marked at each heartbeat and never told. WHAT IS ON THE SCREEN is matched on what they can SEE: the browser extension's word where it is there, else the OCR of the window in front, else nothing. Very high, it is sent without a model; in the middle a model with a short prompt and no tools says yes or no. No limit a day and no gap: the model is told how many there have been. EVERY ANSWER IS A LESSON HOLDING THE WHOLE CHAIN - how it was made, what set it off, which of the day it was - and those lessons are the context the next time it prepares content and words; they keep the words that matched, never the screen's.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-06:* WHEN IT LOOKS is not a fixed clock. The model says when looking again is worth it, between one hour and a day, and code reads what says the user may need something new: new work, a piece of work falling short of things made for it, an answer to a recommendation. Each wakes it sooner, whatever the stock, and it is told why; it may still find nothing is needed. A full reserve with nothing changed is left alone. Nothing stays good past thirty days without the model being asked again. THE SAME LINK IS NEVER TOLD TWICE: code compares links once what only says how someone came to them is taken off, against all that was recommended, printed in an issue or read, on every way a recommendation is sent. A match is sent as it comes: there is no way of only recording, and each match is kept with what was done with it. The Recommendation debugger shows what is kept ready, the words that set each off, why it last looked and what matched. What is scattered goes by the user's own last two weeks, the top quarter of their working windows, and no longer a fixed twelve changes an hour.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-06:* TWO LEVELS OF NOTIFICATION. One pops; one waits in a list, a line beside the avatar saying how many, each by its title and opened in place with its words, why it was told and its answers. Recommendations, the offer of the evening report, what comes from Society and news of an update wait; a model may say a recommendation is worth interrupting for, and that goes in its lesson. What goes wrong, what the agent is stuck on and what the user set themselves pop. A blocker holds what pops, except a risk, which comes through.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-06:* THE EVENING REPORT IS ASKED ONCE AND WRITTEN ONCE. Its question went to the waiting list, and at the fixed time it was asked again; both were answered Now, seconds apart, and two reports came. While the question waits it is not asked again; dismissed unanswered, it may be. One report is written, however many presses, and once it is written nothing is left to answer. A report that could not be written can be asked for again.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-06:* WORDS ZOOM BY SHARE. Each step of the one zoom took a point off the notification and the panels, so text set large on a large screen stopped at 21 points with the zoom at its least. Every window now goes by the same shares as the chat, down to 0.3. A notification's scroll bar takes the mouse on a wider strip than the thumb drawn in it.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-06:* NO WORK PANEL. Work is followed and opened from To do and Work assigned on the Overview, drafts kept included: where each try stands, Pause, Resume, Stop and Continue, and what a run asks of the user, on its row, its item opened and the tab marked. What was made opens straight from there, of a run that stopped too: what it handed over, else the deliverable or the folder. Work that ends done with nothing handed over and no file made hands over its report as an answer. There is nothing to go and see elsewhere.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-06:* A TRIGGER WORD WEIGHS BY HOW RARE IT IS FOR THIS USER: an inverse document frequency of their own, a document being a window on one day or one piece they read, over what is kept of the last two weeks, counted for the trigger words alone in the heartbeat's step. It is a weight on what a word is worth, between 0.3 and 1, never nothing: the words of their work are the ones they see most. How often a word repeats on a page counts for nothing.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-06:* THE LEARNING LEARNS FROM EVERY LESSON. Answers to notifications and recommendations and what the user does to their contacts and lists come in as judgments of a unit of their own, in the same update, and the reasons are looked for across them and the work. The work's own lessons come in through its reasons and principles, not one by one. One further step looks across contexts for a motive or a tension resting on at least two; each is a hypothesis, tested as any reason is and never told to the user. Nothing is filtered out by where it came from: a reason learned from answers says which ones, to whoever is given it, a work run too, and that one judges whether it bears on what it is doing. An answer counts as any judgment does, against a reason of the work too: each judgment shown to the model says the context it was in, which piece of work or an answer to the agent, and whether a reason changes is the model's to say. A reason of the work changed on an answer keeps that in its history, and the Recommendation debugger lists it. Every decision's one retrieval now finds these reasons beside the lessons. A lesson keeps the moment it came at: what the user was doing, where, and what it was about, by name. Before each answer is learned from it is guessed, with the reasons and without, so that it can be read whether they tell anything.",
     "amended": true
    },
    {
@@ -16928,7 +16975,42 @@
    },
    {
     "type": "p",
-    "text": "The built-in ones are a meeting invitation and a time being agreed, spam and scam risk, the moments to recommend something (the day begun, back after an absence, new work, back to a project, the work scattered, a rest), a break, and the evening report. Spam and the two calendar ones are protected from the start.",
+    "text": "The built-in ones are a meeting invitation and a time being agreed, spam and scam risk, the moments to recommend something (the day begun, back after an absence, new work, a rest), a break, and the evening report. Spam and the two calendar ones are protected from the start.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-06:* \"BACK TO A PROJECT AFTER DAYS\" IS TAKEN OUT, the Activator and its event. The project under way is read too unsurely to say this: replayed over eight real days it fired 4 times, wrong all 4, and the one real return was missed. One already kept is deleted at the next start, and what it did stays on the record.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-06:* A LOT OF NEW TEXT IS A MOMENT TO RECOMMEND. Beside what is kept ready, a recommendation can still be made on the spot: an Activator fires and a model is asked, and the model may send nothing. This one fires when at least 800 new characters come up in a window, not a terminal, and nine in ten of their words were on no screen for the last 30 minutes. At most once an hour across all windows: on eight real days of screens, about 6 a day. Mail and chats count, and the model asked may search the web, so what it searches is held: it is told to search the public subject in general words, and, for anything but a page, the web guard refuses a search carrying a mail address, a contact or a whole name from the text, a long number of it, or four words in a row of it (six characters in a language without spaces). A search refused is rewritten or done without. A person's single name in Chinese that is no contact gets past the code, and only the model's instruction stands there. Text showing a password fires nothing. Only a built-in Activator can ask this; the model writes keywords, signals and events.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-06:* \"THE WORK TURNS SCATTERED\" IS TAKEN OUT, the Activator and its event: nothing is recommended for scattered work, as the user said. Many switches gave a moment and no subject, so what came was whatever the user had liked lately. `depth` still says scattered. One already kept is deleted at the next start.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-06:* WHILE A VIDEO HAS THE FOCUS, THE PATHS SAY NOTHING. The project under way is read by what the windows placed teach, then by the working path, then by the words. The path comes mostly from a coding assistant's records, each standing for half a minute in its folder, so a user watching a video while an assistant worked was read as working there. A video in focus for 30 seconds without a break, one after another, leaves the path out for the window under way; a glance changes nothing, and windows already over are placed as before. Replayed over eight real days, the windows with a video in focus read as the main project fell from 34 of 50 to 24, and those with code in focus were untouched.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-06:* THE WORDS ON THE SCREEN NO LONGER PLACE THE WINDOW UNDER WAY: a calendar page lists every matter of the week, and one of them is not what is being done. Replayed, they placed 5 windows of 277, 4 wrongly, and no project is better than the wrong one. Windows already over still go by them until the grouping comes.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-06:* WHAT A WINDOW TEACHES IS HELD TO WHAT THE STATES SAY. A window has one unit, the one covering most of it, and everything in it used to teach that unit: nine minutes of a calendar in a window of another project made the week's calendar that project's. The model already names what each state rests on (`sources`). What only the states of something else name teaches nothing of this unit; what none name teaches as before. A page's address names nothing, since one page of a site is not the site. No new model call. A window the grouping has placed is not changed by this, only what is learned from it.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-06:* WHAT A LATE LOOK READ REACHES THE NOTIFICATIONS. A late look writes states and nothing else, and each ordinary round reads only its own stretch, so a message sent inside a stretch read late never reached a step that could close the reminder to send it: the reminder came up an hour and a half later. The states a late look writes are now kept and given to the notifications step of the next ordinary round, as READ LATE, with their ids and what they were seen by, until the step has answered. No new model call.",
     "amended": true
    },
    {

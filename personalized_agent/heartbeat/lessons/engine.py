@@ -325,24 +325,38 @@ class LessonEngine:
         self.progress: Dict[str, Dict[str, Any]] = {}
 
     # -- what the user did ---------------------------------------------------
+    #: What the user is doing now, for a lesson made now (set by the application).
+    moment_now: Any = None
+
     def record(self, kind: str, source_id: str, summary: str, action: str = "",
                reason: str = "", at: str = "", weight: Optional[float] = None,
-               outcome_of: str = "", learn: bool = False, content: str = "") -> str:
+               outcome_of: str = "", learn: bool = False, content: str = "",
+               moment: Optional[Dict[str, Any]] = None) -> str:
         """One piece of evidence, kept - learned from with the next round
         (or at once, with `learn`). `content`: exactly what it was - what was
-        shown, why it was made - kept with it."""
+        shown, why it was made - kept with it. `moment`: what the user was doing when it was
+        shown (lessons/moment.py); else now, unless this is from another time, or the work's."""
         from ...common.events.models import new_id
+        from .moment import line_of
+        if moment is None and not at and kind != "work" and self.moment_now is not None:
+            try:
+                moment = self.moment_now()
+            except Exception:
+                log.debug("what the user was doing could not be read", exc_info=True)
+        said_of_it = line_of(moment)
+        if said_of_it:
+            summary = f"{str(summary or '')[:3800]} {said_of_it}"
         reason = " ".join(str(reason or "").split())[:1000]
         if weight is None:
             weight = WEIGHT_REASON if reason else WEIGHT_ACTION
         ident = new_id("evi")
         self.db.execute(
             "INSERT INTO lesson_evidence (id, kind, source_id, at, action, summary, reason, "
-            "weight, features, processed_at, outcome_of, content) VALUES (?, ?, ?, ?, ?, ?, "
-            "?, ?, NULL, NULL, ?, ?)",
+            "weight, features, processed_at, outcome_of, content, moment) VALUES (?, ?, ?, ?, ?, "
+            "?, ?, ?, NULL, NULL, ?, ?, ?)",
             (ident, kind, str(source_id or ""), at or _iso(), str(action or "")[:40],
              str(summary or "")[:4000], reason, float(weight), str(outcome_of or ""),
-             str(content or "")[:MOST_CONTENT]))
+             str(content or "")[:MOST_CONTENT], json.dumps(moment or {}, ensure_ascii=False)))
         if learn:
             self.learn_in_background(kind)
         return ident

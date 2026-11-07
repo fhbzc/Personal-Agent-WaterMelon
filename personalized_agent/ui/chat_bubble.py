@@ -25,6 +25,7 @@ for the next time it opens (`on_size`).
 
 from __future__ import annotations
 
+import itertools
 import logging
 import re
 import sys
@@ -50,9 +51,15 @@ LOOK = {"outline": "#313133", "bg": "#181819", "ink": "#ffffff", "muted": "#9497
 
 #: A LINK IN A REPLY (a classmate's, 2026-11-05: `[words](address)` as it was written, not to be
 #: pressed): as a model writes one, or an address alone. Web pages only; what ends a sentence is
-#: not part of an address.
+#: not part of an address. WITHOUT ITS https:// (the user, 2026-11-06: a call's
+#: "meet.google.com/ruv-..." in a notification): a site's name, of the endings sites have, with a
+#: path after it, so that a file's name or a mail address is not taken for one.
 LINK = re.compile(r"\[([^\]\n]+)\]\((https?://(?:[^\s()]|\([^\s()]*\))+)\)"
-                  r"|(https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+)", re.IGNORECASE)
+                  r"|(https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+)"
+                  r"|(?<![\w@./\-])((?:[a-z0-9\-]+\.)+(?:com|org|net|edu|gov|io|ai|co|us|uk|cn|app|dev)"
+                  r"/[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+)", re.IGNORECASE)
+#: Each link's own mark, in whatever box it is written.
+_LINKS = itertools.count(1)
 
 
 def links_in(text: str) -> List[Tuple[str, str]]:
@@ -60,7 +67,7 @@ def links_in(text: str) -> List[Tuple[str, str]]:
     parts: List[Tuple[str, str]] = []
     at = 0
     for found in LINK.finditer(text):
-        address = found.group(2) or found.group(3)
+        address = found.group(2) or found.group(3) or found.group(4)
         words = found.group(1) or ""
         left = ""
         if not words:
@@ -70,7 +77,7 @@ def links_in(text: str) -> List[Tuple[str, str]]:
             address, left, words = bare, address[len(bare):], bare
         if found.start() > at:
             parts.append((text[at:found.start()], ""))
-        parts.append((words, address))
+        parts.append((words, "https://" + address if found.group(4) else address))
         if left:
             parts.append((left, ""))
         at = found.end()
@@ -79,13 +86,37 @@ def links_in(text: str) -> List[Tuple[str, str]]:
     return parts
 
 
+def open_link(said: Any, address: str) -> None:
+    """Not at the end of selecting words. Off this thread: a browser can take its time."""
+    if not said.tag_ranges("sel"):
+        threading.Thread(target=webbrowser.open, args=(address,), daemon=True,
+                         name="open-a-link").start()
+
+
+def write_links(said: Any, at: str, text: str, tags: Tuple[str, ...], ink: str,
+                cursor: str = "xterm") -> None:
+    """Words at `at` in a Text, what is a link in them pressed to open it. `cursor`: the box's own."""
+    said.mark_set("writing", at)
+    for words, address in links_in(text):
+        if not address:
+            said.insert("writing", words, tags)
+            continue
+        link = f"link{next(_LINKS)}"
+        said.tag_configure(link, foreground=ink, underline=True)
+        said.tag_bind(link, "<ButtonRelease-1>", lambda _e, one=address: open_link(said, one))
+        said.tag_bind(link, "<Enter>", lambda _e: said.configure(cursor="hand2"))
+        said.tag_bind(link, "<Leave>", lambda _e: said.configure(cursor=cursor))
+        said.insert("writing", words, (*tags, link))
+    said.mark_unset("writing")
+
+
 #: How long after it is opened the box is fitted to a draft put in it.
 FIT_AFTER_MS = 30
 #: How long after the last key what is written is kept, in milliseconds.
 DRAFT_AFTER_MS = 400
 
 #: How often what is in front is looked at while it is open.
-FRONT_EVERY_MS = 3000
+FRONT_EVERY_MS = 1000
 
 #: How wide it is at the popups' first size, and how tall what was said may
 #: grow before it scrolls. Every size here is as on sizes.REFERENCE, taken to the screen by `px`.
@@ -93,8 +124,7 @@ WIDTH, SAID_TALLEST = 380, 340
 
 #: The sizes its words can be zoomed to (as the note beside what was handed
 #: over), and the one it starts at.
-ZOOMS = (0.8, 0.9, 1.0, 1.1, 1.25, 1.4, 1.6, 1.8, 2.0, 2.25)
-ZOOM_START = 2
+ZOOMS, ZOOM_START = sizes.ZOOMS, sizes.ZOOM_START
 
 #: The smallest it is dragged to; its rim, where its edges are taken; and the
 #: pointer over each edge and corner.
@@ -244,7 +274,6 @@ class ChatBubble:
         #: mentions, on_done)` gives the quick reply; None when it is off.
         self.turn = turn
         self._folds = 0
-        self._links = 0
         #: `send` takes on_text=, and the reply is shown as it is written.
         self.streams = streams
         self.files = files
@@ -300,7 +329,7 @@ class ChatBubble:
             return False
 
     def _points(self, more: int) -> int:
-        return max(7, int(round((self.size + more) * ZOOMS[self.zoom])))
+        return max(sizes.SMALLEST_WORDS, int(round((self.size + more) * ZOOMS[self.zoom])))
 
     def _font(self, more: int = 0, weight: str = "normal", underline: bool = False) -> str:
         """A font of it, named in Tk, at its zoom - a zoom sizes it."""
@@ -1210,26 +1239,10 @@ class ChatBubble:
 
     def _write_links(self, at: str, text: str, tags: Tuple[str, ...]) -> None:
         """Words at `at`, what is a link in them pressed to open it."""
-        said = self.said
-        said.mark_set("writing", at)
-        for words, address in links_in(text):
-            if not address:
-                said.insert("writing", words, tags)
-                continue
-            self._links += 1
-            link = f"link{self._links}"
-            said.tag_configure(link, foreground=LOOK["link"], underline=True)
-            said.tag_bind(link, "<ButtonRelease-1>", lambda _e, one=address: self._open_link(one))
-            said.tag_bind(link, "<Enter>", lambda _e: said.configure(cursor="hand2"))
-            said.tag_bind(link, "<Leave>", lambda _e: said.configure(cursor="xterm"))
-            said.insert("writing", words, (*tags, link))
-        said.mark_unset("writing")
+        write_links(self.said, at, text, tags, LOOK["link"])
 
     def _open_link(self, address: str) -> None:
-        """Not at the end of selecting words. Off this thread: a browser can take its time."""
-        if not self.said.tag_ranges("sel"):
-            threading.Thread(target=webbrowser.open, args=(address,), daemon=True,
-                             name="open-a-link").start()
+        open_link(self.said, address)
 
     # -- the full agent's, folded under the quick reply (agent/two_speed.py) ---------------
     def _fold_begin(self, fold: Dict[str, Any]) -> None:
@@ -1299,9 +1312,17 @@ class ChatBubble:
         return parts
 
     def _fold_toggle(self, body: str) -> None:
-        shut = bool(int(self.said.tag_cget(body, "elide") or 0))
-        self.said.tag_configure(body, elide=not shut)
-        self._fit()
+        """Opened or shut WHERE IT IS (the user, 2026-11-06: More detail, opened, went to the end of
+        the chat): what is read stays put, and its line stays in view."""
+        said = self.said
+        shut = bool(int(said.tag_cget(body, "elide") or 0))
+        top = said.index("@0,0")
+        said.tag_configure(body, elide=not shut)
+        self._fit(to_end=False)
+        said.yview(top)
+        found = said.tag_ranges(body.replace("body", "head"))
+        if found:
+            said.see(f"{found[0]} +1c")          # its first character is the line break before it
 
     def _write(self, who: str, tag: str, text: str) -> None:
         """A turn added to what was said - who, then their words - grown
@@ -1331,35 +1352,40 @@ class ChatBubble:
                         found[-1])
             said.configure(state="disabled")
 
-    def _fit(self) -> None:
+    def _fit(self, to_end: bool = True) -> None:
         """What was said as tall as its lines, until SAID_TALLEST - or, sized
-        by the user, filling what they left it, scrolled to its end. A bar
-        stays a bar: its dot lit, for what came."""
+        by the user, filling what they left it, scrolled to its end unless told not to.
+        A bar stays a bar: its dot lit, for what came."""
         if self.minimized:
             dot, oval = self._dot
             dot.itemconfigure(oval, fill=LOOK["you"])
             return
         if self._size:
             try:
-                self.said.see("end")
+                if to_end:
+                    self.said.see("end")
             except tk.TclError:
                 pass
             return
         try:
             self.window.update_idletasks()
-            lines = self.said.count("1.0", "end", "update", "displaylines")
-            lines = lines[0] if isinstance(lines, tuple) else lines
+            # BY ITS PIXELS, NOT ITS LINES: each name has room above it, which a line more than
+            # was written covers only while the words are large (a bar on a short chat, on a Mac
+            # and at the smallest zoom).
+            high = self.said.count("1.0", "end", "update", "ypixels")
+            high = high[0] if isinstance(high, tuple) else high
             line = max(1, int(self.said.tk.call("font", "metrics", self.said.cget("font"),
                                                 "-linespace")))
             most = max(3, self._grown(SAID_TALLEST) // line)
-            self.said.configure(height=max(1, min(int(lines or 1) + 1, most)))
+            self.said.configure(height=max(1, min(-(-int(high or 0) // line) + 1, most)))
             self.window.update_idletasks()
             # As wide as it was; as tall as it now asks, grown upwards.
             high = self.window.winfo_reqheight()
             bottom = getattr(self, "_bottom", self.window.winfo_y() + self.window.winfo_height())
             self.window.geometry(f"{self.width}x{high}+{self.window.winfo_x()}"
                                  f"+{max(10, bottom - high)}")
-            self.said.see("end")
+            if to_end:
+                self.said.see("end")
         except tk.TclError:
             pass
 
@@ -1422,14 +1448,23 @@ class ScrollBar:
     is in view and where, dragged or clicked on - drawn only while what was
     said does not all fit. Its place is always kept: a bar packed and taken
     away as the text scrolls changes the text's width, which scrolls it
-    again - round and round (measured: the bubble hung)."""
+    again - round and round (measured: the bubble hung).
+
+    `wide` is the strip that takes the mouse and `thumb` what is drawn, at its right: what is drawn
+    can be narrower than what can be pressed (the user, 2026-11-06: a notification's could not be
+    hit, 8 pixels between two margins that take nothing)."""
 
     WIDE = 8
 
-    def __init__(self, parent: Any) -> None:
+    def __init__(self, parent: Any, wide: int = WIDE, thumb: int = WIDE, bg: str = "",
+                 ink: str = "", hot: str = "") -> None:
+        self.wide, self.thumb = wide, thumb
+        self.ink = ink or LOOK["outline"]
+        self.hot = hot or self.ink
+        self._over = False
         # height: a Canvas asks for seven centimetres of its own unless told, and that is what took
         # the room of the box to write in.
-        self.canvas = tk.Canvas(parent, width=self.WIDE, height=1, bg=LOOK["bg"], highlightthickness=0,
+        self.canvas = tk.Canvas(parent, width=wide, height=1, bg=bg or LOOK["bg"], highlightthickness=0,
                                 bd=0, cursor="arrow")
         self.view = (0.0, 1.0)
         self.text: Any = None
@@ -1438,10 +1473,16 @@ class ScrollBar:
         self.canvas.bind("<ButtonPress-1>", self._press)
         self.canvas.bind("<B1-Motion>", self._drag)
         self.canvas.bind("<ButtonRelease-1>", lambda _e: setattr(self, "_grabbed", None))
+        self.canvas.bind("<Enter>", lambda _e: self._hover(True))
+        self.canvas.bind("<Leave>", lambda _e: self._hover(False))
+
+    def _hover(self, over: bool) -> None:
+        self._over = over
+        self._draw()
 
     def scrolls(self, text: Any) -> None:
         self.text = text
-        self.canvas.pack(side="right", fill="y", padx=(6, 0))
+        self.canvas.pack(side="right", fill="y", padx=(max(0, 6 - (self.wide - self.thumb)), 0))
 
     def shown(self, first: Any, last: Any) -> None:
         """The text's yscrollcommand: where the view is."""
@@ -1467,9 +1508,9 @@ class ScrollBar:
         if not self.wanted:
             return
         top, bottom, _high = self._thumb()
-        wide = self.WIDE
-        canvas.create_line(wide / 2, top + wide / 2, wide / 2, bottom - wide / 2,
-                           width=wide - 2, capstyle="round", fill=LOOK["outline"])
+        end, at = self.thumb / 2, self.wide - self.thumb / 2
+        canvas.create_line(at, top + end, at, bottom - end, width=self.thumb - 2, capstyle="round",
+                           fill=self.hot if self._over else self.ink)
 
     def _press(self, event: Any) -> None:
         if not self.wanted:

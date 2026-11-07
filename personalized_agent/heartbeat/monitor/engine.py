@@ -43,11 +43,12 @@ import time
 import webbrowser
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from ...common.events.models import new_id, utcnow
 from . import activators as act
-from .builtins import OLD_BREAK, OLD_SPAM_THENS, QUIET, SPAM, builtins
+from .signals import words_of
+from .builtins import GONE, OLD_BREAK, OLD_SPAM_THENS, QUIET, SPAM, builtins
 from .signals import Signals
 
 log = logging.getLogger(__name__)
@@ -93,6 +94,10 @@ CREATE TABLE IF NOT EXISTS monitor_bad (
 SPOKEN_GROUPS = ("recommend", "rest")
 #: A hit not judged by the step for this long is let go.
 HIT_EXPIRES_HOURS = 12
+#: The words of late: how often they are read, how much of the very latest is left out of them, and
+#: how many readings they come from.
+RECENT_WORDS_EVERY_S, RECENT_WORDS_NOT_LAST_S, RECENT_WORDS_ROWS = 60.0, 10.0, 300
+
 #: What a firing keeps of a window's words.
 MOST_TEXT = 4000
 #: Where a window is, for keywords' "where".
@@ -166,8 +171,8 @@ class ActivatorRule:
 
     def match(self, title: str, text: str, where: str) -> bool:
         ok, score, why = act.evaluate(self.activator["when"], {
-            "title": title, "text": text, "where": where,
-            "signals": self.monitor.latest, "events": ("text",)})
+            "title": title, "text": text, "where": where, "signals": self.monitor.latest,
+            "events": ("text",), "recent_words": self.monitor.recent_words})
         if ok:
             self._last = {"score": score, "why": why, "where": where}
         return ok and act.tier_for(self.activator, score) is not None
@@ -217,8 +222,13 @@ class Monitor:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._rules: Dict[str, ActivatorRule] = {}
+        self._write_builtins()
+
+    def _write_builtins(self) -> None:
         try:
             self.store.seed(builtins())
+            for builtin, why in GONE.items():
+                self.store.retire(builtin, why)
             self.store.reword("break", OLD_BREAK)
             self.store.seed_quiet(QUIET)
             for old in OLD_SPAM_THENS:
@@ -296,6 +306,26 @@ class Monitor:
                 fired.append(self.fire(one, score, why, how="tick", now=when))
         return fired
 
+    def recent_words(self, minutes: float) -> Set[str]:
+        """The words on the screens of the last minutes, up to a moment ago: what has just been read
+        is what they are held against. Read again at most so often: this is the listener's thread."""
+        held = self.__dict__.get("_recent_words")
+        if held is not None and time.monotonic() - held[0] < RECENT_WORDS_EVERY_S:
+            return held[1]
+        until = datetime.now(timezone.utc) - timedelta(seconds=RECENT_WORDS_NOT_LAST_S)
+        rows = self.db.query(
+            "SELECT data FROM raw_events WHERE event_type = 'screen.text' AND timestamp >= ? AND "
+            "timestamp <= ? ORDER BY timestamp DESC LIMIT ?",
+            ((until - timedelta(minutes=minutes)).isoformat(), until.isoformat(), RECENT_WORDS_ROWS))
+        found: Set[str] = set()
+        for row in rows:
+            try:
+                found |= words_of(str(json.loads(row["data"] or "{}").get("text") or ""))
+            except ValueError:
+                continue
+        self._recent_words = (time.monotonic(), found)
+        return found
+
     # -- limits -------------------------------------------------------------------------
     def _kv(self, key: str) -> str:
         row = self.db.query_one("SELECT value FROM kv WHERE key = ?", (key,))
@@ -320,7 +350,8 @@ class Monitor:
                              (ident, midnight.astimezone(timezone.utc).isoformat()))
         if activator.get("group") != "recommend" and len(rows) >= int(activator["most_per_day"]):
             return f"{activator['most_per_day']} already today"
-        if how == "tick":
+        # What is read has its cooldown in each window; new text is one thing across them all.
+        if how == "tick" or "new_text" in (activator.get("when") or {}):
             last = self.db.query_one("SELECT MAX(at) AS t FROM monitor_firings WHERE "
                                      "activator_id = ? AND acted = 1", (ident,))
             if last and last["t"] and when - datetime.fromisoformat(last["t"]) < timedelta(
@@ -450,20 +481,23 @@ class Monitor:
     def say(self, title: str, message: str, context: Dict[str, Any], firing: str,
             choices: str = "", why: str = "", url: str = "", picture: str = "",
             content: bool = False, reason: str = "",
-            recommended: bool = False) -> Dict[str, Any]:
+            recommended: bool = False, pops: bool = False) -> Dict[str, Any]:
         """A notification, with why it was made kept in it. `content` is what the
         model sends: answered Read detail, when it has a page, Good to know or
         Bad notification (the user, 2026-11-04). `reason` is shown with it: why the
-        user is being told; `why` is kept for the model."""
+        user is being told; `why` is kept for the model. A recommendation waits in the list unless
+        `pops`, the model's word (the user, 2026-11-06); a risk comes through a blocker."""
         if self.notifications is None:
             return {"said": False, "why": "nothing to say it with"}
         from ...agent.feedback.templates import REMINDER, SUGGESTION
+        from ...common.notifications import COLLAPSE, POP
         metadata = {"monitor": {"firing": firing, "activator_id": context["activator"]["id"],
                                 "activator": context["activator"]["name"],
                                 "group": context["activator"]["group"], "why": why,
                                 "context": context},
                     "content": content, "url": url, "picture": picture, "reason": reason,
-                    "recommended": recommended}
+                    "recommended": recommended,
+                    "through": context["activator"]["group"] == "risk"}
         if recommended:
             metadata["nth_today"] = self.recommended_today() + 1
             metadata["chain"] = context.get("chain") or {}
@@ -492,7 +526,8 @@ class Monitor:
             template = SUGGESTION
         sent = self.notifications.notify(title, message, kind="proactive",
                                          dedupe_key=f"monitor:{firing}", template=template,
-                                         metadata=metadata)
+                                         metadata=metadata,
+                                         level=COLLAPSE if recommended and not pops else POP)
         said = {"said": sent is not None, "title": title, "message": message, "url": url,
                 "picture": picture, "reason": reason,
                 "notification_id": getattr(sent, "id", "") if sent is not None else "",
@@ -527,7 +562,7 @@ class Monitor:
             # The notification step on that window, as before the Monitor.
             from ..core.triggers import Rule, notify_now
             rule = Rule(activator["builtin"] or activator["id"], activator.get("purpose") or "",
-                        None, None)
+                        None, None, shown_as=activator["name"])
             return notify_now(self.heartbeat, rule, (window or {}).get("title", ""),
                               (window or {}).get("text", ""), (window or {}).get("fresh", ""))
         if self.decider is None:
@@ -647,8 +682,12 @@ class Monitor:
             "SELECT * FROM monitor_bad ORDER BY at DESC LIMIT ?", (limit,))]
 
     def status(self) -> Dict[str, Any]:
-        """For the Monitor panel: the signals now, the Activators, what they did."""
-        return {"enabled": self.enabled(), "signals": {k: v for k, v in (self.latest or {}).items()},
+        """For the Monitor panel: the signals now, the Activators, what they did. What is in front
+        is read as it is asked for (the user, 2026-11-06), not as it was at the last look."""
+        signals = dict(self.latest or {})
+        if signals:
+            signals.update(self.signals._front(datetime.now(timezone.utc)))
+        return {"enabled": self.enabled(), "signals": signals,
                 "habits": self.signals.habits(),
                 "activators": self.store.list(), "firings": self.firings(),
                 "quiet": self.store.quiet_rules(),

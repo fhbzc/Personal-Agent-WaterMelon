@@ -225,6 +225,7 @@ input, select, textarea { border-radius: 12px; }
    narrow left its words one letter wide): each version in its own rows - its number, what it
    says across the whole width, its buttons under that. */
 #overview .ov-todo-versions { display: block; margin: 6px 0 2px; padding: 0; list-style: none; }
+#overview .ov-todo-asks { display: block; margin: 4px 0 8px; font-size: 13px; }
 #overview .ov-todo-version {
   display: grid; grid-template-columns: 26px auto minmax(0, 1fr); gap: 4px 8px; align-items: start;
   padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; line-height: 1.4;

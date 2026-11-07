@@ -75,6 +75,8 @@ class Rule:
     title: Optional["re.Pattern[str]"]
     text: Optional["re.Pattern[str]"]
     action: str = "notify"
+    #: As the user reads it, on what it sends.
+    shown_as: str = ""
 
     def matches(self, title: str, text: str) -> bool:
         return bool((self.title and self.title.search(title or ""))
@@ -466,7 +468,8 @@ def notify_now(heartbeat: Any, rule: Rule, window: str, text: str,
                                 "provider": getattr(response, "provider", "")}
     if waiting is not None:
         report.update(waiting.apply(answered))
-    added = heartbeat._add_notifications(task_id, answered.get("notifications"), report)
+    added = heartbeat._add_notifications(task_id, answered.get("notifications"), report,
+                                         trigger=rule.shown_as or rule.name)
     if added:
         report["notifications_scheduled"] = added
     closed = heartbeat._close_notifications(task_id, answered.get("closed"))

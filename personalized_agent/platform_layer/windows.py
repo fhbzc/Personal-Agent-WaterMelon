@@ -6,7 +6,7 @@ import logging
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..common import children
 from .base import (
@@ -46,6 +46,65 @@ class WindowsActivityProvider(PlatformActivityProvider):
     @property
     def available(self) -> bool:
         return self._user32 is not None
+
+    def watch_front(self, told: Any) -> Optional[Any]:
+        """Windows' own word that another window came to the front (EVENT_SYSTEM_FOREGROUND), on a
+        thread of its own, as such a hook needs. Out of context: nothing is put into any other
+        program, and no key or pointer is seen."""
+        if self._ctypes is None:
+            return None
+        import threading
+        from ctypes import wintypes
+        ctypes = self._ctypes
+        front, out_of_context, quit_message = 0x0003, 0x0000, 0x0012
+        ready = threading.Event()
+        state: Dict[str, Any] = {}
+
+        def run() -> None:
+            user32, kernel32 = ctypes.WinDLL("user32"), ctypes.WinDLL("kernel32")
+            callback_type = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD, wintypes.HWND,
+                                               wintypes.LONG, wintypes.LONG, wintypes.DWORD,
+                                               wintypes.DWORD)
+            user32.SetWinEventHook.restype = wintypes.HANDLE
+            user32.SetWinEventHook.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.HMODULE,
+                                               callback_type, wintypes.DWORD, wintypes.DWORD,
+                                               wintypes.DWORD]
+            user32.UnhookWinEvent.argtypes = [wintypes.HANDLE]
+            user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND,
+                                           wintypes.UINT, wintypes.UINT]
+            user32.PeekMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND,
+                                            wintypes.UINT, wintypes.UINT, wintypes.UINT]
+
+            def on_front(*_said: Any) -> None:
+                try:
+                    told()
+                except Exception:
+                    log.debug("what was to hear of the window in front failed", exc_info=True)
+
+            callback = callback_type(on_front)
+            hook = user32.SetWinEventHook(front, front, None, callback, 0, 0, out_of_context)
+            message = wintypes.MSG()
+            user32.PeekMessageW(ctypes.byref(message), None, 0, 0, 0)    # its queue, to be told to end
+            state.update(thread=kernel32.GetCurrentThreadId(), hook=bool(hook))
+            ready.set()
+            if not hook:
+                return
+            while user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:
+                pass
+            user32.UnhookWinEvent(hook)
+
+        thread = threading.Thread(target=run, name="window-front", daemon=True)
+        thread.start()
+        if not ready.wait(5) or not state.get("hook"):
+            return None
+
+        def stop() -> None:
+            user32 = ctypes.WinDLL("user32")
+            user32.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT, wintypes.WPARAM,
+                                                  wintypes.LPARAM]
+            user32.PostThreadMessageW(state["thread"], quit_message, 0, 0)
+            thread.join(2)
+        return stop
 
     def get_active_window(self) -> ActiveWindow:
         if not self.available:
@@ -191,11 +250,14 @@ class WindowsActivityProvider(PlatformActivityProvider):
             log.debug("the window could not draw itself", exc_info=True)
             return None
 
-    def user_window_image(self, itself_only: bool = False) -> Optional[Any]:
+    def user_window_image(self, itself_only: bool = False, title: str = "") -> Optional[Any]:
         """`itself_only`: never what is on the screen there, which what opened since
         could cover. The topmost real window that is not this application's: pressed on the
         avatar, the avatar is in front, and the window meant is the one under it.
-        Down the windows in their order; the desktop reached, there is none."""
+        Down the windows in their order; the desktop reached, there is none.
+        `title`: the window the user was last in, which is the one meant whatever stands over
+        it (the user, 2026-11-06: a browser's "you are sharing your screen" bar was taken
+        instead of the call under it). Not found, the topmost."""
         if not self.available:
             return None
         ctypes = self._ctypes
@@ -215,20 +277,39 @@ class WindowsActivityProvider(PlatformActivityProvider):
             user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
             user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
             user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+            user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+            found: List[Tuple[Any, Any, str]] = []
             hwnd = user32.GetTopWindow(None)
             while hwnd:
                 box = self._a_users_window(user32, dwm, hwnd, wintypes)
                 if box == "desktop":
-                    return None
+                    break
                 if box:
-                    drawn = self._window_itself(hwnd, box)
-                    if drawn is not None or itself_only:
-                        return drawn
-                    return ImageGrab.grab(bbox=box, all_screens=True)
+                    name = ctypes.create_unicode_buffer(1024)
+                    user32.GetWindowTextW(hwnd, name, 1024)
+                    found.append((hwnd, box, name.value))
+                    if not title or name.value == title:
+                        break
                 hwnd = user32.GetWindow(hwnd, 2)         # GW_HWNDNEXT
+            meant = self.the_window_meant(found, title)
+            if meant is None:
+                return None
+            drawn = self._window_itself(meant[0], meant[1])
+            if drawn is not None or itself_only:
+                return drawn
+            return ImageGrab.grab(bbox=meant[1], all_screens=True)
         except Exception:
             log.debug("could not take the user's window", exc_info=True)
         return None
+
+    @staticmethod
+    def the_window_meant(found: List[Tuple[Any, Any, str]], title: str) -> Optional[Tuple[Any, Any]]:
+        """Of the windows from the top down (handle, frame, title): the one of that title, else
+        the topmost."""
+        if not found:
+            return None
+        one = next((window for window in found if title and window[2] == title), found[0])
+        return one[0], one[1]
 
     def _a_users_window(self, user32: Any, dwm: Any, hwnd: Any, wintypes: Any) -> Any:
         """Its frame, if it is one of the user's; "desktop" at the desktop itself."""

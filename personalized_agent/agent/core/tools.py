@@ -5,7 +5,8 @@ execution tool goes through the sandbox runtime, and every call is recorded as
 a Raw Edit (section 47), so the Debugger can see exactly what the agent did.
 
 There is no memory to search: the chat answers from what it is asked, and
-acts on the workspace and the schedule.
+acts on the workspace and the schedule. What was on the screen it can ask for
+by time (agent/screen_history.py).
 """
 
 from __future__ import annotations
@@ -445,6 +446,7 @@ def build_registry(
             metadata={"origin": "agent", "reason": str(args.get("why") or "")[:300]},
             template=str(args.get("template") or ""),
             question={"task_id": getattr(registry, "task_id", "") or ""},
+            level=str(args.get("level") or "pop"),
         )
         return {"delivered": notification is not None}
 
@@ -471,7 +473,11 @@ def build_registry(
                           "why": {"type": "string"},
                           "template": {"type": "string",
                                        "enum": ["reminder", "permission",
-                                                "passive"]}},
+                                                "passive"]},
+                          "level": {"type": "string", "enum": ["pop", "collapse"],
+                                    "description": "pop shows it at once; collapse keeps it in "
+                                                   "the list they open when they choose. Collapse "
+                                                   "what can wait."}},
                          ["title", "message", "template", "why"])),
         notify_user,
     )

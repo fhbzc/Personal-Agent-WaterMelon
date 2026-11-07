@@ -134,6 +134,7 @@ class TwoSpeed:
         ids = [user["id"]]
         said: Optional[Dict[str, Any]] = None
         if quick["reply"]:
+            self.agent.speaks_whole(quick["reply"])
             said = self.conversations.add_message(
                 conversation_id, "assistant", quick["reply"],
                 metadata={"layer": "fast", "full_agent": "run" if run else "stop", "origin": "user"})

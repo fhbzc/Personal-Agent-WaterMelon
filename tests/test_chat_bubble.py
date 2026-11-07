@@ -707,6 +707,57 @@ class TheBubbleTests(unittest.TestCase):
         self.assertEqual(int(said.tag_cget(body, "elide")), 1, "and folded again")
         bubble.close()
 
+    def _a_fold_with_much_after_it(self, sized):
+        bubble, finish = self._two_speeds({"state": "done", "answer": "Nothing today. " * 200,
+                                           "kind": "more"})
+        finish[0]()
+        self._settle(0.2)
+        if sized:
+            bubble._size = (bubble.window.winfo_width(), bubble.window.winfo_height())
+        for n in range(40):
+            bubble._write("", "fast", f"A made-up line {n}")
+        said = bubble.said
+        body = next(one for one in said.tag_names() if one.startswith("fold_body"))
+        first = said.tag_ranges(body.replace("body", "head"))[0]
+        said.see(f"{first} +1c")
+        self._settle(0.1)
+        return bubble, body, f"{first} +1c"
+
+    def test_opened_it_stays_where_it_is(self) -> None:
+        """The user, 2026-11-06: More detail, opened, went to the end of the chat."""
+        for sized in (True, False):
+            with self.subTest(sized=sized):
+                bubble, body, line = self._a_fold_with_much_after_it(sized)
+                said = bubble.said
+                before = said.bbox(line)
+                self.assertIsNotNone(before)
+                bubble._fold_toggle(body)
+                self._settle(0.1)
+                self.assertEqual(int(said.tag_cget(body, "elide")), 0)
+                self.assertIsNotNone(said.bbox(line), "its line is still in view")
+                self.assertIsNone(said.bbox("end -2c"), "and the end of the chat is not")
+                if sized:
+                    self.assertLess(abs(said.bbox(line)[1] - before[1]), before[3], "within a line of where it was")
+                bubble.close()
+
+    def test_shut_from_inside_it_its_line_comes_back(self) -> None:
+        bubble, body, line = self._a_fold_with_much_after_it(True)
+        said = bubble.said
+        bubble._fold_toggle(body)
+        said.see(said.tag_ranges(body)[1])
+        self._settle(0.1)
+        bubble._fold_toggle(body)
+        self._settle(0.1)
+        self.assertIsNotNone(said.bbox(line))
+        bubble.close()
+
+    def test_what_comes_in_still_goes_to_the_end(self) -> None:
+        bubble, _body, _line = self._a_fold_with_much_after_it(True)
+        bubble._write("", "fast", "The last made-up line")
+        self._settle(0.1)
+        self.assertIsNotNone(bubble.said.bbox("end -2c"))
+        bubble.close()
+
     def test_nothing_to_add_leaves_nothing_behind(self) -> None:
         bubble, finish = self._two_speeds({"state": "done", "answer": "", "nothing": True})
         self.assertIn("Looking into it…", bubble.said.get("1.0", "end"))
@@ -800,6 +851,14 @@ class TheBubbleTests(unittest.TestCase):
         bubble.bar.text.yview_moveto(0.0)
         self._settle(0.2)
         self.assertEqual(bubble.bar.view[0], 0.0, "it follows the view")
+        bubble.close()
+
+    def test_a_short_conversation_has_no_bar_at_the_smallest_words(self) -> None:
+        bubble = self._bubble(lambda text, c: {"answer": "Noted."}, zoom=0)
+        bubble.box.insert("1.0", "Hi")
+        bubble.submit()
+        self._settle(0.5)
+        self.assertFalse(bubble.bar.wanted, "what was said is as tall as it is")
         bubble.close()
 
     def test_while_sized_the_old_turns_are_folded_and_all_back_after(self) -> None:
@@ -1020,7 +1079,7 @@ class TheBubbleTests(unittest.TestCase):
         self.assertEqual(kept["chat_bubble_size"], sizes.share(self.root, (500, 360)), "its share")
         self.assertEqual(sizes.kept(self.root, kept["chat_bubble_size"]), (500, 360))
         # ITS ZOOM, a hidden setting: the older one of its own read, every window's kept.
-        self.assertEqual(first.zoom, 4)
+        self.assertEqual(first.zoom, cb.ZOOM_START + 2, "the step kept before there was one zoom")
         first.zoom_by(1)
         self.assertEqual(kept["popup_zoom"], 3)
         first.close()

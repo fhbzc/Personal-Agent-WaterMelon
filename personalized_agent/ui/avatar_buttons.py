@@ -25,7 +25,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..agent.character.watermelon import LEAF, LEAF_DARK, LEAF_VEIN, OUTLINE
 from . import sizes
-from .chat_bubble import LEAST, RIM as EDGE, LOOK, ScrollBar, beside, edge_strips, sized_to, work_area
+from .chat_bubble import (LEAST, RIM as EDGE, LOOK, ScrollBar, beside, edge_strips, sized_to, work_area,
+                          write_links)
 from .on_top import (borderless, keys_on_hover, on_release, rounded, stay_on_top, stays_through_peek,
                      with_copy)
 
@@ -60,10 +61,9 @@ VINE, VINE_DARK, VINE_LINE = ("#%02x%02x%02x" % one for one in (LEAF, LEAF_DARK,
 VINE_VEIN = "#%02x%02x%02x" % LEAF_VEIN
 PANEL_WIDTH, PANEL_TALLEST = 400, 520
 #: The most the words grow or shrink, in points.
-MOST_ZOOM = 8
 #: The smallest its words go: at a higher floor most of them were there already, and
 #: Ctrl - seemed to do nothing.
-SMALLEST_WORDS = 5
+SMALLEST_WORDS = sizes.SMALLEST_WORDS
 #: Held down, Ctrl + draws as often as it can, and is written down this long after, in
 #: milliseconds: written at each step, the file held every step up.
 ZOOM_KEPT_AFTER_MS = 400
@@ -465,12 +465,14 @@ class ChatVine:
 
 class QuickPanel:
     """One list, beside the avatar. `read()` gives its sections, off Tk's thread:
-    [{"name": "", "rows": [{"id", "title", "detail", "note", "url", "actions":
+    [{"name": "", "rows": [{"id", "title", "detail", "why", "note", "url", "actions":
     [{"key", "label", ...}]}]}]; `post(fn)` runs fn on Tk's thread; `act(action,
     done)` does an action of a row and calls `done` when it has. A section with a
     "group" is one an item can be moved to, under that name; "keep": shown when empty.
     `adds`: what can be added, as on the Overview (the user, 2026-11-04): {"label",
-    "fields": [hints], "keys": [names], "path", "fixed": {...}}, posted as `act` posts."""
+    "fields": [hints], "keys": [names], "path", "fixed": {...}}, posted as `act` posts.
+    `closes_emptied`: opened with something in it, it closes when the last of that is gone (the
+    user, 2026-11-06). Opened with nothing, it stays: it was opened to be looked at."""
 
     def __init__(self, root: Any, title: str, read: Callable[[], List[Dict[str, Any]]],
                  post: Callable[[Callable[[], None]], None], words: Callable[[str], str],
@@ -478,12 +480,16 @@ class QuickPanel:
                  act: Optional[Callable[[Dict[str, Any], Callable[[], None]], None]] = None,
                  zoom: int = 0, on_zoom: Optional[Callable[[int], None]] = None,
                  adds: Sequence[Dict[str, Any]] = (), size: Optional[tuple] = None,
-                 on_size: Optional[Callable[[tuple], None]] = None) -> None:
+                 on_size: Optional[Callable[[tuple], None]] = None,
+                 closes_emptied: bool = False) -> None:
         self.root, self.title, self.read, self.post, self.words = root, title, read, post, words
         self.font, self.empty, self.searches = font, empty, searches
         self.act, self.zoom, self.on_zoom = act, int(zoom or 0), on_zoom
         self.window: Any = None
         self.opened = False
+        self.closes_emptied = closes_emptied
+        #: Whether it held anything when it was opened: None until that has been read.
+        self.opened_holding: Optional[bool] = None
         self.sections: List[Dict[str, Any]] = []
         #: The groups folded stay while the application runs.
         self.folded: Set[str] = set()
@@ -491,6 +497,8 @@ class QuickPanel:
         #: so that nothing found is hidden, and they fold again from there.
         self.folded_searching: Set[str] = set()
         self.opening: Set[str] = set()
+        #: The rows with "folds" that are open: their title alone until pressed.
+        self.expanded: Set[str] = set()
         #: The row whose Remove was pressed: "Remove it? Yes / No", as on the Overview.
         self.asking = ""
         #: The row whose Move was pressed: the groups it can go to.
@@ -550,11 +558,11 @@ class QuickPanel:
             pass
 
     # -- its words' size ---------------------------------------------------------------
-    def _sized(self, more: int, weight: str = "normal") -> Any:
-        name = f"{more}{weight}"
+    def _sized(self, more: int, weight: str = "normal", slant: str = "roman") -> Any:
+        name = f"{more}{weight}{slant}"
         if name not in self._fonts:
-            font = tkfont.Font(root=self.root, family=self.font[0], weight=weight,
-                               size=max(SMALLEST_WORDS, self.font[1] + more + self.zoom))
+            font = tkfont.Font(root=self.root, family=self.font[0], weight=weight, slant=slant,
+                               size=sizes.zoomed(self.font[1] + more, self.zoom))
             self._fonts[name] = (font, more)
         return self._fonts[name][0]
 
@@ -562,7 +570,7 @@ class QuickPanel:
         self.zoom_to(self.zoom + step)
 
     def zoom_to(self, zoom: int) -> None:
-        self.zoom = max(-MOST_ZOOM, min(MOST_ZOOM, int(zoom)))
+        self.zoom = sizes.within_zoom(zoom)
         if not self.is_open:
             self._draw_zoom()
             self._save_zoom()
@@ -578,7 +586,7 @@ class QuickPanel:
         self._zoom_due = None
         top = self.list.index("@0,0") if self.is_open else ""
         for font, more in self._fonts.values():
-            font.configure(size=max(SMALLEST_WORDS, self.font[1] + more + self.zoom))
+            font.configure(size=sizes.zoomed(self.font[1] + more, self.zoom))
         if top:
             self.list.yview(top)             # the line at its top stays there
 
@@ -796,6 +804,7 @@ class QuickPanel:
         if not self._built:
             self._build()
         self.opened = True
+        self.opened_holding = None
         self._fit(near)
         self.list.yview_moveto(0)
         self._take_keys()                    # opened by a press: Ctrl + works at once
@@ -857,6 +866,9 @@ class QuickPanel:
                                 spacing1=8)
         self.list.tag_configure("title", font=self._sized(-1, "bold"), spacing1=6)
         self.list.tag_configure("muted", foreground=LOOK["muted"], font=self._sized(-2))
+        # WHY IT IS TOLD, told apart from what is told (the user, 2026-11-06).
+        self.list.tag_configure("why", foreground=LOOK["muted"],
+                                font=self._sized(-3, slant="italic"))
         self.list.bind("<Button-1>", lambda _e: self.list.focus_force(), add="+")
         with_copy(self.list, self.words("Copy"))
         self._keys(window)
@@ -906,6 +918,13 @@ class QuickPanel:
         self.sections = sections
         if self._built and not same:
             self._draw()
+        if not self.is_open:
+            return
+        holding = any(section["rows"] for section in sections)
+        if self.opened_holding is None:
+            self.opened_holding = holding
+        elif self.closes_emptied and self.opened_holding and not holding:
+            self.close()
 
     def _shown_sections(self) -> List[Dict[str, Any]]:
         asked = (self.box.get() if self.box is not None else "").lower().split()
@@ -913,7 +932,8 @@ class QuickPanel:
         for section in self.sections:
             rows = [row for row in section["rows"] if all(
                 word in " ".join(str(row.get(key) or "") for key in
-                                 ("title", "detail", "note", "url")).lower() for word in asked)]
+                                 ("title", "detail", "why", "note", "url")).lower()
+                for word in asked)]
             if rows or (section.get("keep") and not asked):
                 out.append(dict(section, rows=rows))
         return out
@@ -924,6 +944,10 @@ class QuickPanel:
     def _fold(self, name: str) -> None:
         folds = self.folded_searching if self._searching() else self.folded
         folds.symmetric_difference_update({name})
+        self._draw()
+
+    def _expand(self, ident: str) -> None:
+        self.expanded.symmetric_difference_update({ident})
         self._draw()
 
     def _ask(self, ident: str) -> None:
@@ -995,10 +1019,18 @@ class QuickPanel:
             if folded:
                 continue
             for row in section["rows"]:
-                parts.append(("title", str(row.get("title") or ""), None))
-                for key in ("detail", "note"):
+                ident = str(row.get("id") or "")
+                if row.get("folds"):
+                    shut = ident not in self.expanded
+                    parts.append(("title", f'{"▸" if shut else "▾"} {row.get("title") or ""}',
+                                  lambda one=ident: self._expand(one)))
+                    if shut:
+                        continue
+                else:
+                    parts.append(("title", str(row.get("title") or ""), None))
+                for key, look in (("detail", "muted"), ("why", "why"), ("note", "muted")):
                     if row.get(key):
-                        parts.append(("muted", str(row[key]), None))
+                        parts.append((look, str(row[key]), None))
                 if row.get("actions"):
                     parts.append(("buttons", "", self._buttons_of(
                         dict(row, group=section.get("group") or ""))))
@@ -1035,6 +1067,10 @@ class QuickPanel:
                 said.insert("end", "\n")
                 continue
             tags = tuple(tag.split())
+            if press is None:                    # what can be pressed as a whole holds no link
+                write_links(said, "end-1c", text, tags, LOOK["link"], "arrow")
+                said.insert("end", "\n", tags)
+                continue
             if press is not None:
                 self._marks += 1
                 mark = f"press{self._marks}"

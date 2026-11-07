@@ -566,15 +566,16 @@ $("#chat-form").addEventListener("submit", async (event) => {
 
 /* A LINK IN A REPLY (a classmate's, 2026-11-05: `[words](address)` as it was written): as a model
    writes one, or an address alone, opened in a tab of its own. Web pages only; what ends a
-   sentence is not part of an address. As ui/chat_bubble.py reads them. */
-const CHAT_LINK = /\[([^\]\n]+)\]\((https?:\/\/(?:[^\s()]|\([^\s()]*\))+)\)|(https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+)/gi;
+   sentence is not part of an address. As ui/chat_bubble.py reads them, one without its https://
+   among them: a site's name, of the endings sites have, with a path after it. */
+const CHAT_LINK = /\[([^\]\n]+)\]\((https?:\/\/(?:[^\s()]|\([^\s()]*\))+)\)|(https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+)|(?<![\w@./\-])((?:[a-z0-9\-]+\.)+(?:com|org|net|edu|gov|io|ai|co|us|uk|cn|app|dev)\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+)/gi;
 
 function writeWithLinks(element, text) {
   element.replaceChildren();
   const words = (some) => { if (some) element.append(document.createTextNode(some)); };
   let at = 0;
   for (const found of String(text).matchAll(CHAT_LINK)) {
-    let address = found[2] || found[3];
+    let address = found[2] || found[3] || found[4];
     let left = "";
     if (!found[2]) {
       let bare = address.replace(/[.,;:!?']+$/, "");
@@ -584,7 +585,7 @@ function writeWithLinks(element, text) {
     }
     words(String(text).slice(at, found.index));
     const link = document.createElement("a");
-    link.href = address;
+    link.href = found[4] ? `https://${address}` : address;
     link.target = "_blank";
     link.relList.add("noopener", "noreferrer");
     link.textContent = found[1] || address;
@@ -632,6 +633,71 @@ function appendMessage(role, text, messageId = "") {
 const FOLLOW_UP_SHOWN = 80;
 //: How wide the conversation must be for the follow-ups to go in a margin.
 const FOLLOW_UP_MARGIN_FROM = 760;
+/* THE NOTES' WIDTH IS THE USER'S (2026-11-06): the right edge of any of them dragged, or the arrow
+   keys on it, kept for next time; a double click puts it back. In a narrower window they give way
+   to the conversation, and come back to it in a wider one. */
+const FOLLOW_UP_WIDTH_START = 300, FOLLOW_UP_WIDTH_LEAST = 180, FOLLOW_UP_WIDTH_MOST_SHARE = 0.6;
+const FOLLOW_UP_WIDTH_KEY = "chat-note-width";
+let followUpWidth = FOLLOW_UP_WIDTH_START;
+try {
+  followUpWidth = Number(localStorage.getItem(FOLLOW_UP_WIDTH_KEY)) || FOLLOW_UP_WIDTH_START;
+} catch (_) { /* a private window */ }
+
+function followUpWidthIn(log) {
+  return Math.round(Math.max(FOLLOW_UP_WIDTH_LEAST,
+    Math.min(followUpWidth, log.clientWidth * FOLLOW_UP_WIDTH_MOST_SHARE)));
+}
+
+function keepFollowUpWidth(log) {
+  followUpWidth = followUpWidthIn(log);
+  try { localStorage.setItem(FOLLOW_UP_WIDTH_KEY, String(followUpWidth)); } catch (_) { /* this page only */ }
+  layoutFollowUps();
+}
+
+function followUpGrip() {
+  const grip = document.createElement("div");
+  grip.className = "fu-grip";
+  grip.tabIndex = 0;
+  grip.setAttribute("role", "separator");
+  grip.setAttribute("aria-orientation", "vertical");
+  grip.setAttribute("aria-label", "Width of the notes");
+  grip.title = "Drag to change the width; a double click puts it back";
+  let dragged = null;
+  grip.addEventListener("pointerdown", (event) => {
+    dragged = { x: event.clientX, width: followUpWidthIn($("#chat-log")) };
+    grip.setPointerCapture(event.pointerId);
+    grip.classList.add("dragged");
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  grip.addEventListener("pointermove", (event) => {
+    if (!dragged) return;
+    followUpWidth = dragged.width + event.clientX - dragged.x;
+    layoutFollowUps();
+  });
+  const dropped = () => {
+    if (!dragged) return;
+    dragged = null;
+    grip.classList.remove("dragged");
+    keepFollowUpWidth($("#chat-log"));
+  };
+  grip.addEventListener("pointerup", dropped);
+  grip.addEventListener("pointercancel", dropped);
+  grip.addEventListener("dblclick", () => {
+    followUpWidth = FOLLOW_UP_WIDTH_START;
+    try { localStorage.removeItem(FOLLOW_UP_WIDTH_KEY); } catch (_) { /* this page only */ }
+    layoutFollowUps();
+  });
+  grip.addEventListener("keydown", (event) => {
+    const step = { ArrowLeft: -16, ArrowRight: 16 }[event.key];
+    if (!step) return;
+    const log = $("#chat-log");
+    followUpWidth = followUpWidthIn(log) + step;
+    keepFollowUpWidth(log);
+    event.preventDefault();
+  });
+  return grip;
+}
 
 /* Every follow-up, and the question being written, put where it belongs:
    in the margin beside what it points at, or under its reply. */
@@ -646,6 +712,10 @@ function layoutFollowUps() {
     notes.forEach((note) => { note.style.top = ""; });
     return;
   }
+  log.style.setProperty("--fu-w", `${followUpWidthIn(log)}px`);
+  notes.forEach((note) => {
+    if (![...note.children].some((one) => one.classList.contains("fu-grip"))) note.append(followUpGrip());
+  });
   const origin = log.getBoundingClientRect().top - log.scrollTop;
   const pointedAt = (note) => {
     const mark = note.__anchor;

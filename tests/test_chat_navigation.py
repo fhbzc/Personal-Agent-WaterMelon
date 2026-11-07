@@ -242,6 +242,26 @@ CHECKS = r"""
         report.beside = box.right < reply.left;
         report.atWords = Math.abs(box.top - mark.getBoundingClientRect().top) < 3;
         report.under = box.top >= reply.bottom - 1;
+        if (report.margin) {
+          // Its right edge dragged: every note that wide, the words beside them moved over, kept.
+          const fuGrip = card.querySelector('.fu-grip');
+          fuGrip.setPointerCapture = () => {};
+          const edge = (type, x) => fuGrip.dispatchEvent(new PointerEvent(type, {clientX:x, pointerId:1, bubbles:true}));
+          const wideBefore = card.getBoundingClientRect().width;
+          const words = find('.msg.assistant .msg-text').getBoundingClientRect().left;
+          edge('pointerdown', 300); edge('pointermove', 240); edge('pointerup', 240);
+          await wait(250);
+          assert(Math.abs(card.getBoundingClientRect().width - wideBefore + 60) < 2, 'the note narrower');
+          assert(find('.msg.assistant .msg-text').getBoundingClientRect().left < words - 40, 'the words moved over');
+          assert(Number(localStorage.getItem('chat-note-width')) === Math.round(wideBefore - 60), 'the width kept');
+          edge('pointerdown', 300); edge('pointermove', -3000); edge('pointerup', -3000);
+          await wait(250);
+          assert(Math.abs(card.getBoundingClientRect().width - 180) < 2, 'no narrower than the least');
+          fuGrip.dispatchEvent(new MouseEvent('dblclick', {bubbles:true}));
+          await wait(250);
+          assert(Math.abs(card.getBoundingClientRect().width - wideBefore) < 2, 'put back');
+          assert(localStorage.getItem('chat-note-width')===null, 'nothing kept');
+        }
       }
       open();
       const scroll = find('.chat-sidebar-scroll');
@@ -256,6 +276,25 @@ CHECKS = r"""
         assert(find('#chat-sidebar').hidden, 'backdrop closes drawer');
         open();
       } else {
+        // Its edge dragged: as wide as that, kept, and put back by a double click.
+        const side = find('#chat-sidebar'), grip = find('.chat-sidebar-grip');
+        const pull = (type, x) => grip.dispatchEvent(new PointerEvent(type, {clientX:x, pointerId:1, bubbles:true}));
+        grip.setPointerCapture = () => {};
+        const before = side.getBoundingClientRect().width;
+        pull('pointerdown', 300); pull('pointermove', 360); pull('pointerup', 360);
+        await wait();
+        assert(Math.abs(side.getBoundingClientRect().width - before - 60) < 2, 'dragged wider');
+        assert(Number(localStorage.getItem('chat-sidebar-width')) > before, 'the width kept');
+        pull('pointerdown', 300); pull('pointermove', -2000); pull('pointerup', -2000);
+        await wait();
+        assert(Math.abs(side.getBoundingClientRect().width - 180) < 2, 'no narrower than the least');
+        pull('pointerdown', 300); pull('pointermove', 9000); pull('pointerup', 9000);
+        await wait();
+        assert(find('.chat-workspace').getBoundingClientRect().width > 100, 'the conversation keeps its room');
+        grip.dispatchEvent(new MouseEvent('dblclick', {bubbles:true}));
+        await wait();
+        assert(Math.abs(side.getBoundingClientRect().width - before) < 2, 'put back');
+        assert(localStorage.getItem('chat-sidebar-width')===null, 'nothing kept');
         find('[data-close]').click();
         assert(find('#chat-sidebar').hidden, 'desktop collapse');
         assert(localStorage.getItem('chat-sidebar-collapsed')==='true', 'collapse persistence');

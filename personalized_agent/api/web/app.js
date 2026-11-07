@@ -115,22 +115,23 @@ const ovOpening = new Set();
 
 /* A notification, shown in the page: with a way to say it was a bad one,
    and long enough on screen to say it. */
-function notificationToast(n) {
+function notificationToast(n, inList = null) {
   const item = document.createElement("div");
   item.className = "toast-item toast-notification";
   if (n.kind === "warning" || n.kind === "error") {
     item.style.borderLeftColor = "var(--err)";
   }
   const words = document.createElement("div");
-  words.textContent = `${n.title}: ${n.message}`;
+  writeWithLinks(words, `${n.title}: ${n.message}`);
   let meta = {};
   try {
     meta = typeof n.metadata === "string" ? JSON.parse(n.metadata || "{}") : (n.metadata || {});
   } catch (_err) { /* shown without what it came with */ }
-  const noted = (said) => {
+  const noted = (said, isWhy = false) => {
     const note = document.createElement("div");
     note.className = "muted";
-    note.textContent = said;
+    if (isWhy) note.classList.add("toast-why");
+    writeWithLinks(note, said);
     words.append(note);
   };
   if (meta.recommended) {
@@ -140,7 +141,8 @@ function notificationToast(n) {
     kind.textContent = "Recommended content";
     words.prepend(kind);
   }
-  if (meta.reason) noted(`Why: ${meta.reason}`);
+  if (meta.reason) noted(`Why: ${meta.reason}`, true);
+  if (n.trigger) noted(`Trigger: ${n.trigger}`);
   const partOf = (n.associated || []).map((one) => one.title).filter(Boolean);
   if (partOf.length) noted(`Part of: ${partOf.join(", ")}`);
   // EACH BUTTON SAYS WHAT HAPPENS: how long until it is back, or that it
@@ -223,6 +225,7 @@ function notificationToast(n) {
       words.append(picture);
     }
     item.append(words, buttons, chat);
+    if (inList) { inList.appendChild(item); return; }
     $("#toast").appendChild(item);
     setTimeout(() => { if (!item.contains(document.activeElement)) item.remove(); }, 20000);
     return;
@@ -246,6 +249,7 @@ function notificationToast(n) {
   }
   buttons.append(toTodo, bad);
   item.append(words, buttons, chat);
+  if (inList) { inList.appendChild(item); return; }
   $("#toast").appendChild(item);
   setTimeout(() => { if (!item.contains(document.activeElement)) item.remove(); }, 20000);
 }
@@ -1914,7 +1918,10 @@ async function watchWorkGoing() {
           span._xpHtml = xpShows(html);
         }
       });
-      setTabWaiting("experience", mine);
+      // Where it asks now (the user, 2026-11-06): on its row, its item opened.
+      setTabWaiting("overview", mine);
+      await ovReadAsks(going || []);
+      if (typeof ovPlaceTodos === "function") ovPlaceTodos();
       setTabWaiting("xdebug", debug);
     }
   } catch (err) {
@@ -6577,6 +6584,7 @@ $$("#tabs button").forEach((button) => {
     if (activeTab === "collections") loadCollections();
     if (activeTab === "society") loadSociety();
     if (activeTab === "resourcedebug") rdTick();
+    if (activeTab === "recommenddebug") window.recommendationDebugger?.load();
     if (activeTab === "overview") ovCentreTheCurrent();
     refresh();
   });
@@ -7586,7 +7594,7 @@ function renderPrinciples(tree) {
   const bar = ovRecentBar();
   if (!every.length) {
     host.innerHTML = `<p class="muted">No principles yet: they are grouped
-      from what your projects teach once you learn them in Work.</p>`;
+      from what your projects teach once you learn them in Learning.</p>`;
     return;
   }
   if (!rows.length) {
@@ -15032,8 +15040,45 @@ let speaksInBubble = false;
 
 let waitingOpened = false;
 
-function showWaiting(count) {
+function notificationMeta(n) {
+  try {
+    return typeof n.metadata === "string" ? JSON.parse(n.metadata || "{}") : (n.metadata || {});
+  } catch (_err) { return {}; }
+}
+
+/* THE WAITING LIST: each by its title; opened, the whole of it with its answers. Answered, it goes
+   from the list (the user, 2026-11-06). */
+function drawWaitingList(kept) {
+  $("#toast-waiting-list")?.remove();
+  if (!kept.length) return;
+  const list = document.createElement("div");
+  list.id = "toast-waiting-list";
+  kept.forEach((n) => {
+    const row = document.createElement("details");
+    row.className = "toast-waiting-row";
+    const title = document.createElement("summary");
+    title.textContent = n.title;
+    row.append(title);
+    row.addEventListener("toggle", () => {
+      if (!row.open || row.querySelector(".toast-item")) return;
+      notificationToast(n, row);
+      new MutationObserver(() => {
+        if (row.querySelector(".toast-item")) return;
+        row.remove();
+        if (!list.children.length) list.remove();
+        else if (list.children.length === 1) list.firstElementChild.open = true;
+      }).observe(row, { childList: true });
+    }, { once: false });
+    list.append(row);
+  });
+  $("#toast").appendChild(list);
+  // One alone is open: there is nothing to choose between.
+  if (kept.length === 1) list.firstElementChild.open = true;
+}
+
+function showWaiting(count, kept = []) {
   let line = $("#toast-waiting");
+  showWaiting.kept = kept;
   if (!count) {
     if (line) line.remove();
     return;
@@ -15046,6 +15091,7 @@ function showWaiting(count) {
     line.addEventListener("click", () => {
       waitingOpened = true;
       line.remove();
+      drawWaitingList(showWaiting.kept || []);
       pollNotifications();
     });
     $("#toast").appendChild(line);
@@ -15056,16 +15102,17 @@ function showWaiting(count) {
 async function pollNotifications() {
   if (speaksInBubble) return;
   try {
-    const data = await api.get("/api/notifications?unread=true&limit=5");
+    const data = await api.get("/api/notifications?unread=true&limit=100");
     if (Number(data.remind_later_minutes)) remindLaterMinutes = Number(data.remind_later_minutes);
     // HELD BY A BLOCKER: collapsed - how many wait, opened by hand.
     if (!data.blocked) waitingOpened = false;
-    if (data.blocked && !waitingOpened) {
-      showWaiting(data.notifications.length);
-      return;
-    }
-    showWaiting(0);
-    data.notifications.forEach((n) => {
+    const kept = data.notifications.filter((n) => notificationMeta(n).level === "collapse");
+    const now = data.notifications.filter((n) => notificationMeta(n).level !== "collapse");
+    const held = Boolean(data.blocked) && !waitingOpened;
+    const shown = (held ? now.filter((n) => notificationMeta(n).through) : now).slice(0, 5);
+    const listOpen = Boolean($("#toast-waiting-list"));
+    showWaiting(listOpen ? 0 : kept.length + (held ? now.length - shown.length : 0), kept);
+    shown.forEach((n) => {
       notificationToast(n);
       api.post("/api/notifications/read", { id: n.id });
     });
@@ -20017,8 +20064,6 @@ function pjChart(projects, since, open) {
     days.push(day.getTime());
   }
   const every = Math.max(1, Math.ceil(days.length / 8));
-  const grid = days.map((day) => `<span class="pj-grid" style="left:${at(day).toFixed(2)}%"></span>`)
-    .join("");
   const axis = days.map((day, n) => (n % every ? "" : `<span class="pj-tick"
       style="left:${at(day).toFixed(2)}%">${escapeHtml(new Date(day).toLocaleDateString([],
       { month: "short", day: "numeric" }))}</span>`)).join("");
@@ -20066,7 +20111,7 @@ function pjChart(projects, since, open) {
         <span class="muted">${pjHours(one.minutes)}${one.dormant ? " · dormant" : ""}</span>
         </span>${under ? `<button type="button" class="pj-unfold" title="Put back"
           aria-label="Put back" data-pj-unfold="${escapeHtml(one.id)}">×</button>` : ""}</div>
-      <div class="pj-ctrack">${grid}${juice}</div>
+      <div class="pj-ctrack">${juice}</div>
     </div>`;
   };
   const longest = (a, b) => Number(b.minutes || 0) - Number(a.minutes || 0);
@@ -21059,18 +21104,11 @@ function ovTodoWork(one) {
 }
 
 /* THE LATEST OUTCOME, ONE PRESS AWAY (the user, 2026-11-04): what the newest
-   finished version made, opened as Work status opens it; none made yet, the
-   newest version's session in Work. */
+   version that ended made, opened as Work status opens it. */
 function ovTodoLatest(versions) {
-  const newestFirst = versions.slice().reverse();
-  const finished = newestFirst.find((one) => one.state === "finished" && ovTodoMade(one).length);
-  if (finished) {
-    return `<button type="button" class="small ov-todo-result" data-todo-run="${
-      escapeHtml(finished.run)}"${ovTodoMade(finished)[0].open}>Open the latest outcome</button>`;
-  }
-  const going = newestFirst.find((one) => one.unit);
-  return going ? `<button type="button" class="small secondary ov-todo-ongoing" data-todo-unit="${
-    escapeHtml(going.unit)}" data-todo-open-run="${escapeHtml(going.run || "")}">See the latest try in Work</button>` : "";
+  const ended = versions.slice().reverse().find((one) => ovTodoMade(one).length);
+  return ended ? `<button type="button" class="small ov-todo-result" data-todo-run="${
+    escapeHtml(ended.run)}"${ovTodoMade(ended)[0].open}>Open the latest outcome</button>` : "";
 }
 
 /* What a version made, before it is opened: each thing it handed over -
@@ -21130,12 +21168,7 @@ function ovTodoTracked(one) {
     if (made.length) {
       const when = `finished${version.ended ? ` ${localStamp(version.ended)}` : ""}`;
       return made.map((thing, at) => row("finished", at ? "" : v,
-        at ? thing.what : `${when} - ${thing.what}`,
-        thing.shown ? `<button type="button" class="small secondary ov-todo-ongoing"
-          data-todo-unit="${escapeHtml(version.unit || "")}" data-todo-open-run="${
-          escapeHtml(version.run || "")}">See it in Work</button>`
-          : `<button type="button" class="small ov-todo-result" data-todo-run="${
-          escapeHtml(version.run)}"${thing.open}>${escapeHtml(thing.words)}</button>`,
+        at ? thing.what : `${when} - ${thing.what}`, ovTodoOpen(version, thing),
         at ? null : version)).join("");
     }
     // Stopped and able to go on: Resume - back to its last save point - or
@@ -21147,14 +21180,69 @@ function ovTodoTracked(one) {
             ? `It goes back to its last save point${version.back_to ? `, ${version.back_to}` : ""}, and goes on from there; what came after is given up`
             : "It goes on from where it stopped")}">${
           "Continue"}</button></span>` : "";
-    return row(version.state, v, ovTodoWhere(version), version.unit ? `${
-      version.state === "ongoing" ? ovTodoControls(version) : goOn}<button type="button"
-      class="small secondary ov-todo-ongoing" data-todo-unit="${escapeHtml(version.unit)}"
-      data-todo-open-run="${escapeHtml(version.run || "")}">${
-      version.state === "ongoing" ? "Follow it in Work" : "See it in Work"}</button>` : "",
-      version);
+    // WHAT THERE IS OF ONE THAT STOPPED, opened like any outcome; one that goes, how it stands
+    // and, asking, what it asks.
+    const madeSoFar = version.state === "stopped"
+      ? ovTodoMade(version).map((thing) => ovTodoOpen(version, thing)).join("") : "";
+    return row(version.state, v, ovTodoWhere(version), version.state === "ongoing"
+      ? ovTodoControls(version) : `${goOn}${madeSoFar}`, version) + ovTodoAsks(version);
   }).join("")}</ol>`;
 }
+
+function ovTodoOpen(version, thing) {
+  return `<button type="button" class="small ov-todo-result" data-todo-run="${
+    escapeHtml(version.run)}"${thing.open}>${escapeHtml(thing.words)}</button>`;
+}
+
+/* WHAT A RUN ASKS OF THE USER, on its row (the user, 2026-11-06: no Work panel to ask it in): to
+   approve a command or an install, or what to do about its model. It waits until it is answered,
+   so the item it is under is opened, and the Overview's tab says so. */
+const ovAsks = {};
+
+function ovTodoAsks(version) {
+  const going = ovTodoGoing(version);
+  const asks = going ? ovAsks[going.run] || [] : [];
+  return asks.length ? `<li class="ov-todo-asks">${asks.map((ask) =>
+    xpLiveAsk(going.run, ask)).join("")}</li>` : "";
+}
+
+async function ovReadAsks(going) {
+  const waiting = going.filter((one) => !one.debug && one.state === "waiting_for_you");
+  const seen = new Set(waiting.map((one) => one.run));
+  Object.keys(ovAsks).forEach((run) => { if (!seen.has(run)) delete ovAsks[run]; });
+  await Promise.all(waiting.map(async (one) => {
+    try {
+      const said = await api.get(`/api/work/live?run=${encodeURIComponent(one.run)}&since=${
+        Number.MAX_SAFE_INTEGER}&calls=${Number.MAX_SAFE_INTEGER}`);
+      ovAsks[one.run] = (said || {}).pending || [];
+    } catch (err) { /* the next look catches up */ }
+  }));
+  ovTodos.concat(ovAssigned).forEach((item) => {
+    if (ovTodoVersions(item).some((version) => (ovAsks[(ovTodoGoing(version) || {}).run] || []).length)) {
+      delegateState.tracking.add(item.id);
+    }
+  });
+}
+
+document.addEventListener("click", async (event) => {
+  const fix = event.target.closest?.("#overview [data-xp-model-fix]");
+  if (fix) {
+    await openModelSettings(fix.dataset.xpModelFix);
+    return;
+  }
+  const answer = event.target.closest?.("#overview [data-xp-approve]");
+  if (!answer) return;
+  answer.closest(".xp-package-ask")?.querySelectorAll("button")
+    .forEach((one) => { one.disabled = true; });
+  try {
+    await api.post("/api/work/approve", { run: answer.dataset.xpApprove,
+      request: answer.dataset.xpRequest, allow: answer.dataset.xpAllow === "1" });
+    delete ovAsks[answer.dataset.xpApprove];
+  } catch (err) {
+    toast(err.message, "error");
+  }
+  ovPlaceTodos();
+});
 
 function ovTodoBox() {
   // WHAT IS LEFT TO DO, and only that: one done, or not wanted, is removed -
@@ -21385,12 +21473,6 @@ document.addEventListener("click", async (event) => {
   const going = event.target.closest && event.target.closest(".ov-todo-ongoing");
   if (going && going.dataset.todoDraft) {
     openDelegateDraft(going.dataset.todoDraft);
-  } else if (going) {
-    if (going.dataset.todoUnit) experienceState.unit = going.dataset.todoUnit;
-    // That version's own try opened in its work.
-    experienceState.openRun = going.dataset.todoOpenRun || "";
-    const tab = $('nav button[data-tab="experience"]');
-    if (tab) tab.click();
   }
   const result = event.target.closest && event.target.closest(".ov-todo-result");
   if (result) {
@@ -21689,7 +21771,7 @@ document.addEventListener("click", async (event) => {
     await api.post("/api/work/drafts/save", { id: draft.id,
       instruction: draft.status === "writing" ? ($("#delegate-instruction") || {}).value || "" : null,
       plan: ready ? delegatePlan() : null, folders: delegateState.folders,
-      options: { limits: settings.limits, packages: settings.packages, way: settings.way,
+      options: { way: settings.way,
                  sound: Boolean(settings.sound), unconfined: Boolean(settings.unconfined),
                  see_tries: settings.seeTries !== false } });
     clearTimeout(delegateState.timer);
@@ -21993,19 +22075,12 @@ async function delegateSettings(draft) {
   delegateState.kinds = Object.assign({}, draft.kinds || {});
   const options = draft.options || {};
   const held = (delegateState.settings || {}).draft === draft.id ? delegateState.settings : null;
-  const given = Object.fromEntries(Object.entries(options.limits || {})
-    .filter(([, value]) => value !== undefined && value !== null && value !== ""));
   const settings = held || {
     way: ["auto", "quick", "full"].includes(options.way) ? options.way : "auto",
-    limits: Object.assign({}, (experienceState.limits || {}).defaults || {}, given),
-    // Auto unless asked otherwise (the user, 2026-10-27); the server asks
-    // anyway where the system does not confine what is installed.
-    packages: options.packages === "ask" ? "ask" : "auto",
     sound: Boolean(options.sound), unconfined: Boolean(options.unconfined),
     // THE TRIES BEFORE, told it - unless the user says not (2026-10-31).
     seeTries: options.see_tries !== false,
   };
-  const limit = (name) => escapeHtml(String(settings.limits[name] ?? ""));
   // THE THOROUGH WAY SWITCHED OFF (the user, 2026-10-31): nothing to choose.
   const thoroughOpen = ((experienceState.limits || {}).ways || ["quick", "full"]).includes("full");
   if (!thoroughOpen) settings.way = "quick";
@@ -22017,19 +22092,6 @@ async function delegateSettings(draft) {
             plan.way_why ? ` - ${plan.way_why}` : ""}`) : "not drafted yet"}</span>` : ""}</label>`)
         .join("")}
     </div>` : ""}
-    <div class="xp-limits"><strong>Limits:</strong>
-      <label>minutes <input type="number" data-delegate-limit="minutes" value="${limit("minutes")}"></label>
-      <label title="${escapeHtml(XP_INPUT_TOKENS_ABOUT)}">input tokens <input type="number"
-        data-delegate-limit="tokens_in" step="100000" value="${limit("tokens_in")}"></label>
-      <label title="What the models wrote">output tokens <input type="number"
-        data-delegate-limit="tokens_out" step="10000" value="${limit("tokens_out")}"></label>
-      <label>model calls <input type="number" data-delegate-limit="calls" value="${limit("calls")}"></label>
-      <span class="muted">0 or less: no limit</span></div>
-    <div class="xp-packages-mode"><strong>Python packages:</strong>
-      <label><input type="radio" name="delegate-packages" value="ask"${
-        settings.packages !== "auto" ? " checked" : ""}> Ask me before installing packages</label>
-      <label><input type="radio" name="delegate-packages" value="auto"${
-        settings.packages === "auto" ? " checked" : ""}> Auto</label></div>
     <div class="xp-unconfined-mode">${xpUnconfinedBox(
       `data-delegate-unconfined${settings.unconfined ? " checked" : ""}`)}</div>
     ${xpSoundBox("data-delegate-sound", settings.sound)}
@@ -22103,15 +22165,9 @@ async function delegateFolderCheck() {
 function delegateReadSettings() {
   const box = $("#delegate-settings");
   if (!box || !box.firstChild) return null;
-  const limits = {};
-  box.querySelectorAll("[data-delegate-limit]").forEach((field) => {
-    if (field.value !== "") limits[field.dataset.delegateLimit] = Number(field.value);
-  });
   const settings = {
     draft: (delegateState.draft || {}).id,
     way: (box.querySelector('input[name="delegate-way"]:checked') || {}).value || "auto",
-    limits,
-    packages: (box.querySelector('input[name="delegate-packages"]:checked') || {}).value || "auto",
     sound: Boolean((box.querySelector("[data-delegate-sound]") || {}).checked),
     unconfined: Boolean((box.querySelector("[data-delegate-unconfined]") || {}).checked),
     seeTries: (box.querySelector("[data-delegate-see-tries]") || { checked: true }).checked,
@@ -22202,7 +22258,7 @@ document.addEventListener("click", async (event) => {
       // process to start - and how it went is asked of the draft.
       await api.post("/api/work/drafts/start", { id: draft.id,
         plan, folders: delegateState.folders,
-        options: { limits: settings.limits, packages: settings.packages,
+        options: {
                    sound: Boolean(settings.sound), unconfined: Boolean(settings.unconfined),
                    see_tries: settings.seeTries !== false } });
       $("#delegate-head").innerHTML = "";
@@ -22217,8 +22273,8 @@ document.addEventListener("click", async (event) => {
         return;
       }
       $("#delegate").close();
-      toast(ready ? "Starting - see it in Work"
-        : "It starts once its context is collected - see it in Work");
+      toast(ready ? "Starting - follow it on the Overview"
+        : "It starts once its context is collected - follow it on the Overview");
       if (draft.source === "todo") loadTodos();   // a to-do handed over: now Ongoing
       const said = await delegateHowItStarted(draft.id);
       if (said.error) {
@@ -25150,7 +25206,7 @@ async function applyDebuggerAvailability() {
   document.querySelector("#listenerdebug")?.remove();
   // EVERY DEBUGGER: an installed build is for the user, not for whoever
   // develops the agent - run from Python, they are all there.
-  ["naturedebug", "connectiondebug", "readingdebug", "languagedebug", "resourcedebug", "lessons"].forEach((name) => {
+  ["recommenddebug", "naturedebug", "connectiondebug", "readingdebug", "languagedebug", "resourcedebug", "lessons"].forEach((name) => {
     document.querySelector(`[data-tab="${name}"]`)?.remove();
     document.querySelector(`#${name}`)?.remove();
   });
@@ -25515,7 +25571,7 @@ document.addEventListener("toggle", (event) => {
    a line that climbs says which kind of work is taking the budget, and the
    steepness says how fast.
 */
-const dbgTokens = { calls: [], since: "", metric: "total_tokens", open: true,
+const dbgTokens = { calls: [], since: "", metric: "estimated_cost", open: true,
                     hidden: new Set(), view: "days", days: 30, daily: null,
                     order: [], group: "module", taskModules: {}, manualTasks: [] };
 
@@ -27279,15 +27335,6 @@ setInterval(pollNotifications, 20000);
     api.post("/api/learning/inbox", { id })
       .then((said) => learnFollow(said.draft.id))
       .catch((err) => toast(err.message, "error"));
-    return;
-  }
-  // A try, from a panel beside the avatar: Work, on it.
-  if (wanted.startsWith("work=")) {
-    const [unit, run] = decodeURIComponent(wanted.slice("work=".length)).split(":");
-    history.replaceState(null, "", location.pathname);
-    experienceState.unit = unit;
-    experienceState.openRun = run || "";
-    $('nav button[data-tab="experience"]')?.click();
     return;
   }
   // The selection's "Learn": its learning plan being drafted already.

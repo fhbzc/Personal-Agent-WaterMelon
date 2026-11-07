@@ -64,6 +64,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from .leave_out import LeaveOut
 from .match import closeness, coverage, share
 from .store import LearningStore, dumps
+from .from_lessons import learned_from
 from .vocab import ASPECTS, DIMENSIONS, Vocabulary
 
 #: Cases given in full; in the short index; judged by the model, at most.
@@ -102,7 +103,9 @@ WHICH OF THE REVIEWER'S QUESTIONS DOES IT ANSWER? HOW ALIKE TO THIS JOB IS
 EACH OF THESE CASES OF THEIR PAST WORK?
 
 Each reason says why the user judges their work so, and WHEN it holds (and
-what it is excepted from). For the job described, say for each:
+what it is excepted from). Some were learned from how they answered their agent,
+and say so, with the answers: weigh what it meant there before saying it holds for
+this job. For the job described, say for each:
   "holds": "yes" - its condition holds here: "here" says in one sentence
            what it asks of this job;
            "no" - it does not<NO>;
@@ -318,6 +321,9 @@ class Finder:
                 f"(by the word list: {how}{'; ' + '; '.join(why) if why else ''}; "
                 f"last seen {str(reason.get('last_seen') or '')[:10]}"
                 f"{'; changed since ' + reason['since'][:10] if reason.get('since') else ''})")
+            source = learned_from(self.store, reason["id"])
+            if source:
+                lines.append(f"  {source}")
         if cases:
             lines += ["", "THE CASES (the user's past work, most of the job's terms first):"]
             for case in cases:
@@ -773,6 +779,9 @@ class Finder:
         lines = [f"{reason['id']} [{tag}] {reason['statement']}",
                  f"    when: {cond.get('text', '')}"
                  + (f" - except {dumps(cond.get('excluded'))}" if cond.get("excluded") else "")]
+        source = learned_from(self.store, reason["id"])
+        if source:
+            lines.append(f"    {source}")
         state = {"yes": verdict.get("here") or "its condition holds here",
                  "unknown": "it may hold - see the question"}
         lines.append(f"    here: {state.get(verdict.get('holds'), 'it may hold')}"

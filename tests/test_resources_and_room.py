@@ -310,6 +310,7 @@ class TheResourceDebuggerTests(unittest.TestCase):
         self.assertIn('data-tab="resourcedebug"', (web / "index.html").read_text(encoding="utf-8"))
         script = (web / "app.js").read_text(encoding="utf-8")
         self.assertIn('"languagedebug", "resourcedebug", "lessons"]', script)
+        self.assertIn('["recommenddebug", "naturedebug"', script, "gone from an installed build")
 
 
 class _Body:

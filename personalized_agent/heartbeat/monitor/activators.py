@@ -25,6 +25,7 @@ and what is done when it holds, by score:
                 | {"keywords": {"words": {"verify your account": 3, ...},
                                 "where": ["page", "email"]}}
                 | {"pattern": "<regex>", "in": "title|text|either", "score": 1}  (built in only)
+                | {"new_text": {"least_chars": 800, "unlike": 0.9, "minutes": 30}}  (built in only)
 
 Code holds what the model writes to this shape (`check`): only signals and
 events there are, a few nodes, plain words (never a pattern), a cooldown
@@ -42,7 +43,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ...common.events.models import new_id, utcnow
-from .signals import EVENTS, SIGNALS
+from .signals import EVENTS, SIGNALS, words_of
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS monitor_activators (
@@ -85,6 +86,10 @@ WHERE = ("page", "email", "chat", "terminal", "any")
 MOST_NODES, MOST_DEPTH, MOST_WORDS, MOST_WORD = 40, 5, 300, 60
 LEAST_COOLDOWN, MOST_A_DAY = 1, 50
 MOST_ACTIVATORS = 60
+
+#: A LOT OF NEW TEXT: fewer words than this say nothing of how unlike it is, and with fewer words of
+#: late to hold it against, after a start or a gap, everything would be.
+NEW_TEXT_LEAST_WORDS, NEW_TEXT_LEAST_KNOWN = 20, 200
 
 #: THE DISPLAY LANGUAGES (the user, 2026-11-03: "必须支持agent支持的所有display
 #: language"): those code can tell by their script, and the rest by name.
@@ -212,6 +217,13 @@ def _check_condition(cond: Any, builtin: bool, counted: List[int], depth: int = 
         if any(one not in WHERE for one in where):
             raise ValueError(f"where is any of {', '.join(WHERE)}")
         return {"keywords": {"words": found, "where": where}}
+    if "new_text" in cond:
+        if not builtin:
+            raise ValueError("only plain keywords - new_text is for the built-in ones")
+        spec = cond.get("new_text") or {}
+        return {"new_text": {"least_chars": int(spec.get("least_chars") or 800),
+                             "unlike": float(spec.get("unlike") or 0.9),
+                             "minutes": float(spec.get("minutes") or 30)}}
     if "pattern" in cond:
         if not builtin:
             raise ValueError("only plain keywords - a pattern is for the built-in ones")
@@ -307,7 +319,7 @@ def _check_follow(follow: Any) -> Dict[str, Any]:
 
 def text_driven(cond: Dict[str, Any]) -> bool:
     """Whether a condition looks at what appears on the screen."""
-    if "keywords" in cond or "pattern" in cond:
+    if "keywords" in cond or "pattern" in cond or "new_text" in cond:
         return True
     for key in ("all", "any"):
         if key in cond:
@@ -377,6 +389,8 @@ def evaluate(cond: Dict[str, Any], ctx: Dict[str, Any]) -> Tuple[bool, float, Li
                  if _word_found(word, text)]
         score = sum(weight for _word, weight in found)
         return bool(found), score, [f"“{word}”" for word, _w in found[:12]]
+    if "new_text" in cond:
+        return _new_text(cond["new_text"], ctx)
     if "pattern" in cond:
         place = cond.get("in", "either")
         texts = {"title": [ctx.get("title") or ""], "text": [ctx.get("text") or ""],
@@ -387,6 +401,30 @@ def evaluate(cond: Dict[str, Any], ctx: Dict[str, Any]) -> Tuple[bool, float, Li
                 return True, float(cond.get("score") or 1), [f"“{hit.group(0)[:60]}”"]
         return False, 0.0, []
     return False, 0.0, []
+
+
+def _new_text(spec: Dict[str, Any], ctx: Dict[str, Any]) -> Tuple[bool, float, List[str]]:
+    """A LOT OF NEW TEXT, UNLIKE THE WORDS OF LATE (the user, 2026-11-06): the share of its words that
+    were on no screen for the last minutes. Not a terminal: a coding assistant writes there all day.
+    Mail and chats too: what the model may search with is held (runtime/web_guard.py, `hold`). Not
+    what shows a password, which no model is to be given."""
+    text, recent = str(ctx.get("text") or ""), ctx.get("recent_words")
+    if recent is None or ctx.get("where") == "terminal" or len(text) < spec["least_chars"]:
+        return False, 0.0, []
+    words = words_of(text)
+    if len(words) < NEW_TEXT_LEAST_WORDS:
+        return False, 0.0, []
+    known = recent(spec["minutes"])
+    if len(known) < NEW_TEXT_LEAST_KNOWN:
+        return False, 0.0, []
+    new = sum(1 for word in words if word not in known) / len(words)
+    if new < spec["unlike"]:
+        return False, 0.0, []
+    from ...runtime.documents import shows_credentials
+    if shows_credentials(text):
+        return False, 0.0, []
+    return True, 0.0, [f"{len(text)} new characters, {round(new * 100)}% of the words unlike the "
+                       f"last {spec['minutes']:.0f} minutes"]
 
 
 def tier_for(activator: Dict[str, Any], score: float) -> Optional[Dict[str, Any]]:
@@ -580,6 +618,15 @@ class ActivatorStore:
                             (key, datetime.now(timezone.utc).isoformat()))
             made += 1
         return made
+
+    def retire(self, builtin: str, why: str) -> int:
+        """A built-in one taken out of the application: gone from those kept, as a delete is; what
+        it did stays on the record."""
+        rows = self.db.query("SELECT id FROM monitor_activators WHERE builtin = ? AND "
+                             "COALESCE(deleted_at, '') = ''", (builtin,))
+        for row in rows:
+            self.delete(row["id"], "built in", why)
+        return len(rows)
 
     def seed_quiet(self, rules: Any) -> int:
         """The built-in rules of quiet, each written once: one taken away is not

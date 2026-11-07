@@ -30,6 +30,10 @@ BREAK_GAP_MIN = 5
 #: Around each thing a coding assistant says, how long it is taken to be at work.
 AGENT_GRACE_SECONDS = 120
 SESSION_GAP_MIN = 30
+#: A window in front for less than this is not a focus change. The system now says at once what
+#: comes to the front (2026-11-06), where a look every two seconds passed over these: counted, the
+#: same work would read as more scattered than it did, and than the weeks kept from before.
+GLANCE_SECONDS = 2.0
 #: Windows of continuous absence kept. Eight hours asleep is one fact, not
 #: thirty-two, and persistence would be right about every one of them.
 MAX_AWAY_RUN = 8
@@ -284,7 +288,7 @@ def build_windows(start: datetime, end: datetime, minutes: int,
                 used -= _overlap(item, gone, here, until)
             if used > 0:
                 by_label[item.label] = by_label.get(item.label, 0.0) + used
-            if here <= item.start < until:
+            if here <= item.start < until and (item.end - item.start).total_seconds() >= GLANCE_SECONDS:
                 starts += 1
         active = sum(by_label.values())
         idle = max(0.0, 1.0 - active / seconds)
