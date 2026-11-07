@@ -12,7 +12,7 @@ way you would want it done. All on your own computer.
 </p>
 
 <p align="center">
-<b>Download v0.3.0:</b> <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-Setup-windows-x64.exe"><b>Windows</b></a> ·
+<b>Download v0.3.2:</b> <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-Setup-windows-x64.exe"><b>Windows</b></a> ·
 <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-macos.dmg"><b>macOS</b></a> ·
 <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-linux-x86_64.deb"><b>Linux</b></a>
 <sub>(<a href="#install">other formats</a> · <a href="#versions">every version</a>)</sub>
@@ -423,7 +423,7 @@ on it. What you start yourself (chat, a piece of work) is counted apart.
 
 ## Install
 
-The newest version is **[v0.3.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.0)**. [v0.3.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.1) is a pre-release, on its release page:
+The newest version is **[v0.3.2](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.2)**:
 
 > **On Windows, with 0.2.7 or earlier: install this version yourself, once.** Updating from inside the program quit it and never came back - the installer was never started. Run the installer below over your copy: your data and settings stay. From 0.2.8 on, updates are quiet: made ready in the background, used at the next start.
 
@@ -440,8 +440,9 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.3.2](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.2) | 2026-11-06 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.2) |
 | [v0.3.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.1) | 2026-11-06 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.1) |
-| [v0.3.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.0) | 2026-11-04 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.0) |
+| [v0.3.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.0) | 2026-11-04 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.0/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.0/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.0/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.0) |
 | [v0.2.20](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) | 2026-11-03 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.20/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.20/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.20/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) |
 | [v0.2.19](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.19) | 2026-11-02 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.19) |
 | [v0.2.16](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) | 2026-10-30 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.16/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.16/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.16/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.16) |
@@ -703,6 +704,27 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.3.2](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.2) (2026-11-06)
+
+Recommendations now reach you, and notifications say where they came from.
+
+- **Recommendations are sent.** They no longer only record. Each one waits in Waiting notifications unless the model thinks it should come up at once. A risk, such as a page that looks like a scam, comes through even a blocker.
+- **Ready ahead, at its own pace.** The model says when to look for more, and new work, work running short of things, or your answer to a recommendation wakes it sooner. The same link is never told twice, and words rare in your own reading count for more.
+- **A lot of new text.** A long new passage on the screen, unlike what you have been reading, can set off a recommendation. The model may decide to send nothing.
+- **Searches keep your words to themselves.** A search made from your mail or chats is refused if it carries names, contacts, addresses, long numbers or phrases copied from them. The same goes for Claude Code's own search.
+- **Waiting notifications.** A list on the avatar's menu and the Dock: titles that open, closing by itself when the last one goes.
+- **Every notification says why.** A Trigger line tells what set it off, the reason is in small italics, and links in it can be opened.
+- **Smaller words.** The one zoom now goes by share and two steps further down, so large text can be made small; the notification's scroll bar is easier to take hold of.
+- **What you are working on.** A video in focus is no longer read as your main project, a calendar's words no longer place the window, and what a window teaches is held to what the states say. The "back to a project" and "scattered" triggers are gone.
+- **Reminders of what is done.** What was read late now reaches the notifications, so a reminder to send something you have already sent is closed.
+- **The evening report comes once.** It is not asked again while the question waits, and answering twice writes one report.
+- **Learning from every lesson.** What you do with the agent's lists is reasoned across as a whole.
+- **Chat.** More detail opens where it is. The width of the follow-up notes and of the conversation list can be dragged, Topics and Chats fold, and pins sit in their own part. The chat can look back at what was on the screen when you ask, and sees the window you mean.
+- **The Work panel is gone.** What a run asks of you is answered on its to-do, saved drafts sit under Work assigned, and what a run made can always be opened. Runs have no limits to set.
+- **Overview.** No vertical dashed lines, and Token usage shows the estimated cost.
+- **The avatar's mouth** moves as a reply comes out, and what is in front of you is noticed at once.
+- Also: a call named after the project is read as a call, not as the agent's own window; a Recommendation debugger.
 
 ### [v0.3.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.1) (2026-11-06, a pre-release)
 
