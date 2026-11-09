@@ -12,7 +12,7 @@ way you would want it done. All on your own computer.
 </p>
 
 <p align="center">
-<b>Download v0.3.2:</b> <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-Setup-windows-x64.exe"><b>Windows</b></a> ·
+<b>Download v0.3.3:</b> <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-Setup-windows-x64.exe"><b>Windows</b></a> ·
 <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-macos.dmg"><b>macOS</b></a> ·
 <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-linux-x86_64.deb"><b>Linux</b></a>
 <sub>(<a href="#install">other formats</a> · <a href="#versions">every version</a>)</sub>
@@ -423,7 +423,7 @@ on it. What you start yourself (chat, a piece of work) is counted apart.
 
 ## Install
 
-The newest version is **[v0.3.2](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.2)**:
+The newest version is **[v0.3.3](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.3)**:
 
 > **On Windows, with 0.2.7 or earlier: install this version yourself, once.** Updating from inside the program quit it and never came back - the installer was never started. Run the installer below over your copy: your data and settings stay. From 0.2.8 on, updates are quiet: made ready in the background, used at the next start.
 
@@ -440,7 +440,8 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
-| [v0.3.2](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.2) | 2026-11-06 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.2) |
+| [v0.3.3](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.3) | 2026-11-09 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.3) |
+| [v0.3.2](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.2) | 2026-11-06 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.2/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.2/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.2/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.2) |
 | [v0.3.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.1) | 2026-11-06 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.1) |
 | [v0.3.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.0) | 2026-11-04 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.0/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.0/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.0/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.0) |
 | [v0.2.20](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) | 2026-11-03 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.20/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.20/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.2.20/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.2.20) |
@@ -704,6 +705,21 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.3.3](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.3) (2026-11-09)
+
+Work handed over is easier to take up, the Monitor goes by your own habits, and recommendations match only what is really in front of you.
+
+- **Forms filled, never sent.** With the browser extension (version 0.0.4, as it reaches the stores), a form the agent hands over opens with its boxes filled and outlined: you check them and submit it yourself. The extension's filling can only put words in boxes - it presses, submits, goes and sends nothing - and never fills a password, a card, an ID number, a code or what you wrote yourself. A sign-in page first does not use it up.
+- **What came of the work, in one place.** A project's outcome opens as one panel in three parts - the project's instructions with each item to open, the item's own instructions and checklist, and everything it made - each part zoomed on its own and remembered, ticks kept. A to-do opens its main thing (an email, a page) at once; several things come with Open folder. Folders open in front.
+- **Delegate work, more of it.** A whole project or any of its steps can be delegated (and started at once with »), each try in its own folder, later tries free to build on earlier ones. A run starts at once and gathers its context while you watch; it is given your chat, what was learned, other work's folders, mail, the calendar, and the rules learned about that very subject.
+- **The chat** can hand work over - it is listed under Work assigned, in a group of its own - and keeps a lesson without being asked. It shows the picture of the screen it sent: the whole screen, its own windows left out on Windows and the Mac.
+- **The Monitor by your habits.** Thresholds come from your own activity; there are no break reminders unless you set one; your day runs from waking to sleep, with "The day ahead" in the morning, the evening report at your usual hour and "Back to an old project". Each Activator says whether it pops up or waits, and can be renamed and edited.
+- **Recommendations, on what you can see.** A match counts only while it is in front of you: moved to another program or tab, nothing is sent, and a coding agent's conversation counts only while it is on the screen. Words you see all day count far less and are never enough alone. How many reach the model, and how many are sent without it, keep to the numbers in Settings (30 and 5 a day). What is already on your pages is never told. You can answer one in your own words from the list.
+- **Learning** is on by default at 08:00, reads Claude Code and Codex records by default, up to 100 pieces an update, and learns from what you did on the screen. Lessons are kept tidy: contradictions settled, near-duplicates merged.
+- **Long answers cut off** are asked again in halves rather than lost.
+- **The avatar** jumps into a side when a quarter of it is off the screen, stays in front, and its vine carries two buttons: the chat and the Overview. The chat shortcut closes the chat too.
+- **Overview.** Work assigned and To do read in clear layers, each with when it was created in your time zone, and their buttons in one tidy row.
 
 ### [v0.3.2](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.2) (2026-11-06)
 
