@@ -975,12 +975,16 @@ class TheVineOnTheScreenTests(unittest.TestCase):
 
     def test_the_two_have_their_middle_where_the_one_was(self) -> None:
         """The user, 2026-11-08: "两个藤蔓logo, 平均高度还是要在中央"."""
-        for side, box in (("right", (1886, 500, 128, 128)), ("left", (-94, 500, 128, 128)),
-                          ("top", (900, -94, 128, 128)), ("bottom", (900, 998, 128, 128))):
+        # On this screen, whatever its size (a test machine's is not 1920 wide).
+        left, top, right, bottom = self.vine._screen((300, 300, 128, 128))
+        across, down = (left + right) // 2, (top + bottom) // 2
+        for side, box in (("right", (right - 34, down, 128, 128)), ("left", (left - 94, down, 128, 128)),
+                          ("top", (across, top - 94, 128, 128)),
+                          ("bottom", (across, bottom - 34, 128, 128))):
             self.side[0], self.box[0] = side, box
             self.vine.place()
             self._settle(0.6)
-            one = vine_path(box, side, AREA)[1]
+            one = vine_path(box, side, self.vine._screen(box))[1]
             chat, other = self.vine.at, self.vine.second_at
             middle = ((chat[0] + other[0]) / 2, (chat[1] + other[1]) / 2)
             self.assertLessEqual(abs(middle[0] - one[0]) + abs(middle[1] - one[1]), 1, side)

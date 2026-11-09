@@ -540,7 +540,7 @@ def recorded(db: Any, site: str = "", most: int = 200) -> Dict[str, Any]:
              for row in db.query("SELECT site, COUNT(*) AS n, MAX(at) AS last FROM "
                                  "lesson_retrievals GROUP BY site ORDER BY last DESC")]
     rows = db.query("SELECT * FROM lesson_retrievals WHERE (? = '' OR site = ?) "
-                    "ORDER BY at DESC LIMIT ?", (site, site, most))
+                    "ORDER BY at DESC, rowid DESC LIMIT ?", (site, site, most))
     statements: Dict[str, str] = {}
     out: List[Dict[str, Any]] = []
     for row in rows:
