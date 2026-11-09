@@ -305,3 +305,39 @@ class TheRightClickMenuTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BackOnTopTests(unittest.TestCase):
+    """The user, 2026-11-08: "为什么avatar没有放在front" - found under a browser and two terminals,
+    its "on top" still set. Put back when that is so; never when it is where it should be."""
+
+    def test_out_of_place_only_under_another_programs_window_not_kept_on_top(self) -> None:
+        from personalized_agent.ui.on_top import out_of_place
+        self.assertTrue(out_of_place([{"ours": False, "topmost": True},      # the taskbar
+                                      {"ours": False, "topmost": False}]))   # a browser
+        self.assertFalse(out_of_place([{"ours": False, "topmost": True},
+                                       {"ours": True, "topmost": False}]), "its own windows")
+        self.assertFalse(out_of_place([]))
+
+    def test_looked_at_with_the_screens_and_not_when_hidden(self) -> None:
+        from personalized_agent.ui import on_top
+        asked = []
+        desk = mock.MagicMock(character_hidden=False, agent_window="avatar")
+        with mock.patch.object(on_top, "back_on_top", lambda window: asked.append(window)):
+            desktop_module.DesktopAgent._watch_the_screens(desk)
+            desk.character_hidden = True
+            desktop_module.DesktopAgent._watch_the_screens(desk)
+        self.assertEqual(asked, ["avatar"])
+
+    @unittest.skipUnless(sys.platform.startswith("win"), "Windows' order of windows")
+    def test_a_window_on_top_where_it_should_be_is_left_as_it_is(self) -> None:
+        import tkinter as tk
+        from personalized_agent.ui.on_top import back_on_top
+        root = tk.Tk()
+        try:
+            root.geometry("40x40+-2000+-2000")           # nowhere anyone looks
+            root.attributes("-topmost", True)
+            root.update()
+            self.assertFalse(back_on_top(root))
+        finally:
+            root.destroy()

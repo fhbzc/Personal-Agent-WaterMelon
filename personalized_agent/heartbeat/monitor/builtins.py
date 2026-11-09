@@ -121,21 +121,57 @@ SPAM = {"builtin": "spam_risk", "protected": True, "name": "Spam and scam risk",
                   "reason": "Words of a scam on the screen: {matched}",
                   "and_then": {"do": "ask_model", "handler": "judge", "brief": SPAM_BRIEF}},
                  {"min_score": 4, "do": "queue"}],
-        "cooldown_minutes": 30, "most_per_day": 20}
+        "cooldown_minutes": 30, "most_per_day": 20,
+        # A risk comes up at once, and through a blocker (the user, 2026-11-07: "spam默认弹出").
+        "delivery": "pop"}
 
 
 #: TAKEN OUT (the user, 2026-11-06): the project under way is read too unsurely for "back to a
 #: project after days". Fired 4 times in eight real days, wrong all 4; the one real return was missed.
 GONE = {"project_return": "the user had it deleted: wrong each time it fired",
         # The user, 2026-11-06: "工作零散时，不需要推荐".
-        "scattered": "the user had it deleted: nothing is to be recommended for scattered work"}
+        "scattered": "the user had it deleted: nothing is to be recommended for scattered work",
+        # The user, 2026-11-07: seconds on a channel where a link of a project's showed made a
+        # project of three days "never worked on before"; back to an old project is asked instead.
+        "new_work": "the user had it deleted: it read new work where there was none",
+        # The user, 2026-11-07: a break reminder is the user's own to add ("其它user拿到是没有的");
+        # none is given. One the user changed is theirs and stays.
+        "break": "no break reminder is given by default: the user adds one of their own",
+        "work_break": "no break reminder is given by default: the user adds one of their own"}
+
+#: WHAT THE TWO BREAK REMINDERS WERE, until 2026-11-07 - no longer given, kept for what was said
+#: of them and for the user to add as their own.
+OLD_BREAKS = [
+        {"builtin": "break", "name": "A break", "group": "rest",
+         "purpose": SCREEN_PURPOSE,
+         "when": {"all": [{"signal": "present", "op": "==", "value": True},
+                          # BY THE USER'S HABIT (2026-11-07): their usual stretch, 120 until
+                          # it is known.
+                          {"signal": "since_break_minutes", "op": ">=", "value": 120,
+                           "habit": "usual_stretch_minutes"}]},
+         "then": [{"do": "notify", "choices": "break", "title": "Time for a break?",
+                   "message": SCREEN_MESSAGE}],
+         "cooldown_minutes": 45, "most_per_day": 4},
+        {"builtin": "work_break", "name": "A long stretch of work", "group": "rest",
+         "purpose": "A long stretch of your own work: a pause is suggested.",
+         "when": {"all": [{"signal": "present", "op": "==", "value": True},
+                          {"signal": "work_minutes", "op": ">=", "value": 90,
+                           "habit": "usual_work_stretch_minutes"}]},
+         "then": [{"do": "notify", "choices": "break", "title": "Time for a break?",
+                   "message": "You have been working for {work_minutes} minutes."}],
+         "cooldown_minutes": 45, "most_per_day": 4},
+]
+
+OLD_PROJECT_BRIEF = ("They seem to be back at a project not opened for days. First see from the "
+                     "screen whether it really is that project; if it is, tell them what was done, "
+                     "what is left and where its things are.")
 
 
 def _recommend(builtin: str, name: str, purpose: str, when: Dict[str, Any], brief: str,
                cooldown: float, most: int) -> Dict[str, Any]:
     return {"builtin": builtin, "name": name, "group": "recommend", "purpose": purpose,
             "when": when, "then": [{"do": "ask_model", "handler": "recommend", "brief": brief}],
-            "cooldown_minutes": cooldown, "most_per_day": most}
+            "cooldown_minutes": cooldown, "most_per_day": most, "delivery": "wait"}
 
 
 def builtins() -> List[Dict[str, Any]]:
@@ -151,13 +187,22 @@ def builtins() -> List[Dict[str, Any]]:
         _recommend("back", "Back after an absence",
                    "Back at the computer after a while: where they left off.",
                    {"all": [{"event": "back"},
-                            {"signal": "back_after_minutes", "op": ">=", "value": 30}]},
+                            {"signal": "back_after_minutes", "op": ">=", "value": 30,
+                             "habit": "usual_absence_minutes"}]},
                    "They are back after an absence: where they left off, and what to pick up.",
                    60, 4),
-        _recommend("new_work", "New work begins",
-                   "A piece of work never worked on before: what bears on it.",
-                   {"event": "new_work"},
-                   "They have begun new work: what would help them start it.", 60, 4),
+        # The user, 2026-11-07: back at a project left for days, where it stands and where its
+        # things are - once the model has seen, on the screen, that it really is that project.
+        {"builtin": "old_project", "name": "Back to an old project", "group": "recommend",
+         "purpose": "Back for a while at a project not opened for days: what was done, what is "
+                    "left, and where its things are.",
+         "when": {"event": "old_project"},
+         "then": [{"do": "ask_model", "handler": "old_project", "brief": OLD_PROJECT_BRIEF}],
+         # THE DEFAULTS, THE USER'S (2026-11-07): an old project's summary waits.
+         "delivery": "wait",
+         # Five minutes between looks, across projects (the user, 2026-11-07: "5min冷却就行了"):
+         # a look that found it was not that project is soon tried again.
+         "cooldown_minutes": 5, "most_per_day": 6},
         # At these lines, on eight real days of screens: about 6 a day, a model asked for each.
         _recommend("new_text", "A lot of new text",
                    "A lot of text has come up, unlike what was on the screen of late.",
@@ -171,34 +216,37 @@ def builtins() -> List[Dict[str, Any]]:
                             {"signal": "worked_today_minutes", "op": ">=", "value": 60}]},
                    "They are resting: one light thing they would enjoy - never their work.",
                    180, 2),
-        {"builtin": "break", "name": "A break", "group": "rest",
-         "purpose": SCREEN_PURPOSE,
-         "when": {"all": [{"signal": "present", "op": "==", "value": True},
-                          {"signal": "since_break_minutes", "op": ">=", "value": 120}]},
-         "then": [{"do": "notify", "choices": "break", "title": "Time for a break?",
-                   "message": SCREEN_MESSAGE}],
-         "cooldown_minutes": 45, "most_per_day": 4},
-        {"builtin": "work_break", "name": "A long stretch of work", "group": "rest",
-         "purpose": "A long stretch of your own work: a pause is suggested.",
-         "when": {"all": [{"signal": "present", "op": "==", "value": True},
-                          {"signal": "work_minutes", "op": ">=", "value": 90}]},
-         "then": [{"do": "notify", "choices": "break", "title": "Time for a break?",
-                   "message": "You have been working for {work_minutes} minutes."}],
-         "cooldown_minutes": 45, "most_per_day": 4},
+        # THE DAY AHEAD (the user, 2026-11-07: "白天对今天日程的summary，每天第一次active的时候做"):
+        # the first time they are at the computer in their day, what it holds - written, not
+        # offered; it waits for them.
+        {"builtin": "morning", "name": "The day ahead", "group": "rest",
+         "purpose": "The first time the user is at the computer in their day: what today holds.",
+         "when": {"event": "day_began"},
+         "then": [{"do": "ask_model", "handler": "morning"}],
+         "cooldown_minutes": 600, "most_per_day": 1},
         {"builtin": "evening", "name": "The evening report", "group": "rest",
          "purpose": "After a long day, in the evening: a report of the day, if wanted.",
-         "when": {"all": [{"signal": "present", "op": "==", "value": True},
-                          {"signal": "hour", "op": ">=", "value": 18},
-                          {"signal": "worked_today_minutes", "op": ">=", "value": 240}]},
+         # AHEAD OF THE END OF THEIR DAY (the user, 2026-11-07: "应该是个提前量"): when a quarter
+         # of their days had ended, by the hours of their day - after midnight too; on a day half
+         # as long as their usual one. 18:00 and 240 minutes while these are not known. Away by
+         # then, it is written all the same: it waits for them.
+         "when": {"all": [{"signal": "day_hour", "op": ">=", "value": 18,
+                           "habit": "evening_report_hour"},
+                          {"signal": "worked_today_minutes", "op": ">=", "value": 240,
+                           "habit": "usual_day_minutes", "times": 0.5}]},
          "then": [{"do": "ask_model", "handler": "evening"}],
          "cooldown_minutes": 60, "most_per_day": 3},
         {"builtin": "evening_closing", "name": "Closing up for the evening", "group": "rest",
          "purpose": "Many windows closed after a long day: the report of the day, before they go.",
-         "when": {"all": [{"event": "closing_up"},
-                          {"signal": "hour", "op": ">=", "value": 18},
-                          {"signal": "worked_today_minutes", "op": ">=", "value": 240}]},
+         # Closing up, or gone for the night: written now if it was not - and, if they worked on
+         # after it, a few lines on what came after.
+         "when": {"all": [{"any": [{"event": "closing_up"}, {"event": "day_ended"}]},
+                          {"signal": "day_hour", "op": ">=", "value": 16,
+                           "habit": "evening_report_hour", "plus": -2},
+                          {"signal": "worked_today_minutes", "op": ">=", "value": 240,
+                           "habit": "usual_day_minutes", "times": 0.5}]},
          "then": [{"do": "ask_model", "handler": "evening_now"}],
-         "cooldown_minutes": 60, "most_per_day": 1},
+         "cooldown_minutes": 60, "most_per_day": 2},
     ]
 
 

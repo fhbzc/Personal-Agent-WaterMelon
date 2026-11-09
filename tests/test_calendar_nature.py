@@ -274,6 +274,8 @@ class NotificationLessonTests(unittest.TestCase):
         before = self.app.lessons.rule(rule["id"])["confidence"]
         self._post("/api/tasks/action", {"id": made.id, "action": "delete"})
         keeper.wait()
+        # The model says at the next learning which lesson caused it (the user, 2026-11-07).
+        self.app.lessons.learn("notifications")
         self.assertLess(self.app.lessons.rule(rule["id"])["confidence"], before)
 
 

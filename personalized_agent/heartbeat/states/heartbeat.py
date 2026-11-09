@@ -94,8 +94,12 @@ from ...data_manage.library.record import STATE_TASKS, STATES
 from ...data_manage.text import COMMON_WORDS, estimate_tokens, search_terms
 from ...models.base import ModelRequest
 from ...models.manager import ModelUnavailable
+from ...models import answers as _answers
 
 log = logging.getLogger(__name__)
+
+#: How long quitting waits for a round in flight, in seconds.
+STOP_WAIT_SECONDS = 1.0
 
 #: How many states one round will look at, newest first.
 #:
@@ -2962,7 +2966,10 @@ class StateHeartbeat:
         # timeout, three times over.
         self._interval_changed.set()
         if self._thread:
-            self._thread.join(timeout=5)
+            # A ROUND IN A MODEL CALL IS LEFT, NOT WAITED OUT (the user, 2026-11-07): quitting
+            # waited five seconds for one; it wrote nothing yet - only a whole answer moves
+            # anything on - and is read again at the next start.
+            self._thread.join(timeout=STOP_WAIT_SECONDS)
         log.info("state heartbeat stopped")
 
     #: How deep the search for something worth showing goes.
@@ -5254,6 +5261,8 @@ class StateHeartbeat:
                 # arrives complete.
                 if (report.get("plan") or {}).get("shape_only"):
                     report["plan"] = self._the_shape_so_far(report, nodes)
+                if task is not None and summary.get("not_taken"):
+                    self._failed_summary(task, summary, kept, where, report)
                 if task is not None and summary.get("record_id"):
                     # THE VERSION IT REPLACES, kept on the task: what it was
                     # called, when, how big it was then, and why it was
@@ -5352,8 +5361,10 @@ class StateHeartbeat:
                         "state_tasks", where.scope, task, group.pop("todo"),
                         summary.get("todo"),
                         str(summary.get("todo_note") or ""),
+                        # Nor seen when the answer was not whole (2026-11-07).
                         failed=bool(summary.get("blocked"))
-                        or not summary.get("calls"))
+                        or not summary.get("calls")
+                        or bool(summary.get("not_taken")))
                     if isinstance(summary.get("described"), dict):
                         summary["described"].update(
                             _todo.drawn(task.described))
@@ -6105,6 +6116,29 @@ class StateHeartbeat:
                       exc_info=True)
             return None
         return shown
+
+    def _failed_summary(self, task: Any, summary: Dict[str, Any], kept: Any,
+                        where: _Where, report: Dict[str, Any]) -> None:
+        """A DESCRIPTION THAT FAILED, RECORDED AND MOVED PAST (the user, 2026-11-07: never ask
+        the same thing again the same way). Nothing of the answer is kept - not a name, not a
+        judgement - and the task says it failed (`failed_at`, `why_failed`). One already named
+        keeps its name and is counted from here, as if described now, so it is asked again only
+        when its work has moved; one never named has nothing to be counted from, and waits for
+        its states to change. The user's changes to its next steps are not counted as seen
+        (`_land`)."""
+        held = dict(getattr(task, "described", None) or {})
+        held["failed_at"] = task_now()
+        held["why_failed"] = str(summary.get("not_taken") or "")[:300]
+        for key in ("waiting", "waiting_size", "was"):
+            held.pop(key, None)
+        if getattr(task, "summary_id", ""):
+            task.named()
+            task.summary_at = task_now()
+            task.summary_members = task.size
+        task.described = held
+        kept.save([task])
+        report.setdefault("failed", []).append(
+            {"task": task.id, "why": held["why_failed"]})
 
     def _land_todo(self, table: str, scope: str, thing: Any,
                    shown: Optional[Dict[str, Any]],
@@ -7524,6 +7558,16 @@ class StateHeartbeat:
                     answer = self._ask_whether(SAME_TASK_PROMPT, asked, report,
                                                "merged part")
                     asked_about.append({"part": parent.id, **answer})
+                    if answer.get("not_taken"):
+                        # FAILED, AND MOVED PAST (the user, 2026-11-07): no answer is no
+                        # split - the part stays in the merge - and it is looked at, saying
+                        # it failed, not asked again the same way.
+                        parent.born_of = dict(parent.born_of or {},
+                                              recheck_failed=str(answer["not_taken"])[:300])
+                        kept.save([parent])
+                        report.setdefault("failed", []).append(
+                            {"merge": task.id, "part": parent.id, "why": answer["not_taken"]})
+                        continue
                     if answer["same"]:
                         continue
                     why = f"taken back out of a merge: {answer['why']}"
@@ -7566,13 +7610,20 @@ class StateHeartbeat:
                              metadata={"kind": what}),
                 role="heartbeat")
         except ModelUnavailable as exc:
-            out["why"] = f"could not ask: {exc}"[:300]
+            out["why"] = out["not_taken"] = f"could not ask: {exc}"[:300]
             return out
         except Exception as exc:              # pragma: no cover - a question
-            out["why"] = f"could not ask: {exc}"[:300]
+            out["why"] = out["not_taken"] = f"could not ask: {exc}"[:300]
             return out
         reply = getattr(response, "text", "") or ""
-        answered = _as_json(reply) or {}
+        # NOT A "NO" UNLESS SAID WHOLE (2026-11-07): a cut-off or unreadable answer read as
+        # same=False - a part split out of a merge on no answer at all. `not_taken` says why;
+        # the callers record it as failed and move past it without acting on it.
+        whole = _answers.read(response, parse=_as_json)
+        answered = whole.data if whole.ok else {}
+        if not whole.ok:
+            out["not_taken"] = whole.why_not
+            log.warning("a %s question's answer was not taken: %s", what, whole.why_not)
         self._spent(report, {"calls": 1,
                              "tokens_in": int(getattr(getattr(
                                  response, "usage", None), "input_tokens", 0)
@@ -7899,6 +7950,16 @@ class StateHeartbeat:
                                            "same task")
                 joined.append({"tasks": [one.id, other.id],
                                "apart": round(apart, 4), **answer})
+                if answer.get("not_taken"):
+                    # FAILED, AND MOVED PAST (the user, 2026-11-07): not joined, set aside as
+                    # a "no" is so it is not asked again the same way - and each says the
+                    # question about the other failed, which a "no" does not.
+                    for first, second in ((one, other), (other, one)):
+                        unanswered = dict(first.profile.get("same_failed") or {})
+                        unanswered[second.id] = str(answer["not_taken"])[:300]
+                        first.profile["same_failed"] = unanswered
+                    report.setdefault("failed", []).append(
+                        {"tasks": [one.id, other.id], "why": answer["not_taken"]})
                 if answer["same"]:
                     keep_it, drop = ((one, other) if one.seat <= other.seat
                                      or other.seat < 0 else (other, one))
@@ -8330,6 +8391,13 @@ class StateHeartbeat:
                         f"where: {str((task.described or {}).get('where') or '')[:400]}"]
                 answer = self._ask_project(JOINS_PROJECT_PROMPT,
                                            "\n".join(lines), report)
+                if answer.get("not_taken"):
+                    # FAILED, AND MOVED PAST (the user, 2026-11-07): none is joined, each is
+                    # set aside as a "no" is - asked again only when it has grown - and the
+                    # failure is said.
+                    report.setdefault("failed", []).append(
+                        {"project": existing.id, "asked": [task.id for task in newcomers],
+                         "why": answer["not_taken"]})
                 chosen = {number for number in answer.get("tasks") or []
                           if isinstance(number, int)}
                 for number, task in enumerate(newcomers, start=1):
@@ -8357,6 +8425,11 @@ class StateHeartbeat:
                                        report)
             report.setdefault("asked_about_projects", []).append(
                 {"asked": sorted(ids), **answer})
+            if answer.get("not_taken"):
+                # FAILED, AND MOVED PAST (the user, 2026-11-07): set aside as a "no" is, and
+                # said - not asked again the same way.
+                report.setdefault("failed", []).append(
+                    {"asked": sorted(ids), "why": answer["not_taken"]})
             chosen = [members[number - 1] for number in answer.get("tasks") or []
                       if isinstance(number, int) and 1 <= number <= len(members)]
             if answer.get("one_project") and len(chosen) >= 2:
@@ -8554,6 +8627,25 @@ class StateHeartbeat:
                                 shown, None, failed=True)
                 raise error
             self._spent(report, answer.pop("used", None) or {})
+            if answer.get("not_taken"):
+                # FAILED, RECORDED AND MOVED PAST (the user, 2026-11-07): nothing of the
+                # answer is kept, the project says it failed, and a rename it was owed is
+                # counted from here - not asked again the same way. The user's changes to
+                # its next steps were not seen, so they are still to be told.
+                self._land_todo("state_projects", where.scope, project, shown, None,
+                                failed=True)
+                project.described["failed_at"] = task_now()
+                project.described["why_failed"] = str(answer["not_taken"])[:300]
+                if rename:
+                    project.described["named_size"] = len(members)
+                    project.described["summarised"] = [task.id for task in members]
+                store.save(project)
+                report.setdefault("project_statuses", []).append(
+                    {"project": project.id, "status": "", "renamed": False,
+                     "failed": answer["not_taken"]})
+                report.setdefault("failed", []).append(
+                    {"project": project.id, "why": answer["not_taken"]})
+                return True
             status = _without_ids(str(answer.get("status") or "").strip())
             if status:
                 project.described["status"] = status[:600]
@@ -8620,7 +8712,14 @@ class StateHeartbeat:
             out["why"] = f"could not ask: {exc}"[:300]
             return out
         reply = getattr(response, "text", "") or ""
-        answered = _as_json(reply) or {}
+        # NOT TAKEN UNLESS WHOLE (2026-11-07): `not_taken` says why; nothing of the answer is
+        # used, the callers record it as failed and move past, and the user's next steps are
+        # not cleared.
+        whole = _answers.read(response, parse=_as_json)
+        answered = whole.data if whole.ok else {}
+        if not whole.ok:
+            out["not_taken"] = whole.why_not
+            log.warning("a project question's answer was not taken: %s", whole.why_not)
         used = {"calls": 1, "tokens_in": int(getattr(getattr(
             response, "usage", None), "input_tokens", 0) or 0),
             "tokens_out": int(getattr(getattr(
@@ -9966,7 +10065,24 @@ class StateHeartbeat:
         del usage
         out["answer"] = getattr(response, "text", "") or ""
         out["written_by"] = _writer(response)
-        answered = _as_json(out["answer"]) or {}
+        # NOT DESCRIBED UNLESS WHOLE (2026-11-07): an answer cut off at the limit, empty or not
+        # JSON was read as {} and `_amended` filled it with the old name - a new record, the
+        # judgements re-read, and the user's changes to its next steps counted as seen. Now
+        # nothing is written from it; the caller records it as failed and moves past it
+        # (`_land`). So too an answer still only asking to look things up when the looks ran
+        # out.
+        whole = _answers.read(response, parse=_as_json)
+        still_asking = (whole.ok and isinstance(whole.data.get("need"), dict)
+                        and not str(whole.data.get("title") or "").strip()
+                        and not str(whole.data.get("summary") or "").strip())
+        if not whole.ok or still_asking:
+            out["not_taken"] = (whole.why_not if not whole.ok
+                                else "the answer was still asking to look things up")
+            out["note"] = f"Nothing was written: {out['not_taken']}. Recorded as failed."
+            log.warning("the summary for %s failed: %s",
+                        str(group.get("id") or "a group"), out["not_taken"])
+            return out
+        answered = whole.data
         # The next steps, read before anything can turn the answer away: a
         # call that gave no name still saw the user's changes, and what it
         # said about them is kept (see `_land_todo`).
@@ -10263,10 +10379,30 @@ class StateHeartbeat:
                             said.get("todo_scope") or where.scope, task,
                             said["todo_shown"], said.get("todo"),
                             str(said.get("todo_note") or ""),
-                            failed=not said.get("calls"))
+                            failed=not said.get("calls") or bool(said.get("not_taken")))
             if isinstance(summary.get("described"), dict):
                 summary["described"].update(_todo.drawn(task.described))
         if not said.get("calls"):
+            return
+        if said.get("not_taken"):
+            # FAILED, RECORDED AND MOVED PAST (the user, 2026-11-07): nothing of it kept, the
+            # task says it failed, and it counts as asked - not asked again the same way.
+            self._spent(report, said)
+            summary["status_call"] = said
+            if where.scope != SANDBOX:
+                self._also_status(task.id)
+            held = dict(getattr(task, "described", {}) or {})
+            held["status_failed_at"] = task_now()
+            held["why_status_failed"] = str(said["not_taken"])[:300]
+            task.described = held
+            try:
+                self._kept_now.save([task])
+            except Exception:        # pragma: no cover - a save, not a step
+                log.debug("could not keep the failed status for %s", task.id, exc_info=True)
+            report.setdefault("status_calls", []).append(
+                {"task": task.id, "changed": False, "failed": said["not_taken"]})
+            report.setdefault("failed", []).append(
+                {"task": task.id, "status": True, "why": said["not_taken"]})
             return
         self._spent(report, said)
         summary["status_call"] = said
@@ -10467,6 +10603,14 @@ class StateHeartbeat:
         out["why_no_search"] = ("This call was not offered a search: it is "
                                 "shown one task's description and the states "
                                 "that moved, and asked only where it stands.")
+        # NOT TAKEN UNLESS WHOLE (2026-11-07): a cut-off or unreadable answer read as "nothing
+        # changed" and cleared the user's changes to the next steps. `_keep_status` keeps
+        # nothing of it, records it as failed and leaves the user's changes to be told.
+        whole = _answers.read(response, parse=_as_json)
+        if not whole.ok:
+            out["not_taken"] = whole.why_not
+            log.warning("the status of %s was not taken: %s", task.id, whole.why_not)
+            return out
         said = _without_ids(str(answered.get("status") or "").strip())
         out["changed"] = bool(answered.get("changed")) and bool(said)
         out["why"] = str(answered.get("why") or "").strip()

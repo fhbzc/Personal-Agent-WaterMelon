@@ -4,9 +4,10 @@ Tools are the only way the model touches the machine.  Every filesystem or
 execution tool goes through the sandbox runtime, and every call is recorded as
 a Raw Edit (section 47), so the Debugger can see exactly what the agent did.
 
-There is no memory to search: the chat answers from what it is asked, and
-acts on the workspace and the schedule. What was on the screen it can ask for
-by time (agent/screen_history.py).
+Nothing is given with a message: the chat answers from what it is asked, and
+acts on the workspace and the schedule. What the application keeps of the
+user it searches for when it needs it (memory_tools.py); what was on the
+screen it can ask for by time (agent/screen_history.py).
 """
 
 from __future__ import annotations

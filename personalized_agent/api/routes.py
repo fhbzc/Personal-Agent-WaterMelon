@@ -2123,8 +2123,13 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             # The instruction already typed (Experience's box): what the
             # Delegate work box opens with, to change before Create.
             # A to-do handed over: its id, for what came of it (`of_todos`).
+            # `under`: the project a step of it was handed from (the user, 2026-11-08): its work
+            # goes in a folder of the project's in the agent's own, a folder of its own in that.
+            # `project`, `step`, `whole`: which project, and which step of it - or all of them -
+            # it was handed from, for what came of it to show there (`of_projects`).
             options={k: request.get(k) for k in ("limits", "packages", "sound", "instruction",
-                                                 "unconfined", "todo")
+                                                 "unconfined", "todo", "under", "project",
+                                                 "step", "whole", "read_from")
                      if request.get(k) is not None},
             write_first=bool(request.get("write_first", True)))
         return {"draft": draft}
@@ -2559,9 +2564,6 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     def work_reveal(request: Any) -> Any:
         """Show where a deliverable is, in the machine's own file manager.
         Only a file of the run's folders."""
-        import os
-        import subprocess
-        import sys
         from ..agent.work.delegate import runs_as_program
         found = app.work.readable_by(str(request.require("run")),
                                      str(request.require("path")))
@@ -2570,19 +2572,12 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         # OPENED, asked (a to-do's "Open the result"): a folder, or a file in
         # the program it is opened with - never one that would run as a
         # program itself, which is shown in its folder instead.
+        # IN FRONT (the user, 2026-11-08: "folder都不是直接跳出来的"): platform_layer/front_folder.py.
+        from ..platform_layer.front_folder import opened_in_front
         if request.get("open") and (found.is_dir() or not runs_as_program(found)):
-            if sys.platform.startswith("win"):
-                os.startfile(str(found))                    # type: ignore[attr-defined]
-            else:
-                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open",
-                                  str(found)])
+            opened_in_front(found)
             return {"opened": str(found)}
-        if sys.platform.startswith("win"):
-            subprocess.Popen(["explorer", f"/select,{found}"])
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", "-R", str(found)])
-        else:
-            subprocess.Popen(["xdg-open", str(found.parent)])
+        opened_in_front(found, select=True)
         return {"shown": str(found)}
 
     @route("POST", "/api/work/open_logs")
@@ -2629,8 +2624,9 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         held = app.work.folder_in_use(paths, unit)
         return {"held": held, "said": app.work.folder_said(held) if held else ""}
 
-    @route("POST", "/api/work/handed/open")
-    def work_handed_open(request: Any) -> Any:
+    def _open_handed(run_id: str, at: int, how: str = "", announce: bool = True,
+                     only_note: bool = False, scope: str = "", every: bool = False,
+                     folder: bool = False) -> Any:
         """WHAT A RUN HANDED TO THE USER, opened for them: an email or an
         event as a page filled in, in their own browser - where they are
         signed in - or their mail or calendar program; a file in the program
@@ -2639,18 +2635,19 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         the result" opened it as a new message) - its words handed back to
         be copied - unless a new message is asked for ("how": "new").
         Only what that run handed over, and nothing sent, saved or
-        submitted."""
-        import os
+        submitted. `announce`: its note put on the desktop - not when opened again from that
+        note (the user, 2026-11-08), which would take its own place. `only_note`: the note
+        alone, nothing opened, nothing copied (the user, 2026-11-08: a project's "What it made"
+        opens its instructions panel)."""
         import subprocess
         import sys
         import webbrowser
         from ..agent.work import handed
         from ..agent.work.delegate import runs_as_program
-        run = app.work.run(str(request.require("run")))
+        run = app.work.run(str(run_id))
         if run is None:
             raise ApiError("no such run", 404)
         items = (run.get("plan") or {}).get("handed") or []
-        at = request.int_param("n", 0)
         if not 0 <= at < len(items):
             raise ApiError("it handed over no such thing", 404)
         item = items[at]
@@ -2664,11 +2661,10 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                               handed.person_judge(app.models))
 
         def start(target: str) -> None:
-            if sys.platform.startswith("win"):
-                os.startfile(target)                        # type: ignore[attr-defined]
-            else:
-                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", target])
-        how = str(request.get("how") or "")
+            # IN FRONT, a folder or a file (the user, 2026-11-08): platform_layer/front_folder.py.
+            from ..platform_layer.front_folder import opened_in_front
+            opened_in_front(target)
+        how = str(how or "")
         reply = acts.get("reply") or {}
         replying = how == "reply" or (not how and bool(reply.get("url")))
         if replying and not reply.get("url"):
@@ -2678,7 +2674,7 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         # (platform_layer/clipboard.py) - and said to be there only if they are.
         copied = False
         from ..platform_layer import clipboard
-        if (replying or item["kind"] in ("message", "form")) and acts.get("copy"):
+        if not only_note and (replying or item["kind"] in ("message", "form")) and acts.get("copy"):
             copied = clipboard.copy(acts["copy"])
         from ..common import interface_words
 
@@ -2688,7 +2684,9 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         # - in WeChat without a key pressed - the message copied; never sent.
         chat: Dict[str, Any] = {}
         first: List[str] = []
-        if item["kind"] == "message":
+        if only_note:
+            pass                                     # nothing opened: what to do is in the note
+        elif item["kind"] == "message":
             from ..agent.work import destinations
             store = getattr(app, "connections", None)
             handle = item.get("handle") or destinations.handle_for(
@@ -2719,14 +2717,71 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         elif item["kind"] == "form":
             parts = item.get("parts") or []
             if parts:
-                first.append(say(f"The page opens in your browser - paste each part into its box, starting with {parts[0].get('field', '')}"))
+                # ITS BOXES FILLED BY THE EXTENSION, where it is in that browser (the user, 2026-11-08):
+                # an order left for the page, taken once - nothing pressed, the submit theirs.
+                from ..platform_layer.browser_extension import leave_fill_order
+                filling = bool(leave_fill_order(app.data_dir, str(item.get("url") or ""), parts))
+                first.append(say(f"The page opens in your browser - where the agent's extension is, its boxes are filled for you and outlined: check them, then submit it yourself; where it is not, paste each part into its box, starting with {parts[0].get('field', '')}")
+                             if filling else
+                             say(f"The page opens in your browser - paste each part into its box, starting with {parts[0].get('field', '')}"))
         # WHAT IT IS, HOW IT IS USED AND WHAT TO CHECK, on the desktop beside it.
         told = handed.note(item, acts, say, copied=copied)
         told["check"] = first + list(told.get("check") or [])
         # Headed by the work's name (the user, 2026-11-02: "header应该是这个
         # project的name, 而不是before you use it").
-        app.bus.publish("work.handed_opened", dict(told, run=run["id"], n=at,
-                                                   work=str(run.get("unit_name") or "")))
+        # WHICH KIND OF NOTE (the user, 2026-11-08): a whole project's, or a step's or a to-do's -
+        # each taking the place only of the one of its own kind.
+        whole = bool(getattr(app, "drafts", None)) and app.drafts.handed_from_a_whole_project(
+            str(run.get("unit_id") or ""))
+        if scope:                                    # asked for as one item's (`handed_note_of`)
+            whole = scope == "project"
+        # SEVERAL THINGS ONE WORK MADE, OPENED AT ONCE (the user, 2026-11-08: "一次性都是打开全部的"):
+        # listed and guided as a whole project's are - its panel of its own kind.
+        if not whole and every and len(items) > 1:
+            # SEVERAL THINGS A TO-DO'S WORK MADE (the user, 2026-11-08: "open the instruction 就不应该打开
+            # project level 的instruction, 就应该是item level的"): this one's own panel - its guide, if
+            # its work wrote one, first in how it is used.
+            guide = (run.get("plan") or {}).get("guide") or {}
+            if guide.get("how"):
+                told["how"] = (say("How to use them all") + ":\n" + str(guide["how"])
+                               + ("\n\n" + say("This one") + ":\n" + str(told.get("how") or "")
+                                  if told.get("how") else ""))
+                told["check"] = list(told.get("check") or []) + [
+                    one for one in (guide.get("check") or []) if one not in (told.get("check") or [])]
+        if whole:
+            # EVERY ITEM IT MADE, each opened in its own panel from this one (the user, 2026-11-08:
+            # "project level to do instruction 要有每个item 打开的链接").
+            told["items"] = [{"n": index, "kind": str(one.get("kind") or ""),
+                              "title": str(one.get("title") or one.get("subject") or "")[:200]}
+                             for index, one in enumerate(items)]
+            # THE WHOLE PROJECT'S PART, ON TOP (the user, 2026-11-08): its name, what its work
+            # said of it last, and every item to choose.
+            # ITS GUIDE, as its work wrote it (handed.PROJECT_GUIDE_RULES) - whole, scrolled (the
+            # user, 2026-11-08: "不是截取，而是完整的，可以下拉"); for a work before guides, what it
+            # said last.
+            guide = (run.get("plan") or {}).get("guide") or {}
+            told["project"] = {"title": str(guide.get("title") or run.get("unit_name") or ""),
+                               "about": str(guide.get("how")
+                                            or (run.get("plan") or {}).get("last_report") or ""),
+                               "check": list(guide.get("check") or []),
+                               "guided": bool(guide.get("how"))}
+        payload = dict(told, run=run["id"], n=at, work=str(run.get("unit_name") or ""),
+                       scope="project" if whole else "todo",
+                       # SEVERAL THINGS: its panel opens their folder too (the user, 2026-11-08).
+                       many=len(items) > 1)
+        if announce:
+            app.bus.publish("work.handed_opened", payload)
+        if only_note:
+            opened_folder = ""
+            if folder and len(items) > 1:
+                # THEIR FOLDER OPENED (the user, 2026-11-08: "如果有多个deliverable, 用folder打开").
+                where = app.work.readable_by(run["id"], str(run.get("folder") or "")) \
+                    if run.get("folder") else None
+                if where is not None and where.is_dir():
+                    start(str(where))
+                    opened_folder = str(where)
+            return {"opened": "note", "scope": payload["scope"], "note": payload,
+                    **({"folder": opened_folder} if opened_folder else {})}
         if item["kind"] == "message":
             return {"opened": "message", "copied": copied, "in": chat.get("name", ""),
                     "how": chat.get("how", ""), "chat": {key: chat.get(key) for key in
@@ -2767,6 +2822,49 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         if item["kind"] in ("answer", "text"):
             return {"opened": "note", "kind": item["kind"]}
         raise ApiError("there is nothing to open: copy it", 409)
+
+    def _open_run_folder(run_id: str) -> Any:
+        """A WORK'S OWN FOLDER, OPENED IN FRONT (the user, 2026-11-08: "所有的work status的细节都会有open
+        folder的选项 ... 所以我总可以看细节的时候看到"): everything it made and wrote, whatever it
+        handed over."""
+        from pathlib import Path
+
+        from ..platform_layer.front_folder import opened_in_front
+        rows = app.db.query("SELECT folder FROM work_runs WHERE id = ?", (str(run_id),))
+        folder = Path(str(rows[0]["folder"])) if rows and rows[0]["folder"] else None
+        if folder is None or not folder.is_dir():
+            raise ApiError("its folder is not there any more", 404)
+        opened_in_front(folder)
+        return {"opened": str(folder)}
+    app.open_run_folder = _open_run_folder
+
+    @route("POST", "/api/work/folder")
+    def work_folder(request: Any) -> Any:
+        return _open_run_folder(str(request.require("run")))
+
+    # OPENED AGAIN FROM ITS NOTE ON THE DESKTOP (the user, 2026-11-08: "在to do help panel里重新打开
+    # deliverable的东西"): the same act, no note put up again over itself.
+    app.open_handed = lambda run_id, n, how="": _open_handed(str(run_id), int(n), how,
+                                                             announce=False)
+    # ONE ITEM'S PANEL, opened from its project's: its own kind, the project's left where it is.
+    app.handed_note_of = lambda run_id, n: _open_handed(str(run_id), int(n), only_note=True,
+                                                        scope="todo")
+    # ONE ITEM'S NOTE, HANDED BACK - put up nowhere: the project's panel shows it below its own part.
+    app.handed_told = lambda run_id, n: _open_handed(str(run_id), int(n), only_note=True,
+                                                     announce=False, scope="todo")["note"]
+
+    @route("POST", "/api/work/handed/note")
+    def work_handed_note(request: Any) -> Any:
+        """WHAT IT MADE'S INSTRUCTIONS PANEL, alone (the user, 2026-11-08: "task level 的what it made,
+        要加一个打开task level to do instruction panel"): the note on the desktop, nothing opened."""
+        return _open_handed(str(request.require("run")), request.int_param("n", 0), only_note=True,
+                            every=bool(request.get("all")), folder=bool(request.get("folder")))
+
+    @route("POST", "/api/work/handed/open")
+    def work_handed_open(request: Any) -> Any:
+        """What a run handed over, opened for the user (`_open_handed`)."""
+        return _open_handed(str(request.require("run")), request.int_param("n", 0),
+                            str(request.get("how") or ""))
 
     # -- the Experience debugger: the same work done three ways ---------------
     # Its projects are never the user's - never in Experience - and each way
@@ -3272,10 +3370,12 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             unread_only=str(request.get("unread", "false")).lower() == "true")
         part_of = app.item_links.of_many("notification", [one["id"] for one in rows])
         from ..common.interface_words import shown as in_their_words
-        from ..common.notifications import told_from
+        from ..common.notifications import told_from, what_set_it_off
         return {
             "notifications": [dict(one, associated=part_of.get(one["id"], []),
-                                   trigger=in_their_words(told_from(one.get("metadata")), app.config))
+                                   trigger=in_their_words(told_from(one.get("metadata")), app.config)
+                                   + (f" - {what_set_it_off(one.get('metadata'))}"
+                                      if what_set_it_off(one.get("metadata")) else ""))
                               for one in rows],
             # How long "Remind me in ..." waits, so the button can say it.
             "remind_later_minutes": app.REMIND_LATER_MINUTES,
@@ -3727,6 +3827,16 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                 # IN GROUPS (list_groups.py): the open ones.
                 "groups": _list_groups("todo", [one for one in shown if not one.get("done_at")])}
 
+    @route("GET", "/api/work/of_projects")
+    def work_of_projects(_request: Any) -> Any:
+        """WHAT CAME OF A PROJECT'S STEPS HANDED OVER, and of the project's whole (the user,
+        2026-11-08): by project, its versions each, to open where it was handed over."""
+        try:
+            return {"projects": app.drafts.of_projects()}
+        except Exception:        # pragma: no cover - the card shows without it
+            log.debug("what came of the projects' steps could not be read", exc_info=True)
+            return {"projects": {}}
+
     @route("GET", "/api/work/assigned")
     def work_assigned(_request: Any) -> Any:
         """WORK ASSIGNED, on the Overview left of To do: the work delegated
@@ -3802,6 +3912,21 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     @route("POST", "/api/monitor/quiet/remove")
     def monitor_quiet_remove(request: Any) -> Any:
         return {"removed": app.monitor.store.remove_quiet(str(request.require("id")), "user")}
+
+    @route("POST", "/api/monitor/edit")
+    def monitor_edit(request: Any) -> Any:
+        """THE USER'S OWN CHANGE (the user, 2026-11-07): their name for it, and what it does."""
+        ident = str(request.require("id"))
+        try:
+            warnings: List[str] = []
+            changes = request.get("changes")
+            if isinstance(changes, dict) and changes:
+                _clean, warnings = app.monitor.store.user_edit(ident, changes)
+            if request.get("display_name") is not None:
+                app.monitor.store.rename(ident, request.get("display_name"))
+            return {"activator": app.monitor.store.get(ident), "warnings": warnings}
+        except ValueError as exc:
+            raise ApiError(str(exc), 400)
 
     @route("POST", "/api/monitor/protect")
     def monitor_protect(request: Any) -> Any:
@@ -4163,6 +4288,15 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     def recommendation_debugger(_request: Any) -> Any:
         from ..debugger.recommendation import report
         return report(app)
+
+    # ------------------------------------------- what the lessons gave each decision
+    @route("GET", "/api/debugger/lessons/retrievals")
+    def lesson_retrievals(request: Any) -> Any:
+        """EVERY RETRIEVAL OF THE LESSONS (the user, 2026-11-07), newest first, by site: what it
+        was asked with, in English, and what came back with its score (lessons/retrieve.py)."""
+        from ..heartbeat.lessons.retrieve import recorded
+        return recorded(app.db, str(request.get("site") or ""),
+                        request.int_param("most", 200))
 
     # ---------------------------------------------------- resource debugger
     # What the application costs the computer, as it goes: its processes'

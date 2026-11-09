@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import gc
 import sys
+import time
 import unittest
 from types import SimpleNamespace
 
@@ -104,7 +105,8 @@ class TheNoteTests(unittest.TestCase):
         self.assertIsNone(note.window)
 
     def test_zoomed_whole_and_kept(self) -> None:
-        """The user, 2026-11-05: no zoom of each panel's own; one ✕ for both."""
+        """The user, 2026-11-08 (in place of 2026-11-05's one zoom for both): each part zoomed by
+        itself - "item instruction panel 左右两个也是支持单独缩放的"."""
         note = self._note(dict(NOTE, item=EMAIL))
         built = []
         rebuild = note._build
@@ -115,15 +117,15 @@ class TheNoteTests(unittest.TestCase):
         before = (points(email), points(how))
         note.zoom_by(1, "item")
         self.root.update()
-        self.assertEqual(note.zooms, {"item": hn.ZOOM_START + 1, "how": hn.ZOOM_START + 1})
+        self.assertEqual((note.zooms["item"], note.zooms["how"]), (hn.ZOOM_START + 1, hn.ZOOM_START))
         self.assertGreater(points(email), before[0], "its words larger")
-        self.assertGreater(points(how), before[1], "and the other side's")
+        self.assertEqual(points(how), before[1], "the other side's as they were")
         self.assertEqual(built, [], "nothing built again (the user: no refresh)")
         note.zoom_by(-1, "how")
         note.zoom_by(-1, "how")
-        self.assertEqual(note.zooms, {"item": hn.ZOOM_START - 1, "how": hn.ZOOM_START - 1})
+        self.assertEqual((note.zooms["item"], note.zooms["how"]), (hn.ZOOM_START + 1, hn.ZOOM_START - 2))
         start = hn.ZOOM_START
-        self.assertEqual(self.zooms, [("item", start + 1), ("how", start), ("how", start - 1)],
+        self.assertEqual(self.zooms, [("item", start + 1), ("how", start - 1), ("how", start - 2)],
                          "each told, to be kept for the next")
         # Ctrl and the keys.
         note.window.winfo_containing = lambda x, y: None
@@ -131,12 +133,13 @@ class TheNoteTests(unittest.TestCase):
         note._pressed(SimpleNamespace(widget=note._areas["item"]))
         note.window.event_generate(f"<{MOD}-Key-0>")
         self.root.update()
-        self.assertEqual(note.zooms, {"item": hn.ZOOM_START, "how": hn.ZOOM_START})
+        self.assertEqual((note.zooms["item"], note.zooms["how"]), (hn.ZOOM_START, hn.ZOOM_START - 2),
+                         "Ctrl+0: the part pressed in, back as it opens")
         # Ctrl and the wheel.
         words = note._panes[1][0]
         words.event_generate("<MouseWheel>", delta=120, state=0x0004, x=10, y=10)
         self.root.update()
-        self.assertEqual(note.zooms["how"], hn.ZOOM_START + 1)
+        self.assertEqual(note.zooms["how"], hn.ZOOM_START - 1)
         note.close()
 
     def test_never_taller_than_the_screen_and_what_it_says_scrolls(self) -> None:
@@ -323,6 +326,258 @@ class TheNoteTests(unittest.TestCase):
             out += [child] + self._all(child)
         return out
 
+    def test_what_was_handed_over_opened_again_from_the_note(self) -> None:
+        """The user, 2026-11-08: "在to do help panel里重新打开deliverable的东西" - a page, a folder,
+        a file, an email opened again from its side; an answer, read in the note, has none."""
+        opened, why = [], [""]
+        page = dict(NOTE, item={"kind": "page", "text": "https://example.org/tides"})
+        note = hn.HandedNote(self.root, page, lambda text: text, "Segoe UI", 10,
+                             on_open=lambda: (opened.append(1), why[0])[1])
+        note.show()
+        self.root.update()
+        again = [one for one in self._all(note.window) if isinstance(one, tk.Label)
+                 and str(one.cget("text")) == "Open the page"]
+        self.assertEqual(len(again), 1)
+        # ON A LINE OF ITS OWN, under what it is ("open XX放在email(item名)下面一行。单独成行").
+        self.assertEqual(len(again[0].master.winfo_children()), 1, "nothing beside it")
+        self._click(again[0])
+        self.root.update()
+        self.assertEqual(opened, [1])
+        why[0] = "it is no longer there"
+        self._click(again[0])
+        self.root.update()
+        self.assertIn("it is no longer there", str(note._copied.cget("text")), "said why not")
+        note.close()
+        answer = dict(NOTE, item={"kind": "answer", "text": "The tide turns at six."})
+        note = hn.HandedNote(self.root, answer, lambda text: text, "Segoe UI", 10,
+                             on_open=lambda: "")
+        note.show()
+        self.root.update()
+        self.assertFalse([one for one in self._all(note.window) if isinstance(one, tk.Label)
+                          and str(one.cget("text")).startswith("Open the")], "an answer is read here")
+        note.close()
+
+    def test_what_was_ticked_is_kept_and_ticked_again_when_opened_again(self) -> None:
+        """The user, 2026-11-08: the checklist ticked, kept, and as it was the next time."""
+        told = []
+        note = hn.HandedNote(self.root, dict(NOTE, ticked=["The date: Wednesday the 4th"]),
+                             lambda text: text, "Segoe UI", 10,
+                             on_tick=lambda words, shown: told.append(words))
+        note.show()
+        self.root.update()
+        self.assertEqual(note.ticked, [False, True], "as it was left")
+        boxes = [one for one in self._all(note.window) if isinstance(one, tk.Label)
+                 and str(one.cget("text")) in ("☐", "☑")]
+        self.assertEqual([str(one.cget("text")) for one in boxes], ["☐", "☑"])
+        boxes[0].event_generate("<Button-1>")
+        self.root.update()
+        self.assertEqual(told[-1], ["It answers: The talk & the date", "The date: Wednesday the 4th"])
+        boxes[1].event_generate("<Button-1>")
+        self.root.update()
+        self.assertEqual(told[-1], ["It answers: The talk & the date"])
+        note.close()
+
+    def test_a_projects_panel_opens_each_thing_it_made_in_its_own(self) -> None:
+        """The user, 2026-11-08: "project level to do instruction 要有每个item 打开的链接"."""
+        opened = []
+        whole = dict(NOTE, scope="project", items=[{"n": 0, "kind": "email", "title": "Re: The talk"},
+                                                  {"n": 1, "kind": "file", "title": "Slides"}])
+        note = hn.HandedNote(self.root, whole, lambda text: text, "Segoe UI", 10,
+                             on_item=opened.append)
+        note.show()
+        self.root.update()
+        links = [one for one in self._all(note.window) if isinstance(one, tk.Label)
+                 and str(one.cget("text")).startswith("↗")]
+        self.assertEqual([str(one.cget("text")) for one in links],
+                         ["↗  Email: Re: The talk", "↗  File: Slides"])
+        self._click(links[1])
+        self.root.update()
+        self.assertEqual(opened, [1])
+        note.close()
+        plain = hn.HandedNote(self.root, whole, lambda text: text, "Segoe UI", 10)
+        plain.show()
+        self.root.update()
+        self.assertFalse([one for one in self._all(plain.window) if isinstance(one, tk.Label)
+                          and str(one.cget("text")).startswith("↗")], "nowhere to open them: none")
+        plain.close()
+
+    def test_a_projects_panel_its_part_on_top_and_the_item_chosen_below(self) -> None:
+        """The user, 2026-11-08: on top the project - its whole instructions, scrolled - and a row
+        for each item: the row shows it below, its button opens it too."""
+        asked = []
+        report = "\n".join(f"Line {n} of what the work did for the harbour project." for n in range(60))
+        whole = dict(NOTE, scope="project", run="run_tide", n=0,
+                     item={"kind": "email", "text": "Dear Ada"},
+                     project={"title": "Harbour project", "about": report},
+                     items=[{"n": 0, "kind": "email", "title": "Re: The talk"},
+                            {"n": 1, "kind": "file", "title": "Slides"},
+                            {"n": 2, "kind": "answer", "title": "The tide times"}])
+        note = hn.HandedNote(self.root, whole, lambda text: text, "Segoe UI", 10,
+                             on_item=lambda n, opening: asked.append((n, opening)))
+        note.show()
+        self.root.update()
+        self.assertEqual(note._about_text.get("1.0", "end-1c"), report, "whole, not cut")
+        # THREE PARTS, EACH SCROLLED BY ITSELF (the user, 2026-11-08: "everything it made应该是个单独的
+        # panel ... 分成上下3块"): the guide, what it made, the item - the guide no taller than its share.
+        self.assertEqual(len(note._top_scrolls), 2, "the guide, and what it made, apart")
+        canvas, area, _inner = note._top_scrolls[0]
+        self.root.update()
+        most = int(note.window.winfo_screenheight() * hn.GUIDE_SHARE)
+        self.assertLessEqual(canvas.winfo_height(), most + 2)
+        first = canvas.yview()[0]
+        note._on_wheel(SimpleNamespace(delta=-120, num=0, state=0, widget=canvas))
+        self.root.update()
+        self.assertGreater(canvas.yview()[0], first, "the wheel over it scrolls it")
+        made = note._top_scrolls[1][0]
+        self.assertEqual(made.yview()[0], 0.0, "what it made, as it was")
+        self.assertTrue(all(scrolled is not canvas for scrolled, _s, _p in note._panes),
+                        "the item below scrolls apart")
+        # ZOOMED OVER THEM, as the right-hand side ("也要支持ctrl +-, 滚轮之类的放大缩小").
+        self.assertEqual(note._side_of(canvas), "guide")
+        self.assertEqual(note._side_of(note._top_scrolls[1][0]), "made")
+        # EACH OF THE FOUR ZOOMED BY ITSELF ("四个小panel是支持单独的 缩放").
+        zoomed = []
+        note.on_zoom = lambda side, step: zoomed.append((side, step))
+        note.zoom_by(1, "guide")
+        self.assertEqual(zoomed, [("guide", hn.ZOOM_START + 1)])
+        self.assertEqual((note.zooms["made"], note.zooms["item"], note.zooms["how"]),
+                         (hn.ZOOM_START,) * 3)
+        note.zoom_by(-1, "guide")
+        # ITS HEADER PRESSED, WHAT IT MADE FOLDS ("everything it made 这个是可以点击header collapose的").
+        self.root.update()
+        open_height = note._made_area.winfo_height()
+        note._fold_made()
+        self.root.update()
+        self.assertTrue(note._made_folded)
+        self.assertFalse(note._made_rows.winfo_ismapped())
+        self.assertLess(note._made_area.winfo_height(), open_height)
+        note._fold_made()
+        self.root.update()
+        self.assertFalse(note._made_folded)
+        self.assertTrue(note._made_rows.winfo_ismapped())
+        # THE ITEM BELOW SEEN WHOLE, ITS HEIGHT COUNTED (an item chosen showed only once dragged).
+        self.root.update()
+        bottom = note._middle
+        self.assertGreater(bottom.winfo_height(), 60)
+        self.assertLessEqual(bottom.winfo_rooty() + bottom.winfo_height(),
+                             note.window.winfo_rooty() + note.window.winfo_height() + 2)
+        labels = [one for one in self._all(note.window) if isinstance(one, tk.Label)]
+        rows = [one for one in labels if "Slides" in str(one.cget("text"))
+                or "Re: The talk" in str(one.cget("text")) or "tide times" in str(one.cget("text"))]
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(str(rows[0].cget("text")).startswith("▸"), "the one shown below")
+        self._click(rows[1])
+        self.root.update()
+        self.assertEqual(asked, [(1, False)], "the row: shown below, nothing opened")
+        opens = [one for one in labels if str(one.cget("text")) == "Open the file"]
+        self._click(opens[0])
+        self.root.update()
+        self.assertEqual(asked[-1], (1, True), "its button: opened, and shown below")
+        self.assertFalse([one for one in labels if str(one.cget("text")) == "Open the answer"],
+                         "an answer is read here: no button")
+        self.root.update()
+        old = note.window
+        where = (old.winfo_x(), old.winfo_y(), old.winfo_width(), old.winfo_height())
+        guide_part, made_part, old_middle = (note._top_scrolls[0][1], note._top_scrolls[1][1],
+                                             note._middle)
+        note.show_item(dict(NOTE, run="run_tide", n=1, title="Slides", how="Present them.",
+                            check=["The dates are right"], ticked=["The dates are right"],
+                            item={"kind": "file", "text": "slides.pptx"}))
+        self.root.update()
+        # NOTHING DRAWN AGAIN BUT THE ITEM (the user, 2026-11-08: "有没有完全没有refresh的方法"): the same
+        # window, where it stood and as large; its guide and list the same; the item below put in
+        # place of the one before.
+        self.assertIs(note.window, old)
+        self.assertEqual((old.winfo_x(), old.winfo_y(), old.winfo_width(), old.winfo_height()),
+                         where)
+        self.assertTrue(guide_part.winfo_exists() and made_part.winfo_exists())
+        self.assertIs(note._top_scrolls[0][1], guide_part)
+        self.assertFalse(old_middle.winfo_exists(), "the item before let go")
+        self.assertTrue(note._middle.winfo_ismapped())
+        self.assertGreater(note._middle.winfo_height(), 60)
+        self.assertTrue(any("slides.pptx" in box.get("1.0", "end-1c") for box in note._texts),
+                        "the item chosen, below")
+        # EACH PART ITS OWN - AND + ("另外两个panel还没有+-").
+        for part in (guide_part, made_part):
+            marks = {str(one.cget("text")) for one in self._all(part) if isinstance(one, tk.Label)}
+            self.assertLessEqual({"+", "−"}, marks)
+        # WHAT IT MADE, A HEADER: no arrow, larger - and it stays where it is, above what scrolls
+        # ("everything it made 是第二个panel的header, 不会随着下拉框被拉下去").
+        head = note._made_head
+        self.assertEqual(str(head.cget("text")), "Everything it made")
+        made_canvas = note._top_scrolls[1][0]
+        self.assertFalse(self._inside(head, made_canvas), "not in what scrolls")
+        self.assertTrue(self._inside(head, made_part))
+        self.assertEqual(note.note["n"], 1)
+        self.assertEqual(note.note["project"]["title"], "Harbour project", "the top as it was")
+        self.assertEqual(note.ticked, [True], "ticked as it was left")
+        rows = [one for one in self._all(note.window) if isinstance(one, tk.Label)
+                and str(one.cget("text")).startswith("▸")]
+        self.assertIn("Slides", str(rows[0].cget("text")))
+        note.close()
+
+    def test_a_projects_own_checks_ticked_and_kept_as_the_projects(self) -> None:
+        told = []
+        whole = dict(NOTE, scope="project", run="run_tide", n=0, item={"kind": "email", "text": "x"},
+                     project={"title": "Harbour", "about": "1. Send it.", "guided": True,
+                              "check": ["The hall is booked", "Ada said yes"],
+                              "ticked": ["Ada said yes"]},
+                     items=[{"n": 0, "kind": "email", "title": "Re: The talk"}])
+        note = hn.HandedNote(self.root, whole, lambda text: text, "Segoe UI", 10,
+                             on_item=lambda *a: None,
+                             on_tick=lambda words, shown: told.append((words, shown["n"])))
+        note.show()
+        self.root.update()
+        texts = [str(one.cget("text")) for one in self._all(note.window) if isinstance(one, tk.Label)]
+        self.assertIn("How to use it all", texts)
+        boxes = [one for one in self._all(note.window) if isinstance(one, tk.Label)
+                 and str(one.cget("text")) in ("☐", "☑")]
+        self.assertEqual([str(one.cget("text")) for one in boxes[:2]], ["☐", "☑"], "as left")
+        boxes[0].event_generate("<Button-1>")
+        self.root.update()
+        self.assertEqual(told[-1], (["The hall is booked", "Ada said yes"], "project"))
+        note.close()
+
+    @staticmethod
+    def _inside(widget, area) -> bool:
+        return str(widget) == str(area) or str(widget).startswith(str(area) + ".")
+
+    def test_closed_it_is_gone_at_once(self) -> None:
+        """The user, 2026-11-08: "点击叉掉之后要卡一秒才关掉，能让他即时关吗"."""
+        note = self._note()
+        window = note.window
+        note.close()
+        self.assertIsNone(note.window)
+        self.assertEqual(window.state(), "withdrawn", "hidden the moment it is closed")
+        time.sleep(hn.CLOSE_AFTER_MS / 1000 + 0.1)
+        self.root.update()
+        self.assertFalse(window.winfo_exists(), "its parts let go of after")
+
+    def test_folded_its_square_as_large_as_its_cross(self) -> None:
+        """The user, 2026-11-08: "最大化按钮没有对齐，大小也不对" - drawn as the chat's is: a box as wide as
+        the ✕'s, as tall as its line, the mark in its middle, as wide as most of the ✕."""
+        note = self._note()
+        self.root.update()
+        close, fold = note._close_button, note._fold_button
+        glyph = int(self.root.tk.call("font", "measure", close.cget("font"), "✕"))
+
+        def box_of_mark():
+            return fold.bbox("all")
+        note.toggle_folded()
+        self.root.update()
+        self.assertEqual(note._fold_mark, "square")
+        left, top, right, bottom = box_of_mark()
+        width, height = int(fold.cget("width")), int(fold.cget("height"))
+        side = right - left
+        self.assertAlmostEqual(side, round(glyph * 0.72), delta=3, msg="as wide as most of the ✕")
+        self.assertAlmostEqual(left + right, width, delta=2, msg="in the middle, across")
+        self.assertAlmostEqual(top + bottom, height, delta=2, msg="in the middle, up and down")
+        self.assertEqual(fold.winfo_reqheight(), close.winfo_reqheight(), "one line, both")
+        note.toggle_folded()
+        self.root.update()
+        self.assertEqual(note._fold_mark, "line")
+        note.close()
+
     def test_headed_by_the_work_s_name(self) -> None:
         """The user, 2026-11-02: its header the work's name, not "Before you
         use it" - cut short when long, its buttons never pushed out."""
@@ -334,10 +589,8 @@ class TheNoteTests(unittest.TestCase):
         self.assertLessEqual(len(shown), hn.HEADING_MOST)
         self.assertTrue(shown.endswith("…"))
         self.assertEqual(note.window.title(), shown)
-        for button in ("–", "✕"):
-            widget = next(one for one in note._bar_frame.winfo_children()
-                          if isinstance(one, tk.Label) and one.cget("text") == button)
-            self.assertTrue(widget.winfo_ismapped() and widget.winfo_width() > 1, button)
+        for widget in (note._fold_button, note._close_button):     # the fold mark drawn, the ✕
+            self.assertTrue(widget.winfo_ismapped() and widget.winfo_width() > 1, widget)
         note.close()
         plain = self._note(dict(NOTE, work="Garden plan"))
         self.assertIn("Garden plan", self._texts(plain._bar_frame))
@@ -348,7 +601,7 @@ class TheNoteTests(unittest.TestCase):
         is, a bar left."""
         note = self._note(dict(NOTE, item=EMAIL))
         window = note.window
-        self.assertIn("–", self._texts(note._bar_frame), "– beside the ✕")
+        self.assertEqual(note._fold_mark, "line", "its line beside the ✕")
         words = note._texts[-1] if note._texts else None
         if words is not None:
             words.yview_moveto(0.5)
@@ -368,7 +621,7 @@ class TheNoteTests(unittest.TestCase):
                                msg="where it stood, by its right edge")
         self.assertEqual(window.winfo_y(), top)
         self.assertTrue(window.attributes("-topmost"), "still on top")
-        self.assertEqual(note._fold_button.cget("text"), "□")
+        self.assertEqual(note._fold_mark, "square")
         note.unfold()
         self.root.update()
         self.assertFalse(note.folded)
@@ -378,16 +631,27 @@ class TheNoteTests(unittest.TestCase):
         if words is not None:
             self.assertAlmostEqual(words.yview()[0], scrolled, places=3,
                                    msg="where it was scrolled to")
-        self.assertEqual(note._fold_button.cget("text"), "–")
-        # A double click on its bar folds it, and again opens it (Tk makes
-        # no double click of its own for a test: the binding, then its act).
-        self.assertTrue(note._bar_frame.bind("<Double-Button-1>"))
-        note.toggle_folded()
+        self.assertEqual(note._fold_mark, "line")
+        # A CLICK on its bar folds it, and again opens it; a drag only moves it (the user,
+        # 2026-11-08); its bar of the body's ground, and a wider scroll bar.
+        from types import SimpleNamespace
+        self.assertEqual(str(note._bar_frame.cget("bg")), note.palette["bg"])
+        self.assertEqual(str(note._bar_frame.cget("cursor")), "hand2")
+        x, y = note._bar_frame.winfo_rootx() + 30, note._bar_frame.winfo_rooty() + 5
+        note._grab(SimpleNamespace(x_root=x, y_root=y))
+        note._move(SimpleNamespace(x_root=x + 40, y_root=y + 2))
+        note._bar_released(SimpleNamespace(x_root=x + 40, y_root=y + 2))
+        self.root.update()
+        self.assertFalse(note.folded, "dragged: moved, not folded")
+        note._grab(SimpleNamespace(x_root=x, y_root=y))
+        note._bar_released(SimpleNamespace(x_root=x + 1, y_root=y))
         self.root.update()
         self.assertTrue(note.folded)
-        note.toggle_folded()
+        note._grab(SimpleNamespace(x_root=x, y_root=y))
+        note._bar_released(SimpleNamespace(x_root=x, y_root=y))
         self.root.update()
         self.assertFalse(note.folded)
+        self.assertEqual(hn.SCROLL_WIDE, 14)
         note.close()
 
     def test_its_size_dragged_by_its_corner(self) -> None:
@@ -633,12 +897,16 @@ class OpenedThroughTheDesktopTests(unittest.TestCase):
         DesktopAgent._show_handed_note(fake, payload)
         root.update()
         note = fake._handed_note
-        self.assertEqual(note.zooms, {"item": hn.ZOOM_START + 2, "how": hn.ZOOM_START + 2},
+        self.assertEqual((note.zooms["item"], note.zooms["how"]), (hn.ZOOM_START + 2, hn.ZOOM_START + 2),
                          "opened at the zoom kept")
         note.zoom_by(1, "how")
-        self.assertEqual(kept["popup_zoom"], 3)
-        self.assertEqual(note.zooms, {"item": hn.ZOOM_START + 3, "how": hn.ZOOM_START + 3},
-                         "the whole of it")
+        # KEPT AS THAT PART'S OWN (the user, 2026-11-08: "并且记住历史选择") - the popups' as they were.
+        self.assertEqual(kept["popup_zoom"], 2)
+        self.assertEqual(kept["handed_note_zooms"], {"how": hn.ZOOM_START + 3})
+        self.assertEqual((note.zooms["item"], note.zooms["how"]), (hn.ZOOM_START + 2, hn.ZOOM_START + 3))
+        DesktopAgent._show_handed_note(fake, dict(payload))
+        root.update()
+        self.assertEqual(fake._handed_note.zooms["how"], hn.ZOOM_START + 3, "opened as it was left")
         note = fake._handed_note
         note._save()
         self.assertEqual(saved, [("run_7", 1, EMAIL["text"])], "saved to its run and item")
@@ -657,6 +925,37 @@ class OpenedThroughTheDesktopTests(unittest.TestCase):
         DesktopAgent._show_handed_note(fake, payload)       # a newer one in its place
         self.assertIsNone(note.window)
         fake._handed_note.close()
+
+    def test_a_whole_projects_note_stands_apart_from_a_to_dos(self) -> None:
+        """The user, 2026-11-08: a to-do's note gives way to the next to-do's; a whole project's,
+        of another ground, only to the next whole project's."""
+        import queue
+        from personalized_agent.ui.desktop import DesktopAgent
+        root = tk.Tk()
+        root.withdraw()
+        self.addCleanup(gc.collect)
+        self.addCleanup(root.destroy)
+        kept = {}
+        config = SimpleNamespace(get=lambda key, default=None: kept.get(key, default),
+                                 set=lambda key, value, internal=False: kept.update({key: value}))
+        fake = SimpleNamespace(queue=queue.Queue(), root=root, config=config,
+                               app=SimpleNamespace(work=SimpleNamespace(save_handed=lambda *a: {})),
+                               _words=lambda text: text, _popup_font=lambda: ("Segoe UI", 10))
+        todo = dict(NOTE, item=EMAIL, run="run_1", n=0, scope="todo")
+        whole = dict(NOTE, item=EMAIL, run="run_2", n=0, scope="project")
+        DesktopAgent._show_handed_note(fake, whole)
+        project_note = fake._handed_note
+        self.assertEqual(project_note.palette["bg"], hn.PROJECT_PALETTE["bg"])
+        DesktopAgent._show_handed_note(fake, todo)
+        first_todo = fake._handed_note
+        self.assertNotEqual(first_todo.palette["bg"], hn.PROJECT_PALETTE["bg"])
+        DesktopAgent._show_handed_note(fake, todo)
+        self.assertIsNone(first_todo.window, "the next to-do's takes the place of a to-do's")
+        self.assertIsNotNone(project_note.window, "not of a whole project's")
+        DesktopAgent._show_handed_note(fake, whole)
+        self.assertIsNone(project_note.window, "a whole project's gives way to the next one's")
+        for one in fake._handed_notes.values():
+            one.close()
 
 
 if __name__ == "__main__":

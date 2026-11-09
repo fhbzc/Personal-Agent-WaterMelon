@@ -37,6 +37,9 @@ class _Model:
     def invoke(self, request, role=""):
         prompt = request.messages[0]["content"]
         self.asked.append(prompt)
+        if "CAUSED the part the user corrected" in prompt:   # the blame, its own call (2026-11-07)
+            return self._said({"caused": sorted(set(re.findall(r"\[(les_[0-9a-f]+)\]", prompt))),
+                               "why": "it led to what was undone"})
         if "give each one the features" in prompt:
             ids = re.findall(r"\[(evi_[0-9a-f]+)\]", prompt)
             return self._said({"features": {one: {
@@ -169,6 +172,9 @@ class TheAgentActingOnALessonTests(_Base):
                                               "task_1", "added"))
         before = self.engine.rule(rule["id"])["confidence"]
         self.assertEqual(self.engine.outcome("notifications", "task_1", "deleted it"), 1)
+        # BLAME BY THE MODEL, at the next learning (the user, 2026-11-07): only the lesson it
+        # names as the cause is counted against.
+        self.engine.learn("notifications")
         after = self.engine.rule(rule["id"])
         self.assertLess(after["confidence"], before)
         self.assertGreater(after["contradict"], 1.4)
@@ -254,8 +260,11 @@ class TheAppLearnsFromEveryKindTests(unittest.TestCase):
         sources = {row["source_id"] for row in self.app.db.query(
             "SELECT source_id FROM lesson_evidence WHERE kind = 'connections'")}
         self.assertEqual(len(sources), 1, "the change to Ada, not to the user's profile")
-        # No rule yet: what the user did is given, as an example (2026-11-04).
-        self.assertIn("WHAT THE USER ACTUALLY DID", self.app.connections.lessons_text())
+        # No rule yet: what the user did is given, as an example (2026-11-04) - to a moment like
+        # it; to no moment, nothing (the user, 2026-11-07: by what it is about, no quota).
+        self.assertIn("WHAT THE USER ACTUALLY DID", self.app.connections.lessons_text(
+            "Ada, my advisor, added to my people"))
+        self.assertNotIn("WHAT THE USER ACTUALLY DID", self.app.connections.lessons_text())
         del ada
 
     def test_the_old_lessons_go_and_the_actions_are_learned_from_again(self) -> None:

@@ -1108,13 +1108,25 @@ class StageWriter:
                 if not self.going():
                     return done
                 made = self._join(project, task_id, mine, theirs, key)
+                if made is None:
+                    # NOT ASKED, NOT JOINED (2026-11-07): no model to ask - asked next time.
+                    continue
+                if isinstance(made, str):
+                    # A FAILED JOIN IS MOVED PAST (the user, 2026-11-07): an answer cut off or
+                    # unreadable makes no edge, is marked, and is not asked again the same way.
+                    self.store.set_mark(key, [], [])
+                    done.append({"joined": task_id, "project": project.id, "edges": 0,
+                                 "failed": made})
+                    continue
                 self.store.set_mark(key, [], [])
                 done.append({"joined": task_id, "project": project.id,
                              "edges": made})
         return done
 
     def _join(self, project: Any, task_id: str, mine: List[Dict[str, Any]],
-              theirs: List[Dict[str, Any]], key: str) -> int:
+              theirs: List[Dict[str, Any]], key: str) -> Any:
+        """The edges made; why it failed, when the answer was cut off or unreadable; None when
+        no model was asked."""
         def listed(stages):
             return "\n".join(
                 f"- [{s['id']}] {s['began'][:16]} {s['kind']}: {s['summary'][:220]}"
@@ -1124,6 +1136,13 @@ class StageWriter:
                  f"THE TASK THAT JOINED IT:\n{listed(mine)}")
         answered, response = self._ask(self.in_language(JOIN_PROMPT), asked,
                                        "experience join")
+        if response is None:
+            return None
+        if _cut_off(response) or "edges" not in answered:
+            why = ("the answer was cut off at the output limit or could not be read"
+                   if _cut_off(response) else "the answer said no edges")
+            log.info("a join failed: %s", why)
+            return why
         known = {s["id"]: s for s in mine + theirs}
         made = 0
         for edge in answered.get("edges") or []:

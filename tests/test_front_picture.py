@@ -64,6 +64,22 @@ class PicturesTests(unittest.TestCase):
         self.assertEqual(shot["words"], "High water at noon")
         self.assertEqual(self.pictures.blocks(shot)[0]["media_type"], "image/jpeg")
 
+    def test_every_message_has_the_screen_the_second_too(self) -> None:
+        """The user, 2026-11-08: "在chat里问第二句话的时候，就没有input screen了，应该也是要有的"."""
+        self.pictures.take()                                 # the press that opens the chat
+        first = self.pictures.for_a_message(title="Tides")
+        self.assertTrue(first.get("path"))
+        self.assertEqual(len(self.taken), 1, "the first: the picture of the press")
+        self.front = {"application": "word", "title": "Notes"}     # looked at another window
+        self.image = _screen("Meeting notes", shade=230)
+        second = self.pictures.for_a_message(title="Notes")
+        self.assertEqual(len(self.taken), 2, "taken again for the second")
+        self.assertTrue(second.get("path"))
+        self.assertNotEqual(second["path"], first["path"])
+        third = self.pictures.for_a_message(title="Notes")
+        self.assertEqual(len(self.taken), 3)
+        self.assertEqual(third["path"], second["path"], "the same screen: the same picture")
+
     def test_the_same_screen_is_reused_a_clock_is_not_a_change(self) -> None:
         first = self._press()
         self.image = _screen(clock="10:01")
@@ -282,3 +298,202 @@ class WhatTheWindowDrawsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheWholeScreenTests(unittest.TestCase):
+    """The user, 2026-11-08: "能给整个屏幕吗" - the whole screen, this application's windows and
+    the windows never read painted grey where they show."""
+
+    def test_its_own_windows_and_those_never_read_are_grey_where_they_show(self) -> None:
+        from personalized_agent.platform_layer.windows import BLANKED, blank_windows
+        image = Image.new("RGB", (400, 300), (255, 255, 255))
+        windows = [  # from the top down
+            {"box": (10, 10, 60, 60), "application": "python.exe", "title": "Fern", "ours": True},
+            {"box": (0, 0, 400, 300), "application": "overlay.exe", "title": "", "opaque": False},
+            {"box": (150, 50, 250, 150), "application": "notes.exe", "title": "Notes",
+             "opaque": True},
+            {"box": (100, 0, 300, 200), "application": "KeePass.exe", "title": "Passwords",
+             "opaque": True},
+            {"box": (0, 0, 400, 300), "application": "chrome.exe", "title": "Tides",
+             "opaque": True}]
+        out = blank_windows(image, (0, 0, 400, 300), windows,
+                            hidden=lambda application, title: "keepass" in application.lower())
+        self.assertEqual(out.getpixel((30, 30)), BLANKED, "the avatar, this application's own")
+        self.assertEqual(out.getpixel((120, 20)), BLANKED, "never read, under a see-through one")
+        self.assertEqual(out.getpixel((200, 100)), (255, 255, 255), "a window over it, as it is")
+        self.assertEqual(out.getpixel((350, 250)), (255, 255, 255), "the window in front, as it is")
+
+    def test_on_another_screen_its_place_is_counted_from_that_screen(self) -> None:
+        from personalized_agent.platform_layer.windows import BLANKED, blank_windows
+        image = Image.new("RGB", (200, 100), (255, 255, 255))
+        windows = [{"box": (1950, 10, 2000, 60), "application": "python.exe", "title": "",
+                    "ours": True}]
+        out = blank_windows(image, (1920, 0, 2120, 100), windows)
+        self.assertEqual(out.getpixel((40, 30)), BLANKED)
+        self.assertEqual(out.getpixel((150, 30)), (255, 255, 255))
+
+    def test_taken_as_the_whole_screen_where_it_can_be_and_the_window_when_switched_off(self) -> None:
+        work = tempfile.TemporaryDirectory()
+        self.addCleanup(work.cleanup)
+        asked = []
+
+        def screen(title="", hidden=None):
+            asked.append(("screen", title, hidden("KeePass.exe", "Vault"), hidden("chrome", "x")))
+            return _screen()
+
+        def window(*_a, **_k):
+            asked.append(("window",))
+            return _screen()
+        config = _Config(listener_screen_excluded_applications=["keepass"])
+        pictures = FrontPictures(config, SimpleNamespace(user_screen_image=screen,
+                                                         user_window_image=window),
+                                 Path(work.name) / "front", lambda: {"title": "Tides"},
+                                 read_words=lambda _image: "")
+        pictures.take()
+        self.assertTrue(pictures.latest().get("path"))
+        self.assertEqual(asked, [("screen", "Tides", True, False)])
+        config["front_picture_whole_screen"] = False
+        asked.clear()
+        pictures.take()
+        pictures.latest()
+        self.assertEqual(asked, [("window",)])
+
+
+class ShownAtOnceTests(unittest.TestCase):
+    """The user, 2026-11-08: "你等识别，你可以先把图片截图发上来" - a small copy, before its words."""
+
+    def test_a_small_copy_before_its_words_are_read(self) -> None:
+        import threading as _threading
+        work = tempfile.TemporaryDirectory()
+        self.addCleanup(work.cleanup)
+        reading = _threading.Event()
+
+        def words(_image):
+            reading.wait(5)                      # reading is slow: the copy is there before
+            return "High water"
+        pictures = FrontPictures(_Config(), SimpleNamespace(user_window_image=lambda: _screen()),
+                                 Path(work.name) / "front", lambda: {"title": "Tides"},
+                                 read_words=words)
+        pictures.take()
+        small = pictures.preview(wait=2)
+        self.assertIsNotNone(small, "there before its words")
+        from personalized_agent.agent.front_picture import PREVIEW_SIDE
+        self.assertLessEqual(max(small.size), PREVIEW_SIDE)
+        self.assertFalse(pictures._done.is_set(), "its words still being read")
+        reading.set()
+        self.assertTrue(pictures.latest(wait=5).get("path"))
+
+    def test_none_of_a_window_never_read_nor_a_picture_with_a_password(self) -> None:
+        work = tempfile.TemporaryDirectory()
+        self.addCleanup(work.cleanup)
+        pictures = FrontPictures(_Config(listener_screen_excluded_applications=["keepass"]),
+                                 SimpleNamespace(user_window_image=lambda: _screen()),
+                                 Path(work.name) / "front",
+                                 lambda: {"application": "KeePass", "title": "Vault"},
+                                 read_words=lambda _image: "")
+        pictures.take()
+        self.assertIsNone(pictures.preview(wait=2))
+        pictures.latest(wait=5)
+        self.assertEqual(pictures.why, "the window in front is one never read")
+
+
+class TheChatsIsNotReadTests(unittest.TestCase):
+    """The user, 2026-11-08: "chat的这个可以跳过。不需要识别" - the chat's picture goes as taken."""
+
+    def test_no_words_read_nor_a_password_looked_for_and_the_next_message_the_same(self) -> None:
+        work = tempfile.TemporaryDirectory()
+        self.addCleanup(work.cleanup)
+        read = []
+        shots = iter([_screen("Tides"), _screen("Notes", shade=230)])
+        pictures = FrontPictures(_Config(), SimpleNamespace(user_window_image=lambda: next(shots)),
+                                 Path(work.name) / "front", lambda: {"title": "Tides"},
+                                 read_words=lambda image: read.append(1) or "password: hunter2")
+        pictures.take(words=False)
+        first = pictures.for_a_message(title="Tides")
+        self.assertTrue(first.get("path"), "sent, though what would be read holds a password")
+        self.assertEqual(first.get("words"), "")
+        second = pictures.for_a_message(title="Tides")
+        self.assertTrue(second.get("path"))
+        self.assertNotEqual(second["path"], first["path"], "taken again, as the chat's")
+        self.assertEqual(read, [], "nothing read")
+
+    def test_delegate_works_is_still_read(self) -> None:
+        work = tempfile.TemporaryDirectory()
+        self.addCleanup(work.cleanup)
+        pictures = FrontPictures(_Config(), SimpleNamespace(user_window_image=lambda: _screen()),
+                                 Path(work.name) / "front", lambda: {"title": "Tides"},
+                                 read_words=lambda image: "password: hunter2")
+        pictures.take()
+        self.assertEqual(pictures.latest(wait=5), {}, "a password on it: dropped")
+
+
+@unittest.skipUnless(sys.platform.startswith("win"), "Windows' own way of leaving a window out")
+class ThroughItsOwnWindowsTests(unittest.TestCase):
+    """The user, 2026-11-08: "有一团灰色是我的chat窗口，能不能越过chat窗口截屏"."""
+
+    def _taken(self, leaves_out):
+        from personalized_agent.platform_layer import windows as win
+        provider = win.WindowsActivityProvider()
+        windows = [{"hwnd": 1, "box": (10, 10, 60, 60), "application": "python.exe",
+                    "title": "Chat", "class": "TkTopLevel", "ours": True, "opaque": True},
+                   {"hwnd": 2, "box": (100, 0, 200, 100), "application": "KeePass.exe",
+                    "title": "Vault", "class": "x", "ours": False, "opaque": True},
+                   {"hwnd": 3, "box": (0, 0, 400, 300), "application": "chrome.exe",
+                    "title": "Tides", "class": "Chrome", "ours": False, "opaque": True}]
+        asked = []
+
+        def leave(hwnds, out):
+            asked.append((list(hwnds), out))
+            return list(hwnds) if leaves_out else []
+        with mock.patch.object(provider, "screen_windows", return_value=windows), \
+                mock.patch.object(provider, "_monitor_of", return_value=(0, 0, 400, 300)), \
+                mock.patch.object(provider, "_leave_out_of_pictures", side_effect=leave), \
+                mock.patch.object(win, "LEFT_OUT_SETTLE", 0), \
+                mock.patch("PIL.ImageGrab.grab", return_value=Image.new("RGB", (400, 300), (255, 255, 255))):
+            image = provider.user_screen_image(title="Tides",
+                                               hidden=lambda app, title: "keepass" in app.lower())
+        return image, asked, win.BLANKED
+
+    def test_its_own_left_out_what_is_behind_them_taken_and_put_back(self) -> None:
+        image, asked, grey = self._taken(True)
+        self.assertEqual(asked, [([1], True), ([1], False)], "left out for the grab, then put back")
+        self.assertEqual(image.getpixel((30, 30)), (255, 255, 255), "behind the chat, not grey")
+        self.assertEqual(image.getpixel((150, 50)), grey, "a window never read: grey still")
+
+    def test_where_the_system_will_not_its_own_are_grey_as_before(self) -> None:
+        image, _asked, grey = self._taken(False)
+        self.assertEqual(image.getpixel((30, 30)), grey)
+
+
+@unittest.skipUnless(sys.platform.startswith("win"), "Windows' own way of leaving a window out")
+class OneComeUpMeanwhileTests(unittest.TestCase):
+    """The user, 2026-11-08: the first picture had the chat in it - opened as it was taken."""
+
+    def test_the_chat_opening_while_it_is_taken_is_left_out_too(self) -> None:
+        from personalized_agent.platform_layer import windows as win
+        provider = win.WindowsActivityProvider()
+        page = {"hwnd": 3, "box": (0, 0, 400, 300), "application": "firefox.exe",
+                "title": "Tides", "class": "Mozilla", "ours": False, "opaque": True}
+        avatar = {"hwnd": 1, "box": (300, 200, 340, 240), "application": "python.exe",
+                  "title": "Fern", "class": "TkTopLevel", "ours": True, "opaque": True}
+        chat = {"hwnd": 4, "box": (10, 10, 60, 60), "application": "python.exe",
+                "title": "Chat", "class": "TkTopLevel", "ours": True, "opaque": True}
+        lists = iter([[avatar, page]] + [[chat, avatar, page]] * 10)
+        left, grabs = [], []
+
+        def leave(hwnds, out):
+            if out:
+                left.extend(hwnds)
+            return list(hwnds)
+
+        def grab(**_k):
+            grabs.append(sorted(left))
+            return Image.new("RGB", (400, 300), (255, 255, 255))
+        with mock.patch.object(provider, "screen_windows", side_effect=lambda: next(lists)), \
+                mock.patch.object(provider, "_monitor_of", return_value=(0, 0, 400, 300)), \
+                mock.patch.object(provider, "_leave_out_of_pictures", side_effect=leave), \
+                mock.patch.object(win, "LEFT_OUT_SETTLE", 0), \
+                mock.patch("PIL.ImageGrab.grab", side_effect=grab):
+            image = provider.user_screen_image(title="Tides")
+        self.assertEqual(grabs[-1], [1, 4], "taken with the chat left out as well")
+        self.assertEqual(image.getpixel((30, 30)), (255, 255, 255), "not grey: behind it")

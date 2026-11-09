@@ -229,6 +229,47 @@ class TuckedIntoTheSideTests(unittest.TestCase):
             desktop._end_drag(SimpleNamespace(x_root=570, y_root=364))
         self.assertEqual(waiting, [])
 
+    def test_let_go_more_than_half_past_the_side_it_jumps_in_at_once(self) -> None:
+        """The user, 2026-11-08: "如果西瓜被放置的位置在屏幕外超过50%，西瓜直接跳进屏幕边框，不是慢慢挪进去"."""
+        from personalized_agent.ui import avatar_tuck as tuck
+        sides = tuck.Sides(0, 1920, True, True, 0, 1080, True, True)
+        self.assertTrue(tuck.jumps_in("right", 1920 - 90, 400, 128, sides), "38 of 128 past it")
+        self.assertFalse(tuck.jumps_in("right", 1920 - 100, 400, 128, sides), "28 of 128: sneaks")
+        self.assertTrue(tuck.jumps_in("left", -40, 400, 128, sides))
+        self.assertTrue(tuck.jumps_in("top", 900, -40, 128, sides))
+        self.assertTrue(tuck.jumps_in("bottom", 900, 1080 - 90, 128, sides))
+        self.assertFalse(tuck.jumps_in("", -70, 400, 128, sides))
+        desktop = self._desktop(500)
+        self._clickable(desktop)
+        desktop._look_now = lambda: None
+        desktop._tucked = ""
+        desktop._live.update(tuck=0.0, grip=0.0)
+        self._carry(desktop, 1920 - 40)
+        with self._sides():
+            desktop._end_drag(SimpleNamespace(x_root=1920 + 24, y_root=364))
+        slide = desktop._live.get("slide")
+        self.assertTrue(slide and slide.get("into_side") and slide.get("leap") == "right",
+                        "jumping, now - not sneaking in a while after")
+        sides = tuck.Sides(0, 1920, True, True)
+        self.assertEqual(slide["to"], tuck.tucked_at("right", 1880, 300, 128, sides))
+        slide["at"] = time.monotonic() - tuck.JUMP_IN_SECONDS - 0.01
+        desktop._slide_on(desktop._live, time.monotonic())
+        self.assertEqual(desktop._tucked, "right", "in, its leaves out")
+        self.assertEqual(desktop._live["tuck"], 1.0)
+        self.assertEqual(desktop.agent_window.x, 1920 - round(128 * tuck.PEEK))
+
+    def test_let_go_less_than_half_past_it_sneaks_in_later_as_before(self) -> None:
+        desktop = self._desktop(500)
+        self._clickable(desktop)
+        desktop._look_now = lambda: None
+        desktop._tucked = ""
+        desktop._live.update(tuck=0.0, grip=0.0)
+        self._carry(desktop, 1920 - 120)
+        with self._sides():
+            desktop._end_drag(SimpleNamespace(x_root=1920 - 56, y_root=364))
+        self.assertNotIn("slide", desktop._live)
+        self.assertEqual(desktop._beside, "right")
+
     def test_let_go_without_its_press_is_no_click(self) -> None:
         # A Mac's Control-click is a right click: only its let go comes here.
         desktop = self._desktop(500)

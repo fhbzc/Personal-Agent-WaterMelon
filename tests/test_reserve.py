@@ -57,18 +57,32 @@ class TheReserveTests(unittest.TestCase):
         return model
 
     # -- what comes in --
-    def test_what_an_issue_left_over_comes_in_and_what_it_printed_does_not(self) -> None:
+    def test_everything_an_issue_found_comes_in_printed_or_not(self) -> None:
+        """The user, 2026-11-07: "报纸找到的都要推（因为用户可能不看报纸)"."""
         printed = {"id": "s1", "title": "Spring tides", "sources": ["https://tides.example/spring"]}
         left = {"id": "s2", "title": "Harbour tables", "detail": "New tables", "sources": [PAGE]}
-        self.assertEqual(self.reserve.from_the_issue([printed, left], [printed], set()), 1)
-        self.assertEqual([one["title"] for one in self.reserve.items(rs.RAW)], ["Harbour tables"])
+        self.assertEqual(self.reserve.from_the_issue([printed, left], [printed], set()), 2)
+        self.assertEqual(sorted(one["title"] for one in self.reserve.items(rs.RAW)),
+                         ["Harbour tables", "Spring tides"])
+        self.assertEqual({one["source"] for one in self.reserve.items(rs.RAW)},
+                         {"printed in an issue of the newspaper",
+                          "found by an issue of the newspaper"})
 
-    def test_a_story_printed_later_is_not_told(self) -> None:
+    def test_a_story_printed_later_still_waits_to_be_told(self) -> None:
         left = {"id": "s2", "title": "Harbour tables", "sources": [PAGE]}
         self.reserve.from_the_issue([left], [], set())
         self.reserve.from_the_issue([], [dict(left, id="s9")], set())
-        self.assertEqual(self.reserve.items(rs.RAW), [])
-        self.assertEqual(self.reserve.items(rs.SEEN)[0]["seen_how"], "newspaper")
+        self.assertEqual(len(self.reserve.items(rs.RAW)), 1, "once, and not put aside")
+
+    def test_what_was_put_aside_for_being_printed_waits_again_once(self) -> None:
+        ident = self.reserve.add("Harbour tables", PAGE)
+        self.app.db.execute("UPDATE reserve_items SET status = ?, seen_how = 'newspaper' "
+                            "WHERE id = ?", (rs.SEEN, ident))
+        self.assertEqual(self.reserve.take_back_the_printed(), 1)
+        self.assertEqual(self.reserve.get(ident)["status"], rs.RAW)
+        self.app.db.execute("UPDATE reserve_items SET status = ?, seen_how = 'newspaper' "
+                            "WHERE id = ?", (rs.SEEN, ident))
+        self.assertEqual(self.reserve.take_back_the_printed(), 0, "once")
 
     def test_each_thing_comes_in_once_whatever_became_of_it(self) -> None:
         ident = self.reserve.add("Harbour tables", PAGE)
@@ -242,11 +256,39 @@ class TheReserveTests(unittest.TestCase):
         self.reserve.told_link("Harbour tables", other, "n1")
         self.assertTrue(self.reserve.told_before(other))
 
-    def test_what_an_issue_printed_is_not_told_later(self) -> None:
+    def test_printed_in_an_issue_is_not_recommended_before(self) -> None:
+        """The user, 2026-11-07: "报纸印过的不算，只是recommend不会重复"."""
         printed = {"id": "s1", "title": "Harbour tables", "url": PAGE}
         self.reserve.from_the_issue([printed], [printed], set())
-        self.assertTrue(self.reserve.told_before(PAGE))
-        self.assertEqual(self.reserve.add("Harbour tables again", PAGE), "")
+        self.assertFalse(self.reserve.told_before(PAGE))
+        ident = self.reserve.items(rs.RAW)[0]["id"]
+        self.reserve.told(ident, "n1")
+        self.assertTrue(self.reserve.told_before(PAGE), "recommended once, never again")
+
+    def test_already_on_one_of_their_pages_is_not_told(self) -> None:
+        """The user, 2026-11-08: a paper recommended sixteen seconds after its link was posted in
+        the Slack channel they had open - "如果已经在我的某个页面上的东西也不推"."""
+        from personalized_agent.common.events.models import ListenerEvent, utcnow
+        from datetime import timedelta
+        paper = "https://arxiv.org/abs/2608.11111"
+        self.assertFalse(self.reserve.on_screen(paper))
+        self.assertTrue(self.reserve.on_screen(paper, "see arxiv.org/abs/2608.11111v2 here"),
+                        "on the screen now, its version aside")
+        self.app.raw_store.add_event(ListenerEvent(
+            event_type="screen.text", source="screen", timestamp=utcnow() - timedelta(days=2),
+            application="slack.exe", data={"text": "new preprint: https://arxiv.org/pdf/2608.11111"}))
+        self.assertTrue(self.reserve.on_screen(paper), "on their screen these last days, as a pdf")
+        self.assertTrue(self.reserve.told_before(paper))
+        self.assertFalse(self.reserve.on_screen("https://arxiv.org/abs/2608.22222"))
+        self.assertFalse(self.reserve.on_screen(paper, days=1), "longer ago than asked")
+
+    def test_on_their_screen_it_is_put_aside_before_it_is_sent(self) -> None:
+        ident = self.reserve.add("Harbour tables", PAGE)
+        self.app.db.execute("UPDATE reserve_items SET status = ?, expires_at = ? WHERE id = ?",
+                            (rs.READY, "2999-01-01T00:00:00+00:00", ident))
+        self.assertFalse(self.reserve.still_fresh(ident, f"a colleague posted {PAGE} just now"))
+        self.assertEqual(self.reserve.get(ident)["status"], rs.SEEN)
+        self.assertEqual(self.reserve.get(ident)["seen_how"], "on their screen")
 
     def test_what_was_read_is_told_before(self) -> None:
         self._read(PAGE, "Harbour tables")
@@ -267,7 +309,7 @@ class TheReserveTests(unittest.TestCase):
             first = decider.recommend(monitor, activator, {}, {}, "f1")
             second = decider.recommend(monitor, activator, {}, {}, "f2")
         self.assertTrue(first["said"])
-        self.assertEqual(second, {"sent": False, "why": "that very link was told or read before"})
+        self.assertEqual(second, {"sent": False, "why": "that very link was told or read before, or is on their screen already"})
         self.assertEqual(len(said), 1)
 
     def test_what_was_given_longer_before_comes_down_to_the_most(self) -> None:
@@ -476,11 +518,15 @@ class TheReserveTests(unittest.TestCase):
         self.assertEqual(rs._until(now, "soon"), (now + timedelta(days=rs.VALID_DAYS)).isoformat())
         self.assertEqual(rs._until(now, 9999), (now + timedelta(days=30)).isoformat())
 
-    def test_no_answer_to_go_by_and_nothing_is_dropped(self) -> None:
+    def test_no_answer_to_go_by_it_is_recorded_failed_and_not_asked_again(self) -> None:
+        """The user, 2026-11-07: "还解决不了的标为失败，这样下次可以从新的地方开始做" - an answer
+        that cannot be read leaves no item to be asked about the same way again."""
         ident = self.reserve.add("Harbour tables", PAGE)
         self._model("not json at all")
         self.assertEqual(self.reserve.prepare(self.app.monitor_decider), 0)
-        self.assertEqual(self.reserve.get(ident)["status"], rs.RAW)
+        item = self.reserve.get(ident)
+        self.assertEqual(item["status"], rs.DROPPED)
+        self.assertIn("not made ready", item["why"])
 
     def test_what_was_kept_before_it_had_a_time_gets_one(self) -> None:
         ident = self.reserve.add("Harbour tables", PAGE, status=rs.READY)

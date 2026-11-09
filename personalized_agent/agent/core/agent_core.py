@@ -6,8 +6,10 @@ Direct user instruction workflow:
     Raw Edit -> respond
 
 Answered from the instruction itself and from the conversation it was asked
-in: there is no memory to search and no context gathered before the model is
-asked. A conversation the user continues - one reopened from the chat's
+in: no context is gathered before the model is asked. What the application
+keeps of the user - their to-dos, tasks and projects, what was learned, what
+they were doing - the model searches for itself, when it judges the message
+needs it (agent/core/memory_tools.py). A conversation the user continues - one reopened from the chat's
 sidebar, or the one still open - is given to the model as it was said, whole
 while it fits, and with its older part summarised once it does not. A new
 conversation brings nothing with it.
@@ -30,6 +32,7 @@ from ..two_speed import CORRECTION, FULL_NOTE, NOTHING_TO_ADD
 from ...common.events.models import new_id
 from ...common.observability.tracing import NullTracer, new_trace_id
 from ...models.base import ModelRequest
+from ...models.answers import read_text, was_cut
 from ...common.languages import in_display, in_english
 from ..character.manager import avatar_name
 from ...models.manager import ModelUnavailable
@@ -46,8 +49,13 @@ STREAM_SECONDS, MOST_SPOKEN_SECONDS = 1.5, 4.0
 SYSTEM_PROMPT = """You are {agent_name}, a personal desktop agent for one user.
 
 You can act on the user's workspace, and you can schedule work for later.
-Answer from what you are asked and from this conversation so far; there is no
-memory to search.
+Answer from what you are asked and from this conversation so far. Nothing of
+the user's past comes with a message: when the answer needs it, search for it -
+their to-dos (`search_todos`), their projects and tasks (`search_work`), what
+was learned of how they want things done (`search_lessons`), what they were
+doing at a time (`search_activity`; `screen_history` for the screen itself).
+Search only when the message needs it, and answer from what was found, not
+from a guess.
 
 1. Decide whether the task is IMMEDIATE (do it now, in this reply) or DELAYED
    (it should happen at a later time). For a delayed task call `schedule_task`
@@ -148,6 +156,17 @@ not said."""
 
 SUMMARY_MAX_TOKENS = 1200
 
+#: SAID WHEN A REPLY WAS CUT OFF (2026-11-07): a reply that stopped at the model's output limit
+#: is shown as it came, with this after it, in the display language - never as if whole.
+CUT_NOTE = "(The answer stopped at the length limit.)"
+
+
+def with_cut_note(text: str, config: Any) -> str:
+    """A reply that stopped at the output limit, with the note saying so after it."""
+    from ...common.interface_words import shown
+    note = shown(CUT_NOTE, config)
+    return f"{text.rstrip()}\n\n{note}" if str(text or "").strip() else note
+
 
 class AgentCore:
     def __init__(
@@ -187,6 +206,14 @@ class AgentCore:
             runtime=runtime, scheduler=scheduler,
             notifications=notifications, config=config,
         )
+        # SEARCHES THE MODEL MAY MAKE (the user, 2026-11-07): read-only, each
+        # saying what it finds; nothing of them goes with a message unasked.
+        # The lessons are found by meaning when the application hands over its
+        # retriever (`lesson_retriever`), by their words until then.
+        db = getattr(conversations, "db", None)
+        if db is not None:
+            from .memory_tools import add_tools as _memory_tools
+            _memory_tools(self.tools, db, lambda: getattr(self, "lesson_retriever", None))
 
     # -- prompt -------------------------------------------------------------
     def _system_prompt(self, summary: str = "", topic: str = "") -> str:
@@ -378,21 +405,44 @@ class AgentCore:
         older = turns[covered:split] if cached else turns[:split]
         self._step(task_id, "Reading the conversation so far",
                    f"summarising {split} earlier message{'s' if split != 1 else ''}")
-        summary = self._summarise(prior, older, task_id, debug)
+        summary, why = self._summary_read(prior, older, task_id, debug)
+        through = split
+        start = covered if cached else 0
+        if not summary and why and len(older) >= 2:
+            # ASKED AGAIN WITH LESS (the user, 2026-11-07: never the same ask again the same
+            # way): a summary cut off, or empty, is asked once more of the first half of what it
+            # was to cover - its end where the user speaks - and the rest stays word for word.
+            # Not had then either, it is FAILED: logged, the old summary kept as it was.
+            end = start + len(older) // 2
+            while end < split and turns[end]["role"] != "user":
+                end += 1
+            if start < end < split:
+                summary, why = self._summary_read(prior, turns[start:end], task_id, debug)
+                if summary:
+                    through = end
+            if not summary:
+                log.warning("the earlier conversation could not be summarised (%s); the old "
+                            "summary is kept", why)
         if summary:
-            self.conversations.save_summary(conversation_id, turns[split - 1]["id"],
-                                            split, summary)
+            self.conversations.save_summary(conversation_id, turns[through - 1]["id"],
+                                            through, summary)
         else:
             # Not saved: the next turn tries again. Said, so the model does
             # not take the conversation as starting where the turns below do.
             summary = prior or (f"({split} earlier message{'s' if split != 1 else ''} "
                                 "of this conversation could not be summarised and "
                                 "are not shown.)")
-        return _verbatim(turns[split:]), summary
+        return _verbatim(turns[through:]), summary
 
     def _summarise(self, prior: str, older: List[Dict[str, Any]], task_id: str,
                    debug: Any = None) -> str:
-        """The older part of a conversation in a few paragraphs, or "".
+        """The older part of a conversation in a few paragraphs, or ""."""
+        return self._summary_read(prior, older, task_id, debug)[0]
+
+    def _summary_read(self, prior: str, older: List[Dict[str, Any]], task_id: str,
+                      debug: Any = None) -> Tuple[str, str]:
+        """The older part of a conversation in a few paragraphs, and "" - or "" and why the
+        answer was not one ("" again when the model could not be asked at all).
 
         Given the summary written last time, only what was said since is
         read again: it is extended, never rebuilt from the start.
@@ -418,12 +468,20 @@ class AgentCore:
             log.info("could not summarise the earlier conversation: %s", exc)
             self._emit_debug(debug, "history_summary", {
                 "task_id": task_id, "error": f"{type(exc).__name__}: {exc}"})
-            return ""
-        summary = (response.text or "").strip()
+            return "", ""
+        summary, cut = read_text(response)
+        summary = summary.strip()
         self._emit_debug(debug, "history_summary", {
             "task_id": task_id, "messages_summarised": len(older),
-            "extended_previous": bool(prior), "summary": summary})
-        return summary
+            "extended_previous": bool(prior), "summary": summary, "cut": cut})
+        if cut:
+            # ONLY WHEN WHOLE (2026-11-07): a summary cut off would replace the one before it and
+            # leave the turns it stopped short of out for good - never saved.
+            log.info("the earlier conversation's summary was cut off at the output limit")
+            return "", "the answer was cut off at the output limit"
+        if not summary:
+            return "", "the answer was empty"
+        return summary, ""
 
     def follow_up(self, message_id: str, about: str, question: str) -> Dict[str, Any]:
         """A follow-up about one reply - a word or phrase in it, or the whole
@@ -441,8 +499,11 @@ class AgentCore:
                          language=in_display(),
                          metadata={"context_summary": question[:200]}),
             role="primary")
+        text, cut = read_text(response)
+        text = text.strip()
+        # SAID WHEN CUT OFF (2026-11-07): shown as it came, never as if whole.
         return self.conversations.add_followup(
-            message, about, question, (response.text or "").strip())
+            message, about, question, with_cut_note(text, self.config) if cut else text)
 
     def _model_label(self) -> str:
         """The model doing the thinking, named for the person waiting."""
@@ -697,6 +758,7 @@ class AgentCore:
                 })
             if response.text:
                 answer = response.text
+                made["cut"] = was_cut(response)
             if not response.tool_calls:
                 break
 
@@ -724,6 +786,10 @@ class AgentCore:
         # bubble that looked like the chat had failed to render.
         if not answer.strip():
             answer = "I could not produce an answer for this request."
+        elif made.get("cut"):
+            # SAID WHEN CUT OFF (2026-11-07): a reply that stopped at the output limit is kept
+            # and shown as it came, with a note after it - never as if it were whole.
+            answer = with_cut_note(answer, self.config)
         self._step(task_id, "Writing the answer", "")
 
         self.recorder.agent_response(task_id, instruction if said is None else said, answer)
@@ -742,6 +808,7 @@ class AgentCore:
             # the heartbeat to read beside it.
             "looked_up": list(guard.looked),
             "error": error,
+            "cut": bool(made.get("cut")),
             "duration_seconds": round(
                 (datetime.now(timezone.utc) - started).total_seconds(), 2
             ),

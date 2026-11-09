@@ -45,7 +45,9 @@ class _Config:
     """Settings in memory: what a test sets, else the default asked for."""
 
     def __init__(self, **values) -> None:
-        self.values = dict(values)
+        # No place of this computer's: never set, the places would be Claude Code's and Codex's
+        # real records (learning/places.py, `default_places`).
+        self.values = dict({"learning_places": []}, **values)
 
     def get(self, key, default=None):
         return self.values.get(key, default)
@@ -249,6 +251,25 @@ class ThePlacesTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_by_default_claudes_and_codexs_records_and_learning_each_morning(self) -> None:
+        """The user, 2026-11-08: on by default at 8; no folder by default, Claude Code's and Codex's
+        records where they are; at most 100 pieces an update."""
+        from personalized_agent.common.config import schema
+        defaults = {key: schema.SCHEMA_BY_KEY[key].default for key in (
+            "learning_auto_on", "learning_times", "learning_reads_per_update")}
+        self.assertEqual(defaults, {"learning_auto_on": True, "learning_times": "08:00",
+                                    "learning_reads_per_update": 100})
+        claude, codex = self.dir / "claude-projects", self.dir / "codex-sessions"
+        claude.mkdir()
+        never_set = Places(_Config(), never=[self.app_data])
+        never_set.config.values.pop("learning_places")
+        with mock.patch.object(records, "claude_sessions_root", lambda: claude), \
+                mock.patch.object(records, "codex_sessions_root", lambda: codex):
+            self.assertEqual([(one["kind"], one["path"]) for one in never_set.listed()],
+                             [("claude", str(claude))], "Codex's not on this computer: not listed")
+            never_set.config.set("learning_places", [])
+            self.assertEqual(never_set.listed(), [], "once set by the user, theirs")
 
     def test_a_folder_is_listed_once_and_the_apps_own_never(self) -> None:
         self.places.add(self.project)

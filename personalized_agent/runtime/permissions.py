@@ -141,6 +141,13 @@ class WorkspacePolicy:
     #: application writes them itself, through this policy: its own writes
     #: are not refused.
     closed_paths: List[Path] = field(default_factory=list)
+    #: READ ANYWHERE, BUT WHAT IS EXCLUDED (the user, 2026-11-08: "应该是所有位置，除了exclude掉的都可
+    #: 以读"): the agents' own tools read every place on every drive that passes the checks above -
+    #: not the protected state, a sealed folder, the application's code where it is shut, a closed
+    #: record or a sign-in store. Code it runs inside the operating system's sandbox reads only its
+    #: readable roots: the home, and folder by folder what a work was told to read (no permission
+    #: is written on a drive's root - the user's choice).
+    read_anywhere: bool = False
 
     @property
     def write_root(self) -> Path:

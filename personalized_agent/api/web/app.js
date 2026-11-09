@@ -806,6 +806,9 @@ function learningKind(one) {
   if (one.kind === "text") return "passage";
   if (one.kind === "folder") return "folder";
   if (one.kind === "file") return "file";
+  /* The screen activity and what the earlier learning found (the user, 2026-11-07). */
+  if (one.kind === "activity") return "screen activity";
+  if (one.kind === "earlier") return "the earlier learning";
   return one.kind || "";
 }
 
@@ -11024,7 +11027,7 @@ function renderOvRound(said) {
   const line = $("#ov-round-next");
   if (!button || !line || !said) return;
   button.disabled = Boolean(said.running);
-  button.textContent = said.running ? "Updating tasks…" : "Update tasks now";
+  button.textContent = said.running ? "Updating projects…" : "Update projects now";
   // WHEN IT LAST UPDATED, beside when it next will (the user, 2026-11-04).
   const last = said.last_at ? `Last update: ${clock(said.last_at)}` : "";
   if (said.running) {
@@ -20103,7 +20106,7 @@ function pjChart(projects, since, open) {
       <span class="pj-fruit" style="left:${to.toFixed(2)}%" aria-hidden="true"><svg
         viewBox="0 0 32 32" width="64" height="64">${fruit.art}</svg></span>` : "";
     return `<div class="pj-crow${one.id === open ? " open" : ""}${one.dormant ? " dormant" : ""}${
-        under ? " pj-under" : ""}"
+        under ? " pj-under" : ""}${pjBusy(one.id) ? " pj-busy" : ""}"
         data-pj-open="${escapeHtml(one.id)}" role="button" tabindex="0" draggable="true"
         aria-expanded="${one.id === open}">
       <div class="pj-cname">
@@ -20145,9 +20148,9 @@ function pjCard(one) {
   }
   const dirs = (one.directories || []).slice(0, 6)
     .map((dir) => `<code>${escapeHtml(dir)}</code>`).join(" ");
-  return `<div class="pj-card" style="border-left-color:${pjColour(one.id)}">
+  return `<div class="pj-card${pjBusy(one.id) ? " pj-busy" : ""}" style="border-left-color:${pjColour(one.id)}">
     <p class="sb-card-title">${escapeHtml(one.title || "")}
-      ${pjUserSay("project", one.id, one.title)}</p>
+      ${pjUserSay("project", one.id, one.title, pjWhole(one))}</p>
     <p class="muted">Since ${escapeHtml(pjWhen(one.first_seen))} · last active
       ${escapeHtml(pjWhen(one.last_seen))} · ${pjHours(one.minutes)} worked on${
       one.kind === "leisure" ? " · leisure" : ""}${one.dormant ? " · dormant" : ""}</p>
@@ -20161,6 +20164,99 @@ function pjCard(one) {
     ${pjOpenItems(one)}
     ${pjTaskList(one)}
   </div>`;
+}
+
+/* THE WHOLE PROJECT HANDED OVER (the user, 2026-11-08: "对一个task overview里的完整task有一个delegate
+   work 按钮，会综合考虑全部to do 之后把每个还没被打勾完成的都做一遍"): one piece of work, every step
+   not ticked in it - and, once it has ended, what it made, opened from here. */
+function pjWhole(one) {
+  const left = (one.steps || []).filter((step) => !step.done);
+  const came = ((pjWork[one.id] || {}).whole) || [];
+  // NOTHING LEFT TO DO, WHAT IT MADE STAYS (the user, 2026-11-08: its steps ticked by the work, the
+  // answer went with the button): no Delegate work, the latest outcome still there.
+  if (!left.length) return came.length ? `<span class="pj-whole">${pjCame(came, true)}</span>` : "";
+  const busy = delegateBusy(came);
+  return `<span class="pj-whole">${delegateSplit(busy).replace("<span ", `<span data-pj-whole="${
+      escapeHtml(one.id)}" `)}<button type="button" class="small secondary pj-whole-delegate"${
+      busy ? " disabled" : ""}
+      title="Hand the whole project to the agent: every step not ticked, done in one piece of work">${
+      delegateLabel(`Delegate work: all ${left.length} left`)}</button>${
+      delegateQuickButton("pj-whole-quick", busy)}</span>${pjCame(came, true)}</span>`;
+}
+
+/* THE WHOLE PROJECT'S INSTRUCTIONS PANEL, opened on its own (the user, 2026-11-08: "task level 的what
+   it made, 要加一个打开task level to do instruction panel"): the note on the desktop, how to use what
+   it made and what to check - nothing opened. Only where what it made was handed over. */
+function pjNoteButton(version) {
+  const first = (version.items || [])[0];
+  if (!first || !version.run) return "";
+  return `<button type="button" class="small pj-whole-note" data-note-run="${
+    escapeHtml(version.run)}" data-note-n="${escapeHtml(String(first.n))}"${
+    version.items.length > 1 ? ' data-note-all="1"' : ""}
+    title="How to use what it made, and what to check - in the panel on the desktop">${
+    escapeHtml("Open the results")}</button>`;
+}
+
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest && event.target.closest(".pj-whole-note, .ov-results");
+  if (!button) return;
+  event.preventDefault();
+  // SAID WHILE IT OPENS, AS EVERY OPEN BUTTON IS (the user, 2026-11-08: "open the results 点击之后
+  // 也要opening什么的"): no second press - at least a second, for its panel to come up.
+  const opening = ovOpeningKey(button);
+  if (ovOpening.has(opening)) return;
+  ovOpening.add(opening);
+  ovMarkOpening();
+  const since = Date.now();
+  try {
+    const all = button.dataset.noteAll === "1";
+    await api.post("/api/work/handed/note", { run: button.dataset.noteRun,
+                                              n: Number(button.dataset.noteN || 0),
+                                              all, folder: all });
+    await new Promise((done) => setTimeout(done, Math.max(0, 1000 - (Date.now() - since))));
+  } catch (error) {
+    toast(String((error && error.message) || error), "error");
+  } finally {
+    ovOpening.delete(opening);
+    ovMarkOpening();
+  }
+});
+
+/* A PROJECT AT WORK (the user, 2026-11-08: "有任何一个task或者task的to do在work, 这个overview panel要把这个
+   task框起来，黄框闪烁"): its whole, or any step of it, handed over and at work. */
+function pjBusy(id) {
+  const came = pjWork[id] || {};
+  return delegateBusy(came.whole) || Object.values(came.steps || {}).some(delegateBusy);
+}
+
+/* What came of a step handed over, every version. */
+function pjStepCame(one, step) {
+  return (((pjWork[one.id] || {}).steps || {})[String(step.id)]) || [];
+}
+
+/* WHERE THE LATEST VERSION STANDS, said where it was handed over (the user, 2026-11-08: "最新一个工作
+   是没结束，就是continue按钮，结束了才是open XX"): at work - said so; stopped before its end - Continue,
+   as a to-do's; ended - what it made, to open. Only the latest: an earlier version's outcome is in
+   Work assigned. */
+function pjCame(versions, whole = false) {
+  const latest = (versions || []).length ? versions[versions.length - 1] : null;
+  if (!latest) return "";
+  if (latest.state === "ongoing") {
+    // Handed over and not yet begun: collecting its context, its plan being drafted (2026-11-08).
+    return `<span class="muted pj-step-going">${escapeHtml(latest.run ? "working…"
+      : latest.held || "collecting its context…")}</span>`;
+  }
+  if (latest.state === "stopped" && latest.continuable && latest.run) {
+    return `<span class="ov-todo-controls"><button type="button" class="small"
+        data-todo-run-continue="${escapeHtml(latest.run)}" title="${escapeHtml(latest.goes_back
+          ? `It goes back to its last save point${latest.back_to ? `, ${latest.back_to}` : ""}, and goes on from there; what came after is given up`
+          : "It goes on from where it stopped")}">${"Continue"}</button></span>`;
+  }
+  // A WHOLE PROJECT'S, ITS PANEL - NOT EVERY FILE OPENED (the user, 2026-11-08: "project level 的to do
+  // 展开的时候，不要open all files, 而是展开一个右边框(instruction panel)"): each thing it made is
+  // opened from there.
+  if (whole && (latest.items || []).length) return pjNoteButton(latest);
+  return madeButtons(latest);
 }
 
 /* WHAT IS LEFT TO DO (the user, 2026-11-04; task_plan.py): the steps the records show, each to
@@ -20177,12 +20273,77 @@ function pjSteps(one) {
         <label><input type="checkbox" data-pj-step="${escapeHtml(String(step.id))}"
           data-pj-step-of="${escapeHtml(one.id)}"${step.done ? " checked" : ""}>
         <span>${escapeHtml(step.text || "")}</span></label>${step.reminder && !step.done
-          ? `<span class="muted pj-step-when">${escapeHtml(step.reminder_at || "")}</span>` : ""}
+          ? `<span class="muted pj-step-when">${escapeHtml(step.reminder_at || "")}</span>` : ""}${
+          step.done ? "" : `<span class="pj-step-hand delegate-split${
+            delegateBusy(pjStepCame(one, step)) ? " delegate-busy" : ""}" data-pj-hand="${escapeHtml(String(step.id))}"
+            data-pj-hand-of="${escapeHtml(one.id)}"><button type="button"${
+            delegateBusy(pjStepCame(one, step)) ? " disabled" : ""}
+            class="small secondary pj-step-delegate"
+            title="Hand this to the agent: it collects the context and drafts a plan for you to check">${delegateLabel()}</button>${
+            delegateQuickButton("pj-step-quick", delegateBusy(pjStepCame(one, step)))}</span>`}${
+            pjCame(pjStepCame(one, step))}
         ${why ? `<p class="pj-step-why">${escapeHtml(why)}</p>` : ""}
         ${proof.map((quote) => `<blockquote class="pj-step-from">${escapeHtml(quote)}</blockquote>`).join("")}
       </li>`;
     }).join("")}</ul></div>`;
 }
+
+/* A PROJECT'S STEP HANDED OVER (the user, 2026-11-08): with the box, or at once; either way it is
+   delegated not from a to-do, so it is under Work assigned. */
+function pjStepHanded(button) {
+  const at = button.closest("[data-pj-hand]");
+  if (!at) return null;
+  const one = ((stateBeat.whole || {}).projects || []).find((it) => it.id === at.dataset.pjHandOf);
+  const step = ((one || {}).steps || []).find((it) => String(it.id) === at.dataset.pjHand);
+  if (!one || !step) return null;
+  // THE AGENT'S OWN FOLDER, NEVER THE PROJECT'S (the user, 2026-11-08): a folder for the project in
+  // agent_work, and one in it for this step - the project's own folders only the user gives.
+  return { text: [`${one.title || ""}: ${step.text || ""}`, step.why || ""].filter(Boolean).join("\n"),
+           under: one.title || "Project", source: "project", project: one.id,
+           step: String(step.id), read_from: (one.directories || []).slice(0, 8) };
+}
+
+function pjWholeHanded(button) {
+  const at = button.closest("[data-pj-whole]");
+  const one = at && ((stateBeat.whole || {}).projects || []).find((it) => it.id === at.dataset.pjWhole);
+  if (!one) return null;
+  const left = (one.steps || []).filter((step) => !step.done);
+  if (!left.length) return null;
+  const lines = left.map((step, n) => `${n + 1}. ${step.text || ""}${step.why ? ` (${step.why})` : ""}`);
+  // PLANNED AS ONE (the user, 2026-11-08: "不一定是按照to do 一个个做，而是会统一规划的吧"): the steps
+  // left taken together - in the order and the way that serves the project, merged where they go
+  // together - every one of them seen to.
+  return { text: [`${one.title || ""}: finish what is still left in this project, planned as one`
+                  + " piece of work - in the order and the way that serves the project best, steps"
+                  + " merged where they go together - so that every step below is seen to.",
+                  one.what_it_is ? `What it is: ${one.what_it_is}` : "",
+                  one.summary ? `Being worked on: ${one.summary}` : "", "The steps left:",
+                  ...lines].filter(Boolean).join("\n"),
+           under: one.title || "Project", source: "project", project: one.id, whole: true,
+           read_from: (one.directories || []).slice(0, 8) };
+}
+
+document.addEventListener("click", (event) => {
+  const whole = event.target.closest && event.target.closest(".pj-whole-delegate");
+  const wholeQuick = event.target.closest && event.target.closest(".pj-whole-quick");
+  if (!whole && !wholeQuick) return;
+  event.preventDefault();
+  const handed = pjWholeHanded(whole || wholeQuick);
+  if (!handed) return;
+  if (wholeQuick) delegateQuick(handed, wholeQuick);
+  else openDelegate(handed);
+});
+
+document.addEventListener("click", (event) => {
+  const box = event.target.closest && event.target.closest(".pj-step-delegate");
+  const quick = event.target.closest && event.target.closest(".pj-step-quick");
+  if (!box && !quick) return;
+  event.preventDefault();
+  const handed = pjStepHanded(box || quick);
+  if (!handed) return;
+  if (quick) delegateQuick(handed, quick);
+  else openDelegate(handed);
+});
 
 document.addEventListener("change", async (event) => {
   const box = event.target.closest && event.target.closest("[data-pj-step]");
@@ -20387,10 +20548,12 @@ document.addEventListener("click", (event) => {
 /* THE USER'S OWN SAY, on a project's card and on each of its tasks. A name
    they write stays: later runs still say what it is and where it stands. What
    they put away is not shown, not grouped again and not brought back. */
-function pjUserSay(kind, id, name) {
+function pjUserSay(kind, id, name, before = "") {
   const held = `data-pj-kind="${kind}" data-pj-id="${escapeHtml(String(id))}"
     data-pj-name="${escapeHtml(String(name || ""))}"`;
-  return `<span class="pj-user-say">
+  // `before`: what goes first in the row - a project's Delegate work (the user, 2026-11-08:
+  // "delegate work 对project的要放到renmae, delete 这一行（放在renmae的左边)").
+  return `<span class="pj-user-say">${before}
     <button type="button" class="small secondary" data-pj-rename="1" ${held}
       title="Give it a name of your own, which later runs keep">Rename</button>
     <button type="button" class="small secondary" data-pj-delete="1" ${held}
@@ -20686,12 +20849,26 @@ function ovGroupFoldSave() {
    work status opened out, as a to-do's is. */
 let ovAssigned = [];
 let ovAssignedDrawn = "";
+/* What came of each project's steps handed over, and of its whole: by project. */
+let pjWork = {};
+let pjWorkDrawn = "";
 let ovAssignedLoaded = false;             // the list has come at least once
 
 async function loadTodos() {
   try {
-    const [todos, assigned] = await Promise.all([
-      api.get("/api/todos"), api.get("/api/work/assigned").catch(() => null)]);
+    const [todos, assigned, projects] = await Promise.all([
+      api.get("/api/todos"), api.get("/api/work/assigned").catch(() => null),
+      api.get("/api/work/of_projects").catch(() => null)]);
+    // WHAT CAME OF A PROJECT'S STEPS HANDED OVER (the user, 2026-11-08): the card drawn again
+    // when it changed, for its Open buttons.
+    if (projects) {
+      const came = JSON.stringify(projects.projects || {});
+      if (came !== pjWorkDrawn) {
+        pjWorkDrawn = came;
+        pjWork = projects.projects || {};
+        if (stateBeat.whole && typeof drawProjects === "function") drawProjects(stateBeat.whole);
+      }
+    }
     ovTodos = todos.todos || [];
     ovGroups.todo = todos.groups || null;
     if (assigned) {
@@ -20990,18 +21167,30 @@ function ovPartOf(one) {
     escapeHtml(names.join(", "))}</span>` : "";
 }
 
+/* WHEN IT WAS MADE, IN THE USER'S TIME ZONE (the user, 2026-11-08: "assigned work 和to do 都要写创建时间
+   （用户时区)"): kept in UTC, shown in this computer's zone. */
+function ovMadeAt(at) {
+  const said = at ? localStamp(at) : "";
+  return said ? `<span class="muted ov-todo-made">${escapeHtml(`Created ${said}`)}</span>` : "";
+}
+
 function ovAssignedBox() {
-  const items = ovGroupedItems("assigned", ovAssigned, (one) => {
+  // WHAT THE CHAT'S AGENT HANDED OVER, IN ONE CATEGORY OF ITS OWN, FOLDED (the user, 2026-11-08: "work
+  // assigned 把所有agent加的工作都collapose在一个category里，用户可以expand看"; "基于chat agent加的工作").
+  const fromChat = ovAssigned.filter((one) => one.source === "chat");
+  const yours = ovAssigned.filter((one) => one.source !== "chat");
+  const drawn = (one) => {
     const open = delegateState.tracking.has(one.id);
     return `<li class="ov-todo-item" data-todo="${escapeHtml(one.id)}">
       <span class="ov-todo-text">${escapeHtml(one.text)}</span>${
         one.detail ? `<span class="muted ov-todo-detail">${escapeHtml(one.detail)}</span>` : ""}${
-        ovPartOf(one)}
+        ovMadeAt(one.at)}${ovPartOf(one)}
       <span class="ov-todo-actions"><button type="button" class="small ov-todo-track"
         aria-expanded="${open}" title="Where it stands now">${open ? "&#9662;" : "&#9656;"}
         Work status</button>${ovGroups.assigned ? ` <button type="button" class="small secondary"
         data-group-move="${escapeHtml(one.id)}" data-group-list="assigned">Move</button>` : ""}</span>${ovTodoTracked(one)}</li>`;
-  });
+  };
+  const items = ovGroupedItems("assigned", yours, drawn) + ovChatCategory(fromChat, drawn);
   return `<div class="ov-todo-headrow"><div class="ov-todo-heading"><h3 class="ov-head">Work assigned${
     ovAssigned.length ? ` <span class="ov-head-count">(${ovAssigned.length})</span>` : ""}</h3></div></div>${
     ovAssigned.length ? `<ul class="ov-todo-list">${items}</ul>`
@@ -21010,6 +21199,32 @@ function ovAssignedBox() {
       : !ovAssignedLoaded ? `<p class="muted">Loading…</p>`
       : `<p class="muted">Nothing yet. Work you delegate - from a right-click, selected text or Add work - is listed here, with where it stands.</p>`}`;
 }
+
+/* The chat's agent's work, one heading for it all, folded until opened - opened or not kept in this
+   browser. */
+let ovChatOpened = false;
+try { ovChatOpened = localStorage.getItem("ov-chat-work-opened") === "1"; } catch (_err) { /* folded */ }
+
+function ovChatCategory(items, drawn) {
+  if (!items.length) return "";
+  const says = ovChatOpened ? "Hide the work handed over from the chat" : "Show the work handed over from the chat";
+  return `<li class="ov-group-head ov-group-other ov-chat-head${ovChatOpened ? "" : " ov-group-folded"}">
+    <button type="button" class="ov-group-fold" data-chat-fold="1" aria-expanded="${ovChatOpened}"
+      title="${escapeHtml(says)}"><span class="ov-group-caret" aria-hidden="true">${
+      ovChatOpened ? "&#9662;" : "&#9656;"}</span><span class="ov-group-title">${
+      escapeHtml("Handed over from the chat")}</span><span class="ov-group-count">${items.length}</span></button></li>${
+    ovChatOpened ? items.map(drawn).join("") : ""}`;
+}
+
+document.addEventListener("click", (event) => {
+  const fold = event.target.closest && event.target.closest("[data-chat-fold]");
+  if (!fold) return;
+  event.preventDefault();
+  ovChatOpened = !ovChatOpened;
+  try { localStorage.setItem("ov-chat-work-opened", ovChatOpened ? "1" : "0"); } catch (_err) { /* this page only */ }
+  ovAssignedDrawn = "";
+  ovPlaceAssigned();
+});
 
 function ovPlaceAssigned() {
   const box = $("#ov-assigned");
@@ -21082,7 +21297,8 @@ function ovTodoWhere(version) {
       : `stopped: ${version.status || ""}`;
   }
   const going = ovTodoGoing(version);
-  if (!going) return version.held || "starting";
+  // HANDED OVER, NOT YET BEGUN: its context being collected and its plan drafted (2026-11-08).
+  if (!going) return version.held || (version.run ? "starting" : "collecting its context…");
   const state = OV_TODO_STATE[going.state] || going.state;
   return going.activity ? `${state} - ${going.activity}` : state;
 }
@@ -21091,10 +21307,13 @@ function ovTodoWork(one) {
   const versions = ovTodoVersions(one);
   // The server's: removed versions counted, so the next is never one taken.
   const next = (one.work || {}).next || versions.length + 1;
-  const delegate = `<button type="button" class="small secondary ov-todo-delegate"
+  const busy = delegateBusy(versions);
+  const delegate = `${delegateSplit(busy)}<button type="button" class="small secondary ov-todo-delegate"${
+    busy ? " disabled" : ""}
     title="${versions.length ? "Hand it over again: a new version, beside the others"
       : "Hand this to the agent: it collects the context and drafts a plan for you to check"}">
-    ${delegateLabel()}${next > 1 ? ` <span class="muted">V${next}</span>` : ""}</button>`;
+    ${delegateLabel()}${next > 1 ? ` <span class="muted">V${next}</span>` : ""}</button>${
+    delegateQuickButton("ov-todo-quick", busy)}</span>`;
   if (!versions.length) return delegate;
   // WORK STATUS: where each version stands is in it, opened out.
   const open = delegateState.tracking.has(one.id);
@@ -21106,9 +21325,50 @@ function ovTodoWork(one) {
 /* THE LATEST OUTCOME, ONE PRESS AWAY (the user, 2026-11-04): what the newest
    version that ended made, opened as Work status opens it. */
 function ovTodoLatest(versions) {
-  const ended = versions.slice().reverse().find((one) => ovTodoMade(one).length);
-  return ended ? `<button type="button" class="small ov-todo-result" data-todo-run="${
-    escapeHtml(ended.run)}"${ovTodoMade(ended)[0].open}>Open the latest outcome</button>` : "";
+  // The latest version's, once it has ended (the user, 2026-11-08: "最新一个工作是没结束，就是continue按钮，
+  // 结束了才是open XX"): one not ended is carried on from its row instead.
+  const last = versions.length ? versions[versions.length - 1] : null;
+  const ended = last && last.state !== "ongoing" && !(last.state === "stopped" && last.continuable)
+    && ovTodoMade(last).length ? last : null;
+  return ended ? madeButtons(ended, "Open the latest outcome") : "";
+}
+
+/* EVERYTHING IT MADE (the user, 2026-11-08: "有多个deliverable的，还是要显示多个"): one thing, its
+   own button; SEVERAL, ONE PRESS OPENS THEM ALL (the user, 2026-11-08: "没有what it made这种东西（一次性
+   都是打开全部的，如果有多个deliverable, 用folder打开，写清楚instruction)"): Open the results - their
+   folder opened, and their panel: how to use them all, each of them, the one chosen. */
+function madeButtons(version, one = "") {
+  const made = ovTodoMade(version);
+  if (!made.length) return "";
+  // ONE TO ACT ON, OPENED AT ONCE (the user, 2026-11-08: "follow up with brian 这个to do 为什么不是直接
+  // 打开email呢"): an email, a message, a form or an event among what it made is the thing itself -
+  // opened, with its own instructions; the words beside it (a text to paste) are not another.
+  const main = ovMainMade(version, made);
+  if (made.length === 1 || main) {
+    const thing = main || made[0];
+    return ovTodoOpen(version, one ? Object.assign({}, thing, { words: one }) : thing);
+  }
+  return resultsButton(version);
+}
+
+/* What one version made that is to be acted on - its email, message, form or event - else null. */
+const OV_MAIN_KINDS = ["email", "message", "form", "event"];
+function ovMainMade(version, made) {
+  const items = version.items || [];
+  const at = items.findIndex((item) => OV_MAIN_KINDS.includes(item.kind));
+  return at >= 0 && made[at] ? made[at] : null;
+}
+
+/* Several things one version made, opened at once: their folder, and their panel. */
+function resultsButton(version) {
+  const first = (version.items || [])[0];
+  if (!first || !version.run) return "";
+  return `<button type="button" class="small ov-results" data-note-run="${
+    escapeHtml(version.run)}" data-note-n="${escapeHtml(String(first.n))}" data-note-all="1"
+    title="Their folder opened, and how to use each of them - in the panel on the desktop">${
+    // "Open the instructions": only a whole project's says "Open the results" (the user, 2026-11-08:
+    // "只有project的才是open results, 其它都是open item instruction").
+    escapeHtml("Open the instructions")}</button>`;
 }
 
 /* What a version made, before it is opened: each thing it handed over -
@@ -21153,10 +21413,17 @@ function ovTodoTracked(one) {
         <button type="button" class="small secondary" data-todo-remove-no="1">No</button></span>`
       : `<button type="button" class="small secondary" data-todo-remove="${
           escapeHtml(version.draft)}" title="Not shown again - its files are kept">Remove</button>`;
+  // EVERY VERSION, ITS FOLDER (the user, 2026-11-08: "所有的work status的细节都会有open folder的选项"):
+  // everything its work made and wrote, whatever it handed over.
+  const folder = (version) => version && version.run
+    ? `<button type="button" class="small secondary ov-todo-folder" data-todo-folder="${
+      escapeHtml(version.run)}" title="Everything this version made and wrote">Open folder</button>` : "";
+  // ITS BUTTONS ON ONE LINE UNDER WHAT IT SAYS, IN ONE ROW (the user, 2026-11-08: "open folder, remove,
+  // open the email 看起来太不整齐了"): what it does first, then its folder and Remove.
   const row = (state, v, where, button, version) => `<li class="ov-todo-version ov-todo-version-${
     escapeHtml(state)}"><span class="ov-todo-v">${v}</span><span class="ov-todo-where">${
-    escapeHtml(where)}</span><span class="ov-todo-open">${button}</span><span class="ov-todo-drop">${
-    version ? remove(version) : ""}</span></li>`;
+    escapeHtml(where)}</span><span class="ov-todo-buttons"><span class="ov-todo-open">${button}</span><span
+    class="ov-todo-drop">${folder(version)}${version ? remove(version) : ""}</span></span></li>`;
   return `<ol class="ov-todo-versions">${versions.slice().reverse().map((version) => {
     const v = `V${version.version}`;
     if (version.state === "drafting") {
@@ -21167,13 +21434,20 @@ function ovTodoTracked(one) {
     const made = version.state === "finished" ? ovTodoMade(version) : [];
     if (made.length) {
       const when = `finished${version.ended ? ` ${localStamp(version.ended)}` : ""}`;
-      return made.map((thing, at) => row("finished", at ? "" : v,
-        at ? thing.what : `${when} - ${thing.what}`, ovTodoOpen(version, thing),
-        at ? null : version)).join("");
+      // Several: one row, one press opens them all (the user, 2026-11-08).
+      if (made.length > 1) {
+        const main = ovMainMade(version, made);
+        return row("finished", v, main ? `${when} - ${main.what}` : `${when} - ${made.length} results`,
+                   madeButtons(version), version);
+      }
+      return row("finished", v, `${when} - ${made[0].what}`, ovTodoOpen(version, made[0]), version);
     }
     // Stopped and able to go on: Resume - back to its last save point - or
     // Continue, from where it stopped cleanly; as in Work.
+    // ONLY THE LATEST GOES ON (the user, 2026-11-08: a new one handed over, the one before is not
+    // carried on from here).
     const goOn = version.state === "stopped" && version.continuable && version.run
+      && version === versions[versions.length - 1]
       ? `<span class="ov-todo-controls"><button type="button" class="small"
           data-todo-run-continue="${escapeHtml(version.run)}" title="${escapeHtml(
           version.goes_back
@@ -21182,8 +21456,7 @@ function ovTodoTracked(one) {
           "Continue"}</button></span>` : "";
     // WHAT THERE IS OF ONE THAT STOPPED, opened like any outcome; one that goes, how it stands
     // and, asking, what it asks.
-    const madeSoFar = version.state === "stopped"
-      ? ovTodoMade(version).map((thing) => ovTodoOpen(version, thing)).join("") : "";
+    const madeSoFar = version.state === "stopped" ? madeButtons(version) : "";
     return row(version.state, v, ovTodoWhere(version), version.state === "ongoing"
       ? ovTodoControls(version) : `${goOn}${madeSoFar}`, version) + ovTodoAsks(version);
   }).join("")}</ol>`;
@@ -21262,7 +21535,7 @@ function ovTodoBox() {
     : `<li class="ov-todo-item" data-todo="${escapeHtml(one.id)}">
     <span class="ov-todo-text">${escapeHtml(one.text)}</span>${
       one.detail ? `<span class="muted ov-todo-detail">${escapeHtml(one.detail)}</span>` : ""}${
-      ovPartOf(one)}
+      ovMadeAt(one.created_at)}${ovPartOf(one)}
     <span class="ov-todo-actions">${ovTodoWork(one)}${
       delegateState.opened && delegateState.opened.has(one.id)
         ? ` <button type="button" class="small ov-todo-done">Mark as done</button>` : ""}
@@ -21430,6 +21703,14 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+  const quick = event.target.closest && event.target.closest(".ov-todo-quick");
+  if (!quick) return;
+  const one = ovTodos.find((todo) => todo.id === quick.closest("[data-todo]").dataset.todo);
+  if (one) delegateQuick({ text: [one.text, one.detail].filter(Boolean).join("\n"),
+                           source: "todo", todo: one.id }, quick);
+});
+
+document.addEventListener("click", (event) => {
   const handed = event.target.closest && event.target.closest(".ov-todo-delegate");
   if (!handed) return;
   const one = ovTodos.find((todo) => todo.id === handed.closest("[data-todo]").dataset.todo);
@@ -21521,13 +21802,26 @@ document.addEventListener("click", async (event) => {
   }
 });
 
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest && event.target.closest(".ov-todo-folder");
+  if (!button) return;
+  event.preventDefault();
+  try {
+    await api.post("/api/work/folder", { run: button.dataset.todoFolder });
+  } catch (error) {
+    toast(String((error && error.message) || error), "error");
+  }
+});
+
 function ovOpeningKey(button) {
-  const { todoRun, todoHanded, todoResult } = button.dataset;
+  const { todoRun, todoHanded, todoResult, noteRun } = button.dataset;
+  // A whole project's panel, by its run; anything else by what it opens.
+  if (noteRun) return ["note", noteRun].join("|");
   return [todoRun, todoHanded, todoResult].join("|");
 }
 
 function ovMarkOpening() {
-  $$(".ov-todo-result").forEach((button) => {
+  $$(".ov-todo-result, .pj-whole-note, .ov-results").forEach((button) => {
     const opening = ovOpening.has(ovOpeningKey(button));
     if (opening && button.dataset.todoWords === undefined) {
       button.dataset.todoWords = button.textContent;
@@ -21695,6 +21989,64 @@ async function openDelegate(handed) {
     if (handed.todo) loadTodos();         // handed over: the to-do says Ongoing
   } catch (err) {
     $("#delegate-body").innerHTML = `<p class="delegate-error">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+/* QUICK ASSIGN (the user, 2026-11-08: "如果我直接点加速箭头，就不用弹出work delegate panel, 直接按照
+   default delegate (相当于弹出后直接点确定)"): what the box does when Start is pressed at once - the
+   work made from what was handed over, its instruction as it came, started with the box's own
+   defaults once its context is collected and its plan drafted. Nothing opens; where it stands is
+   on the Overview. */
+/* AT WORK, IT WAITS (the user, 2026-11-08: "at work的时候，delegate work那个窗口要用黄色框起来并且进行闪烁
+   ... 正在work的时候是不能继续点delegate work的"): while a version of it is at work, the whole
+   button is framed in yellow, blinking, and neither part can be pressed. */
+function delegateBusy(versions) {
+  return (versions || []).some((version) => version.state === "ongoing");
+}
+
+function delegateSplit(busy) {
+  return busy ? `<span class="delegate-split delegate-busy" title="Working - it can be handed over again once it ends">`
+    : `<span class="delegate-split">`;
+}
+
+function delegateQuickButton(cls, busy = false) {
+  return `<button type="button" class="small secondary delegate-quick ${cls}"${busy ? " disabled" : ""}
+    title="Assign at once - as Delegate work does when Start is pressed without changing anything"
+    aria-label="Assign at once"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"
+    focusable="false"><path d="M3.5 3.5 8 8l-4.5 4.5M8.5 3.5 13 8l-4.5 4.5" fill="none" stroke="currentColor"
+    stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`;
+}
+
+async function delegateQuick(handed, button) {
+  // ITS ARROW SWEEPS, LEFT TO RIGHT (the user, 2026-11-08: "箭头点击时，有从左往右高亮闪烁"):
+  // the whole button lit across once, so the press is seen before the list changes.
+  const whole = button && button.closest(".delegate-split");
+  if (whole) {
+    whole.classList.remove("delegate-sweep");
+    void whole.offsetWidth;                         // started again on a second press
+    whole.classList.add("delegate-sweep");
+    whole.addEventListener("animationend", () => whole.classList.remove("delegate-sweep"),
+                           { once: true });
+  }
+  if (button) button.disabled = true;
+  try {
+    const said = await api.post("/api/work/drafts", Object.assign({ write_first: true }, handed));
+    const id = said.draft.id;
+    await api.post("/api/work/drafts/compose", { id, instruction: "" });
+    // The box's defaults: the way as it opens (Thorough only where it is open), no sound, inside
+    // the folders it was given, earlier tries seen.
+    const thorough = ((experienceState.limits || {}).ways || ["quick", "full"]).includes("full");
+    await api.post("/api/work/drafts/start", { id, plan: { way: thorough ? "auto" : "quick" },
+      options: { sound: false, unconfined: false, see_tries: true } });
+    toast("Assigned - it starts once its plan is drafted; follow it on the Overview");
+    ovSayAssigned();
+    if (handed.todo) loadTodos();
+    ovListsAskedAt = 0;
+    ovListsAgain();
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 
@@ -22275,7 +22627,11 @@ document.addEventListener("click", async (event) => {
       $("#delegate").close();
       toast(ready ? "Starting - follow it on the Overview"
         : "It starts once its context is collected - follow it on the Overview");
-      if (draft.source === "todo") loadTodos();   // a to-do handed over: now Ongoing
+      // SHOWN AT ONCE, WHATEVER IT CAME FROM (the user, 2026-11-08: "直接让他启动了（显示状态），然后慢慢
+      // 收集context"): a project's step or whole, a to-do - at work on the Overview now, collecting
+      // its context, not only once its run has begun (half a minute later).
+      ovListsAskedAt = 0;
+      ovListsAgain();
       const said = await delegateHowItStarted(draft.id);
       if (said.error) {
         // Back in the box, as it was, with why: to change and Start again.
@@ -25085,7 +25441,7 @@ function renderDebuggerStates() {
     // before the grid stops being a month. Expanding is how the rest are
     // reached: a day the agent inferred nine things about is exactly the day
     // worth looking at, and "+5 more" that cannot be opened is a dead end.
-    const open = stateBeat.expanded.has(key);
+    const open = dbgStates.expanded.has(key);
     const shown = open ? states : states.slice(0, DBG_STATES_PER_CELL);
     const hidden = states.length - shown.length;
     cells.push(`
@@ -25142,8 +25498,8 @@ function wireDebuggerStates() {
     const toggle = event.target.closest("[data-expand]");
     if (toggle) {
       const key = toggle.dataset.expand;
-      if (stateBeat.expanded.has(key)) stateBeat.expanded.delete(key);
-      else stateBeat.expanded.add(key);
+      if (dbgStates.expanded.has(key)) dbgStates.expanded.delete(key);
+      else dbgStates.expanded.add(key);
       renderDebuggerStates();
       return;
     }
@@ -25162,7 +25518,7 @@ function wireDebuggerStates() {
     expandAll.addEventListener("click", () => {
       stateBeat.states.forEach((state) => {
         if (!state.starts_at) return;
-        stateBeat.expanded.add(String(startOfDay(new Date(state.starts_at)).getTime()));
+        dbgStates.expanded.add(String(startOfDay(new Date(state.starts_at)).getTime()));
       });
       renderDebuggerStates();
     });
@@ -25170,7 +25526,7 @@ function wireDebuggerStates() {
   const collapseAll = $("#dbg-collapse-all");
   if (collapseAll) {
     collapseAll.addEventListener("click", () => {
-      stateBeat.expanded.clear();
+      dbgStates.expanded.clear();
       renderDebuggerStates();
     });
   }
@@ -28047,7 +28403,10 @@ document.addEventListener("click", async (event) => {
    protected, and what it watches for and does - and what they did. Read
    every few seconds while the tab is open; a part redrawn only when it
    changed, so an opened Activator stays open. */
-const monState = { open: new Set(), drawn: { tree: "", firings: "" }, data: null };
+const monState = { open: new Set(), drawn: { tree: "", firings: "" }, data: null,
+  // THE ONE BEING EDITED (the user, 2026-11-07), and whether its form is on the page: while it is,
+  // the list is not drawn again under the user's hands.
+  editing: null, drawnFor: null };
 const MON_GROUPS = [["recommend", "Recommendations"], ["risk", "Risks"], ["calendar", "Calendar"],
   ["rest", "Breaks and the evening"], ["other", "Other"]];
 
@@ -28111,8 +28470,10 @@ function renderMonitor(data) {
        <div class="mon-facts">${usual.join("")}</div>`
     : `<p class="muted mon-sub">${escapeHtml("Your habits show once there are a few days like today.")}</p>`}`;
   const tree = monBlocked(data) + monQuiet(data.quiet || []) + monTree(data);
-  if (tree !== monState.drawn.tree) {
+  const holding = monState.editing && monState.drawnFor === monState.editing;
+  if (tree !== monState.drawn.tree && !holding) {
     monState.drawn.tree = tree;
+    monState.drawnFor = monState.editing;
     $("#mon-tree").innerHTML = tree;
     for (const button of $("#mon-tree").querySelectorAll("[data-mon-undo]")) {
       button.addEventListener("click", async (event) => {
@@ -28188,19 +28549,25 @@ function monTree(data) {
       const history = changes.filter((change) => change.activator_id === one.id).slice(0, 6);
       const open = monState.open.has(one.id);
       return `<details class="mon-act${one.enabled ? "" : " mon-off"}" data-mon-act="${escapeHtml(one.id)}"${open ? " open" : ""}>
-        <summary><span class="mon-name">${escapeHtml(one.name)}</span>
+        <summary><span class="mon-name">${escapeHtml(one.display_name || one.name)}</span>
+          ${one.display_name && one.display_name !== one.name
+            ? `<span class="muted mon-real-name" title="${escapeHtml("The name the agent knows it by")}">${
+              escapeHtml(one.name)}</span>` : ""}
           ${one.protected ? `<span class="mon-badge">${escapeHtml("Protected")}</span>` : ""}
           ${one.builtin ? `<span class="mon-badge mon-badge-quiet">${escapeHtml("Built in")}</span>` : ""}
           <span class="mon-switches">
             <label><input type="checkbox" data-mon-switch="${escapeHtml(one.id)}"${one.enabled ? " checked" : ""}> ${escapeHtml("On")}</label>
             <label title="${escapeHtml("Protected: the agent can neither change nor delete it")}"><input type="checkbox" data-mon-protect="${escapeHtml(one.id)}"${one.protected ? " checked" : ""}> ${escapeHtml("Protected")}</label>
           </span></summary>
+        ${monState.editing === one.id ? monEditForm(one) : `
         <p class="muted">${escapeHtml(one.purpose || "")}</p>
+        <button type="button" class="secondary mon-edit" data-mon-edit="${escapeHtml(one.id)}">${
+          escapeHtml("Edit")}</button>
         <dl class="mon-dl">
           <dt>${escapeHtml("Watches for")}</dt><dd>${escapeHtml(monCond(one.when))}</dd>
           <dt>${escapeHtml("Then")}</dt><dd>${(one.then || []).map((tier) => escapeHtml(monThen(tier))).join("<br>")}</dd>
           <dt>${escapeHtml("At most")}</dt><dd>${escapeHtml(`${one.most_per_day} a day, ${one.cooldown_minutes} min apart`)}</dd>
-        </dl>
+        </dl>`}
         ${history.length ? `<ul class="mon-history">${history.map((change) => `<li><span class="muted">${
           escapeHtml(localStamp(change.at))}</span> ${escapeHtml(change.op)} · ${escapeHtml(change.by)}${
           change.why && change.op !== "undo" ? ` - ${escapeHtml(change.why)}` : ""}${
@@ -28213,6 +28580,79 @@ function monTree(data) {
   });
   return groups.join("") || `<p class="muted">${escapeHtml("No Activators yet.")}</p>`;
 }
+
+/* THE USER'S OWN CHANGE (the user, 2026-11-07): their name for it - the agent can never change
+   it - and what it does, held to the same shape as the agent's changes. */
+function monEditForm(one) {
+  const json = (value) => escapeHtml(JSON.stringify(value || {}, null, 2));
+  return `<form class="mon-edit-form" data-mon-form="${escapeHtml(one.id)}">
+    <label>${escapeHtml("Display name")}
+      <input type="text" name="display_name" maxlength="60" value="${escapeHtml(one.display_name || one.name)}"></label>
+    <p class="muted">${escapeHtml("Yours alone: the agent never changes it. It knows this one as")} “${escapeHtml(one.name)}”.</p>
+    <label>${escapeHtml("What it is for")}
+      <textarea name="purpose" rows="2">${escapeHtml(one.purpose || "")}</textarea></label>
+    <div class="mon-edit-row">
+      <label>${escapeHtml("Minutes apart")} <input type="number" name="cooldown_minutes" min="1" value="${escapeHtml(String(one.cooldown_minutes))}"></label>
+      <label>${escapeHtml("At most a day")} <input type="number" name="most_per_day" min="1" value="${escapeHtml(String(one.most_per_day))}"></label>
+      <label>${escapeHtml("When it speaks")} <select name="delivery">
+        <option value="wait"${one.delivery !== "pop" ? " selected" : ""}>${escapeHtml("Waits in the list")}</option>
+        <option value="pop"${one.delivery === "pop" ? " selected" : ""}>${escapeHtml("Pops up")}</option></select></label>
+    </div>
+    <label>${escapeHtml("Watches for")}
+      <textarea name="when" rows="6" class="mon-json">${json(one.when)}</textarea></label>
+    <label>${escapeHtml("Then")}
+      <textarea name="then" rows="5" class="mon-json">${escapeHtml(JSON.stringify(one.then || [], null, 2))}</textarea></label>
+    <p class="mon-edit-error" hidden></p>
+    <div class="mon-edit-row">
+      <button type="submit">${escapeHtml("Save")}</button>
+      <button type="button" class="secondary" data-mon-cancel="${escapeHtml(one.id)}">${escapeHtml("Cancel")}</button>
+    </div>
+  </form>`;
+}
+
+document.addEventListener("click", (event) => {
+  const start = event.target.closest && event.target.closest("[data-mon-edit]");
+  const stop = event.target.closest && event.target.closest("[data-mon-cancel]");
+  if (!start && !stop) return;
+  event.preventDefault();
+  monState.editing = start ? start.dataset.monEdit : null;
+  if (start) monState.open.add(start.dataset.monEdit);
+  monState.drawn.tree = "";
+  monState.drawnFor = null;
+  loadMonitor();
+});
+
+document.addEventListener("submit", async (event) => {
+  const form = event.target.closest && event.target.closest("[data-mon-form]");
+  if (!form) return;
+  event.preventDefault();
+  const said = form.querySelector(".mon-edit-error");
+  const fields = form.elements;
+  let when, then;
+  try {
+    when = JSON.parse(fields.when.value);
+    then = JSON.parse(fields.then.value);
+  } catch (err) {
+    said.textContent = `What it watches for and what it does are written as JSON: ${err.message}`;
+    said.hidden = false;
+    return;
+  }
+  try {
+    await api.post("/api/monitor/edit", {
+      id: form.dataset.monForm, display_name: fields.display_name.value,
+      changes: { purpose: fields.purpose.value, when, then, delivery: fields.delivery.value,
+        cooldown_minutes: Number(fields.cooldown_minutes.value),
+        most_per_day: Number(fields.most_per_day.value) } });
+  } catch (err) {
+    said.textContent = err.message;
+    said.hidden = false;
+    return;
+  }
+  monState.editing = null;
+  monState.drawn.tree = "";
+  monState.drawnFor = null;
+  loadMonitor();
+});
 
 function monFirings(rows) {
   if (!rows.length) return `<p class="muted">${escapeHtml("Nothing yet.")}</p>`;

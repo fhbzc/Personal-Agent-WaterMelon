@@ -250,6 +250,8 @@ ADDED_COLUMNS = (
     ("debug_projects", "current_try", "INTEGER"),
     # When the user put a task of a run away: kept, and shown to nothing.
     ("state_run_tasks", "put_away", "TEXT NOT NULL DEFAULT ''"),
+    # What of a task's work is kept where, as its writer said (the user, 2026-11-07).
+    ("state_run_tasks", "resources", "TEXT NOT NULL DEFAULT '[]'"),
     # The folders the user named for it whose learned experience its full
     # way is not given, beside its own (JSON list).
     ("debug_projects", "leave_out", "TEXT"),
@@ -1052,7 +1054,8 @@ CREATE TABLE IF NOT EXISTS state_run_tasks (
     places          TEXT NOT NULL DEFAULT '{}',   -- folder or page -> times
     continues       TEXT NOT NULL DEFAULT '',     -- the project its writer named
     project_id      TEXT NOT NULL DEFAULT '',
-    put_away        TEXT NOT NULL DEFAULT ''      -- when the user put it away
+    put_away        TEXT NOT NULL DEFAULT '',     -- when the user put it away
+    resources       TEXT NOT NULL DEFAULT '[]'    -- JSON: what of it is kept where
 );
 CREATE INDEX IF NOT EXISTS idx_state_run_tasks_when ON state_run_tasks(scope, ends_at);
 CREATE INDEX IF NOT EXISTS idx_state_run_tasks_project ON state_run_tasks(scope, project_id);
@@ -1288,6 +1291,21 @@ CREATE TABLE IF NOT EXISTS lesson_uses (
     at          TEXT NOT NULL,
     resolved_at TEXT
 );
+-- EVERY RETRIEVAL OF THE LESSONS (heartbeat/lessons/retrieve.py, the user, 2026-11-07): where
+-- it was asked from, with what, and what came back with its score - kept only in a build that
+-- carries the Debugger, and read in the Lessons debugger.
+CREATE TABLE IF NOT EXISTS lesson_retrievals (
+    id              TEXT PRIMARY KEY,
+    at              TEXT NOT NULL,
+    site            TEXT NOT NULL DEFAULT '',
+    query           TEXT NOT NULL DEFAULT '',
+    query_english   TEXT NOT NULL DEFAULT '',
+    by_meaning      INTEGER NOT NULL DEFAULT 0,
+    results         TEXT NOT NULL DEFAULT '[]',   -- [{id, kind, type, state, score}]
+    chars_given     INTEGER NOT NULL DEFAULT 0,
+    without_english INTEGER NOT NULL DEFAULT 0    -- examples compared without an English copy
+);
+CREATE INDEX IF NOT EXISTS lesson_retrievals_at ON lesson_retrievals (site, at);
 
 -- WHAT THE USER READ (heartbeat/reading): a piece per thing read or
 -- watched, in English, and the topics they fall into.

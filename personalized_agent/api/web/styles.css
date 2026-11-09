@@ -2472,6 +2472,7 @@ label.update-version-pre input[type="checkbox"] { width: 16px; height: 16px; mar
   font-size: inherit; color: var(--ink); }
 .ov-todo-item input[type="checkbox"] { width: auto; flex: none; margin: 0; }
 .ov-todo-detail { grid-column: 1; font-size: .78rem; padding-left: 22px; }
+.ov-todo-made { grid-column: 1; font-size: .72rem; padding-left: 22px; }
 /* EVERY × THAT REMOVES SOMETHING: large enough to see and to hit. */
 .x-remove { font-size: 20px !important; line-height: 1 !important; min-width: 28px;
   min-height: 28px; padding: 2px 8px !important; }
@@ -4272,6 +4273,9 @@ label.delegate-see-tries input { width: auto; margin: 3px 3px 3px 4px; flex: non
 .ov-todo-version .ov-todo-open .ov-todo-controls button { width: auto; flex: 1; }
 .ov-todo-version button { width: auto; padding: 1px 8px; font-size: .76rem; }
 .ov-todo-v { font-weight: 600; min-width: 2em; }
+/* A version's buttons in one row under what it says (the user, 2026-11-08: "看起来太不整齐了"). */
+.ov-todo-buttons { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ov-todo-buttons > .ov-todo-open, .ov-todo-buttons > .ov-todo-drop { display: contents; }
 .ov-todo-where { color: var(--muted); overflow-wrap: anywhere; }
 .ov-todo-version-ongoing .ov-todo-where { color: var(--accent); }
 .ov-todo-version-stopped .ov-todo-where { color: var(--warn); }
@@ -4703,6 +4707,15 @@ label.delegate-see-tries input { width: auto; margin: 3px 3px 3px 4px; flex: non
 .mon-dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0; font-size: .86rem; }
 .mon-dl dt { color: var(--muted); }
 .mon-dl dd { margin: 0; overflow-wrap: anywhere; }
+.mon-real-name { font-size: .8rem; }
+.mon-edit { margin: 4px 0; }
+.mon-edit-form { display: grid; gap: 8px; margin: 8px 0; font-size: .86rem; }
+.mon-edit-form label { display: grid; gap: 4px; }
+.mon-edit-form input[type="text"], .mon-edit-form textarea, .mon-edit-form select { width: 100%; box-sizing: border-box; }
+.mon-edit-form .mon-json { font-family: ui-monospace, Consolas, monospace; font-size: .8rem; }
+.mon-edit-row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: end; }
+.mon-edit-row label { display: inline-grid; }
+.mon-edit-error { color: var(--danger, #b42318); margin: 0; }
 .mon-history { margin: 6px 0 0; padding-left: 18px; font-size: .8rem; }
 .mon-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
 .mon-table th, .mon-table td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line);
@@ -4782,3 +4795,73 @@ label.delegate-see-tries input { width: auto; margin: 3px 3px 3px 4px; flex: non
 
 /* A link in a reply (chat.js, writeWithLinks). */
 .msg.assistant a { color: var(--accent); text-decoration: underline; overflow-wrap: anywhere; }
+
+/* QUICK ASSIGN (2026-11-08): the arrow right of Delegate work - assigned at once, the box's
+   defaults. */
+/* ONE BUTTON IN TWO PARTS (the user, 2026-11-08): Delegate work, and its arrow - the small part. */
+.delegate-split { display: inline-flex; align-items: stretch; position: relative;
+  overflow: hidden; border-radius: 6px; vertical-align: middle; }
+.delegate-split > button { margin: 0; }
+.delegate-split > button:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+/* The arrow: its own colour, green, and a clear line between the two (the user, 2026-11-08). */
+.delegate-split > .delegate-quick { border-top-left-radius: 0; border-bottom-left-radius: 0;
+  border-left: 1.5px solid color-mix(in srgb, var(--ok, #2f9e6b) 60%, var(--ink, #1c2230));
+  margin-left: 0; padding: 0 9px; display: inline-flex; align-items: center;
+  justify-content: center; line-height: 1;
+  background: var(--ok, #2f9e6b); border-color: var(--ok, #2f9e6b); color: #fff; }
+.delegate-split > .delegate-quick svg { display: block; }
+.delegate-split > .delegate-quick:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ok, #2f9e6b) 85%, #000); color: #fff; }
+.pj-step-hand { margin-left: 8px; }
+/* Its press: a light swept across the words, left to right, once - not over the green arrow, and
+   in a green like it (the user, 2026-11-08). Slower and plainer: a wide band, nearly solid. */
+.delegate-split > button:first-child { position: relative; overflow: hidden; }
+.delegate-split > button:first-child::after { content: ""; position: absolute; inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent 0%,
+    color-mix(in srgb, var(--ok, #2f9e6b) 65%, transparent) 35%,
+    color-mix(in srgb, var(--ok, #2f9e6b) 65%, transparent) 65%, transparent 100%);
+  transform: translateX(-100%); opacity: 0; }
+.delegate-split.delegate-sweep > button:first-child::after { animation: delegate-sweep 1.3s ease-in-out; }
+.pj-whole { display: inline-flex; align-items: center; gap: 6px; margin-right: 6px; }
+/* AT WORK: framed in yellow, blinking; neither part can be pressed (the user, 2026-11-08). */
+.delegate-split.delegate-busy { overflow: visible; box-shadow: 0 0 0 2px #e8b400;
+  animation: delegate-busy 1.4s ease-in-out infinite; }
+.delegate-split.delegate-busy > button:disabled { cursor: not-allowed; opacity: .75; }
+/* ITS FRUIT JUMPS while it is at work (the user, 2026-11-08: "除了task bar闪烁，对应水果还要跳动"):
+   the picture inside, so where the fruit stands on the row is left as it is. */
+/* SLOWER (the user, 2026-11-08: "水果图标在工作的时候的跳动可以慢一点"): a jump every two seconds, the
+   jump itself unhurried, and a rest on the ground between. */
+.pj-crow.pj-busy .pj-fruit svg { animation: pj-fruit-jump 2s ease-in-out infinite;
+  transform-origin: 50% 100%; }
+@keyframes pj-fruit-jump {
+  0%, 60%, 100% { transform: translateY(0) scale(1, 1); }
+  8% { transform: translateY(0) scale(1.06, .94); }
+  26% { transform: translateY(-12px) scale(.97, 1.03); }
+  44% { transform: translateY(0) scale(1.05, .95); }
+}
+/* A project at work, framed the same way in the overview and on its card. */
+.pj-crow.pj-busy, .pj-card.pj-busy { box-shadow: 0 0 0 2px #e8b400; border-radius: 8px;
+  animation: delegate-busy 1.4s ease-in-out infinite; }
+@keyframes delegate-busy {
+  0%, 100% { box-shadow: 0 0 0 2px #e8b400; }
+  50% { box-shadow: 0 0 0 2px rgba(232, 180, 0, .15); }
+}
+.pj-step-going { margin-left: 6px; font-size: .8rem; }
+@keyframes delegate-sweep {
+  0% { transform: translateX(-100%); opacity: 1; }
+  100% { transform: translateX(100%); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .delegate-split.delegate-sweep > button:first-child::after { animation: none; }
+  .delegate-split.delegate-sweep { outline: 2px solid var(--accent, #4a8); }
+  .delegate-split.delegate-busy, .pj-crow.pj-busy, .pj-card.pj-busy,
+  .pj-crow.pj-busy .pj-fruit svg { animation: none; }
+}
+
+/* What a piece of work made, several: listed in place, under its button (2026-11-08). */
+.ov-made-list { flex-basis: 100%; width: 100%; list-style: none; margin: 6px 0 2px; padding: 0;
+  display: grid; gap: 4px; font-size: 12px; }
+.ov-made-list li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ov-made-what { flex: 1; min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
+.ov-made-list button { flex: none; padding: 2px 8px; font-size: 11.5px; }

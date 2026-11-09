@@ -81,12 +81,13 @@ STORE_IDS: Tuple[str, ...] = (
 #: only when the extension itself changes (its files, its manifest, its words),
 #: and only then uploaded to the stores again, which take a higher one each
 #: time. The agent's updates leave it as it is.
-EXTENSION_VERSION = "0.0.3"    # 0.0.2: says how it was installed ("here"),
+EXTENSION_VERSION = "0.0.4"    # 0.0.2: says how it was installed ("here"),
                                # and says "here" every six hours (alarms)
                                # 0.0.3: says what can be seen of a page (visible.js);
                                # never in a private window
 #: The files of the extension, as they are in resources/browser_extension.
-FILES = ("background.js", "help.html", "help.js", "opening.html", "opening.js", "visible.js")
+FILES = ("background.js", "help.html", "help.js", "opening.html", "opening.js", "visible.js",
+         "fill.js")
 FLAVORS = ("chromium", "firefox")
 ICON_SIZES = (16, 32, 48, 128)
 
@@ -102,7 +103,15 @@ WORDS: Dict[str, Dict[str, str]] = {
            "help_do": "Open Personal Agent WaterMelon, go to Settings, then General, and press "
                       "\"Install the browser extension\". It connects this browser to the agent "
                       "on this computer.",
-           "help_then": "Then right-click the page again and pick Delegate work."},
+           "help_then": "Then right-click the page again and pick Delegate work.",
+           # A form's boxes filled (fill.js, 0.0.4).
+           "fill_head": "Filled by your agent: {n} boxes, outlined. Check them, then submit it yourself.",
+           "fill_missed": "Not filled - {field}",
+           "fill_why_none": "no box found",
+           "fill_why_never": "a box this never fills",
+           "fill_why_yours": "it has your own words in it",
+           "fill_why_choice": "no such choice",
+           "fill_copy": "Copy", "fill_copied": "Copied", "fill_close": "Close"},
     "zh": {"opening": "正在打开…",
            "delegate": "委托工作",
            "learn": "学习",
@@ -110,7 +119,14 @@ WORDS: Dict[str, Dict[str, str]] = {
            "help_head": "agent 还没有连接到这个浏览器",
            "help_do": "打开 Personal Agent WaterMelon，进入 设置 > 通用，点“安装浏览器扩展”。"
                       "它会把这个浏览器连接到这台电脑上的 agent。",
-           "help_then": "然后再在网页上右键，选“委托工作”。"},
+           "help_then": "然后再在网页上右键，选“委托工作”。",
+           "fill_head": "你的 agent 已填好 {n} 个框，已高亮。请检查后自己提交。",
+           "fill_missed": "没有填 - {field}",
+           "fill_why_none": "没找到对应的框",
+           "fill_why_never": "这种框一律不填",
+           "fill_why_yours": "里面已有你自己写的内容",
+           "fill_why_choice": "没有这个选项",
+           "fill_copy": "复制", "fill_copied": "已复制", "fill_close": "关闭"},
 }
 
 
@@ -147,7 +163,9 @@ def manifest(flavor: str, version: str = EXTENSION_VERSION) -> Dict[str, Any]:
                         "alarms"],
         # A SCRIPT IN EVERY PAGE, FOR WHAT CAN BE SEEN OF IT (the user, 2026-11-05, in place of
         # 2026-11-01's none): it goes to the user's own agent on this computer, nowhere else.
-        "content_scripts": [{"matches": ["http://*/*", "https://*/*"], "js": ["visible.js"],
+        # 0.0.4: AND ITS BOXES FILLED when the agent opened it for a form it handed over (fill.js,
+        # the user, 2026-11-08) - never pressing anything.
+        "content_scripts": [{"matches": ["http://*/*", "https://*/*"], "js": ["visible.js", "fill.js"],
                              "run_at": "document_idle"}],
         "icons": {str(size): f"icons/{size}.png" for size in ICON_SIZES},
         # NEVER IN A PRIVATE WINDOW (the user, 2026-11-05): what is opened there is meant to leave
@@ -446,7 +464,10 @@ def open_store(browser: str, platform: str = sys.platform) -> bool:
     program = _browser_program(which, platform)
     try:
         if program:
-            subprocess.Popen(program + [url], close_fds=True)
+            # ITS OWN OUTPUT KEPT OUT OF THE APPLICATION'S (the user, 2026-11-08: a browser started
+            # here wrote "libpng warning: iCCP: known incorrect sRGB profile" in the run log).
+            subprocess.Popen(program + [url], close_fds=True, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return True
         import webbrowser
         return bool(webbrowser.open(url))
@@ -564,6 +585,68 @@ def _on_disk(key: str) -> Optional[bool]:
                for home in homes for one in STORE_IDS)
 
 
+#: A FORM'S ORDER TO FILL, left by the agent as it opens the page (the user, 2026-11-08): given to the
+#: pages of that site within so many seconds - room for a sign-in first - until one fills a box of it.
+FILL_ORDER_SECONDS = 600
+
+
+def leave_fill_order(data_dir: Path, url: str, parts: Any) -> str:
+    """The boxes of the page about to be opened, for the extension to fill (fill.js) - its id."""
+    import time
+    import uuid
+    from urllib.parse import urlsplit
+    host = urlsplit(str(url or "")).hostname or ""
+    kept = [{"field": str(one.get("field") or "")[:200], "text": str(one.get("text") or "")[:20000]}
+            for one in (parts or []) if isinstance(one, dict)][:40]
+    if not host or not kept:
+        return ""
+    ident = uuid.uuid4().hex[:16]
+    where = folder(data_dir) / "fill"
+    where.mkdir(parents=True, exist_ok=True)
+    _write_json(where / f"{ident}.json", {"id": ident, "url": str(url), "host": host,
+                                         "parts": kept, "at": time.time()})
+    return ident
+
+
+def take_fill_order(data_dir: Path, url: str, keep: bool = False) -> Optional[Dict[str, Any]]:
+    """The order left for a page of this one's site, not too old. `keep`: given and kept - a site's
+    sign-in page, opened first, fills none of it and the form after it is given it still (a side
+    agent's note, 2026-11-08); let go of by `finish_fill_order` once a page fills a box of it.
+    Not kept: gone once given. Old ones let go of as they are looked at."""
+    import time
+    from urllib.parse import urlsplit
+    host = urlsplit(str(url or "")).hostname or ""
+    where = folder(data_dir) / "fill"
+    found = None
+    for path in sorted(where.glob("*.json")) if where.is_dir() else []:
+        try:
+            order = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            order = {}
+        old = time.time() - float(order.get("at") or 0) > FILL_ORDER_SECONDS
+        mine = not old and found is None and host and order.get("host") == host
+        if old or (mine and not keep):
+            try:
+                path.unlink()
+            except OSError:
+                continue
+        if mine:
+            found = {"id": order.get("id"), "parts": order.get("parts") or []}
+    return found
+
+
+def finish_fill_order(data_dir: Path, ident: str) -> bool:
+    """A page filled boxes of this order: let go of - no other page is given it."""
+    if not ident or not str(ident).isalnum():
+        return False
+    path = folder(data_dir) / "fill" / f"{ident}.json"
+    try:
+        path.unlink()
+        return True
+    except OSError:
+        return False
+
+
 def keep_visible(data_dir: Path, title: str, text: str) -> None:
     """What can be seen of the page in front, as the extension says: the last word only, on this
     computer, for the recommendations' match (heartbeat/monitor/match.py)."""
@@ -633,7 +716,8 @@ def open_extensions_page(browser: str, platform: str = sys.platform) -> bool:
     if not page or not program:
         return False
     try:
-        subprocess.Popen(program + [page], close_fds=True)
+        subprocess.Popen(program + [page], close_fds=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True
     except OSError:
         log.debug("could not open %s", browser, exc_info=True)

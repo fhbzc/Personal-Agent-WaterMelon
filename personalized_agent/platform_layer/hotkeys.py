@@ -5,7 +5,7 @@ Two today, each on the keys the user chose, else its own:
 * DELEGATE WORK, Ctrl+Alt+D - the Delegate work box, empty, on the screen,
   for the user to write what they want done;
 * CHAT BUBBLE, Ctrl+Alt+C - the chat bubble opened beside the avatar, and the
-  same keys minimise it to its bar, what is half written kept.
+  same keys close it (the user, 2026-11-08), what is half written kept.
 
 Nothing is read from the program in front.
 
@@ -33,9 +33,9 @@ SHORTCUTS: List[Dict[str, str]] = [
      "what": "Opens an empty Delegate work box, from any program, for you to say what "
              "you want done."},
     {"key": "open_chat", "setting": "shortcut_open_chat",
-     "default": "Ctrl+Alt+C", "name": "Open or minimise the chat bubble",
+     "default": "Ctrl+Alt+C", "name": "Open or close the chat bubble",
      "what": "Opens the chat bubble beside the avatar, from any program; pressed again, "
-             "minimises it, keeping what you have written."},
+             "closes it, keeping what you have written but not sent."},
 ]
 BY_KEY = {one["key"]: one for one in SHORTCUTS}
 

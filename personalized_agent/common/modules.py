@@ -104,6 +104,7 @@ TASK_MODULE = {
     "recommendation_prepare": "recommendation",
     "recommendation_judge": "recommendation",
     "monitor_evening": "monitor",
+    "monitor_morning": "monitor",
     # The moment said again in English before its lessons are looked for.
     "monitor_lessons_query": "monitor",
     "calendar_lessons_query": "calendar",

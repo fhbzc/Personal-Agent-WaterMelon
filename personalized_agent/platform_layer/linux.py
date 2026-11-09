@@ -92,6 +92,70 @@ class LinuxActivityProvider(PlatformActivityProvider):
             log.debug("could not take the window in front", exc_info=True)
             return None
 
+    def user_screen_image(self, title: str = "", hidden: Optional[Any] = None,
+                          **_ignored: Any) -> Optional[Any]:
+        """THE WHOLE SCREEN THE USER'S WINDOW IS ON (the user, 2026-11-08: "linux也要做"), as X shows
+        it - this application's windows in it as they are ("linux上实在做不到就带窗口截吧": X has no
+        way to leave a window out of a picture), every window `hidden(application, title)` says is
+        never read painted over where it shows. Not on Wayland, which allows no picture; without
+        xprop and xdotool, None."""
+        import os
+        if not (self._xdotool and self._xprop) or not os.environ.get("DISPLAY"):
+            return None
+        try:
+            from PIL import ImageGrab
+
+            from .screen_picture import blank_windows, display_of, the_window_meant
+            stacked = children.run_short([self._xprop, "-root", "_NET_CLIENT_LIST_STACKING"],
+                                         capture_output=True, text=True, encoding="utf-8",
+                                         errors="replace", timeout=5).stdout
+            windows = []
+            for ident in reversed(stacked_ids(stacked)):          # from the top down
+                one = self._x_window(ident)
+                if one is not None:
+                    windows.append(one)
+            displays = []
+            if which("xrandr"):
+                said = children.run_short(["xrandr", "--listactivemonitors"], capture_output=True,
+                                          text=True, encoding="utf-8", errors="replace",
+                                          timeout=5).stdout
+                displays = monitors_of(said)
+            meant = the_window_meant(windows, title)
+            screen = display_of(meant["box"] if meant else None, displays)
+            image = ImageGrab.grab(bbox=screen) if screen else ImageGrab.grab()
+            if screen is None:
+                screen = (0, 0, image.size[0], image.size[1])
+            shown = [dict(one, ours=False) for one in windows]      # in it, as they are
+            return blank_windows(image, screen, shown, hidden)
+        except Exception:
+            log.debug("could not take the screen", exc_info=True)
+            return None
+
+    def _x_window(self, ident: str) -> Optional[Dict[str, Any]]:
+        """One window X lists: its frame, program, title and whether it is this application's."""
+        import os
+        try:
+            geometry = children.run_short([self._xdotool, "getwindowgeometry", "--shell", ident],
+                                          capture_output=True, text=True, encoding="utf-8",
+                                          errors="replace", timeout=5).stdout
+            said = dict(line.split("=", 1) for line in geometry.splitlines() if "=" in line)
+            x, y, w, h = (int(said[key]) for key in ("X", "Y", "WIDTH", "HEIGHT"))
+            props = children.run_short([self._xprop, "-id", ident, "_NET_WM_PID", "_NET_WM_NAME"],
+                                       capture_output=True, text=True, encoding="utf-8",
+                                       errors="replace", timeout=5).stdout
+        except Exception:
+            return None
+        pid, title = props_of(props)
+        application = ""
+        if pid:
+            try:
+                import psutil
+                application = psutil.Process(pid).name()
+            except Exception:
+                application = ""
+        return {"id": ident, "box": (x, y, x + w, y + h), "application": application,
+                "title": title, "ours": pid == os.getpid(), "opaque": True, "layer": 0}
+
     def get_active_application(self) -> Optional[str]:
         return self.get_active_window().application
 
@@ -193,3 +257,26 @@ class LinuxPlatform(Platform):
             window_text=self.activity.can_read_wechat(),
             extra={"window_text_only": "WeChat"},
         )
+
+
+def stacked_ids(said: str) -> list:
+    """The windows `xprop -root _NET_CLIENT_LIST_STACKING` lists, from the bottom up."""
+    import re
+    return re.findall(r"0x[0-9a-fA-F]+", said.split("#", 1)[-1]) if "#" in said else []
+
+
+def props_of(said: str) -> tuple:
+    """A window's process and title, from `xprop -id <it> _NET_WM_PID _NET_WM_NAME`."""
+    import re
+    pid = re.search(r"_NET_WM_PID\(CARDINAL\)\s*=\s*(\d+)", said)
+    name = re.search(r'_NET_WM_NAME\([^)]*\)\s*=\s*"(.*)"', said)
+    return (int(pid.group(1)) if pid else 0, name.group(1) if name else "")
+
+
+def monitors_of(said: str) -> list:
+    """The screens `xrandr --listactivemonitors` lists, as (left, top, right, bottom)."""
+    import re
+    out = []
+    for width, height, left, top in re.findall(r"(\d+)/\d+x(\d+)/\d+\+(\d+)\+(\d+)", said):
+        out.append((int(left), int(top), int(left) + int(width), int(top) + int(height)))
+    return out

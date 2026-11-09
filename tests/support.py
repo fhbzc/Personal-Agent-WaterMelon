@@ -117,6 +117,9 @@ class TemporaryAgent:
         # open here, for the tests of it; test_work_quick_alone tests it off.
         self.app.work.thorough_open = True
         self.app.executor.runtime = self.app.runtime
+        # NO PLACE OF THIS COMPUTER'S TO LEARN FROM: never set, the learning's places would be
+        # Claude Code's and Codex's real records (learning/places.py, `default_places`).
+        self.app.config.set("learning_places", [], internal=True)
         # The work runner reads its boundary from here too. Left as built, it
         # would be the real one - the user's whole home readable - and its
         # children, isolated by the operating system, would be granted read

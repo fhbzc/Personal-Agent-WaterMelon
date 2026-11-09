@@ -330,6 +330,9 @@ class TurningOffAndDeletingTests(_Base):
         self.assertTrue(self.items.on_never(str(folder)))
         places = Places(self.config)
         places.work_tab_folders = lambda: [{"path": str(folder), "project": "Orchard"}]
+        # Never this computer's own Claude Code and Codex records (listed by default).
+        places.sessions = lambda *a, **k: []
+        places.default_places = lambda: []
         self.assertEqual(places.index_roots(), [], "not searched either")
 
     def test_a_first_reading_waits_for_the_user(self) -> None:

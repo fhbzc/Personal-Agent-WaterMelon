@@ -976,14 +976,18 @@ class ConnectionsStore:
     #: the application.
     retriever: Any = None
 
-    def lessons_text(self, moment: str = "") -> str:
+    def lessons_text(self, moment: str = "", site: str = "") -> str:
         """WHAT THE AGENT IS GIVEN of the user's connection lessons: the rules
-        and examples like `moment` (the one way, `retrieve.py`), else those in
-        force. Without an engine, the changes, dated: the summary of the
-        older ones, then each kept one, newest first."""
+        and examples like `moment` - what the work at hand is about, not its
+        situation (the user, 2026-11-07) - by the one way (`retrieve.py`),
+        recorded as asked from `site`. Without an engine, the changes, dated:
+        the summary of the older ones, then each kept one, newest first."""
         if self.retriever is not None:
+            if not site:
+                import sys
+                site = f"connections {sys._getframe(1).f_code.co_name}"
             return self.retriever.text(("connections", "general"), moment, rules=12,
-                                       rewrite_task="connections_lessons_query") \
+                                       rewrite_task="connections_lessons_query", site=site) \
                 or "None learned yet."
         if self.lessons is not None:
             return self.lessons.text("connections") or "None learned yet."

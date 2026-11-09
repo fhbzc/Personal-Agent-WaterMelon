@@ -604,6 +604,30 @@ class HandedOverByTheWorkTests(unittest.TestCase):
         self.assertEqual(notes[-1]["item"]["text"], EMAIL["body"])
         self.assertEqual((notes[-1]["run"], notes[-1]["n"]), (run["id"], 0),
                          "the note knows what to save to")
+        # ITS INSTRUCTIONS PANEL ALONE (the user, 2026-11-08): the note, nothing opened or copied.
+        before = len(notes)
+        with mock.patch("webbrowser.open") as browsed, \
+                mock.patch("personalized_agent.platform_layer.clipboard.copy") as copied:
+            alone = routes[("POST", "/api/work/handed/note")](_Ask(run=run["id"], n=0))
+        self.assertEqual(alone["opened"], "note")
+        browsed.assert_not_called()
+        copied.assert_not_called()
+        self.assertEqual(len(notes), before + 1, "the panel put up")
+        self.assertEqual(notes[-1]["item"]["text"], EMAIL["body"])
+        self.assertFalse(notes[-1]["copied"])
+        # A WHOLE PROJECT'S, every item it made listed to open; one item's asked for, its own kind.
+        with mock.patch.object(self.app.drafts, "handed_from_a_whole_project", return_value=True):
+            routes[("POST", "/api/work/handed/note")](_Ask(run=run["id"], n=0))
+            self.assertEqual(notes[-1]["scope"], "project")
+            self.assertEqual([one["n"] for one in notes[-1]["items"]], [0])
+            self.assertEqual(notes[-1]["items"][0]["kind"], "email")
+            self.assertIn("project", notes[-1], "the project's part, on top")
+            told = self.app.handed_told(run["id"], 0)
+            self.assertEqual((told["run"], told["n"], told["scope"]), (run["id"], 0, "todo"))
+            self.assertNotIn("project", told, "an item's own, for below")
+            self.app.handed_note_of(run["id"], 0)
+        self.assertEqual(notes[-1]["scope"], "todo", "its own panel, the project's left")
+        self.assertNotIn("items", notes[-1])
         self.assertTrue(notes[-1]["item"]["editable"])
         # SAVE (the user, 2026-11-01): the words as the user changed them, kept
         # where the work keeps them - opened again, they are these.
@@ -663,6 +687,40 @@ class HandedOverByTheWorkTests(unittest.TestCase):
         self.assertNotIn("hand_over", {one.name for one in tools.specs(writing=False)},
                          "not the reviewer's")
         self.assertIn("hand_over", {one.name for one in tools.specs()})
+
+
+    def test_a_whole_projects_guide_kept_apart_and_told_only_to_such_a_work(self) -> None:
+        """The user, 2026-11-08: a whole project's to-do tells the user, step by step, how to use
+        each item's and what to do besides - as an item's does."""
+        from types import SimpleNamespace as _NS
+        from personalized_agent.agent.work.runner import Run
+        from personalized_agent.agent.work.tools import WorkTools
+        self.assertIn("error", handed.guide_of({"kind": "guide", "title": "Harbour"}))
+        tools = WorkTools(self.app.work._runtime(self.unit, self.app.work.folder_of(self.unit)))
+        tools.runs_code = ("run_python", "run_tests")
+        got = []
+        tools.on_hand_over = lambda item: got.append(item)
+        said = tools.give_to_user({"kind": "guide", "title": "Harbour project",
+                                   "how": "1. Send the email to Ada.\n2. Book the hall yourself.",
+                                   "check": ["The hall is free on the 4th"]})
+        self.assertEqual(said["handed"], "guide")
+        self.assertEqual(got[0]["kind"], "guide")
+        self.assertIn("Book the hall yourself", got[0]["how"])
+        # Kept in the run's plan - not among what it made.
+        events = []
+        run = _NS(plan={"handed": [{"kind": "email", "title": "Re: The talk"}]},
+                  _event=lambda *a: events.append(a), owner=_NS(save=lambda one: None))
+        self.assertIsNone(Run._hand_over(run, got[0]))
+        self.assertEqual(run.plan["guide"]["how"], got[0]["how"])
+        self.assertEqual([one["kind"] for one in run.plan["handed"]], ["email"])
+        # Told only to a whole project's work.
+        self.app.db.execute("INSERT INTO work_drafts (id, unit_id, source, options, created_at, "
+                            "updated_at) VALUES ('d1', ?, 'project', ?, '', '')",
+                            ("task-whole", json.dumps({"whole": True})))
+        whole = _NS(owner=_NS(db=self.app.db), unit={"id": "task-whole"})
+        self.assertTrue(Run._a_whole_project(whole))
+        self.assertFalse(Run._a_whole_project(_NS(owner=_NS(db=self.app.db), unit={"id": "task-x"})))
+        self.assertIn("ONE GUIDE", handed.PROJECT_GUIDE_RULES)
 
 
 if __name__ == "__main__":

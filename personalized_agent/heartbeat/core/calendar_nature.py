@@ -61,6 +61,8 @@ log = logging.getLogger(__name__)
 #: they do not want this one any more, that it should never have been there,
 #: or that it was a bad one.
 ACTIONS = ("add", "edit", "disable", "delete", "bad_notification")
+#: How an action's why begins when the answer about it failed (2026-11-07).
+FAILED_WHY = "FAILED - not reasoned: "
 
 #: How much of one changed value is kept, in words, once the record has been
 #: let go of - enough to read "from 09:00 to 14:00" or a reworded message,
@@ -393,12 +395,16 @@ class CalendarNature:
                      "asked: %s", exc)
             return None
         text = (response.text or "").strip()
-        answered = _json_of(text)
-        if not answered:
-            # Not JSON: nothing is changed on a reading that cannot be read -
-            # it is kept as the why, and said so in the log.
-            log.warning("the notification lesson answer was not JSON: %r", text[:200])
-            return (text, []) if text else None
+        # OK ONLY WHEN WHOLE (2026-11-07): an answer cut off, empty or not JSON was kept as the
+        # why, as if it were one. Now nothing of it is taken - no lesson changed - and the
+        # action is RECORDED AS FAILED, its why saying so: one action, nothing to shorten, and
+        # asking it again the same way is the same answer (the user, 2026-11-07).
+        from ...models import answers as _answers
+        answer = _answers.read(response, parse=_json_of)
+        if not answer.ok:
+            log.warning("the notification lesson failed (%s): %r", answer.why_not, text[:200])
+            return (f"{FAILED_WHY}{answer.why_not}", [])
+        answered = answer.data
         why = str(answered.get("why") or "").strip()
         changes = answered.get("changes")
         if changes is None and str(answered.get("lesson") or "").strip():

@@ -19,7 +19,7 @@ import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 from ...scheduler.core.recurrence import RecurrenceError, parse_recurrence
@@ -39,8 +39,12 @@ from ...agent.overview.keywords import Moments, page_key, pairs_of
 from ...agent.feedback.templates import PASSIVE, REMINDER
 from ...models.base import SIGN_IN_STATES, ModelRequest, ToolSpec
 from ...models.manager import ModelUnavailable
+from ...models import answers as _answers
 
 log = logging.getLogger(__name__)
+
+#: How long quitting waits for a round in flight, in seconds.
+STOP_WAIT_SECONDS = 1.0
 
 #: How many states one run may write. A reply asking to rewrite the whole
 #: calendar is a malfunction, not an instruction.
@@ -639,6 +643,10 @@ Not worth adding - and why:
     listed, worded differently. That is a duplicate.
   - Something that will be on screen in front of them anyway before it
     matters - the next look, in a few minutes, can still catch it.
+  - An offer of a summary - "Shall I sum up your day?", "Want a recap of the
+    project?". A summary is never offered: it is written and given whole,
+    unasked, by the Activator whose work it is (the evening report, coming back
+    to an old project). A lesson about offering one is carried out by those.
 
 AND DISABLE WHAT IS ALREADY DONE.
 
@@ -817,6 +825,12 @@ PAUSED_STEPS = ("step_nature",)
 #: process - what happened between that review and the agent being closed
 #: is read by the next one, not lost.
 SUMMARISED_UNTIL = "heartbeat_summarised_until"
+#: THE STRETCHES STEP ONE FAILED ON, the latest last (the user, 2026-11-07: never ask the same
+#: thing again the same way): {"from", "until", "why", "at"}. An answer cut off, empty, not JSON
+#: or without "states" writes no states, and the stretch is recorded here and moved past - the
+#: next review reads new work. Kept where it can be seen; the most kept, STATE_FAILED_MOST.
+STATE_FAILED = "heartbeat_state_failed"
+STATE_FAILED_MOST = 50
 #: WHAT A LATE LOOK WROTE, for the notifications step of the next ordinary round (the user,
 #: 2026-11-06: a reminder to send a message came up an hour and a half after it was sent). A late
 #: look writes states and nothing else, and each ordinary round reads only its own stretch, so
@@ -1801,6 +1815,45 @@ def _how_many(produced: Any, kind: Any) -> int:
                              str(row.get("verdict") or "")})
 
 
+def _halves_answer(parts: Sequence[Tuple[Any, Any]], whole: Any) -> Any:
+    """Step one's answer when asked in halves: the states of the halves answered whole, in order,
+    as one answer - for the steps after it to read as they would one. None answered whole: the
+    last half's answer, not whole."""
+    taken = [answer for _half, answer in parts if answer.ok]
+    if not taken:
+        return parts[-1][1] if parts else whole
+    data = dict(taken[0].data)
+    data["states"] = [state for answer in taken for state in (answer.data.get("states") or [])
+                      if isinstance(state, dict)]
+    return _answers.Answer(data=data, cut=False,
+                           text="\n".join(answer.text for answer in taken),
+                           response=taken[-1].response)
+
+
+def _notify_halves_answer(parts: Sequence[Tuple[Any, Any]], whole: Any) -> Any:
+    """The notifications step's answer when asked in halves: the lists of the halves answered
+    whole put together. None answered whole: the last half's answer, not whole."""
+    taken = [answer for _lines, answer in parts if answer.ok]
+    if not taken:
+        return parts[-1][1] if parts else whole
+    data: Dict[str, Any] = {}
+    for answer in taken:
+        for key, value in answer.data.items():
+            if isinstance(value, list):
+                data[key] = list(data.get(key) or []) + value
+            else:
+                data.setdefault(key, value)
+    return _answers.Answer(data=data, cut=False,
+                           text="\n".join(answer.text for answer in taken),
+                           response=taken[-1].response)
+
+
+def _read_late_id(line: str) -> str:
+    """The state id a read-late line begins with: "[state_...] ..."."""
+    text = str(line or "")
+    return text[1:text.index("]")] if text.startswith("[") and "]" in text else ""
+
+
 def _writer(response: Any) -> Dict[str, str]:
     """Which model wrote an answer: its name and provider, and when."""
     return {"model": str(getattr(response, "model", "") or ""),
@@ -2065,7 +2118,10 @@ class AgentHeartbeat:
         # timeout, three times over.
         self._interval_changed.set()
         if self._thread:
-            self._thread.join(timeout=5)
+            # A ROUND IN A MODEL CALL IS LEFT, NOT WAITED OUT (the user, 2026-11-07): quitting
+            # waited five seconds for one; it wrote nothing yet - only a whole answer moves
+            # anything on - and is read again at the next start.
+            self._thread.join(timeout=STOP_WAIT_SECONDS)
         log.info("agent heartbeat stopped")
 
     #: Settings that change when this loop should next run.
@@ -2384,6 +2440,12 @@ class AgentHeartbeat:
             # so, because a summary is a claim and who made it is part of
             # how much to trust it.
             writers: Dict[str, Dict[str, str]] = {}
+            # Each step's answer as read (models/answers.py): whole or not.
+            answers_of: Dict[str, Any] = {}
+            #: Step one asked again in halves: (the half's floor, its answer).
+            state_parts: List[Tuple[Any, Any]] = []
+            #: The notifications step asked again in halves: (the read-late lines it had, answer).
+            notify_parts: List[Tuple[List[str], Any]] = []
             concluded: List[str] = []
             for index, (item, found) in enumerate(gathered):
                 shape = STEP_PROMPTS.get(item.id)
@@ -2421,8 +2483,11 @@ class AgentHeartbeat:
                                         + [str((one.get("data") or {}).get("window_title") or "")
                                            for one in (found.events or [])[-40:]
                                            if isinstance(one, dict)])
+                                    # Said in English first (the user, 2026-11-07): windows'
+                                    # titles are in any language, the lessons in English.
                                     found.calendar_nature = (
-                                        keeper.relevant_text(asked, 12)
+                                        keeper.relevant_text(
+                                            asked, 12, rewrite_task="calendar_lessons_query")
                                         if hasattr(keeper, "relevant_text") else keeper.text())
                                 except Exception:
                                     log.warning("the calendar nature could "
@@ -2538,7 +2603,59 @@ class AgentHeartbeat:
                 step_row["answer_tokens"] = estimate_tokens(response.text or "")
                 writers[item.id] = _writer(response)
                 step_row["written_by"] = writers[item.id]
-                answered = _extract_json(response.text) or {}
+                # OK ONLY WHEN WHOLE (2026-11-07): an answer cut off at the limit, empty or not
+                # JSON was read as {} - "nothing happened" - and the stretch was marked read.
+                # Step one's is taken only whole and saying "states" (an empty list is an idle
+                # stretch, and moves on); the others as they parse, with `ok` kept for what
+                # they would mark seen.
+                answer = _answers.read(
+                    response, parse=_extract_json,
+                    wants=("states",) if item.id == "step_state" else ())
+                if item.id == "step_state" and not answer.ok:
+                    # ASKED AGAIN SHORTER, ONCE (the user, 2026-11-07: "失败之后分段问重做,
+                    # 如果还解决不了的标为失败"): the stretch in two halves, each its own
+                    # step one; a half still not whole is the failed part.
+                    try:
+                        state_parts = self._state_in_halves(
+                            item, shape, found, step_row, task_id, concluded)
+                    except ModelUnavailable as exc:
+                        # Never answered: nothing moves, the stretch is read next time.
+                        report["blocked"] = True
+                        report["reason"] = str(exc)
+                        step_row["blocked"] = str(exc)
+                        step_row["phase"] = "blocked"
+                        break
+                    if state_parts:
+                        answer = _halves_answer(state_parts, answer)
+                        response = state_parts[-1][1].response or response
+                        writers[item.id] = _writer(response)
+                        step_row["written_by"] = writers[item.id]
+                if item.id == "step_notify" and not answer.ok:
+                    # The same, for what to notify of: what it was given in halves, once.
+                    try:
+                        notify_parts = self._notify_in_halves(
+                            item, shape, found, step_row, task_id, concluded)
+                    except ModelUnavailable as exc:
+                        report["blocked"] = True
+                        report["reason"] = str(exc)
+                        step_row["blocked"] = str(exc)
+                        step_row["phase"] = "blocked"
+                        break
+                    if notify_parts:
+                        answer = _notify_halves_answer(notify_parts, answer)
+                        response = notify_parts[-1][1].response or response
+                        writers[item.id] = _writer(response)
+                        step_row["written_by"] = writers[item.id]
+                answers_of[item.id] = answer
+                if not answer.ok:
+                    step_row["not_taken"] = answer.why_not
+                    report.setdefault("failed", []).append(
+                        {"step": item.id, "why": answer.why_not})
+                    log.warning("heartbeat %s failed: %s", item.id, answer.why_not)
+                if item.id == "step_state":
+                    answered = answer.data if answer.ok else {}
+                else:
+                    answered = answer.data or {}
                 step_row["parsed"] = sorted(answered)
                 step_row["phase"] = "answered"
                 payload.update(answered)
@@ -2557,20 +2674,37 @@ class AgentHeartbeat:
             looked_at = next((found.window() for step, found in gathered
                               if step.id == "step_state"
                               and hasattr(found, "window")), None)
-            written = self._write_states(task_id, payload.get("states"),
-                                         looked_at,
-                                         written_by=writers.get("step_state"))
+            if state_parts and answers_of["step_state"].ok:
+                written = []
+                for half, half_answer in state_parts:
+                    if half_answer.ok:
+                        written += self._write_states(
+                            task_id, half_answer.data.get("states"), half.window(),
+                            written_by=writers.get("step_state")) or []
+            else:
+                written = self._write_states(task_id, payload.get("states"),
+                                             looked_at,
+                                             written_by=writers.get("step_state"))
             if written:
                 report["states_written"] = written
                 if self._window_fixed is not None:
                     self._keep_read_late(written)
             # HOW FAR THE SUMMARIES GOT - only when step one answered. A
             # review the model never answered moves nothing on, so the next
-            # one reads its stretch as well.
+            # one reads its stretch as well. One answered cut off or unreadable moves on too,
+            # recorded as failed (`_move_mark`, the user, 2026-11-07).
             read_to = next((found.until for step, found in gathered
                             if step.id == "step_state"), "")
-            if "step_state" in writers and read_to:
-                self.config.set(SUMMARISED_UNTIL, read_to, internal=True)
+            if "step_state" in answers_of and read_to:
+                self._move_mark(read_to, answers_of["step_state"], report,
+                                start=next((str(found.since or "") for step, found in gathered
+                                            if step.id == "step_state"), ""))
+                if answers_of["step_state"].ok:
+                    for half, half_answer in state_parts:
+                        if not half_answer.ok:
+                            self._record_failed_stretch(
+                                str(half.since or ""), str(half.until or ""),
+                                half_answer.why_not, report)
 
             # Step 2: who the user is, into user_nature/ - paused, so it
             # writes nothing even if an answer carries some.
@@ -2640,8 +2774,25 @@ class AgentHeartbeat:
             closed = self._close_notifications(task_id, payload.get("closed"))
             if closed:
                 report["notifications_closed"] = closed
-            # Seen by the step: an answer was had, so they were in front of it.
-            if "step_notify" in writers and self.config.get(READ_LATE, None):
+            # Seen by the step: an answer was had, so they were in front of it. One cut off or
+            # unreadable was asked again in halves (`_notify_in_halves`); what is still not
+            # answered whole is let go too - not asked a third time - and said as failed in the
+            # report and the log (the user, 2026-11-07).
+            notify_answer = answers_of.get("step_notify")
+            if notify_answer is not None and self.config.get(READ_LATE, None):
+                waiting = list(self.config.get(READ_LATE, None) or [])
+                if notify_parts:
+                    lost = [_read_late_id(line) for lines, half in notify_parts
+                            if not half.ok for line in lines]
+                    lost = [one for one in lost if one]
+                    why = next((half.why_not for _lines, half in notify_parts if not half.ok), "")
+                else:
+                    lost = waiting if not notify_answer.ok else []
+                    why = notify_answer.why_not
+                if lost:
+                    report["read_late_failed"] = {"ids": lost, "why": why}
+                    log.warning("the notifications step failed (%s) on what was read late: %s",
+                                why, lost)
                 self.config.set(READ_LATE, [], internal=True)
 
             # And what step 3 found new details for, filled in.
@@ -3335,10 +3486,58 @@ class AgentHeartbeat:
         if step_row is not None:
             self._charge(step_row, response)
         check["answer"] = response.text or ""
-        answered = _extract_json(response.text or "")
+        # NOT TAKEN UNLESS WHOLE (2026-11-07), and not silent: a verdict cut off is no verdict.
+        # Still not created - one alike is already waiting nearby, so the user is reminded of
+        # it either way, and the doubt was being interrupted twice - but said in the log.
+        answer = _answers.read(response, parse=_extract_json)
+        if not answer.ok and len(alike) > 1:
+            # ASKED AGAIN, SHORTER, ONCE (the user, 2026-11-07): against the most alike half of
+            # them only - the closest are the ones it would repeat.
+            words = f"{proposed['title']}\n{proposed['message']}"
+            closest = sorted(alike, key=lambda task: self._alike(
+                words, f"{task.title}\n{task.description or ''}"), reverse=True)
+            alike = closest[:(len(closest) + 1) // 2]
+            asked = "\n".join(
+                [_now_said(), "", "NEW:",
+                 line(proposed["type"], proposed["title"], proposed["message"], when),
+                 "", "ALREADY SCHEDULED NEARBY:"]
+                + [line(kind_of(task), task.title, str(task.description or ""),
+                        task.scheduled_at, task.id) for task in alike])
+            check.update(asked_again={"prompt": asked, "alike": [task.id for task in alike],
+                                      "first_answer": check.get("answer", ""),
+                                      "why_first": answer.why_not})
+            log.info("is-it-the-same check for %r asked again against the %d closest",
+                     proposed.get("title"), len(alike))
+            try:
+                response = self.models.invoke(
+                    ModelRequest(
+                        messages=[{"role": "user", "content": asked}],
+                        system=SAME_NOTIFICATION_PROMPT,
+                        max_tokens=400,
+                        task="heartbeat:same_notification",
+                        language=in_english("the verdict and why"),
+                        metadata={"context_summary":
+                                  f"is this notification already scheduled: "
+                                  f"{proposed['title']}"[:2000]},
+                    ),
+                    role="heartbeat",
+                )
+            except Exception as exc:
+                check.update(create=False,
+                             why=f"the check could not be made: {exc}"[:300])
+                return check
+            if step_row is not None:
+                self._charge(step_row, response)
+            check["answer"] = response.text or ""
+            answer = _answers.read(response, parse=_extract_json)
+        answered = answer.data if answer.ok else None
         if not isinstance(answered, dict):
             check.update(create=False,
-                         why="the check's answer could not be read")
+                         why=("the check's answer could not be read"
+                              + (" (cut off at the output limit)" if answer.cut else "")))
+            log.warning("is-it-the-same check for %r: %s; not created beside %s",
+                        proposed.get("title"), answer.why_not,
+                        [task.id for task in alike])
             return check
         same = str(answered.get("same_as") or "").strip()
         same = same if same.lower() not in ("null", "none") else ""
@@ -3701,19 +3900,26 @@ class AgentHeartbeat:
     #: because a step that ran out of rounds answered on less than it wanted.
     STATE_MAX_ROUNDS = 6
 
-    def _state_floor(self, task_id: str) -> "StateFloor":
+    def _state_floor(self, task_id: str,
+                     bounds: Optional[tuple] = None) -> "StateFloor":
         """What step 1 is given before it asks for anything.
 
         Every event of the last few minutes, and nothing else. Not a
         search: the question is what is happening, and a search needs words
         that only the answer to that question would supply - which is the
         loop this returns the first round of.
+
+        `bounds` (since, until) for a part of the review's stretch: the half
+        asked again when the whole was not answered whole (`_state_in_halves`).
         """
         started = time.perf_counter()
-        since, until = self._window_bounds()
+        since, until = bounds or self._window_bounds()
         late = self._window_fixed is not None
         minutes = max(1.0, round((until - since).total_seconds() / 60.0, 1))
-        events = self._activity_since(minutes, until=until if late else None)
+        if bounds:
+            minutes = max(0.1, (until - since).total_seconds() / 60.0)
+        events = self._activity_since(minutes,
+                                      until=until if (late or bounds) else None)
         if late:
             # Still in front when the agent was closed: until then, not "now".
             for event in events:
@@ -3840,6 +4046,133 @@ class AgentHeartbeat:
 
     def _summarised_until(self) -> Optional[datetime]:
         return _as_utc(self.config.get(SUMMARISED_UNTIL, ""))
+
+    def _move_mark(self, read_to: str, answer: Any, report: Dict[str, Any],
+                   start: str = "") -> bool:
+        """THE MARK MOVES ON, AND A FAILED STRETCH IS SAID TO HAVE FAILED (the user, 2026-11-07:
+        never ask the same thing again the same way). A whole answer - one that says "states"
+        and was not cut off - is the stretch read. Any other wrote no states, and asking the
+        same stretch again would be the same question: it is recorded as failed (STATE_FAILED,
+        the report's "states_failed", the log) and the mark moves past it, so the next review
+        starts from new work. It comes here after being asked again in halves
+        (`_state_in_halves`): what is still not whole then is the failure. Whether the answer
+        was whole."""
+        self.config.set(SUMMARISED_UNTIL, read_to, internal=True)
+        if answer.ok:
+            return True
+        self._record_failed_stretch(start, read_to, answer.why_not, report)
+        return False
+
+    def _record_failed_stretch(self, start: str, until: str, why: str,
+                               report: Dict[str, Any]) -> None:
+        """A stretch no states were written from, kept (STATE_FAILED), reported and logged."""
+        failed = {"from": start, "until": until, "why": why, "at": utcnow().isoformat()}
+        kept = [one for one in (self.config.get(STATE_FAILED, None) or [])
+                if isinstance(one, dict)]
+        self.config.set(STATE_FAILED, (kept + [failed])[-STATE_FAILED_MOST:], internal=True)
+        report.setdefault("states_failed", failed)
+        report.setdefault("states_failed_parts", []).append(failed)
+        log.warning("step one failed on the stretch %s to %s (%s): no states written from it, "
+                    "and the reviews move on past it", start or "(its start)", until, why)
+
+    def _notify_in_halves(self, item: Any, shape: Dict[str, Any], whole: "StateFloor",
+                          step_row: Dict[str, Any], task_id: str,
+                          concluded: Optional[List[str]]) -> List[Tuple[List[str], Any]]:
+        """THE NOTIFICATIONS STEP ASKED AGAIN, SHORTER (the user, 2026-11-07): what it was given
+        to decide on - this review's states and what was read late - in two halves, each asked
+        once. The second is told what the first scheduled, so it does not schedule it again.
+        Each part: the read-late lines it had, and its answer. [] when there is one thing or
+        none: there is nothing to cut, and the whole is the failure."""
+        states = list(whole.states or [])
+        late = list(whole.read_late or [])
+        if len(states) + len(late) < 2:
+            return []
+        cut_states, cut_late = (len(states) + 1) // 2, len(late) // 2
+        halves = ((states[:cut_states], late[:cut_late]), (states[cut_states:], late[cut_late:]))
+        log.info("the notifications step asked again in halves: %d states, %d read late",
+                 len(states), len(late))
+        parts: List[Tuple[List[str], Any]] = []
+        rows: List[Dict[str, Any]] = []
+        step_row["halves"] = rows
+        told = list(concluded or [])
+        for some_states, some_late in halves:
+            half = copy.deepcopy(whole)
+            half.states, half.read_late = list(some_states), list(some_late)
+            half.restate_floor()
+            row: Dict[str, Any] = {"states": len(some_states), "read_late": len(some_late)}
+            rows.append(row)
+            response = self._ask_step_one(item, shape, half, row, task_id, told)
+            half_answer = _answers.read(response, parse=_extract_json)
+            row["answer"] = str(getattr(response, "text", "") or "")
+            row["not_taken"] = half_answer.why_not
+            for key in ("calls", "tokens_in", "tokens_out", "tokens_total"):
+                step_row[key] = int(step_row.get(key) or 0) + int(row.get(key) or 0)
+            parts.append((list(some_late), half_answer))
+            if half_answer.ok:
+                titles = [str(one.get("title") or "") for one in
+                          (half_answer.data.get("notifications") or []) if isinstance(one, dict)]
+                if titles:
+                    told = told + ["Already scheduled in this review, from the other part of "
+                                   "what it was given (do not schedule these again): "
+                                   + "; ".join(title for title in titles if title)]
+        return parts
+
+    #: The shortest stretch step one is asked again in halves, and the fewest lines in it.
+    HALVES_LEAST_MINUTES = 2.0
+    HALVES_LEAST_EVENTS = 2
+
+    def _halfway(self, whole: "StateFloor") -> Optional[datetime]:
+        """Where a stretch is cut in two: at its middle event, so the halves hold about as much
+        each - not at the middle of the clock, where one half may hold all of it. None when it is
+        too short or too few to cut."""
+        since, until = _as_utc(whole.since), _as_utc(whole.until)
+        if since is None or until is None:
+            return None
+        if (until - since).total_seconds() < self.HALVES_LEAST_MINUTES * 60:
+            return None
+        times = sorted(moment for moment in (
+            _as_utc(event.get("first_at") or event.get("timestamp")) for event in whole.events
+            if isinstance(event, dict)) if moment is not None and since < moment < until)
+        if len(times) < self.HALVES_LEAST_EVENTS:
+            return None
+        middle = times[len(times) // 2]
+        return middle if since < middle < until else None
+
+    def _state_in_halves(self, item: Any, shape: Dict[str, Any], whole: "StateFloor",
+                         step_row: Dict[str, Any], task_id: str,
+                         concluded: Optional[List[str]]) -> List[Tuple["StateFloor", Any]]:
+        """STEP ONE ASKED AGAIN, SHORTER (the user, 2026-11-07): a stretch whose answer was not
+        whole, in two halves at its middle event, each read from its own events and asked as a
+        step one of its own - as two reviews in a row would be. A state that runs across the cut
+        is two, as it is across any two reviews, and joined the same way later. Asked once: a
+        half still not whole is that half failed. What was found for the whole (who is in it) is
+        given to both. [] when it cannot be cut: the whole is then the failure."""
+        middle = self._halfway(whole)
+        if middle is None:
+            return []
+        since, until = _as_utc(whole.since), _as_utc(whole.until)
+        kept_since = self._since
+        parts: List[Tuple["StateFloor", Any]] = []
+        rows: List[Dict[str, Any]] = []
+        step_row["halves"] = rows
+        log.info("step one asked again in halves: %s to %s, cut at %s",
+                 whole.since, whole.until, middle.isoformat())
+        try:
+            for begin, end in ((since, middle), (middle, until)):
+                half = self._state_floor(task_id, bounds=(begin, end))
+                half.people_named = whole.people_named
+                row: Dict[str, Any] = {"from": begin.isoformat(), "until": end.isoformat()}
+                rows.append(row)
+                response = self._ask_step_one(item, shape, half, row, task_id, concluded)
+                half_answer = _answers.read(response, parse=_extract_json, wants=("states",))
+                row["answer"] = str(getattr(response, "text", "") or "")
+                row["not_taken"] = half_answer.why_not
+                for key in ("calls", "tokens_in", "tokens_out", "tokens_total"):
+                    step_row[key] = int(step_row.get(key) or 0) + int(row.get(key) or 0)
+                parts.append((half, half_answer))
+        finally:
+            self._since = kept_since
+        return parts
 
     def _window_bounds(self) -> tuple:
         """(since, until) for the review about to run.

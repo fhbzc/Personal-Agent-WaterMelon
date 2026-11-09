@@ -106,12 +106,13 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from ...common.sound import DONE as SOUND_DONE, FAILED as SOUND_FAILED
 from ...common.sound import STOPPED as SOUND_STOPPED, play_end_sound
 from ...heartbeat.experience.store import description_of, input_of
 from ...models.base import ModelRequest, ToolSpec
+from ...models import answers as model_answers
 from ...common.languages import in_display, in_english
 
 #: WHICH LANGUAGE A WORK RUN WRITES IN, unless a call says otherwise (the
@@ -2279,6 +2280,21 @@ def _slug(name: str) -> str:
     return re.sub(r"_+", "_", slug).strip("_")[:60] or "work"
 
 
+#: WHAT `_ask` ADDS TO AN ANSWER of its own, not the model's: an answer of these alone said
+#: nothing (2026-11-07: "if not said" never fired, written_by being always there).
+BOOKKEEPING = ("written_by", "interrupted")
+
+#: TOLD THE MODEL WHEN ITS LAST ANSWER WAS CUT OFF (2026-11-07), at the start of the next turn it
+#: is given anyway: never read as a report, never asked again by a call of its own.
+CUT_TO_MODEL = ("[Your last answer stopped at the output limit; give it again, shorter, "
+                "or in parts.]")
+
+
+def said_something(said: Any) -> bool:
+    """Whether an answer of `_ask` holds anything of the model's."""
+    return isinstance(said, dict) and any(key not in BOOKKEEPING for key in said)
+
+
 def _as_json(text: str) -> Dict[str, Any]:
     text = text or ""
     fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
@@ -2963,15 +2979,12 @@ def open_in_file_manager(folder: Path) -> None:
     Windows, Finder on a Mac, whatever opens folders elsewhere."""
     import subprocess
     import sys
-    if sys.platform.startswith("win"):
-        try:
-            os.startfile(str(folder))        # type: ignore[attr-defined]
-        except OSError:
+    from ..platform_layer.front_folder import opened_in_front
+    try:
+        opened_in_front(folder)              # in front (the user, 2026-11-08)
+    except OSError:
+        if sys.platform.startswith("win"):
             subprocess.Popen(["explorer", str(folder)])
-    elif sys.platform == "darwin":
-        subprocess.Popen(["open", str(folder)])
-    else:
-        subprocess.Popen(["xdg-open", str(folder)])
 
 
 def read_session(log_dir: Path) -> List[Dict[str, Any]]:
@@ -3142,6 +3155,27 @@ class WorkRuns:
             "SELECT path FROM work_folders WHERE unit_id = ? ORDER BY added_at",
             (unit_id,))]
 
+    def read_also(self, unit_id: str) -> List[str]:
+        """THE FOLDERS A WORK WAS TOLD TO READ (the user, 2026-11-08) - a project's own, say, on
+        another drive: its sandboxed code is let read them, folder by folder, every run of it."""
+        row = self.db.query_one("SELECT value FROM kv WHERE key = ?", (f"work.read_also.{unit_id}",))
+        try:
+            said = json.loads(row["value"]) if row else []
+        except (TypeError, ValueError):
+            said = []
+        return [str(one) for one in said if str(one).strip()]
+
+    def let_read(self, unit_id: str, paths: Any) -> List[str]:
+        """Folders added to what a work's sandboxed code may read - never to what it may write."""
+        kept = self.read_also(unit_id)
+        for one in paths or []:
+            one = str(one).strip()
+            if one and one not in kept and Path(one).exists():
+                kept.append(one)
+        self.db.execute("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET "
+                        "value = excluded.value", (f"work.read_also.{unit_id}", json.dumps(kept)))
+        return kept
+
     def writable_folder(self, path: str) -> Dict[str, Any]:
         """Whether the agents may be let write in a folder the user chose -
         or ONE FILE (the user, 2026-10-26: a file handed over is the work's
@@ -3198,7 +3232,8 @@ class WorkRuns:
 
     def policy_for(self, folder: Path, granted: List[str] = (),
                    sealed: List[str] = (),
-                   code_root: Optional[Path] = None) -> WorkspacePolicy:
+                   code_root: Optional[Path] = None,
+                   read_also: Sequence[str] = ()) -> WorkspacePolicy:
         """Read like the agent always does; write only in its own folder and
         the granted ones; no network from code it runs. `sealed`: folders it
         may not even read - the other ways' of a project of the Experience
@@ -3208,9 +3243,11 @@ class WorkRuns:
         return WorkspacePolicy(
             workspace_root=Path(self.app_policy.workspace_root),
             writable_root=folder,
-            readable_paths=list(self.app_policy.readable_paths),
+            readable_paths=list(self.app_policy.readable_paths)
+            + [Path(one) for one in read_also if Path(one).exists()],
             readonly_paths=list(self.app_policy.readonly_paths),
             protected_paths=list(self.app_policy.protected_paths),
+            read_anywhere=bool(getattr(self.app_policy, "read_anywhere", False)),
             # A folder granted, or one file - written in place, nothing
             # beside it (the guard, the tools and the container alike take
             # a file as a root of its own).
@@ -3302,7 +3339,8 @@ class WorkRuns:
         granted = [] if debug else self.folders(unit["id"])
         sealed = list(debug.get("sealed") or []) if debug else []
         return SandboxRuntime(self.policy_for(folder, granted, sealed,
-                                              self.code_root if debug else None),
+                                              self.code_root if debug else None,
+                                              [] if debug else self.read_also(unit["id"])),
                               platform=self.platform,
                               sandbox_enabled=self.sandbox_enabled)
 
@@ -6550,7 +6588,9 @@ class Run:
             # IT ANSWERED, BUT NOT IN JSON THAT READS - a brace too many in a
             # deck of fifteen slides: sent back once to be corrected, with
             # where it fails. Not corrected, the slides are made in words.
-            problem = json_problem(getattr(self._local_state(), "answer", ""))
+            problem = json_problem(getattr(self._local_state(), "answer", "")) or (
+                "it stopped at the output limit before the JSON was closed"
+                if self._last_cut else "")
             if not problem:
                 return None, "its answer held no slides"
             self._note("slides not valid JSON", why=problem)
@@ -7242,6 +7282,19 @@ class Run:
         from ...heartbeat.experience.store import count_use
         response = None
         interrupted = False
+        local = self._local_state()
+        if getattr(local, "cut_in", None) == id(messages):
+            # SAID IN THE TURN IT GETS ANYWAY (2026-11-07): its last answer in these messages
+            # stopped at the output limit.
+            local.cut_in = None
+            last_message = messages[-1] if messages else {}
+            if last_message.get("role") == "user":
+                if isinstance(last_message.get("content"), list):
+                    last_message["content"].append({"type": "text", "text": CUT_TO_MODEL})
+                else:
+                    last_message["content"] = (CUT_TO_MODEL + "\n\n"
+                                               + str(last_message.get("content") or ""))
+        local.cut = False
         steps = {"n": 0, "began": time.time(), "asked": False, "tools": 0.0,
                  "paused": self._paused_seconds(), "waited": float(getattr(self, "waited", 0.0))}
 
@@ -7355,6 +7408,14 @@ class Run:
         messages.append({"role": "assistant",
                          "content": _exchanges_text(response) + text})
         said = _as_json(text)
+        # CUT OFF (2026-11-07): by the model's word, or by JSON left open - kept for the caller
+        # (`_last_cut`), noted, and said to the model in its next turn on these messages.
+        read = model_answers.read(response, parse=lambda one: _as_json(one) or None)
+        local.cut = read.cut
+        if read.cut:
+            local.cut_in = id(messages)
+            self._note("answer cut off", who=who, why=read.why_not)
+            log.info("run %s: the %s's answer was cut off at the output limit", self.id, who)
         said["written_by"] = {"model": getattr(response, "model", ""),
                               "provider": getattr(response, "provider", "")}
         if interrupted:
@@ -7718,6 +7779,11 @@ class Run:
     def _part(self, value: str) -> None:
         self._local_state().part = value
 
+    @property
+    def _last_cut(self) -> bool:
+        """Whether the last answer `_ask` had, in this thread, was cut off at the output limit."""
+        return bool(getattr(self._local_state(), "cut", False))
+
     def _active_before(self) -> float:
         """The run's own time in its sessions before this one - carried in
         its plan, set when this session began."""
@@ -7779,6 +7845,8 @@ class Run:
         return system.replace("{environment}", self._environment_text()).replace(
             "{packages}", packages) \
             + "\n\n" + handed.HAND_OVER_RULES \
+            + "\n\n" + (handed.PROJECT_GUIDE_RULES if self._a_whole_project()
+                         else handed.MANY_RESULTS_GUIDE_RULES) \
             + "\n\n" + WRITING_RULES \
             + self._what_they_use() \
             + ("\n\n" + QUICK_RULES.replace(
@@ -8567,8 +8635,14 @@ class Run:
             report = str(said.get("report") or "").strip() or str(answer or "").strip()
             used = self._worker_tools - tools_before
             interrupted = bool(said.get("interrupted"))
-            done = said.get("done") is True and not interrupted
+            # A CUT ANSWER IS NO REPORT (2026-11-07): never taken as done; kept, marked, and the
+            # model told in its next turn (`_ask`).
+            cut = self._last_cut and not interrupted
+            if cut:
+                report = (report + " [cut off at the output limit]").strip()
+            done = said.get("done") is True and not interrupted and not cut
             progress = ("done" if done else "interrupted" if interrupted
+                        else "cut off" if cut
                         else "went on" if used else "no tool used")
             self.plan["round"] = number
             self.plan.setdefault("rounds", []).append({
@@ -9921,8 +9995,11 @@ class Run:
         evidence that exists - and that the contract is as approved."""
         problems: List[str] = []
         problems += self._contract_intact()
-        if not summary or not isinstance(summary, dict):
-            return problems + ["no summary came back: return the round JSON object"]
+        if not said_something(summary):
+            # Its bookkeeping alone is no summary (2026-11-07); cut off, it is said why.
+            return problems + [("your answer stopped at the output limit: return the round "
+                                "JSON object, shorter" if self._last_cut else
+                                "no summary came back: return the round JSON object")]
         root, cards = self._tree()
         made = {str(one.get("ref") or "") for one in summary.get("cards") or []
                 if isinstance(one, dict)}
@@ -10817,12 +10894,33 @@ class Run:
                                 if t.startswith("env:") and not t.startswith("env:medium:")],
                 "tasks": self.project_tasks, "text": text}
 
+    def _a_whole_project(self) -> bool:
+        """Whether this work is a whole project handed over as one (delegate.py)."""
+        try:
+            for row in self.owner.db.query("SELECT options FROM work_drafts WHERE unit_id = ? AND "
+                                           "source = 'project'", (str(self.unit.get("id") or ""),)):
+                if (json.loads(row["options"] or "{}") or {}).get("whole"):
+                    return True
+        except Exception:                        # told as any work, then
+            log.debug("whether it is a whole project could not be read", exc_info=True)
+        return False
+
     def _hand_over(self, item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """A result handed to the user (handed.py): kept - in place of the
         one of the same kind and title - and said in the live session.
         ONE WAY OF ONE THING (the user, 2026-11-01): at most WAYS_MOST ways
         of it; each READY when handed over - opened by the user while the
         next is made, so kept at once and never changed once they changed it."""
+        if item.get("kind") == "guide":
+            # THE WHOLE PROJECT'S GUIDE: one, in its plan - not among what it made.
+            self.plan["guide"] = dict(item, at=_now())
+            self._event("worker", "milestone",
+                        f"Handed to you: the guide to the whole - {_clip(item.get('title'), 160)}")
+            try:
+                self.owner.save(self)
+            except Exception:                            # pragma: no cover - saved at the end
+                log.debug("the guide was not saved at once", exc_info=True)
+            return None
         items = list(self.plan.get("handed") or [])
         same = [one for one in items if (one.get("kind"), one.get("title"))
                 == (item.get("kind"), item.get("title"))]

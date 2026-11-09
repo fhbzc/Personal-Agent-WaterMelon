@@ -185,6 +185,43 @@ SAVED OR SUBMITTED for the user: what you hand over is opened for them to
 check, and what is done with it is theirs."""
 
 
+#: A WHOLE PROJECT HANDED OVER (the user, 2026-11-08: "project to do 和Item to do 一样，是告诉用户如何一步
+#: 步用item to do的(或者有些item to do 之外要做的)"): told only to such a work.
+PROJECT_GUIDE_RULES = """THIS IS A WHOLE PROJECT, HANDED OVER AS ONE: besides each result, hand over
+ONE GUIDE to the whole of it - hand_over with kind "guide" (title: the project, in a few words),
+at the end, after the results (again when they change). Like each result's own how and check,
+but for the project: "how" - step by step, in the order the user does them, how they use what you
+handed over to finish the project: which result first, what to do with it, which next - naming
+each result by its title - and every step they must take that no result covers (someone to ask,
+a page to sign, a date to book, something only they can do); "check" - the few things to check
+across the whole before they are done (at most eight, a line each). It comes up at the top of the
+project's panel, the results under it."""
+
+#: ANY WORK THAT HANDS OVER MORE THAN ONE THING (the user, 2026-11-08: "如果有多个deliverable ... 写清楚
+#: instruction"): one guide to them all, as a whole project's.
+MANY_RESULTS_GUIDE_RULES = """MORE THAN ONE RESULT: if you hand over more than one result (ways of one
+thing count as one), also hand over ONE GUIDE to them all - hand_over with kind "guide" (title: the
+work, in a few words), at the end, after them: "how" - step by step, in the order the user does them,
+which result to use first and what to do with it, which next, naming each by its title, and any step
+they must take that no result covers; "check" - the few things to check across them all (at most
+eight, a line each). It comes up at the top of their panel, the results under it. One result: no
+guide - its own how and check say it."""
+
+#: How long a whole project's guide may be.
+GUIDE_HOW_MOST = 6000
+
+
+def guide_of(args: Dict[str, Any]) -> Dict[str, Any]:
+    """A whole project's guide, as kept - from hand_over with kind "guide" - or {"error"}."""
+    how = str(args.get("how") or "").strip()[:GUIDE_HOW_MOST]
+    check = _checks(args.get("check"))
+    if not how:
+        return {"error": "a guide says how, step by step, the user uses what was handed over "
+                         "to finish the project - and what they must do besides"}
+    return {"kind": "guide", "title": _short(args.get("title"), 200), "how": how,
+            "check": check}
+
+
 def _short(value: Any, most: int = SHORT) -> str:
     return " ".join(str(value or "").split())[:most]
 
@@ -678,17 +715,35 @@ def person_judge(models: Any) -> Callable[[List[str], Dict[str, List[str]]], Dic
         from ...heartbeat.states.heartbeat import _as_json
         from ...models.base import ModelRequest
         from ...common.languages import in_english
+        from ...models import answers as model_answers
         labels = {f"T{n + 1}": thread for n, thread in enumerate(threads)}
-        asked = {"the_reply_is_for": who,
-                 "threads": {label: threads[thread] for label, thread in labels.items()}}
-        said = models.invoke(ModelRequest(
-            messages=[{"role": "user", "content": json.dumps(asked, ensure_ascii=False)}],
-            system=SAME_PERSON, max_tokens=300, task="reply_person",
-            language=in_english("the answers")), role="fast_reply")
-        answer = _as_json(getattr(said, "text", "") or "") or {}
-        return {thread: str(answer.get(label) or "unsure").strip().lower()
-                for label, thread in labels.items()}
+
+        def ask(part: List[str]) -> Any:
+            asked = {"the_reply_is_for": who,
+                     "threads": {label: threads[labels[label]] for label in part}}
+            said = models.invoke(ModelRequest(
+                messages=[{"role": "user", "content": json.dumps(asked, ensure_ascii=False)}],
+                system=SAME_PERSON, max_tokens=300, task="reply_person",
+                language=in_english("the answers")), role="fast_reply")
+            return model_answers.read(said, parse=_as_json)
+        out: Dict[str, str] = {}
+        # ONLY WHEN WHOLE (2026-11-07): an answer cut off or unreadable said "unsure" of every
+        # thread. Cut off, the threads are asked again in halves; a part still not answered at
+        # its smallest is FAILED - kept so, and not asked the same way again (the user, 2026-11-07)
+        # - and counts as no match.
+        for part, read in model_answers.in_parts(list(labels), ask):
+            if not read.ok:
+                log.info("whether a person is on a mail page was not answered: %s",
+                         read.why_not)
+            for label in part:
+                out[labels[label]] = (str(read.data.get(label) or "unsure").strip().lower()
+                                      if read.ok else FAILED_JUDGEMENT)
+        return out
     return judge
+
+
+#: What is kept of a thread whether a person is on could not be judged: no match, not asked again.
+FAILED_JUDGEMENT = "failed"
 
 
 def _judged_key(who: List[str], thread: str, people: List[str]) -> str:

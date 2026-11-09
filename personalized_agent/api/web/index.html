@@ -84,7 +84,7 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
                button of the card's own, as "Make an issue now" is - not a
                small grey one beside the text. -->
           <div class="ov-lp-buttons ov-round-now">
-            <button type="button" id="ov-round-run">Update tasks now</button>
+            <button type="button" id="ov-round-run">Update projects now</button>
             <span id="ov-round-next" class="muted"></span>
           </div>
           <div class="muted">What you have been working on, grouped from what
@@ -481,6 +481,20 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
         on a web page is used in that run only and never kept. A card is never
         changed: a new version replaces it.</p>
       <div id="lesson-cards"></div>
+    </div>
+    <!-- WHAT THE LESSONS GAVE EACH DECISION (the user, 2026-11-07): every retrieval, newest
+         first, by site (debugger.js, heartbeat/lessons/retrieve.py). -->
+    <div class="card" id="lesson-retrievals-card">
+      <div class="card-head-row">
+        <h3>What the lessons gave each decision</h3>
+        <select id="lret-site" aria-label="Which site"></select>
+        <button type="button" class="small secondary" id="lret-read">Read again</button>
+      </div>
+      <p class="muted">Every time the lessons were looked for, newest first: where it was
+        asked from, what it was asked with, and what came back with its score. Nothing below
+        the floor is given, so some come back with none. Kept only in a build with the
+        Debugger.</p>
+      <div id="lret-list"><p class="muted">Reading&hellip;</p></div>
     </div>
   </section>
 

@@ -18,10 +18,11 @@ configured reminder interval elapsing.
 from __future__ import annotations
 
 import json
+import re
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..platform_layer import get_platform
 from .events.models import Notification, iso, json_dump
@@ -34,6 +35,45 @@ NOT_A_TRIGGER = {"heartbeat": "None: the heartbeat's round", "agent": "None: the
 NOT_A_TRIGGER_AT_ALL = "None: sent by the application"
 
 
+#: WHAT KIND EACH IS, as the waiting list groups them and its line counts them (the user,
+#: 2026-11-07: "return back to old project 和晚间summary改成 summary类型（不同于notification和
+#: recommendation)"; "N waiting的时候，要写清楚category"). In this order; each counted in these words.
+CATEGORIES = ("Recommended content", "Summaries", "Reminders", "Other")
+#: THE LINE BESIDE THE AVATAR, a row a kind in this order (the user, 2026-11-07: "应该是分行 X
+#: notification / X summary / X recommendation ... 按照这个顺序，每行不同的颜色"): its name, the
+#: groups of the list it counts, its words.
+LINE_KINDS = (("notifications", ("Reminders", "Other"), ("{0} notification", "{0} notifications")),
+              ("summaries", ("Summaries",), ("{0} summary", "{0} summaries")),
+              ("recommendations", ("Recommended content",),
+               ("{0} recommendation", "{0} recommendations")))
+
+
+def category_of(row: Dict[str, Any]) -> str:
+    """A notification's kind: a summary, a recommendation, a reminder or another."""
+    metadata = row.get("metadata") or {}
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata or "{}")
+        except ValueError:
+            metadata = {}
+    if metadata.get("summary"):
+        return "Summaries"
+    if metadata.get("recommended"):
+        return "Recommended content"
+    return "Reminders" if row.get("kind") == "proactive" else "Other"
+
+
+def waiting_lines(counts: Dict[str, int], words: Any) -> List[Tuple[str, str]]:
+    """The rows beside the avatar - (kind, "2 notifications") - for each kind something waits of,
+    in LINE_KINDS' order; `words` puts each in the display language."""
+    out: List[Tuple[str, str]] = []
+    for kind, groups, said in LINE_KINDS:
+        many = sum(int(counts.get(group) or 0) for group in groups)
+        if many:
+            out.append((kind, words(said[0 if many == 1 else 1]).replace("{0}", str(many))))
+    return out
+
+
 def told_from(metadata: Any) -> str:
     """WHICH TRIGGER OF THE MONITOR A NOTIFICATION CAME FROM (the user, 2026-11-06: said on each one),
     or that none did and what did instead."""
@@ -43,11 +83,71 @@ def told_from(metadata: Any) -> str:
         except ValueError:
             metadata = {}
     metadata = metadata if isinstance(metadata, dict) else {}
-    named = (metadata.get("monitor") or {}).get("activator") or metadata.get("trigger")
+    said = metadata.get("monitor") or {}
+    named = said.get("shown_as") or said.get("activator") or metadata.get("trigger")
     if named:
         return str(named)
     return NOT_A_TRIGGER.get(str(metadata.get("made_by") or metadata.get("source") or ""),
                              NOT_A_TRIGGER_AT_ALL)
+
+def _a_signal_said(one: str) -> str:
+    """A signal as its trigger saw it, in plain words: "present True" - at the computer; "hour
+    20.52" - at 20:31; "worked_today_minutes 1021" - worked today 1021 min."""
+    name, _, rest = one.partition(" ")
+    value, _, after = rest.partition(" ")
+    try:
+        number = float(value)
+    except ValueError:
+        number = None
+    if name == "present":
+        return "at the computer" if value == "True" else "away"
+    if name in ("hour", "day_hour") and number is not None:
+        hours = number % 24
+        return (f"at {int(hours):02d}:{int(round((hours % 1) * 60)) % 60:02d}"
+                + (f" {after}" if after else ""))
+    words = name.replace("_minutes", "").replace("_", " ")
+    if number is not None:
+        said = f"{words} {number:g} min" if name.endswith("_minutes") else f"{words} {number:g}"
+        return said + (f" {after}" if after else "")
+    return re.sub(r"(\d+)\.0\b", r"\1", one).replace("_", " ")
+
+
+def what_set_it_off(metadata: Any) -> str:
+    """WHAT EXACTLY SET IT OFF, in a line (the user, 2026-11-08: "这个为什么trigger, 要说出关键词是什么
+    ... 或者关键condition是什么"): the words that matched on the screen and where, or the conditions
+    of its trigger that held - "" when nothing is kept of it."""
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata or "{}")
+        except ValueError:
+            metadata = {}
+    metadata = metadata if isinstance(metadata, dict) else {}
+    context = (metadata.get("monitor") or {}).get("context") or {}
+    if not isinstance(context, dict):
+        return ""
+    where = str((context.get("window") or {}).get("title") or "").strip()
+    chain = context.get("chain") or metadata.get("chain") or {}
+    hit = [str(one) for one in (chain.get("hit") or []) if str(one).strip()] \
+        if isinstance(chain, dict) else []
+    if hit:
+        return (f"the words on the screen: {', '.join(hit[:8])}"
+                + (f" (in {where[:120]})" if where else ""))
+    said = []
+    for one in context.get("why") or []:
+        one = str(one).strip()
+        if not one:
+            continue
+        if one.startswith("event "):
+            one = one[len("event "):].replace("_", " ")
+        elif one.startswith("the words: "):
+            one = "the words on the screen: " + one[len("the words: "):]
+        else:
+            one = _a_signal_said(one)
+        said.append(one)
+    if not said:
+        return ""
+    return "; ".join(said[:6])[:300] + (f" (in {where[:120]})" if where and len(said) else "")
+
 
 #: The kind of notification the agent raises of its own accord, as opposed to
 #: the ones the system raises about itself (a failure, a sign-in, a warning).
@@ -301,6 +401,14 @@ class NotificationService:
             except (TypeError, ValueError):
                 row["metadata"] = {}
         return rows
+
+    def waiting_by_category(self) -> Dict[str, int]:
+        """How many wait, of each kind (`category_of`)."""
+        out: Dict[str, int] = {}
+        for row in self.waiting(1000):
+            name = category_of(row)
+            out[name] = out.get(name, 0) + 1
+        return out
 
     def waiting_count(self) -> int:
         row = self.db.query_one("SELECT COUNT(*) AS n FROM notifications WHERE read = 0 AND "

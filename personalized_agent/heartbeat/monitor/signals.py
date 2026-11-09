@@ -62,6 +62,22 @@ ALIVE_KEY = "monitor.alive_at"
 AWAY_AFTER_S = 300
 #: Away this long and back is the day beginning, when little was worked today.
 DAY_GAP_MIN = 240
+#: THE USER'S DAY (the user, 2026-11-07: some end after midnight, and asleep the computer may still
+#: be on, untouched): from waking to sleep. Their night is the longest time away in a day, the
+#: computer on or off; a time away this share of their usual night, at least SLEEP_LEAST_MIN,
+#: ends the day - DAY_GAP_MIN while their nights are not known.
+SLEEP_SHARE, SLEEP_LEAST_MIN = 0.6, 120
+#: ONLY THE ONE MOST LIKE A NIGHT (the user, 2026-11-07: "长离开里最像夜里的那段是"): a long time
+#: away is their night only when its middle is near the middle of their nights - within twice how
+#: much their nights' middles vary, NIGHT_LEAST_HOURS to NIGHT_MOST_HOURS; a long class or a trip
+#: in the day is no night. While their nights are not known: NIGHT_MIDDLE_DEFAULT, give or take
+#: NIGHT_HOURS_DEFAULT.
+NIGHT_LEAST_HOURS, NIGHT_MOST_HOURS = 3.0, 8.0
+NIGHT_MIDDLE_DEFAULT, NIGHT_HOURS_DEFAULT = 3.5, 6.0
+#: The evening report is due when this share of their days had ended - before they go, most days.
+REPORT_SHARE = 0.25
+#: How far back the day's beginning is looked for, and the slack between two windows read as one.
+DAY_LOOK_HOURS, GAP_SLACK_MIN = 36, 20
 DAY_BEGAN_LEAST_WORK_MIN = 30
 #: Back from an absence: said for this long after it.
 BACK_FOR_MIN = 10
@@ -134,7 +150,18 @@ SIGNALS: Dict[str, Tuple[str, str]] = {
     "since_break_minutes": ("number", "minutes at the screen since the last break, work or not"),
     "work_minutes": ("number", "minutes of the user's own work since the last break: not resting, "
                                "and not their agent working while their hands are off"),
-    "worked_today_minutes": ("number", "minutes worked since midnight"),
+    "worked_today_minutes": ("number", "minutes worked in the user's day so far - since they "
+                                       "woke, not since midnight"),
+    "day": ("text", "the user's day, YYYY-MM-DD: the date they woke on - after midnight it is "
+                    "still the day before until they have slept"),
+    "day_hour": ("number", "hours since the midnight before the user's day began: 25.5 is "
+                           "01:30 of a day that has not ended"),
+    "day_started_at": ("text", "when the user's day began (they woke), ISO"),
+    "sleep_least_minutes": ("number", "how long away is the night, from this user's nights"),
+    "evening_report_hour": ("number", "when the evening report is due, by day_hour: about when a "
+                                      "quarter of this user's days had ended; -1 unknown"),
+    "usual_day_minutes": ("number", "minutes this user usually works in a day like today; "
+                                    "-1 unknown"),
     "project_id": ("text", "the project (or task in no project) of the window in front"),
     "project": ("text", "its name"),
     "project_how": ("text", "how that was told: grouping (the heartbeat placed it), history "
@@ -144,6 +171,12 @@ SIGNALS: Dict[str, Tuple[str, str]] = {
     "task_id": ("text", "the task within it the window most likely belongs to"),
     "task": ("text", "that task's title"),
     "project_minutes": ("number", "minutes on that project in a row"),
+    "project_dwell_minutes": ("number", "minutes, in this quarter of an hour and the one before, "
+                                        "on what is that project's own: its files, pages, titles"),
+    "old_project_least_minutes": ("number", "how long on a project counts as being back at it, "
+                                            "from how this user moves between windows"),
+    "old_project_least_days": ("number", "how many days away make a project an old one, from "
+                                         "how long this user usually leaves one"),
     "project_today_minutes": ("number", "minutes on it today"),
     "project_days_since": ("number", "days since it was last worked on before today; "
                                      "-1 never before"),
@@ -153,6 +186,10 @@ SIGNALS: Dict[str, Tuple[str, str]] = {
                                         "-1 unknown"),
     "usual_worked_by_now_minutes": ("number", "minutes usually worked by this time on a "
                                               "day like today; -1 unknown"),
+    "usual_work_stretch_minutes": ("number", "how long the user's own work usually runs "
+                                             "before a break; -1 unknown"),
+    "usual_absence_minutes": ("number", "how long the user is usually away when they step away "
+                                        "during a day like today; -1 unknown"),
     "worked_vs_usual_minutes": ("number", "worked today minus the usual by now"),
     "usual_activity_now": ("text", "what the user usually does at this half hour on a day "
                                    "like today; empty unknown"),
@@ -162,12 +199,36 @@ SIGNALS: Dict[str, Tuple[str, str]] = {
 #: most there were, and at least this share of them.
 CLOSING_WITHIN_SECONDS, CLOSING_LEAST_FEWER, CLOSING_SHARE = 180, 4, 0.4
 
+#: BACK TO AN OLD PROJECT (the user, 2026-11-07: "在一个地方停留超过2min, 这个project上一次active
+#: 至少在3天前"; both "根据user activity dynamically adjust"). The two lines when too little is known;
+#: being back is this many of the user's usual times in front of one window, between these minutes,
+#: read over these days; an old one is left longer than this share of their times away from a
+#: project, between these days, read over these days; each from at least this many seen.
+OLD_DEFAULT = (2.0, 3.0)
+OLD_FOCUSES, OLD_MINUTES, OLD_FOCUS_DAYS = 4.0, (1.0, 5.0), 14
+OLD_GAP_SHARE, OLD_DAYS, OLD_GAP_DAYS = 0.75, (2.0, 14.0), 30
+OLD_LEAST_SEEN = 10
+#: The day a summary was sent for a project come back to.
+OLD_TOLD = "monitor.old_project.{}"
+#: A WINDOW LOOKED AT IS NOT LOOKED AT AGAIN FOR THIS LONG (the user, 2026-11-07: "一个窗口被调用过
+#: 之后，有30min的冷却(同窗口30min内不重复判断)，generally是5min 冷却"): when it was, by window.
+OLD_WINDOW_MINUTES = 30
+OLD_LOOKED = "monitor.old_project.looked.{}"
+
+
+def old_window_key(application: Any, title: Any) -> str:
+    """A window as the look at it is kept by: its program and its title, made short."""
+    import hashlib
+    said = f"{str(application or '').lower()}|{str(title or '').strip()}"
+    return hashlib.sha1(said.encode("utf-8")).hexdigest()[:16]
+
 #: THE EVENTS, each said on the look it happened: name -> what it is.
 EVENTS: Dict[str, str] = {
     "day_began": "the first work of the day, after hours away (the computer just opened)",
     "back": "back at the computer after an absence (back_after_minutes says how long)",
+    "day_ended": "away for as long as this user's night (sleep_least_minutes): their day is over",
     "project_changed": "the window in front is now another project",
-    "new_work": "a piece of work never worked on before today has begun",
+    "old_project": "back for a while at a project last worked on days ago (once a day each)",
     "leisure": "turned to something to watch or play, after working",
     "text": "new words appeared in a window (for keyword conditions)",
     "closing_up": "many windows closed in a few minutes: tidying up, perhaps to stop for the day",
@@ -220,6 +281,78 @@ def _aware(text: Any) -> Optional[datetime]:
 
 def _median(values: List[float]) -> float:
     return float(statistics.median(values)) if values else -1.0
+
+
+def _quantile(values: List[float], share: float) -> float:
+    if not values:
+        return -1.0
+    ordered = sorted(values)
+    return float(ordered[min(len(ordered) - 1, int(share * len(ordered)))])
+
+
+def away_runs(windows: List[Window]) -> List[Tuple[datetime, datetime, bool]]:
+    """Every time no one was at the computer, oldest first: away windows run together, and the
+    time no window covers (the agent closed, the computer off or asleep). Each (start, end, closed):
+    closed when the user came back after it; the last may still be going on."""
+    runs: List[Tuple[datetime, datetime, bool]] = []
+    start: Optional[datetime] = None
+    last_end: Optional[datetime] = None
+    for w in sorted(windows, key=lambda one: one.start):
+        begin, end = w.start, w.start + timedelta(minutes=w.minutes)
+        if last_end is not None and begin > last_end + timedelta(minutes=GAP_SLACK_MIN):
+            start = start or last_end
+        if w.main == AWAY:
+            start = start or begin
+        elif start is not None:
+            runs.append((start, begin, True))
+            start = None
+        last_end = end if last_end is None else max(last_end, end)
+    if start is not None and last_end is not None:
+        runs.append((start, last_end, False))
+    return runs
+
+
+def _minutes(run: Tuple[datetime, datetime, bool]) -> float:
+    return (run[1] - run[0]).total_seconds() / 60.0
+
+
+def _middle_hour(run: Tuple[datetime, datetime, bool]) -> float:
+    middle = (run[0] + (run[1] - run[0]) / 2).astimezone()
+    return middle.hour + middle.minute / 60.0
+
+
+def _hours_apart(one: float, other: float) -> float:
+    """How far two hours of the day are, round the clock: 23:00 and 01:00 are two apart."""
+    apart = abs(one - other) % 24
+    return min(apart, 24 - apart)
+
+
+def _round_the_clock(hours: List[float]) -> Tuple[float, float]:
+    """The middle of hours of the day, round the clock, and how much they vary (in hours)."""
+    import math
+    angles = [hour / 24.0 * 2 * math.pi for hour in hours]
+    s, c = sum(math.sin(a) for a in angles), sum(math.cos(a) for a in angles)
+    middle = (math.atan2(s, c) / (2 * math.pi) * 24.0) % 24
+    length = min(1.0, math.hypot(s, c) / max(1, len(angles)))
+    spread = math.sqrt(-2 * math.log(length)) / (2 * math.pi) * 24.0 if length > 0 else 12.0
+    return middle, spread
+
+
+def nights_of(runs: List[Tuple[datetime, datetime, bool]], least: float, middle: float,
+              within: float) -> List[Tuple[datetime, datetime, bool]]:
+    """The times away that are nights: long enough, their middle near the nights' middle; of two
+    a day apart or less, the one nearer it."""
+    found: List[Tuple[datetime, datetime, bool]] = []
+    for run in runs:
+        if _minutes(run) < least or _hours_apart(_middle_hour(run), middle) > within:
+            continue
+        if found and (run[0] - found[-1][1]).total_seconds() < 12 * 3600:
+            if _hours_apart(_middle_hour(run), middle) < _hours_apart(
+                    _middle_hour(found[-1]), middle):
+                found[-1] = run
+            continue
+        found.append(run)
+    return found
 
 
 class Signals:
@@ -592,7 +725,8 @@ class Signals:
             found = matcher.match(items, live.start)
             if found and found[0] in index.units:
                 live.project_id, live.project = found[0], index.names.get(found[0], "")
-                self._live = {"how": "history", "items": items, "seen": seen}
+                self._live = {"how": "history", "items": items, "seen": seen,
+                              "dwell": matcher.seconds_for(items, found[0])}
                 return
         if self._watching(now or end):
             return
@@ -603,7 +737,8 @@ class Signals:
             unit, name = "", ""
         if unit:
             live.project_id, live.project = unit, name
-            self._live = {"how": "paths", "items": items, "seen": seen}
+            self._live = {"how": "paths", "items": items, "seen": seen,
+                          "dwell": self._seconds_by_paths(items, unit)}
 
     @staticmethod
     def _name_key(text: str) -> str:
@@ -805,6 +940,8 @@ class Signals:
                  if day_type(ws[0].start.weekday()) == kind
                  and any(w.main != AWAY for w in ws)}
         starts, by_now, stretches, at_this = [], [], [], {}
+        work_stretches: List[float] = []
+        absences: List[float] = []
         clock = local.hour * 60 + local.minute
         for ws in alike.values():
             work = [w for w in ws if w.main != AWAY]
@@ -815,10 +952,22 @@ class Signals:
             for one, nxt in zip(ws, ws[1:]):
                 if one.main != AWAY and nxt.since_break_min < one.since_break_min:
                     stretches.append(one.since_break_min)
+                if one.main != AWAY and 0 < one.own_work_min and nxt.own_work_min < one.own_work_min:
+                    work_stretches.append(one.own_work_min)
+            # The times they stepped away within the day: between its first and last work.
+            at_work = [index for index, w in enumerate(ws) if w.main != AWAY]
+            away = 0.0
+            for w in ws[at_work[0]:at_work[-1] + 1]:
+                if w.main == AWAY:
+                    away += w.minutes
+                elif away:
+                    absences.append(away)
+                    away = 0.0
             for w in work:
                 if w.bucket == time_bucket(local):
                     at_this[w.main] = at_this.get(w.main, 0) + 1
         enough = len(alike) >= HABIT_LEAST_DAYS
+        nights = self._nights(since, local)
         usual_now = ""
         if enough and at_this:
             label, count = max(at_this.items(), key=lambda kv: kv[1])
@@ -828,10 +977,78 @@ class Signals:
                "usual_stretch_minutes": round(_median(stretches), 0) if enough and stretches
                else -1.0,
                "usual_worked_by_now_minutes": round(_median(by_now), 0) if enough else -1.0,
+               "usual_work_stretch_minutes": round(_median(work_stretches), 0)
+               if enough and work_stretches else -1.0,
+               "usual_absence_minutes": round(_median(absences), 0) if enough and absences
+               else -1.0,
                "usual_activity_now": usual_now,
+               **nights,
                "projects_this_week": self._projects_by_week(local)}
         self._habits = (time.monotonic(), key, out)
         return out
+
+    def _nights(self, since: datetime, local: datetime) -> Dict[str, float]:
+        """THE USER'S NIGHTS AND DAYS (the user, 2026-11-07), over the same weeks: how long away is
+        their night, and - of whole days like today, waking to sleep - when they ended (by the
+        midnight before they woke: 25.5 is 01:30 the next morning) and how much was worked."""
+        windows = self.store.between(since, local)
+        runs = away_runs(windows)
+        longest: Dict[Any, float] = {}
+        longest_runs: Dict[Any, Tuple[datetime, datetime, bool]] = {}
+        for run in runs:
+            if run[2]:
+                day = run[1].astimezone().date()
+                if _minutes(run) > longest.get(day, 0.0):
+                    longest[day], longest_runs[day] = _minutes(run), run
+        known = len(longest) >= HABIT_LEAST_DAYS
+        least = (max(SLEEP_LEAST_MIN, SLEEP_SHARE * _median(list(longest.values())))
+                 if known else float(DAY_GAP_MIN))
+        middles = [_middle_hour(run) for day, run in longest_runs.items()]
+        if known:
+            middle, spread = _round_the_clock(middles)
+            within = min(NIGHT_MOST_HOURS, max(NIGHT_LEAST_HOURS, 2 * spread))
+        else:
+            middle, within = NIGHT_MIDDLE_DEFAULT, NIGHT_HOURS_DEFAULT
+        nights = nights_of([run for run in runs if run[2]], least, middle, within)
+        kind = day_type(local.weekday())
+        ends, worked = [], []
+        for woke, slept in zip(nights, nights[1:]):
+            begin, end = woke[1], slept[0]
+            work = [w for w in windows if begin <= w.start < end and w.main != AWAY]
+            if not work:
+                continue
+            awake = begin.astimezone()
+            if day_type(awake.weekday()) != kind:
+                continue
+            midnight = awake.replace(hour=0, minute=0, second=0, microsecond=0)
+            last = work[-1].start + timedelta(minutes=work[-1].minutes)
+            ends.append((last.astimezone() - midnight).total_seconds() / 3600.0)
+            worked.append(sum(w.minutes * (1 - w.idle_share) for w in work))
+        enough = len(ends) >= HABIT_LEAST_DAYS
+        return {"sleep_least_minutes": round(least, 0),
+                "night_middle_hour": round(middle, 2), "night_within_hours": round(within, 2),
+                "evening_report_hour": round(_quantile(ends, REPORT_SHARE), 2) if enough else -1.0,
+                "usual_day_minutes": round(_median(worked), 0) if enough else -1.0}
+
+    def day_began(self, now: datetime, present: bool,
+                  live: Optional[Window] = None) -> datetime:
+        """When the user's day began: the end of their last night - a time away as long as
+        sleep_least_minutes - they came back from. Asleep, it is still the day before; with no
+        night in the last DAY_LOOK_HOURS, midnight."""
+        local = now.astimezone()
+        habits = self.habits(now)
+        least = float(habits.get("sleep_least_minutes") or DAY_GAP_MIN)
+        middle = float(habits.get("night_middle_hour", NIGHT_MIDDLE_DEFAULT))
+        within = float(habits.get("night_within_hours", NIGHT_HOURS_DEFAULT))
+        windows = self.store.since(local - timedelta(hours=DAY_LOOK_HOURS))
+        if live is not None:
+            windows = windows + [live]
+        runs = [run for run in away_runs(windows) if run[2] or present]
+        began = None
+        for _start, end, _closed in nights_of(runs, least, middle, within):
+            began = end
+        return began.astimezone() if began is not None else local.replace(
+            hour=0, minute=0, second=0, microsecond=0)
 
     def _projects_by_week(self, local: datetime) -> List[Dict[str, Any]]:
         """The projects of the last seven days, with the hours of each against
@@ -906,7 +1123,10 @@ class Signals:
                 else:
                     self._back = None
             midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
-            today = [w for w in self.store.since(midnight) if w.main != AWAY]
+            # THE USER'S DAY, FROM WAKING (the user, 2026-11-07), not from midnight.
+            began = self.day_began(when, present, live)
+            day_midnight = began.replace(hour=0, minute=0, second=0, microsecond=0)
+            today = [w for w in self.store.since(began) if w.main != AWAY]
             if live is not None and live.main != AWAY and (not today or live.start > today[-1].start):
                 today = today + [live]
             first = today[0].start if today else None
@@ -923,6 +1143,12 @@ class Signals:
                 "hour": round(local.hour + local.minute / 60.0, 2),
                 "weekday": local.weekday(), "is_weekend": local.weekday() >= 5,
                 "date": local.date().isoformat(),
+                "day": began.date().isoformat(),
+                "day_hour": round((local - day_midnight).total_seconds() / 3600.0, 2),
+                "day_started_at": began.isoformat(),
+                "sleep_least_minutes": habits.get("sleep_least_minutes", float(DAY_GAP_MIN)),
+                "evening_report_hour": habits.get("evening_report_hour", -1.0),
+                "usual_day_minutes": habits.get("usual_day_minutes", -1.0),
                 "present": present, "idle_seconds": round(idle, 0),
                 "away_minutes": round((when - self._away_since).total_seconds() / 60.0, 1)
                 if self._away_since is not None else 0.0,
@@ -947,9 +1173,13 @@ class Signals:
                 "project_today_minutes": round(live.project_today_min, 0) if live is not None
                 else 0.0,
                 "project_days_since": self._days_since(project_id, midnight),
+                "project_dwell_minutes": round(self._dwell(live, project_id, when) / 60.0, 1),
+                **self._old_project_lines(local),
                 "habit_days": habits["habit_days"],
                 "usual_start_hour": habits["usual_start_hour"],
                 "usual_stretch_minutes": habits["usual_stretch_minutes"],
+                "usual_work_stretch_minutes": habits.get("usual_work_stretch_minutes", -1.0),
+                "usual_absence_minutes": habits.get("usual_absence_minutes", -1.0),
                 "usual_worked_by_now_minutes": usual_by_now,
                 "worked_vs_usual_minutes": round(worked - usual_by_now, 0) if usual_by_now >= 0
                 else 0.0,
@@ -968,8 +1198,123 @@ class Signals:
             (project_id, midnight.astimezone(timezone.utc).isoformat()))
         last = _aware(row["t"]) if row and row["t"] else None
         if last is None:
+            last = self._state_before(project_id, midnight)
+        if last is None:
             return -1.0
         return float((midnight.date() - last.astimezone().date()).days)
+
+    # -- BACK TO AN OLD PROJECT (the user, 2026-11-07) ------------------------------------
+    def _seconds_by_paths(self, items: Dict[str, float], unit: str) -> float:
+        """How long, of these, was on names that are this project's alone."""
+        mapping = self._path_map()
+        out = 0.0
+        for op, seconds in items.items():
+            keys = {self._name_key(part) for part in _NAME_SPLIT.split(str(op).split(":", 1)[-1])}
+            if any(mapping.get(key) == {unit} for key in keys if len(key) >= PATH_NAME_LEAST):
+                out += float(seconds or 0)
+        return out
+
+    def _dwell(self, live: Optional[Window], project_id: str, when: datetime) -> float:
+        """SECONDS ON THE PROJECT'S OWN, in the window now and in the one just before when that was
+        the same project: "在一个地方停留超过2min" - seconds on a channel are not a return. Never more
+        than the time there was."""
+        if live is None or not project_id:
+            return 0.0
+        held = self.__dict__.get("_live") or {}
+        mine = float(held.get("dwell") or 0.0)
+        elapsed = (when - live.start).total_seconds()
+        if elapsed > 0:
+            mine = min(mine, elapsed)
+        kept: Dict[datetime, Tuple[str, float]] = self.__dict__.setdefault("_dwells", {})
+        kept[live.start] = (project_id, mine)
+        for old in [one for one in kept if one < live.start - timedelta(hours=1)]:
+            kept.pop(old, None)
+        before = kept.get(live.start - timedelta(minutes=live.minutes))
+        return mine + (before[1] if before and before[0] == project_id else 0.0)
+
+    def _old_project(self, now: Dict[str, Any]) -> bool:
+        """Back long enough at a project left long enough - until one is told for it that day.
+        Marked only once the model has seen it is that project and the summary is sent
+        (`Decider.old_project`): a misreading, or a look skipped, leaves the day's chance (the
+        Activator's cooldown spaces the looks)."""
+        project = str(now.get("project_id") or "")
+        least_minutes = now.get("old_project_least_minutes")
+        if not project or not least_minutes or not now.get("present"):
+            return False
+        if now.get("project_dwell_minutes", 0) < least_minutes:
+            return False
+        if now.get("project_days_since", -1) < now.get("old_project_least_days", OLD_DEFAULT[1]):
+            return False
+        if self._kv(OLD_TOLD.format(project)) == now["date"]:
+            return False
+        looked = _aware(self._kv(OLD_LOOKED.format(old_window_key(now.get("application"),
+                                                                  now.get("title")))))
+        at = _aware(now.get("at"))
+        return not (looked is not None and at is not None
+                    and at - looked < timedelta(minutes=OLD_WINDOW_MINUTES))
+
+    def _old_project_lines(self, local: datetime) -> Dict[str, float]:
+        """THE TWO LINES, FROM THIS USER'S OWN WEEKS, read once a day ("能不能写成根据user activity
+        dynamically adjust"): being back is OLD_FOCUSES of their usual times in front of one
+        window, between OLD_MINUTES; an old project is one left longer than OLD_GAP_SHARE of the
+        times they leave a project, between OLD_DAYS. Too little seen: 2 minutes, 3 days."""
+        day = local.date().isoformat()
+        held = self.__dict__.get("_old_lines")
+        if held and held[0] == day:
+            return dict(held[1])
+        minutes, days = OLD_DEFAULT
+        try:
+            since = (local - timedelta(days=OLD_FOCUS_DAYS)).astimezone(timezone.utc).isoformat()
+            rates = [float(row["switch_rate"]) for row in self.db.query(
+                "SELECT switch_rate FROM activity_windows WHERE start_at >= ? AND main != ? AND "
+                "switch_rate > 0", (since, AWAY))]
+            if len(rates) >= OLD_LEAST_SEEN:
+                seconds = 3600.0 / statistics.median(rates)
+                minutes = min(OLD_MINUTES[1], max(OLD_MINUTES[0], OLD_FOCUSES * seconds / 60.0))
+            since = (local - timedelta(days=OLD_GAP_DAYS)).astimezone(timezone.utc).isoformat()
+            dates: Dict[str, set] = {}
+            for row in self.db.query(
+                    "SELECT project_id, start_at FROM activity_windows WHERE start_at >= ? AND "
+                    "project_id IS NOT NULL AND project_id != ''", (since,)):
+                moment = _aware(row["start_at"])
+                if moment is not None:
+                    dates.setdefault(str(row["project_id"]), set()).add(moment.astimezone().date())
+            gaps: List[int] = []
+            for seen in dates.values():
+                ordered = sorted(seen)
+                gaps += [(two - one).days for one, two in zip(ordered, ordered[1:])]
+            if len(gaps) >= OLD_LEAST_SEEN:
+                gaps.sort()
+                at = gaps[min(len(gaps) - 1, max(0, int(math.ceil(OLD_GAP_SHARE * len(gaps))) - 1))]
+                days = min(OLD_DAYS[1], max(OLD_DAYS[0], float(at)))
+        except Exception:
+            log.debug("the lines for an old project could not be read", exc_info=True)
+        said = {"old_project_least_minutes": round(minutes, 1), "old_project_least_days": days}
+        self._old_lines = (day, said)
+        return dict(said)
+
+    def _state_before(self, project_id: str, midnight: datetime) -> Optional[datetime]:
+        """THE PROJECT'S OWN STATES, when no quarter of an hour was mainly it (the user, 2026-11-07:
+        a project read in Slack on three days, a minute each time, was "new work" on the fourth)."""
+        try:
+            row = self.db.query_one("SELECT members FROM state_tasks WHERE id = ?", (project_id,))
+            members = [str(one) for one in json.loads(row["members"] or "[]")] if row else []
+        except (ValueError, TypeError, AttributeError):
+            return None
+        except Exception:                                # no projects here
+            log.debug("a project's states could not be read", exc_info=True)
+            return None
+        if not members:
+            return None
+        found = []
+        for at in range(0, len(members), 400):
+            got = members[at:at + 400]
+            for state in self.db.query("SELECT starts_at FROM states WHERE id IN (%s)"
+                                       % ",".join("?" * len(got)), tuple(got)):
+                when = _aware(state["starts_at"]) if state["starts_at"] else None
+                if when is not None and when < midnight:
+                    found.append(when)
+        return max(found) if found else None
 
     def _pages_lately(self, local: datetime) -> List[str]:
         """The addresses a browser was on lately, the newest first."""
@@ -1026,16 +1371,22 @@ class Signals:
         if now["present"] and now["back_after_minutes"] > 0 and not before.get(
                 "back_after_minutes"):
             out.append("back")
-        day = now["date"]
+        day = now.get("day") or now["date"]
+        night = float(now.get("sleep_least_minutes") or DAY_GAP_MIN)
         if (now["present"] and now["worked_today_minutes"] <= DAY_BEGAN_LEAST_WORK_MIN
                 and now["mode"] != state_module.GONE and self._kv("monitor.day_began") != day
-                and (now["back_after_minutes"] >= DAY_GAP_MIN or self._first_look_today(day))):
+                and (now["back_after_minutes"] >= night or self._first_look_today(day))):
             self._set_kv("monitor.day_began", day)
             out.append("day_began")
+        if (not now["present"] and float(now.get("away_minutes") or 0) >= night
+                and self._night_hours_now(now)
+                and self._kv("monitor.day_ended") != day):
+            self._set_kv("monitor.day_ended", day)
+            out.append("day_ended")
         if now["project_id"] and now["project_id"] != before.get("project_id"):
             out.append("project_changed")
-            if now["project_days_since"] < 0:
-                out.append("new_work")
+        if now.get("project_dwell_minutes") and self._old_project(now):
+            out.append("old_project")
         if (now["activity"] == "entertainment" and before.get("activity") != "entertainment"
                 and before.get("mode") in (state_module.WORKING, state_module.SHALLOW)):
             out.append("leisure")
@@ -1059,6 +1410,21 @@ class Signals:
         closing = closed >= CLOSING_LEAST_FEWER and closed >= CLOSING_SHARE * most
         self._window_counts = [seen[-1]] if closing else seen
         return closing
+
+    def _night_hours_now(self, now: Dict[str, Any]) -> bool:
+        """Whether this time away could be their night: its middle so far near their nights'."""
+        try:
+            at = datetime.fromisoformat(str(now.get("at") or "")).astimezone()
+        except ValueError:
+            at = datetime.now(timezone.utc).astimezone()
+        away = float(now.get("away_minutes") or 0)
+        middle_now = at - timedelta(minutes=away / 2)
+        hour = middle_now.hour + middle_now.minute / 60.0
+        habits = self._habits[2] if isinstance(self._habits, tuple) and len(self._habits) > 2 \
+            and self._habits[2] else {}
+        middle = float(habits.get("night_middle_hour", NIGHT_MIDDLE_DEFAULT))
+        within = float(habits.get("night_within_hours", NIGHT_HOURS_DEFAULT))
+        return _hours_apart(hour, middle) <= within
 
     def _first_look_today(self, day: str) -> bool:
         """The application started today and nothing was worked before it."""

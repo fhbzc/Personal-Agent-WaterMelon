@@ -54,11 +54,14 @@ As the user asked for it:
 
 from __future__ import annotations
 
+import logging
 import sys
 import tkinter as tk
 from typing import Any, Callable, Dict, List, Optional
 from . import sizes
 from .on_top import on_release
+
+log = logging.getLogger(__name__)
 
 #: Its colours: the agent's dark bubbles', with the amber of what to mind.
 PALETTE = {"edge": "#313133", "bar": "#232325", "bg": "#181819", "ink": "#ffffff",
@@ -87,6 +90,32 @@ ZOOMS, ZOOM_START = sizes.ZOOMS, sizes.ZOOM_START
 
 #: The sides: what was handed over ("item"), how to use it ("how").
 SIDES = ("item", "how")
+#: EACH PART ZOOMED BY ITSELF, AND KEPT (the user, 2026-11-08: "project instruction panel 内部，四个小
+#: panel是支持单独的 缩放（并且记住历史选择)。 同样的，item instruction panel 左右两个也是支持单独缩放
+#: 的"): the two sides, and a whole project's guide and list of what it made.
+PARTS = ("item", "how", "guide", "made")
+#: Closed: hidden at once, its parts let go of this long after, out of sight.
+CLOSE_AFTER_MS = 30
+#: The window an item was shown in, let go this long after the new one is drawn over it.
+SWAP_AFTER_MS = 80
+#: A whole project's guide and its list of what it made, at most these shares of the screen tall
+#: as they open - each scrolled within, the lines between them dragged.
+GUIDE_SHARE, MADE_SHARE = 0.28, 0.2
+#: What a project's row's button says.
+OPEN_ITEM = {"email": "Open the email", "event": "Open the event", "file": "Open the file",
+             "folder": "Open the folder", "message": "Open the chat", "form": "Open the form",
+             "page": "Open the page"}
+#: What is read in the note itself, opened nowhere else: no Open again.
+OPENED_HERE = ("answer", "text")
+#: ITS SCROLL BAR, wider (the user, 2026-11-08: "右边那个拉动的bar也太窄了"): the bar, and what is
+#: taken in it, at the size the note is drawn.
+SCROLL_WIDE, SCROLL_INSET = 14, 3
+#: Moved further than this on its bar, it was being moved - not a click that folds it.
+CLICK_SLACK = 4
+#: A WHOLE PROJECT'S NOTE, told apart by its ground (the user, 2026-11-08: "整个project的to do panel,
+#: 底色和per to do 的不一样").
+PROJECT_PALETTE = {"edge": "#2c3850", "bar": "#1e2738", "bg": "#151c2b", "hover": "#2c3850",
+                   "thumb": "#3c4a66", "thumb_on": "#56678a"}
 
 #: Its sides' widths at the first zoom, and where it stands: this far from
 #: the screen's right edge and top, and from its bottom (the taskbar's room).
@@ -111,10 +140,17 @@ class HandedNote:
                  family: str, size: int, zoom: Any = ZOOM_START,
                  on_zoom: Optional[Callable[[str, int], None]] = None,
                  on_save: Optional[Callable[[str], bool]] = None,
+                 on_open: Optional[Callable[[], Any]] = None,
+                 on_item: Optional[Callable[[int], Any]] = None,
+                 on_tick: Optional[Callable[[List[str]], Any]] = None,
+                 on_folder: Optional[Callable[[], Any]] = None,
                  kept_size: Any = None, split: Any = None,
-                 on_layout: Optional[Callable[[tuple, Optional[float]], None]] = None) -> None:
+                 on_layout: Optional[Callable[[tuple, Optional[float]], None]] = None,
+                 palette: Optional[Dict[str, str]] = None) -> None:
         self.root = root
         self.note = note
+        #: Its colours: a whole project's note has a ground of its own (PROJECT_PALETTE).
+        self.palette = dict(PALETTE, **(palette or {}))
         self.words = words
         self.family = family
         self.size = max(8, int(size or 10))
@@ -123,14 +159,27 @@ class HandedNote:
         self._least = (sizes.px(root, LEAST[0]), sizes.px(root, LEAST[1]))
         self._side_least = sizes.px(root, SIDE_LEAST)
         self._rim = sizes.px(root, RIM)
-        given = zoom if isinstance(zoom, dict) else {side: zoom for side in SIDES}
+        given = zoom if isinstance(zoom, dict) else {side: zoom for side in PARTS}
         self.zooms: Dict[str, int] = {
             side: min(max(int(given.get(side, ZOOM_START)), 0), len(ZOOMS) - 1)
-            for side in SIDES}
+            for side in PARTS}
         self.on_zoom = on_zoom
         #: Where Save keeps the words as changed - none, and there is no Save.
         self.on_save = on_save
-        self.ticked: List[bool] = [False] * len(list(note.get("check") or []))
+        #: OPENED AGAIN FROM HERE (the user, 2026-11-08: "在to do help panel里重新打开deliverable的东西"):
+        #: the page, the folder, the file, the email - "" when it opened, else why not, in words.
+        self.on_open = on_open
+        #: A WHOLE PROJECT'S ITEMS, each opened in a panel of its own (the user, 2026-11-08).
+        self.on_item = on_item
+        #: TICKED, KEPT (the user, 2026-11-08: "checklist 用户是可以编辑打勾的，且数据会保存"): told the
+        #: words ticked at each tick; `note["ticked"]` the words ticked before - by their words,
+        #: so a list said a little differently keeps what is the same.
+        self.on_tick = on_tick
+        #: ITS WORK'S FOLDER, OPENED FROM ITS BAR when it made several things (the user, 2026-11-08).
+        self.on_folder = on_folder
+        before = {str(one) for one in (note.get("ticked") or [])}
+        self.ticked: List[bool] = [str(one)[:300] in before or str(one) in before
+                                   for one in list(note.get("check") or [])]
         self.window: Any = None
         self._scale = ZOOMS[ZOOM_START]
         self._drag = (0, 0)
@@ -186,7 +235,7 @@ class HandedNote:
         from .on_top import borderless
         borderless(window)                   # its words written in, on a Mac too
         window.attributes("-topmost", True)
-        window.configure(bg=PALETTE["edge"])
+        window.configure(bg=self.palette["edge"])
         window.title(self.heading())
         modifier = "Command" if sys.platform == "darwin" else "Control"
         for keys, step in ((("plus", "equal", "KP_Add"), 1), (("minus", "KP_Subtract"), -1)):
@@ -210,18 +259,33 @@ class HandedNote:
         stay_on_top(window)                  # on a Mac, asked before it was laid out: lost
 
     def close(self) -> None:
-        if self.window is not None:
+        """GONE AT ONCE (the user, 2026-11-08: "点击叉掉之后要卡一秒才关掉，能让他即时关吗"): hidden the
+        moment ✕ is let go; its many parts let go of a moment later, out of sight - destroyed
+        first, they held it on the screen as long as that took (a quarter of a second for a
+        small project's, more for a large one)."""
+        if self.window is None:
+            return
+        window, fonts = self.window, list(self._fonts)
+        self.window, self._fonts = None, {}
+        try:
+            window.withdraw()
+        except tk.TclError:
+            pass
+
+        def let_go() -> None:
             try:
-                self.window.destroy()
+                window.destroy()
             except tk.TclError:
                 pass
-            self.window = None
-            for name in self._fonts:
+            for name in fonts:
                 try:
                     self.root.tk.call("font", "delete", name)
                 except tk.TclError:
                     pass
-            self._fonts = {}
+        try:
+            self.root.after(CLOSE_AFTER_MS, let_go)
+        except (tk.TclError, RuntimeError):              # pragma: no cover - Tk gone meanwhile
+            let_go()
 
     def heading(self) -> str:
         """ITS BAR SAYS WHOSE IT IS (the user, 2026-11-02: "header应该是这个
@@ -257,7 +321,7 @@ class HandedNote:
             for one in [getattr(self, "_grip", None)] + list(getattr(self, "_strips", [])):
                 if one is not None:
                     one.place_forget()
-            self._fold_button.configure(text="□")
+            self._draw_fold(folded=True)
             window.update_idletasks()
             bar = self._bar_frame
             width = min(self._unfolded_size[0], self._px(FOLDED_WIDEST),
@@ -287,7 +351,7 @@ class HandedNote:
             for strip, place in zip(getattr(self, "_strips", []), self._strip_places):
                 strip.place(**place)
                 strip.lift()
-            self._fold_button.configure(text="–")
+            self._draw_fold(folded=False)
             self.folded = False
             width, height = self._unfolded_size or (window.winfo_reqwidth(),
                                                     window.winfo_reqheight())
@@ -310,7 +374,7 @@ class HandedNote:
         zoom = min(max(zoom, 0), len(ZOOMS) - 1)
         if side not in self.zooms or zoom == self.zooms[side] or self.window is None:
             return
-        self.zooms = {one: zoom for one in self.zooms}
+        self.zooms[side] = zoom                  # that part alone, the others as they are
         self._last_side = side
         if self.on_zoom is not None:
             self.on_zoom(side, zoom)
@@ -325,11 +389,27 @@ class HandedNote:
         path, area = str(widget or ""), str(area)
         return path == area or path.startswith(area + ".")
 
+    def _open_again(self) -> None:
+        """What was handed over, opened again where it opens - said here when it would not."""
+        if self.on_open is None:
+            return
+        try:
+            why = self.on_open()
+        except Exception as exc:                 # pragma: no cover - said, not raised
+            why = str(exc) or "it could not be opened"
+        if why and getattr(self, "_copied", None) is not None:
+            self._copied.configure(fg=self.palette["accent"], text="✕  " + self.words(str(why)))
+            self._copied.pack(fill="x", pady=(0, self._px(4)))
+
     def _side_of(self, widget: Any) -> str:
         """The side a widget is in - "" for the bar and the foot."""
         for side, area in self._areas.items():
             if self._within(widget, area):
                 return side
+        # A WHOLE PROJECT'S PARTS ABOVE, each zoomed by itself (the user, 2026-11-08).
+        for part, (_canvas, area, _inner) in zip(("guide", "made"), getattr(self, "_top_scrolls", [])):
+            if self._within(widget, area):
+                return part
         return ""
 
     def _side_now(self) -> str:
@@ -386,9 +466,20 @@ class HandedNote:
 
     def _grab(self, event: Any) -> None:
         self._drag = (event.x_root - self.window.winfo_x(), event.y_root - self.window.winfo_y())
+        self._pressed_at = (event.x_root, event.y_root)
+        self._dragging = False
 
     def _move(self, event: Any) -> None:
         """Moved by its bar - at most once a frame (it flickered)."""
+        at = getattr(self, "_pressed_at", None)
+        if not getattr(self, "_dragging", False) and at is not None and (
+                abs(event.x_root - at[0]) > CLICK_SLACK or abs(event.y_root - at[1]) > CLICK_SLACK):
+            self._dragging = True                # being moved: no longer a click
+            for one in getattr(self, "_bar_parts", ()):
+                try:
+                    one.configure(cursor="fleur")
+                except tk.TclError:      # pragma: no cover - the note went
+                    pass
         x, y = event.x_root - self._drag[0], event.y_root - self._drag[1]
         self._sized_once_a_frame(f"+{x}+{y}")
 
@@ -416,6 +507,7 @@ class HandedNote:
         for child in window.winfo_children():
             child.destroy()
         self._texts, self._long, self._areas, self._panes = [], None, {}, []
+        self._top_scrolls: List[Any] = []
         self._words = None
         self.folded = False                  # built whole; folded only by the user
         # LAID OUT ON THE SCREEN, UNSEEN, BEFORE ITS WORDS ARE MEASURED: a
@@ -425,6 +517,85 @@ class HandedNote:
         self._seen(False)
         window.geometry("")
         item = self.note.get("item") or {}
+        sides, width, around = self._side_widths(item)
+        self._scale, self._ctx = ZOOMS[self.zoom], "chrome"
+        # Its outline, then its rim - where its edges are taken - then the card.
+        rim = tk.Frame(window, bg=self.palette["bg"])
+        rim.pack(fill="both", expand=True, padx=1, pady=1)
+        card = tk.Frame(rim, bg=self.palette["bg"])
+        card.pack(fill="both", expand=True, padx=self._rim, pady=self._rim)
+        self._edges(rim)
+        bar = self._bar(card)
+        foot = self._foot(card)
+        # Each side what it says, scrolled when the screen is not tall enough.
+        # A WHOLE PROJECT'S: THREE PARTS, ONE ABOVE ANOTHER (the user, 2026-11-08: "everything it made
+        # 应该是个单独的panel ... 分成上下3块"; "上下的高度也可以用鼠标调整") - its guide, what it made,
+        # the item chosen - each scrolled by itself, the lines between them dragged.
+        stack = None
+        if self.note.get("project") and self.note.get("items"):
+            stack = tk.PanedWindow(card, orient="vertical", bd=0, sashwidth=self._px(7),
+                                   sashrelief="flat", bg=self.palette["edge"], opaqueresize=True,
+                                   showhandle=False)
+            stack.pack(side="top", fill="both", expand=True)
+            guide, made = self._project_parts(stack, width - around)
+            stack.add(guide, minsize=self._px(48))
+            stack.add(made, minsize=self._px(48))
+            stack.bind("<ButtonRelease-1>", lambda _e: self._keep_stack(), add="+")
+        middle = tk.Frame(stack if stack is not None else card, bg=self.palette["bg"])
+        if stack is not None:
+            stack.add(middle, minsize=self._px(80))
+        else:
+            middle.pack(side="top", fill="both", expand=True)
+        middle.rowconfigure(0, weight=1)
+        self._middle, self._columns, self._scrolling, self._unfitted = middle, {}, [], set()
+        panes = self._make_sides(middle, sides, item)
+        window.update()
+        self._fit_texts()
+        window.update_idletasks()
+        room = window.winfo_screenheight() - TOP - BOTTOM \
+            - bar.winfo_reqheight() - foot.winfo_reqheight() - 2 - 2 * self._rim
+        # THE PROJECT'S TWO PARTS COUNTED IN (the user, 2026-11-08: an item chosen showed only once
+        # the window was dragged - its height had left them out, and the item below was cut off).
+        tops = 0
+        if stack is not None:
+            heights = self._stack_heights(room)
+            stack.paneconfigure(guide, height=heights[0])
+            stack.paneconfigure(made, height=heights[1])
+            tops = heights[0] + heights[1] + 2 * int(stack.cget("sashwidth"))
+            room = max(self._px(120), room - tops)
+
+        def natural(one: tuple) -> int:
+            if one[0] == "item":
+                return room if one[4] is not None and one[4] is self._long \
+                    else one[3].winfo_reqheight()
+            return one[4].winfo_reqheight()
+        if self._size is not None:
+            shown = max(60, min(max(self._least[1], self._size[1]) - bar.winfo_reqheight()
+                                - foot.winfo_reqheight() - 2 - 2 * self._rim - tops, room))
+        else:
+            shown = max(60, min(max(natural(one) for one in panes), room))
+        self._fit_sides(panes, shown)
+        self._scale, self._ctx = ZOOMS[self.zoom], "chrome"
+        self._wheel()
+        # Sized from here on - by its edges, its corner, the line between its
+        # sides - what it says follows, nothing built again.
+        window.bind("<Configure>", self._configured, add="+")
+        self._grip.lift()                    # its corner over whatever was laid out after
+        for strip in self._strips:
+            strip.lift()
+        window.update_idletasks()
+        height = bar.winfo_reqheight() + tops + shown + foot.winfo_reqheight() + 2 + 2 * self._rim
+        right, y = self._place or (window.winfo_screenwidth() - RIGHT, TOP)
+        x = max(0, min(right - width, window.winfo_screenwidth() - width))
+        y = max(0, min(y, window.winfo_screenheight() - height - BOTTOM // 2))
+        window.geometry(f"{width}x{height}+{x}+{y}")
+        window.update_idletasks()
+        self._seen(True)
+
+    def _side_widths(self, item: Dict[str, Any]) -> tuple:
+        """The sides and how wide each is - by its zoom, the screen, the width it was dragged to and
+        the line between them: (sides, the whole width, what is around them)."""
+        window = self.window
         sides = ([("item", int(LEFT_WIDTH * self._screen * ZOOMS[self.zooms["item"]]))]
                  if item.get("text") or item.get("meta") or item.get("parts") else []) \
             + [("how", int(WIDTH * self._screen * ZOOMS[self.zooms["how"]]))]
@@ -446,28 +617,18 @@ class HandedNote:
                                                                       whole - self._side_least))
             sides = [(sides[0][0], left), (sides[1][0], max(self._side_least, whole - left))]
         width = sum(one for _side, one in sides) + around
-        self._scale, self._ctx = ZOOMS[self.zoom], "chrome"
-        # Its outline, then its rim - where its edges are taken - then the card.
-        rim = tk.Frame(window, bg=PALETTE["bg"])
-        rim.pack(fill="both", expand=True, padx=1, pady=1)
-        card = tk.Frame(rim, bg=PALETTE["bg"])
-        card.pack(fill="both", expand=True, padx=self._rim, pady=self._rim)
-        self._edges(rim)
-        bar = self._bar(card)
-        foot = self._foot(card)
-        # Each side what it says, scrolled when the screen is not tall enough.
-        middle = tk.Frame(card, bg=PALETTE["bg"])
-        middle.pack(side="top", fill="both", expand=True)
-        middle.rowconfigure(0, weight=1)
-        self._middle, self._columns, self._scrolling, self._unfitted = middle, {}, [], set()
-        panes = []
+        return sides, width, around
+
+    def _make_sides(self, middle: Any, sides: List[Any], item: Dict[str, Any]) -> List[Any]:
+        """Each side made in `middle`: what was handed over, how it is used - to be fitted."""
+        panes: List[Any] = []
         column = 0
         for n, (side, wide) in enumerate(sides):
             self._scale, self._ctx = ZOOMS[self.zooms[side]], side
             if n:
                 self._divider(middle).grid(row=0, column=column, sticky="ns")
                 column += 1
-            pane = tk.Frame(middle, bg=PALETTE["bg"], width=wide)
+            pane = tk.Frame(middle, bg=self.palette["bg"], width=wide)
             pane.grid(row=0, column=column, sticky="nsew")
             # The sides share the width by weight - as they were made, as the
             # line between them was dragged - whatever the width is.
@@ -476,22 +637,22 @@ class HandedNote:
             self._columns[side] = column
             column += 1
             self._areas[side] = pane
-            thumb = tk.Canvas(pane, bg=PALETTE["bg"], highlightthickness=0, bd=0,
-                              width=self._px(10))
-            wrap = wide - self._px(10) - 2 * self._px(18)
+            thumb = tk.Canvas(pane, bg=self.palette["bg"], highlightthickness=0, bd=0,
+                              width=self._px(SCROLL_WIDE))
+            wrap = wide - self._px(SCROLL_WIDE) - 2 * self._px(18)
             if side == "item" and not item.get("parts"):
                 # Its lines above; its words under them, scrolled within
                 # themselves however long they are.
-                inner = tk.Frame(pane, bg=PALETTE["bg"], padx=self._px(18), pady=self._px(6))
+                inner = tk.Frame(pane, bg=self.palette["bg"], padx=self._px(18), pady=self._px(6))
                 # Laid out before its words are measured: a text with no
                 # width yet counts a line for every letter.
                 inner.pack(side="left", fill="both", expand=True)
                 words = self._item(inner, item, wrap)
                 panes.append((side, pane, thumb, inner, words, wide))
             else:
-                canvas = tk.Canvas(pane, bg=PALETTE["bg"], highlightthickness=0, bd=0,
-                                   width=wide - self._px(10))
-                body = tk.Frame(canvas, bg=PALETTE["bg"], padx=self._px(18), pady=self._px(6))
+                canvas = tk.Canvas(pane, bg=self.palette["bg"], highlightthickness=0, bd=0,
+                                   width=wide - self._px(SCROLL_WIDE))
+                body = tk.Frame(canvas, bg=self.palette["bg"], padx=self._px(18), pady=self._px(6))
                 shown_in = canvas.create_window(0, 0, window=body, anchor="nw")
                 # Its words as wide as the side, whatever its width becomes.
                 canvas.bind("<Configure>", lambda e, c=canvas, i=shown_in: (
@@ -501,22 +662,10 @@ class HandedNote:
                 else:
                     self._body(body, wrap)
                 panes.append(("canvas", pane, thumb, canvas, body, wide, side))
-        window.update()
-        self._fit_texts()
-        window.update_idletasks()
-        room = window.winfo_screenheight() - TOP - BOTTOM \
-            - bar.winfo_reqheight() - foot.winfo_reqheight() - 2 - 2 * self._rim
+        return panes
 
-        def natural(one: tuple) -> int:
-            if one[0] == "item":
-                return room if one[4] is not None and one[4] is self._long \
-                    else one[3].winfo_reqheight()
-            return one[4].winfo_reqheight()
-        if self._size is not None:
-            shown = max(60, min(max(self._least[1], self._size[1]) - bar.winfo_reqheight()
-                                - foot.winfo_reqheight() - 2 - 2 * self._rim, room))
-        else:
-            shown = max(60, min(max(natural(one) for one in panes), room))
+    def _fit_sides(self, panes: List[Any], shown: int) -> None:
+        """Each side made as tall as `shown`, scrolled within itself when what it says is taller."""
         for one in panes:
             side, pane, thumb = one[0], one[1], one[2]
             self._ctx = one[6] if side == "canvas" else side
@@ -549,22 +698,66 @@ class HandedNote:
                 if tall > shown:
                     thumb.pack(side="right", fill="y", before=canvas)
                 self._panes.append((canvas, tall > shown, pane))
+
+    def _swap_item_below(self) -> bool:
+        """A WHOLE PROJECT'S ITEM CHOSEN, SHOWN WITH NOTHING ELSE TOUCHED (the user, 2026-11-08: "有没有
+        完全没有refresh的方法"): the item's sides made behind the ones shown, as tall, and put in
+        their place at once; its guide and the list of what it made as they are, the list's row for
+        it marked. False where it cannot be (not a project's panel): built again, then."""
+        stack, old = getattr(self, "_stack", None), getattr(self, "_middle", None)
+        if stack is None or old is None or self.window is None:
+            return False
+        try:
+            if not (stack.winfo_exists() and old.winfo_exists()):
+                return False
+            self.window.update_idletasks()
+            shown = max(60, old.winfo_height())
+            self._size = (self.window.winfo_width(), self.window.winfo_height())
+            self._mark_made_rows()
+            item = self.note.get("item") or {}
+            sides, _width, _around = self._side_widths(item)
+            fresh = tk.Frame(stack, bg=self.palette["bg"])
+            fresh.place(in_=old, x=0, y=0, relwidth=1, relheight=1)
+            fresh.lower(old)                     # behind the one shown while it is made
+            fresh.rowconfigure(0, weight=1)
+            kept_texts = [one for one in self._texts if not self._within(one, old)]
+            self._texts, self._long = kept_texts, None
+            self._areas, self._columns, self._scrolling, self._unfitted = {}, {}, [], set()
+            self._panes = []
+            self._middle = fresh
+            panes = self._make_sides(fresh, sides, item)
+            self.window.update_idletasks()
+            self._fit_texts()
+            self.window.update_idletasks()
+            self._fit_sides(panes, shown)
+            self._scale, self._ctx = ZOOMS[self.zoom], "chrome"
+            height = old.winfo_height()
+            fresh.place_forget()
+            stack.add(fresh, after=old, minsize=self._px(80), height=height)
+            stack.forget(old)
+            old.destroy()
+            self._texts = [one for one in self._texts if one.winfo_exists()]
+            self._grip.lift()
+            for strip in self._strips:
+                strip.lift()
+            return True
+        except tk.TclError:
+            log.debug("the item could not be put in place", exc_info=True)
+            return False
+
+    def _mark_made_rows(self) -> None:
+        """The list of what it made, its rows drawn again - the one now shown below marked."""
+        rows = getattr(self, "_made_rows", None)
+        if rows is None or not rows.winfo_exists():
+            return
+        self._scale, self._ctx = ZOOMS[self.zooms["made"]], "made"
+        wrap = getattr(self, "_made_wrap", self._px(300))
+        current = int(self.note.get("n") or 0)
+        for child in rows.winfo_children():
+            child.destroy()
+        for one in list(self.note.get("items") or [])[:30]:
+            self._project_row(rows, one, current, wrap)
         self._scale, self._ctx = ZOOMS[self.zoom], "chrome"
-        self._wheel()
-        # Sized from here on - by its edges, its corner, the line between its
-        # sides - what it says follows, nothing built again.
-        window.bind("<Configure>", self._configured, add="+")
-        self._grip.lift()                    # its corner over whatever was laid out after
-        for strip in self._strips:
-            strip.lift()
-        window.update_idletasks()
-        height = bar.winfo_reqheight() + shown + foot.winfo_reqheight() + 2 + 2 * self._rim
-        right, y = self._place or (window.winfo_screenwidth() - RIGHT, TOP)
-        x = max(0, min(right - width, window.winfo_screenwidth() - width))
-        y = max(0, min(y, window.winfo_screenheight() - height - BOTTOM // 2))
-        window.geometry(f"{width}x{height}+{x}+{y}")
-        window.update_idletasks()
-        self._seen(True)
 
     def _configured(self, event: Any) -> None:
         """Its own size changed - not a part of it, not where it stands: moved
@@ -658,41 +851,86 @@ class HandedNote:
     def _bar(self, card: Any) -> Any:
         """Its own bar, dragged to move it - one ✕ for both sides, and –
         beside it to fold the note to this bar (□ to open it again)."""
-        bar = tk.Frame(card, bg=PALETTE["bar"], padx=self._px(12), pady=self._px(7))
+        # OF THE BODY'S OWN GROUND, a line under it (the user, 2026-11-08: a ring of the ground
+        # showed round a bar of another, plainest at the rounded corners).
+        ground = self.palette["bg"]
+        bar = tk.Frame(card, bg=ground, padx=self._px(12), pady=self._px(7))
         bar.pack(side="top", fill="x")
+        tk.Frame(card, bg=self.palette["edge"], height=1).pack(side="top", fill="x")
         self._bar_frame = bar
-        dot = tk.Canvas(bar, width=self._px(9), height=self._px(9), bg=PALETTE["bar"],
+        dot = tk.Canvas(bar, width=self._px(9), height=self._px(9), bg=ground,
                         highlightthickness=0, bd=0)
-        dot.create_oval(1, 1, self._px(9) - 1, self._px(9) - 1, fill=PALETTE["accent"],
+        dot.create_oval(1, 1, self._px(9) - 1, self._px(9) - 1, fill=self.palette["accent"],
                         outline="")
         # Its buttons packed first: a long name is cut short, never them.
-        self._flat(bar, "✕", self.close, PALETTE["bar"]).pack(side="right")
-        self._fold_button = self._flat(bar, "□" if self.folded else "–",
-                                       self.toggle_folded, PALETTE["bar"])
+        close = self._flat(bar, "✕", self.close, ground)
+        close.pack(side="right")
+        self._close_button = close
+        # FOLDED OR OPEN, DRAWN AS THE CHAT'S IS (the user, 2026-11-08: "最大化按钮没有对齐，大小也不对";
+        # "你之前chat的框不是画的挺好，参考那个画"): a line, or a square, as wide as the ✕ beside it,
+        # in the middle of its line - not a letter, whose size and place each font gives its own.
+        self._fold_button = tk.Canvas(bar, bg=ground, highlightthickness=0, bd=0, cursor="hand2")
+        self._fold_ink = self.palette["muted"]
+        self._draw_fold()
+        on_release(self._fold_button, self.toggle_folded)
         self._fold_button.pack(side="right")
+        if self.note.get("many") and self.on_folder is not None:
+            # SEVERAL THINGS: their folder, from here (the user, 2026-11-08: "instruction panel如果有多个
+            # deliverable也会有一个open folder的选项").
+            folder = self._flat(bar, self.words("Open folder"), lambda: None, ground, small=True)
+            on_release(folder, lambda b=folder: (self.on_folder(), self._flash(b)))
+            folder.pack(side="right", padx=(0, self._px(6)))
+            self._folder_button = folder
+        # UNDER THE POINTER, ONLY THEIR MARK BRIGHTER - no square (the user, 2026-11-08: "右上角还是
+        # 有一个小的黑框": the square they lit, on a project's dark blue).
+        close.bind("<Enter>", lambda _e: close.configure(bg=ground, fg=self.palette["ink"]))
+        close.bind("<Leave>", lambda _e: close.configure(bg=ground, fg=self.palette["muted"]))
+
+        def lit(on: bool) -> None:
+            self._fold_ink = self.palette["ink"] if on else self.palette["muted"]
+            self._draw_fold()
+        self._fold_button.bind("<Enter>", lambda _e: lit(True))
+        self._fold_button.bind("<Leave>", lambda _e: lit(False))
         dot.pack(side="left", padx=(0, self._px(8)))
-        heading = tk.Label(bar, text=self.heading(), bg=PALETTE["bar"],
-                           fg=PALETTE["muted"], font=self._font(-1, "bold"), anchor="w")
+        heading = tk.Label(bar, text=self.heading(), bg=ground,
+                           fg=self.palette["muted"], font=self._font(-1, "bold"), anchor="w")
         heading.pack(side="left", fill="x", expand=True)
-        for one in (bar, dot, heading):
+        # A CLICK ON ITS BAR FOLDS IT, AND UNFOLDS IT, where it is no button (the user, 2026-11-08:
+        # "可以点击header的其它位置collapose, expand") - a drag moves it; no double click.
+        self._bar_parts = (bar, dot, heading)
+        for one in self._bar_parts:
             one.bind("<ButtonPress-1>", self._grab)
             one.bind("<B1-Motion>", self._move)
-            one.bind("<Double-Button-1>", lambda _e: self.toggle_folded())
+            one.bind("<ButtonRelease-1>", self._bar_released, add="+")
+            one.configure(cursor="hand2")
         return bar
 
+    def _bar_released(self, event: Any) -> None:
+        at = getattr(self, "_pressed_at", None)
+        dragged, self._dragging = getattr(self, "_dragging", False), False
+        for one in getattr(self, "_bar_parts", ()):
+            try:
+                one.configure(cursor="hand2")
+            except tk.TclError:          # pragma: no cover - the note went
+                pass
+        if dragged or at is None:
+            return
+        if abs(event.x_root - at[0]) <= CLICK_SLACK and abs(event.y_root - at[1]) <= CLICK_SLACK:
+            self.toggle_folded()
+
     def _foot(self, card: Any) -> Any:
-        foot = tk.Frame(card, bg=PALETTE["bg"], padx=self._px(18), pady=self._px(10))
+        foot = tk.Frame(card, bg=self.palette["bg"], padx=self._px(18), pady=self._px(10))
         foot.pack(side="bottom", fill="x")
         self._foot_frame = foot
         hint = "⌘ + / − to zoom" if sys.platform == "darwin" else "Ctrl + / − to zoom"
-        tk.Label(foot, text=self.words(hint), bg=PALETTE["bg"], fg=PALETTE["muted"],
+        tk.Label(foot, text=self.words(hint), bg=self.palette["bg"], fg=self.palette["muted"],
                  font=self._font(-2)).pack(side="left")
-        done = tk.Label(foot, text=self.words("Done"), bg=PALETTE["accent"],
-                        fg=PALETTE["on_accent"], font=self._font(-1, "bold"),
+        done = tk.Label(foot, text=self.words("Done"), bg=self.palette["accent"],
+                        fg=self.palette["on_accent"], font=self._font(-1, "bold"),
                         padx=self._px(14), pady=self._px(4), cursor="hand2")
         done.pack(side="right", padx=(0, self._px(10)))
         on_release(done, self.close)
-        grip = tk.Label(card, text="◢", bg=PALETTE["bg"], fg=PALETTE["thumb_on"],
+        grip = tk.Label(card, text="◢", bg=self.palette["bg"], fg=self.palette["thumb_on"],
                         font=self._font(-1),
                         cursor="size_nw_se" if sys.platform.startswith("win")
                         else "bottom_right_corner")
@@ -709,7 +947,7 @@ class HandedNote:
         self._strips, self._strip_places = [], []
         corner = 3 * self._rim
         for edge, cursor in EDGES.items():
-            strip = tk.Frame(rim, bg=PALETTE["bg"], cursor=cursor)
+            strip = tk.Frame(rim, bg=self.palette["bg"], cursor=cursor)
             wide = corner if len(edge) == 2 or edge in "ns" else self._rim
             high = corner if len(edge) == 2 or edge in "we" else self._rim
             place: Dict[str, Any] = {"width": wide, "height": high}
@@ -761,8 +999,8 @@ class HandedNote:
 
     def _divider(self, middle: Any) -> None:
         """The line between the sides - dragged to share the width anew."""
-        divider = tk.Frame(middle, bg=PALETTE["bg"], width=DIVIDER, cursor="sb_h_double_arrow")
-        line = tk.Frame(divider, bg=PALETTE["edge"], width=1, cursor="sb_h_double_arrow")
+        divider = tk.Frame(middle, bg=self.palette["bg"], width=DIVIDER, cursor="sb_h_double_arrow")
+        line = tk.Frame(divider, bg=self.palette["edge"], width=1, cursor="sb_h_double_arrow")
         line.place(relx=0.5, rely=0.0, relheight=1.0, anchor="n")
         for one in (divider, line):
             one.bind("<ButtonPress-1>", self._split_start)
@@ -840,19 +1078,61 @@ class HandedNote:
 
     def _flat(self, parent: Any, text: str, act: Callable[[], None], bg: str,
               small: bool = False) -> Any:
-        button = tk.Label(parent, text=text, bg=bg, fg=PALETTE["muted"],
+        button = tk.Label(parent, text=text, bg=bg, fg=self.palette["muted"],
                           font=self._font(-1, "bold") if small else self._font(1),
                           padx=self._px(7), pady=0, cursor="hand2")
-        button.bind("<Enter>", lambda _e: button.configure(bg=PALETTE["hover"], fg=PALETTE["ink"]))
-        button.bind("<Leave>", lambda _e: button.configure(bg=bg, fg=PALETTE["muted"]))
+        button.bind("<Enter>", lambda _e: button.configure(bg=self.palette["hover"], fg=self.palette["ink"]))
+        button.bind("<Leave>", lambda _e: button.configure(bg=bg, fg=self.palette["muted"]))
         on_release(button, act)                  # done when let go over it
         return button
+
+    def _draw_fold(self, folded: Optional[bool] = None) -> None:
+        """Its fold mark: a line while it is open, a square while it is folded - each as wide as
+        the ✕ beside it is (0.72 of it), in the middle of a box as wide as the ✕'s, as tall as its
+        line (chat_bubble._draw_fold)."""
+        fold = getattr(self, "_fold_button", None)
+        if fold is None:
+            return
+        folded = self.folded if folded is None else folded
+        try:
+            font = self._bar_font(1)
+            glyph = int(self.root.tk.call("font", "measure", font, "✕"))
+            line = int(self.root.tk.call("font", "metrics", font, "-linespace"))
+        except tk.TclError:
+            return
+        side = max(7, int(round(glyph * 0.72)))
+        width, height = glyph + 2 * self._px(7), line
+        close = getattr(self, "_close_button", None)
+        if close is not None:
+            # As large as the ✕'s own box, its border and all: the two on one line, one size.
+            close.update_idletasks()
+            width, height = max(width, close.winfo_reqwidth()), max(height, close.winfo_reqheight())
+        fold.configure(width=width, height=height)
+        fold.delete("all")
+        left, top = (width - side) / 2, (height - side) / 2
+        thick = max(1.0, side / 9)
+        ink = getattr(self, "_fold_ink", self.palette["muted"])
+        if folded:
+            fold.create_rectangle(left, top, left + side, top + side, outline=ink, width=thick)
+        else:
+            middle = top + side / 2
+            fold.create_line(left, middle, left + side, middle, fill=ink, width=thick)
+        self._fold_mark = "square" if folded else "line"
+
+    def _bar_font(self, more: int) -> str:
+        """A font of the bar's, `more` points larger than its words."""
+        was = (self._scale, self._ctx)
+        self._scale, self._ctx = ZOOMS[self.zoom], "chrome"
+        try:
+            return self._font(more)
+        finally:
+            self._scale, self._ctx = was
 
     def _zoomer(self, row: Any, side: str) -> None:
         """A side's own - and +, at the right of its first row."""
         for text, step in (("+", 1), ("−", -1)):
             self._flat(row, text, lambda s=step: self.zoom_by(s, side),
-                       PALETTE["bg"]).pack(side="right")
+                       self.palette["bg"]).pack(side="right")
 
     def _selectable(self, parent: Any, text: str, font: tuple, fg: str, wrap: int,
                     pack: Optional[Dict[str, Any]] = None, editable: bool = False) -> Any:
@@ -860,11 +1140,11 @@ class HandedNote:
         that cannot be written in - or, `editable`, one that can - as wide
         as `wrap`, made as tall as its lines once it is laid out
         (`_fit_texts`); Ctrl+C and the right button's menu copy from it."""
-        box = tk.Text(parent, wrap="word", font=font, bg=PALETTE["bg"], fg=fg, relief="flat",
+        box = tk.Text(parent, wrap="word", font=font, bg=self.palette["bg"], fg=fg, relief="flat",
                       bd=0, highlightthickness=0, padx=0, pady=0, cursor="xterm", height=1,
-                      selectbackground=PALETTE["select"], selectforeground=PALETTE["ink"],
-                      inactiveselectbackground=PALETTE["select"], exportselection=True,
-                      takefocus=0, undo=editable, insertbackground=PALETTE["ink"])
+                      selectbackground=self.palette["select"], selectforeground=self.palette["ink"],
+                      inactiveselectbackground=self.palette["select"], exportselection=True,
+                      takefocus=0, undo=editable, insertbackground=self.palette["ink"])
         # Measured by Tk itself: a font object of Python's, let go on another
         # thread, would call Tk from there (and Tk ends the process).
         zero = int(parent.tk.call("font", "measure", font, "0"))
@@ -903,8 +1183,8 @@ class HandedNote:
               everything: Callable[[], Any]) -> Any:
         """The right button's menu for a text: Copy and Select all - and,
         where it can be written in, Cut and Paste."""
-        menu = tk.Menu(self.window, tearoff=0, bg=PALETTE["bar"], fg=PALETTE["ink"],
-                       activebackground=PALETTE["select"], activeforeground=PALETTE["ink"],
+        menu = tk.Menu(self.window, tearoff=0, bg=self.palette["bar"], fg=self.palette["ink"],
+                       activebackground=self.palette["select"], activeforeground=self.palette["ink"],
                        bd=0, font=self._font(-1))
         chosen = bool(box.tag_ranges("sel"))
         if editable:
@@ -937,10 +1217,10 @@ class HandedNote:
         zoom - whether it is on the clipboard already, its lines (To,
         Subject, When...), its words - whole, however long: the text they
         are in, which scrolls."""
-        head = tk.Frame(body, bg=PALETTE["bg"])
+        head = tk.Frame(body, bg=self.palette["bg"])
         head.pack(fill="x", pady=(self._px(4), self._px(2)))
         tk.Label(head, text=self.words(KINDS.get(item.get("kind"), "Result")),
-                 bg=PALETTE["bg"], fg=PALETTE["accent"], font=self._font(-1, "bold"),
+                 bg=self.palette["bg"], fg=self.palette["accent"], font=self._font(-1, "bold"),
                  anchor="w").pack(side="left")
         self._zoomer(head, "item")
         self._save_button = None
@@ -948,27 +1228,37 @@ class HandedNote:
         if item.get("text"):
             # COPY ALL (the user, 2026-11-01): the whole of it, as it now is -
             # said on the button when done.
-            copy = self._flat(head, self.words("Copy all"), lambda: None, PALETTE["bg"],
+            copy = self._flat(head, self.words("Copy all"), lambda: None, self.palette["bg"],
                               small=True)
             on_release(copy, lambda b=copy: (self._copy_item(), self._flash(b)))
             copy.pack(side="right", padx=(0, self._px(8)))
+        if self.on_open is not None and item.get("kind") not in OPENED_HERE:
+            # OPENED FROM HERE: where it opens - its page, folder, file, email; an answer or a text
+            # is read here, and has none. ON A LINE OF ITS OWN, under what it is (the user,
+            # 2026-11-08: "open XX放在email(item名)下面一行。单独成行") - "Open the email", no "again".
+            line = tk.Frame(body, bg=self.palette["bg"])
+            line.pack(fill="x", pady=(0, self._px(4)))
+            again = self._flat(line, self.words(OPEN_ITEM.get(item.get("kind"), "Open")),
+                               lambda: None, self.palette["bg"], small=True)
+            on_release(again, lambda b=again: (self._open_again(), self._flash(b)))
+            again.pack(side="left")
         if (item.get("text") or item.get("parts")) and True:
             if item.get("editable", True) and self.on_save is not None:
                 # Made now, shown beside Copy only while something is not saved.
                 self._save_button = self._flat(head, self.words("Save"), self._save,
-                                               PALETTE["accent"], small=True)
-                self._save_button.configure(fg=PALETTE["on_accent"])
+                                               self.palette["accent"], small=True)
+                self._save_button.configure(fg=self.palette["on_accent"])
                 self._save_button.bind("<Leave>", lambda _e: self._save_button.configure(
-                    bg=PALETTE["accent"], fg=PALETTE["on_accent"]))
+                    bg=self.palette["accent"], fg=self.palette["on_accent"]))
                 self._save_after = copy                  # none for a form: its parts have theirs
                 if self._unsaved:
                     self._show_save(True)
         self._head = head
-        self._copied = tk.Label(body, text="", bg=PALETTE["bg"], fg=PALETTE["ticked"],
+        self._copied = tk.Label(body, text="", bg=self.palette["bg"], fg=self.palette["ticked"],
                                 font=self._font(-1, "bold"), wraplength=wrap, justify="left",
                                 anchor="w")
         if self.note.get("copied") and self._edited is not None:
-            self._copied.configure(fg=PALETTE["accent"], text="✎  " + self.words(
+            self._copied.configure(fg=self.palette["accent"], text="✎  " + self.words(
                 "Changed - press Copy to copy what you changed"))
             self._copied.pack(fill="x", pady=(0, self._px(4)))
         elif self.note.get("copied"):
@@ -980,16 +1270,16 @@ class HandedNote:
         meta = list(item.get("meta") or [])[:8]
         if meta:
             self._selectable(body, "\n".join(str(line)[:600] for line in meta),
-                             self._font(-1), PALETTE["muted"], wrap)
+                             self._font(-1), self.palette["muted"], wrap)
         if item.get("parts"):
             self._parts(body, list(item["parts"]), wrap)
             return None
         if not item.get("text"):
             return None
         if meta:
-            tk.Frame(body, bg=PALETTE["edge"], height=1).pack(fill="x", pady=self._px(8))
+            tk.Frame(body, bg=self.palette["edge"], height=1).pack(fill="x", pady=self._px(8))
         text = self._edited if self._edited is not None else str(item["text"])
-        words = self._selectable(body, text, self._font(), PALETTE["ink"], wrap,
+        words = self._selectable(body, text, self._font(), self.palette["ink"], wrap,
                                  {"fill": "both", "expand": True},
                                  editable=bool(item.get("editable", True)))
         self._words = words
@@ -1006,11 +1296,11 @@ class HandedNote:
             words = button.cget("text")
             if words.startswith("✓"):
                 return                                   # pressed again meanwhile
-            button.configure(text="✓  " + self.words(said), fg=PALETTE["ticked"])
+            button.configure(text="✓  " + self.words(said), fg=self.palette["ticked"])
 
             def back() -> None:
                 try:
-                    button.configure(text=words, fg=PALETTE["muted"])
+                    button.configure(text=words, fg=self.palette["muted"])
                 except tk.TclError:
                     pass
             button.after(1500, back)
@@ -1037,7 +1327,7 @@ class HandedNote:
         self._say("✎  " + self.words("Changed - Save keeps it, Copy copies it"
                                      if self.on_save is not None else
                                      "Changed - press Copy to copy what you changed"),
-                  PALETTE["accent"])
+                  self.palette["accent"])
 
     def _save(self) -> None:
         """Kept where the work keeps it (`on_save`), and said."""
@@ -1054,11 +1344,11 @@ class HandedNote:
             self._edited_saved = True
             self._unsaved = False
             self._show_save(False)
-            self._say("✓  " + self.words("Saved - opened again, it is this"), PALETTE["ticked"])
+            self._say("✓  " + self.words("Saved - opened again, it is this"), self.palette["ticked"])
         else:
             self._say("✕  " + self.words(saved if isinstance(saved, str) and saved
                                          else "Not saved - copy it, so it is not lost"),
-                      PALETTE["accent"])
+                      self.palette["accent"])
 
     def _parts(self, body: Any, parts: List[Dict[str, Any]], wrap: int) -> None:
         """A FORM'S PARTS, each in its own box under the label of the box it
@@ -1067,16 +1357,16 @@ class HandedNote:
         texts = self._edited if isinstance(self._edited, list) else \
             [str(one.get("text") or "") for one in parts]
         for n, part in enumerate(parts):
-            row = tk.Frame(body, bg=PALETTE["bg"])
+            row = tk.Frame(body, bg=self.palette["bg"])
             row.pack(fill="x", pady=(self._px(10), self._px(2)))
-            tk.Label(row, text=f"{n + 1}.  {part.get('field') or ''}", bg=PALETTE["bg"],
-                     fg=PALETTE["accent"], font=self._font(-1, "bold"),
+            tk.Label(row, text=f"{n + 1}.  {part.get('field') or ''}", bg=self.palette["bg"],
+                     fg=self.palette["accent"], font=self._font(-1, "bold"),
                      wraplength=wrap - self._px(70), justify="left",
                      anchor="w").pack(side="left")
             box = self._selectable(body, texts[n] if n < len(texts) else "", self._font(),
-                                   PALETTE["ink"], wrap, editable=True)
+                                   self.palette["ink"], wrap, editable=True)
             box.bind("<<Modified>>", lambda _e, b=box: self._part_changed(b), add="+")
-            copy = self._flat(row, self.words("Copy"), lambda: None, PALETTE["bg"], small=True)
+            copy = self._flat(row, self.words("Copy"), lambda: None, self.palette["bg"], small=True)
             on_release(copy, lambda b=box, c=copy: (
                 self._copy(b.get("1.0", "end-1c")), self._flash(c)))
             copy.pack(side="right")
@@ -1092,7 +1382,7 @@ class HandedNote:
         self._say("✎  " + self.words("Changed - Save keeps it, Copy copies it"
                                      if self.on_save is not None else
                                      "Changed - press Copy to copy what you changed"),
-                  PALETTE["accent"])
+                  self.palette["accent"])
 
     def _show_save(self, shown: bool) -> None:
         """Save beside Copy, or not."""
@@ -1134,7 +1424,7 @@ class HandedNote:
                                    else "Copied - paste it with ⌘V")
         try:
             if label is not None and label.winfo_exists():
-                label.configure(text=words, fg=PALETTE["ticked"])
+                label.configure(text=words, fg=self.palette["ticked"])
                 if not label.winfo_ismapped():
                     label.pack(fill="x", pady=(0, self._px(4)), after=self._head)
         except tk.TclError:
@@ -1143,46 +1433,315 @@ class HandedNote:
     def _body(self, body: Any, wrap: int) -> None:
         """How it is used, on the right: its own zoom, its title, how, what to check."""
         note = self.note
-        row = tk.Frame(body, bg=PALETTE["bg"])
+        row = tk.Frame(body, bg=self.palette["bg"])
         row.pack(fill="x")
         self._zoomer(row, "how")
         self._selectable(body, str(note.get("title") or "")[:200], self._font(3, "bold"),
-                         PALETTE["ink"], wrap,
+                         self.palette["ink"], wrap,
                          {"fill": "x", "pady": (self._px(2), self._px(2))})
         if note.get("how"):
             self._heading(body, "How to use it")
-            self._selectable(body, str(note["how"])[:1200], self._font(), PALETTE["ink"], wrap)
+            self._selectable(body, str(note["how"])[:1200], self._font(), self.palette["ink"], wrap)
         checks = list(note.get("check") or [])[:10]
         if checks:
             self._heading(body, "Check before you use it")
             for n, one in enumerate(checks):
                 self._check(body, n, str(one)[:300], wrap)
+        items = list(note.get("items") or [])
+        if items and self.on_item is not None and not note.get("project"):
+            self._heading(body, "Everything it made")
+            for one in items[:30]:
+                self._item_link(body, one, wrap)
+
+    # -- A WHOLE PROJECT'S PANEL (the user, 2026-11-08: "先上下分2块，然后下面一块再左右分，上面是project
+    # level to do, 包括可以选择的每个item to do"; "每行右边一个按钮，代表打开file同时切换到这个item的
+    # instruction panel, 如果直接点左边就是只切换instruction") -------------------------------------
+    def _scrolled_part(self, stack: Any, wide: int, header: bool = False) -> tuple:
+        """A part of a whole project's panel, scrolled by itself by its own bar: (the part, what is
+        written in it, how wide its words wrap) - and, `header`, a row above what scrolls, that
+        stays where it is (the part's header)."""
+        area = tk.Frame(stack, bg=self.palette["bg"])
+        if header:
+            self._part_header = tk.Frame(area, bg=self.palette["bg"], padx=self._px(18))
+            self._part_header.pack(side="top", fill="x", pady=(self._px(6), self._px(2)))
+        thumb = tk.Canvas(area, bg=self.palette["bg"], highlightthickness=0, bd=0,
+                          width=self._px(SCROLL_WIDE))
+        canvas = tk.Canvas(area, bg=self.palette["bg"], highlightthickness=0, bd=0, height=10)
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(canvas, bg=self.palette["bg"], padx=self._px(18), pady=self._px(6))
+        shown_in = canvas.create_window(0, 0, window=inner, anchor="nw")
+
+        def fit(_event: Any = None) -> None:
+            tall, high = max(1, inner.winfo_reqheight()), max(1, canvas.winfo_height())
+            canvas.configure(scrollregion=(0, 0, max(1, canvas.winfo_width()), max(tall, high)))
+            if tall > high + 1 and not thumb.winfo_ismapped():
+                thumb.pack(side="right", fill="y", before=canvas)
+            elif tall <= high + 1 and thumb.winfo_ismapped():
+                thumb.pack_forget()
+        inner.bind("<Configure>", fit)
+        canvas.bind("<Configure>", lambda e: (canvas.itemconfigure(shown_in, width=max(1, e.width)),
+                                              fit()))
+        self._scroller(canvas, thumb, 200)
+        self._top_scrolls.append((canvas, area, inner))
+        wrap = max(self._px(200), wide - 2 * self._px(18) - self._px(SCROLL_WIDE))
+        return area, inner, wrap
+
+    def _project_parts(self, stack: Any, wide: int) -> tuple:
+        """A whole project's two parts above the item: its guide - the project, how to use it all,
+        what to check - and what it made, a row for each, that chooses what is shown below."""
+        project = self.note.get("project") or {}
+        self._scale, self._ctx = ZOOMS[self.zooms["guide"]], "guide"
+        guide, top, wrap = self._scrolled_part(stack, wide)
+        # EACH PART ITS OWN - AND + (the user, 2026-11-08: "另外两个panel还没有+-"), as the sides have.
+        first = tk.Frame(top, bg=self.palette["bg"])
+        first.pack(fill="x")
+        self._zoomer(first, "guide")
+        if project.get("title"):
+            self._selectable(top, str(project["title"])[:200], self._font(3, "bold"),
+                             self.palette["ink"], wrap, {"fill": "x", "pady": (0, self._px(2))})
+        if project.get("about"):
+            # ITS GUIDE, step by step, as its work wrote it - or, from before guides, what it said -
+            # whole: its part scrolls.
+            self._heading(top, "How to use it all" if project.get("guided") else "About the whole")
+            self._about_text = self._selectable(top, str(project["about"]), self._font(-1),
+                                                self.palette["ink"], wrap)
+        checks = list(project.get("check") or [])[:10]
+        if checks:
+            self._heading(top, "Check before you are done")
+            before = {str(one) for one in (project.get("ticked") or [])}
+            ticks = [str(one)[:300] in before for one in checks]
+            for n, one in enumerate(checks):
+                self._project_check(top, ticks, n, str(one)[:300], wrap)
+        self._scale, self._ctx = ZOOMS[self.zooms["made"]], "made"
+        made, inner, wrap = self._scrolled_part(stack, wide, header=True)
+        # ITS HEADER PRESSED, IT FOLDS TO ITSELF, OR OPENS (the user, 2026-11-08: "everything it made
+        # 这个是可以点击header collapose的") - folded as it was when another item is chosen.
+        folded = bool(getattr(self, "_made_folded", False))
+        # A HEADER (the user, 2026-11-08: "要看起来像是一个header (不需要那个箭头，字体调大)"): its words
+        # large, nothing before them; pressed, the part folds - its own - and + beside.
+        # ITS HEADER STAYS WHERE IT IS (the user, 2026-11-08: "everything it made 是第二个panel的header,
+        # 不会随着下拉框被拉下去"): above what scrolls, not in it.
+        top_row = self._part_header
+        self._zoomer(top_row, "made")
+        head = tk.Label(top_row, text=self.words("Everything it made"), bg=self.palette["bg"],
+                        fg=self.palette["ink"], cursor="hand2", font=self._font(3, "bold"),
+                        anchor="w")
+        head.pack(side="left", fill="x", expand=True)
+        rows = tk.Frame(inner, bg=self.palette["bg"])
+        if not folded:
+            rows.pack(fill="x")
+        current = int(self.note.get("n") or 0)
+        for one in list(self.note.get("items") or [])[:30]:
+            self._project_row(rows, one, current, wrap)
+        self._stack, self._made_area, self._made_head, self._made_rows = stack, made, head, rows
+        self._made_wrap = wrap
+        on_release(head, self._fold_made)
+        return guide, made
+
+    def _fold_made(self) -> None:
+        """What it made, folded to its header - or opened again, as tall as it was."""
+        stack, made, head, rows = (getattr(self, name, None) for name in
+                                   ("_stack", "_made_area", "_made_head", "_made_rows"))
+        if stack is None or made is None:
+            return
+        try:
+            folding = not getattr(self, "_made_folded", False)
+            if folding:
+                self._made_open_height = made.winfo_height()
+                rows.pack_forget()
+                self.window.update_idletasks()
+                stack.paneconfigure(made, height=self._part_header.winfo_reqheight()
+                                    + self._px(12))
+            else:
+                rows.pack(fill="x")
+                stack.paneconfigure(made, height=max(self._px(48), int(getattr(
+                    self, "_made_open_height", 0) or self._px(160))))
+            self._made_folded = folding
+            self._keep_stack()
+        except tk.TclError:
+            pass
+
+    def _stack_heights(self, room: int) -> tuple:
+        """How tall the guide and the list of what it made are: as the user dragged them, else as
+        tall as they need, at most their shares of the screen - room left for the item below."""
+        kept = getattr(self, "_stack_kept", None)
+        if kept:
+            return kept
+        screen = self.window.winfo_screenheight()
+        tall = [max(self._px(48), part[2].winfo_reqheight()) for part in self._top_scrolls[:2]]
+        guide = min(tall[0], int(screen * GUIDE_SHARE), max(self._px(48), room // 3))
+        made = min(tall[1], int(screen * MADE_SHARE), max(self._px(48), room // 4))
+        return guide, made
+
+    def _keep_stack(self) -> None:
+        """The lines between the parts dragged: their heights kept for this panel - an item chosen
+        below, they stay."""
+        try:
+            parts = self._top_scrolls[:2]
+            if len(parts) == 2:
+                self._stack_kept = (parts[0][1].winfo_height(), parts[1][1].winfo_height())
+        except tk.TclError:
+            pass
+
+    def _project_check(self, top: Any, ticks: List[bool], n: int, text: str, wrap: int) -> None:
+        """One thing to check across the whole project: ticked, kept as the project's own."""
+        row = tk.Frame(top, bg=self.palette["bg"])
+        row.pack(fill="x", pady=(self._px(2), 0))
+        box = tk.Label(row, bg=self.palette["bg"], font=self._font(1), width=2, anchor="nw",
+                       cursor="hand2")
+        box.pack(side="left", anchor="n")
+        said = tk.Label(row, text=text, bg=self.palette["bg"], font=self._font(-1),
+                        wraplength=wrap - self._px(28), justify="left", anchor="w")
+        said.pack(side="left", fill="x", expand=True)
+        checks = [str(one)[:300] for one in ((self.note.get("project") or {}).get("check") or [])]
+
+        def draw() -> None:
+            on = ticks[n]
+            box.configure(text="☑" if on else "☐",
+                          fg=self.palette["ticked"] if on else self.palette["muted"])
+            said.configure(fg=self.palette["muted"] if on else self.palette["ink"])
+
+        def tick(_event: Any = None) -> None:
+            ticks[n] = not ticks[n]
+            draw()
+            words = [one for k, one in enumerate(checks[:len(ticks)]) if ticks[k]]
+            project = self.note.get("project") or {}
+            project["ticked"] = words                    # as it is, when the item below changes
+            if self.on_tick is not None:
+                try:
+                    self.on_tick(words, {"run": self.note.get("run"), "n": "project"})
+                except Exception:                # pragma: no cover - ticked here still
+                    log.debug("what was ticked could not be kept", exc_info=True)
+        box.bind("<Button-1>", tick)
+        draw()
+
+    def _project_row(self, top: Any, one: Dict[str, Any], current: int, wrap: int) -> None:
+        n = int(one.get("n") or 0)
+        chosen = n == current
+        # A ROW THAT IS A BUTTON (the user, 2026-11-08: "类似于一行一行的按钮"): its own ground,
+        # lighter under the pointer, the one shown below marked.
+        ground = self.palette["accent"] if chosen else self.palette["bar"]
+        ink = self.palette["on_accent"] if chosen else self.palette["ink"]
+        row = tk.Frame(top, bg=ground, cursor="hand2")
+        row.pack(fill="x", pady=(self._px(3), 0))
+        kind = self.words(KINDS.get(str(one.get("kind") or ""), "Result"))
+        title = str(one.get("title") or "").strip()
+        words = ("▸  " if chosen else "") + (f"{kind}: {title}" if title else kind)
+        pick = tk.Label(row, text=words, bg=ground, fg=ink,
+                        font=self._font(0, "bold" if chosen else "normal"), anchor="w",
+                        justify="left", wraplength=wrap - self._px(170), cursor="hand2")
+        pick.pack(side="left", fill="x", expand=True, padx=(self._px(10), 0), pady=self._px(6))
+        on_release(pick, lambda: self._choose(n, False))
+        on_release(row, lambda: self._choose(n, False))
+        if not chosen:
+            def lit(on: bool) -> None:
+                for widget in (row, pick):
+                    widget.configure(bg=self.palette["hover"] if on else ground)
+            for widget in (row, pick):
+                widget.bind("<Enter>", lambda _e: lit(True), add="+")
+                widget.bind("<Leave>", lambda _e: lit(False), add="+")
+        if str(one.get("kind") or "") not in OPENED_HERE:
+            # "Open the email", not "... again" (the user, 2026-11-08: "不要加again").
+            opens = self._flat(row, self.words(OPEN_ITEM.get(str(one.get("kind") or ""), "Open")),
+                               lambda: None, ground, small=True)
+            on_release(opens, lambda: self._choose(n, True))
+            opens.pack(side="right", padx=(self._px(8), self._px(4)))
+
+    def _choose(self, n: int, opening: bool) -> None:
+        """An item chosen in the project's part: shown below (`on_item(n, opening)` brings its
+        note to `show_item`) - and, `opening`, opened where it opens."""
+        if self.on_item is None:
+            return
+        if n == int(self.note.get("n") or 0) and not opening:
+            return
+        try:
+            self.on_item(n, opening)
+        except TypeError:                        # one that only shows it
+            self.on_item(n)
+
+    def show_item(self, told: Dict[str, Any]) -> None:
+        """Below the project's part, this item's note now: what it is, how it is used, what to
+        check - ticked as it was left. The project's part as it was."""
+        if self.window is None:
+            return
+        kept = {key: self.note.get(key) for key in ("project", "items", "scope", "work")}
+        self.note = dict(told, **{key: value for key, value in kept.items() if value})
+        before = {str(one) for one in (self.note.get("ticked") or [])}
+        self.ticked = [str(one)[:300] in before or str(one) in before
+                       for one in list(self.note.get("check") or [])]
+        self._unsaved = False
+        if self._swap_item_below():
+            return
+        # NO FLASH OF THE WHOLE OF IT (the user, 2026-11-08: "切换之后还是要整个panel刷新，能不能不出现
+        # 整个panel fresh一下的视觉效果"): made in a window of its own where this one stands, as large,
+        # the lines between its parts where they were - shown over this one, which goes once it is
+        # drawn. Built again in place, it was hidden while laid out, and the whole of it blinked.
+        old = self.window
+        try:
+            old.update_idletasks()
+            self._keep_stack()
+            self._place = (old.winfo_x() + old.winfo_width(), old.winfo_y())
+            self._size = (old.winfo_width(), old.winfo_height())
+        except tk.TclError:
+            pass
+        self.show()
+
+        def gone() -> None:
+            try:
+                old.destroy()
+            except tk.TclError:
+                pass
+        try:
+            self.window.after(SWAP_AFTER_MS, gone)
+        except tk.TclError:                              # pragma: no cover - closed meanwhile
+            gone()
+
+    def _item_link(self, body: Any, one: Dict[str, Any], wrap: int) -> None:
+        """One thing the project's work made: pressed, its own panel."""
+        kind = self.words(KINDS.get(str(one.get("kind") or ""), "Result"))
+        title = str(one.get("title") or "").strip()
+        link = tk.Label(body, text="↗  " + (f"{kind}: {title}" if title else kind),
+                        bg=self.palette["bg"], fg=self.palette["accent"], font=self._font(),
+                        wraplength=wrap, justify="left", anchor="w", cursor="hand2")
+        link.pack(fill="x", pady=(self._px(3), 0))
+        n = int(one.get("n") or 0)
+        on_release(link, lambda: self.on_item(n) if self.on_item is not None else None)
+
+    def _ticked_words(self) -> List[str]:
+        checks = list(self.note.get("check") or [])
+        return [str(one)[:300] for n, one in enumerate(checks) if n < len(self.ticked)
+                and self.ticked[n]]
 
     def _heading(self, body: Any, text: str) -> None:
-        tk.Label(body, text=self.words(text), bg=PALETTE["bg"], fg=PALETTE["accent"],
+        tk.Label(body, text=self.words(text), bg=self.palette["bg"], fg=self.palette["accent"],
                  font=self._font(-1, "bold"), anchor="w").pack(fill="x",
                                                                pady=(self._px(12), self._px(4)))
 
     def _check(self, body: Any, n: int, text: str, wrap: int) -> None:
         """One thing to check: a box to tick - ticked by its box, so what it
         says can be selected - and what it says."""
-        row = tk.Frame(body, bg=PALETTE["bg"])
+        row = tk.Frame(body, bg=self.palette["bg"])
         row.pack(fill="x", pady=(self._px(3), 0))
-        box = tk.Label(row, bg=PALETTE["bg"], font=self._font(1), width=2, anchor="nw",
+        box = tk.Label(row, bg=self.palette["bg"], font=self._font(1), width=2, anchor="nw",
                        cursor="hand2")
         box.pack(side="left", anchor="n")
-        said = self._selectable(row, text, self._font(), PALETTE["ink"], wrap - self._px(28),
+        said = self._selectable(row, text, self._font(), self.palette["ink"], wrap - self._px(28),
                                 {"side": "left", "fill": "x", "expand": True})
 
         def draw() -> None:
             on = self.ticked[n]
             box.configure(text="☑" if on else "☐",
-                          fg=PALETTE["ticked"] if on else PALETTE["muted"])
-            said.configure(fg=PALETTE["muted"] if on else PALETTE["ink"])
+                          fg=self.palette["ticked"] if on else self.palette["muted"])
+            said.configure(fg=self.palette["muted"] if on else self.palette["ink"])
 
         def tick(_event: Any = None) -> None:
             self.ticked[n] = not self.ticked[n]
             draw()
+            if self.on_tick is not None:
+                try:
+                    self.on_tick(self._ticked_words(), self.note)
+                except Exception:                # pragma: no cover - ticked here still
+                    log.debug("what was ticked could not be kept", exc_info=True)
         box.bind("<Button-1>", tick)
         draw()
 
@@ -1190,7 +1749,7 @@ class HandedNote:
     def _scroller(self, scrolled: Any, thumb: Any, shown: int) -> None:
         """A thin bar of its own, beside what scrolls (a canvas, or a text):
         dragged, or pressed above or below its thumb."""
-        least, inset, wide = self._px(28), self._px(3), self._px(10)
+        least, inset, wide = self._px(28), self._px(SCROLL_INSET), self._px(SCROLL_WIDE)
 
         def tall() -> int:
             return max(1, thumb.winfo_height() if thumb.winfo_ismapped() else shown)
@@ -1204,7 +1763,7 @@ class HandedNote:
                 top = min(top, shown - least)
                 bottom = top + least
             thumb.create_rectangle(inset, top + 2, wide - inset, bottom - 2,
-                                   fill=PALETTE["thumb"], outline="", tags="thumb")
+                                   fill=self.palette["thumb"], outline="", tags="thumb")
         scrolled.configure(yscrollcommand=draw)
         held = {"y": None, "at": 0.0}
 
@@ -1214,7 +1773,7 @@ class HandedNote:
             top = min(first * shown, shown - least)
             if top <= event.y <= max(last * shown, top + least):
                 held["y"], held["at"] = event.y, first
-                thumb.itemconfigure("thumb", fill=PALETTE["thumb_on"])
+                thumb.itemconfigure("thumb", fill=self.palette["thumb_on"])
             else:
                 scrolled.yview_scroll(-1 if event.y < top else 1, "pages")
 
@@ -1224,7 +1783,7 @@ class HandedNote:
 
         def release(_event: Any) -> None:
             held["y"] = None
-            thumb.itemconfigure("thumb", fill=PALETTE["thumb"])
+            thumb.itemconfigure("thumb", fill=self.palette["thumb"])
         thumb.bind("<ButtonPress-1>", press)
         thumb.bind("<B1-Motion>", drag)
         thumb.bind("<ButtonRelease-1>", release)
@@ -1243,6 +1802,12 @@ class HandedNote:
             if side:
                 self.zoom_by(1 if delta > 0 else -1, side)
             return "break"
+        for canvas, area, _inner in getattr(self, "_top_scrolls", []):
+            if self._within(event.widget, area):
+                # Over one of a whole project's parts: it scrolls, the others as they are.
+                canvas.yview_scroll((-1 if delta > 0 else 1) * max(1, abs(int(delta)) // 120) * 3,
+                                    "units")
+                return "break"
         for scrolled, scrolls, side in self._panes:
             if scrolls and self._within(event.widget, side):
                 step = -1 if delta > 0 else 1

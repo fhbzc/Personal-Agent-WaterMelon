@@ -1492,7 +1492,9 @@ class WorkTools:
                 "and the message copied; \"form\" (url, parts) - the page opened in their "
                 "browser, each part to paste in its box; "
                 "\"file\" or \"folder\" (path) - one this work made, opened; "
-                "\"answer\" (text) - shown. WORDS THE USER SENDS OR POSTS AS THEIR OWN "
+                "\"answer\" (text) - shown; \"guide\" (title, how, check) - the one guide "
+                "to them all, where you hand over more than one result or the work is a whole "
+                "project. WORDS THE USER SENDS OR POSTS AS THEIR OWN "
                 "(email, message, text, form) are written as they write: look first with "
                 "how_the_user_writes. ONE THING, MORE THAN ONE WAY (a message by Slack "
                 "or by email): up to 3, each complete, with the same choice and its own "
@@ -1503,7 +1505,7 @@ class WorkTools:
                 "opened for the user, and what is done with it is theirs.",
                 _schema({"kind": {"type": "string",
                                   "enum": ["email", "event", "text", "file", "folder",
-                                           "answer", "message", "form"]},
+                                           "answer", "message", "form", "guide"]},
                          "title": {"type": "string",
                                    "description": "what it is, in a few words"},
                          "to": {"type": "array", "items": {"type": "string"}},
@@ -1588,6 +1590,16 @@ class WorkTools:
                 if target == root or root in target.parents:
                     return target
             return None
+        if str(args.get("kind") or "").strip().lower() == "guide":
+            # A WHOLE PROJECT'S GUIDE (handed.PROJECT_GUIDE_RULES): kept apart from what it made.
+            guide = handed.guide_of(args)
+            if guide.get("error"):
+                return guide
+            kept = self.on_hand_over(guide)
+            if isinstance(kept, dict) and kept.get("error"):
+                return kept
+            return {"handed": "guide", "title": guide["title"],
+                    "note": "it comes up at the top of the project's panel"}
         item = handed.checked(args, resolve)
         if item.get("error"):
             return item

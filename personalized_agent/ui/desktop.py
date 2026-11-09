@@ -21,6 +21,7 @@ comes back through a queue drained by the Tk event loop.
 from __future__ import annotations
 
 import collections
+import json
 import logging
 import queue
 import re
@@ -151,6 +152,12 @@ BUBBLE_LOOK = {
            "dot": "#eba55a", "button": "#3a3122", "button_hover": "#4a3f2c",
            "primary": "#eba55a", "primary_hover": "#f3b874", "on_primary": "#2a2418"},
 }
+
+#: EACH KIND IN ITS OWN COLOUR, on the line of what waits and on its bubble's dot (the user,
+#: 2026-11-07: "推荐用黄色，总结用绿色"): a notification blue, a summary green, a recommendation
+#: yellow - a clear yellow, not the amber of a notification said loud.
+WAITING_INK = {"notifications": "#6aa5ff", "summaries": "#5fd1b3", "recommendations": "#f2d14b"}
+SUMMARY_DOT = WAITING_INK["summaries"]
 
 #: WHAT THE MODEL RECOMMENDS LOOKS ITS OWN (the user, 2026-11-04): no notification.
 RECOMMENDED_LOOK = {"outline": "#2f6f62", "bg": "#14302b", "ink": "#e6f3ef", "muted": "#9cc4b9",
@@ -868,8 +875,9 @@ class DesktopAgent:
             return
         from . import avatar_tuck
         side = slide.get("leap", "")
-        into = min(1.0, (now - slide["at"]) / (avatar_tuck.leap_seconds(side) if side
-                                               else self.TUCK_SECONDS))
+        seconds = (avatar_tuck.JUMP_IN_SECONDS if slide.get("into_side")
+                   else avatar_tuck.leap_seconds(side) if side else self.TUCK_SECONDS)
+        into = min(1.0, (now - slide["at"]) / seconds)
         jump = avatar_tuck.leap(into) if side else None
         eased = jump.out if jump else 1 - (1 - into) ** 3
         x = int(round(slide["x"] + (slide["to"][0] - slide["x"]) * eased))
@@ -885,6 +893,8 @@ class DesktopAgent:
         self.agent_window.geometry(f"+{x}+{y}")
         if into >= 1:
             live.pop("slide", None)
+            if slide.get("into_side") and getattr(self, "_beside", ""):
+                self._sneaked_in(live)               # in, as if it had sneaked there
 
     #: Pulled along, how far it leans back at most, and for how fast a pull.
     LEAN_MOST, LEAN_PER_PIXEL = 11.0, 0.02
@@ -967,6 +977,13 @@ class DesktopAgent:
         sides = avatar_tuck.sides_of(window, x + self.size // 2, y + self.size // 2)
         self._beside = avatar_tuck.side_to_tuck(x, y, self.size, sides)
         self._beside_since = time.monotonic()
+        if avatar_tuck.jumps_in(self._beside, x, y, self.size, sides):
+            # MORE THAN HALF OF IT PAST THE SIDE: in it jumps, now (the user, 2026-11-08).
+            self._live["edge"] = avatar_tuck.edge_of(self._beside, sides)
+            self._slide_from_here(avatar_tuck.tucked_at(self._beside, x, y, self.size, sides),
+                                  1.0, 1.0, leap=self._beside)
+            self._live["slide"]["into_side"] = True
+            self._look_now()
 
     def _watched(self, pointer_on_it: bool) -> bool:
         """Whether anything is going on with it: it does not sneak off then."""
@@ -1288,9 +1305,11 @@ class DesktopAgent:
         from .avatar_buttons import ChatVine
         self._quick_panels: Dict[str, Any] = {}
         try:
+            # A CHAT AND AN OVERVIEW ON IT (the user, 2026-11-08): the Overview as a double click.
             self._chat_vine = ChatVine(self.root, self._words("Chat"), self.toggle_chat_bubble,
                                        self._avatar_box, self._popup_font(),
-                                       self._vine_side, self.agent_window)
+                                       self._vine_side, self.agent_window,
+                                       overview=(self._words("Overview"), self._on_double_click))
             # It moves as the avatar moves: sliding into a side, its head coming out.
             self.agent_window.bind("<Configure>", self._chat_vine.place, add="+")
             self.root.after(1500, self._prepare_panels)
@@ -1403,10 +1422,20 @@ class DesktopAgent:
         self.queue.put(("call", self._show_quick_delegate))
 
     def _chat_by_shortcut(self) -> None:
-        """The shortcut pressed: the chat bubble beside the avatar, on the
-        conversation they were in; the same keys minimise it (the user,
-        2026-11-04)."""
-        self.queue.put(("call", self.toggle_chat_bubble))
+        """The shortcut pressed: the chat bubble beside the avatar; THE SAME KEYS CLOSE IT, as its
+        x does - not minimise it (the user, 2026-11-08: "打开chat的快捷键再嗯一下是关掉（而不是最小化)"):
+        what was written and not sent kept, the next one a new conversation."""
+        self.queue.put(("call", self._chat_open_or_closed))
+
+    def _chat_open_or_closed(self) -> None:
+        bubble = getattr(self, "_chat_bubble", None)
+        if bubble is not None and bubble.is_open:
+            bubble.close()
+            vine = getattr(self, "_chat_vine", None)
+            if vine is not None:
+                vine.place()
+        else:
+            self.open_chat_bubble()
 
     def toggle_chat_bubble(self) -> None:
         bubble = getattr(self, "_chat_bubble", None)
@@ -1658,6 +1687,13 @@ class DesktopAgent:
 
     def _watch_the_screens(self) -> None:
         self._keep_on_screen()
+        if not self.character_hidden:
+            from .on_top import back_on_top
+            try:
+                if back_on_top(self.agent_window):
+                    log.info("the avatar had fallen under another window: put back on top")
+            except Exception:    # pragma: no cover - the window has gone
+                log.debug("could not keep the avatar on top", exc_info=True)
         self.root.after(self.ON_SCREEN_EVERY_MS, self._watch_the_screens)
 
     @staticmethod
@@ -1746,7 +1782,9 @@ class DesktopAgent:
             panel.close()                    # one at a time, however it was opened
         pictures = getattr(self.app, "front_pictures", None)
         if pictures is not None:
-            pictures.take()                  # before anything of this covers it
+            # Before anything of this covers it - and, the chat's, its words not read (the user,
+            # 2026-11-08: "chat的这个可以跳过。不需要识别"): the picture goes as it was taken.
+            pictures.take(words=False)
         from ..agent.front_screen import front_now
         from .chat_bubble import ChatBubble
         bubble = getattr(self, "_chat_bubble", None)
@@ -1833,10 +1871,45 @@ class DesktopAgent:
         pictures = getattr(self.app, "front_pictures", None)
         if pictures is None:
             return note_of(said), []
-        shot = pictures.latest(title=said.get("title", ""))
+        # WHAT GOES WITH IT, SHOWN UNDER THE MESSAGE AT ONCE (the user, 2026-11-08: "每次发出去的时候，
+        # 显示当前发给模型的屏幕截屏长什么样"; "你等识别，你可以先把图片截图发上来") - small, before its
+        # words are read; then said whether it went, and how.
+        again = getattr(pictures, "again_for_a_message", None)
+        if callable(again):
+            again()
+        showing = bubble is not None and getattr(self, "queue", None) is not None
+        preview = pictures.preview() if showing and callable(
+            getattr(pictures, "preview", None)) else None
+        if preview is not None:
+            self.queue.put(("call", lambda: bubble.picture_sent(preview)))
+        taking = getattr(pictures, "for_a_message", None)
+        shot = (taking if callable(taking) else pictures.latest)(title=said.get("title", ""))
         if shot.get("words"):
             said = dict(said, picture_words=shot["words"][:MOST_TEXT])
-        return note_of(said), pictures.blocks(shot)
+        seen = pictures.blocks(shot)
+        if showing:
+            sees = getattr(self, "_chat_model_sees", lambda: True)()
+            if preview is None and seen and shot.get("path"):
+                path = str(shot["path"])
+                self.queue.put(("call", lambda: bubble.picture_sent(path)))
+            if preview is not None or seen:
+                how = ("sent" if sees else "words") if seen else "not"
+                why = str(getattr(pictures, "why", "") or "")
+                if how == "words" and not shot.get("words"):
+                    # Nothing read of it (the chat's): a model that sees no pictures has none.
+                    how, why = "not", "this model sees no pictures"
+                self.queue.put(("call", lambda: bubble.picture_settled(how, why)))
+        return note_of(said), seen
+
+    def _chat_model_sees(self) -> bool:
+        """Whether the chat's first model is given pictures, or their words only."""
+        try:
+            from ..models.vision import sees_images
+            first = next(iter(self.app.models.chain("primary")), None)
+            return first is None or sees_images(first.provider_id, first.model_id,
+                                                self.app.config)
+        except Exception:                        # said as seen: the picture went
+            return True
 
     def _avatar_box(self) -> tuple:
         """Where the avatar is on the screen: (x, y, width, height)."""
@@ -2145,7 +2218,8 @@ class DesktopAgent:
                                    reason=payload.get("reason", ""),
                                    trigger=payload.get("trigger", ""),
                                    recommended=bool(payload.get("recommended")),
-                                   through=bool(payload.get("through")))
+                                   through=bool(payload.get("through")),
+                                   summary=bool(payload.get("summary")))
             else:                       # a plain string, from elsewhere
                 self.notify_bubble(str(payload))
             self.root.after(4000, lambda: self.set_state("idle"))
@@ -2163,7 +2237,7 @@ class DesktopAgent:
 
     # -- bus subscriptions --------------------------------------------------
     def _on_notification(self, _topic: str, payload: Any) -> None:
-        from ..common.notifications import told_from
+        from ..common.notifications import told_from, what_set_it_off
         text = f"{payload.get('title')}: {payload.get('message')}"
         # A notification raised alongside a question carries its id, so the
         # bubble can offer that question's own buttons rather than a bare
@@ -2183,7 +2257,9 @@ class DesktopAgent:
             "picture": str(metadata.get("picture") or ""),
             "conversation": str(metadata.get("chat_conversation") or ""),
             "reason": str(metadata.get("reason") or ""), "trigger": told_from(metadata),
+            "set_off": what_set_it_off(metadata),
             "recommended": bool(metadata.get("recommended")),
+            "summary": bool(metadata.get("summary")),
             "through": bool(metadata.get("through"))}))
 
     def _on_speaking(self, _topic: str, payload: Any) -> None:
@@ -2217,7 +2293,7 @@ class DesktopAgent:
                       template: str = "", content: bool = False,
                       picture: str = "", conversation: str = "", reason: str = "",
                       recommended: bool = False, through: bool = False,
-                      trigger: str = "") -> None:
+                      trigger: str = "", summary: bool = False) -> None:
         """Queue something to say beside the character.
 
         Everything the agent raises of its own accord arrives this way. It used
@@ -2246,7 +2322,7 @@ class DesktopAgent:
                 "notification_id": notification_id, "template": template,
                 "content": content, "picture": picture, "conversation": conversation,
                 "reason": reason, "recommended": recommended, "through": through,
-                "trigger": trigger}
+                "trigger": trigger, "summary": summary}
         if not self._merge_bubble(item):
             self._bubble_queue.append(item)
         self._show_next_bubble()
@@ -2291,15 +2367,30 @@ class DesktopAgent:
         2026-11-01; agent/work/handed.py) - beside what was just opened, a
         card of its own on top until it is closed (ui/handed_note.py). A
         newer one takes its place; its zoom is kept for the next."""
-        from .handed_note import SIDES, ZOOM_START, HandedNote
-        old = getattr(self, "_handed_note", None)
+        from .handed_note import PARTS, PROJECT_PALETTE, ZOOM_START, HandedNote
+        # ONE OF EACH KIND (the user, 2026-11-08: "per to do 的内容，如果打开下一个per to do的to do panel,
+        # 上一个自动关掉，但是per project的to do panel 只会被下一个per project的panel关掉"): a newer
+        # note takes the place of the one of its own kind only.
+        scope = "project" if note.get("scope") == "project" else "todo"
+        notes = self.__dict__.setdefault("_handed_notes", {})
+        old = notes.get(scope)
         if old is not None:
             old.close()
         font = self._popup_font()
-        zooms = {side: ZOOM_START + sizes.popup_zoom(self.config) for side in SIDES}
+        # EACH PART'S OWN ZOOM, AS IT WAS LAST LEFT (the user, 2026-11-08: "四个小panel是支持单独的 缩放
+        # （并且记住历史选择)"): a part never zoomed opens at the popups' zoom.
+        left = self.config.get("handed_note_zooms", {}) or {}
+        left = left if isinstance(left, dict) else {}
+        zooms = {part: int(left.get(part, ZOOM_START + sizes.popup_zoom(self.config)))
+                 for part in PARTS}
 
-        def kept(_side: str, step: int) -> None:
-            zoom_popups(self, step - ZOOM_START)
+        def kept(side: str, step: int) -> None:
+            try:
+                now = dict(self.config.get("handed_note_zooms", {}) or {})
+                now[side] = int(step)
+                self.config.set("handed_note_zooms", now, internal=True)
+            except Exception:                    # this note keeps it
+                log.debug("a part's zoom could not be kept", exc_info=True)
         def save(words: str) -> Any:
             """Saved where the work keeps it (WorkRuns.save_handed) - True,
             else why not, in words."""
@@ -2312,6 +2403,82 @@ class DesktopAgent:
             if isinstance(said, dict) and said.get("error") == "going":
                 return "It is working on it again - save once it is done; copy it so it is not lost"
             return said is not None
+        # TICKED, KEPT (the user, 2026-11-08): by the run and the item, in the database.
+        def tick_key(one: Dict[str, Any]) -> str:
+            # An item's by its place; a whole project's own checks, "project".
+            n = one.get("n")
+            return f"handed.ticked.{one.get('run') or ''}.{n if n == 'project' else int(n or 0)}"
+
+        def kept_ticks(one: Dict[str, Any]) -> list:
+            try:
+                row = self.app.db.query_one("SELECT value FROM kv WHERE key = ?", (tick_key(one),))
+                return json.loads(row["value"]) if row and row["value"] else []
+            except Exception:                    # none ticked, then
+                log.debug("what was ticked could not be read", exc_info=True)
+                return []
+
+        def ticked_of(one: Dict[str, Any]) -> Dict[str, Any]:
+            return dict(one, ticked=kept_ticks(one)) if one.get("run") else one
+        note = ticked_of(note)
+        if note.get("run") and isinstance(note.get("project"), dict):
+            note["project"] = dict(note["project"], ticked=kept_ticks({"run": note["run"],
+                                                                       "n": "project"}))
+
+        def ticked(words: list, shown: Optional[Dict[str, Any]] = None) -> None:
+            self.app.db.execute("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) "
+                                "DO UPDATE SET value = excluded.value",
+                                (tick_key(shown or note), json.dumps(list(words), ensure_ascii=False)))
+
+        def item(n: int, opening: bool = False) -> None:
+            """One of a whole project's items, shown below the project's part of its panel -
+            `opening`: opened where it opens, too. Asked off Tk's thread: what it is is worked out
+            as when it is opened."""
+            told = getattr(self.app, "handed_told", None)
+            opens = getattr(self.app, "open_handed", None)
+            if told is None:
+                return
+            run = str(note.get("run") or "")
+
+            def ask() -> None:
+                if opening and opens is not None:
+                    try:
+                        opens(run, int(n))
+                    except Exception:            # said in its note's own words, when shown
+                        log.info("an item could not be opened", exc_info=True)
+                try:
+                    said = ticked_of(told(run, int(n)))
+                except Exception:
+                    log.info("an item's note could not be made", exc_info=True)
+                    return
+                panel = self.__dict__.get("_handed_notes", {}).get("project")
+                if panel is not None:
+                    self.queue.put(("call", lambda: panel.show_item(said)))
+            threading.Thread(target=ask, name="handed-item", daemon=True).start()
+
+        def folder() -> None:
+            """Its work's folder, in front - asked off Tk's thread."""
+            opening = getattr(self.app, "open_run_folder", None)
+            if opening is None:
+                return
+
+            def ask() -> None:
+                try:
+                    opening(str(note.get("run") or ""))
+                except Exception:
+                    log.info("a work's folder could not be opened", exc_info=True)
+            threading.Thread(target=ask, name="open-work-folder", daemon=True).start()
+
+        def again() -> str:
+            """Opened again where it opens (the API's own act, no note put up over this one): ""
+            when it opened, else why not."""
+            opening = getattr(self.app, "open_handed", None)
+            if opening is None:
+                return "It cannot be opened from here - open it from the Overview"
+            try:
+                opening(str(note.get("run") or ""), int(note.get("n") or 0))
+            except Exception as exc:             # the API's own refusal, in its words
+                return str(getattr(exc, "message", "") or exc) or "It could not be opened"
+            return ""
         # ITS SIZE AND ITS SIDES' SHARE as the user left the last note's.
         size = sizes.kept(self.root, self.config.get("handed_note_size", []) or []) or []
         try:
@@ -2330,7 +2497,14 @@ class DesktopAgent:
         self._handed_note = HandedNote(self.root, note, self._words, font[0], font[1],
                                        zoom=zooms, on_zoom=kept,
                                        on_save=save if note.get("run") else None,
-                                       kept_size=size or None, split=split, on_layout=laid_out)
+                                       on_open=again if note.get("run") else None,
+                                       on_item=item if note.get("run") and note.get("items")
+                                       else None,
+                                       on_tick=ticked if note.get("run") else None,
+                                       on_folder=folder if note.get("run") else None,
+                                       kept_size=size or None, split=split, on_layout=laid_out,
+                                       palette=PROJECT_PALETTE if scope == "project" else None)
+        notes[scope] = self._handed_note
         self._handed_note.show()
 
     def _blocker(self) -> bool:
@@ -2395,9 +2569,17 @@ class DesktopAgent:
                 pass
 
     def _show_waiting(self) -> None:
-        """The small line beside the avatar: how many wait. It takes no focus."""
-        kept = self.app.notifications.waiting_count()
-        count = kept + (len(self._bubble_queue) if self._blocked() else 0)
+        """The small line beside the avatar: how many wait, a row a kind in its colour (the user,
+        2026-11-07: "要写清楚category", "分行", "每行不同的颜色"). It takes no focus."""
+        from ..common.notifications import waiting_lines
+        counts = self.app.notifications.waiting_by_category()
+        kept = sum(counts.values())
+        if self._blocked():
+            for item in self._bubble_queue:
+                name = ("Summaries" if item.get("summary") else
+                        "Recommended content" if item.get("recommended") else "Reminders")
+                counts[name] = counts.get(name, 0) + 1
+        count = sum(counts.values())
         panel = getattr(self, "_quick_panels", {}).get("waiting")
         if panel is not None and panel.is_open and kept != getattr(self, "_waiting_kept", kept):
             panel._read_it(quiet=True)
@@ -2405,29 +2587,45 @@ class DesktopAgent:
         if not count:
             self._hide_waiting()
             return
-        said = self._words("{0} waiting").replace("{0}", str(count))
+        rows = waiting_lines(counts, self._words)
         if self._waiting_line is not None:
-            self._waiting_label.configure(text=said)
+            self._draw_waiting(rows)
             return
-        from .chat_bubble import beside, work_area
-        from .on_top import on_release, stay_on_top
+        from .on_top import stay_on_top
         look = BUBBLE_LOOK[False]
         line = tk.Toplevel(self.root)
         line.overrideredirect(True)
         line.attributes("-topmost", True)
         line.configure(bg=look["outline"])
-        font = self._popup_font()
-        self._waiting_label = tk.Label(line, text=said, bg=look["bg"], fg=look["ink"],
-                                       font=(font[0], sizes.zoomed(font[1] - 1, self._bubble_zoom())),
-                                       padx=10, pady=4, cursor="hand2")
-        self._waiting_label.pack(padx=1, pady=1)
-        on_release(self._waiting_label, self._open_waiting)
-        line.update_idletasks()
-        x, y = beside(self._beside_box(), (line.winfo_reqwidth(), line.winfo_reqheight()),
-                      (line.winfo_screenwidth(), line.winfo_screenheight()), work_area(line))
-        line.geometry(f"+{x}+{y}")
-        stay_on_top(line)
+        self._waiting_box = tk.Frame(line, bg=look["bg"], padx=10, pady=4, cursor="hand2")
+        self._waiting_box.pack(padx=1, pady=1)
         self._waiting_line = line
+        self._draw_waiting(rows)
+        stay_on_top(line)
+
+    def _draw_waiting(self, rows: List[Tuple[str, str]]) -> None:
+        """Its rows, drawn again, and the line placed for its new size."""
+        from .chat_bubble import beside, work_area
+        from .on_top import on_release
+        line, box = self._waiting_line, self._waiting_box
+        look = BUBBLE_LOOK[False]
+        font = self._popup_font()
+        try:
+            for old in box.winfo_children():
+                old.destroy()
+            for kind, said in rows:
+                row = tk.Label(box, text=said, bg=look["bg"], fg=WAITING_INK.get(kind, look["ink"]),
+                               font=(font[0], sizes.zoomed(font[1] - 1, self._bubble_zoom())),
+                               anchor="w", justify="left", cursor="hand2")
+                row.pack(fill="x")
+                on_release(row, self._open_waiting)
+            on_release(box, self._open_waiting)
+            line.update_idletasks()
+            x, y = beside(self._beside_box(), (line.winfo_reqwidth(), line.winfo_reqheight()),
+                          (line.winfo_screenwidth(), line.winfo_screenheight()), work_area(line))
+            line.geometry(f"+{x}+{y}")
+        except tk.TclError:                  # pragma: no cover - the line went
+            pass
 
     def _copyable(self, parent: Any, text: str, font: tuple, ink: str, look: Dict[str, str],
                   wide: int, tallest: int = 0) -> Any:
@@ -2587,10 +2785,12 @@ class DesktopAgent:
         head = tk.Frame(frame, bg=look["bg"])
         head.pack(fill="x")
         dot = tk.Canvas(head, width=10, height=10, bg=look["bg"], highlightthickness=0, bd=0)
-        dot.create_oval(1, 1, 9, 9, fill=look["dot"], outline="")
+        dot.create_oval(1, 1, 9, 9, fill=SUMMARY_DOT if item.get("summary") else look["dot"],
+                        outline="")
         dot.pack(side="left", padx=(0, 7))
         # What the model sends asks nothing, though it has answers of its own.
-        kind = "Recommended content" if item.get("recommended") else \
+        kind = "Work summary" if item.get("summary") else \
+            "Recommended content" if item.get("recommended") else \
             "Notification" if item.get("content") else "Question" if item["question_id"] else \
             "Notification" if item.get("notification_id") else "From your agent"
         tk.Label(head, text=self._words(kind), bg=look["bg"], fg=look["muted"],
@@ -2627,7 +2827,9 @@ class DesktopAgent:
         # WHAT SET IT OFF (the user, 2026-11-06).
         if item.get("trigger"):
             self._copyable(frame, self._words("Trigger: {0}").replace(
-                "{0}", self._words(item["trigger"])), (family, max(sizes.SMALLEST_WORDS, points - 1)),
+                "{0}", self._words(item["trigger"])
+                + (f" - {item['set_off']}" if item.get("set_off") else "")),
+                (family, max(sizes.SMALLEST_WORDS, points - 1)),
                 look["muted"], look, width - 34).pack(fill="x", pady=(4, 0))
         part_of = self._bubble_part_of(item.get("notification_id", ""))
         if part_of:

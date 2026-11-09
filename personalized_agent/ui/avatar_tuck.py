@@ -162,6 +162,26 @@ def side_to_tuck(x: int, y: int, width: int, sides: Sides) -> str:
     return ""
 
 
+#: LET GO MOSTLY PAST THE SIDE, IT JUMPS IN AT ONCE (the user, 2026-11-08: "如果西瓜被放置的位置在屏幕外
+#: 超过50%，西瓜直接跳进屏幕边框，不是慢慢挪进去"): more than this share of it beyond the side - a quarter
+#: (the user, 2026-11-08: "在边框外的比例可以低一点就足够触发").
+JUMP_IN_PAST = 0.25
+#: How long that jump takes: a short way, quicker than a jump out.
+JUMP_IN_SECONDS = 0.5
+
+
+def off_by(side: str, x: int, y: int, width: int, sides: Sides) -> float:
+    """How much of it, 0 to 1, is beyond that side of the screen."""
+    beyond = {"left": sides.left - x, "right": x + width - sides.right,
+              "top": sides.top - y, "bottom": y + width - sides.bottom}.get(side, 0)
+    return max(0.0, min(1.0, beyond / max(1, width)))
+
+
+def jumps_in(side: str, x: int, y: int, width: int, sides: Sides) -> bool:
+    """Whether, let go there, it jumps into that side at once rather than sneaking in later."""
+    return bool(side) and off_by(side, x, y, width, sides) > JUMP_IN_PAST
+
+
 def edge_of(side: str, sides: Sides) -> int:
     """That side of the screen, where it is."""
     return getattr(sides, side)

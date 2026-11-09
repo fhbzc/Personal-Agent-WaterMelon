@@ -21,6 +21,8 @@ from ..models.base import ModelRequest
 #: At most so many answers, so much of them, and a title so long.
 MOST_ANSWERS, MOST_CHARACTERS, MOST_TITLE = 200, 120000, 200
 STYLES = ("plain", "enriched")
+#: After a summary that stopped at the model's output limit, in the display language.
+CUT_NOTE = "(The answer stopped at the length limit.)"
 #: Its model calls are the user's chat (common/modules.py).
 TASK = "chat_summary_document"
 
@@ -79,11 +81,19 @@ def summarise(models: Any, answers: List[str], title: str = "",
                                                          ensure_ascii=False)}],
         task=TASK, max_tokens=8000, builtin_web=False,
         language=in_display("the document")), role="primary")
-    text = str(getattr(response, "text", "") or "").strip()
+    from ..models.answers import read_text
+    text, cut = read_text(response)
+    text = text.strip()
     if not text:
         raise ValueError("The model wrote nothing - try again.")
     if style == "plain":
-        return {"summary": text, "answer_count": len(answers), "style": style}
+        if cut:
+            # SAID WHEN CUT OFF (2026-11-07): a summary that stopped at the output limit is
+            # given as it came, with the note after it - never as if whole.
+            from ..common.interface_words import shown
+            text += "\n\n" + shown(CUT_NOTE, getattr(models, "config", None))
+        return {"summary": text, "answer_count": len(answers), "style": style,
+                **({"cut": True} if cut else {})}
     document = _document(text)
     if document is None:
         raise ValueError("The model's enriched document could not be read - try again, "

@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ...common.languages import in_english, needs_english_copy
 
@@ -67,10 +67,12 @@ def wanting(described: Dict[str, Any], words: Dict[str, Any],
     english = described.get("in_english") if isinstance(described.get("in_english"),
                                                         dict) else {}
     of = english.get("_of") if isinstance(english.get("_of"), dict) else {}
+    # Failed on these very words (2026-11-07): not asked again the same way.
+    failed = english.get("_failed") if isinstance(english.get("_failed"), dict) else {}
     out = {}
     for field in fields:
         text = str(words.get(field) or "").strip()
-        if not text:
+        if not text or failed.get(field) == mark(text):
             continue
         if not str(english.get(field) or "").strip() or of.get(field) != mark(text):
             out[field] = text
@@ -132,28 +134,106 @@ def fill(db: Any, models: Any, config: Any, scope: str = "live",
     for batch in batches[:MOST_CALLS]:
         if going is not None and not going():
             break
-        out["filled"] += _translate(db, models, batch)
-        out["calls"] += 1
+        filled, calls, why = _translate(db, models, batch)
+        out["filled"] += filled
+        out["calls"] += calls
+        if why:
+            out.setdefault("not_taken", []).append(why)
     return out
 
 
-def _translate(db: Any, models: Any, batch: List[Tuple[str, str, Dict[str, str]]]) -> int:
+def asked_in_parts(items: Sequence[Any], ask: Callable[[Sequence[Any]], Any]) -> List[Any]:
+    """A batch asked whole, in halves while it is cut off (`answers.in_parts`) - and a part
+    answered unreadably though not cut off, once more in two halves (the user, 2026-11-07:
+    never the same question again the same way; a shorter one may be). What is still not
+    whole at the end is given back as it is, for the caller to record as failed."""
+    from ...models import answers as _answers
+    out: List[Any] = []
+    for part, answer in _answers.in_parts(items, ask):
+        if answer.ok or answer.cut or len(part) < 2:
+            out.append((part, answer))
+            continue
+        half = len(part) // 2
+        out += _answers.in_parts(part[:half], ask) + _answers.in_parts(part[half:], ask)
+    return out
+
+
+class _NotAsked(Exception):
+    """The model could not be asked: the batch is left for next time."""
+
+
+def _ask(models: Any, batch: Sequence[Tuple[str, str, Dict[str, str]]]) -> Any:
+    """One call for these rows, its answer read (models/answers.py)."""
+    from ...models import answers as _answers
     from ...models.base import ModelRequest
     from .heartbeat import _as_json
-    ids = {f"{table}:{ident}": (table, ident, need) for table, ident, need in batch}
-    asked = json.dumps({"items": [{"id": key, "fields": need}
-                                  for key, (_t, _i, need) in ids.items()]},
-                       ensure_ascii=False)
+    asked = json.dumps({"items": [{"id": f"{table}:{ident}", "fields": need}
+                                  for table, ident, need in batch]}, ensure_ascii=False)
     try:
         response = models.invoke(ModelRequest(
             messages=[{"role": "user", "content": asked}], system=TRANSLATE,
             max_tokens=4000, task="state_heartbeat_english",
             language=in_english("every field you return"),
             metadata={"kind": "english_copies"}), role="heartbeat")
-    except Exception:
+    except Exception as exc:
         log.warning("the English copies could not be asked for", exc_info=True)
-        return 0
-    answered = _as_json(getattr(response, "text", "") or "") or {}
+        raise _NotAsked() from exc
+    return _answers.read(response, parse=_as_json, wants=("items",))
+
+
+def _translate(db: Any, models: Any, batch: List[Tuple[str, str, Dict[str, str]]]
+               ) -> Tuple[int, int, str]:
+    """(fields filled, calls made, why some failed). A CUT BATCH IS ASKED AGAIN IN HALVES
+    (2026-11-07): cut off, it filled nothing, and the same batch came first every time - so
+    nothing after it was ever filled. A part not whole at its smallest is RECORDED AS FAILED
+    on its rows (`_failed`) and moved past: not asked again until its words change."""
+    calls = [0]
+
+    def ask(part: Sequence[Tuple[str, str, Dict[str, str]]]) -> Any:
+        calls[0] += 1
+        return _ask(models, part)
+
+    try:
+        answered = asked_in_parts(batch, ask)
+    except _NotAsked:
+        return 0, calls[0], ""
+    filled, why = 0, ""
+    for part, answer in answered:
+        if not answer.ok:
+            why = why or answer.why_not
+            log.warning("the English copies of %d row(s) failed: %s", len(part), answer.why_not)
+            _failed(db, part, answer.why_not)
+            continue
+        filled += _keep(db, part, answer.data)
+    return filled, calls[0], why
+
+
+def _failed(db: Any, batch: Sequence[Tuple[str, str, Dict[str, str]]], why: str) -> None:
+    """Each field of these rows marked as failed for the words it has now (`_failed` in the
+    copy, with `_why_failed`): `wanting` passes over it until the words change."""
+    from .todo import LOCK
+    for table, ident, need in batch:
+        with LOCK:
+            row = db.query_one(f"SELECT described FROM {table} WHERE id = ?", (ident,))
+            if row is None:
+                continue
+            said = _loads(row["described"])
+            english = dict(said.get("in_english") or {}) \
+                if isinstance(said.get("in_english"), dict) else {}
+            failed = dict(english.get("_failed") or {}) \
+                if isinstance(english.get("_failed"), dict) else {}
+            failed.update({field: mark(text) for field, text in need.items()})
+            english["_failed"] = failed
+            english["_why_failed"] = str(why or "")[:300]
+            said["in_english"] = english
+            db.execute(f"UPDATE {table} SET described = ? WHERE id = ?",
+                       (json.dumps(said, ensure_ascii=False), ident))
+
+
+def _keep(db: Any, batch: Sequence[Tuple[str, str, Dict[str, str]]],
+          answered: Dict[str, Any]) -> int:
+    """What a whole answer gave, kept where the words are still the ones translated."""
+    ids = {f"{table}:{ident}": (table, ident, need) for table, ident, need in batch}
     filled = 0
     from .todo import LOCK
     for item in answered.get("items") or []:

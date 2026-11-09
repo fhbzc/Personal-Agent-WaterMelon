@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -302,6 +303,169 @@ class WindowsActivityProvider(PlatformActivityProvider):
             log.debug("could not take the user's window", exc_info=True)
         return None
 
+    # -- THE WHOLE SCREEN (the user, 2026-11-08: "能给整个屏幕吗") ----------------------------------
+    def screen_windows(self) -> List[Dict[str, Any]]:
+        """Every window drawn on the screen, from the top down: its frame in real pixels, its
+        program, its title, whether it is this application's and whether it hides what is under
+        it (`opaque`: not a layered or a see-through one - a sharing bar, an overlay)."""
+        if not self.available:
+            return []
+        ctypes = self._ctypes
+        from ctypes import wintypes
+        user32 = ctypes.WinDLL("user32")
+        dwm = ctypes.WinDLL("dwmapi")
+        for name in ("GetTopWindow", "GetWindow"):
+            getattr(user32, name).restype = wintypes.HWND
+        user32.GetTopWindow.argtypes = [wintypes.HWND]
+        user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsIconic.argtypes = [wintypes.HWND]
+        user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
+        user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        names: Dict[int, str] = {}
+        out: List[Dict[str, Any]] = []
+        hwnd = user32.GetTopWindow(None)
+        while hwnd:
+            try:
+                if user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd):
+                    cloaked = wintypes.DWORD()
+                    dwm.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), ctypes.sizeof(cloaked))
+                    rect = wintypes.RECT()
+                    if not cloaked.value and dwm.DwmGetWindowAttribute(
+                            hwnd, 9, ctypes.byref(rect), ctypes.sizeof(rect)) == 0 \
+                            and rect.right > rect.left and rect.bottom > rect.top:
+                        pid = wintypes.DWORD()
+                        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                        if pid.value not in names:
+                            try:
+                                names[pid.value] = psutil.Process(pid.value).name() if psutil else ""
+                            except Exception:
+                                names[pid.value] = ""
+                        title = ctypes.create_unicode_buffer(1024)
+                        user32.GetWindowTextW(hwnd, title, 1024)
+                        kind = ctypes.create_unicode_buffer(64)
+                        user32.GetClassNameW(hwnd, kind, 64)
+                        extra = user32.GetWindowLongW(hwnd, -20)
+                        out.append({"hwnd": hwnd, "box": (rect.left, rect.top, rect.right, rect.bottom),
+                                    "application": names[pid.value], "title": title.value,
+                                    "class": kind.value, "ours": pid.value == os.getpid(),
+                                    "opaque": not extra & (0x80000 | 0x20)})  # LAYERED, TRANSPARENT
+            except Exception:
+                log.debug("a window on the screen could not be read", exc_info=True)
+            hwnd = user32.GetWindow(hwnd, 2)         # GW_HWNDNEXT
+        return out
+
+    def _monitor_of(self, hwnd: Any) -> Optional[tuple]:
+        """The screen a window is on, in real pixels."""
+        ctypes = self._ctypes
+        from ctypes import wintypes
+        user32 = ctypes.WinDLL("user32")
+        handle = ctypes.c_void_p
+
+        class Info(ctypes.Structure):
+            _fields_ = [("size", wintypes.DWORD), ("monitor", wintypes.RECT),
+                        ("work", wintypes.RECT), ("flags", wintypes.DWORD)]
+        user32.MonitorFromWindow.restype = handle
+        user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+        user32.GetMonitorInfoW.argtypes = [handle, ctypes.c_void_p]
+        user32.SetThreadDpiAwarenessContext.restype = handle
+        user32.SetThreadDpiAwarenessContext.argtypes = [handle]
+        was = user32.SetThreadDpiAwarenessContext(handle(-4))       # per monitor: real pixels
+        try:
+            monitor = user32.MonitorFromWindow(hwnd, 1)              # MONITOR_DEFAULTTOPRIMARY
+            info = Info()
+            info.size = ctypes.sizeof(Info)
+            if not monitor or not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+                return None
+            box = info.monitor
+            return (box.left, box.top, box.right, box.bottom)
+        finally:
+            if was:
+                user32.SetThreadDpiAwarenessContext(was)
+
+    def user_screen_image(self, title: str = "",
+                          hidden: Optional[Any] = None) -> Optional[Any]:
+        """THE WHOLE SCREEN THE USER'S WINDOW IS ON, as it is now - this application's own windows
+        and every window `hidden(application, title)` says is never read painted over where they
+        show (`blank_windows`). None where it cannot be taken."""
+        if not self.available:
+            return None
+        try:
+            from PIL import ImageGrab
+            windows = self.screen_windows()
+            users = [one for one in windows if not one["ours"] and one["title"]
+                     and one["class"] not in ("Progman", "WorkerW", "Shell_TrayWnd",
+                                              "Shell_SecondaryTrayWnd")
+                     and one["box"][2] - one["box"][0] >= 120 and one["box"][3] - one["box"][1] >= 90]
+            meant = next((one for one in users if title and one["title"] == title),
+                         users[0] if users else None)
+            screen = self._monitor_of(meant["hwnd"] if meant else None)
+            if screen is None:
+                return None
+            # THROUGH ITS OWN WINDOWS (the user, 2026-11-08: "有一团灰色是我的chat窗口，能不能越过chat窗口
+            # 截屏"): each left out of the picture a moment, what is behind it taken - nothing
+            # changes on the screen. One the system would not leave out is painted over still.
+            mine = [one for one in windows if one["ours"]]
+            left_out = self._leave_out_of_pictures([one["hwnd"] for one in mine], True)
+            try:
+                if left_out:
+                    time.sleep(LEFT_OUT_SETTLE)  # the next frame drawn without them
+                # ONE COME UP MEANWHILE - the chat opening as it is pressed (the user, 2026-11-08: the
+                # first picture had the chat in it): looked for again just before, left out too.
+                for _again in range(2):
+                    windows = self.screen_windows()
+                    new = [one["hwnd"] for one in windows
+                           if one["ours"] and one["hwnd"] not in left_out]
+                    if not new:
+                        break
+                    more = self._leave_out_of_pictures(new, True)
+                    left_out += more
+                    if more:
+                        time.sleep(LEFT_OUT_SETTLE)
+                image = ImageGrab.grab(bbox=screen, all_screens=True)
+                for _again in range(2):
+                    # One come up while it was taken: left out, and taken again.
+                    windows = self.screen_windows()
+                    new = [one["hwnd"] for one in windows
+                           if one["ours"] and one["hwnd"] not in left_out]
+                    more = self._leave_out_of_pictures(new, True) if new else []
+                    if not more:
+                        break
+                    left_out += more
+                    time.sleep(LEFT_OUT_SETTLE)
+                    image = ImageGrab.grab(bbox=screen, all_screens=True)
+            finally:
+                self._leave_out_of_pictures(left_out, False)
+            shown = [dict(one, ours=False, left_out=True) if one["hwnd"] in left_out else one
+                     for one in windows]
+            return blank_windows(image, screen, shown, hidden)
+        except Exception:
+            log.debug("could not take the screen", exc_info=True)
+            return None
+
+    def _leave_out_of_pictures(self, hwnds: List[Any], out: bool) -> List[Any]:
+        """This application's windows left out of what the screen is taken as (WDA_EXCLUDEFROMCAPTURE,
+        Windows 10 2004 and later) - or, `out` false, put back. The ones it was done to."""
+        if not hwnds:
+            return []
+        try:
+            from ctypes import wintypes
+            user32 = self._ctypes.WinDLL("user32")
+            user32.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
+            user32.SetWindowDisplayAffinity.restype = wintypes.BOOL
+        except Exception:                        # pragma: no cover - painted over, then
+            return []
+        done = []
+        for hwnd in hwnds:
+            try:
+                if user32.SetWindowDisplayAffinity(hwnd, 0x11 if out else 0x0):
+                    done.append(hwnd)
+            except Exception:
+                log.debug("a window could not be left out of the picture", exc_info=True)
+        return done
+
     @staticmethod
     def the_window_meant(found: List[Tuple[Any, Any, str]], title: str) -> Optional[Tuple[Any, Any]]:
         """Of the windows from the top down (handle, frame, title): the one of that title, else
@@ -598,3 +762,11 @@ class WindowsPlatform(Platform):
             # UI Automation client (section 19.2).
             window_text=_can_read_windows(),
         )
+
+
+#: How long the screen is left to be drawn again without this application's windows, in seconds.
+LEFT_OUT_SETTLE = 0.12
+
+
+# Shared with the Mac's and Linux's (screen_picture.py).
+from .screen_picture import BLANKED, blank_windows  # noqa: E402,F401

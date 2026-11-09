@@ -21,6 +21,10 @@ and what is done when it holds, by score:
 
     <condition> = {"all": [<condition>, ...]} | {"any": [...]} | {"not": <condition>}
                 | {"signal": "since_break_minutes", "op": ">=", "value": 120}
+                | {"signal": "work_minutes", "op": ">=", "value": 90,
+                   "habit": "usual_work_stretch_minutes", "times": 1, "plus": 0}
+                  (BY THE USER'S HABIT: against the habit's value times "times" plus "plus" -
+                   "value" only while the habit is not known yet, -1)
                 | {"event": "back"}
                 | {"keywords": {"words": {"verify your account": 3, ...},
                                 "where": ["page", "email"]}}
@@ -76,8 +80,10 @@ CREATE TABLE IF NOT EXISTS monitor_quiet (
 """
 
 GROUPS = ("recommend", "risk", "calendar", "rest", "other")
+#: How what an Activator sends is delivered: at once, or into the waiting list.
+DELIVERIES = ("pop", "wait")
 DOES = ("notify", "ask_model", "queue")
-HANDLERS = ("recommend", "judge", "calendar", "evening", "evening_now")
+HANDLERS = ("recommend", "judge", "calendar", "evening", "evening_now", "old_project", "morning")
 #: What may come after a notify, once it is said (`and_then`).
 FOLLOWS = ("ask_model", "queue")
 OPS = ("<", "<=", ">", ">=", "==", "!=", "contains")
@@ -123,6 +129,8 @@ RULES_FOR_THE_MODEL = f"""HOW TO WRITE AN ACTIVATOR (the Monitor) - code runs it
 - KEYWORDS IN EVERY DISPLAY LANGUAGE the agent supports - {LANGUAGES} - each
   word or phrase as it is written in that language, weighted 0.5 to 10.
 - A cooldown of minutes and a most a day that keep it from being a nuisance.
+- "delivery": "pop" (what it sends comes up at once) or "wait" (it waits in the user's list);
+  the user's to set - left out, a risk and a meeting pop and the rest wait.
 - PREFER EDITING one there is to adding another. DELETE ONLY WHEN IT IS REALLY
   NECESSARY - one that keeps being called a bad notification is first narrowed
   (a higher score, fewer words, a longer cooldown), not deleted.
@@ -199,7 +207,21 @@ def _check_condition(cond: Any, builtin: bool, counted: List[int], depth: int = 
             value = value if isinstance(value, bool) else str(value).lower() in ("true", "1", "yes")
         else:
             value = str(value or "")[:120]
-        return {"signal": name, "op": op, "value": value}
+        out = {"signal": name, "op": op, "value": value}
+        habit = cond.get("habit")
+        if habit:
+            habit = str(habit)
+            if SIGNALS.get(habit, ("",))[0] != "number" or SIGNALS[name][0] != "number":
+                raise ValueError("a habit is a number signal, for a number signal")
+            try:
+                times = float(cond.get("times", 1) or 1)
+                plus = float(cond.get("plus", 0) or 0)
+            except (TypeError, ValueError):
+                raise ValueError('"times" and "plus" are numbers')
+            if not 0.1 <= times <= 10:
+                raise ValueError('"times" is between 0.1 and 10')
+            out.update(habit=habit, times=times, plus=plus)
+        return out
     if "event" in cond:
         name = str(cond.get("event") or "")
         if name not in EVENTS or name == "text":
@@ -274,7 +296,8 @@ def check(data: Any, builtin: bool = False) -> Tuple[Dict[str, Any], List[str]]:
                 clean["and_then"] = _check_follow(tier["and_then"])
         if do == "ask_model":
             handler = str(tier.get("handler") or "recommend")
-            if handler not in HANDLERS or (handler == "calendar" and not builtin):
+            if handler not in HANDLERS or (handler in ("calendar", "old_project", "morning")
+                                            and not builtin):
                 raise ValueError("handler is recommend or evening")
             clean["handler"] = handler
             brief = str(tier.get("brief") or "").strip()[:600]
@@ -289,10 +312,16 @@ def check(data: Any, builtin: bool = False) -> Tuple[Dict[str, Any], List[str]]:
         most = int(data.get("most_per_day", 6))
     except (TypeError, ValueError):
         raise ValueError("cooldown_minutes and most_per_day are numbers")
+    # POPPED OR WAITING, ITS OWN SETTING (the user, 2026-11-07: "monitor 里可以编写default设置"):
+    # what it sends comes up at once ("pop") or waits in the list ("wait"); unsaid, a risk and a
+    # meeting pop and the rest wait.
+    delivery = str(data.get("delivery") or "").strip().lower()
+    if delivery not in DELIVERIES:
+        delivery = "pop" if group in ("risk", "calendar") else "wait"
     out = {"name": name, "purpose": str(data.get("purpose") or "")[:400], "group": group,
            "when": when, "then": tiers,
            "cooldown_minutes": max(LEAST_COOLDOWN, cooldown),
-           "most_per_day": max(1, min(MOST_A_DAY, most))}
+           "most_per_day": max(1, min(MOST_A_DAY, most)), "delivery": delivery}
     warnings = []
     if words:
         missing = [lang for lang, script in SCRIPTS.items()
@@ -327,6 +356,22 @@ def text_driven(cond: Dict[str, Any]) -> bool:
     if "not" in cond:
         return text_driven(cond["not"])
     return False
+
+
+def want_of(cond: Dict[str, Any], signals: Dict[str, Any]) -> Tuple[Any, str]:
+    """What a signal is compared with: the user's habit when the condition names one and it is
+    known (times, plus) - else its fixed value, the default; and how it is said in the why."""
+    habit = cond.get("habit")
+    if not habit:
+        return cond["value"], ""
+    try:
+        usual = float(signals.get(habit, -1))
+    except (TypeError, ValueError):
+        usual = -1.0
+    if usual < 0:
+        return cond["value"], f" (the default {cond['value']:g}: {habit} not known yet)"
+    want = round(usual * float(cond.get("times", 1)) + float(cond.get("plus", 0)), 2)
+    return want, f" (by the user's habit, {habit} {usual:g}: {want:g})"
 
 
 def _compare(have: Any, op: str, want: Any) -> bool:
@@ -373,9 +418,11 @@ def evaluate(cond: Dict[str, Any], ctx: Dict[str, Any]) -> Tuple[bool, float, Li
         ok, _score, _why = evaluate(cond["not"], ctx)
         return (not ok), 0.0, []
     if "signal" in cond:
-        have = (ctx.get("signals") or {}).get(cond["signal"])
-        ok = have is not None and _compare(have, cond["op"], cond["value"])
-        return ok, 0.0, [f"{cond['signal']} {have}"] if ok else []
+        signals = ctx.get("signals") or {}
+        have = signals.get(cond["signal"])
+        want, said = want_of(cond, signals)
+        ok = have is not None and _compare(have, cond["op"], want)
+        return ok, 0.0, [f"{cond['signal']} {have}{said}"] if ok else []
     if "event" in cond:
         ok = cond["event"] in (ctx.get("events") or ())
         return ok, 0.0, [f"event {cond['event']}"] if ok else []
@@ -442,10 +489,22 @@ class ActivatorStore:
         self.db = db
         with self.db.write() as conn:
             conn.executescript(SCHEMA)
+            # THE NAME THE USER SEES (the user, 2026-11-07): theirs alone, kept apart from what the
+            # model writes (`data`), so no change of the model's reaches it; empty - its own name.
+            names = {row[1] for row in conn.execute("PRAGMA table_info(monitor_activators)")}
+            if "display_name" not in names:
+                conn.execute("ALTER TABLE monitor_activators ADD COLUMN display_name TEXT NOT "
+                             "NULL DEFAULT ''")
 
     def _row(self, row: Any) -> Dict[str, Any]:
         data = json.loads(row["data"] or "{}")
+        shown = ""
+        try:
+            shown = str(row["display_name"] or "")
+        except (IndexError, KeyError):
+            shown = ""
         return dict(data, id=row["id"], enabled=bool(row["enabled"]),
+                    display_name=shown or str(data.get("name") or ""),
                     protected=bool(row["protected"]), builtin=row["builtin"] or "",
                     created_at=row["created_at"], updated_at=row["updated_at"],
                     text_driven=text_driven(data.get("when") or {}))
@@ -550,14 +609,52 @@ class ActivatorStore:
         found = self._model_may(self.get(ident), ident)
         if not isinstance(changes, dict):
             raise ValueError("the changes are an object of fields")
-        before = {key: found[key] for key in ("name", "purpose", "group", "when", "then",
-                                               "cooldown_minutes", "most_per_day")}
+        before = {key: found.get(key) for key in ("name", "purpose", "group", "when", "then",
+                                                   "cooldown_minutes", "most_per_day",
+                                                   "delivery")}
         clean, warnings = check(dict(before, **{k: v for k, v in changes.items()
                                                  if k in before}), builtin=bool(found["builtin"]))
         self.db.execute("UPDATE monitor_activators SET data = ?, updated_at = ? WHERE id = ?",
                         (json.dumps(clean, ensure_ascii=False), _now(), found["id"]))
         self._said(found["id"], by, "edit", why, before, clean)
         return clean, warnings
+
+    #: What the user may change from the panel.
+    USER_FIELDS = ("purpose", "when", "then", "cooldown_minutes", "most_per_day", "delivery")
+
+    def user_edit(self, ident: str, changes: Any, why: str = "") -> Tuple[Dict[str, Any], List[str]]:
+        """THE USER'S OWN CHANGE (the user, 2026-11-07: "monitor要允许用户进行edit"): held to the
+        same shape (`check`), a protected one too - protection keeps it from the model, not from
+        them; the change is said to be theirs, so the one they changed is theirs to keep."""
+        found = self.get(ident)
+        if found is None:
+            raise ValueError(f"there is no Activator {ident!r}")
+        if not isinstance(changes, dict):
+            raise ValueError("the changes are an object of fields")
+        before = {key: found.get(key) for key in ("name", "purpose", "group", "when", "then",
+                                                   "cooldown_minutes", "most_per_day",
+                                                   "delivery")}
+        clean, warnings = check(dict(before, **{k: v for k, v in changes.items()
+                                                 if k in self.USER_FIELDS}),
+                                builtin=bool(found["builtin"]))
+        self.db.execute("UPDATE monitor_activators SET data = ?, updated_at = ? WHERE id = ?",
+                        (json.dumps(clean, ensure_ascii=False), _now(), found["id"]))
+        self._said(found["id"], "user", "edit", why or "the user changed it", before, clean)
+        return clean, warnings
+
+    def rename(self, ident: str, display_name: Any) -> Dict[str, Any]:
+        """The user's name for it - only the user's: empty gives it back its own name."""
+        found = self.get(ident)
+        if found is None:
+            raise ValueError(f"there is no Activator {ident!r}")
+        shown = " ".join(str(display_name or "").split())[:60]
+        if shown == found["name"]:
+            shown = ""
+        self.db.execute("UPDATE monitor_activators SET display_name = ?, updated_at = ? WHERE "
+                        "id = ?", (shown, _now(), found["id"]))
+        self._said(found["id"], "user", "rename", "", {"display_name": found["display_name"]},
+                   {"display_name": shown or found["name"]})
+        return self.get(ident)
 
     def delete(self, ident: str, by: str, why: str = "") -> None:
         found = self._model_may(self.get(ident), ident)
@@ -621,12 +718,44 @@ class ActivatorStore:
 
     def retire(self, builtin: str, why: str) -> int:
         """A built-in one taken out of the application: gone from those kept, as a delete is; what
-        it did stays on the record."""
+        it did stays on the record. ONLY WHERE NO ONE CHANGED IT (the user, 2026-11-07: what the
+        application gives is the default, what the user adds or changes is theirs): one the user
+        or the model made their own stays, theirs to keep or delete."""
         rows = self.db.query("SELECT id FROM monitor_activators WHERE builtin = ? AND "
                              "COALESCE(deleted_at, '') = ''", (builtin,))
+        gone = 0
         for row in rows:
-            self.delete(row["id"], "built in", why)
-        return len(rows)
+            if self._untouched(row["id"]):
+                self.delete(row["id"], "built in", why)
+                gone += 1
+        return gone
+
+    def _untouched(self, ident: str) -> bool:
+        """Whether only the application ever wrote it: no change by the user or the model. THEIR
+        NAME FOR IT IS NOT A CHANGE (the user, 2026-11-07: "display name 只是user level的设定"): a
+        built-in one renamed still follows the application's defaults."""
+        return self.db.query_one("SELECT 1 FROM monitor_changes WHERE activator_id = ? AND "
+                                 "by != 'built in' AND op != 'rename' LIMIT 1", (ident,)) is None
+
+    def refresh(self, builtins: List[Dict[str, Any]]) -> int:
+        """A BUILT-IN ONE'S DEFAULT CHANGED, the copies kept of it follow - where no one changed
+        them (the user, 2026-11-07: one written when its cooldown was 30 minutes kept 30 after the
+        application said 5). One the user or the model changed is theirs and stays as it is."""
+        changed = 0
+        for one in builtins:
+            fresh, _warnings = check({k: v for k, v in one.items()
+                                      if k not in ("builtin", "protected")}, builtin=True)
+            for row in self.db.query("SELECT id, data FROM monitor_activators WHERE builtin = ? "
+                                     "AND COALESCE(deleted_at, '') = ''", (one["builtin"],)):
+                kept = json.loads(row["data"] or "{}")
+                if kept == fresh or not self._untouched(row["id"]):
+                    continue
+                self.db.execute("UPDATE monitor_activators SET data = ?, updated_at = ? WHERE id = ?",
+                                (json.dumps(fresh, ensure_ascii=False), _now(), row["id"]))
+                self._said(row["id"], "built in", "edit", "the application's default changed",
+                           kept, fresh)
+                changed += 1
+        return changed
 
     def seed_quiet(self, rules: Any) -> int:
         """The built-in rules of quiet, each written once: one taken away is not
@@ -675,9 +804,9 @@ class ActivatorStore:
 
     def for_the_model(self) -> List[Dict[str, Any]]:
         """What the model is shown of them."""
-        return [{key: one[key] for key in ("id", "name", "purpose", "group", "when", "then",
-                                           "cooldown_minutes", "most_per_day", "enabled",
-                                           "protected", "builtin")}
+        return [{key: one.get(key) for key in ("id", "name", "purpose", "group", "when", "then",
+                                               "cooldown_minutes", "most_per_day", "delivery",
+                                               "enabled", "protected", "builtin")}
                 for one in self.list()]
 
 

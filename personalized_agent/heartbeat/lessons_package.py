@@ -175,6 +175,13 @@ ROW_TABLES = (
     # user's decision: the package carries them with the rest). Not where
     # each was used: those are this computer's runs.
     ("lesson_card", "lesson_cards", "id", "updated_at"),
+    # THE MONITOR, AS THE USER MADE IT (the user, 2026-11-07: what the application gives is the
+    # default, what the user adds or changes is theirs - and carried with the rest): the
+    # Activators, what was done to each (by which the application tells one changed from one
+    # left as given), the rules of quiet. In this order: a change finds its Activator.
+    ("monitor_activator", "monitor_activators", "id", "updated_at"),
+    ("monitor_change", "monitor_changes", "id", "at"),
+    ("monitor_quiet", "monitor_quiet", "id", "created_at"),
 )
 
 #: The small tables carried whole, inside the manifest.
@@ -210,6 +217,11 @@ MERGE_RULES = {
     "experience_learning": "by unit; the later learned_at is kept",
     "calendar_nature": "each lesson new here is added to the list, unless a "
                        "lesson here already says it",
+    "monitor_activator": "the user's own by id; a built-in one by which it is: the one the "
+                         "user or the model changed is kept over one left as given, else the "
+                         "newer updated_at (a deletion too)",
+    "monitor_change": "added when missing, to the Activator it was carried with",
+    "monitor_quiet": "by id, else by its name; one deleted there is deleted here",
 }
 
 #: Files that are text, and documents whose text is extracted.
@@ -837,7 +849,7 @@ class _Packing:
         for kind, table, key, version in ROW_TABLES:
             for row in self.db.query(f"SELECT * FROM {table}"):
                 owner._check()
-                if kind == "calendar_action" or kind.startswith("connection_"):
+                if kind == "calendar_action" or kind.startswith(("connection_", "monitor_")):
                     pass
                 elif not carried_scope(row.get("scope")):
                     continue
@@ -1213,7 +1225,16 @@ class _Packing:
             log.info("a reference could not be summarised: %s", exc)
             return None
         count_use(self.used, response)
-        text = str(getattr(response, "text", "") or "").strip()
+        from ..models import answers
+        text, cut = answers.read_text(response)
+        text = text.strip()
+        # A SUMMARY CUT OFF IS NOT KEPT (2026-11-07): it would be kept for good under its file's
+        # name. Nothing is written, the failure is counted in the packaging's report, and the
+        # file goes as unsummarised.
+        if cut:
+            log.info("a reference's summary was cut off at the output limit: not kept")
+            self.refs_stats["summary_failed"] = self.refs_stats.get("summary_failed", 0) + 1
+            return None
         if not text:
             return None
         cited = "\n".join(f"- {one.get('owner')} {one.get('id')}: "
@@ -1401,6 +1422,9 @@ class _Loading:
                 if kind == "calendar_action":
                     self._calendar_action(row, columns, new_actions)
                     continue
+                if kind.startswith("monitor_"):
+                    self._monitor_row(kind, row, columns, rows)
+                    continue
                 if kind == "lesson_card" and _rests_on_web(row):
                     self._count(kind, "skipped")
                     self.report["conflicts"].append(
@@ -1445,6 +1469,104 @@ class _Loading:
         self._link_tables()
         self._index(changed_stages)
         self._calendar_text(new_actions, rows.get("calendar_nature") or [])
+
+    # -- the Monitor ----------------------------------------------------------------------
+    def _monitor_row(self, kind: str, row: Dict[str, Any], columns: set,
+                     rows: Dict[str, Any]) -> None:
+        """One Activator, change or rule of quiet, merged as MERGE_RULES says."""
+        if kind == "monitor_activator":
+            self._activator(row, columns, rows)
+        elif kind == "monitor_change":
+            ids = self.__dict__.get("_activator_ids") or {}
+            row = dict(row, activator_id=ids.get(str(row.get("activator_id")),
+                                                 row.get("activator_id")))
+            if self.db.query_one("SELECT 1 FROM monitor_changes WHERE id = ?", (row["id"],)):
+                self._count(kind, "skipped")
+                return
+            self._insert("monitor_changes", row, columns)
+            self._count(kind, "added")
+        else:
+            self._quiet_rule(row, columns)
+
+    def _carried_changed(self, rows: Dict[str, Any]) -> set:
+        """The Activators the package says the user or the model changed."""
+        held = self.__dict__.get("_changed_there")
+        if held is None:
+            held = set()
+            for entry in rows.get("monitor_change") or []:
+                one = self._record("monitor_change", entry)
+                if one and str(one.get("by") or "") != "built in"                         and str(one.get("op") or "") != "rename":
+                    held.add(str(one.get("activator_id")))
+            self._changed_there = held
+        return held
+
+    def _activator(self, row: Dict[str, Any], columns: set, rows: Dict[str, Any]) -> None:
+        ids: Dict[str, str] = self.__dict__.setdefault("_activator_ids", {})
+        builtin = str(row.get("builtin") or "")
+        held = None
+        if builtin:
+            # By which it is: each computer wrote its own copy of a built-in one, each its own id.
+            held = self.db.query_one(
+                "SELECT * FROM monitor_activators WHERE builtin = ? ORDER BY "
+                "(COALESCE(deleted_at, '') = '') DESC, updated_at DESC LIMIT 1", (builtin,))
+        if held is None:
+            held = self.db.query_one("SELECT * FROM monitor_activators WHERE id = ?", (row["id"],))
+        if held is None:
+            self._insert("monitor_activators", row, columns)
+            ids[str(row["id"])] = str(row["id"])
+            if builtin:                                  # written: not written again at the start
+                self.db.execute("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO "
+                                "UPDATE SET value = excluded.value",
+                                ("monitor.seeded." + builtin, str(row.get("created_at") or "")))
+            self._count("monitor_activator", "added")
+            return
+        ids[str(row["id"])] = str(held["id"])
+        # THE USER'S NAME FOR IT comes over on its own (a user-level setting, not a change): where
+        # this computer has none of its own.
+        shown = str(row.get("display_name") or "")
+        if shown and "display_name" in columns and not str(dict(held).get("display_name") or ""):
+            self.db.execute("UPDATE monitor_activators SET display_name = ? WHERE id = ?",
+                            (shown, held["id"]))
+        changed_there = str(row["id"]) in self._carried_changed(rows)
+        changed_here = self.db.query_one(
+            "SELECT 1 FROM monitor_changes WHERE activator_id = ? AND by != 'built in' AND "
+            "op != 'rename' LIMIT 1", (held["id"],)) is not None
+        if changed_there != changed_here:
+            take = changed_there                         # the one someone made their own
+        else:
+            take = is_newer(row.get("updated_at"), held.get("updated_at"))
+        if not take:
+            self._count("monitor_activator", "skipped")
+            return
+        names = [name for name in row if name in columns and name not in ("id", "builtin",
+                                                                           "created_at")]
+        self.db.execute(f"UPDATE monitor_activators SET {', '.join(f'{n} = ?' for n in names)} "
+                        "WHERE id = ?", (*[row[n] for n in names], held["id"]))
+        self._count("monitor_activator", "updated")
+
+    def _quiet_rule(self, row: Dict[str, Any], columns: set) -> None:
+        held = self.db.query_one("SELECT * FROM monitor_quiet WHERE id = ?", (row["id"],))
+        if held is None:
+            name = str((_loads(row.get("data"), {}) or {}).get("name") or "")
+            for one in self.db.query("SELECT * FROM monitor_quiet"):
+                if name and str((_loads(one.get("data"), {}) or {}).get("name") or "") == name:
+                    held = one
+                    break
+        if held is None:
+            self._insert("monitor_quiet", row, columns)
+            self._count("monitor_quiet", "added")
+            return
+        if row.get("deleted_at") and not held.get("deleted_at"):
+            self.db.execute("UPDATE monitor_quiet SET deleted_at = ? WHERE id = ?",
+                            (row["deleted_at"], held["id"]))
+            self._count("monitor_quiet", "updated")
+        else:
+            self._count("monitor_quiet", "skipped")
+
+    def _insert(self, table: str, row: Dict[str, Any], columns: set) -> None:
+        names = [name for name in row if name in columns]
+        self.db.execute(f"INSERT INTO {table} ({', '.join(names)}) VALUES "
+                        f"({', '.join('?' for _ in names)})", tuple(row[name] for name in names))
 
     def _record(self, kind: str, entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         sha = str(entry.get("sha") or "")

@@ -214,6 +214,21 @@ class DraftsTests(unittest.TestCase):
         self.assertTrue(made[1].name.startswith("Summarise the meeting 20"),
                         "a second copy told apart by when")
 
+    def test_a_step_of_a_project_works_in_a_folder_of_the_projects_in_agent_work(self) -> None:
+        """The user, 2026-11-08: a project's step gets a project folder of its own in the agent's
+        own place, and a folder for itself in it - never the project's own folders."""
+        self.app.models = _Models(PLAN)
+        self.app.work.start = lambda unit, instruction, **kw: {"run": "run_x"}
+        workspace = Path(self.app.work.app_policy.workspace_root) / "agent_work"
+        draft = self.app.drafts.create(text="Harbour survey: summarise the tide notes",
+                                       source="project", collect=False,
+                                       options={"under": "Harbour survey/../x"})
+        self.app.drafts.collect_and_plan(draft["id"])
+        said = self.app.drafts.start(draft["id"], folders=[])
+        folder = self.app.work.folder_of(self.app.state_heartbeat.experience.unit(said["unit"]))
+        self.assertEqual(folder, workspace / "Harbour survey .. x" / "Summarise the meeting",
+                         "the project's name a folder's name, never a path")
+
     def test_where_it_works_is_only_what_the_user_gave(self) -> None:
         # What is handed over is where it works, each listed to take off: a
         # folder, to work in; a FILE, that file alone - never its folder.

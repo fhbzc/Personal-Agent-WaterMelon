@@ -13,8 +13,11 @@ order it happened:
     added are lines an agent's edit put in that file, the USER'S otherwise
     - and a file no agent edited in between changed by the user alone;
   - its commits (git), as context;
-  - for a Work project, its tasks: what the user did, as the state
-    heartbeat summarised it.
+  - WHAT THE SCREEN SHOWED of it (activity.py, the user 2026-11-07): the
+    states the state heartbeat wrote of the user's work and the tasks they
+    were grouped into - for a Work project in its own unit, for any other
+    piece of their work in a unit of its own - and the earlier learning's
+    patterns, in one unit.
 
 Every word goes through `scrub` first. Then, in chunks, a model writes the
 CASES (a deliverable: what it is for, who for, where it is, what it looks
@@ -24,7 +27,12 @@ when the quote is really there; "written" and "noted" only for what rests
 on a rule file or the agent's memory.
 
 How far each source was read is kept as it goes (`marks`), so a stopped
-update carries on where it stopped.
+update carries on where it stopped. AN ANSWER CUT OFF is asked again in
+halves (models/answers.py `in_parts`); a part still not answered at its
+smallest, or one that could not be read, is RECORDED FAILED on the unit
+(`marks["failed"]`) and moved past - never asked again the same way. A call
+that was not made or not answered (paused, the day's limit, no model) leaves
+the marks where they were.
 
 AN ITEM OF THE LEARNING LIST (items.py) is a unit too: a web page or site
 (online.py), a passage the user kept, a folder or a file - each with whose
@@ -42,6 +50,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import logging
 import os
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -49,6 +58,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from . import records
+from ..models import answers
 from .authorship import init_made, line_authors, memory_source
 from .scrub import scrub
 from .store import STRENGTHS, LearningStore, dumps, now
@@ -72,6 +82,18 @@ FILES_LISTED = 120
 RECENT_DAYS = 180
 DELIVERABLE_SUFFIXES = {".docx", ".doc", ".pptx", ".ppt", ".pdf", ".md", ".tex", ".txt",
                         ".html", ".rtf", ".odt", ".odp", ".key", ".pages", ".xlsx", ".ipynb"}
+#: What ask.Asker says of an answer that came and could not be taken (models/answers.py): asked
+#: again only shorter, else recorded failed and moved past - unlike a call not made or failed.
+log = logging.getLogger(__name__)
+
+#: THE MODEL, NOT WHAT IT WAS ASKED (2026-11-07): this many parts in a row answered unreadably,
+#: none whole between them, and it is taken that the model is wrong (the wrong one set, or one
+#: answering nonsense) - not the parts. None of them is recorded failed; the update stops, to be
+#: read again once the model answers. Fewer are the parts' own failure, recorded as before - when
+#: a part is next answered whole, or at the end of the update.
+MODEL_SUSPECT = 5
+UNREADABLE = {answers.Answer(None, False, "").why_not, answers.Answer(None, False, "x").why_not,
+              answers.Answer(None, True, "x").why_not}
 DATA_SUFFIXES = {".csv", ".tsv", ".jsonl", ".ndjson", ".log", ".json", ".parquet", ".npy"}
 
 READ_PROMPT = """WRITE WHAT THIS PIECE OF THE USER'S WORK SHOWS: ITS CASES AND THE USER'S JUDGMENTS.
@@ -257,6 +279,19 @@ class UnitReader:
         self.logins: Dict[str, str] = {}
         #: Each item's pages, read once an update.
         self._pages: Dict[str, List[Any]] = {}
+        #: Whether the model answers (MODEL_SUSPECT): parts answered whole in this update, the
+        #: unreadable ones since the last whole one - not yet recorded - and why the update is
+        #: to stop, when the model is taken to be wrong.
+        self.answered = 0
+        #: THE UPDATE'S READING LEFT (learning_reads_per_update): pieces still to read in it - None,
+        #: no limit. Reached, the reading stops where it is; the rest is read next time.
+        self.reads_left: Optional[int] = None
+        self.unreadable: List[Tuple[Dict[str, Any], Dict[str, Any], List[Piece], str]] = []
+        self.model_wrong = ""
+        #: THE SCREEN'S ACTIVITY (activity.Activity), set by the update; and how much of it each
+        #: unit reads in this update (activity.allot) - None: all of it.
+        self.activity: Any = None
+        self.activity_allow: Optional[Dict[str, int]] = None
 
     # -- gathering ------------------------------------------------------------
     def _clean(self, text: str) -> str:
@@ -518,26 +553,37 @@ class UnitReader:
                              ("git", folder, latest)))
         return out
 
-    def _task_pieces(self, unit: Dict[str, Any], marks: Dict[str, Any], cutoff: str
-                     ) -> List[Piece]:
-        if unit.get("kind") != "work":
-            return []
-        try:
-            from ..heartbeat.states.task_projects import RunTasks
-        except Exception:                      # pragma: no cover - import
-            return []
-        until = str(marks.get("tasks") or "")
-        tasks = [one for one in RunTasks(self.db, "live").of_project(unit["key"], limit=500)
-                 if until < str(one.get("ends_at") or "") <= cutoff]
-        if not tasks:
-            return []
-        tasks.sort(key=lambda one: str(one.get("ends_at") or ""))
-        lines = ["WHAT THE USER DID IN THIS PROJECT (from their screen, summarised):"]
-        for one in tasks:
-            lines.append(f"  [{str(one.get('starts_at') or '')[:16]}] {one.get('title', '')}: "
-                         f"{one.get('summary', '')} ({round(float(one.get('minutes') or 0))} min)")
-        return [Piece(str(tasks[0].get("starts_at") or ""), self._clean("\n".join(lines)),
-                      ("tasks", "", str(tasks[-1].get("ends_at") or "")))]
+    def _activity(self) -> Any:
+        if self.activity is None:
+            from .activity import Activity
+            config = getattr(self.places, "config", None)
+            left = list(self.places.excluded()) if hasattr(self.places, "excluded") else []
+            self.activity = Activity(self.db, config, left + [str(one) for one in self.never])
+        return self.activity
+
+    def _activity_pieces(self, unit: Dict[str, Any], cutoff: str) -> List[Piece]:
+        """WHAT THE SCREEN SHOWED of a unit and was not read yet (activity.py) - or, of the
+        earlier learning's unit, its patterns. As much of it as this update gives the unit, the
+        latest first (`activity_allow`)."""
+        from .activity import EARLIER_KIND
+        source = self._activity()
+        if unit.get("kind") == EARLIER_KIND:
+            pieces = [Piece(at, self._clean(text), ("earlier", meta["pattern"], meta["version"]),
+                            meta)
+                      for at, text, meta in source.earlier_pieces()]
+        else:
+            pieces = [Piece(at, self._clean(text), ("activity", unit["id"], ids))
+                      for at, text, ids in source.pieces(unit, cutoff)]
+        if self.activity_allow is None:
+            return pieces
+        allowed = int(self.activity_allow.get(unit["id"]) or 0)
+        out, size = [], 0
+        for piece in sorted(pieces, key=lambda one: one.at, reverse=True):
+            if size >= allowed or (out and size + len(piece.text) > allowed):
+                break
+            out.append(piece)
+            size += len(piece.text)
+        return sorted(out, key=lambda one: one.at)
 
     # -- reading --------------------------------------------------------------
     def pending(self, unit: Dict[str, Any], cutoff: str, all_sessions: Sequence[records.Session],
@@ -547,6 +593,10 @@ class UnitReader:
         marks = json.loads(json.dumps(unit.get("marks") or {}))
         if unit.get("kind") == "item":
             return self._item_pending(unit, marks, cutoff, all_sessions)
+        from .activity import EARLIER_KIND, KIND
+        if unit.get("kind") in (KIND, EARLIER_KIND):
+            # Only what the screen showed, or what the earlier learning found: no folder of its own.
+            return ([] if older else self._activity_pieces(unit, cutoff)), marks
         first = not unit.get("first_read")
         since = ""
         if first and not older:
@@ -566,7 +616,8 @@ class UnitReader:
         pieces += self._rule_pieces(unit, sessions, marks, all_sessions)
         pieces += self._file_pieces(unit, sessions, marks, first)
         pieces += self._git_pieces(unit, marks, since, cutoff)
-        pieces += self._task_pieces(unit, marks, cutoff)
+        if unit.get("kind") == "work":
+            pieces += self._activity_pieces(unit, cutoff)
         if first:
             marks["recent_from"] = since
         pieces.sort(key=lambda one: one.at)
@@ -711,7 +762,8 @@ class UnitReader:
              stopped: Optional[Callable[[], bool]] = None) -> Dict[str, Any]:
         """Read the pieces in chunks; keep cases and judgments; leave the
         marks as each chunk is done. Stops early when `stopped()`."""
-        report = {"chunks": 0, "cases": 0, "judgments": 0, "left_agent": 0, "failed": ""}
+        report = {"chunks": 0, "cases": 0, "judgments": 0, "left_agent": 0, "failed": "",
+                  "failed_parts": 0}
         chunk: List[Piece] = []
         size = 0
 
@@ -719,17 +771,14 @@ class UnitReader:
             nonlocal chunk, size
             if not chunk:
                 return True
-            ok = self._read_chunk(unit, chunk, report)
+            if self.reads_left is not None:
+                if self.reads_left <= 0:
+                    report["held"] = "the update's reading is used up: read next time"
+                    return False
+                self.reads_left -= 1
+            ok = self._read_chunk(unit, chunk, report, marks)
             if not ok:
                 return False
-            for piece in chunk:
-                kind, key, value = piece.mark
-                if kind in ("sessions", "files", "rules", "git", "pages"):
-                    marks.setdefault(kind, {})[key] = value
-                elif kind in ("tasks", "text", "file"):
-                    marks[kind] = value
-            unit["marks"] = marks
-            self.store.save_unit(unit)
             if progress is not None:
                 progress(size)
             chunk, size = [], 0
@@ -750,38 +799,141 @@ class UnitReader:
         self.store.save_unit(unit)
         return report
 
+    def _mark(self, unit: Dict[str, Any], marks: Dict[str, Any], part: Sequence[Piece],
+              failed: str = "") -> None:
+        """What a part held, marked read - or, `failed`, recorded failed and moved past."""
+        for piece in part:
+            kind, key, value = piece.mark
+            if kind in ("sessions", "files", "rules", "git", "pages"):
+                marks.setdefault(kind, {})[key] = value
+            elif kind in ("tasks", "text", "file"):
+                marks[kind] = value
+            elif kind == "activity":
+                self._activity().read(unit["id"], list(value), failed)
+                marks["activity"] = max(str(marks.get("activity") or ""), piece.at)
+            elif kind == "earlier":
+                self._activity().earlier_read(key, str(value), failed)
+        if failed:
+            # RECORDED FAILED, MOVED PAST (the user, 2026-11-07): where it can be seen.
+            marks["failed"] = (list(marks.get("failed") or []) + [{
+                "at": now(), "why": failed[:200], "pieces": len(part),
+                "from": str(part[0].at)[:10], "to": str(part[-1].at)[:10]}])[-30:]
+        unit["marks"] = marks
+        self.store.save_unit(unit)
+
     def _read_chunk(self, unit: Dict[str, Any], chunk: Sequence[Piece],
-                    report: Dict[str, Any]) -> bool:
+                    report: Dict[str, Any], marks: Optional[Dict[str, Any]] = None) -> bool:
+        """One chunk asked; CUT OFF, asked again in halves (models/answers.py). Each part
+        answered is kept and marked; one answered unreadably even at its smallest is recorded
+        failed and moved past. False when a call was not answered at all - stopped, or failed -
+        and its part is left to be read again."""
+        marks = unit.setdefault("marks", {}) if marks is None else marks
+        item = self.item_of(unit) if unit.get("kind") == "item" else None
+        head = (self._item_header(item) if item else
+                [f"THE UNIT: {unit.get('title', '')} - {unit.get('summary', '')}",
+                 "Its folders: " + (", ".join(unit.get("folders") or []) or "-")])
+
+        def asked(part: Sequence[Piece]) -> answers.Answer:
+            said = self._ask_part(unit, item, head, part)
+            report["chunks"] += 1
+            fine = bool(said) and not said.get("_failed")
+            return answers.Answer(data=said if fine else None, cut=bool(said and said.get("_cut")),
+                                  text=str((said or {}).get("_failed") or ""), response=said or {})
+
+        whole = True
+        for part, answer in answers.in_parts(list(chunk), asked):
+            said = answer.response or {}
+            if said.get("_model_wrong"):
+                self.model_wrong = str(said["_model_wrong"])
+                report["failed"] = self.model_wrong
+                return False
+            if answer.ok:
+                self.answered += 1
+                self.settle()
+                shown = "\n".join([*head, *[one.text for one in part]])
+                if item and item["whose"] == "others":
+                    self._keep_others(unit, item, said, shown, report)
+                elif unit.get("kind") == "earlier":
+                    self._keep_earlier(unit, said, shown, report, part)
+                else:
+                    self._keep(unit, said, shown, report, [one.rule for one in part
+                                                           if one.rule and one.rule.get("path")])
+                self._mark(unit, marks, part)
+            elif said.get("_cut") or said.get("_failed") in UNREADABLE:
+                report["failed_parts"] += 1
+                # Recorded once the model is known to answer (`settle`): until then, held.
+                self.unreadable.append((unit, marks, list(part),
+                                        answer.why_not or str(said.get("_failed") or "")))
+                if len(self.unreadable) >= MODEL_SUSPECT:
+                    self.model_wrong = (
+                        f"{len(self.unreadable)} parts in a row were answered with nothing that "
+                        f"could be read ({self.unreadable[-1][3]}): the model looks wrong, not "
+                        f"what it was asked - check Settings > Models. Nothing was marked; it is "
+                        f"read again next time.")
+                    log.warning("learning stopped: %s", self.model_wrong)
+                    self.unreadable = []
+                    report["failed"] = self.model_wrong
+                    return False
+            else:
+                report["failed"] = str(said.get("_failed") or "no answer")
+                whole = False
+        return whole
+
+    def settle(self) -> None:
+        """The parts held as unreadable, recorded failed and moved past: fewer than MODEL_SUSPECT
+        in a row are their own failure, not the model's."""
+        held, self.unreadable = self.unreadable, []
+        for unit, marks, part, why in held:
+            self._mark(unit, marks, part, why)
+
+    def _ask_part(self, unit: Dict[str, Any], item: Optional[Dict[str, Any]],
+                  head: Sequence[str], part: Sequence[Piece]) -> Dict[str, Any]:
+        from .activity import ACTIVITY_NOTE, EARLIER_PROMPT
         cases = self.store.cases(unit["id"])
         known = ["THE CASES OF THIS UNIT SO FAR:"] + [
             f"  {one['id']}: {one['title']} - {dumps(one['facets'])} - "
             f"{one['looks_like'][:200]} items: {', '.join(one['items'][:12])}"
             for one in cases[-40:]] if cases else ["THE CASES OF THIS UNIT SO FAR: none"]
-        item = self.item_of(unit) if unit.get("kind") == "item" else None
-        head = (self._item_header(item) if item else
-                [f"THE UNIT: {unit.get('title', '')} - {unit.get('summary', '')}",
-                 "Its folders: " + (", ".join(unit.get("folders") or []) or "-")])
         text = "\n".join([
             *head, "", *known, "", "THE WORD LIST:",
             self.vocab.listing(list(DIMENSIONS) + [OBJECT]), "",
-            "WHAT IS THERE:" if item else "WHAT HAPPENED, IN ORDER:", *[one.text for one in chunk]])
+            "WHAT IS THERE:" if item else "WHAT HAPPENED, IN ORDER:", *[one.text for one in part]])
         if item and item["whose"] == "others":
             from .reasons import REASON_SHAPE
             prompt = READ_OTHERS_PROMPT.replace("{reason_shape}", REASON_SHAPE)
-            said = self.ask("read", prompt, text, 8000, "the case, what is endorsed and its rules")
-        else:
-            prompt = READ_PROMPT + ("\n\n" + MATERIAL if item and item["kind"] == "url" else "")
-            said = self.ask("read", prompt, text, 8000, "the cases and judgments")
-        report["chunks"] += 1
-        if not said or said.get("_failed"):
-            report["failed"] = said.get("_failed", "no answer") if said else "no answer"
-            return False
-        shown = "\n".join([*head, *[one.text for one in chunk]])
-        if item and item["whose"] == "others":
-            self._keep_others(unit, item, said, shown, report)
-        else:
-            self._keep(unit, said, shown, report, [one.rule for one in chunk if one.rule])
-        return True
+            return self.ask("read", prompt, text, 8000, "the case, what is endorsed and its rules")
+        if unit.get("kind") == "earlier":
+            prompt = EARLIER_PROMPT.replace("{aspects}", "; ".join(
+                f'"{name}" - {words}' for name, words in ASPECT_WORDS.items()))
+            return self.ask("read", prompt, text, 8000, "the cases and judgments")
+        prompt = READ_PROMPT
+        if any(one.mark[0] == "activity" for one in part):
+            prompt += "\n\n" + ACTIVITY_NOTE
+        if item and item["kind"] == "url":
+            prompt += "\n\n" + MATERIAL
+        return self.ask("read", prompt, text, 8000, "the cases and judgments")
+
+    def _keep_earlier(self, unit: Dict[str, Any], said: Dict[str, Any], shown: str,
+                      report: Dict[str, Any], part: Sequence[Piece]) -> None:
+        """WHAT THE EARLIER LEARNING FOUND, kept as judgments of the strength "earlier" - found by
+        an agent watching, never the user's words - each saying how many pieces of work it was
+        seen in. Only of the patterns shown."""
+        shown_patterns = {one.rule["pattern"]: one.rule for one in part
+                          if one.rule and one.rule.get("kind") == "earlier"}
+        judgments = []
+        for one in said.get("judgments") or []:
+            if not isinstance(one, dict):
+                continue
+            meta = shown_patterns.get(str(one.get("pattern") or ""))
+            if meta is None:
+                continue
+            why = str(one.get("why") or "").strip()
+            judgments.append(dict(
+                one, by="user", strength="earlier", said="", at=str(one.get("at") or meta["at"]),
+                refs=[f"earlier pattern {meta['pattern']}"],
+                why=(why + " " if why else "") + "(found by the earlier learning, from their "
+                    f"screen, in {meta['support']} of their pieces of work)"))
+        self._keep(unit, dict(said, judgments=judgments), shown, report, earlier=True)
 
     # -- keeping --------------------------------------------------------------
     def _tag(self, tag: Any, dim: str, added: Dict[str, str]) -> str:
@@ -822,7 +974,8 @@ class UnitReader:
         return strength
 
     def _keep(self, unit: Dict[str, Any], said: Dict[str, Any], shown: str,
-              report: Dict[str, Any], rules: Sequence[Dict[str, Any]] = ()) -> None:
+              report: Dict[str, Any], rules: Sequence[Dict[str, Any]] = (),
+              earlier: bool = False) -> None:
         added: Dict[str, str] = {}
         for one in said.get("new_terms") or []:
             if not isinstance(one, dict):
@@ -902,6 +1055,9 @@ class UnitReader:
                 strength = "accepted"
             refs_given = [str(ref)[:300] for ref in one.get("refs") or []][:6]
             strength = self._strength(strength, quote, refs_given, rules)
+            # "earlier" is the earlier learning's alone (_keep_earlier).
+            if earlier or strength == "earlier":
+                strength = "earlier" if earlier else "accepted"
             self.store.save_judgment({
                 "case_id": case_id, "item": str(one.get("item") or "")[:120],
                 "aspect": aspect, "object": obj,

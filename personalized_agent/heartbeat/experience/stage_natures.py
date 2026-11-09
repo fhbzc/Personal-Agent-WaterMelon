@@ -270,30 +270,54 @@ class StageNatures:
               going=None) -> Dict[str, Any]:
         report = {"calls": 0, "stages": 0, "natures": 0, "examples": 0}
         going = going or (lambda: True)
+        from ...models import answers
         natures = self.natures()
+
+        def ask(batch: Sequence[Dict[str, Any]]) -> Any:
+            if report["calls"] >= budget:            # the halves count against the budget too
+                return answers.Answer(data=None, cut=False, text="")
+            shown = natures.show([_stage_text(s) for s in batch])
+            read, writer = self._ask(batch, shown)
+            report["calls"] += 1
+            read.writer = writer                     # who wrote it, kept with what was said
+            return read
         for start in range(0, len(stages), STAGES_PER_CALL):
             if report["calls"] >= budget or not going() or self.models is None:
                 break
-            batch = list(stages[start:start + STAGES_PER_CALL])
-            shown = natures.show([_stage_text(s) for s in batch])
-            answered, writer = self._ask(batch, shown)
-            report["calls"] += 1
-            if answered is None:
+            stop = False
+            for batch, read in answers.in_parts(list(stages[start:start + STAGES_PER_CALL]), ask):
+                # ONLY A WHOLE ANSWER WRITES (2026-11-07): one cut off is asked again in halves;
+                # stages still not answered at their smallest are recorded as failed and marked,
+                # moved past - not asked again the same way. Not asked at all (no call, no
+                # budget): left for the next pass.
+                if not read.ok and read.response is None:
+                    stop = True
+                    continue
+                if not read.ok:
+                    log.info("%d stage(s) failed for their natures: %s", len(batch), read.why_not)
+                    report.setdefault("failed", []).append(
+                        {"stages": [stage["id"] for stage in batch], "why": read.why_not})
+                    for stage in batch:
+                        self.store.mark_natured(stage["id"])
+                    continue
+                ids = {stage["id"] for stage in batch}
+                for one in (read.data or {}).get("natures") or []:
+                    done = self._write_one(one, ids, getattr(read, "writer", {}), batch, natures)
+                    if done == "new":
+                        report["natures"] += 1
+                    elif done == "added":
+                        report["examples"] += 1
+                for stage in batch:
+                    self.store.mark_natured(stage["id"])
+                report["stages"] += len(batch)
+            if stop:
                 break
-            ids = {stage["id"] for stage in batch}
-            for one in answered.get("natures") or []:
-                done = self._write_one(one, ids, writer, batch, natures)
-                if done == "new":
-                    report["natures"] += 1
-                elif done == "added":
-                    report["examples"] += 1
-            for stage in batch:
-                self.store.mark_natured(stage["id"])
-            report["stages"] += len(batch)
         report["calls"] += natures.reworded
         return report
 
     def _ask(self, batch: Sequence[Dict[str, Any]], shown: str = ""):
+        """The model's answer on a batch of stages, read (models/answers.py), and who wrote it."""
+        from ...models import answers
         from ...models.base import ModelRequest
         asked = "\n\n".join(_stage_said(s) for s in batch)
         if shown:
@@ -308,9 +332,9 @@ class StageNatures:
                 role="heartbeat")
         except Exception as exc:          # pragma: no cover - a call
             log.info("could not read stages for their natures: %s", exc)
-            return None, {}
+            return answers.Answer(data=None, cut=False, text=""), {}
         count_use(self.used, response)
-        return (_as_json(getattr(response, "text", "") or ""),
+        return (answers.read(response, parse=answers.json_of, wants=("natures",)),
                 {"model": str(getattr(response, "model", "") or ""),
                  "provider": str(getattr(response, "provider", "") or ""),
                  "at": now()})

@@ -179,6 +179,20 @@ class ApiTests(unittest.TestCase):
         with urllib.request.urlopen(keyed(self.app, request), timeout=20) as response:
             return json.loads(response.read().decode("utf-8"))
 
+    def test_the_monitor_panel_edits_and_names_one(self) -> None:
+        """The user, 2026-11-07: the user edits a Monitor and gives it a display name."""
+        spam = next(one for one in self.get("/api/monitor")["activators"]
+                    if one["builtin"] == "spam_risk")
+        said = self.post("/api/monitor/edit", {"id": spam["id"], "display_name": "Scam watch",
+                                               "changes": {"cooldown_minutes": 75}})
+        self.assertEqual(said["activator"]["display_name"], "Scam watch")
+        self.assertEqual(said["activator"]["cooldown_minutes"], 75)
+        self.assertEqual(said["activator"]["name"], spam["name"])
+        with self.assertRaises(urllib.error.HTTPError) as refused:
+            self.post("/api/monitor/edit", {"id": spam["id"],
+                                            "changes": {"when": {"signal": "no_such"}}})
+        self.assertEqual(refused.exception.code, 400)
+
     def test_projects_are_learned_from_the_api(self) -> None:
         """Learning is started from the page, project by project; there is
         one experience, and nothing clears what it learned."""

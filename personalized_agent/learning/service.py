@@ -30,7 +30,15 @@ A time that passes while an update is still open is CANCELLED - said on the
 update - and the next update waits for the next time.
 
 THE LEARNING LIST (items.py) is read in the same updates, under the same
-limit: each item due by its cadence, as a unit of its own. Any unit - a
+limit: each item due by its cadence, as a unit of its own.
+
+WHAT THE SCREEN SHOWED (activity.py, the user 2026-11-07): the states of the
+user's work, read into each Work project's unit and into a unit of each other
+piece of their work, and the earlier learning's patterns - all of it, the
+history too, `activity.PER_UPDATE` of it an update. What of it is not learned
+is looked for once at the start (`catch_up`): nothing to do for a new user.
+
+Any unit - a
 project, a folder, an item - may be TURNED OFF (not read, nothing of it
 given) or DELETED: what was learned from it goes, the reasons it bore on
 are weighed again (and go with nothing left to rest on), and its source is
@@ -49,6 +57,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from .activity import (CAUGHT_UP, EARLIER_KIND, EARLIER_UNIT, KIND as ACTIVITY, Activity,
+                       allot, catch_up)
 from .ask import Asker
 from .items import Items, folder_parts, unit_id_of
 from .places import Places
@@ -316,6 +326,7 @@ class Learning:
         reader.items = self.items
         reader.online = Online(self.data_dir / "learning" / "online")
         reader.logins = my_logins(self.db)
+        reader.activity = self._activity_source()
         sessions = self.places.sessions()
         plan = update.get("plan") or {}
         if not plan.get("units"):
@@ -336,11 +347,25 @@ class Learning:
             update["plan"] = plan
             update["total"] = sum(one["size"] for one in plan["units"])
             self.store.save_update(update)
+        # As much of the screen as the plan gave each unit: none to a plan made before it.
+        reader.activity_allow = {one["id"]: int(one.get("activity") or 0) for one in plan["units"]}
+        # AT MOST SO MANY PIECES AN UPDATE (learning_reads_per_update); 0, none.
+        try:
+            most = int(self.config.get("learning_reads_per_update", 100) or 0)
+        except (TypeError, ValueError):
+            most = 0
+        reader.reads_left = most if most > 0 else None
+        used_up = False
         # Reading, unit by unit.
         for phase in ("recent", "older"):
+            if used_up:
+                break
             for one in plan["units"]:
                 if one.get("done_" + phase) or (phase == "older" and not one.get("older")):
                     continue
+                if reader.reads_left is not None and reader.reads_left <= 0:
+                    used_up = True
+                    break
                 self._check(update_id)
                 unit = self.store.unit(one["id"])
                 if not unit:
@@ -361,6 +386,21 @@ class Learning:
                 said = reader.read(unit, pieces, marks, progress,
                                    stopped=lambda: ask.stopped and ask.stopped())
                 self._check(update_id)
+                if said.get("held"):
+                    # The update's reading used up within this unit: what it read is kept (its
+                    # marks), the rest of it - and of the others - read next time.
+                    used_up = True
+                    break
+                if reader.model_wrong:
+                    # The model, not the units: the update stops and says so; nothing it held
+                    # is recorded, and the next update reads it again.
+                    update = self.store.update(update_id)
+                    update["state"] = "failed"
+                    update["note"] = reader.model_wrong[:400]
+                    update["now_reading"] = ""
+                    update["finished_at"] = now()
+                    self.store.save_update(update)
+                    return
                 if said.get("failed"):
                     one["failed"] = said["failed"]
                 if first and phase == "recent":
@@ -376,6 +416,8 @@ class Learning:
                 update = self.store.update(update_id)
                 update["plan"] = plan
                 self.store.save_update(update)
+        # What was held as unreadable, recorded failed now the model is known to answer.
+        reader.settle()
         # The reasons, once everything is read.
         self._check(update_id)
         if not plan.get("reasoned"):
@@ -383,9 +425,11 @@ class Learning:
             update["now_reading"] = "reasons"
             self.store.save_update(update)
             first_learning = any(one.get("first") for one in plan["units"])
-            report = Reasons(self.db, ask).run(first_learning,
+            report = Reasons(self.db, ask, embedder=getattr(self, "embedder", None)).run(
+                first_learning,
                                                stopped=lambda: ask.stopped and ask.stopped())
             self._check(update_id)
+            reader.settle()
             plan["reasoned"] = True
             plan["reasons"] = report
         update = self.store.update(update_id)
@@ -484,16 +528,50 @@ class Learning:
             unit.update({"title": "Rules for every agent", "summary": "", "folders": []})
             self.store.save_unit(unit)
             units.append(unit)
-        # Units no longer listed are marked gone - kept, not read.
+        # WHAT THE SCREEN SHOWED AND THE EARLIER LEARNING FOUND (activity.py, the user
+        # 2026-11-07): each piece of their work not a Work project's own, with states not read yet.
+        activity = reader.activity or self._activity_source()
+        reader.activity = activity
+        for found in activity.units():
+            if self.items.unit_never(found["id"]):
+                continue
+            unit = self.store.unit(found["id"]) or {"id": found["id"], "kind": ACTIVITY,
+                                                    "key": found["key"], "marks": {}}
+            unit.update({"title": found["title"], "summary": found["summary"], "folders": []})
+            self.store.save_unit(unit)
+            units.append(unit)
+        if activity.earlier() and not self.items.unit_never(EARLIER_UNIT):
+            unit = self.store.unit(EARLIER_UNIT) or {"id": EARLIER_UNIT, "kind": EARLIER_KIND,
+                                                     "key": "experience", "marks": {}}
+            unit.update({"title": "What the earlier learning found",
+                         "summary": "The patterns of how you work that the earlier learning "
+                                    "found from your screen, until 2026-10-19.", "folders": []})
+            self.store.save_unit(unit)
+            units.append(unit)
+        # Units no longer listed are marked gone - kept, not read. One of the screen's, or the
+        # earlier learning's, is listed only while it has something not read.
         wanted = {one["id"] for one in units}
         for old in self.store.units():
-            if old["id"] not in wanted and old["state"] != "gone" and old.get("kind") != "lessons":
+            if old["id"] not in wanted and old["state"] != "gone" and old.get("kind") not in (
+                    "lessons", ACTIVITY, EARLIER_KIND):
                 old["state"] = "gone"
                 self.store.save_unit(old)
         # How much each has, and the order - looked at without keeping a
         # thing (`dry`): what is read is kept when it is read.
         planned = []
         reader.dry = True
+        # THE HISTORY AT THE LEARNING'S OWN PACE: of the screen, at most `PER_UPDATE` an update.
+        reader.activity_allow = None
+        offered = []
+        for unit in units:
+            if unit.get("state") == "inactive" or unit.get("kind") not in (
+                    "work", ACTIVITY, EARLIER_KIND):
+                continue
+            self._check(update_id)
+            pieces = reader._activity_pieces(unit, cutoff)
+            if pieces:
+                offered.append((unit["id"], pieces))
+        reader.activity_allow = allot(offered)
         for unit in units:
             # Turned off by the user, or an item not due: not read.
             if unit.get("state") == "inactive" or (unit.get("kind") == "item"
@@ -501,15 +579,32 @@ class Learning:
                 continue
             self._check(update_id)
             pieces, _marks = reader.pending(unit, cutoff, sessions)
+            if not pieces and unit.get("kind") in (ACTIVITY, EARLIER_KIND):
+                continue                        # its turn comes at a later update
             has_talk = any(piece.mark[0] in ("sessions", "rules") for piece in pieces)
             latest = max((piece.at for piece in pieces), default="")
             planned.append({"id": unit["id"], "title": unit.get("title", ""),
-                            "size": reader.size(pieces), "talk": has_talk, "latest": latest})
+                            "size": reader.size(pieces), "talk": has_talk, "latest": latest,
+                            "activity": int(reader.activity_allow.get(unit["id"]) or 0)})
         reader.dry = False
         # Conversations and rules first; within each, the latest first.
         planned.sort(key=lambda one: one["latest"], reverse=True)
         planned.sort(key=lambda one: not one["talk"])
-        return {"units": planned}
+        return {"units": planned, "history": activity.left()}
+
+    # -- what the screen showed (activity.py) ---------------------------------------------
+    def _activity_source(self) -> Activity:
+        """The screen's activity and the earlier patterns, with what is never read of it: the
+        places the user left out or deleted, the application's own."""
+        left = (list(self.places.excluded()) + list(self.items.never())
+                + [str(one) for one in self.never])
+        return Activity(self.db, self.config, left)
+
+    def catch_up(self) -> Dict[str, Any]:
+        """FOR EVERY USER (the user, 2026-11-07): whether there is history - states, the
+        earlier learning's patterns - the learning has not learned. Looked for at the start; it
+        goes into the next updates' plans by itself."""
+        return catch_up(self.db, self.config, self._activity_source())
 
     # -- what was handed over and split (sources.py) ------------------------------------
     def _follow_sources(self, update_id: str, ask: Any) -> None:
@@ -946,6 +1041,11 @@ class Learning:
                 thread.join(max(0.0, until - time.monotonic()))
 
     def _loop(self) -> None:
+        # At the start, behind: what of the history is not learned yet (activity.py).
+        try:
+            self.catch_up()
+        except Exception:                      # pragma: no cover - looked at again next start
+            log.warning("learning: the history not learned could not be looked for", exc_info=True)
         while not self._stop.wait(LOOKS_EVERY):
             try:
                 self.look()
@@ -977,6 +1077,8 @@ class Learning:
             "breakdown": self.store.breakdown(),
             "spending": self.spending(),
             "lessons": self.lessons(),
+            # What of the history was found not learned at the start, and when it all was.
+            "history": dict(self.config.get(CAUGHT_UP, {}) or {}),
         }
         if update:
             total = int(update.get("total") or 0)

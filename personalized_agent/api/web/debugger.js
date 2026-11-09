@@ -995,3 +995,68 @@
   };
 })();
 
+
+/* WHAT THE LESSONS GAVE EACH DECISION (the user, 2026-11-07): every retrieval of the lessons,
+   newest first, filtered by the site that asked - what it was asked with, in English, and what
+   came back with its score (/api/debugger/lessons/retrievals, heartbeat/lessons/retrieve.py).
+   Read when the Lessons debugger is opened, and on Read again. Read-only. */
+(() => {
+  const $ = (s) => document.querySelector(s);
+  if (!$("#lesson-retrievals-card")) return;
+  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const when = (v) => (v ? new Date(v).toLocaleString() : "");
+  let request = 0;
+
+  function drawSites(sites) {
+    const select = $("#lret-site");
+    const chosen = select.value;
+    select.innerHTML = `<option value="">Every site</option>` + sites.map((one) =>
+      `<option value="${esc(one.site)}">${esc(one.site)} (${Number(one.count || 0)})</option>`).join("");
+    select.value = sites.some((one) => one.site === chosen) ? chosen : "";
+  }
+
+  function drawResults(results) {
+    if (!results.length) return `<span class="muted">Nothing came back.</span>`;
+    return `<ul>${results.map((one) => `<li><strong>${esc(Number(one.score || 0).toFixed(3))}</strong>
+      <span class="muted">${esc(one.type)} · ${esc(one.kind)} · ${esc(one.state)}</span>
+      ${esc(one.said || one.id)}</li>`).join("")}</ul>`;
+  }
+
+  function draw(data) {
+    const rows = data.retrievals || [];
+    if (!rows.length) {
+      $("#lret-list").innerHTML = `<p class="muted">${data.recording
+        ? "No retrieval recorded yet." : "Recording is off in this build."}</p>`;
+      return;
+    }
+    $("#lret-list").innerHTML = `<table class="rec-table"><thead><tr><th>When</th><th>Site</th>
+      <th>Asked with</th><th>What came back</th></tr></thead><tbody>${rows.map((one) => `<tr>
+      <td>${esc(when(one.at))}</td><td>${esc(one.site)}</td>
+      <td>${esc(String(one.query || "").slice(0, 600))}${one.query_english
+        && one.query_english !== one.query ? `<div class="muted">${esc(one.query_english)}</div>` : ""}
+        <div class="muted">${one.by_meaning ? "By meaning" : "By words"}</div>
+        <div class="muted">${`${Number(one.chars_given || 0)} characters given`}</div>${
+          one.without_english ? `<div class="muted">${
+            `${Number(one.without_english)} examples compared without an English copy`}</div>` : ""}</td>
+      <td>${drawResults(one.results || [])}</td></tr>`).join("")}</tbody></table>`;
+  }
+
+  async function load() {
+    const asked = ++request;
+    const site = $("#lret-site").value;
+    try {
+      const data = await api.get(`/api/debugger/lessons/retrievals?site=${encodeURIComponent(site)}`);
+      if (asked !== request) return;
+      drawSites(data.sites || []);
+      draw(data);
+    } catch (error) {
+      $("#lret-list").innerHTML = `<p class="muted">${esc(error.message)}</p>`;
+    }
+  }
+
+  $("#lret-site").addEventListener("change", load);
+  $("#lret-read").addEventListener("click", load);
+  document.querySelector('[data-tab="lessons"]')?.addEventListener("click", load);
+  window.lessonRetrievals = { load };
+})();

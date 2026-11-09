@@ -92,6 +92,17 @@ CREATE TABLE IF NOT EXISTS monitor_bad (
 
 #: Groups held to the limits of what interrupts on the agent's own account.
 SPOKEN_GROUPS = ("recommend", "rest")
+#: THE REPORT OF THE DAY IS WRITTEN, NOT SPOKEN (the user, 2026-11-07): it waits for them, so it is
+#: not held for their being away, for quiet, or for something said a moment ago.
+REPORT_HANDLERS = ("evening", "evening_now", "morning")
+#: How long a report waits for the model, asked about another at the same moment (the day's
+#: beginning sets off a recommendation and the day ahead together): not skipped.
+REPORT_WAIT_SECONDS = 600
+
+
+def _writes_a_report(activator: Dict[str, Any]) -> bool:
+    return any(isinstance(one, dict) and one.get("do") == "ask_model"
+               and one.get("handler") in REPORT_HANDLERS for one in activator.get("then") or [])
 #: A hit not judged by the step for this long is let go.
 HIT_EXPIRES_HOURS = 12
 #: The words of late: how often they are read, how much of the very latest is left out of them, and
@@ -229,6 +240,7 @@ class Monitor:
             self.store.seed(builtins())
             for builtin, why in GONE.items():
                 self.store.retire(builtin, why)
+            self.store.refresh(builtins())             # defaults changed, where no one changed them
             self.store.reword("break", OLD_BREAK)
             self.store.seed_quiet(QUIET)
             for old in OLD_SPAM_THENS:
@@ -357,7 +369,7 @@ class Monitor:
             if last and last["t"] and when - datetime.fromisoformat(last["t"]) < timedelta(
                     minutes=float(activator["cooldown_minutes"])):
                 return "in its cooldown"
-        if activator.get("group") in SPOKEN_GROUPS:
+        if activator.get("group") in SPOKEN_GROUPS and not _writes_a_report(activator):
             if not self.latest.get("present", True):
                 return "the user is away"
             quieted = self._quieted()
@@ -400,6 +412,7 @@ class Monitor:
         when = now or datetime.now(timezone.utc)
         tier = act.tier_for(activator, score)
         context = {"activator": {"id": activator["id"], "name": activator["name"],
+                                 "shown_as": activator.get("display_name") or activator["name"],
                                  "group": activator["group"], "purpose": activator.get("purpose")},
                    "why": why[:20], "score": score,
                    "signals": {k: v for k, v in (self.latest or {}).items()
@@ -416,11 +429,21 @@ class Monitor:
         held = held or self._held(activator, how, when)
         action = "held" if held else (tier["do"] + (":" + tier.get("handler", "")
                                                    if tier["do"] == "ask_model" else ""))
+        # HELD THE SAME WAY, KEPT ONCE (the user, 2026-11-07: "那个检查是对的，不需要这么多次"):
+        # the evening report, done for the day, was held and written down every minute - 1708
+        # rows in a day and a half. Written when why it is held changes, or on a new day.
+        last = self.__dict__.setdefault("_held_last", {})
+        day = when.astimezone().date().isoformat()
+        if held and last.get(activator["id"]) == (held, day):
+            return {"firing": "", "held": held}
+        last[activator["id"]] = (held, day) if held else None
         self.db.execute(
             "INSERT INTO monitor_firings (id, activator_id, at, how, score, why, action, acted, "
-            "context) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "outcome, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (firing, activator["id"], when.isoformat(), how, score, "; ".join(why)[:600],
-             action, 0 if held else 1, json.dumps(context, ensure_ascii=False, default=str)))
+             action, 0 if held else 1,
+             json.dumps({"held": held}, ensure_ascii=False) if held else "{}",
+             json.dumps(context, ensure_ascii=False, default=str)))
         if held:
             return {"firing": firing, "held": held}
         outcome: Dict[str, Any] = {}
@@ -481,22 +504,27 @@ class Monitor:
     def say(self, title: str, message: str, context: Dict[str, Any], firing: str,
             choices: str = "", why: str = "", url: str = "", picture: str = "",
             content: bool = False, reason: str = "",
-            recommended: bool = False, pops: bool = False) -> Dict[str, Any]:
+            recommended: bool = False, summary: bool = False) -> Dict[str, Any]:
         """A notification, with why it was made kept in it. `content` is what the
         model sends: answered Read detail, when it has a page, Good to know or
         Bad notification (the user, 2026-11-04). `reason` is shown with it: why the
-        user is being told; `why` is kept for the model. A recommendation waits in the list unless
-        `pops`, the model's word (the user, 2026-11-06); a risk comes through a blocker."""
+        user is being told; `why` is kept for the model. It comes up at once or waits in the list
+        as the Activator's own `delivery` says (`delivery_of`, the user, 2026-11-07: by code, not
+        the model's word); a risk comes through a blocker. A `summary` - of a project come back to, of
+        the day - is a kind of its own (the user, 2026-11-07)."""
         if self.notifications is None:
             return {"said": False, "why": "nothing to say it with"}
         from ...agent.feedback.templates import REMINDER, SUGGESTION
         from ...common.notifications import COLLAPSE, POP
         metadata = {"monitor": {"firing": firing, "activator_id": context["activator"]["id"],
                                 "activator": context["activator"]["name"],
+                                # The user's name for it, which is what they are shown.
+                                "shown_as": context["activator"].get("shown_as")
+                                or context["activator"]["name"],
                                 "group": context["activator"]["group"], "why": why,
                                 "context": context},
                     "content": content, "url": url, "picture": picture, "reason": reason,
-                    "recommended": recommended,
+                    "recommended": recommended, "summary": summary,
                     "through": context["activator"]["group"] == "risk"}
         if recommended:
             metadata["nth_today"] = self.recommended_today() + 1
@@ -527,7 +555,8 @@ class Monitor:
         sent = self.notifications.notify(title, message, kind="proactive",
                                          dedupe_key=f"monitor:{firing}", template=template,
                                          metadata=metadata,
-                                         level=COLLAPSE if recommended and not pops else POP)
+                                         level=POP if self.delivery_of(context["activator"]) == "pop"
+                                         else COLLAPSE)
         said = {"said": sent is not None, "title": title, "message": message, "url": url,
                 "picture": picture, "reason": reason,
                 "notification_id": getattr(sent, "id", "") if sent is not None else "",
@@ -535,6 +564,19 @@ class Monitor:
         # Now, not when the caller is done: an answer finds its firing by this.
         self._outcome(firing, said)
         return said
+
+    def delivery_of(self, activator: Dict[str, Any]) -> str:
+        """POPPED OR WAITING, BY THE ACTIVATOR'S OWN SETTING - done by code, the model not asked
+        (the user, 2026-11-07: "不要让模型判断是否弹出了还是waiting，目前就按照default直接由代码执行"):
+        its `delivery`, the user's to change; where it has none, a risk and a meeting pop, the
+        rest wait."""
+        said = str(activator.get("delivery") or "")
+        if not said and activator.get("id"):
+            kept = self.store.get(str(activator["id"]))
+            said = str((kept or {}).get("delivery") or "")
+        if said in ("pop", "wait"):
+            return said
+        return "pop" if activator.get("group") in ("risk", "calendar") else "wait"
 
     def _notify(self, activator: Dict[str, Any], tier: Dict[str, Any],
                 context: Dict[str, Any], firing: str) -> Dict[str, Any]:
@@ -569,13 +611,18 @@ class Monitor:
             return {"skipped": "no model to ask"}
 
         def ask() -> None:
-            if not self._asking.acquire(blocking=False):
+            if not (self._asking.acquire(timeout=REPORT_WAIT_SECONDS) if handler in REPORT_HANDLERS
+                    else self._asking.acquire(blocking=False)):
                 self._outcome(firing, {"skipped": "the model is being asked about another"})
                 return
             try:
                 if handler in ("evening", "evening_now"):
                     said = self.decider.evening(self, activator, context, firing,
                                                 at_once=handler == "evening_now")
+                elif handler == "morning":
+                    said = self.decider.morning(self, activator, context, firing)
+                elif handler == "old_project":
+                    said = self.decider.old_project(self, activator, context, firing)
                 else:
                     said = self.decider.recommend(self, activator, tier, context, firing,
                                                   recommended=handler == "recommend")
@@ -665,14 +712,17 @@ class Monitor:
                                               json.dumps(decision, ensure_ascii=False), hit))
 
     def firings(self, limit: int = 60) -> List[Dict[str, Any]]:
-        rows = self.db.query("SELECT f.*, a.data AS activator FROM monitor_firings f LEFT JOIN "
+        rows = self.db.query("SELECT f.*, a.data AS activator, a.display_name AS shown_as FROM "
+                             "monitor_firings f LEFT JOIN "
                              "monitor_activators a ON a.id = f.activator_id ORDER BY f.at DESC "
                              "LIMIT ?", (limit,))
         out = []
         for row in rows:
             one = dict(row)
             one["outcome"] = json.loads(one.get("outcome") or "{}")
-            one["name"] = (json.loads(one.pop("activator") or "{}") or {}).get("name", "")
+            one["name"] = (one.pop("shown_as", "") or
+                           (json.loads(one.pop("activator") or "{}") or {}).get("name", ""))
+            one.pop("activator", None)
             one.pop("context", None)
             out.append(one)
         return out

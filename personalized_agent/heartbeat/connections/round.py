@@ -31,7 +31,7 @@ import json
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from ...models.base import ModelRequest, ToolSpec
 from ...common.languages import in_display, in_english
@@ -591,6 +591,7 @@ class ConnectionsRound:
         its stories - laid out and pictured as an issue is."""
         from ...runtime.web_guard import WebGuard
         self.guard = WebGuard()
+        self._not_answered: List[Dict[str, str]] = []
         used = {"calls": 0, "web": 0, "tokens_in": 0, "tokens_out": 0}
         self._stage(1, "planning the special issue")
         if not title:
@@ -620,6 +621,9 @@ class ConnectionsRound:
         self._stage(4, "researching the special issue on the web")
         stories = self._page_branch(used, going, [page], today, since)
         items, paper = self._paper([], stories, [page])
+        if not items and self._not_answered:
+            raise RuntimeError("The special issue's answer was cut off or could not be read - "
+                               "try again: " + self._not_answered[0]["why"])
         if not items:
             raise RuntimeError("No stories were found for this brief - try making its "
                                "subject clearer, or its time range wider.")
@@ -715,6 +719,7 @@ class ConnectionsRound:
         used = {"calls": 0, "web": 0, "tokens_in": 0, "tokens_out": 0}
         from ...runtime.web_guard import WebGuard
         self.guard = WebGuard()
+        self._not_answered: List[Dict[str, str]] = []
         # CONNECTIONS OFF: no one looked up - not a contact, not the user -
         # nothing of the contacts tidied or summarised; the news only.
         people = bool(self.people_on())
@@ -756,7 +761,9 @@ class ConnectionsRound:
             stale="\n".join(f"- [{one['id']}] {one['name']} ({one['relationship'] or '?'}, "
                             f"closeness {one['closeness']}) - last looked at "
                             f"{(one['checked_at'] or 'never')[:10]}" for one in stale)
-            or "None.", proactive=MOST_PROACTIVE, lessons=self.store.lessons_text(work),
+            # The lessons by the user's work now: what the plan is about (the user, 2026-11-07).
+            or "None.", proactive=MOST_PROACTIVE,
+            lessons=self.store.lessons_text(work, site="connections plan"),
             orgs=", ".join(one["name"] for one in self.store.names_in_use("org")[:MOST_NAMES])
             or "None yet.", today=today, stale_days=STALE_DAYS, known=known)
         web_items: List[Any] = []
@@ -794,7 +801,14 @@ class ConnectionsRound:
         if topics_branch is not None:
             topics_branch.join()
         self._stage(5, "ranking what you need to know")
-        said = _json_of(answer)
+        said: Dict[str, Any] = {}
+        if people:
+            read = _read(answer, wants=("items",))
+            if read.ok:
+                said = read.data or {}
+            else:
+                log.info("the search of your contacts was not answered: %s", read.why_not)
+                self._missed("the search of your contacts", read.why_not)
         found = self._items([*(said.get("items") or []),
                              *[dict(one, kind="web") for one in web_items
                                if isinstance(one, dict)]])
@@ -807,10 +821,20 @@ class ConnectionsRound:
         # THE PAPER: what was found for their work and for each page,
         # checked, scored and laid out a page each.
         items, paper = self._paper(items, topic_items, pages)
+        missed = list(self._not_answered)
+        if not items and missed:
+            # A FAILED ISSUE DOES NOT TAKE THE PLACE OF A WHOLE ONE (2026-11-07): nothing came
+            # back whole, so nothing is saved, and the last issue stays the latest.
+            log.info("no issue was saved: %s", "; ".join(f"{one['what']}: {one['why']}"
+                                                         for one in missed))
+            return {"needs": needs, "items": [], "used": used, "pictures": 0,
+                    "me": me_said, "tidied": tidied, "not_answered": missed,
+                    "not_saved": "every answer was cut off or could not be read"}
         self._stage(5, "a picture for each story")
         items = self._pictured(items, going)
         self._about_to_save()
         self.store.save_briefing(needs, items, dict(used, stale_offered=len(stale),
+                                                    not_answered=missed,
                                                     web_items=len(web_items),
                                                     topic_items=len(topic_items),
                                                     found=len(found), changes=changes,
@@ -834,7 +858,7 @@ class ConnectionsRound:
                 if avatars.fetch_avatar(self.store, person_id, get=self.download).get("ok"):
                     pictures += 1
         return {"needs": needs, "items": items, "used": used, "pictures": pictures,
-                "me": me_said, "tidied": tidied}
+                "me": me_said, "tidied": tidied, "not_answered": missed}
 
     def _issues_shown(self) -> List[Dict[str, Any]]:
         """The issues of the last SHOWN_DAYS (recommend.py): what they carried
@@ -933,7 +957,12 @@ class ConnectionsRound:
             except Exception:
                 log.warning("the page %s could not be searched", page["title"], exc_info=True)
                 return out
-            said = _json_of(answer)
+            read = _read(answer, wants=("items",))
+            if not read.ok:
+                log.info("the page %s was not answered: %s", page["title"], read.why_not)
+                self._missed(f"the page {page['title']}", read.why_not)
+                return out
+            said = read.data or {}
             heading = str(said.get("heading") or "").strip()
             if heading:
                 page["heading"] = heading[:60]
@@ -992,9 +1021,20 @@ class ConnectionsRound:
         retriever = getattr(self, "retriever", None)
         if retriever is None:
             return "None yet."
-        moment = " ".join(str(page.get(key) or "") for key in ("title", "english", "about"))
+        # WHAT THE PAGE IS ABOUT (the user, 2026-11-07): its title, its subjects and the start of
+        # what is written of them - a page has no "english" or "about" of its own - said in
+        # English first when it is not.
+        subjects = [str(one.get("title") or "") if isinstance(one, dict) else str(one)
+                    for one in page.get("subjects") or []]
+        detail = page.get("detail") or []
+        detail = [detail] if isinstance(detail, str) else list(detail)
+        moment = " ".join(part for part in (
+            str(page.get("title") or ""), *subjects[:6],
+            *(str(line)[:200] for line in detail[:4])) if part.strip())
         try:
-            return retriever.text(("recommendations",), moment) or "None yet."
+            return retriever.text(("recommendations",), moment,
+                                  rewrite_task="connections_lessons_query",
+                                  site="connections page") or "None yet."
         except Exception:
             log.info("the lessons could not be looked for", exc_info=True)
             return "None yet."
@@ -1071,7 +1111,11 @@ class ConnectionsRound:
             language=in_display('each need, and what it is for ("for") - the words to '
                                 'search with in whatever language the pages are written in'),
             task=NEWS_TASK)
-        said = _json_of(str(getattr(response, "text", "") or ""))
+        read = _read(response, wants=("needs",))
+        if not read.ok:                     # searched for as when no need was said, and noted
+            log.info("what you would want to know was not worked out: %s", read.why_not)
+            self._missed("what you would want to know", read.why_not)
+        said = read.data if read.ok else {}
         return [{key: str(one.get(key) or "")[:300] for key in ("need", "for", "look", "search")}
                 for one in said.get("needs") or [] if isinstance(one, dict)
                 and str(one.get("need") or "").strip()][:12]
@@ -1102,7 +1146,20 @@ class ConnectionsRound:
         except Exception:
             log.warning("the web search of the connections round failed", exc_info=True)
             return []
-        return [one for one in _json_of(answer).get("items") or [] if isinstance(one, dict)]
+        read = _read(answer, wants=("items",))
+        if not read.ok:
+            log.info("the web search of the issue was not answered: %s", read.why_not)
+            self._missed("the web search", read.why_not)
+            return []
+        return [one for one in (read.data or {}).get("items") or [] if isinstance(one, dict)]
+
+    def _missed(self, what: str, why: str) -> None:
+        """A part of the issue whose answer was cut off or unreadable: kept with the issue, so
+        that one made smaller by it is known, and does not take the place of a whole one."""
+        missed = getattr(self, "_not_answered", None)
+        if missed is None:
+            missed = self._not_answered = []
+        missed.append({"what": what[:120], "why": why})
 
     # -- one spelling for each thing -----------------------------------------------
     def _tidy_names(self, used: Dict[str, int]) -> Dict[str, Any]:
@@ -1136,7 +1193,15 @@ class ConnectionsRound:
             # own name, as it writes it.
             language=in_english("each label's one spelling - an organisation keeps its "
                                 "own name as it writes it"))
-        said = _json_of(str(getattr(response, "text", "") or ""))
+        read = _read(response, wants=("groups",))
+        # A FAILED TIDYING MERGES NOTHING, AND IS NOT ASKED AGAIN THE SAME WAY (the user,
+        # 2026-11-07): the names as they were are marked seen, and asked about again only when
+        # they change; the failure is said.
+        if not read.ok:
+            log.info("the names were not tidied: %s", read.why_not)
+            store.meta("names_tidied", print_)
+            return {"failed": read.why_not}
+        said = read.data or {}
         merged = []
         for group in said.get("groups") or []:
             if not isinstance(group, dict) or group.get("kind") not in ("label", "org"):
@@ -1191,14 +1256,26 @@ class ConnectionsRound:
             me=_me_text(me), inbox=self._inbox_text(),
             today=datetime.now().astimezone().strftime("%A %d %B %Y, %H:%M %Z"))}]
         before = used["calls"]
-        self._loop(messages, used, going, tools=MY_TOOLS, handle=handle, room=room,
-                   counted=mine, system=MY_SYSTEM,
-                   # What was found, and why each change is proposed: in the inbox.
-                   language=in_display("what you found, and why each change is proposed - "
-                                       "a profile's own fields keep their own wording"))
+        said = self._loop(messages, used, going, tools=MY_TOOLS, handle=handle, room=room,
+                          counted=mine, system=MY_SYSTEM,
+                          # What was found, and why each change is proposed: in the inbox.
+                          language=in_display("what you found, and why each change is proposed "
+                                              "- a profile's own fields keep their own wording"))
+        from ...models import answers
+        text, cut = str(said or ""), answers.was_cut(said)
+        out = {"calls": used["calls"] - before, "web": mine["web"],
+               "activity": mine["activity"], "asked": mine["asked"]}
+        # A LOOK-UP STOPPED IS NOT A LOOK-UP: it is made again. One whose last answer was cut off
+        # or empty is marked checked all the same - not asked again the same way - and its
+        # failure said (the user, 2026-11-07).
+        if not going():
+            return dict(out, not_checked="it was stopped")
         self.store.mark_checked(me["id"])
-        return {"calls": used["calls"] - before, "web": mine["web"],
-                "activity": mine["activity"], "asked": mine["asked"]}
+        if cut or not str(text).strip():
+            why = "the answer was cut off at the output limit" if cut else "the answer was empty"
+            log.info("your look-up failed: %s", why)
+            return dict(out, failed=why)
+        return out
 
     def _inbox_text(self) -> str:
         lines = [f"- waiting for the user: {one['title']}" for one in self.store.inbox("open")]
@@ -1333,7 +1410,7 @@ class ConnectionsRound:
                                  language=language, task=task)
             calls = getattr(response, "tool_calls", None) or []
             if not calls:
-                return str(getattr(response, "text", "") or "")
+                return _said(response)
             messages.append({"role": "assistant",
                              "content": getattr(response, "raw_content", None)
                              or getattr(response, "text", "")})
@@ -1343,11 +1420,10 @@ class ConnectionsRound:
                                        ensure_ascii=False, default=str)[:30000]}
                 for call in calls]})
         if not going():
-            return ""
+            return _Said("")
         messages.append({"role": "user", "content": "That is all the room for this "
                          "round: answer now, with the JSON object, from what you have."})
-        return str(getattr(self._ask(messages, used, system=system, language=language,
-                                     task=task), "text", "") or "")
+        return _said(self._ask(messages, used, system=system, language=language, task=task))
 
     def _tool(self, name: str, args: Dict[str, Any], used: Dict[str, int]) -> Any:
         store = self.store
@@ -1557,7 +1633,16 @@ class ConnectionsRound:
             or "Nothing new.", work=work[:4000], today=today, most=MOST_KNOW)}], used,
             system="You keep a short list up to date, changing only what needs it.",
             language=in_display(), task=NEWS_TASK)
-        said = _json_of(str(getattr(response, "text", "") or ""))
+        read = _read(response, wants=("changes",))
+        if not read.ok:
+            # NOT ANSWERED, NOT SHRUNK (2026-11-07): the list kept as it stands, what was found
+            # added, as when the model is not to be had.
+            log.info("the list was not updated: %s", read.why_not)
+            self._missed("the list's update", read.why_not)
+            items = (current + [fresh(one) for one in found])[:MOST_KNOW]
+            return items, [{"op": "add", "id": one["id"], "title": one["title"],
+                            "why": read.why_not} for one in items[len(current):]]
+        said = read.data or {}
         by_id = {one["id"]: one for one in current}
         order = [one["id"] for one in current]
         changes: List[Dict[str, Any]] = []
@@ -1636,18 +1721,41 @@ class ConnectionsRound:
         overflow = self.store.overflowing_actions()
         if not overflow or not self._room(used):
             return
-        changes = "\n".join(
-            f"- {str(one['at'])[:16]} {one['action']} {one['person_name']}"
-            + (f" - reason: {one['reason']}" if one["reason"] else "")
-            + (f" {json.dumps(one['after'], ensure_ascii=False)[:200]}"
-               if one["action"] == "edit" else "") for one in overflow)
-        response = self._ask([{"role": "user", "content": SUMMARISE.format(
-            summary=self.store.lessons_summary().get("text") or "(none yet)",
-            changes=changes)}], used, system="You summarise faithfully and briefly.",
-            language=in_display())
-        text = str(getattr(response, "text", "") or "").strip()
-        if text:
-            self.store.fold_actions(overflow, text)
+        from ...models import answers
+        import hashlib
+        # These very changes failed to be summarised before: not asked again the same way.
+        def print_of(actions: List[Dict[str, Any]]) -> str:
+            return hashlib.sha256(",".join(sorted(str(one.get("id") or one.get("at"))
+                                                  for one in actions)).encode("utf-8")).hexdigest()
+        if self.store.meta(FOLD_FAILED) == print_of(overflow):
+            return
+
+        def ask(part: List[Dict[str, Any]]) -> Any:
+            if not self._room(used):
+                return answers.Answer(data=None, cut=False, text="")
+            changes = "\n".join(
+                f"- {str(one['at'])[:16]} {one['action']} {one['person_name']}"
+                + (f" - reason: {one['reason']}" if one["reason"] else "")
+                + (f" {json.dumps(one['after'], ensure_ascii=False)[:200]}"
+                   if one["action"] == "edit" else "") for one in part)
+            response = self._ask([{"role": "user", "content": SUMMARISE.format(
+                summary=self.store.lessons_summary().get("text") or "(none yet)",
+                changes=changes)}], used, system="You summarise faithfully and briefly.",
+                language=in_display())
+            text, cut = answers.read_text(response)
+            text = text.strip()
+            # A SUMMARY CUT OFF FOLDS NOTHING (2026-11-07): the changes it would take the place
+            # of stay word for word; they are asked again in halves, each folded in turn.
+            if text and not cut:
+                self.store.fold_actions(part, text)
+            return answers.Answer(data={} if text and not cut else None, cut=cut, text=text,
+                                  response=response)
+        failed = [(part, read) for part, read in answers.in_parts(list(overflow), ask)
+                  if not read.ok and read.response is not None]
+        if failed:
+            log.info("%d change(s) to contacts were not summarised: %s",
+                     sum(len(part) for part, _read in failed), failed[0][1].why_not)
+            self.store.meta(FOLD_FAILED, print_of([one for part, _read in failed for one in part]))
 
 
 def _brief(person: Dict[str, Any]) -> Dict[str, Any]:
@@ -1686,6 +1794,32 @@ def _me_text(me: Dict[str, Any]) -> str:
                  + ("" if recent else " nothing yet."))
     lines += [f"  - {str(one['at'])[:10]}: {one['what']}" for one in recent[:15]]
     return "\n".join(lines)
+
+
+#: The changes to contacts whose summary failed, as one print: not asked again (2026-11-07).
+FOLD_FAILED = "lessons_fold_failed"
+
+
+class _Said(str):
+    """AN ANSWER'S WORDS WITH WHY IT STOPPED (2026-11-07): `_loop` gives back words, as it always
+    did, and with them the model's `stop_reason`, so that one cut off at the limit is known."""
+    stop_reason = ""
+
+
+def _said(response: Any) -> "_Said":
+    out = _Said(str(getattr(response, "text", "") or ""))
+    out.stop_reason = str(getattr(response, "stop_reason", "") or "")
+    return out
+
+
+def _read(said: Any, wants: Sequence[str] = ()) -> Any:
+    """An answer - a response, or the words `_loop` gave back - read (models/answers.py)."""
+    from types import SimpleNamespace
+    from ...models import answers
+    if not isinstance(said, str):
+        said = _said(said)
+    return answers.read(SimpleNamespace(text=str(said), stop_reason=getattr(said, "stop_reason", "")),
+                        parse=answers.json_of, wants=wants)
 
 
 def _json_of(text: str) -> Dict[str, Any]:

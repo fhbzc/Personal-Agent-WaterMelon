@@ -255,4 +255,56 @@ def stay_on_top(window: Any) -> None:
         pass
 
 
-__all__ = ["stay_on_top", "stays_through_peek", "keys_on_hover", "borderless", "on_release"]
+def out_of_place(above: List[Any]) -> bool:
+    """Of the windows over one kept on top (each {"ours", "topmost"}, from the top down): whether
+    any is a window of another program's that is not kept on top - which a window kept on top is
+    never under, and was (the user, 2026-11-08: the avatar under a browser, its "on top" still set)."""
+    return any(not one.get("ours") and not one.get("topmost") for one in above)
+
+
+def back_on_top(window: Any) -> bool:
+    """WINDOWS: `window`, kept on top, put back at the top if the system has let it fall under a
+    window that is not (the user, 2026-11-08: "为什么avatar没有放在front") - taking nothing's
+    keyboard; this application's own windows that were over it put back over it, in their
+    order. True when it had to be."""
+    if not sys.platform.startswith("win"):
+        return False
+    try:
+        import ctypes
+        import os
+        from ctypes import wintypes
+        user32 = ctypes.WinDLL("user32")
+        for name in ("GetTopWindow", "GetWindow"):
+            getattr(user32, name).restype = wintypes.HWND
+        user32.GetTopWindow.argtypes = [wintypes.HWND]
+        user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsIconic.argtypes = [wintypes.HWND]
+        user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
+        user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                        ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        frame = int(window.wm_frame(), 16)
+        above: List[Any] = []
+        hwnd = user32.GetTopWindow(None)
+        while hwnd and hwnd != frame:
+            if user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd):
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                above.append({"hwnd": hwnd, "ours": pid.value == os.getpid(),
+                              "topmost": bool(user32.GetWindowLongW(hwnd, -20) & 0x8)})
+            hwnd = user32.GetWindow(hwnd, 2)             # GW_HWNDNEXT
+        if not hwnd or not out_of_place(above):
+            return False
+        flags = 0x0001 | 0x0002 | 0x0010                 # NOSIZE, NOMOVE, NOACTIVATE
+        topmost = wintypes.HWND(-1)
+        user32.SetWindowPos(frame, topmost, 0, 0, 0, 0, flags)
+        for one in reversed([one for one in above if one["ours"]]):
+            user32.SetWindowPos(one["hwnd"], topmost, 0, 0, 0, 0, flags)
+        return True
+    except Exception:                                    # pragma: no cover - as it was, then
+        return False
+
+
+__all__ = ["stay_on_top", "stays_through_peek", "keys_on_hover", "borderless", "on_release",
+           "back_on_top", "out_of_place"]

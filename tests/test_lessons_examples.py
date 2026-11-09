@@ -152,12 +152,16 @@ class OneWayOfFindingThemTests(Base):
         self.engine._new_rule("notifications", {"statement": "Say it in the morning"}, "x")
         self.engine._new_rule("connections", {"statement": "Keep colleagues apart"}, "x")
         self.engine._new_rule("general", {"statement": "Be brief"}, "x")
-        notices = self.app.calendar_nature.relevant_text("anything")
+        # BY WHAT IT IS ABOUT, NO QUOTA (the user, 2026-11-07): a moment like the lessons finds
+        # them; "anything" is like none of them, and is given none.
+        notices = self.app.calendar_nature.relevant_text("say it in the morning, be brief")
         self.assertIn("Say it in the morning", notices)
         self.assertIn("Be brief", notices, "general lessons bear on every decision")
-        people = self.app.connections.lessons_text("anything")
+        people = self.app.connections.lessons_text("keep colleagues apart, be brief")
         self.assertIn("Keep colleagues apart", people)
         self.assertIn("Be brief", people)
+        self.assertNotIn("Say it in the morning",
+                         self.app.calendar_nature.relevant_text("anything"))
 
     def test_every_type_is_looked_at_its_own_first(self) -> None:
         # The user, 2026-11-04: what was learned elsewhere bears on it too.
@@ -171,7 +175,8 @@ class OneWayOfFindingThemTests(Base):
             "'Only after the thesis figures are checked', 'x', 'x')")
         found = self.retriever.retrieve(("notifications", "general"), "about the thesis draft", rules=4)
         kinds = [one.get("kind") for one in found["rules"]]
-        self.assertGreaterEqual(kinds.count("notifications"), 2, "half the room is its own")
+        # NO HALF FOR ITS OWN (the user, 2026-11-07): the tea rules are nothing like the thesis.
+        self.assertEqual(kinds.count("notifications"), 0, "its own only when like it")
         self.assertIn("connections", kinds)
         self.assertIn("work card", kinds)
         said = self.retriever.text(("notifications", "general"), "about the thesis draft", rules=4)

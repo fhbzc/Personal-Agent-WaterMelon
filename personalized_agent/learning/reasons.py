@@ -217,6 +217,27 @@ own words as they wrote them).
 Return ONLY this JSON object:
 {"same": true or false, "statement": "", "condition_text": ""}"""
 
+#: THE SAME REASON LEARNED TWICE (2026-11-07): from the earlier experience and from the screen,
+#: two reasons said alike rest on no evidence in common, and were never compared. Each new one is
+#: shown the kept ones nearest it in meaning - by rank, not a line: the same reason, worded
+#: apart, was as little alike as 0.2 - and the model says which, if any, it is.
+NEAR = 6
+#: EVERY REASON ONCE (2026-11-07): the same reasons learned twice before this came stay two
+#: unless all are looked at once; done in the first update after it, for every user, then marked.
+MERGED_ALL = "learning.reasons_merged_all_2026_11_07"
+NEAR_PER_CALL = 5
+NEAR_PROMPT = """IS EACH NEW REASON OF THE USER'S ONE ALREADY KEPT?
+
+Each NEW reason is shown with the kept reasons nearest it in meaning. For each new one, say which
+kept one it is THE SAME AS - the same reason when an agent would act the same on either, however
+worded and whatever evidence each was learned from - or none. One on the same subject that says
+something else, is narrower in a way that matters, or pulls the other way is not the same: say
+none. For one that is the same, give the one wording that keeps both (the user's own words as
+they wrote them).
+
+Return ONLY this JSON object:
+{"same": [{"new": "R-...", "as": "the kept one's id, or null", "statement": "the one wording"}]}"""
+
 TERMS_PROMPT = """WHICH OF THESE WORDS MEAN THE SAME THING?
 
 Below are the terms under one parent in a shared word list, each with its
@@ -253,11 +274,13 @@ def _users_own(judgment: Dict[str, Any]) -> bool:
 
 
 class Reasons:
-    def __init__(self, db: Any, ask: Callable[..., Dict[str, Any]]) -> None:
+    def __init__(self, db: Any, ask: Callable[..., Dict[str, Any]], embedder: Any = None) -> None:
         self.db = db
         self.store = LearningStore(db)
         self.vocab = Vocabulary(db)
         self.ask = ask
+        #: To find the kept reasons nearest a new one in meaning (merge_near); None: not looked.
+        self.embedder = embedder
         self.report: Dict[str, Any] = defaultdict(int)
 
     # -- shown to a model -----------------------------------------------------
@@ -272,6 +295,11 @@ class Reasons:
         if case.get("unit_id") == from_lessons.UNIT:
             return "their answer to what their agent told them"
         unit = self.store.unit(case.get("unit_id", "")) or {}
+        # WHERE IT WAS SEEN, said (the user, 2026-11-07): the screen, or the earlier learning.
+        if unit.get("kind") == "earlier":
+            return "what the earlier learning found in their work, from their screen"
+        if unit.get("kind") == "activity":
+            return f'their work, "{unit.get("title") or ""}", as their screen showed it'
         return f'their work, "{unit.get("title") or ""}"'
 
     def _judgment_line(self, judgment: Dict[str, Any]) -> str:
@@ -401,10 +429,13 @@ class Reasons:
     @staticmethod
     def _enough(supports: Sequence[Dict[str, Any]]) -> bool:
         """One rule the user wrote, or a reference they endorsed for it; two
-        cases they changed or approved, or three they let stand."""
+        cases they changed or approved - or two the earlier learning found, each
+        from several pieces of their work (activity.py, 2026-11-07) - or three
+        they let stand."""
         if any(one["strength"] in ("written", "noted", "endorsed") for one in supports):
             return True
-        strong = {one["case_id"] for one in supports if one["strength"] in ("changed", "approved")}
+        strong = {one["case_id"] for one in supports
+                  if one["strength"] in ("changed", "approved", "earlier")}
         if len(strong) >= 2:
             return True
         return len({one["case_id"] for one in supports}) >= 3
@@ -809,7 +840,9 @@ class Reasons:
                 self.store.set_judgment_state(one["id"], "pool")
 
     # -- the same reason twice -------------------------------------------------
-    def merge_same(self) -> None:
+    def merge_same(self, new: Optional[set] = None) -> None:
+        """Reasons resting on much of the same evidence, asked whether they are one. `new`: only
+        pairs with one of these in them (an update's own); None: every pair (a first learning)."""
         reasons = self.store.reasons(("candidate", "active"))
         support = {r["id"]: {one["id"] for one in self.store.evidence(r["id"])
                              if one["role"] == "supports"} for r in reasons}
@@ -818,6 +851,8 @@ class Reasons:
             for other in reasons:
                 if one["id"] >= other["id"] or one["id"] in done or other["id"] in done:
                     continue
+                if new is not None and one["id"] not in new and other["id"] not in new:
+                    continue
                 a, b = support[one["id"]], support[other["id"]]
                 if not a or not b or len(a & b) / min(len(a), len(b)) < SAME_SHARE:
                     continue
@@ -825,22 +860,86 @@ class Reasons:
                                 + "\nTWO: " + self._reason_line(other, False), 800, "the answer")
                 if not said.get("same"):
                     continue
-                keep, gone = (one, other) if one["created_at"] <= other["created_at"] else (other, one)
-                if said.get("statement"):
-                    keep["history"] = list(keep.get("history") or []) + [
-                        {"at": now(), "what": "merged", "gone": gone["id"],
-                         "before": keep["statement"]}]
-                    keep["statement"] = str(said["statement"])[:500]
-                    if keep["source"] != "stated" and gone["source"] == "stated":
-                        keep["source"] = "stated"
-                self.store.save_reason(keep)
-                for link in self.store.links_of_reason(gone["id"]):
-                    self.store.link(keep["id"], link["judgment_id"], link["role"],
-                                    why=link["why"], predicted=bool(link["predicted"]))
-                self._retire(gone, f"the same as {keep['id']}")
-                self.rescore(keep["id"])
-                done.add(gone["id"])
-                self.report["merged"] += 1
+                done.add(self._merge(one, other, str(said.get("statement") or "")))
+
+    def _merge(self, one: Dict[str, Any], other: Dict[str, Any], statement: str) -> str:
+        """Two reasons that are one, made one: the older kept, in `statement` when given, with
+        the other's evidence; the other retired. The id retired."""
+        keep, gone = (one, other) if one["created_at"] <= other["created_at"] else (other, one)
+        if statement:
+            keep["history"] = list(keep.get("history") or []) + [
+                {"at": now(), "what": "merged", "gone": gone["id"],
+                 "before": keep["statement"]}]
+            keep["statement"] = statement[:500]
+            if keep["source"] != "stated" and gone["source"] == "stated":
+                keep["source"] = "stated"
+        self.store.save_reason(keep)
+        for link in self.store.links_of_reason(gone["id"]):
+            self.store.link(keep["id"], link["judgment_id"], link["role"],
+                            why=link["why"], predicted=bool(link["predicted"]))
+        self._retire(gone, f"the same as {keep['id']}")
+        self.rescore(keep["id"])
+        self.report["merged"] += 1
+        return gone["id"]
+
+    def _kv(self, key: str) -> str:
+        try:
+            row = self.db.query_one("SELECT value FROM kv WHERE key = ?", (key,))
+        except Exception:
+            return ""
+        return str(row["value"]) if row else ""
+
+    def _set_kv(self, key: str, value: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", (key, value))
+
+    def merge_near(self, new: set) -> None:
+        """Each new reason against the kept ones nearest it in meaning (NEAR), the model saying
+        which it is the same as (NEAR_PROMPT) - NEAR_PER_CALL new ones a call. Nothing without an
+        embedder."""
+        embedder = self.embedder
+        reasons = self.store.reasons(("candidate", "active"))
+        fresh = [one for one in reasons if one["id"] in new]
+        if not fresh or len(reasons) < 2 or embedder is None:
+            return
+        try:
+            if not embedder.available():
+                return
+            vectors = embedder.embed([str(one["statement"]) for one in reasons])
+        except Exception:
+            log.warning("the reasons could not be read by meaning", exc_info=True)
+            return
+        if not vectors or len(vectors) != len(reasons):
+            return
+        from ..heartbeat.states.tasks import _cosine
+        by_id = {one["id"]: (one, vector) for one, vector in zip(reasons, vectors)}
+        gone: set = set()
+        for start in range(0, len(fresh), NEAR_PER_CALL):
+            lines: List[str] = []
+            for one in fresh[start:start + NEAR_PER_CALL]:
+                if one["id"] in gone:
+                    continue
+                mine = by_id[one["id"]][1]
+                near = sorted((other for other in reasons
+                               if other["id"] != one["id"] and other["id"] not in gone),
+                              key=lambda other: _cosine(mine, by_id[other["id"]][1]),
+                              reverse=True)[:NEAR]
+                lines += ["NEW: " + self._reason_line(one, False), "  the kept ones nearest it:"]
+                lines += ["    " + self._reason_line(other, False) for other in near]
+                lines.append("")
+            if not lines:
+                continue
+            said = self.ask("reasons", NEAR_PROMPT, "\n".join(lines), 1500, "the answer")
+            for answer in said.get("same") or [] if isinstance(said, dict) else []:
+                if not isinstance(answer, dict):
+                    continue
+                one, other = by_id.get(str(answer.get("new") or "")), by_id.get(
+                    str(answer.get("as") or ""))
+                if (one is None or other is None or one[0]["id"] == other[0]["id"]
+                        or one[0]["id"] not in new or {one[0]["id"], other[0]["id"]} & gone):
+                    continue
+                gone.add(self._merge(self.store.reason(one[0]["id"]) or one[0],
+                                     self.store.reason(other[0]["id"]) or other[0],
+                                     str(answer.get("statement") or "")))
 
     # -- the word list ---------------------------------------------------------
     def tend_terms(self, first_learning: bool) -> None:
@@ -932,7 +1031,13 @@ class Reasons:
                                     ("without", f"WHAT THEY DID BEFORE:\n{cases}")):
             answer = self.ask("reasons", PREDICT_PROMPT, f"{known_of_them}\n\nTOLD THEM:\n{shown}",
                               1500, "what they would answer")
-            said[name] = (answer or {}).get("answers") or {}
+            # NO GUESS KEPT FROM NO ANSWER (2026-11-07): a call that failed, was cut off or could
+            # not be read keeps no prediction - an empty one would be read as a wrong guess.
+            if not answer or answer.get("_failed"):
+                log.info("no prediction kept: %s", (answer or {}).get("_failed") or "no answer")
+                self.report["predict_failed"] = self.report.get("predict_failed", 0) + 1
+                return
+            said[name] = answer.get("answers") or {}
         at = now()
         for one in rated:
             self.db.execute(
@@ -956,7 +1061,9 @@ class Reasons:
         lines = [f"{one['id']} [{', '.join(sorted(contexts[one['id']])) or 'work'}]: {one['statement']}"
                  for one in reasons]
         principles = [str(row["statement"]) for row in self.db.query(
-            "SELECT statement FROM experience_patterns WHERE layer = 'principle'")]
+            # The user's own, never the Experience debugger's scopes ("work:dbg_...:<way>", 2026-11-07).
+            "SELECT statement FROM experience_patterns WHERE layer = 'principle' "
+            "AND scope NOT LIKE 'work:%'")]
         said = self.ask("reasons", ACROSS_PROMPT, "REASONS:\n" + "\n".join(lines)
                         + "\n\nPRINCIPLES OF THEIR WORK:\n" + "\n".join(f"- {one}" for one in principles),
                         4000, "what drives them")
@@ -982,6 +1089,8 @@ class Reasons:
 
     def run(self, first_learning: bool, stopped: Optional[Callable[[], bool]] = None
             ) -> Dict[str, Any]:
+        before = {one["id"]: str(one.get("statement") or "")
+                  for one in self.store.reasons(("candidate", "active"))}
         taken = from_lessons.take(self.db)
         self.report["lessons_taken"] = len(taken)
         if taken and (stopped is None or not stopped()):
@@ -999,8 +1108,19 @@ class Reasons:
             self.across()
         if stopped is None or not stopped():
             self.compete()
-        if first_learning and (stopped is None or not stopped()):
-            self.merge_same()
+        # THE SAME REASON MADE ONE, EVERY UPDATE (2026-11-07): it ran on a first learning only,
+        # so the same reason learned again later stayed two. The update's own new reasons now.
+        # New, or said anew (revised), in this update; every one, once, in the first update.
+        if stopped is None or not stopped():
+            kept = self.store.reasons(("candidate", "active"))
+            everyone = not self._kv(MERGED_ALL)
+            new = {one["id"] for one in kept
+                   if everyone or before.get(one["id"]) != str(one.get("statement") or "")}
+            self.merge_same(None if (first_learning or everyone) else new)
+            if new and (stopped is None or not stopped()):
+                self.merge_near(new)
+            if everyone and (stopped is None or not stopped()):
+                self._set_kv(MERGED_ALL, now())
         if stopped is None or not stopped():
             self.tend_terms(first_learning)
         return dict(self.report)

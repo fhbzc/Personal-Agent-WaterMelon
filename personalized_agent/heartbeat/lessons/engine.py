@@ -40,7 +40,12 @@ THE CYCLE (`learn`), run in the background after each of the user's edits:
                SUPPORTS (the rule's conditions hold and the user did what it
                predicts), CONTRADICTS (its conditions all hold and the user
                did the opposite), or unrelated. Each judgement is kept, with
-               why. Evidence nothing explains goes to the pool.
+               why. Evidence nothing explains goes to the pool. WEIGHED BOTH
+               WAYS (the user, 2026-11-07): beside its shortlist, each piece
+               is shown the lessons closest to the ones it was listed with -
+               in the same call - so that a lesson pointing the other way is
+               contradicted by it, not left standing beside the one it
+               supports.
   3. INDUCE    pooled evidence that shares features, `GROUP_AT` or more
                pieces, is shown to the model together: one rule that
                explains it, with its conditions - or none.
@@ -53,11 +58,38 @@ THE CYCLE (`learn`), run in the background after each of the user's edits:
                `REVISE_BELOW` is revised - narrowed, split or retired - from
                its supporting and contradicting evidence side by side; two
                lessons that rest on the same evidence are merged; one with no
-               support for `STALE_DAYS` retires. The user's pin, rejection
-               and edits win.
+               support for `STALE_DAYS` retires. A CANDIDATE retires only
+               when contradicted more than supported (the user, 2026-11-07);
+               one with no new evidence for long stays ("很久没有新证据可以留着").
+               The user's pin, rejection and edits win.
   6. PUBLISH   `text`: only the lessons in force, each with its id, its
                confidence and how many cases back it - what the agent is
                given, never the raw actions.
+
+A BAD OUTCOME BLAMES ONLY WHAT CAUSED IT (the user, 2026-11-07): the user
+undoing what the agent did on lessons is kept, and in the next cycle the
+model is asked, once for each, which of the lessons used caused it; the
+contradiction goes to those alone. Not asked, or no whole answer: nothing
+is recorded - never spread over every lesson used.
+
+THE UPKEEP (`upkeep`, the user 2026-11-07: keeping the rules is the
+system's job, not hand edits), with the round's learning (`learn_due`), for
+each kind whose rules or waiting evidence changed since the last; each step
+in batches, each question asked once (`_asked`):
+
+  RETAKE      evidence linked to no rule `RETAKE_AFTER_DAYS` after it was
+              read is taken up again, ONCE: linked to a rule it fits, or a
+              candidate made from it (the work: linked only - its natures
+              come from its stages).
+  DUPLICATES  rules worded much alike, candidates and lessons together, are
+              shown to the model: the same ones merge - one statement, the
+              evidence and history joined, the other marked merged into it.
+  OPPOSITES   rules about the same thing are shown in pairs: pointing
+              opposite ways, one is narrowed, the two merged, or one retired
+              - each with why, in its history.
+  A rule the user pinned, stated or worded is never rewritten or retired by
+  the model. None of it is evidence: only what the user did moves how sure
+  a lesson is.
 """
 
 from __future__ import annotations
@@ -107,6 +139,27 @@ SETTLE_DAYS = 3
 WEIGHT_ACTION = 1.0
 WEIGHT_REASON = 2.0
 WEIGHT_CORRECTION = 1.5
+
+#: THE UPKEEP (the user, 2026-11-07). How alike two rules' words must be
+#: (their share in common) to be shown the model as about the same thing -
+#: and, beside a piece of evidence, as close to a lesson it was listed with.
+ALIKE_AT = 0.3
+#: ... and as worded much the same: offered for merging (on the user's lessons of
+#: 2026-11-07, 8 pairs of work rules are at 0.5 or more - as many as the audit found).
+DUPLICATE_AT = 0.5
+#: The most close lessons added beside one piece of evidence's shortlist.
+NEIGHBOURS = 5
+#: Evidence linked to no rule is taken up again this long after it was read:
+#: the pool's grouping (`_induce`) has had its chance first.
+RETAKE_AFTER_DAYS = 7
+#: The most pairs, and pieces of evidence, one upkeep takes up - the rest
+#: with the next.
+MOST_PAIRS = 60
+MOST_RETAKE = 60
+#: The most pairs, or pieces, one upkeep call is given.
+UPKEEP_BATCH = 10
+#: The questions already asked of the upkeep, kept this many.
+MOST_ASKED = 4000
 
 #: The most pieces of evidence one call is given.
 BATCH = 30
@@ -173,6 +226,11 @@ might bear on it, the most relevant first. For each pair, judge:
   - "unrelated": the lesson's conditions do not all hold. A case outside a
     lesson's scope never counts against it.
 
+WEIGH IT BOTH WAYS: a lesson marked "close to" another is about much the
+same thing. When a record supports one lesson, look at the others listed
+with it: one whose conditions hold but which says the opposite of what the
+user did is CONTRADICTED by it.
+
 Return ONLY this JSON object, listing only pairs that support or contradict:
 {{"judgements": [{{"record": "<record id>", "lesson": "<lesson id>",
                   "relation": "supports|contradicts", "why": "one sentence"}}]}}
@@ -227,6 +285,74 @@ B: {b}
 Return ONLY this JSON object:
 {{"same": true, "statement": "the one lesson that says both"}}
 or {{"same": false}}."""
+
+BLAME_PROMPT = """You keep the lessons on how one person wants things done - from {about}.
+The agent acted on the lessons below, and the user then undid or corrected
+what it did. Which of these lessons CAUSED the part the user corrected? A
+lesson that was followed but did not lead to that part did not cause it -
+it may be that none of them did.
+
+WHAT THE AGENT DID: {decision} ({subject})
+WHAT THE USER DID: {summary}
+
+THE LESSONS IT FOLLOWED:
+{lessons}
+
+Return ONLY this JSON object:
+{{"caused": ["the id of each lesson that caused it - none, one or more"], "why": "one sentence"}}"""
+
+RETAKE_PROMPT = """You keep the lessons on how one person wants things done - from {about}.
+Each RECORD below is something the user did that no lesson explains yet,
+with the lessons closest to it, if any. For each record, decide one:
+
+  - "fits": a listed lesson's conditions all hold for it - it "supports" the
+    lesson (the user did what it says) or "contradicts" it (the opposite).
+{new}  - "none": {none}
+
+Return ONLY this JSON object, with an entry for EVERY record:
+{{"records": [{{"record": "<record id>", "decision": "fits|{new_word}none",
+               "lesson": "<the lesson's id, for fits>", "relation": "supports|contradicts",
+               "rule": {{"statement": "for new: the rule, one sentence, said to the agent: when ..., do / do not ...",
+                        "conditions": {{"source": "...", "event_type": "...", "person": "...",
+                                       "action": "...", "keywords": ["..."], "other": "..."}}}},
+               "why": "one sentence"}}]}}
+
+{records}"""
+
+DUPLICATES_PROMPT = """You keep the lessons on how one person wants things done - from {about}.
+Each PAIR below is two lessons worded much alike. Do they say the SAME
+thing - the same case, the same wish - so that one lesson would do for both?
+
+Return ONLY this JSON object, with an entry for EVERY pair:
+{{"pairs": [{{"pair": "<pair id>", "same": true,
+             "statement": "for the same: the one lesson that says both", "why": "one sentence"}}]}}
+("same": false when they differ.)
+
+{pairs}"""
+
+OPPOSITES_PROMPT = """You keep the lessons on how one person wants things done - from {about}.
+Each PAIR below is two lessons about much the same thing. Do they point
+OPPOSITE ways - one says do, the other do not, for the same case? For each
+pair, decide one:
+
+  - "narrow": both hold, each in its own cases. Rewrite ONE of them (its id)
+    with the condition that separates them.
+  - "merge": they are one lesson after all. Give the one statement.
+  - "retire": one of them is wrong - give its id; the one its cases back
+    less.
+  - "none": they do not point opposite ways for the same case. Leave both.
+
+A lesson marked SET BY THE USER is never rewritten or retired.
+
+Return ONLY this JSON object, with an entry for EVERY pair:
+{{"pairs": [{{"pair": "<pair id>", "decision": "narrow|merge|retire|none",
+             "lesson": "<the id narrowed or retired>",
+             "statement": "for narrow or merge: the new statement",
+             "conditions": {{"source": "...", "event_type": "...", "person": "...",
+                            "action": "...", "keywords": ["..."], "other": "..."}},
+             "why": "one sentence"}}]}}
+
+{pairs}"""
 
 
 def _now() -> datetime:
@@ -299,6 +425,32 @@ def relevance(features: Dict[str, Any], conditions: Dict[str, Any],
     if mine and theirs:
         score += 4.0 * len(mine & theirs) / len(mine | theirs)
     return round(score, 4)
+
+
+#: Words that say nothing of what a rule is about. "not", "never" stay: they
+#: are what makes two rules point opposite ways.
+_FILLER = set("the and for that with this from they their them user users when what which "
+              "into about have has are was were will would should but also its each every "
+              "more most than then agent any all can one own".split())
+
+
+def rule_words(rule: Dict[str, Any]) -> set:
+    """What a rule is about, as words: its statement and its keywords, a
+    plural taken as its singular."""
+    conditions = rule.get("conditions") if isinstance(rule.get("conditions"), dict) else {}
+    out = set()
+    for word in _words([rule.get("statement") or ""] + list(conditions.get("keywords") or [])):
+        if word in _FILLER:
+            continue
+        if len(word) > 4 and word.endswith("s") and not word.endswith("ss"):
+            word = word[:-1]
+        out.add(word)
+    return out
+
+
+def alike(a: set, b: set) -> float:
+    """How alike two rules are (their `rule_words`): the share in common."""
+    return round(len(a & b) / len(a | b), 4) if a and b else 0.0
 
 
 class LessonEngine:
@@ -431,23 +583,77 @@ class LessonEngine:
                         (ident, kind, json.dumps(ids), str(subject_id), str(decision), _iso()))
         return ident
 
+    #: A bad outcome waiting to be judged: kv key prefix, then the use's id.
+    BLAME_KEY = "lessons.blame."
+
     def outcome(self, kind: str, subject_id: str, summary: str) -> int:
         """The user undid what the agent did on a lesson - deleted, disabled
-        or changed it: a correction, against each lesson it followed."""
+        or changed it: a correction, kept for the next cycle to judge which
+        of the lessons it followed caused it (`_blame`). How many decisions
+        it corrects."""
         rows = self.db.query("SELECT * FROM lesson_uses WHERE kind = ? AND subject_id = ? "
                              "AND resolved_at IS NULL", (kind, str(subject_id)))
-        made = 0
         for use in rows:
-            for rule_id in _loads(use["rule_ids"], []):
-                self._linked_evidence(kind, rule_id, "contradicts", WEIGHT_CORRECTION,
-                                      f"The user corrected what the agent did on this "
-                                      f"lesson: {summary}", outcome_of=use["id"])
-                made += 1
+            # NOT ON THE USER'S CLICK, AND NOT ON EVERY LESSON USED (the user, 2026-11-07: a
+            # sound rule was blamed for a choice another rule, or none, caused): kept, and the
+            # model asked in the cycle which of them caused it.
+            self._kv_set(self.BLAME_KEY + use["id"], json.dumps(
+                {"kind": kind, "summary": str(summary or "")[:1200], "at": _iso()},
+                ensure_ascii=False))
             self.db.execute("UPDATE lesson_uses SET resolved_at = ? WHERE id = ?",
                             (_iso(), use["id"]))
-        if made:
-            self.score(kind)
-        return made
+        return len(rows)
+
+    def _blames_waiting(self, kind: str) -> List[Tuple[str, Dict[str, Any]]]:
+        out = []
+        for row in self.db.query("SELECT key, value FROM kv WHERE key LIKE ?",
+                                 (self.BLAME_KEY + "%",)):
+            said = _loads(row["value"], {})
+            if said.get("kind") == kind:
+                out.append((str(row["key"])[len(self.BLAME_KEY):], said))
+        return out
+
+    def _blame(self, kind: str) -> Dict[str, Any]:
+        """Each bad outcome waiting: the model asked, once, which of the
+        lessons used caused it - the contradiction to those alone. Not asked,
+        or its answer not whole: nothing recorded, and not asked again."""
+        about = KINDS.get(kind, (kind, kind))[1]
+        done: Dict[str, Any] = {"judged": 0, "blamed": 0, "failed": []}
+        for use_id, said in self._blames_waiting(kind):
+            use = self.db.query_one("SELECT * FROM lesson_uses WHERE id = ?", (use_id,))
+            rules = [self.rule(one) for one in _loads((use or {}).get("rule_ids"), [])]
+            rules = [one for one in rules if one is not None]
+            self.db.execute("DELETE FROM kv WHERE key = ?", (self.BLAME_KEY + use_id,))
+            if not rules:
+                continue
+            read = self._read(BLAME_PROMPT.format(
+                about=about, decision=str(use.get("decision") or ""),
+                subject=str(use.get("subject_id") or ""), summary=said.get("summary") or "",
+                lessons="\n".join(f"[{one['id']}] {one['statement']}" for one in rules)),
+                language=in_english("why"), wants=("caused",))
+            caused = (read.data or {}).get("caused") if read.ok else None
+            if not isinstance(caused, list):
+                # NEVER SPREAD (the user, 2026-11-07): no whole answer, nothing recorded.
+                why = read.why_not or "the answer named no list of lessons"
+                log.info("the lessons could not judge a correction (%s): %s", use_id, why)
+                done["failed"].append({"use": use_id, "why": why})
+                continue
+            done["judged"] += 1
+            used = {one["id"] for one in rules}
+            why = " ".join(str((read.data or {}).get("why") or "").split())[:300]
+            for rule_id in sorted({str(one) for one in caused} & used):
+                self._linked_evidence(kind, rule_id, "contradicts", WEIGHT_CORRECTION,
+                                      f"The user corrected what the agent did on this "
+                                      f"lesson: {said.get('summary') or ''}", outcome_of=use_id,
+                                      at=str(said.get("at") or ""),
+                                      why=f"the outcome of the agent acting on it - it caused "
+                                          f"it: {why}" if why else "")
+                done["blamed"] += 1
+        return done
+
+    def _kv_set(self, key: str, value: str) -> None:
+        self.db.execute("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE "
+                        "SET value = excluded.value", (key, value))
 
     def settle_uses(self, kind: str) -> int:
         """Decisions on lessons the user left alone `SETTLE_DAYS`: no longer
@@ -477,15 +683,15 @@ class LessonEngine:
         return len(rows)
 
     def _linked_evidence(self, kind: str, rule_id: str, relation: str, weight: float,
-                         summary: str, outcome_of: str) -> None:
+                         summary: str, outcome_of: str, at: str = "", why: str = "") -> None:
         ident = self.record(kind, outcome_of, summary, action="outcome", weight=weight,
-                            outcome_of=outcome_of, learn=False)
+                            outcome_of=outcome_of, learn=False, at=at)
         self.db.execute("UPDATE lesson_evidence SET processed_at = ?, features = '{}' "
                         "WHERE id = ?", (_iso(), ident))
         self.db.execute("INSERT OR REPLACE INTO lesson_links (evidence_id, rule_id, relation, "
                         "why, at) VALUES (?, ?, ?, ?, ?)",
-                        (ident, rule_id, relation, "the outcome of the agent acting on it",
-                         _iso()))
+                        (ident, rule_id, relation,
+                         (why or "the outcome of the agent acting on it")[:400], _iso()))
 
     # -- the user's own say over the lessons ----------------------------------------------------
     def set_state(self, rule_id: str, op: str, statement: str = "") -> Optional[Dict[str, Any]]:
@@ -630,13 +836,14 @@ class LessonEngine:
                 "SELECT COUNT(*) AS n FROM lesson_evidence WHERE kind = ? AND "
                 "processed_at IS NULL", (kind,))
             fresh = kind == "work" and self.natures is not None and self.natures.due(self)
-            if (waiting or {}).get("n") or fresh:
+            if (waiting or {}).get("n") or fresh or self._blames_waiting(kind):
                 out.append(kind)
         return out
 
     #: A cycle's steps, in order - its bar moves through them.
-    STEPS = ("bringing in the natures", "reading the new edits", "matching them to the lessons",
-             "finding new lessons", "deciding", "writing back onto the natures", "grouping")
+    STEPS = ("bringing in the natures", "judging the corrections", "reading the new edits",
+             "matching them to the lessons", "finding new lessons", "deciding",
+             "writing back onto the natures", "keeping the lessons in order", "grouping")
 
     def _at(self, kind: str, step: str, done: int = 0, of: int = 0) -> None:
         mine = self.progress.setdefault(kind, {})
@@ -692,6 +899,21 @@ class LessonEngine:
             except Exception as exc:
                 log.warning("learning the %s lessons failed", kind, exc_info=True)
                 said[kind] = {"failed": str(exc)[:200]}
+                self._finished(kind, str(exc)[:200])
+        # THE UPKEEP (the user, 2026-11-07: keeping the rules is the system's job, not hand
+        # edits): each kind whose rules or waiting evidence changed since the last one.
+        from ...common.modules import enabled as module_on
+        for kind in LEARNED_KINDS:
+            if not module_on(self.config, KIND_MODULE.get(kind, "core")) or \
+                    not self._upkeep_due(kind):
+                continue
+            try:
+                kept = self.upkeep(kind)
+                if any(kept.get(key) for key in ("retaken", "merged", "opposed", "failed",
+                                                 "retired_candidates", "promoted")):
+                    said.setdefault(kind, {})["upkeep"] = kept
+            except Exception as exc:
+                log.warning("keeping the %s lessons failed", kind, exc_info=True)
                 self._finished(kind, str(exc)[:200])
         for kind in ("notifications", "connections"):
             if self.grouper is None or not self._regroup_due(kind):
@@ -769,6 +991,9 @@ class LessonEngine:
                 self._at(kind, "bringing in the natures")
                 report["synced"] = self.natures.sync(self)
             self.settle_uses(kind)
+            if self._blames_waiting(kind):
+                self._at(kind, "judging the corrections")
+                report["blame"] = self._blame(kind)
             fresh = [dict(row) for row in self.db.query(
                 "SELECT * FROM lesson_evidence WHERE kind = ? AND processed_at IS NULL "
                 "ORDER BY at, rowid", (kind,))]
@@ -796,34 +1021,56 @@ class LessonEngine:
     # 1. INGEST
     def _ingest(self, kind: str, rows: List[Dict[str, Any]]) -> None:
         about = KINDS.get(kind, (kind, kind))[1]
+        from ...models import answers
         wanting = [row for row in rows if row.get("features") is None]
-        for start in range(0, len(wanting), BATCH):
-            part = wanting[start:start + BATCH]
+
+        def ask(part: Sequence[Dict[str, Any]]) -> Any:
             records = "\n".join(f"[{row['id']}] ({row['action']}) {row['summary'][:900]}"
                                 + (f" - the user's reason: {row['reason']}" if row["reason"]
                                    else "") for row in part)
-            self._at(kind, "reading the new edits", start, len(wanting))
             classes = [row["category"] for row in self.db.query(
                 "SELECT DISTINCT category FROM lesson_evidence WHERE kind = ? AND category != '' "
                 "LIMIT 60", (kind,))]
-            said = self._ask(FEATURES_PROMPT.format(about=about, records=records,
-                                                    categories=", ".join(classes) or "none yet"),
-                             language=in_english("the features, the classes and keywords"))
-            if said is None:
-                return                      # tried again with the next edit
-            got = said.get("features") if isinstance(said.get("features"), dict) else {}
-            for row in part:
-                one = got.get(row["id"]) if isinstance(got.get(row["id"]), dict) else {}
-                features = {"source": str(one.get("source") or "")[:60].lower(),
-                            "event_type": str(one.get("event_type") or "")[:60].lower(),
-                            "person": str(one.get("person") or "")[:80],
-                            "keywords": [str(k).lower()[:40] for k in one.get("keywords") or []][:10],
-                            "action": row["action"]}
-                self.db.execute(
-                    "UPDATE lesson_evidence SET features = ?, category = ?, english = ? WHERE id = ?",
-                    (json.dumps(features, ensure_ascii=False),
-                     " ".join(str(one.get("category") or "").lower().split())[:60],
-                     " ".join(str(one.get("english") or "").split())[:600], row["id"]))
+            return self._read(FEATURES_PROMPT.format(about=about, records=records,
+                                                     categories=", ".join(classes) or "none yet"),
+                              language=in_english("the features, the classes and keywords"),
+                              wants=("features",))
+        for start in range(0, len(wanting), BATCH):
+            self._at(kind, "reading the new edits", start, len(wanting))
+            for part, read in answers.in_parts(wanting[start:start + BATCH], ask):
+                # ONLY A WHOLE ANSWER IS TAKEN (2026-11-07): one cut off is asked again in halves;
+                # a part answered and still not whole at its smallest is recorded as failed - its
+                # features say so - and moved past, not asked again the same way. The model not
+                # to be asked: tried again with the next edit.
+                if not read.ok and read.response is None:
+                    return
+                if not read.ok:
+                    log.info("the lessons failed to read %d record(s): %s", len(part),
+                             read.why_not)
+                    for row in part:
+                        self.db.execute(
+                            "UPDATE lesson_evidence SET features = ? WHERE id = ?",
+                            (json.dumps({"action": row["action"], "keywords": [],
+                                         "failed": read.why_not}, ensure_ascii=False),
+                             row["id"]))
+                    continue
+                self._features_of(part, read.data or {})
+
+    def _features_of(self, part: Sequence[Dict[str, Any]], said: Dict[str, Any]) -> None:
+        """What a whole answer said of each record, kept."""
+        got = said.get("features") if isinstance(said.get("features"), dict) else {}
+        for row in part:
+            one = got.get(row["id"]) if isinstance(got.get(row["id"]), dict) else {}
+            features = {"source": str(one.get("source") or "")[:60].lower(),
+                        "event_type": str(one.get("event_type") or "")[:60].lower(),
+                        "person": str(one.get("person") or "")[:80],
+                        "keywords": [str(k).lower()[:40] for k in one.get("keywords") or []][:10],
+                        "action": row["action"]}
+            self.db.execute(
+                "UPDATE lesson_evidence SET features = ?, category = ?, english = ? WHERE id = ?",
+                (json.dumps(features, ensure_ascii=False),
+                 " ".join(str(one.get("category") or "").lower().split())[:60],
+                 " ".join(str(one.get("english") or "").split())[:600], row["id"]))
 
     # 2. MATCH
     def shortlist(self, features: Dict[str, Any], rules: List[Dict[str, Any]]
@@ -836,42 +1083,91 @@ class LessonEngine:
         ranked.sort(key=lambda one: one[0], reverse=True)
         return ranked[:SHORTLIST]
 
+    @staticmethod
+    def _close_to(listed: Sequence[Tuple[float, Dict[str, Any]]], rules: List[Dict[str, Any]],
+                  words: Dict[str, set]) -> List[Tuple[Dict[str, Any], str]]:
+        """The lessons most alike the first few a piece of evidence was
+        listed with, and not listed themselves - up to `NEIGHBOURS`, each with
+        the one it is close to."""
+        have = {rule["id"] for _score, rule in listed}
+        found: Dict[str, Tuple[float, Dict[str, Any], str]] = {}
+        for _score, near in list(listed)[:3]:
+            mine = words.get(near["id"]) or rule_words(near)
+            for rule in rules:
+                if rule["id"] in have:
+                    continue
+                score = alike(mine, words.get(rule["id"]) or rule_words(rule))
+                if score >= ALIKE_AT and score > found.get(rule["id"], (0.0,))[0]:
+                    found[rule["id"]] = (score, rule, near["id"])
+        ranked = sorted(found.values(), key=lambda one: one[0], reverse=True)[:NEIGHBOURS]
+        return [(rule, near) for _score, rule, near in ranked]
+
     def _match(self, kind: str, rows: List[Dict[str, Any]]) -> int:
         about = KINDS.get(kind, (kind, kind))[1]
+        from ...models import answers
         rules = self.rules(kind, ("candidate", "active"))
+        words = {rule["id"]: rule_words(rule) for rule in rules}
         judged = 0
         for start in range(0, len(rows), 10):
             self._at(kind, "matching them to the lessons", start, len(rows))
             part = rows[start:start + 10]
-            blocks, asked = [], {}
+            blocks, asked = {}, {}
             for row in part:
                 features = _loads(row["features"], {})
                 listed = self.shortlist(features, rules)
-                asked[row["id"]] = {rule["id"] for _score, rule in listed}
+                # WEIGHED AGAINST THE LESSONS POINTING THE OTHER WAY TOO (the user, 2026-11-07),
+                # in the same call: the lessons closest to those it was listed with.
+                close = self._close_to(listed, rules, words)
+                asked[row["id"]] = {rule["id"] for _score, rule in listed} | \
+                    {rule["id"] for rule, _near in close}
                 if not listed:
                     continue
                 lines = [f"NEW RECORD [{row['id']}] ({row['action']}) {row['summary'][:900]}"
                          + (f"\n  the user's reason: {row['reason']}" if row["reason"] else "")]
+                listed = list(listed) + [(f"close to lesson {near}", rule) for rule, near in close]
                 for score, rule in listed:
                     examples = self.db.query(
                         "SELECT e.summary FROM lesson_links l JOIN lesson_evidence e ON "
                         "e.id = l.evidence_id WHERE l.rule_id = ? AND l.relation = 'supports' "
                         "ORDER BY e.at DESC LIMIT 2", (rule["id"],))
-                    lines.append(f"  LESSON [{rule['id']}] (relevance {score}) {rule['statement']}"
+                    said = score if isinstance(score, str) else f"relevance {score}"
+                    lines.append(f"  LESSON [{rule['id']}] ({said}) {rule['statement']}"
                                  f"\n    conditions: {json.dumps(rule['conditions'], ensure_ascii=False)}"
                                  + "".join(f"\n    e.g. {one['summary'][:200]}" for one in examples))
-                blocks.append("\n".join(lines))
-            if blocks:
-                said = self._ask(JUDGE_PROMPT.format(about=about, pairs="\n\n".join(blocks)),
-                                 language=in_english("the verdicts and why"))
-                if said is None:
-                    return judged          # the rest is tried with the next edit
-                for one in said.get("judgements") or []:
+                blocks[row["id"]] = "\n".join(lines)
+
+            def ask(ids: Sequence[str]) -> Any:
+                return self._read(JUDGE_PROMPT.format(about=about, pairs="\n\n".join(
+                    blocks[one] for one in ids)), language=in_english("the verdicts and why"),
+                    wants=("judgements",))
+            # ONLY A WHOLE ANSWER JUDGES (2026-11-07): one cut off is asked again in halves; a
+            # record still not answered at its smallest is processed with no link, its failure
+            # kept in its features - moved past, not asked again the same way. The model not to
+            # be asked: the rest is tried with the next edit.
+            unjudged: set = set()
+            stop = False
+            for ids, read in (answers.in_parts(list(blocks), ask) if blocks else []):
+                if not read.ok and read.response is None:
+                    unjudged.update(ids)
+                    stop = True
+                    continue
+                if not read.ok:
+                    log.info("the lessons failed to judge %d record(s): %s", len(ids),
+                             read.why_not)
+                    for row in part:
+                        if row["id"] in ids:
+                            self.db.execute(
+                                "UPDATE lesson_evidence SET features = ? WHERE id = ?",
+                                (json.dumps(dict(_loads(row["features"], {}),
+                                                 match_failed=read.why_not),
+                                            ensure_ascii=False), row["id"]))
+                    continue
+                for one in (read.data or {}).get("judgements") or []:
                     if not isinstance(one, dict):
                         continue
                     record, rule_id = str(one.get("record") or ""), str(one.get("lesson") or "")
                     relation = str(one.get("relation") or "")
-                    if rule_id not in asked.get(record, set()) or \
+                    if record not in ids or rule_id not in asked.get(record, set()) or \
                             relation not in ("supports", "contradicts"):
                         continue
                     self.db.execute(
@@ -880,8 +1176,12 @@ class LessonEngine:
                         (record, rule_id, relation, str(one.get("why") or "")[:400], _iso()))
                     judged += 1
             for row in part:
+                if row["id"] in unjudged:
+                    continue
                 self.db.execute("UPDATE lesson_evidence SET processed_at = ? WHERE id = ?",
                                 (_iso(), row["id"]))
+            if stop:
+                return judged              # the rest is tried with the next edit
         return judged
 
     # 3. INDUCE
@@ -972,22 +1272,15 @@ class LessonEngine:
     # 5. DECIDE
     def _decide(self, kind: str) -> Dict[str, int]:
         done = {"promoted": 0, "revised": 0, "merged": 0, "retired": 0}
-        least = PROMOTE_BY_KIND.get(kind, PROMOTE_SUPPORT)
-        sure = PROMOTE_CONFIDENCE_BY_KIND.get(kind, PROMOTE_CONFIDENCE)
-        for rule in self.rules(kind, ("candidate",)):
-            if rule["support"] >= least and rule["confidence"] >= sure:
-                self._change(rule, {"state": "active"},
-                             f"promoted: {round(rule['support'], 1)} weighted cases, "
-                             f"{round(rule['confidence'] * 100)}% sure")
-                done["promoted"] += 1
+        done.update(self._candidates(kind))
         for rule in self.rules(kind, ("active",)):
-            if not rule["pinned"] and rule["confidence"] < REVISE_BELOW:
+            if not self._the_users(rule) and rule["confidence"] < REVISE_BELOW:
                 if self._revise(kind, rule):
                     done["revised"] += 1
         done["merged"] = self._merge(kind)
         stale = _iso(_now() - timedelta(days=STALE_DAYS))
         for rule in self.rules(kind, ("active",)):
-            if rule["pinned"] or rule["support"] >= 1:
+            if self._the_users(rule) or rule["support"] >= 1:
                 continue
             last = self.db.query_one(
                 "SELECT MAX(e.at) AS at FROM lesson_links l JOIN lesson_evidence e ON "
@@ -998,6 +1291,40 @@ class LessonEngine:
                              f"no support for {STALE_DAYS} days")
                 done["retired"] += 1
         return done
+
+    def _candidates(self, kind: str) -> Dict[str, int]:
+        """The candidates decided: promoted on enough support - or RETIRED
+        WHEN CONTRADICTED MORE THAN SUPPORTED (the user, 2026-11-07), by the
+        weights as `score` counts them. One with no new evidence for long
+        stays ("很久没有新证据可以留着")."""
+        done = {"promoted": 0, "retired_candidates": 0}
+        least = PROMOTE_BY_KIND.get(kind, PROMOTE_SUPPORT)
+        sure = PROMOTE_CONFIDENCE_BY_KIND.get(kind, PROMOTE_CONFIDENCE)
+        for rule in self.rules(kind, ("candidate",)):
+            if rule["support"] >= least and rule["confidence"] >= sure:
+                self._change(rule, {"state": "active"},
+                             f"promoted: {round(rule['support'], 1)} weighted cases, "
+                             f"{round(rule['confidence'] * 100)}% sure")
+                done["promoted"] += 1
+            elif rule["contradict"] > rule["support"] and not self._the_users(rule):
+                self._change(rule, {"state": "retired"},
+                             f"retired: contradicted more than supported "
+                             f"({round(rule['contradict'], 2)} against, "
+                             f"{round(rule['support'], 2)} for)")
+                done["retired_candidates"] += 1
+        return done
+
+    def _the_users(self, rule: Dict[str, Any]) -> bool:
+        """A rule the user pinned, stated in the chat or worded themselves:
+        never rewritten or retired by the model (the user, 2026-11-07)."""
+        if rule.get("pinned"):
+            return True
+        for one in rule.get("history") or []:
+            why = str((one or {}).get("why") or "") if isinstance(one, dict) else ""
+            if why == "stated by the user in the chat" or why.startswith("the user: edit"):
+                return True
+        return self.db.query_one("SELECT 1 FROM lesson_links WHERE rule_id = ? AND why = "
+                                 "'the user stated it'", (rule["id"],)) is not None
 
     def _revise(self, kind: str, rule: Dict[str, Any]) -> bool:
         about = KINDS.get(kind, (kind, kind))[1]
@@ -1078,39 +1405,393 @@ class LessonEngine:
                     continue
                 if len(left & right) / min(len(left), len(right)) < MERGE_OVERLAP:
                     continue
+                if self._the_users(a) and self._the_users(b):
+                    continue
                 said = self._ask(MERGE_PROMPT.format(a=a["statement"], b=b["statement"]),
                                  language=in_english("the statement"))
                 if not said or not said.get("same"):
                     continue
-                keep, drop = (a, b) if a["support"] >= b["support"] else (b, a)
-                for row in self.db.query("SELECT * FROM lesson_links WHERE rule_id = ?",
-                                         (drop["id"],)):
-                    self.db.execute("INSERT OR IGNORE INTO lesson_links (evidence_id, rule_id, "
-                                    "relation, why, at) VALUES (?, ?, ?, ?, ?)",
-                                    (row["evidence_id"], keep["id"], row["relation"],
-                                     row["why"], row["at"]))
-                if str(said.get("statement") or "").strip() and not keep["pinned"]:
-                    self._change(keep, {"statement": " ".join(str(said["statement"]).split())[:600]},
-                                 f"merged with {drop['id']}")
-                self._change(drop, {"state": "retired", "pinned": 0},
-                             f"merged into {keep['id']}")
+                keep, drop = self._keeper(a, b)
+                self._join(kind, keep, drop, str(said.get("statement") or ""), "")
                 gone.add(drop["id"])
                 merged += 1
         if merged:
             self.score(kind)
         return merged
 
-    def _change(self, rule: Dict[str, Any], fields: Dict[str, Any], why: str) -> None:
+    def _keeper(self, a: Dict[str, Any], b: Dict[str, Any]
+                ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Of two rules merged, the one kept: the user's own, then the one in
+        force, then the better backed."""
+        def rank(rule: Dict[str, Any]) -> Tuple[int, int, float]:
+            return (int(self._the_users(rule)), int(rule["state"] == "active"),
+                    float(rule["support"]))
+        return (a, b) if rank(a) >= rank(b) else (b, a)
+
+    def _join(self, kind: str, keep: Dict[str, Any], drop: Dict[str, Any], statement: str,
+              why: str) -> None:
+        """Two rules made one: the evidence and history of `drop` joined onto
+        `keep` - its statement rewritten when one is given and it is not the
+        user's, nor a nature of the work (kept as the nature is titled) - and
+        `drop` marked merged into it."""
+        for row in self.db.query("SELECT * FROM lesson_links WHERE rule_id = ?", (drop["id"],)):
+            self.db.execute("INSERT OR IGNORE INTO lesson_links (evidence_id, rule_id, "
+                            "relation, why, at) VALUES (?, ?, ?, ?, ?)",
+                            (row["evidence_id"], keep["id"], row["relation"], row["why"],
+                             row["at"]))
+        statement = " ".join(str(statement or "").split())[:600]
+        said = f": {why}" if why else ""
+        fields: Dict[str, Any] = {}
+        if statement and statement != keep["statement"] and not self._the_users(keep) \
+                and kind != "work":
+            fields["statement"] = statement
+        if drop["state"] == "active" and keep["state"] == "candidate":
+            fields["state"] = "active"      # one of them was already in force
+        joined = [dict(one, joined_from=drop["id"]) for one in drop.get("history") or []
+                  if isinstance(one, dict)]
+        self._change(keep, fields, f"merged with {drop['id']}{said}", joined=joined)
+        self._change(drop, {"state": "retired", "pinned": 0}, f"merged into {keep['id']}{said}",
+                     merged_into=keep["id"])
+
+    def _change(self, rule: Dict[str, Any], fields: Dict[str, Any], why: str,
+                joined: Sequence[Dict[str, Any]] = (), merged_into: str = "") -> None:
         history = list(rule.get("history") or [])
+        if joined:
+            history = sorted(history + list(joined), key=lambda one: str(
+                one.get("at") or "" if isinstance(one, dict) else ""))
         history.append({"at": _iso(), "what": ", ".join(sorted(fields)),
                         "before": {key: rule.get(key) for key in fields if key in rule
                                    and key != "conditions"},
-                        "why": why})
+                        "why": why, **({"merged_into": merged_into} if merged_into else {})})
         fields = dict(fields, updated_at=_iso(), history=json.dumps(history[-40:],
                                                                     ensure_ascii=False))
         sets = ", ".join(f"{key} = ?" for key in fields)
         self.db.execute(f"UPDATE lesson_rules SET {sets} WHERE id = ?",
                         (*fields.values(), rule["id"]))
+
+    # 7. THE UPKEEP (module docstring; the user, 2026-11-07) ---------------------------------
+    #: Config key: what the rules and the waiting evidence were at the last whole upkeep.
+    UPKEPT = "lessons_upkept_{kind}"
+    #: kv key prefix, then the kind: the questions the upkeep asked, each once.
+    ASKED_KEY = "lessons.upkeep.asked."
+
+    def _retakeable(self, kind: str) -> List[Dict[str, Any]]:
+        """Evidence read `RETAKE_AFTER_DAYS` ago or more, linked to no rule,
+        and not taken up again yet."""
+        until = _iso(_now() - timedelta(days=RETAKE_AFTER_DAYS))
+        rows = self.db.query(
+            "SELECT id, action, summary, reason, features FROM lesson_evidence e WHERE kind = ? "
+            "AND processed_at IS NOT NULL "
+            "AND processed_at <= ? AND action != 'outcome' AND NOT EXISTS (SELECT 1 FROM "
+            "lesson_links l WHERE l.evidence_id = e.id) ORDER BY at, rowid", (kind, until))
+        return [dict(row) for row in rows if "retaken" not in _loads(row["features"], {})]
+
+    def _upkeep_signature(self, kind: str) -> str:
+        import hashlib
+        rules = sorted((rule["id"], rule["statement"], rule["state"])
+                       for rule in self.rules(kind, ("candidate", "active")))
+        said = json.dumps([rules, len(self._retakeable(kind))], ensure_ascii=False)
+        return hashlib.sha1(said.encode("utf-8")).hexdigest()
+
+    def _upkeep_due(self, kind: str) -> bool:
+        if self.config is None:
+            return True
+        return str(self.config.get(self.UPKEPT.format(kind=kind), "") or "") != \
+            self._upkeep_signature(kind)
+
+    def _asked(self, kind: str) -> Dict[str, Any]:
+        row = self.db.query_one("SELECT value FROM kv WHERE key = ?", (self.ASKED_KEY + kind,))
+        return _loads((row or {}).get("value"), {})
+
+    def _remember(self, kind: str, asked: Dict[str, Any]) -> None:
+        if len(asked) > MOST_ASKED:
+            kept = sorted(asked.items(), key=lambda one: str((one[1] or {}).get("at") or ""))
+            asked = dict(kept[-MOST_ASKED:])
+        self._kv_set(self.ASKED_KEY + kind, json.dumps(asked, ensure_ascii=False))
+
+    @staticmethod
+    def _pair_key(step: str, a: Dict[str, Any], b: Dict[str, Any]) -> str:
+        """One question: a step and two rules as they are worded - worded
+        again, they are a new question."""
+        import hashlib
+        said = json.dumps([step] + sorted([[a["id"], a["statement"]], [b["id"], b["statement"]]]),
+                          ensure_ascii=False)
+        return hashlib.sha1(said.encode("utf-8")).hexdigest()[:24]
+
+    def upkeep(self, kind: str) -> Dict[str, Any]:
+        """THE UPKEEP of one kind's rules (module docstring): evidence no
+        rule explains taken up again, near-duplicates merged, rules pointing
+        opposite ways settled - in batches, each question once. What could
+        not be answered whole is in the report's `failed`, and not asked
+        again the same way."""
+        with self._lock:
+            self._learning = kind
+            self._at(kind, "keeping the lessons in order")
+            report: Dict[str, Any] = {"kind": kind, "retaken": 0, "linked": 0, "made": 0,
+                                      "merged": 0, "opposed": 0, "failed": [], "more": False}
+            asked = self._asked(kind)
+            stopped = False
+            try:
+                stopped = self._retake(kind, report)
+                for step in ("duplicates", "opposites"):
+                    if not stopped:
+                        stopped = self._pairs(kind, step, asked, report)
+            finally:
+                self._remember(kind, asked)
+            for one in report["failed"]:
+                log.info("keeping the %s lessons: %s failed: %s", kind, one.get("what"),
+                         one.get("why"))
+            self.score(kind)
+            report.update(self._candidates(kind))
+            changed = any(report.get(key) for key in ("linked", "made", "merged", "opposed",
+                                                      "promoted", "retired_candidates"))
+            if changed and kind == "work" and self.natures is not None:
+                report["written_back"] = self.natures.write_back(self)
+            if self.config is not None:
+                # Not asked, or more left: due again with the next round.
+                self.config.set(self.UPKEPT.format(kind=kind),
+                                "" if stopped or report["more"] else self._upkeep_signature(kind),
+                                internal=True)
+            report["stopped"] = stopped
+            self._finished(kind)
+            return report
+
+    def _shown(self, rule: Dict[str, Any], users: bool) -> str:
+        """A rule as the upkeep shows it: its id, state, how backed, whose,
+        its conditions and two of its cases."""
+        examples = self.db.query(
+            "SELECT e.summary FROM lesson_links l JOIN lesson_evidence e ON e.id = l.evidence_id "
+            "WHERE l.rule_id = ? AND l.relation = 'supports' ORDER BY e.at DESC LIMIT 2",
+            (rule["id"],))
+        return (f"[{rule['id']}] ({rule['state']}; {round(rule['support'], 2)} for, "
+                f"{round(rule['contradict'], 2)} against{'; SET BY THE USER' if users else ''}) "
+                f"{rule['statement']}"
+                f"\n    conditions: {json.dumps(rule['conditions'], ensure_ascii=False)}"
+                + "".join(f"\n    e.g. {one['summary'][:200]}" for one in examples))
+
+    # RETAKE
+    def _retake(self, kind: str, report: Dict[str, Any]) -> bool:
+        """Evidence no rule explains, taken up again ONCE each (the user,
+        2026-11-07): linked to a rule it fits, or a candidate made from it.
+        True when the model could not be asked."""
+        from ...models import answers
+        about = KINDS.get(kind, (kind, kind))[1]
+        rows = self._retakeable(kind)
+        if len(rows) > MOST_RETAKE:
+            report["more"] = True
+            rows = rows[:MOST_RETAKE]
+        if not rows:
+            return False
+        rules = self.rules(kind, ("candidate", "active"))
+        blocks: Dict[str, str] = {}
+        offered: Dict[str, set] = {}
+        for row in rows:
+            listed = [rule for _score, rule in self.shortlist(_loads(row["features"], {}),
+                                                              rules)[:5]]
+            offered[row["id"]] = {rule["id"] for rule in listed}
+            blocks[row["id"]] = "\n".join(
+                [f"RECORD [{row['id']}] ({row['action']}) {row['summary'][:900]}"
+                 + (f"\n  the user's reason: {row['reason']}" if row["reason"] else "")]
+                + [f"  LESSON [{rule['id']}] {rule['statement']}\n    conditions: "
+                   f"{json.dumps(rule['conditions'], ensure_ascii=False)}" for rule in listed])
+        # The work's natures come from its stages (experience/stage_natures.py): none made here.
+        making = kind != "work"
+        new = ('  - "new": no listed lesson fits; state the rule it suggests, as narrow as it '
+               'needs - a possible\n    rule, kept forming until more cases back it.\n'
+               if making else "")
+        none = ("it says nothing general about how the user wants things done." if making
+                else "no listed lesson fits it.")
+
+        def ask(ids: Sequence[str]) -> Any:
+            return self._read(RETAKE_PROMPT.format(
+                about=about, new=new, none=none, new_word="new|" if making else "",
+                records="\n\n".join(blocks[one] for one in ids)),
+                language=in_english("each statement")
+                + in_english("their conditions and keywords, and why"), wants=("records",))
+        ids = [row["id"] for row in rows]
+        features = {row["id"]: _loads(row["features"], {}) for row in rows}
+
+        def mark(ident: str, said: str) -> None:
+            self.db.execute("UPDATE lesson_evidence SET features = ? WHERE id = ?",
+                            (json.dumps(dict(features[ident], retaken={"at": _iso(), "as": said}),
+                                        ensure_ascii=False), ident))
+        for start in range(0, len(ids), UPKEEP_BATCH):
+            for part, read in answers.in_parts(ids[start:start + UPKEEP_BATCH], ask):
+                if not read.ok and read.response is None:
+                    return True            # not asked: the rest with the next upkeep
+                if not read.ok:
+                    # ONCE (the user, 2026-11-07): failed at its smallest, recorded and moved past.
+                    report["failed"].append({"what": f"taking up {len(part)} record(s) again",
+                                             "why": read.why_not})
+                    for ident in part:
+                        mark(ident, f"failed: {read.why_not}")
+                    continue
+                said = (read.data or {}).get("records")
+                answered = {str(one.get("record") or ""): one for one in
+                            (said if isinstance(said, list) else []) if isinstance(one, dict)}
+                for ident in part:
+                    one = answered.get(ident)
+                    if one is None:
+                        report["failed"].append({"what": f"taking up {ident} again",
+                                                 "why": "the answer did not say"})
+                        mark(ident, "failed: the answer did not say")
+                        continue
+                    report["retaken"] += 1
+                    mark(ident, self._take_up(kind, ident, one, offered[ident], making, report))
+        return False
+
+    def _take_up(self, kind: str, ident: str, one: Dict[str, Any], offered: set, making: bool,
+                 report: Dict[str, Any]) -> str:
+        decision = str(one.get("decision") or "")
+        why = " ".join(str(one.get("why") or "").split())[:300]
+        if decision == "fits":
+            rule_id, relation = str(one.get("lesson") or ""), str(one.get("relation") or "")
+            if rule_id not in offered or relation not in ("supports", "contradicts"):
+                return "none: no lesson listed for it named"
+            self.db.execute("INSERT OR REPLACE INTO lesson_links (evidence_id, rule_id, relation, "
+                            "why, at) VALUES (?, ?, ?, ?, ?)",
+                            (ident, rule_id, relation, f"taken up again: {why}"[:400], _iso()))
+            report["linked"] += 1
+            return f"{relation} {rule_id}"
+        rule = one.get("rule") if isinstance(one.get("rule"), dict) else {}
+        if decision == "new" and making and str(rule.get("statement") or "").strip():
+            rule_id = self._new_rule(kind, rule, f"made from a case no lesson explained, taken "
+                                                 f"up again: {why}")
+            self.db.execute("INSERT OR REPLACE INTO lesson_links (evidence_id, rule_id, relation, "
+                            "why, at) VALUES (?, ?, 'supports', ?, ?)",
+                            (ident, rule_id, "the case it was made from", _iso()))
+            report["made"] += 1
+            return f"made {rule_id}"
+        return "none"
+
+    # DUPLICATES, OPPOSITES
+    def _pairs(self, kind: str, step: str, asked: Dict[str, Any], report: Dict[str, Any]) -> bool:
+        """Rules alike enough - worded much the same (`duplicates`), or about
+        the same thing (`opposites`) - shown to the model in pairs, in
+        batches; what it decides done, each with why in the rule's history.
+        True when the model could not be asked."""
+        from ...models import answers
+        about = KINDS.get(kind, (kind, kind))[1]
+        rules = self.rules(kind, ("candidate", "active"))
+        words = {rule["id"]: rule_words(rule) for rule in rules}
+        users = {rule["id"]: self._the_users(rule) for rule in rules}
+        least = DUPLICATE_AT if step == "duplicates" else ALIKE_AT
+        found = []
+        for i, a in enumerate(rules):
+            for b in rules[i + 1:]:
+                if users[a["id"]] and users[b["id"]]:
+                    continue                   # the user's say, both: nothing for the model
+                score = alike(words[a["id"]], words[b["id"]])
+                if score < least:
+                    continue
+                key = self._pair_key(step, a, b)
+                if key not in asked:
+                    found.append((score, key, a, b))
+        found.sort(key=lambda one: one[0], reverse=True)
+        if len(found) > MOST_PAIRS:
+            report["more"] = True
+            found = found[:MOST_PAIRS]
+        if not found:
+            return False
+        pairs = {f"p{n + 1}": (key, a, b) for n, (_score, key, a, b) in enumerate(found)}
+
+        def ask(ids: Sequence[str]) -> Any:
+            shown = "\n\n".join(
+                f"PAIR [{pid}]"
+                + "".join(f"\n  {side} {self._shown(rule, users[rule['id']])}"
+                          for side, rule in (("A", pairs[pid][1]), ("B", pairs[pid][2])))
+                for pid in ids)
+            prompt = DUPLICATES_PROMPT if step == "duplicates" else OPPOSITES_PROMPT
+            return self._read(prompt.format(about=about, pairs=shown),
+                              language=in_english("each statement")
+                              + in_english("their conditions and keywords, and why"),
+                              wants=("pairs",))
+        touched: set = set()
+        ids = list(pairs)
+        for start in range(0, len(ids), UPKEEP_BATCH):
+            for part, read in answers.in_parts(ids[start:start + UPKEEP_BATCH], ask):
+                if not read.ok and read.response is None:
+                    return True            # not asked: the rest with the next upkeep
+                if not read.ok:
+                    report["failed"].append({"what": f"{step}: {len(part)} pair(s)",
+                                             "why": read.why_not})
+                    for pid in part:
+                        asked[pairs[pid][0]] = {"at": _iso(), "step": step,
+                                                "as": f"failed: {read.why_not}"}
+                    continue
+                said = (read.data or {}).get("pairs")
+                answered = {str(one.get("pair") or ""): one for one in
+                            (said if isinstance(said, list) else []) if isinstance(one, dict)}
+                for pid in part:
+                    key, a, b = pairs[pid]
+                    if a["id"] in touched or b["id"] in touched:
+                        report["more"] = True  # changed by another pair: asked as it is now
+                        continue
+                    one = answered.get(pid)
+                    if one is None:
+                        result = "failed: the answer did not say"
+                    elif step == "duplicates":
+                        result = self._settle_duplicate(kind, a, b, one, users, report)
+                    else:
+                        result = self._settle_opposites(kind, a, b, one, users, report)
+                    if result.startswith("failed"):
+                        report["failed"].append({"what": f"{step}: {a['id']} and {b['id']}",
+                                                 "why": result[len("failed: "):]})
+                    elif not result.startswith(("none", "left", "not")):
+                        touched.update((a["id"], b["id"]))
+                    asked[key] = {"at": _iso(), "step": step, "as": result[:200]}
+        return False
+
+    def _settle_duplicate(self, kind: str, a: Dict[str, Any], b: Dict[str, Any],
+                          one: Dict[str, Any], users: Dict[str, bool],
+                          report: Dict[str, Any]) -> str:
+        if one.get("same") is not True:
+            return "not the same"
+        why = " ".join(str(one.get("why") or "").split())[:300]
+        keep, drop = self._keeper(a, b)
+        self._join(kind, keep, drop, str(one.get("statement") or ""),
+                   f"the same lesson{': ' + why if why else ''}")
+        report["merged"] += 1
+        return f"merged {drop['id']} into {keep['id']}"
+
+    def _settle_opposites(self, kind: str, a: Dict[str, Any], b: Dict[str, Any],
+                          one: Dict[str, Any], users: Dict[str, bool],
+                          report: Dict[str, Any]) -> str:
+        decision = str(one.get("decision") or "")
+        why = " ".join(str(one.get("why") or "").split())[:300]
+        if decision == "none":
+            return "none"
+        if decision == "merge":
+            keep, drop = self._keeper(a, b)
+            self._join(kind, keep, drop, str(one.get("statement") or ""),
+                       f"pointing opposite ways, one lesson after all{': ' + why if why else ''}")
+            report["opposed"] += 1
+            return f"merged {drop['id']} into {keep['id']}"
+        if decision not in ("narrow", "retire"):
+            return "failed: no decision"
+        named = str(one.get("lesson") or "")
+        target = a if named == a["id"] else b if named == b["id"] else None
+        if target is None:
+            return "failed: named neither lesson"
+        if users[target["id"]]:
+            return "left: the user's own"     # the user's say wins (2026-11-07)
+        other = b if target is a else a
+        if decision == "retire":
+            self._change(target, {"state": "retired"},
+                         f"retired: it points opposite to {other['id']}: {why}")
+            report["opposed"] += 1
+            return f"retired {target['id']}"
+        statement = " ".join(str(one.get("statement") or "").split())[:600]
+        if not statement:
+            return "failed: no narrowed statement"
+        fields: Dict[str, Any] = {"statement": statement}
+        if kind != "work" and isinstance(one.get("conditions"), dict):
+            fields["conditions"] = json.dumps(one["conditions"], ensure_ascii=False)
+        # "narrowed" first: a nature of the work is written back with its new words (natures.py).
+        self._change(target, fields, f"narrowed: against {other['id']}, pointing the other way: "
+                                     f"{why}")
+        report["opposed"] += 1
+        return f"narrowed {target['id']}"
 
     # -- the model -------------------------------------------------------------------------
     def language(self) -> str:
@@ -1122,8 +1803,17 @@ class LessonEngine:
         return "English"
 
     def _ask(self, prompt: str, language: Any = None) -> Optional[Dict[str, Any]]:
+        """The JSON of a whole answer, or None: cut off at the limit, unreadable or not asked
+        (2026-11-07: an answer read as {} was taken as "nothing in it")."""
+        read = self._read(prompt, language=language)
+        return read.data if read.ok else None
+
+    def _read(self, prompt: str, language: Any = None, wants: Sequence[str] = ()) -> Any:
+        """The model's answer, read (models/answers.py): `.ok` only when whole, readable and
+        saying every key in `wants`."""
+        from ...models import answers
         if self.models is None:
-            return None
+            return answers.Answer(data=None, cut=False, text="")
         from ...models.base import ModelRequest
         try:
             response = self.models.invoke(ModelRequest(
@@ -1136,8 +1826,8 @@ class LessonEngine:
                 role="heartbeat")
         except Exception as exc:
             log.info("the lessons could not be asked: %s", exc)
-            return None
-        return _json_of(getattr(response, "text", "") or "")
+            return answers.Answer(data=None, cut=False, text="")
+        return answers.read(response, parse=answers.json_of, wants=wants)
 
 
 __all__ = ["LessonEngine", "relevance", "SHORTLIST", "KINDS"]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from ..common import children
 from .base import (
@@ -223,6 +223,60 @@ class MacActivityProvider(PlatformActivityProvider):
                 return image
         except Exception:
             log.debug("could not take the window in front", exc_info=True)
+            return None
+
+    def user_screen_image(self, title: str = "", hidden: Optional[Any] = None,
+                          **_ignored: Any) -> Optional[Any]:
+        """THE WHOLE SCREEN THE USER'S WINDOW IS ON, WITHOUT THIS APPLICATION'S WINDOWS (the user,
+        2026-11-08: "mac不要涂灰，我要的效果就是不带chat的截图"): made of the windows on it, from the
+        front - this application's, and every window `hidden(application, title)` says is never
+        read, left out: what is behind them shows, nothing painted. Needs Screen Recording, as
+        every picture of a window here does; without it, or where the system will not, None."""
+        try:
+            import os
+
+            import Quartz
+            from PIL import Image
+
+            from .screen_picture import display_of, kept_in_picture, mac_windows, the_window_meant
+            if not Quartz.CGPreflightScreenCaptureAccess():
+                return None
+            infos = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly,
+                                                      Quartz.kCGNullWindowID)
+            windows = mac_windows(infos, os.getpid())
+            error, ids, count = Quartz.CGGetActiveDisplayList(16, None, None)
+            displays = []
+            for one in list(ids or [])[:int(count or 0)]:
+                rect = Quartz.CGDisplayBounds(one)
+                displays.append((int(rect.origin.x), int(rect.origin.y),
+                                 int(rect.origin.x + rect.size.width),
+                                 int(rect.origin.y + rect.size.height)))
+            meant = the_window_meant(windows, title)
+            screen = display_of(meant["box"] if meant else None, displays)
+            if screen is None:
+                return None
+            keep = kept_in_picture(windows, hidden)
+            if not keep:
+                return None
+            picture = Quartz.CGWindowListCreateImageFromArray(
+                Quartz.CGRectMake(screen[0], screen[1], screen[2] - screen[0], screen[3] - screen[1]),
+                keep, Quartz.kCGWindowImageDefault)
+            if picture is None:
+                return None
+            from Foundation import NSMutableData
+            data = NSMutableData.data()
+            destination = Quartz.CGImageDestinationCreateWithData(data, "public.png", 1, None)
+            if destination is None:
+                return None
+            Quartz.CGImageDestinationAddImage(destination, picture, None)
+            if not Quartz.CGImageDestinationFinalize(destination):
+                return None
+            import io
+            image = Image.open(io.BytesIO(bytes(data)))
+            image.load()
+            return image.convert("RGB")
+        except Exception:
+            log.debug("could not take the screen", exc_info=True)
             return None
 
     def get_browser_history_paths(self) -> Dict[str, Path]:

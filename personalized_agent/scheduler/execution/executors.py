@@ -23,6 +23,9 @@ from ..storage.store import AWAITING_VERIFICATION
 
 log = logging.getLogger(__name__)
 
+#: After an answer that stopped at the model's output limit (2026-11-07), in the display language.
+CUT_NOTE = "(The answer stopped at the length limit.)"
+
 def _extract_json(text: str) -> Optional[Dict[str, Any]]:
     if not text:
         return None
@@ -461,15 +464,25 @@ class TaskExecutor:
             ),
             role="scheduled_task",
         )
+        from ...models.answers import read_text
+        text, cut = read_text(response)
+        # SAID WHEN CUT OFF (2026-11-07): a task whose answer stopped at the output limit still
+        # ran - kept as done - but its result and its notification say it was cut.
+        note = ""
+        if cut:
+            from ...common.interface_words import shown
+            note = "\n\n" + shown(CUT_NOTE, self.config)
+            log.info("scheduled task %s: its answer was cut off at the output limit", task.id)
         if _wants_notification(task):
             self.notifications.notify(
-                task.title, response.text[:500], kind="proactive",
+                task.title, text[:500] + note, kind="proactive",
                 template=REMINDER, question=self._reply_for(task),
                 metadata={"task_id": task.id, **_made_by(task)},
             )
             self._ask_whether_it_was_worth_it(task)
-        return ExecutionOutcome(True, response.text[:2000],
-                                metadata={"tokens": response.usage.total_tokens})
+        return ExecutionOutcome(True, text[:2000] + note,
+                                metadata={"tokens": response.usage.total_tokens,
+                                          **({"cut": True} if cut else {})})
 
     def _system_action(self, task: ScheduledTask) -> ExecutionOutcome:
         action = task.task_payload.get("action")

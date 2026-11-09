@@ -193,6 +193,12 @@ class OpenedForTheUserTests(unittest.TestCase):
                                  "https://review.example.org/paper/7"])
         self.assertTrue(said["copied"])
         self.assertIn("starting with Summary", self.notes[-1]["check"][0])
+        # ITS BOXES LEFT FOR THE EXTENSION TO FILL (the user, 2026-11-08): an order for its page,
+        # taken once - and said so, the submit theirs.
+        self.assertIn("submit it yourself", self.notes[-1]["check"][0])
+        from personalized_agent.platform_layer import browser_extension
+        order = browser_extension.take_fill_order(self.app.data_dir, "https://review.example.org/paper/7")
+        self.assertEqual([one["field"] for one in order["parts"]], ["Summary", "Weaknesses"])
         self.assertEqual([one["field"] for one in self.notes[-1]["item"]["parts"]],
                          ["Summary", "Weaknesses"])
         saved = self.app.work.save_handed("run_m", 2, ["Ferns, studied well.", "Small sample."])

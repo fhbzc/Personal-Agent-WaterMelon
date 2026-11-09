@@ -292,7 +292,11 @@ class ReadingLog:
         items = self._sittings(events)
         fresh, again = self._against_the_log(items)
         report["read_again"] = again
-        if fresh and going():
+        self._not_written: List[Dict[str, Any]] = []
+        self._failed: List[Dict[str, Any]] = []
+        if fresh and not going():                # stopped before it was read: read next time
+            self._not_written = list(fresh)
+        elif fresh:
             self.progress.update(stage="choosing what was read", total=len(fresh))
             kept, fetching = self._triage(fresh)
             if kept is not None:
@@ -306,8 +310,20 @@ class ReadingLog:
                 self.progress.update(running=False, finished_at=_iso(),
                                      stage="", note="the model could not be asked")
                 return report
-        if events and self.config is not None:
-            self.config.set(UNTIL, events[-1]["at"], internal=True)
+        until = events[-1]["at"] if events else ""
+        left = list(getattr(self, "_not_written", []) or [])
+        if left:
+            # WHAT WAS NOT ASKED IS NOT PASSED (2026-11-07): a pass stopped before a piece was asked
+            # about reads it next time - the mark stops before its first event. (A piece whose
+            # answer failed was asked, and is passed: report["failed"].)
+            first = min(str(one.get("first") or "") for one in left)
+            before = [event["at"] for event in events if event["at"] < first]
+            until = before[-1] if before else ""
+            report["not_written"] = len(left)
+        if self._failed:
+            report["failed"] = list(self._failed)
+        if until and self.config is not None:
+            self.config.set(UNTIL, until, internal=True)
         report["topics"] = self.topics.place_waiting(self.embedder)
         self.progress.update(running=False, stage="", finished_at=_iso(), last=report)
         return report
@@ -433,26 +449,36 @@ class ReadingLog:
         - or None when the model could not be asked."""
         for n, one in enumerate(items):
             one["id"] = f"p{n}"
+        from ...models import answers
         kept, fetching = [], set()
-        for start in range(0, len(items), TRIAGE_BATCH):
-            part = items[start:start + TRIAGE_BATCH]
+
+        def ask(part: List[Dict[str, Any]]) -> "answers.Answer":
             lines = "\n".join(
                 f"[{one['id']}] {one['title'][:200]}" + (f" <{one['url'][:300]}>" if one["url"]
                                                          else f" ({one['app'][:60]})")
                 + f" - {round(one['seconds'])}s"
                 + (f"\n    {' '.join(one['text'].split())[:300]}" if one["text"] else "")
                 for one in part)
-            said = self._ask(TRIAGE.format(items=lines, most=MOST_FETCHES))
-            if said is None:
-                return None, set()
-            verdicts = {str(v.get("id")): v for v in said.get("items") or []
-                        if isinstance(v, dict)}
-            for one in part:
-                verdict = verdicts.get(one["id"]) or {}
-                if verdict.get("keep") is True:
-                    kept.append(one)
-                    if verdict.get("fetch") is True and one["url"]:
-                        fetching.add(one["id"])
+            return self._read(TRIAGE.format(items=lines, most=MOST_FETCHES))
+        for start in range(0, len(items), TRIAGE_BATCH):
+            # A batch cut off is asked again in halves (models/answers.py). The model not to be
+            # asked: the whole pass is read again. A part answered and still not whole at its
+            # smallest is recorded as failed and passed, not asked again the same way (the user,
+            # 2026-11-07).
+            for part, read in answers.in_parts(items[start:start + TRIAGE_BATCH], ask):
+                if not read.ok and read.response is None:
+                    return None, set()
+                if not read.ok:
+                    self._record_failed(part, "choosing", read.why_not)
+                    continue
+                verdicts = {str(v.get("id")): v for v in (read.data or {}).get("items") or []
+                            if isinstance(v, dict)}
+                for one in part:
+                    verdict = verdicts.get(one["id"]) or {}
+                    if verdict.get("keep") is True:
+                        kept.append(one)
+                        if verdict.get("fetch") is True and one["url"]:
+                            fetching.add(one["id"])
         return kept, fetching
 
     # -- 2. fetch ---------------------------------------------------------------------------
@@ -479,11 +505,10 @@ class ReadingLog:
     # -- 3. extract -------------------------------------------------------------------------
     def _extract(self, kept: List[Dict[str, Any]], going: Callable[[], bool]) -> int:
         from ...common.events.models import new_id
+        from ...models import answers
         written = 0
-        for start in range(0, len(kept), EXTRACT_BATCH):
-            if not going():
-                break
-            part = kept[start:start + EXTRACT_BATCH]
+
+        def ask(part: List[Dict[str, Any]]) -> "answers.Answer":
             lines = "\n\n".join(
                 f"[{one['id']}] {one['title'][:200]}" + (f" <{one['url'][:300]}>"
                                                          if one["url"] else "")
@@ -491,43 +516,73 @@ class ReadingLog:
                 + " ".join(one["text"].split())[:FETCH_CHARS if one.get("fetched")
                                                 else TEXT_CHARS]
                 for one in part)
-            said = self._ask(EXTRACT.format(items=lines))
-            if said is None:
+            return self._read(EXTRACT.format(items=lines))
+        not_written = getattr(self, "_not_written", None)
+        if not_written is None:
+            not_written = self._not_written = []
+        for start in range(0, len(kept), EXTRACT_BATCH):
+            if not going():
+                not_written.extend(kept[start:])     # stopped: the rest is read next time
                 break
-            got = {str(p.get("id")): p for p in said.get("pieces") or [] if isinstance(p, dict)}
-            for one in part:
-                p = got.get(one["id"])
-                if p is None:
+            for part, read in answers.in_parts(kept[start:start + EXTRACT_BATCH], ask):
+                # ONLY A WHOLE ANSWER IS WRITTEN (2026-11-07): a part cut off at its smallest, or
+                # not readable, is recorded as failed and passed - not asked again the same way.
+                if not read.ok and read.response is None:
+                    not_written.extend(part)         # not asked at all: read next time
                     continue
-                words = lambda key, most, chars: [str(x)[:chars] for x in p.get(key) or []
-                                                  if str(x).strip()][:most]
-                characters = len(one["text"])
-                self.db.execute(
-                    "INSERT INTO reading_pieces (id, first_at, last_at, url, url_key, title, "
-                    "title_key, app, kind, topics, entities, points, summary, seconds, visits, "
-                    "characters, fetched, engagement, topic_id, vector, created_at, updated_at, "
-                    "purpose) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, ?, ?, ?)",
-                    (new_id("read"), one["first"], one["last"], one["url"][:1000],
-                     url_key(one["url"]) if one["url"] else "", one["title"][:300],
-                     title_key(one["title"]), one["app"][:80],
-                     str(p.get("kind") or "other")[:20],
-                     json.dumps(words("topics", 4, 60)), json.dumps(words("entities", 8, 80)),
-                     json.dumps(words("points", 3, 400)), str(p.get("summary") or "")[:400],
-                     round(one["seconds"], 1), max(1, one["visits"]), characters,
-                     int(bool(one.get("fetched"))),
-                     engagement(one["seconds"], max(1, one["visits"]), characters),
-                     _iso(), _iso(),
-                     # Leisure or work: an interest is judged by a different
-                     # rule for each (connections/recommend.py).
-                     str(p.get("purpose") or "").strip().lower()
-                     if str(p.get("purpose") or "").strip().lower() in ("work", "leisure")
-                     else ""))
-                written += 1
-            self.progress.update(done=min(len(kept), start + len(part)), total=len(kept))
+                if not read.ok:
+                    self._record_failed(part, "writing down", read.why_not)
+                    continue
+                written += self._write_pieces(part, read.data or {}, new_id)
+            self.progress.update(done=min(len(kept), start + EXTRACT_BATCH), total=len(kept))
         return written
 
-    def _ask(self, prompt: str) -> Optional[Dict[str, Any]]:
+    def _record_failed(self, part: List[Dict[str, Any]], what: str, why: str) -> None:
+        """Pieces whose answer failed: logged, and kept in the pass's report."""
+        log.info("the reading log's %s failed on %d piece(s): %s", what, len(part), why)
+        failed = getattr(self, "_failed", None)
+        if failed is None:
+            failed = self._failed = []
+        failed += [{"title": one["title"][:200], "url": one["url"][:300], "step": what,
+                    "why": why} for one in part]
+
+    def _write_pieces(self, part: List[Dict[str, Any]], said: Dict[str, Any],
+                      new_id: Callable[[str], str]) -> int:
+        """What a whole answer said of each piece, written down."""
+        written = 0
+        got = {str(p.get("id")): p for p in said.get("pieces") or [] if isinstance(p, dict)}
+        for one in part:
+            p = got.get(one["id"])
+            if p is None:
+                continue
+            words = lambda key, most, chars: [str(x)[:chars] for x in p.get(key) or []
+                                              if str(x).strip()][:most]
+            characters = len(one["text"])
+            self.db.execute(
+                "INSERT INTO reading_pieces (id, first_at, last_at, url, url_key, title, "
+                "title_key, app, kind, topics, entities, points, summary, seconds, visits, "
+                "characters, fetched, engagement, topic_id, vector, created_at, updated_at, "
+                "purpose) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, ?, ?, ?)",
+                (new_id("read"), one["first"], one["last"], one["url"][:1000],
+                 url_key(one["url"]) if one["url"] else "", one["title"][:300],
+                 title_key(one["title"]), one["app"][:80],
+                 str(p.get("kind") or "other")[:20],
+                 json.dumps(words("topics", 4, 60)), json.dumps(words("entities", 8, 80)),
+                 json.dumps(words("points", 3, 400)), str(p.get("summary") or "")[:400],
+                 round(one["seconds"], 1), max(1, one["visits"]), characters,
+                 int(bool(one.get("fetched"))),
+                 engagement(one["seconds"], max(1, one["visits"]), characters),
+                 _iso(), _iso(),
+                 # Leisure or work: an interest is judged by a different
+                 # rule for each (connections/recommend.py).
+                 str(p.get("purpose") or "").strip().lower()
+                 if str(p.get("purpose") or "").strip().lower() in ("work", "leisure")
+                 else ""))
+            written += 1
+        return written
+
+    def _call(self, prompt: str) -> Any:
         if self.models is None:
             return None
         from ...models.base import ModelRequest
@@ -544,7 +599,20 @@ class ReadingLog:
         except Exception as exc:
             log.info("the reading log could not ask the model: %s", exc)
             return None
-        return _json_of(getattr(response, "text", "") or "")
+        return response
+
+    def _read(self, prompt: str) -> Any:
+        """The model's answer, read (models/answers.py): `.ok` only when whole and readable."""
+        from ...models import answers
+        response = self._call(prompt)
+        if response is None:
+            return answers.Answer(data=None, cut=False, text="")
+        return answers.read(response, parse=_json_of)
+
+    def _ask(self, prompt: str) -> Optional[Dict[str, Any]]:
+        """The JSON of a whole answer, or None (cut off, unreadable, or not asked)."""
+        read = self._read(prompt)
+        return read.data if read.ok else None
 
     # -- what the page shows ----------------------------------------------------------------------
     def pieces(self, most: int = 100) -> List[Dict[str, Any]]:

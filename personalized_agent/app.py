@@ -375,6 +375,8 @@ class AgentApplication:
         self.lesson_retriever = LessonRetriever(self.lessons, embedder, self.models)
         self.calendar_nature.retriever = self.lesson_retriever
         self.state_heartbeat.retriever = self.lesson_retriever
+        # THE CHAT'S search_lessons, by meaning (the user, 2026-11-07: search tools for the chat).
+        self.agent.lesson_retriever = self.lesson_retriever
         self.state_heartbeat.item_links = self.item_links
         self.state_heartbeat.active_items = self._active_items
         # What the plan of a piece of work may read and do (heartbeat/states/task_plan.py).
@@ -400,6 +402,7 @@ class AgentApplication:
                                decider=self.monitor_decider, heartbeat=self.heartbeat,
                                pictures=self.paths.data_dir / "notification_pictures")
         self.monitor_decider.item_links = self.item_links
+        self.monitor_decider.today = self._monitor_today
         self.monitor.keeper = self._keep_recommended
         self.triggers.rules = lambda: [*self.monitor.text_rules(), self.reserve_rule]
         self.heartbeat.monitor_step = lambda: self.monitor_decider.step(self.monitor)
@@ -460,6 +463,8 @@ class AgentApplication:
         self.learning = Learning(self.db, self.config, self.models, self.paths.data_dir,
                                  never=[self.paths.data_dir, self.paths.workspace_dir])
         self.learning.places.work_tab_folders = self._work_tab_folders
+        # The learning reads its reasons by meaning too, to find the same one learned twice.
+        self.learning.embedder = getattr(self.state_heartbeat, "embedder", None)
         # THE LOCAL INDEX: the user's own files searchable by their words -
         # every Work project's folders and the folders the user adds - built
         # in a process of its own at the lowest priority (index/service.py),
@@ -565,6 +570,7 @@ class AgentApplication:
         # A NEWSPAPER SPECIAL ISSUE FROM CHAT (the user, 2026-11-03, from PR
         # #8): the brief agreed in the chat handed to the newspaper.
         self._add_special_issue_tool()
+        self._add_assign_work_tool()
         # THE TWO LISTS IN GROUPS (agent/feedback/list_groups.py): grouped by
         # a model whenever an item comes or changes - Task organisation's
         # calls - the user's own moves told to it first.
@@ -756,6 +762,8 @@ class AgentApplication:
             readable_paths=[Path.home()],
             protected_paths=self.paths.protected_paths(),
         )
+        # Read anywhere but what is excluded (the user, 2026-11-08): the agents' own tools.
+        policy.read_anywhere = True
         try:
             grant_chat(policy)
         except OSError:
@@ -906,6 +914,49 @@ class AgentApplication:
         it, or the avatar's own."""
         from .agent.character.manager import avatar_name
         return avatar_name(self.config, getattr(self, "characters", None))
+
+    def _add_assign_work_tool(self) -> None:
+        """WORK HANDED OVER FROM THE CHAT (the user, 2026-11-08: "chat里(full model)要能add work (加入work
+        assigned)，直接执行"): under Work assigned, started as Assign at once starts it - its
+        context collected, its plan drafted, and begun with nothing more to approve."""
+        from .models.base import ToolSpec
+
+        def assign(args: Dict[str, Any]) -> Any:
+            words = str(args.get("instruction") or "").strip()
+            if not words:
+                return {"error": "say what is to be done, in full"}
+            folders = [str(one) for one in (args.get("folders") or []) if str(one).strip()][:12]
+            try:
+                draft = self.drafts.create(text=words, folders=folders, source="chat",
+                                           write_first=True)
+                self.drafts.compose(draft["id"], words, str(args.get("title") or ""))
+                way = "auto" if getattr(self.work, "thorough_open", True) else "quick"
+                said = self.drafts.start_apart(draft["id"], plan={"way": way},
+                                               options={"sound": False, "unconfined": False,
+                                                        "see_tries": True})
+            except Exception as exc:             # said to the user, in its words
+                return {"error": f"it could not be assigned: {exc}"[:300]}
+            if said.get("error"):
+                return {"error": said["error"]}
+            return {"assigned": draft["id"],
+                    "said": "Assigned - it is under Work assigned on the Overview, and starts once "
+                            "its context is collected and its plan drafted. Tell the user so."}
+        self.agent.tools.add(ToolSpec(
+            "assign_work",
+            "HAND A PIECE OF WORK TO THE AGENT TO DO, AT ONCE, when the user asks for something "
+            "done that takes work - research, a document, code, a draft to send - rather than an "
+            "answer here. It goes under Work assigned on the Overview and starts by itself: its "
+            "context collected, its plan drafted, nothing more to approve. The instruction is "
+            "everything the user wants, in full, as they said it and as agreed in this chat "
+            "(the work reads nothing of the chat but this); a title only when they gave one; "
+            "folders only the ones they named for it. Nothing is sent or published by it - what "
+            "it makes is handed back to the user to check.",
+            {"type": "object", "properties": {
+                "instruction": {"type": "string", "description": "what is to be done, in full"},
+                "title": {"type": "string", "description": "only a title the user gave"},
+                "folders": {"type": "array", "items": {"type": "string"},
+                            "description": "folders the user named for it, if any"}},
+             "required": ["instruction"], "additionalProperties": False}), assign)
 
     def _add_special_issue_tool(self) -> None:
         from .common import modules as _modules
@@ -1191,9 +1242,8 @@ class AgentApplication:
         title, and opened, its words, why it was told and its answers."""
         from .agent.feedback.templates import BAD_LABEL, GOT_IT
         from .common.interface_words import shown
-        from .common.notifications import told_from
-        parts: Dict[str, List[Dict[str, Any]]] = {"Recommended content": [], "Reminders": [],
-                                                  "Other": []}
+        from .common.notifications import CATEGORIES, category_of, told_from, what_set_it_off
+        parts: Dict[str, List[Dict[str, Any]]] = {name: [] for name in CATEGORIES}
         for one in self.notifications.waiting():
             ident, meta = str(one["id"]), one["metadata"]
             asked = str(meta.get("question_id") or "")
@@ -1209,15 +1259,21 @@ class AgentApplication:
                             "path": "/api/notifications/read", "body": {"id": ident}}]
             actions.append({"key": "bad", "label": shown(BAD_LABEL, self.config), "changes": True,
                             "path": "/api/notifications/bad", "body": {"id": ident}})
+            # IN THEIR OWN WORDS, a recommendation too (the user, 2026-11-08: "recommendation 也允许
+            # 我用语言回复"): as under a bubble - a lesson in their words, and it is done with.
+            actions.append({"key": "reply", "label": shown("Reply", self.config), "writes": True,
+                            "changes": True, "fields": [shown("Tell the agent for next time...",
+                                                              self.config)],
+                            "keys": ["text"], "yes": shown("Send", self.config),
+                            "path": "/api/notifications/chat", "body": {"id": ident}})
             why = str(meta.get("reason") or "")
-            part = "Recommended content" if meta.get("recommended") else \
-                "Reminders" if one.get("kind") == "proactive" else "Other"
-            parts[part].append({
+            parts[category_of(one)].append({
                 "id": ident, "title": str(one.get("title") or ""), "folds": True,
                 "detail": str(one.get("message") or ""), "url": str(meta.get("url") or ""),
                 "why": shown("Why: {0}", self.config).replace("{0}", why) if why else "",
                 "note": shown("Trigger: {0}", self.config).replace(
-                    "{0}", shown(told_from(meta), self.config)),
+                    "{0}", shown(told_from(meta), self.config)
+                    + (f" - {what_set_it_off(meta)}" if what_set_it_off(meta) else "")),
                 "actions": actions})
         # ONE ALONE IS OPEN (the user, 2026-11-06): there is nothing to choose between.
         waiting = [row for rows in parts.values() for row in rows]
@@ -1349,6 +1405,32 @@ class AgentApplication:
             if title and not said.get("deleted_by_user"):
                 status = str(said.get("status") or said.get("where_it_stands") or "").strip()
                 out.append(title + (f" - {status[:160]}" if status else ""))
+        return out
+
+    def _monitor_today(self, until: Any) -> Dict[str, List[str]]:
+        """WHAT TODAY HOLDS (the day ahead, 2026-11-07): the notifications on the calendar from now
+        to `until`, each with its time; the open to-dos; what is agreed and waits for a time."""
+        from .common.events.models import utcnow
+        out: Dict[str, List[str]] = {"scheduled": [], "todos": [], "waiting": []}
+        store = getattr(self.scheduler, "store", None)
+        if store is not None:
+            for task in store.list(status="pending", start=utcnow(), end=until, limit=60):
+                if task.execution_type != "notification":
+                    continue
+                at = task.scheduled_at.astimezone().strftime("%H:%M") if task.scheduled_at else ""
+                details = (task.metadata or {}).get("details") or {}
+                line = f"- {at} {task.title}: {str(task.description or '')[:300]}"
+                if details:
+                    line += " (" + "; ".join(f"{k}: {v}" for k, v in
+                                             list(details.items())[:6])[:300] + ")"
+                out["scheduled"].append(line)
+        for one in self.todos.open()[:20]:
+            out["todos"].append(f"- {one['text']}" + (f": {str(one['detail'])[:200]}"
+                                                      if one.get("detail") else ""))
+        try:
+            out["waiting"] = list(self.pending.lines())[:12]
+        except Exception:                                # pragma: no cover - read without it
+            pass
         return out
 
     def _monitor_experience(self, query: str) -> List[str]:
@@ -1857,7 +1939,11 @@ class AgentApplication:
                 except Exception:
                     log.exception("api shutdown failed")
                 spent["ApiServer"] = round(_time.perf_counter() - began, 3)
-            log.info("shutdown took %.3fs: %s", sum(spent.values()),
+            # THE TIME IT TOOK, AS A CLOCK SAYS IT (the user, 2026-11-07): the parts were added up,
+            # though the work's closing runs beside the rest and its time holds theirs - five
+            # seconds read as ten. Each part's own time is still said, overlapping as they do.
+            log.info("shutdown took %.3fs (the parts overlap): %s",
+                     _time.perf_counter() - began_work,
                      ", ".join(f"{name} {held:.3f}s" for name, held
                                in sorted(spent.items(), key=lambda one: -one[1])))
             self._shutdown_spent = spent

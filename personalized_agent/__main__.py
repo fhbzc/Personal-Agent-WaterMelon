@@ -21,6 +21,7 @@ import logging
 import signal
 import sys
 import threading
+import time
 from typing import Any, Optional
 from pathlib import Path
 
@@ -595,6 +596,52 @@ def _add_ocr() -> int:
     return 0
 
 
+#: STARTING THAT TAKES THIS LONG IS STUCK (the user, 2026-11-08: a start stood still 44 seconds after
+#: "internal :", nothing said): every thread's place then written down - in a build with the
+#: Debugger only ("只在debugger版加").
+START_STUCK_SECONDS = 15
+
+
+def _watch_the_start(root: Any) -> Any:
+    """Every thread's place written to the logs' startup_stuck.txt if the start is not done within
+    START_STUCK_SECONDS (faulthandler) - a build with the Debugger only. What `_started` ends."""
+    try:
+        from .build_flags import debugger_available
+        if not debugger_available():
+            return None
+        import faulthandler
+        from .common.paths import AppPaths, resolve_root
+        folder = AppPaths(resolve_root(root)).logs_dir
+        folder.mkdir(parents=True, exist_ok=True)
+        out = open(folder / "startup_stuck.txt", "w", encoding="utf-8")
+        out.write(f"{APP_NAME} {__version__}: the start was not done {START_STUCK_SECONDS} s after "
+                  f"{time.strftime('%Y-%m-%d %H:%M:%S')} - where every thread stood then:\n\n")
+        out.flush()
+        faulthandler.dump_traceback_later(START_STUCK_SECONDS, repeat=False, file=out)
+        return out
+    except Exception:                        # never in the way of starting
+        log.debug("the start could not be watched", exc_info=True)
+        return None
+
+
+def _started(stuck: Any) -> None:
+    """The start done: the watch let go - its file gone when nothing was written to it."""
+    if stuck is None:
+        return
+    try:
+        import faulthandler
+        faulthandler.cancel_dump_traceback_later()
+        written = stuck.tell()
+        stuck.close()
+        path = Path(stuck.name)
+        if path.stat().st_size <= written and written < 400:
+            path.unlink()                    # only its first line: nothing stood still
+        else:
+            log.warning("the start stood still: where every thread was is in %s", path)
+    except Exception:
+        log.debug("the start's watch could not be let go", exc_info=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     args_in = list(sys.argv[1:] if argv is None else argv)
     _certificates_carried()
@@ -791,14 +838,17 @@ def main(argv: list[str] | None = None) -> int:
             guard.release()
             return 0
 
+    stuck = _watch_the_start(args.root or args.data_dir)
     try:
         application = AgentApplication(root=args.root or args.data_dir)
     except Exception:
+        _started(stuck)
         if guard is not None:
             guard.release()
         raise
 
     if args.status:
+        _started(stuck)
         print(json.dumps(application.status(), indent=2, default=str))
         return 0
 
@@ -817,7 +867,10 @@ def main(argv: list[str] | None = None) -> int:
     # The headless path keeps the old order because there is nothing to
     # show: the next line of its output IS its progress report.
     if args.headless:
-        application.start(with_api=not args.no_api)
+        try:
+            application.start(with_api=not args.no_api)
+        finally:
+            _started(stuck)
         print(f"{APP_NAME} {__version__} running. "
               f"UI: {application.api_base_url}")
         if not args.no_api:
@@ -870,9 +923,11 @@ def main(argv: list[str] | None = None) -> int:
     def behind_the_window() -> None:
         try:
             application.start(with_api=not args.no_api)
+            _started(stuck)
             log.info("%s %s running. UI: %s", APP_NAME, __version__,
                      application.api_base_url)
         except Exception:
+            _started(stuck)
             log.exception("the agent could not start")
             ui.on_main_thread(ui.say_it_could_not_start)
             return

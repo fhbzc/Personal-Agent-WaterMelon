@@ -214,6 +214,56 @@ class WhatCameOfATodoTests(unittest.TestCase):
         drafts.start(third["id"], folders=[str(self.folder)], options={"see_tries": False})
         self.assertNotIn("TRIED BEFORE", told[2])
 
+    def test_a_projects_step_and_its_whole_are_told_what_came_before(self) -> None:
+        """The user, 2026-11-08: a step handed over again may build on its first try - not must -
+        and is whole in its own folder; the whole project may use every step's and its own
+        earlier versions."""
+        drafts = self.app.drafts
+        told, ids, kept = [], iter(["run_s1", "run_s2", "run_w1"]), []
+        self.app.work.start = lambda unit, instruction, **kw: (
+            told.append(instruction) or kept.append(kw) or {"run": next(ids)})
+        workspace = Path(self.app.work.app_policy.workspace_root) / "agent_work"
+        step = {"project": "p-harbour", "step": "3", "under": "Harbour survey"}
+        first = drafts.create(text="Harbour survey: count the boats", source="project",
+                              options=dict(step), collect=False)
+        drafts.collect_and_plan(first["id"])
+        unit = drafts.start(first["id"], folders=[])["unit"]
+        _run(self.app, "run_s1", unit, workspace / "Harbour survey" / "x", "done",
+             "2026-11-08T10:00:00+00:00")
+        self.app.db.execute("UPDATE work_runs SET final = ? WHERE id = 'run_s1'",
+                            (json.dumps({"answer": "Forty-one boats at the pier."}),))
+        self.assertNotIn("TRIED BEFORE", told[0])
+        second = drafts.create(text="Harbour survey: count the boats", source="project",
+                               options=dict(step), collect=False)
+        drafts.collect_and_plan(second["id"])
+        self.assertEqual(len(drafts.get(second["id"])["context"]["tries"]), 1, "the plan too")
+        said = drafts.start(second["id"], folders=[])
+        self.assertIn("THIS WORK WAS TRIED BEFORE", told[1])
+        self.assertIn("one step of the project", told[1])
+        self.assertIn("it reported: Forty-one boats at the pier.", told[1])
+        self.assertIn("MAY use or carry on from", told[1])
+        self.assertIn("WHATEVER THIS TRY DELIVERS IS WHOLE IN ITS OWN FOLDER", told[1])
+        folder = self.app.work.folder_of(self.app.state_heartbeat.experience.unit(said["unit"]))
+        self.assertEqual(folder.parent, workspace / "Harbour survey")
+        self.assertTrue(folder.name.endswith("(V2)"), folder.name)
+        whole = drafts.create(text="Harbour survey: every step left", source="project",
+                              options={"project": "p-harbour", "whole": True,
+                                       "under": "Harbour survey",
+                                       "read_from": [str(self.folder)]}, collect=False)
+        drafts.collect_and_plan(whole["id"])
+        drafts.start(whole["id"], folders=[])
+        self.assertIn("one step of the project", told[2], "the whole is told its steps' tries")
+        # The project's own folders, to read and never write; a file too big to copy, pointed to.
+        self.assertIn("THE PROJECT'S OWN FOLDERS", told[2])
+        self.assertIn(f"  - {self.folder}", told[2])
+        self.assertIn("NEVER write, change or delete anything in", told[2])
+        self.assertIn("too big to copy conveniently", told[2])
+        self.assertIn(f"its folder: {workspace / 'Harbour survey' / 'x'}", told[2],
+                      "and where each step's work is, to read and copy from")
+        folder = self.app.work.folder_of(self.app.state_heartbeat.experience.unit(
+            drafts.get(whole["id"])["unit_id"]))
+        self.assertFalse(folder.name.endswith(")"), "its first version: no number")
+
     def test_a_try_removed_still_gives_the_next_its_words(self) -> None:
         drafts = self.app.drafts
         ids = iter(["run_v1", "run_v2", "run_v3", "run_v4"])

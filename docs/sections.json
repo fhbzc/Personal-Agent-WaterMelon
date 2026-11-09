@@ -16915,6 +16915,26 @@
    },
    {
     "type": "p",
+    "text": "*Amended 2026-11-07:* BACK TO AN OLD PROJECT, IN PLACE OF NEW WORK. \"New work begins\" read seconds on a channel, where a link once kept with a project showed, as work never done before, though the project was three days old; it is taken out, as \"back to a project\" was. In its place: back for a while at a project left for days - the time on what is the project's own, in this quarter of an hour and the one before, and the days since it was last worked on, its windows or its own states. Both lines come from the user's weeks: four of their usual times in front of one window (one to five minutes), and longer than three in four of their times away from a project (two to fourteen days); with too little seen, two minutes and three days. Once a day for each project, counted only when a summary is sent: a misreading or a skipped look spends nothing. No limit a day: five minutes between looks, and a window the model has looked at waits half an hour before it is looked at again. Code's match is not trusted: the model is shown the screen, its words and its latest picture, and the project, and says first whether it is that project; only then does it write where the work stood, what is left and where its things are. Not that project, or unsure: nothing is sent.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-07:* WHAT IS KEPT WHERE. The task writer, in the call it already makes, says of each task the folders, files, pages and channels its work uses, each with a few words and a kind (its main folder, code, data, a document, a page, a chat), copied from its states' places - a link passed in a chat is not the work's. A project's resources are its tasks', each place once.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-07:* SUMMARIES, A KIND OF THEIR OWN. Back to an old project and the evening report are summaries, apart from notifications and recommendations: a group of the waiting list and a name on the bubble. The line beside the avatar says how many of each kind wait, a row a kind in this order - notifications (reminders and the rest), summaries, recommendations - in blue, green and yellow; a summary's bubble has the green dot. A search a recommendation makes never carries a contact's name, whatever set it off; a project's name may go.",
+    "amended": true
+   },
+   {
+    "type": "p",
+    "text": "*Amended 2026-11-07:* SPEAKING INTO THE CHAT, TRIED AND TAKEN OUT. Speaking into the chat bubble - a held shortcut or microphone button, the words made on this computer - was built and taken out the same day (the user: \"不支持语音输入\"). What stays of it: the speech model the videos are read with is fetched from Hugging Face or, where that cannot be reached, from its mirror hf-mirror.com, its revision fixed and every file held to the fingerprint of Hugging Face's own.",
+    "amended": true
+   },
+   {
+    "type": "p",
     "text": "*Amended 2026-11-06:* NO WORK PANEL. Work is followed and opened from To do and Work assigned on the Overview, drafts kept included: where each try stands, Pause, Resume, Stop and Continue, and what a run asks of the user, on its row, its item opened and the tab marked. What was made opens straight from there, of a run that stopped too: what it handed over, else the deliverable or the folder. Work that ends done with nothing handed over and no file made hands over its report as an answer. There is nothing to go and see elsewhere.",
     "amended": true
    },

@@ -48,6 +48,10 @@ LOOK = {"outline": "#313133", "bg": "#181819", "ink": "#ffffff", "muted": "#9497
         "primary": "#4b91ff",
         "primary_hover": "#6aa5ff", "on_primary": "#ffffff", "select": "#2d4a7a",
         "fast": "#8ab4ff", "slow": "#ff8f85", "link": "#6aa5ff"}
+#: How far a press may move and still be a click, in pixels.
+CLICK_SLACK = 4
+#: The minimised bar's room from the screen's edges, in pixels.
+BAR_MARGIN = 12
 
 #: A LINK IN A REPLY (a classmate's, 2026-11-05: `[words](address)` as it was written, not to be
 #: pressed): as a model writes one, or an address alone. Web pages only; what ends a sentence is
@@ -109,6 +113,11 @@ def write_links(said: Any, at: str, text: str, tags: Tuple[str, ...], ink: str,
         said.insert("writing", words, (*tags, link))
     said.mark_unset("writing")
 
+
+#: The picture sent with a message, at most this wide and tall in the bubble.
+PICTURE_WIDE, PICTURE_TALL = 260, 170
+#: Pressed, it is seen this large at most: a small copy, quick to open.
+VIEW_SIDE = 1280
 
 #: How long after it is opened the box is fitted to a draft put in it.
 FIT_AFTER_MS = 30
@@ -283,6 +292,8 @@ class ChatBubble:
         #: Sent in this conversation, to @; @ed in what is being written; and
         #: the list that comes up, while it is up: (where the @ is, files, which).
         self.sent_files: list = []
+        #: The pictures shown in what was said - kept, or Tk draws them blank.
+        self._pictures: list = []
         self.mentions: list = []
         self._mention: Optional[list] = None
         self._thumbs: list = []
@@ -421,10 +432,17 @@ class ChatBubble:
                         fg=LOOK["muted"], font=self._font(-2, underline=True), cursor="hand2")
         full.pack(side="right", padx=(0, 10))
         on_release(full, self._open_full)
+        self._line_parts = (head, dot, title)
+        self._mark_line()
         for one in (head, dot, title):
             one.bind("<ButtonPress-1>", self._grab)
             one.bind("<B1-Motion>", self._move)
-            one.bind("<Double-Button-1>", lambda _e: self.expand())
+            # MINIMISED, ITS LINE OPENS IT where it is not a button (the user, 2026-11-07: "最小化
+            # 之后最大化一定要点那个正方形，其实可以点这个header的其它非按钮位置都行") - a click,
+            # not a drag: moved further than CLICK_SLACK, it was being moved.
+            # OPEN, ITS LINE MINIMISES IT the same way (the user, 2026-11-08: "最大化的时候也可以点击非
+            # 按钮的header位置变成最小化"). No double click: two clicks are two changes.
+            one.bind("<ButtonRelease-1>", self._line_released, add="+")
         self.card = card
         # What was said: selectable, scrolled once it is tall - with a slim
         # bar on its right while it does not all fit (the user, 2026-11-03).
@@ -542,6 +560,7 @@ class ChatBubble:
     def _draw_fold(self) -> None:
         """"—" while it is open, a square while it is a bar - each as wide as
         the ✕ beside it is, at its zoom."""
+        self._mark_line()
         fold = getattr(self, "fold", None)
         if fold is None:
             return
@@ -592,7 +611,15 @@ class ChatBubble:
         self._draw_fold()
         window.update_idletasks()
         bar = window.winfo_reqheight()
-        window.geometry(f"{width}x{bar}+{x}+{y + height - bar}")
+        # IN THE SCREEN'S BOTTOM RIGHT CORNER, ALWAYS (the user, 2026-11-07: "如果我窗口已经很低了，
+        # 你最小化直接放到屏幕外面了" - "其实最小化可以放在固定位置，比如屏幕右下"): the taskbar's
+        # room left out; expanded, it goes back where it was.
+        area = work_area(window, (x, y, width, height)) or (
+            0, 0, window.winfo_screenwidth(), window.winfo_screenheight())
+        left, top, right, bottom = area
+        at_x = max(left, right - width - BAR_MARGIN)
+        at_y = max(top, bottom - bar - BAR_MARGIN)
+        window.geometry(f"{width}x{bar}+{at_x}+{at_y}")
 
     def expand(self) -> None:
         """As it was before it was minimised - and what came meanwhile in it."""
@@ -613,14 +640,19 @@ class ChatBubble:
         dot, oval = self._dot
         dot.itemconfigure(oval, fill=LOOK["dot"])
         if self._restore is not None:
-            width, height, _x, _y = self._restore
+            # BACK WHERE IT WAS before it went to the corner (2026-11-07) - held on the screen.
+            width, height, x, y = self._restore
             window = self.window
             window.update_idletasks()
-            bottom = window.winfo_y() + window.winfo_height()
+            area = work_area(window, (x, y, width, height)) or (
+                0, 0, window.winfo_screenwidth(), window.winfo_screenheight())
+            x = max(area[0], min(x, area[2] - width))
+            y = max(area[1], min(y, area[3] - height))
             if self._size:
-                window.geometry(f"{width}x{height}+{window.winfo_x()}+{max(10, bottom - height)}")
+                window.geometry(f"{width}x{height}+{x}+{y}")
             else:
-                self._bottom = bottom
+                window.geometry(f"+{x}+{y}")
+                self._bottom = y + height
                 self._fit()
         try:
             self.said.see("end")
@@ -784,9 +816,40 @@ class ChatBubble:
 
     def _grab(self, event: Any) -> None:
         self._drag = (event.x_root - self.window.winfo_x(), event.y_root - self.window.winfo_y())
+        self._pressed_at = (event.x_root, event.y_root)
+        self._dragging = False
+
+    def _mark_line(self, cursor: str = "") -> None:
+        """WHAT A PRESS ON ITS LINE WILL DO, by the pointer (the user, 2026-11-07: "如果是手型就是
+        展开（松开才生效），如果发现有拖动就变成变的形状的鼠标，这样就是移动效果，不展开"): a hand -
+        a click opens it, or minimises it when it is open (2026-11-08) - and the move cursor while
+        it is dragged."""
+        cursor = cursor or "hand2"                 # a click minimises it or opens it
+        for one in getattr(self, "_line_parts", ()):
+            try:
+                one.configure(cursor=cursor)
+            except tk.TclError:              # pragma: no cover - the window went
+                pass
+
+    def _line_released(self, event: Any) -> None:
+        at = getattr(self, "_pressed_at", None)
+        dragged, self._dragging = getattr(self, "_dragging", False), False
+        self._mark_line()
+        if dragged or at is None:
+            return
+        if abs(event.x_root - at[0]) <= CLICK_SLACK and abs(event.y_root - at[1]) <= CLICK_SLACK:
+            if self.minimized:
+                self.expand()
+            else:
+                self.minimize()
 
     def _move(self, event: Any) -> None:
         """Moved by its line - at most once a frame (it flickered)."""
+        at = getattr(self, "_pressed_at", None)
+        if not getattr(self, "_dragging", False) and at is not None and (
+                abs(event.x_root - at[0]) > CLICK_SLACK or abs(event.y_root - at[1]) > CLICK_SLACK):
+            self._dragging = True                # being moved: no longer a click
+            self._mark_line("fleur")
         x, y = event.x_root - self._drag[0], event.y_root - self._drag[1]
         self._asked_geometry = f"+{x}+{y}"
         if getattr(self, "_geometry_due", None) is None:
@@ -827,6 +890,9 @@ class ChatBubble:
         self.sent_files.extend(sent)
         self._write(self.words("You"), "you",
                     "\n".join([*([text] if text else []), *[f"[{one['name']}]" for one in sent]]))
+        # Where the picture that goes with it is shown, if one does (`picture_sent`).
+        self.said.mark_set("sent_end", "end-1c")
+        self.said.mark_gravity("sent_end", "left")
         self._write("", "waiting", self.words("Thinking…"))
         self.waiting = True
         self.button.configure(bg=LOOK["field"], fg=LOOK["muted"])
@@ -1030,13 +1096,11 @@ class ChatBubble:
             row.pack_forget()
         else:
             words = self.words("On your screen, given as context: {0}").replace("{0}", line[:110])
+            # NO ✕ (the user, 2026-11-08: "on your screen, given XX as context 这个，不用叉叉"): what is in
+            # front is told, not to be taken off here.
             tk.Label(row, text=words, bg=LOOK["bg"], fg=LOOK["muted"], font=self._font(-2),
-                     wraplength=self.width - 60, justify="left", anchor="w").pack(
+                     wraplength=self.width - 40, justify="left", anchor="w").pack(
                 side="left", fill="x", expand=True)
-            off = tk.Label(row, text="×", bg=LOOK["bg"], fg=LOOK["muted"], font=self._font(0),
-                           padx=4, cursor="hand2")
-            off.pack(side="right", anchor="n")
-            on_release(off, lambda: self._without_front(title))
             self._place_front()
         self._fit()
 
@@ -1342,6 +1406,93 @@ class ChatBubble:
         said.configure(state="disabled")
         said.see("end")
         self._fit()
+
+    def picture_sent(self, image: Any, sees: Optional[bool] = None) -> None:
+        """THE PICTURE OF THE SCREEN THAT GOES WITH THE MESSAGE, under it (the user, 2026-11-08): shown
+        at once, small - its words still being read - and said once it is known whether it went
+        (`picture_settled`); pressed, seen larger, in a window of its own. `image`: the picture,
+        or its file. `sees` given: it is settled already."""
+        if not self.is_open or "sent_end" not in self.said.mark_names():
+            return
+        try:
+            from PIL import Image, ImageTk
+            if isinstance(image, (str, bytes)) or hasattr(image, "__fspath__"):
+                with Image.open(image) as found:
+                    image = found.convert("RGB")
+            view = image.convert("RGB")
+            view.thumbnail((VIEW_SIDE, VIEW_SIDE))
+            small = view.copy()
+            small.thumbnail((max(80, min(PICTURE_WIDE, self.width - 60)), PICTURE_TALL))
+            picture = ImageTk.PhotoImage(small, master=self.window)
+        except Exception:
+            log.debug("the picture sent could not be shown", exc_info=True)
+            return
+        self._pictures.append(picture)               # kept, or Tk shows nothing
+        said = self.said
+        tag = f"sent_picture{len(self._pictures)}"
+        self._last_picture = tag
+        said.tag_configure(tag, foreground=LOOK["muted"], font=self._font(-2))
+        said.tag_bind(tag, "<ButtonRelease-1>", lambda _e, one=view: self._open_picture(one))
+        said.tag_bind(tag, "<Enter>", lambda _e: said.configure(cursor="hand2"))
+        said.tag_bind(tag, "<Leave>", lambda _e: said.configure(cursor="xterm"))
+        said.configure(state="normal")
+        line = self.words("Your screen, taken - checking it before it goes…")
+        said.tag_configure(tag + "_line", foreground=LOOK["muted"], font=self._font(-2))
+        # At a mark that stays put, what goes in last is first: the picture, then the line over it.
+        name = said.image_create("sent_end", image=picture, padx=0, pady=2)
+        said.insert("sent_end", "\n", (tag,))
+        said.insert("sent_end", line, (tag, tag + "_line"))
+        said.insert("sent_end", "\n", (tag,))
+        at = said.index(name)
+        said.tag_add(tag, at, f"{at} +1c")
+        said.configure(state="disabled")
+        said.mark_unset("sent_end")
+        self._fit()
+        if sees is not None:
+            self.picture_settled("sent" if sees else "words")
+
+    def picture_settled(self, how: str, why: str = "") -> None:
+        """What became of the picture last shown: "sent", "words" (only its words: the model sees
+        no pictures), or "not" - and `why`."""
+        tag = getattr(self, "_last_picture", "")
+        if not self.is_open or not tag:
+            return
+        found = self.said.tag_ranges(tag + "_line")
+        if not found:
+            return
+        line = (self.words("Sent with it, a picture of your screen:") if how == "sent" else
+                self.words("Sent with it, the words read in this picture of your screen "
+                           "(this model sees no pictures):") if how == "words" else
+                self.words("Not sent with it") + (f" ({self.words(why)})" if why else ""))
+        said = self.said
+        said.configure(state="normal")
+        said.delete(found[0], found[1])
+        said.insert(found[0], line, (tag, tag + "_line"))
+        said.configure(state="disabled")
+        self._last_picture = ""
+        self._fit()
+
+    def _open_picture(self, view: Any) -> None:
+        """SEEN LARGER, IN A WINDOW OF ITS OWN (the user, 2026-11-08: "压缩后的低分辨率图，方便我打开
+        view"): the small copy kept in memory - no file, nothing opened elsewhere. A click or Esc
+        closes it."""
+        try:
+            from PIL import ImageTk
+            shown = view.copy()
+            shown.thumbnail((int(self.window.winfo_screenwidth() * 0.8),
+                             int(self.window.winfo_screenheight() * 0.8)))
+            top = tk.Toplevel(self.window)
+            top.title(self.words("Your screen, as it went with the message"))
+            top.attributes("-topmost", True)
+            photo = ImageTk.PhotoImage(shown, master=top)
+            label = tk.Label(top, image=photo, bd=0, cursor="hand2")
+            label.image = photo                      # kept, or Tk shows nothing
+            label.pack()
+            label.bind("<ButtonRelease-1>", lambda _e: top.destroy())
+            top.bind("<Escape>", lambda _e: top.destroy())
+            top.focus_force()
+        except Exception:
+            log.debug("the picture could not be opened", exc_info=True)
 
     def _unwrite_waiting(self) -> None:
         said = self.said

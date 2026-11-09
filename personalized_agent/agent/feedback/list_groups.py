@@ -258,8 +258,13 @@ class ListGroups:
             "the_users_changes_newest_last": [f"{one['at'][:16].replace('T', ' ')} - {one['said']}"
                                               for one in self.changes(which)]}
         if self.retriever is not None:
+            # WHAT THE ITEMS ARE ABOUT (the user, 2026-11-07): their words - those to place now,
+            # new or edited, first - not which list it is.
+            placing = [seen[ident] for ident in seen if changed(ident)]
+            rest = [seen[ident] for ident in seen if not changed(ident)]
             elsewhere = self.retriever.the_users_own(
-                " ".join(sorted(seen.values()))[:2000], "list_grouping")
+                " ".join(placing + sorted(rest))[:2000], "list_grouping",
+                site=f"list grouping {which}")
             if elsewhere:
                 handed["what_the_user_did_elsewhere"] = elsewhere
         response = self._models().invoke(ModelRequest(
@@ -270,8 +275,20 @@ class ListGroups:
             language=in_display("each group's name - but \"Others\" stays exactly as it is")),
             role="heartbeat")
         from ...heartbeat.states.heartbeat import _as_json
-        said = _as_json(getattr(response, "text", "") or "") or {}
-        groups = self._checked(said, seen, kept)
+        from ...models import answers
+        answer = answers.read(response, parse=_as_json, wants=("groups",))
+        if not answer.ok:
+            # ONLY WHEN WHOLE (2026-11-07): an answer cut off, empty or unreadable read as no
+            # groups, and every item went into Others. The user's groups stay exactly as they
+            # are; the failure is logged and what was seen is saved - FAILED AND MOVED ON (the
+            # user: never the same ask again the same way): the list is grouped again when it
+            # changes, and what is new meanwhile shows as new, under no heading.
+            log.warning("the %s list was not grouped: %s", which, answer.why_not)
+            with self._lock:
+                if self._version.get(which, 0) == version:
+                    self._keep(which, kept["groups"], kept["loose"], seen)
+            return {"groups": kept["groups"], "not_grouped": answer.why_not}
+        groups = self._checked(answer.data, seen, kept)
         with self._lock:
             if self._version.get(which, 0) != version:
                 # The user moved the groups meanwhile: theirs stands, and the

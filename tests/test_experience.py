@@ -1948,6 +1948,8 @@ class TheLoopCarriesOnWhatTheRoundLeftTests(_Base):
                             internal=True)
         # The people's round of it is done: only the grouping is left open.
         self.app.config.set("connections_round_until", until, internal=True)
+        # (Learning by itself is on by default now: its daily look is another step.)
+        self.app.config.set("learning_auto_on", False)
         self.assertEqual(beat._steps_left(), ["patterns"])
         said = beat.run_if_due(trigger="timer")
         self.assertFalse(said.get("ran"), "not a new round")

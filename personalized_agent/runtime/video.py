@@ -43,6 +43,22 @@ PICTURES_GIVEN = 8
 FRAME_SIDE = 1280
 #: The speech model: small enough for a processor, good in many languages.
 SPEECH_MODEL = "small"
+#: WHERE IT COMES FROM, AND WHAT IT MUST BE (2026-11-07). Hugging Face first; where that cannot be
+#: reached - as in mainland China - the mirror hf-mirror.com (the user's choice). The mirror is no
+#: one's we know, so the revision is fixed and each file held to its fingerprint, measured on the
+#: copy fetched from Hugging Face itself: a file that is not what it should be is thrown away.
+SPEECH_REPO = "Systran/faster-whisper-small"
+SPEECH_REVISION = "536b0662742c02347bc0e980a01041f333bce120"
+SPEECH_FILES = {
+    "config.json": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+    "model.bin": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+    "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+    "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+}
+#: The files faster-whisper takes (faster_whisper.utils.download_model's).
+SPEECH_PATTERNS = ["config.json", "preprocessor_config.json", "model.bin", "tokenizer.json",
+                   "vocabulary.*"]
+SPEECH_MIRROR = "https://hf-mirror.com"
 #: The most of a video whose speech is read in one call, in seconds: an hour
 #: takes the processor many minutes. Further on is read with `start`.
 MOST_SPEECH_SECONDS = 30 * 60
@@ -119,13 +135,61 @@ def _threads() -> int:
     return max(1, (os.cpu_count() or 2) // 2)
 
 
+class ModelNotFetched(OSError):
+    """The speech model could be had from neither Hugging Face nor its mirror."""
+
+
+def _fingerprint(path: Path) -> str:
+    import hashlib
+    digest = hashlib.sha256()
+    with open(path, "rb") as held:
+        for piece in iter(lambda: held.read(1 << 20), b""):
+            digest.update(piece)
+    return digest.hexdigest()
+
+
+def _checked(folder: str) -> str:
+    """The folder, its every file what it should be - or what is not thrown away, and refused."""
+    for name, wanted in SPEECH_FILES.items():
+        one = Path(folder) / name
+        if not one.is_file() or _fingerprint(one) != wanted:
+            for gone in {one, one.resolve()}:
+                try:
+                    gone.unlink()
+                except OSError:
+                    pass
+            raise ModelNotFetched(f"{name} of the speech model is not what it should be: thrown away")
+    return folder
+
+
+def speech_model_folder() -> str:
+    """Where the speech model is on this computer: kept from before, else fetched now - from
+    Hugging Face, or from its mirror where that cannot be reached - and checked once fetched."""
+    import huggingface_hub
+    asked = {"revision": SPEECH_REVISION, "allow_patterns": SPEECH_PATTERNS}
+    try:
+        return huggingface_hub.snapshot_download(SPEECH_REPO, local_files_only=True, **asked)
+    except Exception:
+        pass                                             # not here yet: fetched
+    last: Optional[BaseException] = None
+    for endpoint in (None, SPEECH_MIRROR):
+        try:
+            more = {"endpoint": endpoint} if endpoint else {}
+            return _checked(huggingface_hub.snapshot_download(SPEECH_REPO, **asked, **more))
+        except Exception as exc:
+            log.warning("the speech model could not be fetched from %s",
+                        endpoint or "Hugging Face", exc_info=True)
+            last = exc
+    raise ModelNotFetched(f"the speech model could not be fetched: {last}") from last
+
+
 def _speech_model() -> Any:
     """The model, loaded when first wanted, and held while it is used."""
     global _model, _holders
     with _model_lock:
         if _model is None:
             from faster_whisper import WhisperModel
-            _model = WhisperModel(SPEECH_MODEL, device="cpu", compute_type="int8",
+            _model = WhisperModel(speech_model_folder(), device="cpu", compute_type="int8",
                                   cpu_threads=_threads())
         _holders += 1
         return _model

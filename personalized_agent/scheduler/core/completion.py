@@ -183,12 +183,18 @@ class TaskCompleter:
             return self._settle(task, DONE, note="nothing was missing")
 
         try:
-            filled = self._ask(task, missing)
+            answer = self._answer(task, missing)
         except Exception as exc:               # pragma: no cover - reported
             log.info("could not complete task %s (%s)", task_id, exc)
             return self._settle(task, FAILED, note=str(exc))
-        if filled is None:
-            return self._settle(task, FAILED, note="the model gave nothing usable")
+        if not answer.ok:
+            # SAID WHY (2026-11-07): an answer cut off at the output limit is not one that
+            # "gave nothing usable" - the reason says which it was.
+            log.info("could not complete task %s: %s", task_id, answer.why_not)
+            return self._settle(task, FAILED, note=(
+                "the model's answer was cut off at the output limit" if answer.cut
+                else "the model gave nothing usable"))
+        filled = answer.data
 
         # Re-read: the user may have filled something in themselves while this
         # was thinking, and what they typed wins over what was guessed.
@@ -205,6 +211,13 @@ class TaskCompleter:
 
     # -- internals ----------------------------------------------------------
     def _ask(self, task: Any, missing: List[str]) -> Optional[Dict[str, Any]]:
+        """The fields the model filled in - None unless its answer was whole and read."""
+        answer = self._answer(task, missing)
+        return answer.data if answer.ok else None
+
+    def _answer(self, task: Any, missing: List[str]) -> Any:
+        """The model's answer, read (models/answers.py)."""
+        from ...models import answers
         when = task.scheduled_at.isoformat() if task.scheduled_at else "unspecified"
         prompt = (
             f"The task they started:\n"
@@ -222,7 +235,7 @@ class TaskCompleter:
                          task="task_completion",
                          language=in_display()),
             role="task_completion")
-        return _extract_json(response.text)
+        return answers.read(response, parse=_extract_json)
 
     @staticmethod
     def _fields_from(task: Any, filled: Dict[str, Any],

@@ -78,11 +78,17 @@ class TheMonitorsTests(_Base):
     def test_a_recommendation_waits(self) -> None:
         self.assertEqual(self._say(recommended=True, content=True)["level"], COLLAPSE)
 
-    def test_unless_the_model_says_it_is_worth_interrupting_for(self) -> None:
-        self.assertEqual(self._say(recommended=True, content=True, pops=True)["level"], POP)
+    def test_by_the_triggers_own_setting_not_the_models_word(self) -> None:
+        """The user, 2026-11-07: popped or waiting by each trigger's delivery, done by code."""
+        context = {"activator": {"id": "a", "name": "A moment", "group": "recommend",
+                                 "delivery": "pop"}}
+        said = self.app.monitor.say("Title", "Words", context, "fx", recommended=True, content=True)
+        self.assertEqual(self.notes.get(said["notification_id"])["metadata"]["level"], POP)
 
-    def test_a_break_pops(self) -> None:
-        self.assertEqual(self._say("rest")["level"], POP)
+    def test_a_break_waits_and_a_risk_pops(self) -> None:
+        """The user, 2026-11-07: what a trigger sends by itself waits; a risk comes up at once."""
+        self.assertEqual(self._say("rest")["level"], COLLAPSE)
+        self.assertEqual(self._say("risk")["level"], POP)
 
     def test_only_a_risk_comes_through_a_blocker(self) -> None:
         self.assertTrue(self._say("risk")["through"])
@@ -109,8 +115,26 @@ class TheMonitorsTests(_Base):
     def test_a_match_waits_when_the_model_only_says_yes(self) -> None:
         self.assertEqual(self._matched({"yes": True})["level"], COLLAPSE)
 
-    def test_a_match_pops_on_the_models_word(self) -> None:
-        self.assertEqual(self._matched({"yes": True, "pop": True})["level"], POP)
+    def test_a_match_waits_whatever_the_model_says_of_popping(self) -> None:
+        self.assertEqual(self._matched({"yes": True, "pop": True})["level"], COLLAPSE)
+
+    def test_a_match_not_known_to_be_on_the_screen_is_still_sent(self) -> None:
+        """The user, 2026-11-07, "B": 13 of 14 matches stopped at not knowing what was in front - in
+        the same program (2026-11-08: another program in front is moved on, test_reserve_match)."""
+        reserve = self.app.reserve
+        ident = reserve.add("Harbour tables", "https://tides.example/t", detail="New",
+                            status=rs.READY, angle="An angle", why="A why", keywords=WORDS)
+        rule = self.app.reserve_rule
+        rule.activity = SimpleNamespace(              # another window of the same program now
+            get_active_window=lambda: SimpleNamespace(title="Mail", application="b", pid=2),
+            front_window_image=lambda: None)
+        rule._live_at = 0.0
+        self.app.monitor.latest = {"present": True}
+        self.app.monitor_decider.models = SimpleNamespace(invoke=lambda *_a, **_k: SimpleNamespace(
+            text=json.dumps({"yes": True}), tool_calls=[], usage=None))
+        said = rule.act("Tides", "b", "", "tide table and spring tide")
+        self.assertEqual(reserve.get(ident)["status"], rs.TOLD)
+        self.assertEqual(self.notes.get(said["notification_id"])["metadata"]["level"], COLLAPSE)
 
 
 class TheListTests(_Base):
@@ -134,7 +158,7 @@ class TheListTests(_Base):
         self.assertEqual((row["title"], row["detail"]), ("Harbour tables", "New tables"))
         self.assertIn("For your survey", row["why"])
         self.assertIn("Good to know", [one["label"] for one in row["actions"]])
-        self.assertEqual(row["actions"][-1]["path"], "/api/notifications/bad")
+        self.assertIn("/api/notifications/bad", [one["path"] for one in row["actions"]])
         other = sections[1]["rows"][0]
         self.assertEqual(other["actions"][0]["path"], "/api/notifications/read")
 
@@ -159,8 +183,48 @@ class TheListTests(_Base):
         self.assertTrue(self.notes.get(said.id)["read"])
 
 
+class InTheirOwnWordsTests(_Base):
+    """The user, 2026-11-08: "recommendation 也允许我用语言回复"."""
+
+    def test_a_recommendation_answered_in_words_is_a_lesson_and_gone(self) -> None:
+        said, _asked = TheListTests._asked(self)
+        row = self.app.quick_sections("waiting")[0]["rows"][0]
+        reply = next(one for one in row["actions"] if one["key"] == "reply")
+        self.assertTrue(reply["writes"])
+        self.assertEqual(reply["keys"], ["text"])
+        body = dict(reply["body"], text="I read this one already, more on tide gauges")
+        from personalized_agent.api.routes import build_routes
+        request = SimpleNamespace(require=body.__getitem__, get=body.get)
+        with mock.patch.object(self.app.lessons, "record", wraps=self.app.lessons.record) as kept:
+            build_routes(self.app)[("POST", reply["path"])](request)
+        self.assertEqual(self.notes.waiting_count(), 0)
+        self.assertTrue(self.notes.get(said.id)["read"])
+        told = [call for call in kept.call_args_list if call.args and call.args[0] == "recommendations"]
+        self.assertTrue(told, "a lesson of what is recommended")
+        self.assertIn("more on tide gauges", repr(told[0]))
+
+    def test_every_one_waiting_can_be_answered_so(self) -> None:
+        self.notes.notify("Updated", "A new version", kind="info", level=COLLAPSE)
+        row = self.app.quick_sections("waiting")[0]["rows"][0]
+        self.assertIn("reply", [one["key"] for one in row["actions"]])
+
+
 class WhatSetItOffTests(_Base):
     """The user, 2026-11-06: each one says which trigger of the Monitor it came from."""
+
+    def test_and_what_exactly_set_it_off(self) -> None:
+        """The user, 2026-11-08: "这个为什么trigger, 要说出关键词是什么 ... 或者关键condition是什么"."""
+        from personalized_agent.common.notifications import what_set_it_off
+        matched = {"monitor": {"activator": "Something kept ready", "context": {
+            "window": {"title": "harbour - Slack"},
+            "chain": {"hit": ["tide tables", "ferry survey"]}}}}
+        self.assertEqual(what_set_it_off(matched),
+                         "the words on the screen: tide tables, ferry survey (in harbour - Slack)")
+        held = {"monitor": {"activator": "Back after an absence", "context": {
+            "why": ["event back", "back_after_minutes 183.0", "present True", "hour 20.5"]}}}
+        self.assertEqual(what_set_it_off(held),
+                         "back; back after 183 min; at the computer; at 20:30")
+        self.assertEqual(what_set_it_off({"made_by": "heartbeat"}), "", "nothing kept of it")
 
     def test_a_trigger_by_its_name_or_what_sent_it_instead(self) -> None:
         self.assertEqual(told_from({"monitor": {"activator": "A rest"}}), "A rest")
@@ -274,9 +338,10 @@ class TheBubblesTests(_Base):
         hidden = []
         desk._hide_waiting = lambda: hidden.append(1)
         desk._waiting_line = object()
-        desk._waiting_label = SimpleNamespace(configure=lambda text: setattr(desk, "said", text))
+        desk._draw_waiting = lambda rows: setattr(desk, "said", rows)
         DesktopAgent._show_waiting(desk)
-        self.assertEqual(desk.said, "2 waiting")
+        self.assertEqual(desk.said, [("notifications", "2 notifications")],
+                         "a reminder and another: both notifications")
         self.notes.mark_all_read()
         desk._bubble_queue.clear()
         DesktopAgent._show_waiting(desk)
@@ -293,10 +358,19 @@ class TheBubblesTests(_Base):
 
 class TheRowThatOpensTests(unittest.TestCase):
     def setUp(self) -> None:
+        # Last of all: Tk's own objects let go of here, on the thread that made them - left to
+        # the collector, they went on another test's thread and ended the run.
+        self.addCleanup(self._let_go)
         self.root = tk.Tk()
         self.root.withdraw()
         self.addCleanup(self.root.destroy)
         self.posted = queue.Queue()
+
+    def _let_go(self) -> None:
+        import gc
+        for name in [one for one in vars(self) if not one.startswith("_")]:
+            delattr(self, name)
+        gc.collect()
 
     def _settle(self) -> None:
         for _ in range(40):
@@ -340,6 +414,22 @@ class TheRowThatOpensTests(unittest.TestCase):
         sections.clear()
         panel._read_it()
         self._until(lambda: not panel.is_open)
+
+    def test_the_empty_list_is_never_drawn_on_the_screen(self) -> None:
+        """The last one answered, the list closed with a flash: drawn empty, then closed."""
+        sections = self._one()
+        panel = self._panel(sections)
+        panel.show((800, 500, 128, 128))
+        self._until(lambda: panel.opened_holding is True)
+        drawn_open = []
+        draw = panel._draw
+        panel._draw = lambda: (drawn_open.append(panel.opened), draw())[1]
+        sections.clear()
+        panel._read_it()
+        self._until(lambda: not panel.is_open)
+        self.assertTrue(drawn_open, "the empty list is drawn, out of sight, for the next opening")
+        self.assertNotIn(True, drawn_open)
+        self.assertIn("Nothing is waiting.", panel.list.get("1.0", "end"))
 
     def test_while_one_is_left_it_stays(self) -> None:
         sections = self._one()

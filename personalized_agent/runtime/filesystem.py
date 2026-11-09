@@ -314,6 +314,10 @@ def validate_read_path(requested_path: PathLike, policy: WorkspacePolicy) -> Pat
     check_not_app_code(resolved, policy)
     check_not_closed(resolved, policy)
     check_not_credential_store(resolved, policy)
+    # EVERYWHERE ELSE, where the policy says so (WorkspacePolicy.read_anywhere): every exclusion
+    # has been passed.
+    if getattr(policy, "read_anywhere", False):
+        return resolved
     # And what it may write, wherever that is: a project the user keeps
     # outside the workspace (a folder on the desktop) is its runs' own
     # folder, and the package installer - given nothing else to read - was
@@ -504,6 +508,9 @@ def unreadable_for(policy: WorkspacePolicy) -> Optional[List[str]]:
                   if os.path.exists(f"{letter}:/")]
     else:
         drives = [Path("/")]
+    if getattr(policy, "read_anywhere", False):
+        # Every drive readable: only what is excluded inside them is denied.
+        roots.extend(real_of_existing_ancestor(drive) for drive in drives)
     try:
         _deny_all(drives, holds_a_root, deny_beside, denied, policy, roots)
     except _TooManyToDeny:

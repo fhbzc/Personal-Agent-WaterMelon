@@ -80,8 +80,25 @@ class Places:
 
     # -- the list -------------------------------------------------------------
     def listed(self) -> List[Dict[str, Any]]:
-        value = self.config.get(PLACES, []) or []
-        return [dict(one) for one in value if isinstance(one, dict) and one.get("path")]
+        value = self.config.get(PLACES, None)
+        if value is None:
+            # NEVER SET, THE DEFAULT (the user, 2026-11-08: "default是没有directory (default可以加上codex
+            # 和claude的directory)"): Claude Code's and Codex's records, where this computer has them.
+            # Every lesson is learned from whatever is listed: that needs no place.
+            value = self.default_places()
+        return [dict(one) for one in (value or []) if isinstance(one, dict) and one.get("path")]
+
+    def default_places(self) -> List[Dict[str, Any]]:
+        out = []
+        for kind, root in (("claude", records.claude_sessions_root),
+                           ("codex", records.codex_sessions_root)):
+            try:
+                path = Path(str(root())).expanduser()
+            except Exception:                    # pragma: no cover - not on this system
+                continue
+            if path.is_dir() and not self.is_never(path):
+                out.append({"path": str(path), "kind": kind, "added_at": "", "default": True})
+        return out
 
     def excluded(self) -> List[str]:
         return [str(one) for one in (self.config.get(EXCLUDED, []) or [])]

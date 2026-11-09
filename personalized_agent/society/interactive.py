@@ -99,6 +99,14 @@ QUICK = {"en": "Received - I am {user}'s agent; I'll answer properly in a moment
          "ja": "受け取りました。{user} のエージェントです。少し後できちんとお返事します。",
          "ko": "받았습니다. {user}의 에이전트입니다. 곧 제대로 답해 드릴게요.",
          "ru": "Получено. Я агент {user}; скоро отвечу как следует."}
+#: Told the user when an instant answer could not be read (cut off at the output limit, or not
+#: JSON): the sorry went instead, and nothing was put on the calendar.
+NOT_TAKEN_NOTE = ("Your agent's answer could not be read whole, so it sent an apology instead; "
+                  "nothing it may have been asked to put on your calendar was added.")
+#: Told the user when a reply or draft could not be made, its answer unreadable: the messages
+#: are let be, and say so - never "no answer was wanted".
+NOT_ANSWERED_NOTE = ("Not answered by your agent: its answer could not be read whole. "
+                     "Answer these messages yourself.")
 SORRY = {"en": "I am {user}'s agent. I could not answer this just now - {user} will get back "
                "to you.",
          "zh": "我是 {user} 的 agent。这条我暂时没法回答，{user} 会再联系你。",
@@ -186,10 +194,25 @@ class Interactive:
         added = self._events(message, made.get("events") or [])
         reply = str(made.get("reply") or "").strip()
         sent = self._send(message, reply or SORRY[tongue].format(user=user))
+        if made.get("not_taken"):
+            # THE SORRY, SAID WHY (2026-11-07): the answer could not be taken - so the apology
+            # went, as for one not made in time - and any events it asked for were not put on;
+            # the user is told, never left to think there were none.
+            log.warning("the instant society answer was not taken (%s); a sorry was sent",
+                        made["not_taken"])
+            added = "\n".join(part for part in (added, self._shown(NOT_TAKEN_NOTE)) if part)
         note = "\n".join(part for part in (str(made.get("for_user") or "").strip(), added) if part)
         if note:
             self.society.note(message["peer_id"], note)
         return sent
+
+    def _shown(self, text: str) -> str:
+        """One of the application's own sentences, in the display language."""
+        try:
+            from ..common.interface_words import shown
+            return shown(text, getattr(self.app, "config", None))
+        except Exception:                 # pragma: no cover - English is still a note
+            return text
 
     # -- the reply and draft groups: in a while ---------------------------------------------
     def answer_waiting(self) -> int:
@@ -222,6 +245,14 @@ class Interactive:
             log.exception("the society answer could not be made")
             return                                 # tried again next time
         self.society.mark_handled([one["id"] for one in messages])
+        if made.get("not_taken"):
+            # FAILED, SAID WHY, AND MOVED ON (the user, 2026-11-07: never the same ask again the
+            # same way): an answer cut off or unreadable is not "no answer was wanted". The
+            # messages are handled - the next round starts from new ones - and the user is told
+            # they were not answered, and why.
+            log.warning("the society messages were not answered: %s", made["not_taken"])
+            self.society.note(last["peer_id"], self._shown(NOT_ANSWERED_NOTE))
+            return
         reply = str(made.get("reply") or "").strip()
         why = str(made.get("no_reply_because") or "").strip()
         if not reply:
@@ -267,7 +298,16 @@ class Interactive:
                                 "language of the messages it answers, unless your user's "
                                 "commands say otherwise")), role="primary")
         from ..heartbeat.states.heartbeat import _as_json
-        said = _as_json(getattr(response, "text", "") or "") or {}
+        from ..models import answers
+        read = answers.read(response, parse=_as_json)
+        if not read.ok:
+            # ONLY WHEN WHOLE (2026-11-07): an answer cut off or unreadable read as "no answer
+            # was wanted", and the messages were let be for good. Said, for the caller to record
+            # them as not answered, and why.
+            log.warning("the society answer could not be taken: %s", read.why_not)
+            return {"reply": "", "no_reply_because": "", "events": [], "for_user": "",
+                    "not_taken": read.why_not}
+        said = read.data
         events = said.get("events") if mode == "instant" else []
         return {"reply": str(said.get("reply") or "")[:20000],
                 "no_reply_because": str(said.get("no_reply_because") or "")[:500],

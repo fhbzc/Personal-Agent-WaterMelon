@@ -209,6 +209,41 @@ class WorkspaceLayerTests(unittest.TestCase):
         found = fs.validate_read_path(self.mine, self.policy)
         self.assertEqual(found.read_text(), "the user wrote this")
 
+    def test_it_reads_anywhere_but_what_is_excluded(self) -> None:
+        """The user, 2026-11-08: "应该是所有位置，除了exclude掉的都可以读"."""
+        import dataclasses
+        import os
+        outside = next((Path(one) for one in ("C:/Windows/win.ini", "/etc/hosts")
+                        if os.path.exists(one)), None)
+        if outside is None:
+            self.skipTest("no file outside the home to read here")
+        # The application's own policy (the tests' own is kept narrow on purpose).
+        policy = self.agent.app._build_policy()
+        self.assertTrue(policy.read_anywhere)
+        self.assertEqual(fs.validate_read_path(outside, policy), outside.resolve())
+        narrow = dataclasses.replace(policy, read_anywhere=False, readable_paths=[])
+        with self.assertRaises(SecurityViolation):
+            fs.validate_read_path(outside, narrow)
+        # What is excluded stays shut.
+        internal = self.agent.app.paths.data_dir / "database" / "events.db"
+        with self.assertRaises(SecurityViolation):
+            fs.validate_read_path(internal, policy)
+        denied = fs.unreadable_for(policy)
+        if denied is not None:
+            self.assertFalse(any(Path(one) == Path(outside.anchor) for one in denied),
+                             "no drive denied whole")
+
+    def test_a_work_is_let_read_what_it_was_told_to_read(self) -> None:
+        import tempfile
+        work = self.agent.app.work
+        with tempfile.TemporaryDirectory() as there:
+            self.assertEqual(work.let_read("unit_x", [there, "C:/no/such/place"]), [there])
+            self.assertEqual(work.read_also("unit_x"), [there], "kept for every run of it")
+            policy = work.policy_for(self.policy.write_root / "x", read_also=work.read_also("unit_x"))
+            self.assertIn(Path(there), policy.readable_paths)
+            self.assertEqual(policy.read_anywhere, bool(work.app_policy.read_anywhere))
+            self.assertFalse(fs.is_inside(Path(there), policy.write_root), "read, never written")
+
     def test_it_cannot_write_loose_in_the_workspace_either(self) -> None:
         with self.assertRaises(SecurityViolation):
             fs.validate_write_path(self.policy.workspace_root / "loose.txt",

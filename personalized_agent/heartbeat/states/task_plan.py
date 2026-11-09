@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from ...common.languages import in_display
 from ...models.base import ModelRequest, ToolSpec
 from ...models.manager import ModelUnavailable
+from ...models import answers as _answers
 from ...scheduler.core.given import now_line
 from . import todo as _todo
 from .tasks import Task
@@ -108,6 +109,25 @@ TOOLS = [
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _said_failed(db: Any, scope: str, which: str, why: str) -> None:
+    """`plan_failed_at` and `plan_why_failed` on the project, nothing else of it touched."""
+    with _todo.LOCK:
+        row = db.query_one(f"SELECT described FROM {TABLE} WHERE id = ? AND scope = ?",
+                           (which, scope))
+        if row is None:
+            return
+        try:
+            described = json.loads(dict(row).get("described") or "{}")
+        except (TypeError, ValueError):
+            described = {}
+        if not isinstance(described, dict):
+            described = {}
+        described["plan_failed_at"] = _now()
+        described["plan_why_failed"] = why
+        db.execute(f"UPDATE {TABLE} SET described = ? WHERE id = ? AND scope = ?",
+                   (json.dumps(described), which, scope))
 
 
 def _plain(text: Any) -> str:
@@ -241,6 +261,8 @@ class Planner:
         messages: List[Dict[str, Any]] = [{"role": "user", "content": self._prompt(row, read, items)}]
         tools = list(TOOLS)
         turns = 0
+        ended = False
+        response = None
         for turn in range(MOST_TURNS + 1):
             try:
                 response = self.hb.models.invoke(ModelRequest(
@@ -256,6 +278,7 @@ class Planner:
             self.hb._add_usage(self.report, getattr(response, "usage", None))
             calls = getattr(response, "tool_calls", None) or []
             if not calls:
+                ended = True
                 break
             messages.append({"role": "assistant", "content": getattr(response, "raw_content", None)
                              or getattr(response, "text", "")})
@@ -265,6 +288,23 @@ class Planner:
                                        default=str)[:MOST_RESULT]} for call in calls]})
             if turn == MOST_TURNS - 1:
                 tools = []                   # the last turn says it is done
+        # A PLAN THAT FAILED IS SAID TO HAVE FAILED (2026-11-07): a turn cut off at the output
+        # limit ended the loop as if it had said it was done, and the user's changes were
+        # cleared as gone through. What its tools did stands - each change proved - and the
+        # project is moved past, as one gone through is (the user: never ask the same thing
+        # again the same way), with `plan_failed_at` and `plan_why_failed` saying so - but the
+        # user's changes were not all seen, and stay to be told the next time it is planned.
+        if not ended or _answers.was_cut(response):
+            why = ("the answer was cut off at the output limit" if _answers.was_cut(response)
+                   else "it was still asking for tools when the turns ran out")
+            log.warning("the plan for %s failed: %s", row.id, why)
+            _todo.change(self.db, TABLE, self.scope, row.id, lambda _said: {
+                "todo_at": _now(), "plan_due": None})
+            _said_failed(self.db, self.scope, row.id, why)
+            self.report.setdefault("plans", []).append(
+                {"project": row.id, "turns": turns, "did": did, "failed": why})
+            self.report.setdefault("failed", []).append({"project": row.id, "why": why})
+            return True
         _todo.change(self.db, TABLE, self.scope, row.id, lambda _said: {
             "todo_at": _now(), "plan_due": None, "todo_changes": None})
         self.report.setdefault("plans", []).append({"project": row.id, "turns": turns, "did": did})

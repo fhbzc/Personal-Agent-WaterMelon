@@ -461,7 +461,16 @@ def notify_now(heartbeat: Any, rule: Rule, window: str, text: str,
     except Exception as exc:
         log.info("the trigger could not ask the model: %s", exc)
         return {"skipped": f"the model could not be asked: {exc}"[:300]}
-    answered = _extract_json(getattr(response, "text", "") or "") or {}
+    # OK ONLY WHEN WHOLE (2026-11-07): an answer cut off, empty or not JSON is not "nothing to
+    # notify" - nothing is applied, and it is recorded as failed (the trigger's history, the
+    # log). Not asked again: one window, nothing to shorten, and the same question asked the
+    # same way is the same answer (the user, 2026-11-07).
+    from ...models import answers as _answers
+    answer = _answers.read(response, parse=_extract_json)
+    if not answer.ok:
+        log.warning("the trigger on %s failed: %s", window, answer.why_not)
+        return {"not_taken": answer.why_not, "failed": True}
+    answered = answer.data
     task_id = new_id("trigger")
     report: Dict[str, Any] = {"task_id": task_id}
     heartbeat._notify_writer = {"model": getattr(response, "model", ""),

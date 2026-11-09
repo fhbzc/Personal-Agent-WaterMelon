@@ -9,6 +9,7 @@ import gc
 import queue
 import sys
 import threading
+from pathlib import Path
 import time
 import unittest
 from types import SimpleNamespace
@@ -258,6 +259,43 @@ class TheBubbleTests(unittest.TestCase):
         bubble._draw_front({"title": "Notes - Word"})
         self.assertEqual(bubble.front_off, "", "another window: told again")
         self.assertTrue(bubble.front_row.winfo_children())
+
+    def test_the_picture_that_went_with_a_message_is_shown_under_it(self) -> None:
+        """The user, 2026-11-08: "每次发出去的时候，显示当前发给模型的屏幕截屏长什么样"."""
+        import tempfile
+        from PIL import Image
+        folder = Path(tempfile.mkdtemp(prefix="sent-picture-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(folder, ignore_errors=True))
+        shot = folder / "screen.png"
+        Image.new("RGB", (1600, 900), (40, 120, 200)).save(shot)
+        answered = threading.Event()
+
+        def send(*_a, **_k):
+            self.posted.put(lambda: bubble.picture_sent(str(shot), True))
+            answered.wait(5)
+            return {"answer": "The tide turns at six."}
+        bubble = self._bubble(send)
+        bubble.box.insert("1.0", "When is high tide here?")
+        bubble.submit()
+        self._settle(0.3)
+        answered.set()
+        self._settle(0.5)
+        said = bubble.said
+        text = said.get("1.0", "end-1c")
+        self.assertEqual(len(said.image_names()), 1, "one picture, under the message")
+        at = said.index(said.image_names()[0])
+        self.assertLess(text.index("When is high tide here?"), len(said.get("1.0", at)),
+                        "after the message")
+        self.assertLess(len(said.get("1.0", at)), text.index("The tide turns at six."),
+                        "before the answer")
+        self.assertIn("Sent with it, a picture of your screen:", text)
+        self.assertLessEqual(bubble._pictures[0].width(), cb.PICTURE_WIDE)
+        opened = []
+        bubble._open_picture = opened.append
+        tags = [one for one in said.tag_names(at) if one.startswith("sent_picture")]
+        self.assertTrue(tags, "pressed, it opens")
+        bubble.picture_sent(str(shot), False)
+        self.assertEqual(len(said.image_names()), 1, "none when no message is waiting for one")
 
     def test_what_is_on_the_screen_is_right_under_its_head_whatever_came_first(self) -> None:
         front = {"title": "Tide tables - Chrome", "address": "https://example.com/tides"}
@@ -955,6 +993,62 @@ class TheBubbleTests(unittest.TestCase):
         bubble.close()
         self.assertEqual(bubble._fonts, {}, "its fonts let go")
 
+    def test_minimised_it_goes_to_the_bottom_right_corner_and_comes_back(self) -> None:
+        """The user, 2026-11-07: low on the screen, minimised, it went off it - "其实最小化可以放在
+        固定位置，比如屏幕右下"."""
+        bubble = self._bubble(lambda t, c: {"answer": "ok", "conversation_id": "conv_4"})
+        self.root.update()
+        screen = bubble.window.winfo_screenheight()
+        bubble.window.geometry(f"+40+{screen - 120}")       # most of it below the screen
+        self.root.update()
+        area = (0, 0, 1600, screen - 40)
+        with mock.patch.object(cb, "work_area", return_value=area):
+            bubble.minimize()
+            self.root.update()
+            bar, wide = bubble.window.winfo_height(), bubble.window.winfo_width()
+            self.assertEqual(bubble.window.winfo_y() + bar, area[3] - cb.BAR_MARGIN,
+                             "at the foot of the screen, above the taskbar")
+            self.assertEqual(bubble.window.winfo_x() + wide, area[2] - cb.BAR_MARGIN, "on the right")
+            bubble.expand()
+            self.root.update()
+        self.assertEqual(bubble.window.winfo_x(), 40, "back where it was")
+        self.assertLessEqual(bubble.window.winfo_y() + bubble.window.winfo_height(), area[3],
+                             "and on the screen")
+
+    def test_minimised_a_click_on_its_line_opens_it_and_a_drag_does_not(self) -> None:
+        """The user, 2026-11-07: not only the square - anywhere on the line that is no button."""
+        bubble = self._bubble(lambda t, c: {"answer": "ok", "conversation_id": "conv_3"})
+        bubble.minimize()
+        self.root.update()
+        line = bubble.head
+        self.assertEqual(str(line.cget("cursor")), "hand2", "a bar: a hand, a click opens it")
+        x, y = line.winfo_rootx() + 30, line.winfo_rooty() + 5
+        press = SimpleNamespace(x_root=x, y_root=y)
+        bubble._grab(press)
+        bubble._move(SimpleNamespace(x_root=x + 2, y_root=y))
+        self.assertEqual(str(line.cget("cursor")), "hand2", "a twitch is still a click")
+        bubble._move(SimpleNamespace(x_root=x + 40, y_root=y + 2))
+        self.assertEqual(str(line.cget("cursor")), "fleur", "dragged: the move cursor")
+        bubble._line_released(SimpleNamespace(x_root=x + 40, y_root=y + 2))
+        self.root.update()
+        self.assertTrue(bubble.minimized, "dragged: moved, not opened")
+        self.assertEqual(str(line.cget("cursor")), "hand2", "let go: a hand again")
+        bubble._grab(press)
+        bubble._line_released(SimpleNamespace(x_root=x + 1, y_root=y))
+        self.root.update()
+        self.assertFalse(bubble.minimized, "clicked: open")
+        self.assertEqual(str(line.cget("cursor")), "hand2", "open: a hand, a click minimises it")
+        # The user, 2026-11-08: "最大化的时候也可以点击非按钮的header位置变成最小化".
+        bubble._grab(press)
+        bubble._move(SimpleNamespace(x_root=x + 40, y_root=y + 2))
+        bubble._line_released(SimpleNamespace(x_root=x + 40, y_root=y + 2))
+        self.root.update()
+        self.assertFalse(bubble.minimized, "open and dragged: moved, not minimised")
+        bubble._grab(press)
+        bubble._line_released(SimpleNamespace(x_root=x, y_root=y))
+        self.root.update()
+        self.assertTrue(bubble.minimized, "open and clicked: minimised")
+
     def test_minimised_to_a_bar_nothing_lost_closed_a_new_one(self) -> None:
         # The user, 2026-11-03: a bar when minimised, all of it back when
         # expanded; closed, the next one opened is a new conversation.
@@ -970,8 +1064,8 @@ class TheBubbleTests(unittest.TestCase):
         self.assertTrue(bubble.minimized)
         self.assertLess(bubble.window.winfo_height(), tall / 2, "only its line: a bar")
         self.assertFalse(bubble.row.winfo_ismapped())
-        self.assertEqual(bubble.window.winfo_y() + bubble.window.winfo_height(), bottom,
-                         "its bottom where it was")
+        self.assertNotEqual(bottom, None)    # it goes to the screen's corner (2026-11-07): see
+        # test_minimised_it_goes_to_the_bottom_right_corner_and_comes_back
         # An answer that comes meanwhile: the bar stays a bar, its dot lit.
         bubble._write("Fern", "agent", "And the tomatoes too.")
         self.root.update()

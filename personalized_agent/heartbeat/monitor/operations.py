@@ -352,6 +352,20 @@ class ProjectMatcher:
                     out[cls] += share * seen * present
         return dict(out)
 
+    def seconds_for(self, items: Mapping[str, float], cls: str) -> float:
+        """How long, of these, was spent on what is this class's: each operation that speaks for
+        it (as in `scores`), for its seconds."""
+        out = 0.0
+        for item, seconds in _as_operations(items).items():
+            per = self._minutes.get(item)
+            if not per or cls not in per:
+                continue
+            rate = {one: minutes / max(1, self._windows_in[one]) for one, minutes in per.items()}
+            total = sum(rate.values())
+            if total and rate[cls] / total >= SPECIFICITY and self.evidence(item, cls) > 0:
+                out += float(seconds or 0)
+        return out
+
     def match(self, items: Union[Mapping[str, float], Iterable[str]],
               start: Optional[datetime] = None) -> Optional[Tuple[str, float]]:
         """(class, score) - or None when no class speaks clearly. ``start`` is

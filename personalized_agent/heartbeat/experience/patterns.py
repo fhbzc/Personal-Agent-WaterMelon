@@ -706,7 +706,13 @@ class PatternBuilder:
                 self.store.save_pattern(principle)
         principles = [p for p in principles if p["members"]]
         placed = {one for p in principles for one in p["members"]}
-        unplaced = [p for p in patterns if p["id"] not in placed]
+        # Patterns whose placing failed, as they are worded: not asked again the same way.
+        held = {p["id"] for p in patterns if p["id"] not in placed and principles
+                and self.store.db.query("SELECT 1 FROM experience_marks WHERE task_id = ? AND "
+                                        "scope = ?", (self._place_failed(p), self.store.scope))}
+        unplaced = [p for p in patterns if p["id"] not in placed and p["id"] not in held]
+        if held:
+            report["held_back"] = sorted(held)
         if principles and not unplaced:
             self._reword_principles(principles, by_pattern, budget, report)
             report["principles"] = len(principles)
@@ -732,31 +738,57 @@ class PatternBuilder:
                       .replace("{most}", str(self.principles_most)))
             answered, writer = self._ask(prompt, lines, tokens=4000)
             report["calls"] += 1
-            made = answered.get("principles") or []
-            existing: Dict[str, Dict[str, Any]] = {}
+            made_by = [(one, writer) for one in answered.get("principles") or []]
         else:
-            lines = ("THE PRINCIPLES:\n" + "\n".join(
-                f"- [{p['id']}] {p['statement']}" for p in principles)
-                + "\n\nTHE NEW PATTERNS:\n" + "\n".join(
-                f"- [{p['id']}] ({len(p['members'])}) {p['statement']}"
-                for p in unplaced))
-            answered, writer = self._ask(worded(PLACE_PROMPT, self.kind),
-                                         lines, tokens=3000)
-            report["calls"] += 1
+            from ...models import answers
+
+            def ask(part: Sequence[Dict[str, Any]]) -> Any:
+                if report["calls"] >= budget:        # the halves count against the budget too
+                    return answers.Answer(data=None, cut=False, text="")
+                said = ("THE PRINCIPLES:\n" + "\n".join(
+                    f"- [{p['id']}] {p['statement']}" for p in principles)
+                    + "\n\nTHE NEW PATTERNS:\n" + "\n".join(
+                    f"- [{p['id']}] ({len(p['members'])}) {p['statement']}" for p in part))
+                read, writer = self._read(worded(PLACE_PROMPT, self.kind), said, tokens=3000)
+                report["calls"] += 1
+                read.writer = writer
+                return read
             existing = {p["id"]: p for p in principles}
-            for pattern_id, principle_id in (answered.get("placed") or {}).items():
-                if pattern_id in by_pattern and principle_id in existing and \
-                        pattern_id not in placed and \
-                        principle_id not in not_under.get(pattern_id, ()):
-                    existing[principle_id]["members"].append(pattern_id)
-                    placed.add(pattern_id)
-                    took.add(principle_id)
-            made = answered.get("new_principles") or []
-        for said in made:
+            made_by = []
+            for part, read in answers.in_parts(unplaced, ask):
+                # NOT ANSWERED, NOT PLACED (2026-11-07): an answer cut off (asked again in halves)
+                # or unreadable puts nothing under a principle by vector as if the model had left
+                # it out. Answered and failed at its smallest: recorded and moved past, not asked
+                # again the same way - until the pattern is worded anew. Not asked (no budget):
+                # the next round.
+                if not read.ok:
+                    held.update(one["id"] for one in part)
+                    if read.response is not None:
+                        log.info("%d new pattern(s) failed to be placed: %s", len(part),
+                                 read.why_not)
+                        report.setdefault("failed", []).append(
+                            {"patterns": [one["id"] for one in part], "why": read.why_not})
+                        for one in part:
+                            self.store.set_mark(self._place_failed(one), [read.why_not], [])
+                    else:
+                        report["unfinished"] = "principles still to place"
+                    continue
+                answered = read.data or {}
+                for pattern_id, principle_id in (answered.get("placed") or {}).items():
+                    if pattern_id in {one["id"] for one in part} and principle_id in existing \
+                            and pattern_id not in placed and \
+                            principle_id not in not_under.get(pattern_id, ()):
+                        existing[principle_id]["members"].append(pattern_id)
+                        placed.add(pattern_id)
+                        took.add(principle_id)
+                made_by += [(one, getattr(read, "writer", {}))
+                            for one in answered.get("new_principles") or []]
+        for said, writer in made_by:
             if not isinstance(said, dict) or not said.get("statement"):
                 continue
             members = [one for one in said.get("patterns") or []
-                       if one in by_pattern and one not in placed]
+                       if one in by_pattern and one not in placed
+                       and one not in held]
             if not members:
                 continue
             placed.update(members)
@@ -769,8 +801,9 @@ class PatternBuilder:
         if not principles:
             report["unfinished"] = "the principles came back empty"
             return
-        # A pattern the model left out goes with the nearest principle.
-        for pattern in [p for p in patterns if p["id"] not in placed]:
+        # A pattern the model left out goes with the nearest principle - not one it did not
+        # answer for.
+        for pattern in [p for p in patterns if p["id"] not in placed and p["id"] not in held]:
             mine = centre(pattern["members"], vectors)
             allowed = [pr for pr in principles
                        if pr.get("id") not in not_under.get(pattern["id"], ())]
@@ -859,10 +892,22 @@ class PatternBuilder:
                                  written_by=self._named(principle, writer))
                 self.store.save_pattern(principle)
 
+    def _place_failed(self, pattern: Dict[str, Any]) -> str:
+        """The mark of a pattern whose placing failed, as it is worded (2026-11-07)."""
+        import hashlib
+        worded_as = hashlib.sha256(str(pattern.get("statement") or "").encode("utf-8"))
+        return f"place-failed:{self.kind}:{pattern['id']}:{worded_as.hexdigest()[:12]}"
+
     def _ask(self, prompt: str, items: str, tokens: int = 800
              ) -> Tuple[Dict[str, Any], Dict[str, str]]:
+        read, writer = self._read(prompt, items, tokens)
+        return (read.data or {}) if read.ok else {}, writer
+
+    def _read(self, prompt: str, items: str, tokens: int = 800) -> Tuple[Any, Dict[str, str]]:
+        """The model's answer, read (models/answers.py), and who wrote it."""
+        from ...models import answers
         if self.models is None:
-            return {}, {}
+            return answers.Answer(data=None, cut=False, text=""), {}
         from ...models.base import ModelRequest
         try:
             response = self.models.invoke(
@@ -876,10 +921,10 @@ class PatternBuilder:
                 role="heartbeat")
         except Exception as exc:          # pragma: no cover - a call
             log.info("could not name a pattern: %s", exc)
-            return {}, {}
+            return answers.Answer(data=None, cut=False, text=""), {}
         from .store import count_use
         count_use(self.used, response)
-        return (_as_json(getattr(response, "text", "") or ""),
+        return (answers.read(response, parse=answers.json_of),
                 {"model": str(getattr(response, "model", "") or ""),
                  "provider": str(getattr(response, "provider", "") or ""),
                  "at": now()})

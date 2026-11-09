@@ -149,15 +149,26 @@ project's own words and set "continues" to that project's id; otherwise "continu
 For each task: "title" (an imperative line naming the thing, at most 15 words), "summary" \
 (one or two plain sentences: what was done in this stretch), "kind" ("work", "leisure", or \
 "routine" = keeping up with messages, mail, feeds, chores), "continues", "states" (the state \
-ids), and "title_display" and "summary_display": the same title and summary in the user's \
-display language.
+ids), "title_display" and "summary_display": the same title and summary in the user's \
+display language, and "resources".
+
+"resources" - WHAT OF THIS WORK IS KEPT WHERE, for someone coming back to it after days: \
+the folders, files, repositories, documents, pages and channels the work itself uses, each \
+with a few words of what it is ("the analysis scripts", "the draft of the paper", "where the \
+team discusses it"), in the user's display language. "where" is copied exactly from the \
+places of the task's states. "kind" is one of: "main" (the folder or repository the work \
+lives in - at most one), "code", "data", "document", "page", "chat", "other". Only what the \
+work uses: a link someone posted in a chat or a feed, passed on the way, is not the work's. \
+At most 6; [] when the places say nothing of the kind.
 
 Answer with JSON only:
 {"lines": {"<project id>": {"title": "...", "title_display": "...", "line": "...",
                             "line_display": "..."}},
  "tasks": [{"title": "...", "summary": "...", "title_display": "...",
             "summary_display": "...", "kind": "work", "continues": "",
-            "states": ["s1", "s2"]}]}"""
+            "states": ["s1", "s2"],
+            "resources": [{"kind": "main", "where": "D:\\\\work\\\\orchard-survey",
+                           "what": "the survey's folder"}]}]}"""
 
 #: Only the names, for the projects still waiting for one when a run's
 #: stretches are written - all of them in one call (NAMES_PER_CALL a call).
@@ -312,7 +323,7 @@ class RunTasks:
 
     COLUMNS = ("id", "scope", "run_id", "written_at", "title", "summary",
                "title_display", "summary_display", "kind", "states", "minutes",
-               "starts_at", "ends_at", "places", "continues", "project_id")
+               "starts_at", "ends_at", "places", "continues", "project_id", "resources")
 
     def __init__(self, db: Any, scope: str = "live") -> None:
         self.db = db
@@ -326,7 +337,7 @@ class RunTasks:
                     "INSERT OR REPLACE INTO state_run_tasks (id, scope, run_id, "
                     "written_at, title, summary, title_display, summary_display, "
                     "kind, states, minutes, starts_at, ends_at, places, continues, "
-                    "project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "project_id, resources) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (task["id"], self.scope, task.get("run_id", ""),
                      task.get("written_at") or iso(now()), task.get("title", ""),
                      task.get("summary", ""), task.get("title_display", ""),
@@ -335,7 +346,8 @@ class RunTasks:
                      float(task.get("minutes") or 0.0), task.get("starts_at") or None,
                      task.get("ends_at") or None,
                      json.dumps(dict(task.get("places") or {})),
-                     task.get("continues", ""), task.get("project_id", "")))
+                     task.get("continues", ""), task.get("project_id", ""),
+                     json.dumps(list(task.get("resources") or []), ensure_ascii=False)))
                 written += 1
             except Exception:  # pragma: no cover - a lost row, not a lost run
                 log.debug("could not keep run task %s", task.get("id"), exc_info=True)
@@ -363,6 +375,7 @@ class RunTasks:
             row = dict(row)
             row["states"] = _loads(row.get("states"), [])
             row["places"] = _loads(row.get("places"), {})
+            row["resources"] = _loads(row.get("resources"), [])
             row["minutes"] = float(row.get("minutes") or 0.0)
             out.append(row)
         return out
@@ -461,7 +474,8 @@ def stretch_text(states: Sequence[Any], minutes: Dict[str, float],
             getattr(state, "ends_at", None))
         when = (f"{began.astimezone():%m-%d %H:%M}-{(ended or began).astimezone():%H:%M}"
                 if began else "")
-        where = "; ".join(one[:80] for one in state_places(state)[:3])
+        # Enough of each for a task's resources to be copied from (the user, 2026-11-07).
+        where = "; ".join(one[:PLACE_SHOWN] for one in state_places(state)[:PLACES_SHOWN])
         lines.append("|".join([
             short[sid], when, f"{minutes.get(sid, 0):.0f}m",
             str(metadata.get("kind") or "?"),
@@ -503,6 +517,72 @@ def needing_text(needing: Dict[str, str], tasks_of: Dict[str, List[Dict[str, Any
     return "\n".join(out)
 
 
+#: WHAT OF A PIECE OF WORK IS KEPT WHERE (the user, 2026-11-07: "stateheartbeat要对project的resource
+#:做一个总结分类（什么东西放在哪里)"): each task's, as its writer saw them in its states' places.
+RESOURCE_KINDS = ("main", "code", "data", "document", "page", "chat", "other")
+#: At most this many a task, and a project shows this many.
+MOST_RESOURCES, PROJECT_RESOURCES = 6, 14
+#: Each state's places shown to the writer: this many, this long.
+PLACES_SHOWN, PLACE_SHOWN = 5, 120
+
+
+def _comparable(place: str) -> str:
+    return re.sub(r"[\/]+$", "", str(place or "").strip().replace("\\", "/")).lower()
+
+
+def read_resources(said: Any, places: Sequence[str]) -> List[Dict[str, str]]:
+    """A task's resources, held to its states' places: a place written that none of them is or
+    holds is left out - the writer copies places, it does not find new ones."""
+    known = [_comparable(one) for one in places if one]
+    out: List[Dict[str, str]] = []
+    seen: set = set()
+    for one in said if isinstance(said, list) else []:
+        if not isinstance(one, dict):
+            continue
+        where = str(one.get("where") or "").strip()[:300]
+        key = _comparable(where)
+        if not key or key in seen or not any(
+                place == key or place.startswith(key + "/") for place in known):
+            continue
+        kind = str(one.get("kind") or "other").strip().lower()
+        if kind == "main" and any(row["kind"] == "main" for row in out):
+            kind = "other"
+        seen.add(key)
+        out.append({"kind": kind if kind in RESOURCE_KINDS else "other", "where": where,
+                    "what": str(one.get("what") or "").strip()[:160]})
+        if len(out) >= MOST_RESOURCES:
+            break
+    return out
+
+
+def resources_of(tasks: Sequence[Dict[str, Any]], most: int = PROJECT_RESOURCES
+                 ) -> List[Dict[str, Any]]:
+    """A PROJECT'S RESOURCES, from its tasks newest first: each place once, as its latest task
+    said it, with how many tasks used it; its main folder first, then by kind and use."""
+    found: Dict[str, Dict[str, Any]] = {}
+    for task in tasks:
+        for one in task.get("resources") or []:
+            if not isinstance(one, dict) or not one.get("where"):
+                continue
+            key = _comparable(one["where"])
+            if key in found:
+                found[key]["tasks"] += 1
+                if not found[key]["what"] and one.get("what"):
+                    found[key]["what"] = str(one["what"])
+                continue
+            found[key] = {"kind": str(one.get("kind") or "other"), "where": str(one["where"]),
+                          "what": str(one.get("what") or ""), "tasks": 1,
+                          "last": str(task.get("ends_at") or task.get("written_at") or "")}
+    # The one most tasks were in; of those, the newest (the tasks come newest first).
+    mains = sorted((one for one in found.values() if one["kind"] == "main"),
+                   key=lambda one: -one["tasks"])
+    for extra in mains[1:]:
+        extra["kind"] = "other"
+    order = {kind: at for at, kind in enumerate(RESOURCE_KINDS)}
+    return sorted(found.values(), key=lambda one: (order.get(one["kind"], 99), -one["tasks"],
+                                                   one["where"].lower()))[:most]
+
+
 def read_tasks(answer: Dict[str, Any], states: Sequence[Any],
                short: Dict[str, str], project_of_label: Dict[str, str]
                ) -> List[Dict[str, Any]]:
@@ -512,6 +592,7 @@ def read_tasks(answer: Dict[str, Any], states: Sequence[Any],
     project."""
     by_short = {label: sid for sid, label in short.items()}
     known = {str(getattr(state, "id", "")) for state in states}
+    by_id = {str(getattr(state, "id", "")): state for state in states}
     placed: set = set()
     out: List[Dict[str, Any]] = []
     for task in answer.get("tasks") or []:
@@ -534,7 +615,9 @@ def read_tasks(answer: Dict[str, Any], states: Sequence[Any],
             "summary_display": str(task.get("summary_display") or "").strip()[:800],
             "kind": kind if kind in KINDS else "work",
             "continues": project_of_label.get(said, ""),
-            "states": ids})
+            "states": ids,
+            "resources": read_resources(task.get("resources"), [
+                place for sid in ids for place in state_places(by_id.get(sid))])})
     left = [str(getattr(state, "id", "")) for state in states
             if str(getattr(state, "id", "")) not in placed]
     for sid in left:
@@ -828,4 +911,5 @@ def _loads(text: Any, fallback: Any) -> Any:
 __all__ = ["SCHEME", "RunTasks", "WRITER_SYSTEM", "LINES_SYSTEM", "group", "inherit",
            "typical", "worked_minutes", "read_tasks", "read_lines", "louvain",
            "state_places", "directories", "WINDOW_DAYS", "WINDOW_HOURS", "SLICE_HOURS",
-           "RELINK_SYSTEM", "relink_text", "read_links"]
+           "RELINK_SYSTEM", "relink_text", "read_links", "read_resources", "resources_of",
+           "RESOURCE_KINDS"]

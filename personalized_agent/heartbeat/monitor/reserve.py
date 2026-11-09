@@ -2,8 +2,9 @@
 that a moment needs no search. The module `recommendation`: off, nothing here runs, no model is
 asked, and the Monitor's recommendations stop with it.
 
-  - WHAT COMES IN: what an issue of the Newspaper found and did not print, and what the heartbeat's
-    step finds on the web. Each is told at most once.
+  - WHAT COMES IN: everything an issue of the Newspaper found, printed or not (the user,
+    2026-11-07: "报纸找到的都要推，因为用户可能不看报纸"), and what the heartbeat's step finds on the
+    web. Each is told at most once.
   - MADE READY BY THE MODEL, once a while (`due`): what it is, from what angle it is worth telling,
     why, and the words that would set it off - proper names once, concept words in Chinese and in
     English. WHAT THE USER ANSWERED EARLIER IS ITS CONTEXT: the lessons hold the whole chain of
@@ -23,9 +24,10 @@ asked, and the Monitor's recommendations stop with it.
   - ALREADY SEEN IS NEVER RECOMMENDED, as in the Newspaper: at every heartbeat what the user has
     read, by its address or by the same title, is marked not to be told (`mark_seen`), and it is
     looked at once more just before anything is sent (`still_fresh`).
-  - THE SAME LINK IS NEVER TOLD TWICE (the user, 2026-11-06), by code and exactly: two links are
-    the same when their `link_key` is. This table is the record of every link recommended, however
-    it was, and of every link an issue printed (`told_before`, `told_link`).
+  - THE SAME LINK IS NEVER RECOMMENDED TWICE (the user, 2026-11-06), by code and exactly: two links
+    are the same when their `link_key` is. This table is the record of every link recommended,
+    however it was (`told_before`, `told_link`). One an issue printed is not one recommended (the
+    user, 2026-11-07: "报纸印过的不算"); one the user read is not told.
 
 NO LIMIT A DAY (the user, 2026-11-05: "我没有强制的上限，只是看模型愿不愿意推"): the model is told
 which of the day this one would be, and that number is part of the lesson.
@@ -53,6 +55,15 @@ RAW, READY, TOLD, SEEN, DROPPED = "raw", "ready", "told", "seen", "dropped"
 MOST_AT_ONCE = 12
 #: Fewer ready than this, and the step looks for more on its own. Deep: most is never set off.
 MOST_READY = 100
+#: ALREADY ON ONE OF THEIR PAGES (the user, 2026-11-08: a paper recommended sixteen seconds after
+#: its link was posted in the Slack channel they had open - "如果已经在我的某个页面上的东西也不推"):
+#: its link, or the paper's own number, on their screen in these last days, is not told.
+ON_SCREEN_DAYS = 7
+#: The number a paper goes by in its link: arXiv's, and a DOI.
+PAPER_NUMBER = re.compile(r"(?:arxiv\.org/(?:abs|pdf|html)/)([0-9]{4}\.[0-9]{4,5})|"
+                          r"(?:doi\.org/)(10\.[0-9]{4,9}/[^\s?#]+)", re.I)
+#: Kept once what was put aside for being printed was made to wait again.
+PRINTED_BACK = "monitor.reserve.printed_taken_back_2026_11_07"
 #: How long something stays good, in days: when the model does not say, and at the most.
 VALID_DAYS, MOST_VALID_DAYS = 30, 30
 #: Hours between two looks: never fewer, never more, and how many when the model does not say.
@@ -64,6 +75,8 @@ LAST_RUN = "reserve.last_run"
 NEXT_LOOK = "reserve.next_look"
 LAST_REASONS = "reserve.last_reasons"
 WORK_LOOKED_AT = "reserve.work_looked_at"
+#: The last look whose answer was cut off or unreadable: when, why, what it dropped (2026-11-07).
+LAST_FAILED = "reserve.last_failed"
 #: What in a link only says how someone came to the page. Named: anything else may be the page.
 _TRACKING = re.compile(r"(?i)^(utm_\w+|fbclid|gclid|msclkid|mc_cid|mc_eid|igshid|spm|ref_src)$")
 
@@ -109,6 +122,13 @@ answered. Learn from them what ANGLE is worth their time and which words set off
 - "proper": names that are written the same in any language: people, products, places.
 - "zh" and "en": the concept words, in Chinese and in English. Words the page they would be reading
   would really contain, not general ones like "research" or "工作".
+- WORDS RARE ON THEIR SCREENS SET IT OFF; COMMON ONES DO NOT: each word weighs by how seldom this user
+  sees it, and words they see all day (WORDS TOO COMMON, below) count next to nothing - a match on
+  those alone is no match. Give more of the rare: names of people, papers, tools; an exact phrase
+  of its title; an unusual term of its subject - at least two of them for each item.
+- "things": the exact titles of what it points to - each video's, paper's, article's or post's
+  title, word for word as a page would show it (a channel's page, a feed, the original). What is
+  already in front of the user is never told, under whatever address: these are how it is known.
 - "valid_days": how long its trigger stays good, 30 at the most. News, a few days; a lasting
   subject, the 30. Past that you are asked again.
 - "for": the title of the piece of work under THE WORK GOING ON that it serves, as written there;
@@ -125,8 +145,46 @@ answered. Learn from them what ANGLE is worth their time and which words set off
 Answer with JSON alone:
 {"items": [{"from": "the id given, or empty for one you found", "title": "...", "url": "...",
  "detail": "what it says, two lines", "angle": "...", "why": "...",
- "proper": ["..."], "zh": ["..."], "en": ["..."], "valid_days": 30, "for": "..."}],
+ "proper": ["..."], "zh": ["..."], "en": ["..."], "things": ["..."], "valid_days": 30,
+ "for": "..."}],
  "extend": [{"id": "the id given", "valid_days": 30}], "next_look_hours": 6}"""
+
+
+#: A title as short as this is no proof of anything: not looked for.
+THING_LEAST = 8
+#: What is quoted in an item's own words - each kind of mark by its own pair; a plain ' only where it
+#: opens after a space and closes before a stop, so "haven't" is no quote.
+QUOTED = [re.compile(one % THING_LEAST) for one in (
+    r"(?:^|(?<=[\s(:]))'([^']{%d,160})'(?=[\s,.;:)!?]|$)",
+    r"‘([^’]{%d,160})’", r"“([^”]{%d,160})”", r"「([^」]{%d,160})」", r"《([^》]{%d,160})》",
+    r'"([^"]{%d,160})"')]
+
+
+def _things(said: Any) -> List[str]:
+    """The titles of what an item points to, as kept: words each, the short left out."""
+    return [one for one in dict.fromkeys(" ".join(str(one or "").split())
+                                         for one in (said or []) if isinstance(one, str))
+            if len(one) >= THING_LEAST][:12]
+
+
+def things_of(item: Dict[str, Any]) -> List[str]:
+    """WHAT IT POINTS TO, BY ITS TITLES (the user, 2026-11-08: a cast recommended as its channel's
+    page showed it): those the model gave, else what is quoted in its own words."""
+    said = item.get("things") or []
+    if isinstance(said, str):                # as kept in the table
+        try:
+            said = json.loads(said or "[]")
+        except ValueError:
+            said = []
+    kept = _things(said if isinstance(said, list) else [])
+    if kept:
+        return kept
+    words = f"{item.get('title') or ''} {item.get('detail') or ''}"
+    return _things(found.group(1) for pattern in QUOTED for found in pattern.finditer(words))
+
+
+def _plain(text: str) -> str:
+    return " ".join(str(text or "").lower().split())
 
 
 def link_key(url: Any) -> str:
@@ -150,6 +208,11 @@ def _words(values: Any) -> List[str]:
         if word and len(word) <= LONGEST_WORD and word not in out:
             out.append(word)
     return out[:MOST_WORDS]
+
+
+def _common() -> float:
+    from .match import COMMON
+    return COMMON
 
 
 def keywords_of(answer: Dict[str, Any]) -> Dict[str, List[str]]:
@@ -226,7 +289,7 @@ class Reserve:
         with self.db.write() as conn:
             conn.executescript(SCHEMA)
             columns = {row[1] for row in conn.execute("PRAGMA table_info(reserve_items)")}
-            for column in ("expires_at", "for_work"):
+            for column in ("expires_at", "for_work", "things"):
                 if column not in columns:
                     conn.execute(f"ALTER TABLE reserve_items ADD COLUMN {column} TEXT NOT NULL "
                                  "DEFAULT ''")
@@ -318,40 +381,53 @@ class Reserve:
         at = utcnow().isoformat()
         self.db.execute(
             "INSERT INTO reserve_items (id, at, source, status, title, url, url_key, title_key, "
-            "detail, angle, why, keywords, for_work, prepared_at, expires_at) VALUES "
-            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "detail, angle, why, keywords, for_work, prepared_at, expires_at, things) VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (ident, at, str(source), status, title, str(url or "")[:1000], address, name,
              str(detail or "")[:1200], str(made.get("angle") or "")[:400],
              str(made.get("why") or "")[:600],
              json.dumps(made.get("keywords") or {}, ensure_ascii=False),
              str(made.get("for_work") or ""),
              at if status == READY else "",
-             _until(utcnow(), made.get("valid_days")) if status == READY else ""))
+             _until(utcnow(), made.get("valid_days")) if status == READY else "",
+             json.dumps(_things(made.get("things")), ensure_ascii=False)))
         return ident
 
     # -- what comes from the Newspaper -------------------------------------------------
     def from_the_issue(self, stories: Iterable[Dict[str, Any]], printed: Iterable[Dict[str, Any]],
                        shown: Optional[Set[str]] = None) -> int:
-        """What an issue left over comes in; what it printed the user has been shown."""
+        """EVERYTHING AN ISSUE FOUND COMES IN, PRINTED OR NOT (the user, 2026-11-07): the user may
+        never open the paper. What they read is still left out (`add`). `shown` is no longer
+        what keeps one out: printed is not told."""
         if not self.enabled():
             return 0
-        shown = shown or set()
         printed = list(printed)
-        for one in printed:
-            address, name = _keys(_address(one), one.get("title"))
-            if address and not self._known(address, ""):
-                self._put(str(one.get("title") or ""), _address(one), source="printed in an issue")
-            self._mark(address, name, "newspaper")
         ids = {one.get("id") for one in printed}
         added = 0
-        for one in stories:
-            url = _address(one)
-            if one.get("id") in ids or (url and _keys(url, "")[0] in shown):
-                continue
-            if self.add(str(one.get("title") or ""), url, str(one.get("detail") or ""),
-                        source="what an issue of the newspaper left over"):
+        for one in [*printed, *(one for one in stories if one.get("id") not in ids)]:
+            if self.add(str(one.get("title") or ""), _address(one),
+                        str(one.get("detail") or one.get("summary") or ""),
+                        source=("printed in an issue of the newspaper" if one.get("id") in ids
+                                else "found by an issue of the newspaper")):
                 added += 1
         return added
+
+    def take_back_the_printed(self) -> int:
+        """ONCE (2026-11-07): what was put aside only for being printed in an issue - never read -
+        made to wait again, while young enough to be told."""
+        if self._kept(PRINTED_BACK):
+            return 0
+        since = (utcnow() - timedelta(days=VALID_DAYS)).isoformat()
+        rows = self.db.query("SELECT id, url_key, title_key FROM reserve_items WHERE status = ? "
+                             "AND seen_how = 'newspaper' AND at >= ?", (SEEN, since))
+        back = 0
+        for row in rows:
+            if not self._read(row["url_key"], row["title_key"]):
+                self.db.execute("UPDATE reserve_items SET status = ?, seen_at = '', seen_how = '' "
+                                "WHERE id = ?", (RAW, row["id"]))
+                back += 1
+        self._keep(PRINTED_BACK, utcnow().isoformat())
+        return back
 
     def _mark(self, address: str, name: str, how: str) -> None:
         at = utcnow().isoformat()
@@ -375,26 +451,71 @@ class Reserve:
                 done += 1
         return done
 
-    def still_fresh(self, ident: str) -> bool:
-        """Looked at once more, just before it is sent."""
+    def still_fresh(self, ident: str, words: str = "") -> bool:
+        """Looked at once more, just before it is sent: still good, not read - and not on their
+        screen now (`words`) nor in these last days (`on_screen`)."""
         one = self.get(ident)
         if one is None or one["status"] != READY or \
                 one["expires_at"] <= datetime.now(timezone.utc).isoformat():
             return False
-        how = self._read(one["url_key"], one["title_key"])
+        how = self._read(one["url_key"], one["title_key"]) or (
+            "on their screen" if self.on_screen(one.get("url"), words, things=things_of(one))
+            else "")
         if how:
             self._mark(one["url_key"], one["title_key"], how)
             return False
         return True
 
+    def on_screen(self, url: Any, words: str = "", days: float = ON_SCREEN_DAYS,
+                  things: Any = ()) -> bool:
+        """WHETHER IT IS ON ONE OF THEIR PAGES ALREADY: its link - or the paper's number - in what
+        they see now, or in what their screen showed in the last `days`: a chat it was posted in,
+        a mail, a page that links it. By code: no model."""
+        # ITS LINK, ITS PAPER'S NUMBER - AND THE TITLES OF WHAT IT POINTS TO, word for word
+        # (`things_of`): on a page of another address too (a channel's, a feed).
+        needles = self._needles(url) + [_plain(one) for one in things or [] if
+                                        len(_plain(one)) >= THING_LEAST]
+        if not needles:
+            return False
+        seen = _plain(words)
+        if any(needle in seen for needle in needles):
+            return True
+        since = (utcnow() - timedelta(days=days)).isoformat()
+        for needle in needles:
+            try:
+                if self.db.query_one(
+                        "SELECT 1 FROM raw_events WHERE timestamp >= ? AND event_type IN "
+                        "('screen.text', 'browser.navigation', 'window.focus') AND "
+                        "LOWER(data) LIKE ? LIMIT 1", (since, f"%{needle}%")):
+                    return True
+            except Exception:              # pragma: no cover - no screen kept here
+                log.debug("the screen could not be looked through", exc_info=True)
+                return False
+        return False
+
+    @staticmethod
+    def _needles(url: Any) -> List[str]:
+        """What a link is found on a screen by: itself without its scheme, and the paper's number
+        when it has one - at least eight characters each, so nothing short matches by chance."""
+        out = []
+        key = link_key(url)
+        if key:
+            out.append(key.lower())
+        found = PAPER_NUMBER.search(str(url or ""))
+        if found:
+            out.append((found.group(1) or found.group(2)).lower())
+        return [one for one in dict.fromkeys(out) if len(one) >= 8]
+
     def told_before(self, url: Any) -> bool:
-        """Exactly this link, told before or printed in an issue, or read. By code: no model."""
+        """Exactly this link, recommended before, or read - or on their screen already
+        (`on_screen`). Printed in an issue is neither. By code: no model."""
         address = link_key(url)
         if not address:
             return False
         return bool(self._read(address, "") or self.db.query_one(
-            "SELECT 1 FROM reserve_items WHERE url_key = ? AND status IN (?, ?)",
-            (address, TOLD, SEEN)))
+            "SELECT 1 FROM reserve_items WHERE url_key = ? AND (status = ? OR (status = ? AND "
+            "COALESCE(seen_how, '') != 'newspaper'))", (address, TOLD, SEEN))
+            or self.on_screen(url))
 
     def told_link(self, title: str, url: Any, notification_id: str = "") -> None:
         """A link recommended from outside the reserve, kept so that it is not told again."""
@@ -491,6 +612,9 @@ class Reserve:
         if not self.enabled():
             return {}
         report: Dict[str, Any] = {"seen": self.mark_seen()}
+        back = self.take_back_the_printed()
+        if back:
+            report["printed_taken_back"] = back
         if asks:
             work = decider._tasks()
             if self.due(now, work):
@@ -498,18 +622,32 @@ class Reserve:
         words = self.trigger_words(now)
         if self.rarity.due(words, now):
             report["rarity_documents"] = self.rarity.refresh(words, now)
+        from .match import ASKS_PER_DAY, DIRECT_PER_DAY, move_line
+        moved = move_line(self.db, int(self.config.get("monitor_recommend_asks_per_day",
+                                                       ASKS_PER_DAY) or ASKS_PER_DAY), now,
+                          int(self.config.get("monitor_recommend_direct_per_day", DIRECT_PER_DAY)
+                              or DIRECT_PER_DAY))
+        if moved and (moved["line"], moved["high"]) != (moved["was"], moved["high_was"]):
+            report["line"] = moved
         return report
 
     def trigger_words(self, now: Optional[datetime] = None) -> List[str]:
         return [word for one in self.live(now) for kind in ("proper", "zh", "en")
                 for word in one["keywords"].get(kind) or []]
 
+    @staticmethod
+    def _lessons(decider: Any, query: str) -> str:
+        """The lessons for what is made ready, recorded as the reserve's."""
+        from ..lessons.retrieve import retrieval_site
+        with retrieval_site("reserve prepare"):
+            return decider.lessons_for(query)
+
     def prepare(self, decider: Any, now: Optional[datetime] = None,
                 reasons: Iterable[str] = ()) -> int:
         """One model call: what waits made ready, and what it found itself. Its lessons are the
         chains of what was recommended before. `reasons`: what said it was worth looking."""
         from ...runtime.web_guard import WebGuard
-        from .decide import _json
+        from .decide import _answer
         now = now or datetime.now(timezone.utc)
         self._keep(LAST_RUN, now.isoformat())
         self._keep(NEXT_LOOK, (now + timedelta(hours=LOOKING_HOURS)).isoformat())
@@ -518,8 +656,10 @@ class Reserve:
         waiting = self.items(RAW, MOST_AT_ONCE)
         past = self.past_its_time(now)
         work = decider._tasks()
-        query = "; ".join([*work[:6], *(one["title"] for one in waiting[:6])]) or \
-            "what to recommend to the user"
+        # THE CONTENT, NOT THE SITUATION (the user, 2026-11-07): the lessons are looked for by
+        # the work being prepared for and what waits to be made ready for it - with neither, by
+        # nothing, and none are given ("what to recommend to the user" matched every rule alike).
+        query = "; ".join([*work[:6], *(one["title"] for one in waiting[:6])])
         parts = [
             "WHY YOU ARE ASKED NOW:\n" + ("\n".join(f"- {one}" for one in reasons)
                                           or "- Nothing has changed; it is time for a look."),
@@ -531,16 +671,34 @@ class Reserve:
                 [{key: one[key] for key in ("id", "title", "angle", "why", "keywords")}
                  for one in past], ensure_ascii=False) if past else "Nothing."),
             "THE WORK GOING ON:\n" + ("\n".join(f"- {one}" for one in work) or "-"),
+            "WORDS TOO COMMON ON THEIR SCREENS to set anything off by themselves: "
+            + (", ".join(self.rarity.common(_common())) or "none counted yet"),
             "ALREADY READY, not to be repeated:\n" + ("\n".join(
                 f"- {one['title']}" for one in self.live(now, 120)) or "-"),
             "THE LESSONS - what was recommended before, how, and what they answered:\n"
-            + (decider.lessons_for(query) or "None learned yet."),
+            + (self._lessons(decider, query) or "None learned yet."),
         ]
         guard = WebGuard()
         searches = bool(self.config.get("monitor_recommend_search", True))
-        answer = _json(decider._ask(PREPARE_SYSTEM, "\n\n".join(parts), PREPARE_TASK, web=searches,
+        read = _answer(decider._ask(PREPARE_SYSTEM, "\n\n".join(parts), PREPARE_TASK, web=searches,
                                     max_tokens=4000, guard=guard))
         made = 0
+        if not read.ok:
+            # A FAILED LOOK IS MOVED PAST, NOT ASKED AGAIN THE SAME WAY (the user, 2026-11-07): what
+            # waited for it is dropped with why, what was past its time goes as an answer leaving
+            # it out would, the work counts as looked at, and the failure is kept (LAST_FAILED).
+            log.info("the reserve was not made ready: %s", read.why_not)
+            self._keep(LAST_FAILED, json.dumps({"at": now.isoformat(), "why": read.why_not,
+                                                "dropped": [one["id"] for one in waiting]},
+                                               ensure_ascii=False))
+            for one in waiting:
+                self.db.execute("UPDATE reserve_items SET status = ?, why = ? WHERE id = ? AND "
+                                "status = ?", (DROPPED, f"not made ready: {read.why_not}"[:600],
+                                               one["id"], RAW))
+            self._take({}, [], past, work, guard, now)
+            answer: Dict[str, Any] = {}
+        else:
+            answer = read.data or {}
         if "items" in answer or "extend" in answer:    # no answer to go by: nothing is dropped for it
             made = self._take(answer, waiting, past, work, guard, now)
         if "next_look_hours" in answer:
@@ -582,16 +740,18 @@ class Reserve:
                 kept.add(ident)
                 self.db.execute(
                     "UPDATE reserve_items SET status = ?, detail = ?, angle = ?, why = ?, keywords "
-                    "= ?, for_work = ?, prepared_at = ?, expires_at = ? WHERE id = ?",
+                    "= ?, for_work = ?, prepared_at = ?, expires_at = ?, things = ? WHERE id = ?",
                     (READY, str(one.get("detail") or given[ident]["detail"])[:1200],
                      str(one.get("angle") or "")[:400], str(one.get("why") or "")[:600],
                      json.dumps(keywords, ensure_ascii=False), serves, now.isoformat(),
-                     _until(now, one.get("valid_days")), ident))
+                     _until(now, one.get("valid_days")),
+                     json.dumps(_things(one.get("things")), ensure_ascii=False), ident))
                 made += 1
             elif self.add(title, url, str(one.get("detail") or ""),
                           source="what the heartbeat found on the web", status=READY,
                           angle=one.get("angle"), why=one.get("why"), keywords=keywords,
-                          valid_days=one.get("valid_days"), for_work=serves):
+                          valid_days=one.get("valid_days"), for_work=serves,
+                          things=_things(one.get("things"))):
                 made += 1
         for ident in set(given) - kept:
             self.db.execute("UPDATE reserve_items SET status = ? WHERE id = ?", (DROPPED, ident))

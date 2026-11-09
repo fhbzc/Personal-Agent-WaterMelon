@@ -10,6 +10,8 @@ in this computer's order - then that much JSON.
     {"type": "here", "browser": "Brave"}   -> {"ok": true}
     {"type": "delegate", "picked": {...}}  -> {"ok": true}
     {"type": "learn", "picked": {...}}     -> {"ok": true}
+    {"type": "fill-ask", "url": ...}       -> {"ok": true, "order"?: {"id", "parts": [...]}}
+    {"type": "fill-done", "id": ...}       -> {"ok": true}
 
 HERE: the extension is in that browser - so the agent's own icon beside
 selected text on Windows leaves that browser's pages to the extension's
@@ -82,6 +84,15 @@ def answer(message: Dict[str, Any], data_dir: Path,
         mark_seen(data_dir, str(message.get("browser") or ""),
                   store=from_store(caller, str(message.get("install") or "")))
         return {"ok": True}
+    if kind == "fill-ask":
+        # A PAGE JUST OPENED: the boxes the agent left it to fill, if it left any (fill.js).
+        from .browser_extension import take_fill_order
+        order = take_fill_order(data_dir, str(message.get("url") or ""), keep=True)
+        return {"ok": True, **({"order": order} if order else {})}
+    if kind == "fill-done":
+        # IT FILLED BOXES OF IT: the order let go of. Until then it stays, for the form after a sign-in.
+        from .browser_extension import finish_fill_order
+        return {"ok": finish_fill_order(data_dir, str(message.get("id") or ""))}
     if kind == "visible":
         from .browser_extension import keep_visible
         keep_visible(data_dir, str(message.get("title") or ""), str(message.get("text") or ""))

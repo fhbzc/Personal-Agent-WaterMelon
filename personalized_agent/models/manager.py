@@ -327,6 +327,22 @@ class ModelManager:
             return provider._efforts_of(model_id)
         return list(getattr(descriptor, "reasoning_efforts", None) or [])
 
+    def _output_limit(self, provider: Any, model_id: str, asked: int) -> int:
+        """ONE OUTPUT LIMIT FOR EVERY CALL (the user, 2026-11-07): the setting - at least 20000 -
+        whatever a call asked for, since a limit of a few hundred was cut off, or spent on the
+        model's thinking before a word was written, and its answer read as saying nothing; never
+        more than the model itself can write, where its catalog says."""
+        try:
+            limit = max(int(asked or 0), int(self.config.get("max_output_tokens", 20000) or 20000))
+        except (TypeError, ValueError):
+            limit = 20000
+        try:
+            descriptor = next((m for m in provider.list_models() if m.id == model_id), None)
+        except Exception:                               # pragma: no cover - its catalog away
+            descriptor = None
+        most = getattr(descriptor, "max_output_tokens", None)
+        return min(limit, int(most)) if most else limit
+
     def _as_configured(self, request: ModelRequest) -> ModelRequest:
         """THE MODEL'S OWN WEB SEARCH, WHERE IT HAS ONE - never a setting
         (the user, 2026-10-27): a provider with search of its own takes it in
@@ -733,6 +749,8 @@ class ModelManager:
             request = replace(request, messages=[
                 dict(message, content=without_pictures(message.get("content")))
                 for message in request.messages])
+        request = replace(request, max_tokens=self._output_limit(provider, resolved.model_id,
+                                                                 request.max_tokens))
         started = time.perf_counter()
         try:
             with self.tracer.span(

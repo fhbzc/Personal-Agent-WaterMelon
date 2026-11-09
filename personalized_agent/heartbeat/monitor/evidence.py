@@ -62,9 +62,14 @@ class Evidence:
         rules: List[str] = []
         retriever = self.retriever()
         if retriever is not None:
-            found_lessons = retriever.retrieve(("notifications", "general"),
-                                               about or str(found.get("purpose") or ""),
-                                               rules=6, examples=MOST_CASES // 2)
+            # WHAT THE CHANGE IS ABOUT (the user, 2026-11-07): what the model says it changes, and
+            # what the Activator is for - not its name or when it runs; in English first.
+            moment = " ".join(part for part in (str(about or ""), str(found.get("purpose") or ""))
+                              if part.strip())
+            found_lessons = retriever.retrieve(("notifications", "general"), moment,
+                                               rules=6, examples=MOST_CASES // 2,
+                                               rewrite_task="monitor_lessons_query",
+                                               site="monitor evidence")
             rules = [str(one["statement"]) for one in found_lessons["rules"]]
             for one in found_lessons["examples"]:
                 cases.append({"id": str(one.get("id")), "at": str(one.get("at") or "")[:16],

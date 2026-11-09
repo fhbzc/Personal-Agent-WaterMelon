@@ -115,10 +115,14 @@ class TheMatchTests(unittest.TestCase):
         self.assertEqual((hit["done"], hit["seen_by"]), ("not in what they can see", "ocr"))
         self.assertEqual(self.reserve.get(self.item)["status"], rs.READY, "nothing was told")
 
-    def test_what_could_not_be_read_leaves_a_trace_too(self) -> None:
+    def test_what_could_not_be_read_is_matched_on_what_appeared_and_sent(self) -> None:
+        """The user, 2026-11-07, "B": not known to be on the screen still, it is sent anyway -
+        matched on what appeared, waiting in the list by default."""
         with self._on_screen(""):
             self.rule.act("Tides", "browser", "", "tide table and spring tide")
-        self.assertEqual(self._hits()[0]["done"], "what they can see is not known")
+        hit = self._hits()[0]
+        self.assertEqual(hit["done"], "sent")
+        self.assertEqual(hit["seen_by"], "what appeared")
 
     def test_new_words_that_never_matched_leave_none(self) -> None:
         with self._on_screen("the top of the page"):
@@ -129,6 +133,58 @@ class TheMatchTests(unittest.TestCase):
         with self._on_screen(""):
             self.assertEqual(self.rule.act("Tides", "browser", "", "")["skipped"],
                              "what they can see is not known")
+
+    def test_moved_on_to_another_program_it_is_not_sent(self) -> None:
+        """The user, 2026-11-08: switched to a video, what matched is not on the screen."""
+        self.rule.activity = _Activity("A video")
+        self.rule.activity.get_active_window = lambda: SimpleNamespace(
+            title="A video", application="vlc.exe", pid=2)
+        with self._on_screen("") as read:
+            said = self.rule.act("Tides", "browser", "", "tide table and spring tide")
+        read.assert_not_called()
+        self.assertIn("moved on", said["skipped"])
+        hit = self._hits()[0]
+        self.assertEqual((hit["seen_by"], hit["done"]),
+                         ("switched", "they had moved on to another program or page"))
+        self.assertEqual(self.reserve.get(self.item)["status"], rs.READY, "nothing was told")
+
+    def test_another_tab_of_the_same_browser_is_another_page(self) -> None:
+        """A side agent's note, 2026-11-08: in one browser another tab is only another title."""
+        self.rule.activity.get_active_window = lambda: SimpleNamespace(
+            title="Cat videos - YouTube - Mozilla Firefox", application="firefox.exe", pid=1)
+        said = self.rule.act("Tides - Mozilla Firefox", "firefox.exe", "", "tide table and spring tide")
+        self.assertIn("moved on", said["skipped"])
+        self.assertEqual(self._hits()[0]["seen_by"], "switched")
+
+    def test_the_same_window_unread_is_still_sent_on_what_appeared(self) -> None:
+        self.rule.activity.get_active_window = lambda: SimpleNamespace(
+            title="Tides - Mozilla Firefox", application="firefox.exe", pid=1)
+        with self._on_screen(""):
+            self.rule.act("Tides - Mozilla Firefox", "firefox.exe", "", "tide table and spring tide")
+        self.assertEqual((self._hits()[0]["seen_by"], self._hits()[0]["done"]), ("what appeared", "sent"))
+
+    def test_a_coding_agents_conversation_counts_only_while_it_is_on_the_screen(self) -> None:
+        """The user, 2026-11-08: a Claude Code conversation running behind a video set a
+        recommendation off - "要是他们在屏幕上的时候，在最小化跑着不算"."""
+        from personalized_agent.heartbeat.monitor.engine import where_of
+        self.assertNotEqual(where_of(self.app.config, "Claude Code", "x"), "terminal",
+                            "it may set one off")
+        self.assertTrue(self.rule.match("x", "tide table and spring tide", "other"))
+        # Behind a video: out of sight.
+        self.rule.activity.get_active_window = lambda: SimpleNamespace(
+            title="Cat videos - YouTube", application="firefox.exe", pid=1)
+        with self._on_screen("tide table and spring tide") as read:
+            said = self.rule.act("a session", "Claude Code", "", "tide table and spring tide")
+        read.assert_not_called()
+        self.assertIn("moved on", said["skipped"])
+        # In front, in the terminal it runs in: what it shows is read, and matched.
+        self.rule.activity.get_active_window = lambda: SimpleNamespace(
+            title="Fix the tide loader", application="WindowsTerminal.exe", pid=3)
+        with self._on_screen("tide table and spring tide") as read:
+            said = self.rule.act("a session", "Claude Code", "", "tide table and spring tide")
+        read.assert_called_once()
+        self.assertTrue(said["said"])
+        self.assertEqual(self._hits()[0]["seen_by"], "ocr")
 
     def test_only_the_window_in_front(self) -> None:
         self.rule.activity = _Activity("Something else")
@@ -168,7 +224,7 @@ class TheMatchTests(unittest.TestCase):
         asked = self.model.asked[0]
         self.assertEqual(asked.task, match.JUDGE_TASK)
         self.assertEqual(asked.tools, [])
-        self.assertLess(len(asked.system), 200)
+        self.assertLess(len(asked.system), 450, "short, with the rule of what is already there")
         self.assertNotIn("LESSONS", asked.messages[0]["content"])
         self.assertNotIn("hunter2", asked.messages[0]["content"])
         self.assertEqual(self.reserve.get(self.item)["status"], rs.TOLD)
@@ -181,7 +237,8 @@ class TheMatchTests(unittest.TestCase):
         self.assertEqual(self._hits()[0]["done"], "the model said no")
 
     def test_very_high_it_is_sent_without_a_model_says_why_and_keeps_the_chain(self) -> None:
-        with self._on_screen("Thistle Harbour tide table spring tide 涨潮"):
+        # High, and not so close that it may be the thing itself (see the tests below).
+        with self._on_screen("Thistle Harbour tide table spring tide 涨潮"),                 mock.patch.object(match, "OVERLAP_HITS", 99),                 mock.patch.object(match, "OVERLAP_SHARE", 2.0):
             said = self.rule.act("Tides", "browser", "", "")
         self.assertEqual(self.model.asked, [])
         shown = self.app.notifications.get(said["notification_id"])
@@ -193,6 +250,38 @@ class TheMatchTests(unittest.TestCase):
         self.assertEqual(chain["reserve_id"], self.item)
         self.assertIn("Thistle Harbour", chain["hit"])
         self.assertEqual(meta["url"], PAGE)
+
+    def test_so_close_it_may_be_the_thing_itself_the_model_is_asked_first(self) -> None:
+        """The user, 2026-11-08: "存在大量的短语match或者title基本一致" - and the model stops the same
+        thing under another address."""
+        self.model.answer = {"yes": True, "already_there": True}
+        with self._on_screen("Thistle Harbour tide table spring tide 涨潮"):
+            said = self.rule.act("Tides", "browser", "", "")
+        self.assertEqual(said, {"skipped": "already in front of them"})
+        self.assertEqual(len(self.model.asked), 1, "high, but so close: asked")
+        asked = self.model.asked[0].messages[0]["content"]
+        self.assertIn(f"Its address: {PAGE}", asked)
+        self.assertIn("ALREADY IN FRONT OF THEM", self.model.asked[0].system)
+        self.assertEqual(self.reserve.get(self.item)["status"], rs.SEEN)
+        self.assertEqual(self.reserve.get(self.item)["seen_how"], "on their screen (the model)")
+        self.assertIn("already in front of them", self._hits()[0]["done"])
+
+    def test_a_title_nearly_as_on_the_screen_is_close(self) -> None:
+        item = {"title": "Two casts", "detail": "New: '决定版 大法师老年糊涂 魔兽争霸解说th000 starbuck'.",
+                "things": "", "keywords": json.dumps({"proper": ["a", "b", "c", "d", "e", "f",
+                                                                 "g", "h", "i", "j", "k"]})}
+        self.assertIn("nearly as on the screen", match.overlap_of(
+            item, ["starbuck"], "频道 决定版 大法师老年糊涂 魔兽争霸 解说 th000 starbuck 播放"))
+        self.assertEqual(match.overlap_of(item, ["starbuck"], "a page about tides"), "")
+
+    def test_its_titles_word_for_word_on_the_screen_it_is_not_sent(self) -> None:
+        ident = self.reserve.add("Two casts", "https://www.163.com/dy/media/x.html",
+                                 detail="casts", status=rs.READY, keywords=WORDS,
+                                 things=["谁是谁的18岁？魔兽争霸xiaoy解说sok Liildc"])
+        self.assertFalse(self.reserve.still_fresh(
+            ident, "解说xiaoy的主页 谁是谁的18岁？魔兽争霸xiaoy解说sok Liildc 15:41"),
+            "the same cast on its channel's page - another address")
+        self.assertEqual(self.reserve.get(ident)["seen_how"], "on their screen")
 
     def test_told_once(self) -> None:
         with self._on_screen("Thistle Harbour tide table spring tide 涨潮"):

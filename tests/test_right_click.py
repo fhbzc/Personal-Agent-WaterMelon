@@ -341,7 +341,7 @@ class ExtensionTests(unittest.TestCase):
         self.assertIn("nativeMessaging", chromium["permissions"])
         # A script in every page, for what can be seen of it (the user, 2026-11-05).
         for one in (chromium, firefox):
-            self.assertEqual(one["content_scripts"][0]["js"], ["visible.js"])
+            self.assertEqual(one["content_scripts"][0]["js"], ["visible.js", "fill.js"], "and the filler (0.0.4)")
             self.assertNotIn("<all_urls>", one["content_scripts"][0]["matches"])
             self.assertNotIn("host_permissions", one)
         for flavor in folders.values():
@@ -966,7 +966,9 @@ class WorkAssignedTests(unittest.TestCase):
                             plan={"title": f"Plan {name}"} if name != "picked" else {})
                 made[name] = one["id"]
             listed = drafts.assigned()
-            self.assertEqual({one["id"] for one in listed}, {made["picked"], made["starting"]})
+            # A to-do's work too (the user, 2026-11-08: "Work assigned, all of it").
+            self.assertEqual({one["id"] for one in listed},
+                             {made["picked"], made["starting"], made["todo"]})
             mine = next(one for one in listed if one["id"] == made["picked"])
             self.assertEqual(mine["text"], "Plant the tomatoes by May 10.")
             self.assertEqual(mine["detail"], "Google Chrome - Garden club - spring plans")
@@ -975,6 +977,38 @@ class WorkAssignedTests(unittest.TestCase):
             # Its start cut off (nothing starting it here): its plan, to start again.
             self.assertEqual((starting["text"], starting["work"]["versions"][0]["state"]),
                              ("Plan starting", "drafting"))
+        finally:
+            agent.cleanup()
+
+    def test_what_came_of_a_projects_steps_and_of_its_whole(self) -> None:
+        """The user, 2026-11-08: a step of a project, or the whole of it, handed over - what came
+        of it opened where it was handed over."""
+        from personalized_agent.agent.work import delegate
+        agent = TemporaryAgent()
+        try:
+            drafts = agent.app.drafts
+            step = drafts.create(text="Harbour survey: count the boats", source="project",
+                                 options={"project": "p-harbour", "step": "3"}, collect=False)
+            whole = drafts.create(text="Harbour survey: every step left", source="project",
+                                  options={"project": "p-harbour", "whole": True}, collect=False)
+            gone = drafts.create(text="Harbour survey: a cancelled one", source="project",
+                                 options={"project": "p-harbour", "step": "3"}, collect=False)
+            drafts._set(gone["id"], status=delegate.CANCELLED)
+            came = drafts.of_projects()["p-harbour"]
+            self.assertEqual([one["draft"] for one in came["steps"]["3"]], [step["id"]])
+            self.assertEqual([one["draft"] for one in came["whole"]], [whole["id"]])
+            self.assertEqual(came["steps"]["3"][0]["state"], "drafting")
+            # A try removed (from Work assigned, say) goes from there too: the one before it is
+            # the latest; none left, nothing (the user, 2026-11-08).
+            later = drafts.create(text="Harbour survey: count the boats again", source="project",
+                                  options={"project": "p-harbour", "step": "3"}, collect=False)
+            self.assertEqual([one["draft"] for one in drafts.of_projects()["p-harbour"]["steps"]["3"]],
+                             [step["id"], later["id"]])
+            drafts._set(later["id"], options=dict(later["options"], removed=True))
+            self.assertEqual([one["draft"] for one in drafts.of_projects()["p-harbour"]["steps"]["3"]],
+                             [step["id"]], "the latest removed: the one before is the latest")
+            drafts._set(whole["id"], options=dict(whole["options"], removed=True))
+            self.assertEqual(drafts.of_projects()["p-harbour"]["whole"], [], "none left: nothing")
         finally:
             agent.cleanup()
 

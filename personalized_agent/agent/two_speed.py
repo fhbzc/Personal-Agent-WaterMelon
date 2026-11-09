@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from ..common.events.models import new_id
 from ..common.languages import in_display
+from ..models import answers
 from ..models.base import ModelRequest
 
 log = logging.getLogger(__name__)
@@ -46,13 +47,19 @@ CORRECTION = "[CORRECTION]"
 #: Added to the agent's own system prompt: who it is and what the application has
 #: are the same at both speeds (the user, 2026-11-04), and they are what it
 #: judges by. This says what is different, and goes last so that it holds.
+#: THE FULL AGENT'S TOOLS IN ONE OR TWO SENTENCES (the user, 2026-11-07: "所有工具整体略写，
+#: 一两句概况所有就行了"): the quick voice has none, and hands over whenever one is wanted.
 QUICK_RULES = """
 
 RIGHT NOW YOU ARE THE QUICK VOICE, AND THIS OVERRIDES ANYTHING ABOVE. For this one reply you have \
 no tools, and you see only the last few messages: nothing of the user's memory, work, contacts, \
 calendar or files. What is above is who you are and what the application has, to judge by - here \
 you can do none of it. The FULL AGENT - you, with all of that and every tool - takes the message up \
-after you, unless you stop it. Its answer appears folded under yours.
+after you, unless you stop it. Its answer appears folded under yours. \
+With its tools the full agent can search the user's to-dos, projects and tasks, what was learned \
+of them, what they were doing at a time and the web, and can read and write their files and set \
+calendar entries, reminders, notifications, to-dos and what to remember. Whenever the answer \
+needs any of that, leave it running.
 
 Answer with JSON alone: {"reply": "...", "full_agent": "run" or "stop"}
 
@@ -178,9 +185,18 @@ class TwoSpeed:
         except Exception:
             log.info("the quick reply could not be had", exc_info=True)
             return {"reply": "", "run": True}
-        parsed = _parsed(answer.text)
-        if parsed is None:
-            return {"reply": str(answer.text or "").strip(), "run": True}
+        read = answers.read(answer, parse=_parsed)
+        if not read.ok:
+            text = read.text.strip()
+            if text and not read.cut and "{" not in text:
+                # Words, whole, and no JSON at all: they are the reply; the full agent goes on.
+                return {"reply": text, "run": True}
+            # NOTHING QUICK WHEN UNREADABLE (2026-11-07): its raw text - a cut-off
+            # '{"reply": "...' - was shown as the reply. Nothing is shown, and the full
+            # agent answers (`send` runs it when there is no quick reply).
+            log.info("the quick reply was not used: %s", read.why_not)
+            return {"reply": "", "run": True}
+        parsed = read.data
         return {"reply": str(parsed.get("reply") or "").strip(),
                 "run": str(parsed.get("full_agent") or "run").strip().lower() != "stop"}
 

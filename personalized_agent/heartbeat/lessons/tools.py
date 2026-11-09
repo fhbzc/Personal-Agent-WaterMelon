@@ -36,15 +36,21 @@ def add_tools(registry: Any, engine: Any, retriever: Any) -> None:
                 "said": "Kept as a lesson. Tell the user in a few words what you will do."}
 
     def find(args: Dict[str, Any]) -> Any:
+        # The moment the chat's model describes is what is asked with; said in English first
+        # when it is not (the user, 2026-11-07), and recorded as the chat's.
         return {"lessons": retriever.text(KINDS, str(args.get("moment") or ""), rules=8,
-                                          examples=4) or "None learned yet."}
+                                          examples=4, rewrite_task="lessons",
+                                          site="chat lesson_find") or "None learned yet."}
 
     registry.add(ToolSpec(
         "lesson_add",
-        "Keep a lesson: ONLY when the USER says something should be remembered about how "
-        "they want things done (\"remember this\", \"from now on...\", \"don't ever...\", or "
-        "plainly correcting how you or the agent acted). Never your own guess. Kept with "
-        "every other lesson, and used when the agent next decides anything like it.",
+        "Keep a lesson - WITHOUT BEING ASKED, whenever the conversation shows how the user "
+        "wants things done: they correct you or the agent, state a preference, say how they "
+        "judge a result, or show one by what they accept, turn down or change - as well as "
+        "when they say \"remember this\", \"from now on...\", \"don't ever...\". Always "
+        "from their own words in this conversation, never a guess of yours with nothing they "
+        "said behind it; one lesson for one thing, not every remark. Kept with every other "
+        "lesson, and used when the agent next decides anything like it.",
         {"type": "object", "properties": {
             "user_said": {"type": "string", "description": "the user's own words, exactly"},
             "about": {"type": "string", "enum": list(KINDS),
@@ -58,7 +64,9 @@ def add_tools(registry: Any, engine: Any, retriever: Any) -> None:
          "required": ["user_said", "about"]}), add)
     registry.add(ToolSpec(
         "lesson_find",
-        "Read the lessons - the rules and what the user did - like a moment you describe.",
+        "Read the lessons - the rules and what the user did - like a moment you describe: say "
+        "what it is about (its subject and content), not the time or the mode. Only those "
+        "like it come back, maybe none.",
         {"type": "object", "properties": {"moment": {"type": "string"}}, "required": ["moment"]},
         read_only=True), find)
 

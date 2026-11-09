@@ -128,6 +128,37 @@ class OnTheScreenTests(unittest.TestCase):
         for words in ("Coast (1)", "Measure the gauge", "Before noon.", "Part of: Tides"):
             self.assertIn(words, self._said(panel))
 
+    def test_a_click_on_its_line_folds_it_and_unfolds_it_and_a_drag_moves_it(self) -> None:
+        """The user, 2026-11-08: "to do panel 也是，可以点击header的其它位置collapose, expand"."""
+        from types import SimpleNamespace
+        panel = self._panel(self.ONE)
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        whole = panel.window.winfo_height()
+        self.assertEqual(str(panel.head.cget("cursor")), "hand2")
+        x, y = panel.head.winfo_rootx() + 20, panel.head.winfo_rooty() + 4
+        panel._grab(SimpleNamespace(x_root=x, y_root=y))
+        panel._move(SimpleNamespace(x_root=x + 40, y_root=y + 3))
+        self.assertEqual(str(panel.head.cget("cursor")), "fleur", "dragged: the move cursor")
+        panel._line_released(SimpleNamespace(x_root=x + 40, y_root=y + 3))
+        self.assertFalse(panel.rolled_up, "dragged: moved, not folded")
+        panel._grab(SimpleNamespace(x_root=x, y_root=y))
+        panel._line_released(SimpleNamespace(x_root=x + 1, y_root=y))
+        self._settle(0.1)
+        self.assertTrue(panel.rolled_up)
+        self.assertLess(panel.window.winfo_height(), whole / 2, "down to its line")
+        self.assertFalse(panel.body.winfo_ismapped())
+        panel._grab(SimpleNamespace(x_root=x, y_root=y))
+        panel._line_released(SimpleNamespace(x_root=x, y_root=y))
+        self._settle(0.1)
+        self.assertFalse(panel.rolled_up)
+        self.assertEqual(panel.window.winfo_height(), whole, "back at its size")
+        self.assertTrue(panel.body.winfo_ismapped())
+        panel.fold()
+        panel.close()
+        panel.show((800, 500, 128, 128))
+        self.assertFalse(panel.rolled_up, "opened again, it opens whole")
+
     def test_a_group_folds_and_opens_again(self) -> None:
         panel = self._panel(self.ONE)
         panel.show((800, 500, 128, 128))
@@ -261,6 +292,49 @@ class OnTheScreenTests(unittest.TestCase):
         finish[0]()
         self._settle(0.1)
         self.assertNotIn("Opening...", self._buttons(panel))
+
+    def test_an_answer_takes_its_row_away_at_once_and_is_kept_behind(self) -> None:
+        """The user, 2026-11-07: Good to know pressed, no "Opening..." and no wait - gone."""
+        sections = [{"name": "Recommended content", "rows": [
+            {"id": "n1", "title": "Harbour tables", "actions": [
+                {"key": "answer:good_to_know", "label": "Good to know", "changes": True}]},
+            {"id": "n2", "title": "Tide notes", "actions": [
+                {"key": "answer:good_to_know", "label": "Good to know", "changes": True}]}]}]
+        asked, finish = [], []
+
+        def act(action, done):
+            asked.append(action["key"])
+            finish.append(done)
+        panel = self._panel(sections, act=act, closes_emptied=True)
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        panel._do(sections[0]["rows"][0], sections[0]["rows"][0]["actions"][0])
+        self.assertNotIn("Harbour tables", self._said(panel), "away at once, before it is kept")
+        self.assertNotIn("Opening...", self._buttons(panel))
+        self.assertEqual(asked, ["answer:good_to_know"])
+        self.assertTrue(panel.is_open, "one is left")
+        panel._do(sections[0]["rows"][1], sections[0]["rows"][1]["actions"][0])
+        self.assertFalse(panel.is_open, "the last answered: closed at once")
+        sections[0]["rows"].clear()                       # both were kept
+        for done in finish:
+            done()
+        self._settle(0.3)
+        self.assertFalse(panel.is_open)
+
+    def test_an_answer_that_failed_comes_back(self) -> None:
+        sections = [{"name": "Reminders", "rows": [
+            {"id": "n1", "title": "Harbour tables", "actions": [
+                {"key": "got_it", "label": "Got it", "changes": True}]},
+            {"id": "n2", "title": "Tide notes", "actions": []}]}]
+        finish = []
+        panel = self._panel(sections, act=lambda action, done: finish.append(done))
+        panel.show((800, 500, 128, 128))
+        self._settle()
+        panel._do(sections[0]["rows"][0], sections[0]["rows"][0]["actions"][0])
+        self.assertNotIn("Harbour tables", self._said(panel))
+        finish[0]()                                       # not kept: still in the list
+        self._settle(0.5)
+        self.assertIn("Harbour tables", self._said(panel))
 
     def _open(self, sections, **more):
         panel = self._panel(sections, **more)
@@ -823,7 +897,8 @@ class TheVineOnTheScreenTests(unittest.TestCase):
         self.box = [(1000, 300, 128, 128)]
         self.root.update()
         self.vine = ChatVine(self.root, "Chat", lambda: self.pressed.append(1), lambda: self.box[0],
-                             ("Segoe UI", 11), lambda: self.side[0], self.front)
+                             ("Segoe UI", 11), lambda: self.side[0], self.front,
+                             overview=("Overview", lambda: self.pressed.append("overview")))
 
     def tearDown(self) -> None:
         self.root.destroy()
@@ -869,6 +944,66 @@ class TheVineOnTheScreenTests(unittest.TestCase):
         canvas.event_generate("<ButtonRelease-1>", x=20, y=20)
         self._settle(0.1)
         self.assertEqual(self.pressed, [1])
+
+    def test_beside_it_the_overview_on_a_branch_of_its_own(self) -> None:
+        """The user, 2026-11-08: "藤蔓要有2个logo, 一个是chat, 一个是overview (等价于双击的功能)"."""
+        for side, box in (("right", (1886, 500, 128, 128)), ("top", (900, -94, 128, 128))):
+            self.side[0], self.box[0] = side, box
+            self.vine.place()
+            self._settle(0.6)
+            second = self.vine.second
+            spot = (second.window.winfo_x(), second.window.winfo_y())
+            self.assertEqual(spot, self.vine.second_at)
+            chat = self.vine.at
+            apart = abs(spot[0] - chat[0]) + abs(spot[1] - chat[1])
+            self.assertEqual(apart, ICON + 8, f"beside the chat's, not on it: {side}")
+            along = spot[0] == chat[0] if side == "right" else spot[1] == chat[1]
+            self.assertTrue(along, f"along the side: {side}")
+            whole = self.vine.around(box)
+            self.assertLessEqual(whole[1], spot[1])
+            self.assertGreaterEqual(whole[1] + whole[3], spot[1] + ICON)
+        canvas = second.canvas
+        canvas.event_generate("<Enter>", x=20, y=20)
+        canvas.event_generate("<ButtonPress-1>", x=20, y=20)
+        canvas.event_generate("<ButtonRelease-1>", x=20, y=20)
+        self._settle(0.1)
+        self.assertEqual(self.pressed, ["overview"], "the Overview, as a double click")
+        self.side[0] = ""
+        self.vine.place()
+        self._settle(0.1)
+        self.assertLess(second.window.winfo_x(), -1000, "gone with the vine")
+
+    def test_the_two_have_their_middle_where_the_one_was(self) -> None:
+        """The user, 2026-11-08: "两个藤蔓logo, 平均高度还是要在中央"."""
+        for side, box in (("right", (1886, 500, 128, 128)), ("left", (-94, 500, 128, 128)),
+                          ("top", (900, -94, 128, 128)), ("bottom", (900, 998, 128, 128))):
+            self.side[0], self.box[0] = side, box
+            self.vine.place()
+            self._settle(0.6)
+            one = vine_path(box, side, AREA)[1]
+            chat, other = self.vine.at, self.vine.second_at
+            middle = ((chat[0] + other[0]) / 2, (chat[1] + other[1]) / 2)
+            self.assertLessEqual(abs(middle[0] - one[0]) + abs(middle[1] - one[1]), 1, side)
+
+    def test_at_the_foot_of_the_screen_both_stay_on_it(self) -> None:
+        from personalized_agent.ui.avatar_buttons import pair_spots
+        half = (ICON + 8) // 2
+        self.assertEqual(pair_spots((1870, 500), "right", AREA), ((1870, 500 - half), (1870, 500 + half)))
+        chat, other = pair_spots((1870, 1040 - ICON), "right", AREA)
+        self.assertEqual(other[1] + ICON, 1040, "moved up together, as little as it takes")
+        self.assertEqual(other[1] - chat[1], ICON + 8)
+        self.assertEqual(pair_spots((900, 20), "top", AREA), ((900 - half, 20), (900 + half, 20)))
+
+    def test_its_mark_is_not_the_chats(self) -> None:
+        from personalized_agent.ui import avatar_buttons as ab
+        self.assertNotEqual(ab.face().tobytes(), ab.face(mark="overview").tobytes())
+        self.assertEqual(ab.face(mark="overview").getpixel((0, 0)), ab.KEY)
+
+    def test_the_avatar_double_click_is_what_it_does(self) -> None:
+        from pathlib import Path
+        import personalized_agent.ui.desktop as desktop
+        said = Path(desktop.__file__).read_text(encoding="utf-8")
+        self.assertIn('overview=(self._words("Overview"), self._on_double_click)', said)
 
     def test_green_as_the_vine(self) -> None:
         from personalized_agent.ui import avatar_buttons as ab

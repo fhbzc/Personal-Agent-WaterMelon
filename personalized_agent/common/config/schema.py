@@ -480,11 +480,15 @@ SETTINGS_SCHEMA: List[SettingField] = [
     SettingField("model_fallback_target", "Fallback model", "string", "", "Models",
                  "The model to fall back to. Has no effect unless model fallback is "
                  "enabled above. Format: provider/model.", hidden=True),
-    SettingField("max_output_tokens", "Max output tokens", "int", 4096, "Models",
-                 "Ceiling on the length of a single model reply. Raising it allows "
-                 "longer answers and costs more per request; too low a value truncates "
-                 "long answers mid-thought.",
-                 minimum=256, maximum=128000),
+    # AT LEAST 20000 (the user, 2026-11-07: "你的输出上限应该调大，比如至少20000"): an answer cut
+    # off by its length was read as one that said nothing, and what it was about was let go.
+    # The minimum lifts a value kept from before (4096) as it is read; the model's own ceiling
+    # still holds (models/manager.py).
+    SettingField("max_output_tokens", "Max output tokens", "int", 20000, "Models",
+                 "Ceiling on the length of a single model reply, for every call. Held to "
+                 "what the model itself can write. Too low a value truncates long answers "
+                 "mid-thought.",
+                 minimum=20000, maximum=128000),
     SettingField("credential_storage", "Credential storage", "choice", "keychain", "Models",
                  "Where API keys and tokens are kept. 'keychain' uses the operating "
                  "system's credential store (section 83), which is the safer option but "
@@ -797,6 +801,14 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
     SettingField("monitor_least_gap_minutes", "Least time between two (min)", "int", 20,
                  "Monitor", "A break is never suggested sooner than this after anything said.",
                  minimum=1, maximum=600),
+    SettingField("monitor_recommend_asks_per_day", "Recommendation matches a day", "int", 30,
+                 "Monitor", "About how many matches a day, on the days you are at the computer, "
+                 "are looked at by the model before a recommendation is sent; the line moves "
+                 "itself, once a day, to keep to it.", minimum=1, maximum=500),
+    SettingField("monitor_recommend_direct_per_day", "Recommendations sent without the model a day",
+                 "int", 5, "Monitor", "About how many recommendations a day match so well that "
+                 "they are sent without the model looking first; that line moves itself, once a "
+                 "day, to keep to it, and stays above the other.", minimum=0, maximum=100),
     SettingField("monitor_recommend_search", "Look recommendations up on the web", "bool", True,
                  "Monitor", "The model may search the public web for what it recommends; only "
                  "the words of the search are sent."),
@@ -840,10 +852,11 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
     SettingField("recommend_auto_on", "Make issues by themselves", "bool", False, "Heartbeat",
                  "Newspaper makes an issue by itself at the times set - only with this on "
                  "and at least one time set.", hidden=True),
-    SettingField("learning_auto_on", "Learn by itself", "bool", False, "Work",
+    # ON, EACH MORNING AT 8 (the user, 2026-11-08: "所有版本的learning default是打开并且定在上午8点").
+    SettingField("learning_auto_on", "Learn by itself", "bool", True, "Work",
                  "Work's learning updates by itself at the times set - only with this on "
                  "and at least one time set.", hidden=True),
-    SettingField("learning_times", "Learning, each day at", "string", "", "Work",
+    SettingField("learning_times", "Learning, each day at", "string", "08:00", "Work",
                  "When Work's learning updates by itself: one or more times of day, in this "
                  "computer's time zone.", hidden=True),
     # TWO LIMITS, INPUT AND OUTPUT, as a Work run has (the user, 2026-10-28);
@@ -858,6 +871,16 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
                  "int", 0, "Work",
                  "What one day's learning may write; reached, it waits for the next day. "
                  "0: no limit.", minimum=0, maximum=1_000_000_000, hidden=True),
+    # AT MOST SO MUCH AN UPDATE (the user, 2026-11-08: "有一个默认上限吧 ... 每次学多少条"): on by
+    # default each morning, the first updates of a long history read some of it each, not all at
+    # once. One piece: one reading call, up to reading.CHUNK_CHARS. What is left is read next time.
+    # 100 (the user, 2026-11-08; measured on their week: 4-8 pieces of new matter a day, but 15-25
+    # calls, each thing at work at least one): a day's new read whole, the rest for what is behind.
+    SettingField("learning_reads_per_update", "Learning reads at most this many pieces an update",
+                 "int", 100, "Work",
+                 "Each piece is one reading call of up to 50,000 characters; what is left is read "
+                 "by the next update. The reasons are worked out of what was read either way. "
+                 "0: no limit.", minimum=0, maximum=100_000),
     SettingField("state_heartbeat_every_hours", "How often states are grouped",
                  "float", 12.0, "Heartbeat",
                  "How often that grouping runs - THE ONLY NUMBER FOR IT. "
@@ -1090,6 +1113,12 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
                  "int", 80, "Listener",
                  "The most pictures of windows taken in one day.",
                  minimum=0, maximum=1000),
+    # THE WHOLE SCREEN, NOT THE WINDOW (the user, 2026-11-08): the picture that goes with a message
+    # to the chat or Delegate work - where the system can paint over windows never read (Windows).
+    SettingField("front_picture_whole_screen", "Pictures for the chat show the whole screen",
+                 "bool", True, "Listener",
+                 "On: the whole screen the window is on, with this application's windows and "
+                 "the windows never read painted grey. Off: the window alone.", hidden=True),
     SettingField("listener_screen_excluded_applications",
                  "Windows never to read", "multiline",
                  "\n".join(DEFAULT_UNREADABLE_WINDOWS), "Listener",

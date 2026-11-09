@@ -25,8 +25,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..agent.character.watermelon import LEAF, LEAF_DARK, LEAF_VEIN, OUTLINE
 from . import sizes
-from .chat_bubble import (LEAST, RIM as EDGE, LOOK, ScrollBar, beside, edge_strips, sized_to, work_area,
-                          write_links)
+from .chat_bubble import (CLICK_SLACK, LEAST, RIM as EDGE, LOOK, ScrollBar, beside, edge_strips, sized_to,
+                          work_area, write_links)
 from .on_top import (borderless, keys_on_hover, on_release, rounded, stay_on_top, stays_through_peek,
                      with_copy)
 
@@ -45,6 +45,10 @@ AREA_FOR_SECONDS = 5.0
 #: window: on it, the pointer going to the button brought the head out. Where the vine starts:
 #: this far past the side of the screen, so that no end of it shows there.
 ICON, PAST, BEYOND = 44, 30, 4
+#: THE OVERVIEW BESIDE IT (the user, 2026-11-08: "藤蔓要有2个logo, 一个是chat, 一个是overview (等价于双击
+#: 的功能)"): the two along the side, this far apart, THEIR MIDDLE WHERE THE ONE WAS ("平均高度还是要在
+#: 中央"), between the leaves; the vine forks to them.
+APART = 8
 #: IT WINDS AS A WHOLE (the user, 2026-11-04: "西瓜藤也是整体就是弯弯绕绕的，而不是现在整体像一个茎秆一样的"):
 #: how far it swings to each side, how many times, and the points it is drawn through.
 SWING, SWINGS, VINE_POINTS = 19, 1.5, 36
@@ -188,6 +192,31 @@ def _veined(draw: Any, side: int, scale: int) -> None:
             draw.line([(x, y), tip], fill=LEAF_VEIN, width=max(1, int(scale * 0.6)))
 
 
+def pair_spots(at: Tuple[int, int], side: str, area: tuple
+               ) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    """The chat's button and the Overview's, for one at `at`: along the side, their middle at its
+    middle - moved together, as little as it takes, to stay on the screen."""
+    left, top, right, bottom = area
+    half, step = (ICON + APART) // 2, ICON + APART
+    if side in ("right", "left"):
+        first = at[1] - half
+        first = max(top, min(first, bottom - ICON - step))
+        return (at[0], first), (at[0], first + step)
+    first = at[0] - half
+    first = max(left, min(first, right - ICON - step))
+    return (first, at[1]), (first + step, at[1])
+
+
+def _overview_mark(draw: Any, scale: int) -> None:
+    """The Overview: a page of four panels, on a grid of 50."""
+    def at(*points: float) -> List[float]:
+        return [one * scale * ICON / 50 for one in points]
+    draw.rounded_rectangle(at(12, 13, 38, 37), radius=4 * scale, fill=INK)
+    for x0, y0, x1, y1 in ((15.5, 16.5, 23.5, 24), (26.5, 16.5, 34.5, 24),
+                           (15.5, 26.5, 23.5, 33.5), (26.5, 26.5, 34.5, 33.5)):
+        draw.rounded_rectangle(at(x0, y0, x1, y1), radius=1.5 * scale, fill=LEAF_DARK)
+
+
 def _mark(draw: Any, scale: int) -> None:
     """A speech bubble, on a grid of 50."""
     def at(*points: float) -> List[float]:
@@ -198,7 +227,7 @@ def _mark(draw: Any, scale: int) -> None:
         draw.ellipse(at(x - 1.9, 21.1, x + 1.9, 24.9), fill=LEAF_DARK)
 
 
-def face(lit: bool = False, upside_down: bool = False) -> Any:
+def face(lit: bool = False, upside_down: bool = False, mark: str = "chat") -> Any:
     """The button as a picture: a disc of leaf, outlined as a leaf is. Its edge is whole pixels
     - a window has no half see-through ones - so the outline hides the steps. None without
     Pillow. `upside_down`: as the avatar hangs out of the top of the screen."""
@@ -210,7 +239,7 @@ def face(lit: bool = False, upside_down: bool = False) -> Any:
     side = ICON * scale
     ground = Image.new("RGB", (side, side), LEAF_LIT if lit else LEAF)
     _veined(ImageDraw.Draw(ground), side, scale)
-    _mark(ImageDraw.Draw(ground), scale)
+    (_overview_mark if mark == "overview" else _mark)(ImageDraw.Draw(ground), scale)
     disc = Image.new("L", (side, side), 0)
     ImageDraw.Draw(disc).ellipse((scale, scale, side - scale, side - scale), fill=255)
     rim = Image.new("L", (side, side), 0)
@@ -249,8 +278,9 @@ def see_through(window: Any) -> str:
 class _Icon:
     """The round button, a window of its own."""
 
-    def __init__(self, root: Any, says: str, act: Callable[[], None], font: tuple) -> None:
-        self.root, self.says, self.font = root, says, font
+    def __init__(self, root: Any, says: str, act: Callable[[], None], font: tuple,
+                 mark: str = "chat") -> None:
+        self.root, self.says, self.font, self.mark = root, says, font, mark
         self.window = tk.Toplevel(root)
         self.window.overrideredirect(True)
         self.window.attributes("-topmost", True)
@@ -270,8 +300,10 @@ class _Icon:
             self.shown = self.canvas.create_oval(2, 2, ICON - 3, ICON - 3, fill=VINE,
                                                  outline=VINE_LINE, width=2)
             mark = "#%02x%02x%02x" % INK
-            for make, spots in ((self.canvas.create_oval, (11, 12, 33, 29)),
-                                (self.canvas.create_polygon, (15, 25, 13, 35, 24, 28))):
+            drawn = ((self.canvas.create_rectangle, (12, 12, 32, 32)),) if mark == "overview" else (
+                (self.canvas.create_oval, (11, 12, 33, 29)),
+                (self.canvas.create_polygon, (15, 25, 13, 35, 24, 28)))
+            for make, spots in drawn:
                 self.marks.append((make(*spots, fill=mark, outline=""), spots))
         self.tip: Any = None
         self.canvas.bind("<Enter>", self._over)
@@ -288,7 +320,7 @@ class _Icon:
                 return []
             colour = tuple(int(ground[at:at + 2], 16) for at in (1, 3, 5))
             for lit, upside_down in ((False, False), (True, False), (False, True), (True, True)):
-                picture = face(lit, upside_down)
+                picture = face(lit, upside_down, self.mark)
                 if picture is None:
                     return []
                 if colour != KEY:                # no see-through here: on the card's colour
@@ -345,9 +377,13 @@ class ChatVine:
     `front`, its window, stays in front of both."""
 
     def __init__(self, root: Any, says: str, act: Callable[[], None], avatar: Callable[[], tuple],
-                 font: tuple, side: Callable[[], str], front: Any = None) -> None:
+                 font: tuple, side: Callable[[], str], front: Any = None,
+                 overview: Optional[Tuple[str, Callable[[], None]]] = None) -> None:
         self.avatar, self.side, self.front = avatar, side, front
         self.icon = _Icon(root, says, act, font)
+        #: The Overview's button, beside the chat's: what a double click on the avatar opens.
+        self.second = _Icon(root, overview[0], overview[1], font, "overview") if overview else None
+        self.second_at: Optional[Tuple[int, int]] = None
         self.stem = tk.Toplevel(root)
         self.stem.overrideredirect(True)
         self.stem.attributes("-topmost", True)
@@ -371,9 +407,14 @@ class ChatVine:
         """`box` and the button, as one (x, y, width, height)."""
         if not self.out or self.at is None:
             return box
-        left, top = min(box[0], self.at[0]), min(box[1], self.at[1])
-        return (left, top, max(box[0] + box[2], self.at[0] + ICON) - left,
-                max(box[1] + box[3], self.at[1] + ICON) - top)
+        spots = [self.at] + ([self.second_at] if self.second_at else [])
+        left = min([box[0]] + [one[0] for one in spots])
+        top = min([box[1]] + [one[1] for one in spots])
+        return (left, top, max([box[0] + box[2]] + [one[0] + ICON for one in spots]) - left,
+                max([box[1] + box[3]] + [one[1] + ICON for one in spots]) - top)
+
+    def _windows(self) -> List[Any]:
+        return [self.icon.window] + ([self.second.window] if self.second else [])
 
     def _screen(self, box: tuple) -> tuple:
         """The part of the screen the avatar is on that windows may use: asked of the
@@ -392,7 +433,8 @@ class ChatVine:
 
     def _park(self) -> None:
         self.out, self.grown, self.at, self._drawn = False, 0.0, None, None
-        move_together([self.icon.window, self.stem], [(PARKED, PARKED)] * 2)
+        self.second_at = None
+        move_together(self._windows() + [self.stem], [(PARKED, PARKED)] * (len(self._windows()) + 1))
 
     def place(self, _event: Any = None) -> None:
         """Where the avatar is now: told as it moves."""
@@ -419,23 +461,37 @@ class ChatVine:
 
     def _draw(self, side: str) -> None:
         self.icon.turn(side == "top")
+        if self.second:
+            self.second.turn(side == "top")
         box = self.avatar()
-        points, self.at = vine_path(box, side, self._screen(box), self.grown)
+        area = self._screen(box)
+        points, self.at = vine_path(box, side, area, self.grown)
+        # TWO, THEIR MIDDLE WHERE THE ONE WAS: the vine forks from its end to each.
+        branch: List[Tuple[int, int]] = []
+        if self.second:
+            self.at, self.second_at = pair_spots(self.at, side, area)
+            branch = [(self.at[0] + ICON // 2, self.at[1] + ICON // 2), points[-1],
+                      (self.second_at[0] + ICON // 2, self.second_at[1] + ICON // 2)]
         full = self.grown >= 1.0
         if (points, self.at, full) == self._drawn:
             return
         self._drawn = (points, self.at, full)
         pad = 26
-        left = min(one[0] for one in points) - pad
-        top = min(one[1] for one in points) - pad
-        width = max(one[0] for one in points) + pad - left
-        height = max(one[1] for one in points) + pad - top
+        every = points + branch
+        left = min(one[0] for one in every) - pad
+        top = min(one[1] for one in every) - pad
+        width = max(one[0] for one in every) + pad - left
+        height = max(one[1] for one in every) + pad - top
         self.stem.geometry(f"{width}x{height}")
         self.canvas.delete("all")
         flat = [value for x, y in points for value in (x - left, y - top)]
         # Outlined as the leaves are: the dark line, the green on it.
         self.canvas.create_line(*flat, smooth=True, width=5, fill=VINE_LINE, capstyle="round")
         self.canvas.create_line(*flat, smooth=True, width=3, fill=VINE, capstyle="round")
+        if branch and full:
+            twig = [value for x, y in branch for value in (x - left, y - top)]
+            self.canvas.create_line(*twig, width=5, fill=VINE_LINE, capstyle="round")
+            self.canvas.create_line(*twig, width=3, fill=VINE, capstyle="round")
         # AS A MELON'S VINE GROWS (the user, 2026-11-04): a thin stem, a curling tendril on one side
         # and a lobed leaf on the other, once it has come that far.
         if self.grown > 0.5:
@@ -453,7 +509,8 @@ class ChatVine:
             self.canvas.create_line(x + 7 * math.cos(across), y + 7 * math.sin(across),
                                     x - 7 * math.cos(across), y - 7 * math.sin(across), fill=VINE_VEIN)
         spot = self.at if full else (PARKED, PARKED)
-        move_together([self.icon.window, self.stem], [spot, (left, top)], self.front)
+        spots = [spot] + ([self.second_at if full else (PARKED, PARKED)] if self.second else [])
+        move_together(self._windows() + [self.stem], spots + [(left, top)], self.front)
 
     def follow(self) -> None:
         self.place()
@@ -461,6 +518,10 @@ class ChatVine:
             self.stem.after(FOLLOW_EVERY_MS, self.follow)
         except tk.TclError:              # the application is closing
             pass
+
+
+#: What a row's button opens rather than answers: said "Opening..." until it has.
+OPENS = ("delegate", "read")
 
 
 class QuickPanel:
@@ -497,6 +558,11 @@ class QuickPanel:
         #: so that nothing found is hidden, and they fold again from there.
         self.folded_searching: Set[str] = set()
         self.opening: Set[str] = set()
+        #: ANSWERED, GONE AT ONCE (the user, 2026-11-07: "点击Good to know, 你还是要卡一下才关闭，并且
+        #: good to know 那里会变成opening, 这个变化没必要，直接关闭就行"): the rows an answer was
+        #: pressed on, out of sight while the answer is kept; one that failed comes back with the
+        #: list read again.
+        self.gone: Set[str] = set()
         #: The rows with "folds" that are open: their title alone until pressed.
         self.expanded: Set[str] = set()
         #: The row whose Remove was pressed: "Remove it? Yes / No", as on the Overview.
@@ -773,6 +839,13 @@ class QuickPanel:
         self._open_form(action["fields"], go, self.words("Save"),
                         [str(row.get("title") or ""), str(row.get("detail") or "")])
 
+    def _write_row(self, row: Dict[str, Any], action: Dict[str, Any]) -> None:
+        """A box for their own words about it, empty; sent, the row is done with."""
+        def go(said: List[str]) -> None:
+            body = dict(action.get("body") or {}, **dict(zip(action["keys"], said)))
+            self._do(row, dict(action, body=body))
+        self._open_form(action["fields"], go, action.get("yes") or self.words("Send"))
+
     # -- moved from group to group ---------------------------------------------------------
     def _groups(self) -> List[Tuple[str, str]]:
         """What can be moved to: (shown, its name)."""
@@ -803,6 +876,7 @@ class QuickPanel:
     def show(self, near: tuple) -> None:
         if not self._built:
             self._build()
+        self.unfold()                        # opened again, it opens whole
         self.opened = True
         self.opened_holding = None
         self._fit(near)
@@ -838,9 +912,14 @@ class QuickPanel:
                          font=self._sized(0))
         close.pack(side="right")
         on_release(close, self.close)
-        for one in (head, dot, name):
+        # ITS LINE FOLDS IT, AND UNFOLDS IT, where it is no button (the user, 2026-11-08: "to do panel
+        # 也是，可以点击header的其它位置collapose, expand") - a click; a drag moves it, as the chat's.
+        self.head, self._line_parts, self.rolled_up = head, (head, dot, name), False
+        for one in self._line_parts:
             one.bind("<ButtonPress-1>", self._grab)
             one.bind("<B1-Motion>", self._move)
+            one.bind("<ButtonRelease-1>", self._line_released, add="+")
+        self._mark_line()
         self.box: Any = None
         if self.searches:
             self.box = self._field(card, self.words("Search"))
@@ -897,9 +976,62 @@ class QuickPanel:
 
     def _grab(self, event: Any) -> None:
         self._drag = (event.x_root - self.window.winfo_x(), event.y_root - self.window.winfo_y())
+        self._pressed_at = (event.x_root, event.y_root)
+        self._dragging = False
 
     def _move(self, event: Any) -> None:
+        at = getattr(self, "_pressed_at", None)
+        if not getattr(self, "_dragging", False) and at is not None and (
+                abs(event.x_root - at[0]) > CLICK_SLACK or abs(event.y_root - at[1]) > CLICK_SLACK):
+            self._dragging = True                # being moved: no longer a click
+            self._mark_line("fleur")
         self.window.geometry(f"+{event.x_root - self._drag[0]}+{event.y_root - self._drag[1]}")
+
+    def _mark_line(self, cursor: str = "") -> None:
+        """A hand on its line - a click folds or unfolds it - and the move cursor while dragged."""
+        for one in getattr(self, "_line_parts", ()):
+            try:
+                one.configure(cursor=cursor or "hand2")
+            except tk.TclError:              # pragma: no cover - the window went
+                pass
+
+    def _line_released(self, event: Any) -> None:
+        at = getattr(self, "_pressed_at", None)
+        dragged, self._dragging = getattr(self, "_dragging", False), False
+        self._mark_line()
+        if dragged or at is None:
+            return
+        if abs(event.x_root - at[0]) <= CLICK_SLACK and abs(event.y_root - at[1]) <= CLICK_SLACK:
+            self.unfold() if self.rolled_up else self.fold()
+
+    def fold(self) -> None:
+        """Down to its line: what is under it put away, its size kept to unfold to."""
+        if self.rolled_up or not self._built:
+            return
+        self.window.update_idletasks()
+        self._unfolded_size = (self.window.winfo_width(), self.window.winfo_height())
+        self._folded_away = [(child, child.pack_info()) for child in self.card.pack_slaves()
+                             if child is not self.head]
+        for child, _info in self._folded_away:
+            child.pack_forget()
+        self.rolled_up = True
+        self.window.update_idletasks()
+        tall = self.card.winfo_reqheight() + 2 * sizes.px(self.root, EDGE) + 2
+        self.window.geometry(f"{self._unfolded_size[0]}x{tall}")
+
+    def unfold(self) -> None:
+        """All of it back, at the size it had."""
+        if not self.rolled_up:
+            return
+        for child, info in getattr(self, "_folded_away", []):
+            info = dict(info)
+            parent = info.pop("in", None)
+            child.pack(in_=parent, **info)
+        self._folded_away = []
+        self.rolled_up = False
+        width, height = getattr(self, "_unfolded_size", (0, 0))
+        if width and height:
+            self.window.geometry(f"{width}x{height}")
 
     # -- what it lists -----------------------------------------------------------------
     def _read_it(self, quiet: bool = False) -> None:
@@ -916,21 +1048,22 @@ class QuickPanel:
     def _got(self, sections: List[Dict[str, Any]], quiet: bool = False) -> None:
         same = quiet and sections == self.sections
         self.sections = sections
+        if self.is_open:
+            holding = any(section["rows"] for section in sections)
+            if self.opened_holding is None:
+                self.opened_holding = holding
+            elif self.closes_emptied and self.opened_holding and not holding:
+                # OUT OF SIGHT FIRST (the user, 2026-11-07: pressed on the last one, the list
+                # "闪一下才退出"): drawn and then closed, the empty list showed for a moment.
+                self.close()
         if self._built and not same:
             self._draw()
-        if not self.is_open:
-            return
-        holding = any(section["rows"] for section in sections)
-        if self.opened_holding is None:
-            self.opened_holding = holding
-        elif self.closes_emptied and self.opened_holding and not holding:
-            self.close()
 
     def _shown_sections(self) -> List[Dict[str, Any]]:
         asked = (self.box.get() if self.box is not None else "").lower().split()
         out = []
         for section in self.sections:
-            rows = [row for row in section["rows"] if all(
+            rows = [row for row in section["rows"] if str(row.get("id")) not in self.gone and all(
                 word in " ".join(str(row.get(key) or "") for key in
                                  ("title", "detail", "why", "note", "url")).lower()
                 for word in asked)]
@@ -960,8 +1093,21 @@ class QuickPanel:
         key = f'{row.get("id")}:{action["key"]}'
         if self.act is None or key in self.opening:
             return
-        self.opening.add(key)
         self.asking = ""
+        ident = str(row.get("id") or "")
+        if action.get("changes") and action["key"] not in OPENS and ident:
+            self.gone.add(ident)                 # answered: away now, kept behind
+            self._draw()
+            if (self.closes_emptied and self.opened_holding and self.is_open
+                    and not any(section["rows"] for section in self._shown_sections())):
+                self.close()
+
+            def kept() -> None:
+                self.gone.discard(ident)         # the list read again says whether it went:
+                self._read_it()                  # drawn whatever it says - one not kept is back
+            self.act(action, lambda: self.post(kept))
+            return
+        self.opening.add(key)
         self._draw()
 
         def done() -> None:
@@ -992,6 +1138,8 @@ class QuickPanel:
                 out.append((action["label"], lambda: self._start_moving(ident), ""))
             elif action.get("edits"):
                 out.append((action["label"], lambda a=action: self._edit_row(row, a), ""))
+            elif action.get("writes"):
+                out.append((action["label"], lambda a=action: self._write_row(row, a), ""))
             elif action.get("confirm") and self.asking == ident:
                 out.append((self.words("Remove it?"), None, "said"))
                 out.append((self.words("Yes"), lambda a=action: self._do(row, a), "danger"))

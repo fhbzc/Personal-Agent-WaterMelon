@@ -27,7 +27,14 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 log = logging.getLogger(__name__)
 
 #: How far back it looks, what a word weighs at the least, and how few documents say nothing.
-DAYS, FLOOR, LEAST_DOCUMENTS = 14, 0.3, 50
+#: STEEPER (the user, 2026-11-08: "能压的多点吗"): the share of what they saw a word is not in, by
+#: logs, SQUARED - a word in 7% of it weighed 0.37 and three such came to a recommendation; now
+#: 0.14. The floor 0.1, not 0.3: only "science" was ever held up by 0.3.
+DAYS, FLOOR, LEAST_DOCUMENTS = 14, 0.1, 50
+STEEPNESS = 2
+#: How the weights were worked out: other than this, they are worked out again at once.
+HOW = f"log-share^{STEEPNESS}, floor {FLOOR}"
+COUNTED_HOW = "reserve.rarity_how"
 #: How often it is worked out again; with new words, how soon.
 EVERY_HOURS, NEW_WORDS_HOURS = 24, 1
 COUNTED_AT, COUNTED_OF = "reserve.rarity_at", "reserve.rarity_documents"
@@ -72,7 +79,8 @@ def weight_of(seen: int, total: int) -> float:
     """1 for a word never seen, down to FLOOR for one in everything."""
     if total < LEAST_DOCUMENTS:
         return 1.0
-    return round(max(FLOOR, min(1.0, math.log((total + 1) / (seen + 1)) / math.log(total + 1))), 3)
+    share = min(1.0, math.log((total + 1) / (seen + 1)) / math.log(total + 1))
+    return round(max(FLOOR, share ** STEEPNESS), 3)
 
 
 class Rarity:
@@ -104,7 +112,7 @@ class Rarity:
         if not words:
             return False
         at = self._kept(COUNTED_AT)
-        if not at:
+        if not at or self._kept(COUNTED_HOW) != HOW:
             return True
         since = now - datetime.fromisoformat(at)
         if since >= timedelta(hours=EVERY_HOURS):
@@ -126,7 +134,15 @@ class Rarity:
                              rows)
         self._keep(COUNTED_AT, now.isoformat())
         self._keep(COUNTED_OF, str(total))
+        self._keep(COUNTED_HOW, HOW)
         return total
 
+    def common(self, below: float, most: int = 40) -> List[str]:
+        """The words they see most, of those counted: too common to set anything off alone."""
+        return [row["word"] for row in self.db.query(
+            "SELECT word FROM reserve_word_rarity WHERE weight < ? ORDER BY weight, word LIMIT ?",
+            (float(below), int(most)))]
 
-__all__ = ["Rarity", "documents", "seen_in", "weight_of", "DAYS", "FLOOR", "LEAST_DOCUMENTS"]
+
+__all__ = ["Rarity", "documents", "seen_in", "weight_of", "DAYS", "FLOOR", "LEAST_DOCUMENTS",
+           "STEEPNESS", "HOW"]

@@ -25,9 +25,11 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from ...common.languages import in_display, in_english
 from ...models.base import ModelRequest
 from ...models.manager import ModelUnavailable
+from ...models import answers as _answers
 from . import item_links
 from . import task_projects as tp
 from . import todo as _todo
+from .english_copies import asked_in_parts
 from .tasks import LIVE, Kept, Task, now as task_now
 
 log = logging.getLogger(__name__)
@@ -47,6 +49,38 @@ MOST_NEWS, NEWS_SHOWN, NEWS_NEAR = 200, 6, 0.42
 NEWS_HEADER = ("FROM THE USER'S NEWSPAPER OF THE LAST 3 DAYS, the stories nearest this work. They "
                "may explain what the work refers to and what belongs with what. None is work of "
                "the user's, and none is a task of its own:\n")
+
+
+class _Unreachable(Exception):
+    """The model could not be reached in the middle of asking in parts: the run stops."""
+
+
+#: A stretch's states asked for in parts of about this many characters - their titles, each
+#: with its kind: what the meaning model reads of a text is about this long.
+PART_CHARS = 900
+
+
+def _parts_of_a_stretch(moment: str) -> List[str]:
+    """The titles of a stretch's states (the writer's lines: id|when|minutes|kind|title|...),
+    in parts; a moment of another shape, as it is."""
+    lines = [one for one in str(moment or "").splitlines() if one.count("|") >= 5]
+    if not lines:
+        return [moment] if str(moment or "").strip() else []
+    titles = []
+    for line in lines:
+        cells = line.split("|")
+        said = f"{cells[3]}: {cells[4]}".strip(": ")
+        if said and said not in titles:
+            titles.append(said)
+    parts, part = [], ""
+    for title in titles:
+        if part and len(part) + len(title) + 2 > PART_CHARS:
+            parts.append(part)
+            part = ""
+        part = f"{part}; {title}" if part else title
+    if part:
+        parts.append(part)
+    return parts
 
 
 def is_scheme_row(task: Any) -> bool:
@@ -227,28 +261,73 @@ class ProjectRound:
         for pid in needing:
             tasks_of[pid] = self.tasks.of_project(pid, limit=8)
         minutes = tp.worked_minutes(states, window)
-        short = tp.short_labels([str(state.id) for state in states], "s")
-        stretch_said = tp.stretch_text(states, minutes, short)
-        self._users_own = self._the_users_own(stretch_said)
-        self._news_said = self._news_like(stretch_said)
-        prompt = "\n\n".join(part for part in (
-            self._users_own,
-            self._news_said,
-            tp.needing_text(needing, tasks_of, self._named_before(recent), short_of),
-            tp.project_list_text(rows, needing, short_of),
-            stretch_said) if part)
-        self.hb._at(self.report, "writing the tasks",
-                    f"{len(states)} state(s) from {window[0]:%m-%d %H:%M}")
-        answer, reply, usage = self._ask(tp.WRITER_SYSTEM, prompt, {"states": len(states)})
-        stretch = {"from": tp.iso(window[0]), "to": tp.iso(window[1]),
-                   "states": len(states), "sent": prompt, "reply": reply,
-                   "tokens_in": int(getattr(usage, "input_tokens", 0) or 0),
-                   "tokens_out": int(getattr(usage, "output_tokens", 0) or 0)}
-        self.report["stretches"].append(stretch)
-        if answer is None:
+        needing_said = tp.needing_text(needing, tasks_of, self._named_before(recent), short_of)
+        listed = tp.project_list_text(rows, needing, short_of)
+
+        def ask(part: Sequence[Any]) -> Any:
+            """The writer, on these states: the prompt built for them alone."""
+            part = list(part)
+            short = tp.short_labels([str(state.id) for state in part], "s")
+            stretch_said = tp.stretch_text(part, minutes, short)
+            self._users_own = self._the_users_own(stretch_said)
+            self._news_said = self._news_like(stretch_said)
+            prompt = "\n\n".join(one for one in (
+                self._users_own, self._news_said, needing_said, listed, stretch_said) if one)
+            self.hb._at(self.report, "writing the tasks",
+                        f"{len(part)} state(s) from {window[0]:%m-%d %H:%M}")
+            answer, reply, usage = self._ask(tp.WRITER_SYSTEM, prompt, {"states": len(part)},
+                                             wants=("tasks",))
+            entry = {"from": tp.iso(window[0]), "to": tp.iso(window[1]),
+                     "states": len(part), "sent": prompt, "reply": reply,
+                     "tokens_in": int(getattr(usage, "input_tokens", 0) or 0),
+                     "tokens_out": int(getattr(usage, "output_tokens", 0) or 0)}
+            self.report["stretches"].append(entry)
+            if answer is None:
+                raise _Unreachable()
+            if not answer.ok:
+                entry["not_taken"] = answer.why_not
+            answer.short, answer.entry = short, entry
+            return answer
+
+        # A CUT ANSWER IS ASKED AGAIN IN HALVES (the user's choice B, 2026-11-07): read as {},
+        # it made every state a task of its own and the stretch counted as read. Each half is
+        # asked with its own prompt (and an unreadable answer once more in two halves); a part
+        # still not whole at its smallest writes no tasks and is RECORDED AS FAILED - the
+        # report's "failed", the log - and the run moves on past it: never the same question
+        # again the same way (the user, 2026-11-07).
+        try:
+            answered = asked_in_parts(states, ask)
+        except _Unreachable:
             return False
-        lines = tp.read_lines(answer, of_label)
-        written = tp.read_tasks(answer, states, short, of_label)
+        lines: Dict[str, Dict[str, str]] = {}
+        rows_written = []
+        for part, answer in answered:
+            if not answer.ok:
+                log.warning("the tasks of %d state(s) failed: %s", len(part), answer.why_not)
+                self.report.setdefault("failed", []).append(
+                    {"states": [str(state.id) for state in part], "why": answer.why_not})
+                continue
+            for pid, said in tp.read_lines(answer.data, of_label).items():
+                lines.setdefault(pid, said)
+            mine = self._rows_of(tp.read_tasks(answer.data, list(part), answer.short, of_label),
+                                 list(part), minutes)
+            answer.entry["tasks"] = [{key: row[key] for key in (
+                "id", "title", "kind", "minutes", "continues", "states")} for row in mine]
+            rows_written += mine
+        if rows_written:
+            self.tasks.add(rows_written)
+        stretch = self.report["stretches"][-1]
+        if len(answered) > 1:
+            stretch["parts"] = len(answered)
+        stretch["lines"] = lines
+        if rows_written:
+            self._regroup(window[1], lines)
+        stretch["seconds"] = round(time.perf_counter() - began, 1)
+        return True
+
+    def _rows_of(self, written: Sequence[Dict[str, Any]], states: Sequence[Any],
+                 minutes: Dict[str, float]) -> List[Dict[str, Any]]:
+        """The writer's tasks as rows to keep."""
         by_id = {str(state.id): state for state in states}
         rows_written = []
         for task in written:
@@ -265,19 +344,26 @@ class ProjectRound:
                 "starts_at": tp.iso(min(one for one, _ in spans)),
                 "ends_at": tp.iso(max(two for _, two in spans)),
                 "places": dict(places.most_common(12))})
-        self.tasks.add(rows_written)
-        stretch["tasks"] = [{key: row[key] for key in ("id", "title", "kind", "minutes",
-                                                        "continues", "states")}
-                            for row in rows_written]
-        stretch["lines"] = lines
-        self._regroup(window[1], lines)
-        stretch["seconds"] = round(time.perf_counter() - began, 1)
-        return True
+        return rows_written
 
     def _the_users_own(self, moment: str) -> str:
-        """What the user did to names and groups, in moments like this one."""
+        """What the user did to names and groups, in moments like this one. A STRETCH IS ASKED
+        IN PARTS, BY WHAT ITS STATES ARE (the user, 2026-11-07: "按单个项目检索，不截取整段"): the
+        stretch's lines were one text, and only its first states were read for it."""
         retriever = getattr(self.hb, "retriever", None)
-        return retriever.the_users_own(moment, "state_heartbeat") if retriever is not None else ""
+        if retriever is None:
+            return ""
+        parts = _parts_of_a_stretch(moment)
+        if len(parts) <= 1 or not hasattr(retriever, "in_parts"):
+            return retriever.the_users_own(moment, "state_heartbeat")
+        from ..lessons.retrieve import THE_USERS_OWN
+        try:
+            found = retriever.in_parts(("general",), parts, rewrite_task="state_heartbeat",
+                                       site="state heartbeat: names and groups")
+        except Exception:
+            log.info("the lessons could not be looked for", exc_info=True)
+            return ""
+        return THE_USERS_OWN + found if found else ""
 
     def _news_like(self, moment: str) -> str:
         """WHAT THE LAST DAYS' NEWSPAPERS SAID THAT BEARS ON THIS (the user, 2026-11-04):
@@ -305,8 +391,10 @@ class ProjectRound:
             return ""
         return NEWS_HEADER + "\n".join(lines) if lines else ""
 
-    def _ask(self, system: str, prompt: str, metadata: Dict[str, Any]
-             ) -> Tuple[Optional[Dict[str, Any]], str, Any]:
+    def _ask(self, system: str, prompt: str, metadata: Dict[str, Any],
+             wants: Sequence[str] = ()) -> Tuple[Optional[_answers.Answer], str, Any]:
+        """The answer as read (models/answers.py) - whole or not, for the caller to take only
+        when `ok` - its text, and what it cost; None when the model could not be reached."""
         from .heartbeat import _as_json
 
         try:
@@ -325,11 +413,12 @@ class ProjectRound:
         usage = getattr(response, "usage", None)
         self.hb._add_usage(self.report, usage)
         reply = getattr(response, "text", "") or ""
-        answer = _as_json(reply)
-        if answer is None:
+        answer = _answers.read(response, parse=_as_json, wants=wants)
+        if not answer.ok:
             self.report.setdefault("unreadable", 0)
             self.report["unreadable"] += 1
-            answer = {}
+            self.report.setdefault("not_taken_why", []).append(
+                f"{metadata}: {answer.why_not}"[:300])
         return answer, reply, usage
 
     # -- projects -------------------------------------------------------------------------
@@ -576,10 +665,9 @@ class ProjectRound:
         (NAMES_PER_CALL a call), so none is shown unnamed until the next run."""
         projects = [one for one in self._projects_now() if (one.described or {}).get("name_due")]
         self.report["naming"] = []
-        for at in range(0, len(projects), tp.NAMES_PER_CALL):
-            part = projects[at:at + tp.NAMES_PER_CALL]
+        def ask(part: Sequence[Any]) -> Any:
+            part = list(part)
             short_of = tp.short_labels([one.id for one in part], "P")
-            of_label = {label: pid for pid, label in short_of.items()}
             tasks_of = {one.id: self.tasks.of_project(one.id, limit=8) for one in part}
             prompt = tp.needing_text({one.id: one.described["name_due"] for one in part},
                                      tasks_of, self._named_before(part), short_of)
@@ -590,26 +678,60 @@ class ProjectRound:
             self.hb._at(self.report, "naming the projects", f"{len(part)} project(s)")
             answer, reply, _usage = self._ask(tp.LINES_SYSTEM, prompt, {"projects": len(part)})
             self.report["naming"].append({"sent": prompt, "reply": reply})
-            if not answer:
+            if answer is None:
+                raise _Unreachable()
+            if not answer.ok:
+                self.report["naming"][-1]["not_taken"] = answer.why_not
+            answer.of_label = {label: pid for pid, label in short_of.items()}
+            return answer
+
+        for at in range(0, len(projects), tp.NAMES_PER_CALL):
+            # A CUT BATCH IN HALVES (2026-11-07), an unreadable one once more in two halves; an
+            # unreadable answer stopped every batch after it, and now the next goes on. What is
+            # still not named at the smallest is RECORDED AS FAILED and moved past - its
+            # `name_due` let go, `name_failed_at` and `why_name_failed` said - not asked again
+            # the same way (the user, 2026-11-07).
+            try:
+                asked = asked_in_parts(projects[at:at + tp.NAMES_PER_CALL], ask)
+            except _Unreachable:
                 return
-            lines = tp.read_lines(answer, of_label)
-            changed = []
-            for one in part:
-                said = lines.get(one.id)
-                if not said:
+            for part, answer in asked:
+                if not answer.ok:
+                    log.warning("naming %d project(s) failed: %s", len(part), answer.why_not)
+                    self._naming_failed(list(part), answer.why_not)
                     continue
-                described = dict(one.described or {})
-                english = dict(described.get("in_english") or {})
-                self._name(one, described, english, said,
-                           float(described.get("minutes") or 0.0))
-                described["what_it_is"] = described["line_display"]
-                english["what_it_is"] = said["line"]
-                from .english_copies import stamped
-                described["in_english"] = stamped(english, described,
-                                                  ("title", "summary", "what_it_is"))
-                one.described = described
-                changed.append(one)
-            self.kept.save(changed)
+                self._name_these(list(part), tp.read_lines(answer.data, answer.of_label))
+
+    def _naming_failed(self, part: Sequence[Task], why: str) -> None:
+        for one in part:
+            described = dict(one.described or {})
+            described.pop("name_due", None)
+            described["name_failed_at"] = task_now()
+            described["why_name_failed"] = str(why or "")[:300]
+            one.described = described
+        self.kept.save(list(part))
+        self.report.setdefault("failed", []).append(
+            {"named": [one.id for one in part], "why": why})
+
+    def _name_these(self, part: Sequence[Task], lines: Dict[str, Dict[str, str]]) -> None:
+        """The names a whole answer gave, kept."""
+        from .english_copies import stamped
+        changed = []
+        for one in part:
+            said = lines.get(one.id)
+            if not said:
+                continue
+            described = dict(one.described or {})
+            english = dict(described.get("in_english") or {})
+            self._name(one, described, english, said,
+                       float(described.get("minutes") or 0.0))
+            described["what_it_is"] = described["line_display"]
+            english["what_it_is"] = said["line"]
+            described["in_english"] = stamped(english, described,
+                                              ("title", "summary", "what_it_is"))
+            one.described = described
+            changed.append(one)
+        self.kept.save(changed)
 
     # -- what is still open ----------------------------------------------------------------
     def _link_what_is_open(self) -> None:
@@ -635,9 +757,15 @@ class ProjectRound:
             answer, reply, _usage = self._ask(item_links.LINKS_SYSTEM, prompt,
                                               {"open": len(items)})
             self.report["links"] = {"sent": prompt, "reply": reply}
-            if answer:
-                self.report["linked"] = item_links.keep_answer(links, answer, of_item, of_project,
-                                                               of_task)
+            # Only a whole answer (2026-11-07); else what was linked before stands.
+            if answer is not None and answer.ok:
+                self.report["linked"] = item_links.keep_answer(links, answer.data, of_item,
+                                                               of_project, of_task)
+            elif answer is not None:
+                self.report["links"]["failed"] = answer.why_not
+                self.report.setdefault("failed", []).append(
+                    {"links": len(items), "why": answer.why_not})
+                log.warning("linking what is open failed: %s", answer.why_not)
         except Exception:
             log.warning("what is open could not be linked to the work", exc_info=True)
 
@@ -756,9 +884,17 @@ class ProjectRound:
         self.hb._at(self.report, "looking for earlier projects", f"{len(wanted)} project(s)")
         answer, reply, _usage = self._ask(tp.RELINK_SYSTEM, prompt, {"projects": len(wanted)})
         self.report["relinked"].update({"sent": prompt, "reply": reply})
-        if not answer:
+        # NOTHING CHANGED ON AN ANSWER NOT WHOLE (2026-11-07): a cut-off one could name some
+        # links and not others, and what it said was taken. Recorded as failed, and moved
+        # past - the look for earlier projects is this run's alone.
+        if answer is None or not answer.ok:
+            if answer is not None:
+                self.report["relinked"]["failed"] = answer.why_not
+                self.report.setdefault("failed", []).append(
+                    {"relink": [one.id for one in wanted], "why": answer.why_not})
+                log.warning("looking for earlier projects failed: %s", answer.why_not)
             return
-        links = tp.read_links(answer, {v: k for k, v in new_label.items()},
+        links = tp.read_links(answer.data, {v: k for k, v in new_label.items()},
                               {v: k for k, v in old_label.items()})
         # Each earlier project to one new one: being the same first, then the
         # most alike. One that kept an earlier id is the same as no other.

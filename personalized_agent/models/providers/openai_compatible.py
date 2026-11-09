@@ -154,6 +154,24 @@ PRESETS: Tuple[Preset, ...] = (
 )
 
 
+#: Asked with this when a service refuses a longer output limit: what most models take.
+SAFE_OUTPUT = 8192
+
+
+def _too_long_a_limit(text: str, body: Dict[str, Any]) -> bool:
+    """Whether a refusal is of the output limit: said too large, over the model's maximum."""
+    if not any(key in body for key in ("max_tokens", "max_completion_tokens")):
+        return False
+    if int(body.get("max_tokens") or body.get("max_completion_tokens") or 0) <= SAFE_OUTPUT:
+        return False
+    named = any(word in text for word in ("max_tokens", "max_completion_tokens", "max_new_tokens",
+                                          "output tokens", "completion tokens"))
+    too = any(word in text for word in ("too large", "too many", "exceed", "maximum", "at most",
+                                        "less than or equal", "must be <=", "out of range",
+                                        "larger than"))
+    return named and too
+
+
 class OpenAICompatibleProvider(ModelProvider):
     """One service that speaks the OpenAI chat API (`Preset`)."""
 
@@ -171,6 +189,8 @@ class OpenAICompatibleProvider(ModelProvider):
         #: The service turned down "max_tokens" and asked for
         #: "max_completion_tokens" (OpenAI's newer models): not sent again.
         self._completion_tokens = False
+        #: The most a service took when it refused a longer limit, by model: asked so from then.
+        self._most_output: Dict[str, int] = {}
         #: The service turned down the marks that ask for caching: not
         #: asked for again (`_marked`).
         self._marks_refused = False
@@ -434,7 +454,7 @@ class OpenAICompatibleProvider(ModelProvider):
             # Its usage whole - what was read from the cache, what it cost.
             body["usage"] = {"include": True}
         body["max_completion_tokens" if self._completion_tokens else "max_tokens"] = \
-            int(request.max_tokens)
+            min(int(request.max_tokens), self._most_output.get(model, int(request.max_tokens)))
         effort = request.reasoning_effort
         if effort and effort in self._efforts_of(model):
             # OpenRouter takes it as its own object; the rest as OpenAI does.
@@ -468,6 +488,15 @@ class OpenAICompatibleProvider(ModelProvider):
                 # A newer model takes the other name for the same limit.
                 self._completion_tokens = True
                 body["max_completion_tokens"] = body.pop("max_tokens")
+                said = self._request("POST", "/chat/completions", body)
+            elif _too_long_a_limit(text, body):
+                # THE LIMIT TOO LONG FOR THIS MODEL (2026-11-07: every call asks for at least
+                # 20000): asked again with what most models take, and so from then on.
+                key = "max_completion_tokens" if "max_completion_tokens" in body else "max_tokens"
+                self._most_output[model] = SAFE_OUTPUT
+                body[key] = SAFE_OUTPUT
+                log.info("%s refused an output limit for %s; asking with %d", self.provider_id,
+                         model, SAFE_OUTPUT)
                 said = self._request("POST", "/chat/completions", body)
             else:
                 raise

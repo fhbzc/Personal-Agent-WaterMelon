@@ -37,6 +37,12 @@ def as_json(text: str) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+#: The provider that stands in when no model is set up - never one to learn with.
+OFFLINE = "offline"
+OFFLINE_NOTE = ("the model chosen is the offline stand-in, which cannot learn: "
+                "choose a model in Settings > Models")
+
+
 class Asker:
     """Calls a model for the learning. `spent(tokens)` is told what each
     call cost; `stopped()` is asked before each call - a paused update
@@ -75,4 +81,17 @@ class Asker:
             + int(getattr(usage, "output_tokens", 0) or 0)
         if self.spent is not None:
             self.spent(tokens)
-        return as_json(getattr(response, "text", "") or "")
+        # THE OFFLINE STAND-IN DOES NOT LEARN (2026-11-07): it answers anything, never what was
+        # asked, and every part it answered was recorded failed. Not an answer: nothing is
+        # marked, and the update stops saying which model to choose (`_model_wrong`).
+        if str(getattr(response, "provider", "") or "") == OFFLINE:
+            return {"_failed": OFFLINE_NOTE, "_model_wrong": OFFLINE_NOTE}
+        # A CUT OR UNREADABLE ANSWER IS A FAILED ONE (2026-11-07): it was read as {} and taken as
+        # "nothing in it". Now it says so, as a call that failed does - "_cut" when it stopped at
+        # the output limit - and its callers keep nothing of it.
+        from ..models import answers
+        read = answers.read(response, parse=answers.json_of)
+        if read.ok:
+            return read.data or {}
+        log.info("a learning call (%s) was not answered: %s", kind, read.why_not)
+        return {"_failed": read.why_not, **({"_cut": True} if read.cut else {})}

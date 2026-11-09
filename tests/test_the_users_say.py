@@ -199,6 +199,18 @@ class ChatBubbleKeysTests(unittest.TestCase):
             ui.toggle_chat_bubble()
             ui.open_chat_bubble.assert_called_once()
 
+    def test_the_shortcut_pressed_again_closes_it_minimised_or_not(self) -> None:
+        """The user, 2026-11-08: "打开chat的快捷键再嗯一下是关掉（而不是最小化)"."""
+        for minimized in (False, True):
+            ui = self._ui(is_open=True, minimized=minimized, close=mock.Mock())
+            ui._chat_open_or_closed()
+            ui._chat_bubble.close.assert_called_once()
+            ui._chat_bubble.minimize.assert_not_called()
+            ui.open_chat_bubble.assert_not_called()
+        for ui in (self._ui(is_open=False, minimized=False, close=mock.Mock()), self._ui()):
+            ui._chat_open_or_closed()
+            ui.open_chat_bubble.assert_called_once()
+
     def test_it_is_a_shortcut_of_its_own_in_settings(self) -> None:
         from personalized_agent.common.config.schema import SCHEMA_BY_KEY
         from personalized_agent.platform_layer.hotkeys import BY_KEY
@@ -273,6 +285,48 @@ class FrontScreenTests(unittest.TestCase):
         self._event("application.focused", "word", pid=1, window_title="Notes")
         self.assertIn("Notes", DesktopAgent._front_for_chat(desk)[0], "another window goes again")
 
+    def test_the_picture_that_goes_is_handed_to_the_bubble_to_show(self) -> None:
+        """The user, 2026-11-08: the picture sent with a message shown under it - at once, small,
+        before its words are read ("你等识别，你可以先把图片截图发上来"); then said how it went."""
+        import queue
+        from personalized_agent.ui.desktop import DesktopAgent
+        self._event("application.focused", "chrome", pid=1, window_title="Tides")
+        shown = []
+        bubble = SimpleNamespace(front_off="", picture_sent=lambda *said: shown.append(("shown",) + said),
+                                 picture_settled=lambda *said: shown.append(("settled",) + said))
+        order = []
+        small = object()
+
+        def for_a_message(title=""):
+            order.append("waited")
+            return {"path": "C:/shots/tides.png", "words": "High tide 6pm", "title": title}
+        pictures = SimpleNamespace(
+            again_for_a_message=lambda: order.append("taken"),
+            preview=lambda: order.append("preview") or small, for_a_message=for_a_message,
+            why="", blocks=lambda shot: [{"media_type": "image/jpeg", "data": "AAAA"}]
+            if shot.get("path") else [])
+        posted = queue.Queue()
+        desk = SimpleNamespace(app=SimpleNamespace(db=self.app.db, config=self.app.config,
+                                                   front_pictures=pictures),
+                               _chat_bubble=bubble, queue=posted, _chat_model_sees=lambda: False)
+        note, seen = DesktopAgent._front_for_chat(desk)
+        self.assertEqual(order, ["taken", "preview", "waited"], "shown before it is waited for")
+        self.assertIn("High tide 6pm", note)
+        self.assertEqual(len(seen), 1)
+        while not posted.empty():
+            kind, call = posted.get_nowait()
+            self.assertEqual(kind, "call")
+            call()                               # on Tk's thread, in the application
+        self.assertEqual(shown, [("shown", small), ("settled", "words", "")],
+                         "the small one at once; then: its words only")
+        shown.clear()
+        pictures.for_a_message = lambda title="": {}
+        pictures.why = "something like a password was on it"
+        DesktopAgent._front_for_chat(desk)
+        while not posted.empty():
+            posted.get_nowait()[1]()
+        self.assertEqual(shown, [("shown", small), ("settled", "not", pictures.why)])
+
     def test_nothing_while_the_listener_is_off_or_nothing_is_known(self) -> None:
         self.assertEqual(front_note(self.app.db, self.app.config), "")
         self._event("application.focused", "chrome", pid=1, window_title="Tides")
@@ -302,12 +356,16 @@ class TheLatestOutcomeTests(unittest.TestCase):
             self.skipTest("no browser available to render the page")
         script = (ROOT / "personalized_agent" / "api" / "web" / "app.js").read_text(encoding="utf-8")
         part = script[script.index("/* THE LATEST OUTCOME"):script.index("/* The rows of a to-do's work")]
+        # Its button, as each outcome's is made (`madeButtons` calls it).
+        start = script.index("function ovTodoOpen(version, thing)")
+        part += "\n" + script[start:script.index("\n}\n", start) + 3]
         page = """<!doctype html><html><head><meta charset='utf-8'></head><body><script>
 const XP_HANDED_KIND={};const escapeHtml=(s)=>String(s);</script><script>%s</script>
 <script>window.addEventListener('load',()=>{const finished=(run,version)=>({state:'finished',version,
 run,unit:'u',result:'/out/'+run+'.txt'});
 document.title=JSON.stringify({
-both:ovTodoLatest([finished('r1',1),finished('r2',2),{state:'ongoing',run:'r3',unit:'u'}]),
+both:ovTodoLatest([finished('r1',1),finished('r2',2)]),
+going:ovTodoLatest([finished('r1',1),finished('r2',2),{state:'ongoing',run:'r3',unit:'u'}]),
 none:ovTodoLatest([{state:'stopped',run:'r1',unit:'u1'},{state:'ongoing',run:'r2',unit:'u2'}]),
 stopped:ovTodoLatest([{state:'stopped',run:'r1',unit:'u1',result:'/out/r1',result_kind:'folder'}]),
 plan:ovTodoLatest([{state:'drafting'}])});});</script></body></html>""" % part
@@ -325,6 +383,8 @@ plan:ovTodoLatest([{state:'drafting'}])});});</script></body></html>""" % part
         self.assertIn('data-todo-run="r2"', said["both"])
         self.assertIn('data-todo-result="/out/r2.txt"', said["both"])
         self.assertIn("Open the latest outcome", said["both"])
+        self.assertEqual(said["going"], "", "the latest not ended: carried on from its row "
+                         "(the user, 2026-11-08), no earlier one's outcome")
         self.assertEqual(said["none"], "", "there is no Work panel to send them to")
         self.assertIn('data-todo-result="/out/r1"', said["stopped"], "what a stopped one made opens")
         self.assertEqual(said["plan"], "")
@@ -454,7 +514,7 @@ class TheFruitPictureTests(unittest.TestCase):
         part = script[script.index("function pjHours"):script.index("/* The open project's card")]
         part = part[:part.index("function pjLeastBar")] + part[part.index("function pjWhen"):]
         page = """<!doctype html><html><head><meta charset='utf-8'></head><body><div id="host"></div><script>
-const escapeHtml=(s)=>String(s);</script><script>%s</script><script>
+const escapeHtml=(s)=>String(s);const pjBusy=()=>false;</script><script>%s</script><script>
 window.addEventListener('load',()=>{const day=86400000,now=Date.now();
 const task=(from,to)=>({title:'T',minutes:60,starts_at:new Date(now-from*day).toISOString(),
 ends_at:new Date(now-to*day).toISOString()});

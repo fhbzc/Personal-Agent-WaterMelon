@@ -59,6 +59,8 @@ BEAT_SECONDS = 0.5
 ORDERS_EVERY = 0.1
 #: How long the agent waits to hear a pause, a resume or settings done.
 HEARD_WITHIN = 1.0
+#: Told and waited for: not heard in time, it is said not done.
+WAITED_FOR = ("close",)
 
 SPEC, REPLY, SNAPSHOT, CONTROL, LOG = ("spec.json", "reply.json", "snapshot.json",
                                        "control.jsonl", "child.log")
@@ -215,7 +217,8 @@ class ChildRun:
         return self.owner.log_dir_of(row) if row and row.get("folder") else None
 
     # -- what the user does --------------------------------------------------------------
-    def _tell(self, what: str, wait: bool = False, **said: Any) -> bool:
+    def _tell(self, what: str, wait: bool = False, within: Optional[float] = None,
+              **said: Any) -> bool:
         """Told by a line in its control file. `wait`: until the child says
         it has done it - a second at most - so what the page asks next is
         already as it is now (the user, 2026-10-27: Resume made it wait)."""
@@ -225,11 +228,12 @@ class ChildRun:
         with open(self.dir / CONTROL, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
         if wait:
-            until = time.monotonic() + HEARD_WITHIN
+            until = time.monotonic() + (HEARD_WITHIN if within is None else within)
             while time.monotonic() < until:
                 if entry["id"] in (self._snap().get("obeyed") or []):
-                    break
+                    return True
                 time.sleep(0.02)
+            return what not in WAITED_FOR          # heard or not, as before - but a close
         return True
 
     def pause(self, why: str = "") -> bool:
@@ -241,6 +245,14 @@ class ChildRun:
     def resume(self, why: str = "", settings: Optional[Dict[str, Any]] = None) -> bool:
         return self._tell("resume", wait=True, why=why,
                           **({"settings": settings} if settings else {}))
+
+    def close_for(self, why: str) -> bool:
+        """THE APPLICATION CLOSING, a run in a process of its own (found 2026-11-08 in the log: "'ChildRun'
+        object has no attribute 'close_for'" - it kept no point): told, it keeps where it stands
+        itself (`Run.close_for`, in the child); True once it says it has, within the time the
+        closing gives every run."""
+        from .runner import CLOSE_SECONDS
+        return self._tell("close", wait=True, within=max(1.0, CLOSE_SECONDS - 2), why=why)
 
     def release(self, now: bool = False) -> None:
         self._tell("stop", now=bool(now or self.stop_now))
@@ -504,6 +516,8 @@ def _obey(run: Any, order: Dict[str, Any]) -> None:
             run.release(bool(order.get("now")))
         elif what == "answer":
             run.answer(str(order.get("request") or ""), bool(order.get("allow")))
+        elif what == "close":
+            run.close_for(str(order.get("why") or ""))
     except Exception:                          # pragma: no cover - told again
         log.warning("could not do %s", what, exc_info=True)
 

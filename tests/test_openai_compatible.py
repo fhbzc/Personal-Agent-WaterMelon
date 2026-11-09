@@ -203,6 +203,20 @@ class OpenAICompatibleTests(unittest.TestCase):
         self.provider.invoke(ModelRequest(messages=[{"role": "user", "content": "hi"}]), "model-a")
         self.assertIn("max_completion_tokens", _Service.seen[-1][3], "remembered")
 
+    def test_a_limit_too_long_for_the_model_is_asked_again_with_less(self) -> None:
+        """2026-11-07: every call asks for at least 20000; a model that takes less says so."""
+        def answer(body):
+            if int(body.get("max_tokens") or 0) > 8192:
+                return 400, {"error": {"message": "max_tokens is too large: 20000. This model "
+                                                  "supports at most 8192 completion tokens."}}
+            return 200, {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+        _Service.reply["next"] = (200, answer)
+        asked = ModelRequest(messages=[{"role": "user", "content": "hi"}], max_tokens=20000)
+        self.assertEqual(self._keyed().invoke(asked, "model-b").text, "ok")
+        self.assertEqual(_Service.seen[-1][3]["max_tokens"], 8192)
+        self.provider.invoke(asked, "model-b")
+        self.assertEqual(_Service.seen[-1][3]["max_tokens"], 8192, "remembered for that model")
+
     def test_how_hard_it_thinks_is_sent_where_the_model_takes_it(self) -> None:
         from personalized_agent.models.providers.openai_compatible import efforts_for
         self.assertEqual(efforts_for("openai", "gpt-5.1"), ["minimal", "low", "medium", "high"])

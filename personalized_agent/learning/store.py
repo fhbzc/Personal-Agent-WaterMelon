@@ -16,10 +16,13 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 #: they said yes to it; "accepted": they let it stand; "endorsed": they
 #: put someone else's work in the learning list as a reference, saying what
 #: of it they endorse (learning/items.py) - or the heartbeat found them
-#: saying so (learning/interests.py).
-STRENGTHS = ("written", "noted", "endorsed", "changed", "approved", "accepted")
+#: saying so (learning/interests.py). "earlier": a pattern the earlier
+#: learning found from their screen in several pieces of their work
+#: (learning/activity.py, the user 2026-11-07) - an agent's finding, never
+#: their words: below what they changed, above one thing let stand.
+STRENGTHS = ("written", "noted", "endorsed", "changed", "approved", "earlier", "accepted")
 WEIGHT = {"written": 3.0, "noted": 2.5, "endorsed": 2.0, "changed": 2.0, "approved": 1.5,
-          "accepted": 1.0}
+          "earlier": 1.5, "accepted": 1.0}
 #: A unit the user turned off, or one whose first reading waits for them to
 #: look: nothing learned from it is given (learning/find.py).
 HELD = ("inactive", "pending")

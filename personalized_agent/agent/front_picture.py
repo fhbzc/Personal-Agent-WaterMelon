@@ -9,6 +9,9 @@ is the same picture: nothing is read or written again.
 
 THAT WINDOW ALONE, NOT THE SCREEN (the user agreed, 2026-11-04): a window kept from
 being read could stand beside the one in front, and the list is asked of that one.
+THE WHOLE SCREEN NOW, WHERE IT CAN BE (the user, 2026-11-08: "能给整个屏幕吗"): on Windows the whole
+screen the window is on, with this application's windows and every window never read painted
+grey where they show (platform_layer/windows.py, `blank_windows`); elsewhere the window, as before.
 Never with activity monitoring or the pictures switched off (Settings), of a window
 excluded from being read, and never one whose words, as far as they can be read
 here, hold a password or a code: that one is dropped whole.
@@ -37,6 +40,18 @@ SAME_BELOW = 0.35
 SMALL = (240, 135)
 #: How long a message waits for what is behind it, in seconds; past it, none goes.
 WAIT_SECONDS = 4.0
+#: THE WHOLE SCREEN'S WORDS TAKE LONGER (the user, 2026-11-08: "chat里没显示这个图" - measured: a
+#: whole screen read in 5.7 s here, a window in 1.6 s, and every message went past 4 s with none):
+#: what a message waits for its picture - its words read, to see that no password is in it.
+WAIT_FOR_A_MESSAGE = 12.0
+#: THE CHAT'S, NOT READ (the user, 2026-11-08: "chat的这个可以跳过。不需要识别"): taken and kept, no
+#: words read and no password looked for - what a chat message waits for it then.
+WAIT_UNREAD = 4.0
+#: SHOWN AT ONCE, BEFORE ITS WORDS ARE READ (the user, 2026-11-08: "你等识别，你可以先把图片截图发上来。
+#: 而且你在chat里的截图可以不是原图，可以是一个压缩后的低分辨率图"): a copy this large at most, kept in
+#: memory only; how long a message waits for the grab itself.
+PREVIEW_SIDE = 1280
+PREVIEW_WAIT = 2.0
 
 
 def _small(image: Any) -> Any:
@@ -80,6 +95,15 @@ class FrontPictures:
         #: The last one kept, and its small copy, to tell the same screen by.
         self._kept: Dict[str, Any] = {}
         self._small: Any = None
+        #: GIVEN WITH A MESSAGE ALREADY: the next message takes the screen again (the user,
+        #: 2026-11-08: "在chat里问第二句话的时候，就没有input screen了").
+        self.used = False
+        #: The screen as just taken, small - for the chat to show before its words are read
+        #: (`preview`); never a window that is never read. Why the last one did not go, in words.
+        self._grabbed = threading.Event()
+        self._grabbed.set()
+        self._preview: Any = None
+        self.why = ""
 
     def _on(self) -> bool:
         return (self.folder is not None and self.activity is not None
@@ -91,12 +115,27 @@ class FrontPictures:
         return any(one.strip() and one.strip().lower() in haystack
                    for one in self.config.lines("listener_screen_excluded_applications"))
 
-    def take(self) -> None:
+    def take(self, words: bool = True) -> None:
         """The press: the screen now. Only the grab is done here - where what a window
         draws can be asked of it, not even that (the user, 2026-11-04: Chat opened with a
-        catch): nothing opened after it can be in that, so nothing need wait for it."""
+        catch): nothing opened after it can be in that, so nothing need wait for it.
+        `words`: its words read, and a picture with a password dropped - not the chat's
+        (the user, 2026-11-08), whose picture goes as it was taken."""
+        self._reading = bool(words)
         self._shot = {}
+        self.used = False
+        self._preview, self.why = None, ""
+        self._grabbed = threading.Event()
         if not self._on():
+            self._grabbed.set()
+            return
+        if callable(getattr(self.activity, "user_screen_image", None)) \
+                and self.config.get("front_picture_whole_screen", True):
+            # THE WHOLE SCREEN (the user, 2026-11-08: "能给整个屏幕吗"), taken at once: this
+            # application's windows and those never read painted over, whatever stands there.
+            self._done = done = threading.Event()
+            threading.Thread(target=self._screen_and_kept, args=(done,), name="front-picture",
+                             daemon=True).start()
             return
         if getattr(self.activity, "draws_windows", False) is True:
             self._done = done = threading.Event()
@@ -109,10 +148,26 @@ class FrontPictures:
             log.debug("the screen could not be taken", exc_info=True)
             image = None
         if image is None:
+            self._grabbed.set()
             return
         self._done = done = threading.Event()
         threading.Thread(target=self._keep, args=(image, done), name="front-picture",
                          daemon=True).start()
+
+    def _screen_and_kept(self, done: threading.Event) -> None:
+        try:
+            title = str((self.front() or {}).get("title") or "")
+            image = self.activity.user_screen_image(
+                title=title, hidden=lambda application, name: self._excluded(
+                    {"application": application, "title": name}))
+        except Exception:
+            log.debug("the screen could not be taken", exc_info=True)
+            image = None
+        if image is None:
+            self._grabbed.set()
+            done.set()
+            return
+        self._keep(image, done)
 
     def _drawn_and_kept(self, done: threading.Event) -> None:
         try:
@@ -122,6 +177,7 @@ class FrontPictures:
             log.debug("the window could not be taken", exc_info=True)
             image = None
         if image is None:
+            self._grabbed.set()
             done.set()
             return
         self._keep(image, done)
@@ -129,12 +185,35 @@ class FrontPictures:
     def _keep(self, image: Any, done: threading.Event) -> None:
         try:
             said = self.front() or {}
-            if not self._excluded(said):
+            if self._excluded(said):
+                self.why = "the window in front is one never read"
+            else:
+                try:
+                    small = image.convert("RGB")
+                    small.thumbnail((PREVIEW_SIDE, PREVIEW_SIDE))
+                    self._preview = small
+                except Exception:                # shown once it is kept, then
+                    log.debug("the screen's small copy could not be made", exc_info=True)
+                self._grabbed.set()
                 self._shot = self._kept_of(image, said)
+                if not self._shot:
+                    self.why = "something like a password was on it"
         except Exception:
             log.info("the screen's picture could not be kept", exc_info=True)
         finally:
+            self._grabbed.set()
             done.set()
+
+    def preview(self, wait: float = PREVIEW_WAIT) -> Any:
+        """The screen as just taken, small, before its words are read - None if there is none
+        (switched off, a window never read in front, not taken in time)."""
+        self._grabbed.wait(wait)
+        return self._preview
+
+    def again_for_a_message(self) -> None:
+        """For a message after the first, the screen taken again now."""
+        if self.used:
+            self.take(words=getattr(self, "_reading", True))
 
     def _words_of(self, image: Any) -> str:
         if self.read_words is not None:
@@ -153,8 +232,9 @@ class FrontPictures:
         if self._small is not None and self._kept and same_screen(small, self._small) \
                 and Path(self._kept["path"]).is_file():
             return dict(self._kept, title=said.get("title", ""))
-        words = self._words_of(image)
-        if self._held_back(words):
+        reading = getattr(self, "_reading", True)
+        words = self._words_of(image) if reading else ""
+        if reading and self._held_back(words):
             self._small, self._kept = None, {}
             return {}
         picture = image.convert("RGB")
@@ -175,6 +255,18 @@ class FrontPictures:
                 one.unlink()
             except OSError:
                 log.debug("an old picture of the screen could not be let go of", exc_info=True)
+
+    def for_a_message(self, title: str = "", wait: float = WAIT_FOR_A_MESSAGE) -> Dict[str, Any]:
+        """The picture to go with a message: the one taken on the press for the first; for each
+        after it, the screen taken again now - the same screen being the same picture."""
+        self.again_for_a_message()
+        if not getattr(self, "_reading", True) and wait == WAIT_FOR_A_MESSAGE:
+            wait = WAIT_UNREAD                   # nothing read: it is ready at once
+        shot = self.latest(title=title, wait=wait)
+        if not shot and not self._done.is_set() and not self.why:
+            self.why = "it could not be checked in time"
+        self.used = True
+        return shot
 
     def latest(self, title: str = "", wait: float = WAIT_SECONDS) -> Dict[str, Any]:
         """The picture of the last press: {"path", "words", "title"} - {} when
