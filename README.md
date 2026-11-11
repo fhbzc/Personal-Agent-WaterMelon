@@ -272,6 +272,28 @@ writes and speaks in it too.
 
 ## Your privacy
 
+> [!CAUTION]
+> **This open-source software aggressively collects data on your local machine and from your
+> screen. Before you use it, always assume that every action on your machine may be collected.**
+>
+> **Our privacy policy**
+>
+> 1. **This software does not require you to upload any data.** All of your data is stored
+>    locally, on your own computer.
+> 2. **Even so, your data is processed by large language models, so the model you connect may
+>    see all of your activity.**
+>    1. If you have the resources, we recommend deploying an open-source model on a local server
+>       or a server you trust. This is likely the most effective way to prevent privacy
+>       violations.
+>    2. If you connect an API or a subscription service, please check its privacy policy. For
+>       example, if you use Claude or ChatGPT with this software, we highly recommend turning
+>       off the setting that allows your data to be used for model improvement:
+>       - **Claude** (including Claude Code signed in with a Pro or Max plan):
+>         [claude.ai/settings/data-privacy-controls](https://claude.ai/settings/data-privacy-controls)
+>       - **ChatGPT** (including Codex signed in with a ChatGPT plan): Settings → Data controls →
+>         "Improve the model for everyone",
+>         [chatgpt.com/#settings/DataControls](https://chatgpt.com/#settings/DataControls)
+
 An agent that sees your work has to earn that. Personal Agent is built so
 that your data is **stored only on your computer** and **sent only to the
 model you choose**, never to any server of ours or anyone else's. **You
