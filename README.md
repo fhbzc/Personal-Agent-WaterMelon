@@ -288,11 +288,19 @@ writes and speaks in it too.
 >    2. If you connect an API or a subscription service, please check its privacy policy. For
 >       example, if you use Claude or ChatGPT with this software, we highly recommend turning
 >       off the setting that allows your data to be used for model improvement:
->       - **Claude** (including Claude Code signed in with a Pro or Max plan):
->         [claude.ai/settings/data-privacy-controls](https://claude.ai/settings/data-privacy-controls)
->       - **ChatGPT** (including Codex signed in with a ChatGPT plan): Settings → Data controls →
->         "Improve the model for everyone",
->         [chatgpt.com/#settings/DataControls](https://chatgpt.com/#settings/DataControls)
+>       - **Claude** (this also covers Claude Code signed in with a Pro or Max plan, since the
+>         setting covers both chats and coding sessions): on [claude.ai](https://claude.ai), click
+>         your name or initials at the bottom left, choose **Settings**, open **Privacy**, and turn
+>         **off** the **"Help improve Claude"** switch. You can also go straight to
+>         [claude.ai/settings/data-privacy-controls](https://claude.ai/settings/data-privacy-controls).
+>         ([Anthropic's instructions](https://privacy.claude.com/en/articles/12109829-how-do-i-change-my-model-improvement-privacy-settings))
+>       - **ChatGPT** (this also covers Codex signed in with a ChatGPT plan): on
+>         [chatgpt.com](https://chatgpt.com), click your profile picture, choose **Settings**, open
+>         **Data controls**, and turn **off** **"Improve the model for everyone"**. You can also go
+>         straight to [chatgpt.com/#settings/DataControls](https://chatgpt.com/#settings/DataControls).
+>
+>       Turning it off applies to what you send from then on. What was sent while it was on may
+>       already have been used.
 
 An agent that sees your work has to earn that. Personal Agent is built so
 that your data is **stored only on your computer** and **sent only to the
