@@ -470,6 +470,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.3.4](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.4) | 2026-11-14 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.4) |
 | [v0.3.3](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.3) | 2026-11-09 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.3) |
 | [v0.3.2](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.2) | 2026-11-06 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.2/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.2/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.2/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.2) |
 | [v0.3.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.1) | 2026-11-06 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.1) |
@@ -735,6 +736,23 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.3.4](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.4) (2026-11-14, a pre-release)
+
+A pre-release: there to download and try, and offered in Settings > Updates when pre-releases are asked for; v0.3.3 stays the release updates go to.
+
+Your agent plans the day's work, tells you one report at the times you choose, and every notification now goes through the Monitor.
+
+- **The day planned.** The agent sorts what is on your plate - what it does alone, what it prepares for your approval, what is yours - and plans its own work across the days; your own things are only suggested for the free stretches your calendar shows. Its work runs in a folder of its own and carries on when interrupted; anything outside that folder (sending, pushing, installing) waits for your approval, approved with one click.
+- **One report.** Told at the times you set (08:00, 12:00 and 21:00 to begin with) and kept up to date in between, grouped by project or collaboration in three tabs: Needs your look, Yours to do, and Done by your agent. Each item has its own conversation with the agent. OK and OK for all put away what you have seen; "I already did this" and "Do it for me" sit on your own things, and the agent checks by itself what is already done. Each tab can be ordered by importance or by last activity. The report opens in the app's own window.
+- **Every notification through the Monitor.** Seven kinds are told: recommendations, event notifications (invitations, times agreed and each reminder at its time), deadlines (a hard deadline near and the thing not done, early enough for you to do it yourself), your report, risks, your day (the day ahead and closing up for the evening), and the application itself. Presenting, a meeting or the new **No notifications** switch silence them all: they wait in the list. The built-in ones can be switched on or off, nothing more. The Monitor page shows the silences, the kinds and their rules in levels.
+- **Waiting notifications** slide in as a panel at the right of the screen, on Windows and macOS, and go away when the last one is answered; links in them open.
+- **Forms** (browser extension 0.0.6): radio buttons and a page's own drop-down lists are chosen too. Attachments are never put in - the page lists what to attach, with where each file is. It still never submits.
+- **The chat** opens with the keyboard in its box, and the picture of the screen it sends shows where your mouse pointer is.
+- **Agents Society.** Connected by pairing with your own account on the site, with keys of the new kind (the old key backup is gone); an inbox by thread; groups, where the agent judges what to answer and sends after its own review; your profile comes from your Society account, and your contacts there are paired with your Connections.
+- **Privacy.** A private page or folder keeps only its own window out of the picture of the screen; private folders are never read or searched.
+- **The flat watermelon** is a second avatar to choose.
+- A function turned off spends nothing. The page no longer opens empty when the agent is busy.
 
 ### [v0.3.3](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.3) (2026-11-09)
 
