@@ -81,7 +81,8 @@ CREATE TABLE IF NOT EXISTS monitor_quiet (
 
 GROUPS = ("recommend", "risk", "calendar", "deadline", "rest", "summary", "system", "other")
 #: A BUILT-IN ONE IS FIXED (the user, 2026-11-13: "现在设置的几个monitor都是protected, 不允许改"): on or off only.
-BUILT_IN_FIXED = "A built-in Activator is fixed: it can only be switched on or off."
+BUILT_IN_FIXED = ("A built-in Activator is fixed while it is protected: it can only be switched on or "
+                  "off. Take its protection off to change it.")
 #: How what an Activator sends is delivered: at once, or into the waiting list.
 DELIVERIES = ("pop", "wait")
 DOES = ("notify", "ask_model", "queue")
@@ -497,6 +498,23 @@ class ActivatorStore:
             if "display_name" not in names:
                 conn.execute("ALTER TABLE monitor_activators ADD COLUMN display_name TEXT NOT "
                              "NULL DEFAULT ''")
+            # A SILENCE IS A MONITOR TOO (the user, 2026-11-14: "也是一个monitor, 也可以修改和开关"): its switch, its
+            # protection, the user's name for it, and which of the application's own it is.
+            quiet = {row[1] for row in conn.execute("PRAGMA table_info(monitor_quiet)")}
+            for column, kind in (("enabled", "INTEGER NOT NULL DEFAULT 1"),
+                                 ("protected", "INTEGER NOT NULL DEFAULT 0"),
+                                 ("display_name", "TEXT NOT NULL DEFAULT ''"),
+                                 ("builtin", "TEXT NOT NULL DEFAULT ''")):
+                if column not in quiet:
+                    conn.execute(f"ALTER TABLE monitor_quiet ADD COLUMN {column} {kind}")
+            if "builtin" not in quiet:
+                # Those the application wrote before this was kept: its own, protected as its others are.
+                from .builtins import QUIET
+                for key, name, _when in QUIET:
+                    conn.execute(
+                        "UPDATE monitor_quiet SET builtin = ?, protected = 1 WHERE json_extract(data, "
+                        "'$.name') = ? AND id IN (SELECT activator_id FROM monitor_changes WHERE "
+                        "op = 'quiet_add' AND by = 'built in')", (key, name))
 
     def _row(self, row: Any) -> Dict[str, Any]:
         data = json.loads(row["data"] or "{}")
@@ -522,30 +540,125 @@ class ActivatorStore:
 
     # -- rules of quiet: everything that speaks for itself held while one applies ---------
     def quiet_rules(self) -> List[Dict[str, Any]]:
-        out = []
-        for row in self.db.query("SELECT id, data, created_at FROM monitor_quiet "
-                                 "WHERE deleted_at IS NULL ORDER BY created_at"):
-            out.append({"id": row["id"], "created_at": row["created_at"],
-                        **json.loads(row["data"])})
-        return out
+        """Every rule of quiet, on or off - each {"id", "name", "when", "enabled", "protected",
+        "display_name", "builtin", "created_at"}."""
+        return [self._quiet_row(row) for row in self.db.query(
+            "SELECT * FROM monitor_quiet WHERE deleted_at IS NULL ORDER BY created_at, rowid")]
 
-    def add_quiet(self, name: Any, when: Any, by: str, why: str = "") -> str:
-        """A rule of quiet, its condition held to the shape of an Activator's."""
+    @staticmethod
+    def _quiet_row(row: Any) -> Dict[str, Any]:
+        data = json.loads(row["data"] or "{}")
+        return dict(data, id=row["id"], created_at=row["created_at"], enabled=bool(row["enabled"]),
+                    protected=bool(row["protected"]), builtin=row["builtin"] or "",
+                    display_name=str(row["display_name"] or "") or str(data.get("name") or ""))
+
+    def quiet(self, ident: str) -> Optional[Dict[str, Any]]:
+        row = self.db.query_one("SELECT * FROM monitor_quiet WHERE id = ? AND deleted_at IS NULL",
+                                (str(ident or ""),))
+        return self._quiet_row(row) if row else None
+
+    @staticmethod
+    def _clean_quiet(name: Any, when: Any, why: str = "") -> Dict[str, Any]:
         clean, _warnings = check({"name": name, "purpose": str(why or name), "group": "other",
                                   "when": when, "then": [{"do": "queue"}]})
+        return {"name": clean["name"], "when": clean["when"]}
+
+    def add_quiet(self, name: Any, when: Any, by: str, why: str = "", builtin: str = "",
+                  protected: bool = False) -> str:
+        """A rule of quiet, its condition held to the shape of an Activator's."""
+        data = self._clean_quiet(name, when, why)
         ident = new_id("quiet")
-        data = {"name": clean["name"], "when": clean["when"]}
-        self.db.execute("INSERT INTO monitor_quiet (id, data, created_at) VALUES (?, ?, ?)",
-                        (ident, json.dumps(data, ensure_ascii=False), _now()))
+        self.db.execute("INSERT INTO monitor_quiet (id, data, created_at, builtin, protected) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (ident, json.dumps(data, ensure_ascii=False), _now(), builtin, int(protected)))
         self._said(ident, by, "quiet_add", why, None, data)
         return ident
 
+    def _quiet_may(self, ident: str, by: str) -> Dict[str, Any]:
+        """Who may change a rule of quiet: the user, unless it is one of the application's own and
+        protected (then only its switch and their name for it); the agent, never a protected one."""
+        found = self.quiet(ident)
+        if found is None:
+            raise ValueError(f"there is no rule of quiet {ident!r}")
+        if by != "user" and found["protected"]:
+            raise ValueError(f"“{found['name']}” is protected by the user: it cannot be changed, "
+                             "switched or removed")
+        if by == "user" and found["protected"] and self._quiet_given(found) is not None:
+            raise ValueError(BUILT_IN_FIXED)
+        return found
+
+    @staticmethod
+    def _quiet_given(found: Dict[str, Any]) -> Optional[tuple]:
+        from .builtins import QUIET
+        return next((one for one in QUIET if found.get("builtin") and one[0] == found["builtin"]), None)
+
     def remove_quiet(self, ident: str, by: str, why: str = "") -> bool:
+        try:
+            self._quiet_may(ident, by)
+        except ValueError:
+            if by != "user":
+                raise
+            return False
         gone = self.db.execute("UPDATE monitor_quiet SET deleted_at = ? WHERE id = ? AND "
                                "deleted_at IS NULL", (_now(), ident)).rowcount
         if gone:
             self._said(ident, by, "quiet_remove", why, None, None)
         return bool(gone)
+
+    def edit_quiet(self, ident: str, changes: Any, by: str, why: str = "") -> Dict[str, Any]:
+        """What a rule of quiet holds for (`when`), and its own name - the user's change, or the agent's
+        of one not protected."""
+        found = self._quiet_may(ident, by)
+        if not isinstance(changes, dict):
+            raise ValueError("the changes are an object of fields")
+        before = {"name": found["name"], "when": found["when"]}
+        data = self._clean_quiet(changes.get("name") or found["name"], changes.get("when") or found["when"],
+                                 why)
+        self.db.execute("UPDATE monitor_quiet SET data = ? WHERE id = ?",
+                        (json.dumps(data, ensure_ascii=False), found["id"]))
+        self._said(found["id"], by, "quiet_edit", why or ("the user changed it" if by == "user" else ""),
+                   before, data)
+        return self.quiet(ident) or {}
+
+    def switch_quiet(self, ident: str, on: bool, by: str = "user", why: str = "") -> Dict[str, Any]:
+        """On or off - the user's always; the agent's, never of a protected one."""
+        found = self.quiet(ident) if by == "user" else self._quiet_may(ident, by)
+        if found is None:
+            raise ValueError(f"there is no rule of quiet {ident!r}")
+        self.db.execute("UPDATE monitor_quiet SET enabled = ? WHERE id = ?", (int(bool(on)), found["id"]))
+        self._said(found["id"], by, "on" if on else "off", why, None, None)
+        return self.quiet(ident) or {}
+
+    def protect_quiet(self, ident: str, protected: bool) -> Dict[str, Any]:
+        """The user's: protected, the agent can neither change, switch nor remove it. One of the
+        application's own protected again is its own again."""
+        found = self.quiet(ident)
+        if found is None:
+            raise ValueError(f"there is no rule of quiet {ident!r}")
+        self.db.execute("UPDATE monitor_quiet SET protected = ? WHERE id = ?", (int(bool(protected)), found["id"]))
+        self._said(found["id"], "user", "protect" if protected else "unprotect", "", None, None)
+        given = self._quiet_given(found) if protected else None
+        if given is not None:
+            data = self._clean_quiet(given[1], given[2])
+            if data != {"name": found["name"], "when": found["when"]}:
+                self.db.execute("UPDATE monitor_quiet SET data = ? WHERE id = ?",
+                                (json.dumps(data, ensure_ascii=False), found["id"]))
+                self._said(found["id"], "built in", "quiet_edit", "the application's own again",
+                           {"name": found["name"], "when": found["when"]}, data)
+        return self.quiet(ident) or {}
+
+    def rename_quiet(self, ident: str, display_name: Any) -> Dict[str, Any]:
+        """The user's name for it - only the user's: empty gives it back its own name."""
+        found = self.quiet(ident)
+        if found is None:
+            raise ValueError(f"there is no rule of quiet {ident!r}")
+        shown = " ".join(str(display_name or "").split())[:60]
+        if shown == found["name"]:
+            shown = ""
+        self.db.execute("UPDATE monitor_quiet SET display_name = ? WHERE id = ?", (shown, found["id"]))
+        self._said(found["id"], "user", "rename", "", {"display_name": found["display_name"]},
+                   {"display_name": shown or found["name"]})
+        return self.quiet(ident) or {}
 
     def undo(self, change_ids: Sequence[str]) -> int:
         """Changes taken back, the latest first: the way the agent's changes
@@ -598,13 +711,21 @@ class ActivatorStore:
         return ident, warnings
 
     @staticmethod
-    def _fixed(found: Dict[str, Any]) -> bool:
-        """ONE OF THE APPLICATION'S OWN, AS IT IS NOW (the user, 2026-11-13: "现在设置的几个monitor都是protected, 不
-        允许改"): switched on or off, nothing more. One once built in and since taken out of the
-        application (an old break reminder kept as the user's) is theirs as any other."""
+    def _given(found: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """The application's own definition of a built-in one, as it is now - None for one the user or
+        the model made, or one since taken out of the application."""
         from .builtins import builtins as given
-        return bool(found.get("builtin")) and str(found["builtin"]) in {
-            str(one.get("builtin")) for one in given()}
+        name = str(found.get("builtin") or "")
+        return next((one for one in given() if name and str(one.get("builtin")) == name), None)
+
+    @classmethod
+    def _fixed(cls, found: Dict[str, Any]) -> bool:
+        """ONE OF THE APPLICATION'S OWN, AS IT IS NOW, AND PROTECTED (the user, 2026-11-13: "现在设置的几个monitor都是
+        protected, 不允许改"): switched on or off, nothing more. ITS PROTECTION IS THE USER'S TO TAKE OFF (the
+        user, 2026-11-14: "所有monitor要有protected按钮（不是protected的话agent是允许改monitor的)"): then it is theirs
+        and the agent's to change as any other. One once built in and since taken out of the application is
+        theirs as any other."""
+        return bool(found.get("protected")) and cls._given(found) is not None
 
     def _model_may(self, found: Optional[Dict[str, Any]], ident: str) -> Dict[str, Any]:
         if found is None:
@@ -690,15 +811,39 @@ class ActivatorStore:
         return self.get(ident)
 
     def protect(self, ident: str, protected: bool) -> Dict[str, Any]:
-        """The user's: protected, the model can neither change nor delete it."""
+        """The user's: protected, the model can neither change nor delete it - every one, built in too
+        (the user, 2026-11-14). A built-in one protected again is the application's again: what was
+        changed in it while it was not goes back to the application's own."""
         found = self.get(ident)
         if found is None:
             raise ValueError(f"there is no Activator {ident!r}")
-        if self._fixed(found) and not protected:
-            raise ValueError(BUILT_IN_FIXED)
         self.db.execute("UPDATE monitor_activators SET protected = ?, updated_at = ? WHERE id = ?",
                         (int(bool(protected)), _now(), found["id"]))
         self._said(found["id"], "user", "protect" if protected else "unprotect", "", None, None)
+        given = self._given(found) if protected else None
+        if given is not None:
+            self._as_given(found["id"], given)
+        return self.get(ident)
+
+    def _as_given(self, ident: str, given: Dict[str, Any]) -> bool:
+        """A built-in one made the application's own again - False when it already was."""
+        fresh, _warnings = check({k: v for k, v in given.items() if k not in ("builtin", "protected")},
+                                 builtin=True)
+        row = self.db.query_one("SELECT data FROM monitor_activators WHERE id = ?", (ident,))
+        kept = json.loads(row["data"] or "{}") if row else {}
+        if row is None or kept == fresh:
+            return False
+        self.db.execute("UPDATE monitor_activators SET data = ?, updated_at = ? WHERE id = ?",
+                        (json.dumps(fresh, ensure_ascii=False), _now(), ident))
+        self._said(ident, "built in", "edit", "the application's own again", kept, fresh)
+        return True
+
+    def model_switch(self, ident: str, on: bool, by: str, why: str = "") -> Dict[str, Any]:
+        """Switched on or off by the agent - never a protected one (code, not the prompt, refuses it)."""
+        found = self._model_may(self.get(ident), ident)
+        self.db.execute("UPDATE monitor_activators SET enabled = ?, updated_at = ? WHERE id = ?",
+                        (int(bool(on)), _now(), found["id"]))
+        self._said(found["id"], by, "on" if on else "off", why, None, None)
         return self.get(ident)
 
     def changes(self, ident: str = "", limit: int = 100) -> List[Dict[str, Any]]:
@@ -759,15 +904,16 @@ class ActivatorStore:
         """A BUILT-IN ONE'S DEFAULT CHANGED, the copies kept of it follow - where no one changed
         them (the user, 2026-11-07: one written when its cooldown was 30 minutes kept 30 after the
         application said 5). FIXED NOW (the user, 2026-11-13: "都是protected, 不允许改"): every copy follows -
-        what is the user's of it, its switch and their name for it, is kept apart and stays."""
+        what is the user's of it, its switch and their name for it, is kept apart and stays. ONE WHOSE
+        PROTECTION THE USER TOOK OFF AND THAT WAS CHANGED SINCE (2026-11-14) is theirs: kept as it is."""
         changed = 0
         for one in builtins:
             fresh, _warnings = check({k: v for k, v in one.items()
                                       if k not in ("builtin", "protected")}, builtin=True)
-            for row in self.db.query("SELECT id, data FROM monitor_activators WHERE builtin = ? "
-                                     "AND COALESCE(deleted_at, '') = ''", (one["builtin"],)):
+            for row in self.db.query("SELECT id, data, protected FROM monitor_activators WHERE "
+                                     "builtin = ? AND COALESCE(deleted_at, '') = ''", (one["builtin"],)):
                 kept = json.loads(row["data"] or "{}")
-                if kept == fresh:
+                if kept == fresh or (not row["protected"] and self._changed(row["id"])):
                     continue
                 self.db.execute("UPDATE monitor_activators SET data = ?, updated_at = ? WHERE id = ?",
                                 (json.dumps(fresh, ensure_ascii=False), _now(), row["id"]))
@@ -775,6 +921,12 @@ class ActivatorStore:
                            kept, fresh)
                 changed += 1
         return changed
+
+    def _changed(self, ident: str) -> bool:
+        """Whether what it does was last changed by anyone but the application."""
+        row = self.db.query_one("SELECT by FROM monitor_changes WHERE activator_id = ? AND op = 'edit' "
+                                "ORDER BY at DESC, rowid DESC LIMIT 1", (ident,))
+        return row is not None and row["by"] != "built in"
 
     def seed_quiet(self, rules: Any) -> int:
         """The built-in rules of quiet, each written once: one taken away is not
@@ -785,7 +937,7 @@ class ActivatorStore:
             row = self.db.query_one("SELECT value FROM kv WHERE key = ?", (seeded,))
             if row and row["value"]:
                 continue
-            self.add_quiet(name, when, "built in", "built in")
+            self.add_quiet(name, when, "built in", "built in", builtin=key, protected=True)
             self.db.execute("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO "
                             "UPDATE SET value = excluded.value", (seeded, _now()))
             made += 1

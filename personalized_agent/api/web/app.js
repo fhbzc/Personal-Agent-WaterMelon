@@ -28262,6 +28262,7 @@ async function loadSociety() {
       openSocietyThread(societyState.thread, false);
     }
     if (societyState.view === "groups" && !($("#society-g-text")?.value || "").trim()) loadSocietyGroups();
+    if (societyState.view === "calendar" && !societyCal.making) loadSocietyCalendar();
   }, 15000);
 }
 
@@ -28489,9 +28490,11 @@ function societyView(which) {
   $$("[data-society-view]").forEach((one) => one.classList.toggle("on", one.dataset.societyView === which));
   $("#society-view-chats").hidden = which !== "chats";
   $("#society-view-groups").hidden = which !== "groups";
+  $("#society-view-calendar").hidden = which !== "calendar";
   $("#society-view-settings").hidden = which !== "settings";
   societyState.view = which;
   if (which === "groups") loadSocietyGroups();
+  if (which === "calendar") loadSocietyCalendar();
 }
 
 function societyAt(seconds) {
@@ -28814,6 +28817,140 @@ document.addEventListener("change", async (event) => {
   }
 });
 
+
+/* -- THE ACCOUNT'S CALENDAR (society/site_calendar.py; the user, 2026-11-14: "agentssociety的doc更新了calender,
+   你要支持这个功能"): ONE SETTING for how the agent handles invitations - answering, inviting, changing ("一个
+   权限决定能否invite/accept/edit invitation，用户可以设定") - the invitations waiting, with the user's own
+   answers, the events ahead, and a new event. What the user goes to is on their own calendar too. ------- */
+const societyCal = { data: null, making: false };
+const SOCIETY_CAL_MODES = [
+  ["judge", "Your agent judges: what it can tell you would want, it does - reviewed first, told after; the rest it asks you"],
+  ["ask", "Ask me about each one - nothing is answered, sent or changed before I say so"],
+  ["read", "Read only - your agent answers, invites and changes nothing"]];
+const SOCIETY_CAL_ANSWER = { accepted: "Going", tentative: "Maybe", declined: "Not going", needsAction: "Not answered" };
+const SOCIETY_CAL_LACKS = {
+  read: "This key may not read your calendar - give it Calendar read on your account page.",
+  respond: "This key may not answer invitations - give it Calendar answer on your account page.",
+  write: "This key may not make or change events - give it Calendar write on your account page.",
+  invite: "This key may not invite guests - give it Calendar invite on your account page."};
+
+async function loadSocietyCalendar(fresh = false) {
+  try { societyCal.data = await api.get(`/api/society/calendar${fresh ? "?fresh=1" : ""}`); }
+  catch (err) { societyCal.data = { error: err.message, events: [], invitations: [], may: {} }; }
+  renderSocietyCalendar();
+}
+
+function societyCalWhen(one) {
+  const start = one.start_local || "";
+  const end = (one.end_local || "").split(" ");
+  const sameDay = start.split(" ")[0] === end[0];
+  return one.all_day ? (start.split(" ")[0] || "") : `${start}${end[1] ? ` - ${sameDay ? end[1] : one.end_local}` : ""}`;
+}
+
+function societyCalDecided(one) {
+  const said = one.decided;
+  if (!said) return "";
+  const words = said.answer === "asked" ? "Your agent asked you - in your report"
+    : said.answer === "left" ? "Left for you"
+      : `${said.by === "agent" ? "Your agent answered" : "You answered"}: ${SOCIETY_CAL_ANSWER[said.answer] || said.answer}`;
+  return `<div class="muted society-cal-decided">${escapeHtml(words)}${said.why ? ` - ${escapeHtml(said.why)}` : ""}</div>`;
+}
+
+function renderSocietyCalendar() {
+  const box = $("#society-cal");
+  if (!box) return;
+  const data = societyCal.data || { events: [], invitations: [], may: {} };
+  const may = data.may || {};
+  const badge = $("#society-cal-waiting");
+  const waiting = (data.invitations || []).length;
+  if (badge) { badge.textContent = waiting || ""; badge.hidden = !waiting; }
+  const lacks = ["read", "respond", "write", "invite"].filter((part) => !may[part])
+    .map((part) => `<p class="panel-note">${escapeHtml(SOCIETY_CAL_LACKS[part])}</p>`).join("");
+  const mode = `<label class="society-cal-mode">${escapeHtml("Invitations, and what your agent does on this calendar")}
+      <select id="society-cal-mode">${SOCIETY_CAL_MODES.map(([key, words]) =>
+        `<option value="${key}"${data.mode === key ? " selected" : ""}>${escapeHtml(words)}</option>`).join("")}</select></label>`;
+  const answers = (one) => may.respond ? `<div class="ov-lp-buttons">${[["accepted", "Accept"], ["tentative", "Maybe"], ["declined", "Decline"]]
+    .map(([key, words]) => `<button type="button" class="small${key === "accepted" ? "" : " secondary"}${one.your_response === key ? " on" : ""}" data-society-cal-answer="${escapeHtml(key)}" data-event="${escapeHtml(one.id)}">${escapeHtml(words)}</button>`).join("")}</div>` : "";
+  const where = (one) => one.location ? ` · ${escapeHtml(one.location)}` : "";
+  const invitations = (data.invitations || []).map((one) => `<li class="society-cal-item society-cal-invite">
+      <div><strong>${escapeHtml(one.title || "")}</strong></div>
+      <div class="muted">${escapeHtml(societyCalWhen(one))}${where(one)}</div>
+      <div class="muted">${escapeHtml("Invited by")} ${escapeHtml(one.organizer_name || one.organizer || "")}${
+        (one.recurrence || []).length ? ` · ${escapeHtml("Repeats")}` : ""} · ${escapeHtml(String((one.attendees || []).length))} ${escapeHtml("on it")}</div>
+      ${one.description ? `<div class="society-cal-description">${escapeHtml(one.description)}</div>` : ""}
+      ${societyCalDecided(one)}${answers(one)}</li>`).join("");
+  const events = (data.events || []).map((one) => `<li class="society-cal-item">
+      <div><strong>${escapeHtml(one.title || "")}</strong> <span class="society-by">${escapeHtml(
+        one.you_organize ? "You organize it" : (SOCIETY_CAL_ANSWER[one.your_response] || ""))}</span></div>
+      <div class="muted">${escapeHtml(societyCalWhen(one))}${where(one)}${one.you_organize ? "" : ` · ${escapeHtml(one.organizer_name || one.organizer || "")}`}</div>
+      ${one.you_organize && may.write ? `<div class="ov-lp-buttons"><button type="button" class="small secondary" data-society-cal-cancel="${escapeHtml(one.id)}">${escapeHtml("Cancel it")}</button></div>`
+        : one.your_response !== "accepted" && one.your_response !== "needsAction" ? answers(one) : ""}</li>`).join("");
+  const making = societyCal.making ? `<div class="society-sub society-cal-make">
+      <input id="society-cal-title" maxlength="200" placeholder="${escapeHtml("What it is")}">
+      <div class="society-cal-times"><label>${escapeHtml("Starts")} <input type="datetime-local" id="society-cal-start"></label>
+        <label>${escapeHtml("Ends")} <input type="datetime-local" id="society-cal-end"></label></div>
+      <input id="society-cal-location" maxlength="300" placeholder="${escapeHtml("Where (optional)")}">
+      ${may.invite ? `<input id="society-cal-guests" placeholder="${escapeHtml("Invite: account ids, pa-XXXX-XXXX, comma between (optional)")}">` : ""}
+      <textarea id="society-cal-description" rows="2" maxlength="5000" placeholder="${escapeHtml("More about it (optional)")}"></textarea>
+      <div class="ov-lp-buttons"><button type="button" class="small" id="society-cal-make-go">${escapeHtml("Make the event")}</button>
+        <button type="button" class="small secondary" id="society-cal-make-no">${escapeHtml("Cancel")}</button></div></div>` : "";
+  box.innerHTML = `${data.error ? `<p class="delegate-error">${escapeHtml(data.error)}</p>` : ""}${lacks}${mode}
+    <div class="society-side-head"><span class="muted">${escapeHtml("Invitations waiting")}</span>
+      <button type="button" class="small secondary" id="society-cal-check">${escapeHtml("Check now")}</button></div>
+    <ul class="society-cal-list">${invitations || `<li class="muted">${escapeHtml("None waiting.")}</li>`}</ul>
+    <div class="society-side-head"><span class="muted">${escapeHtml("Ahead")}${data.timezone ? ` · ${escapeHtml(data.timezone)}` : ""}</span>
+      ${may.write ? `<button type="button" class="small secondary" id="society-cal-new">${escapeHtml("New event")}</button>` : ""}</div>
+    ${making}
+    <ul class="society-cal-list">${events || `<li class="muted">${escapeHtml(may.read ? "Nothing ahead." : "The calendar is not read with this key.")}</li>`}</ul>
+    <p class="muted">${escapeHtml("What you go to - accepted, or yours - is on your own calendar too, with its reminder.")}</p>`;
+}
+
+document.addEventListener("change", async (event) => {
+  if (event.target.id !== "society-cal-mode") return;
+  try {
+    societyCal.data = await api.post("/api/society/calendar/mode", { mode: event.target.value });
+    toast("Saved");
+  } catch (err) { toast(err.message, "error"); }
+  renderSocietyCalendar();
+});
+
+document.addEventListener("click", async (event) => {
+  const at = event.target.closest && event.target.closest("#society-view-calendar button");
+  if (!at) return;
+  const run = async (call, done) => {
+    try { const said = await call(); if (done) toast(done); return said || true; }
+    catch (err) { toast(err.message, "error"); return null; }
+  };
+  if (at.id === "society-cal-check") {
+    at.disabled = true;
+    await loadSocietyCalendar(true);
+  } else if (at.id === "society-cal-new" || at.id === "society-cal-make-no") {
+    societyCal.making = at.id === "society-cal-new";
+    renderSocietyCalendar();
+    if (societyCal.making) $("#society-cal-title")?.focus();
+  } else if (at.id === "society-cal-make-go") {
+    const iso = (box) => (box && box.value ? new Date(box.value).toISOString() : "");
+    const guests = ($("#society-cal-guests")?.value || "").split(/[\s,，]+/).filter(Boolean);
+    at.disabled = true;
+    const made = await run(() => api.post("/api/society/calendar/do", {
+      op: "create", title: $("#society-cal-title").value, start: iso($("#society-cal-start")),
+      end: iso($("#society-cal-end")), location: $("#society-cal-location").value,
+      description: $("#society-cal-description").value, ...(guests.length ? { attendees: guests } : {}) }), "Event made");
+    if (!made) { at.disabled = false; return; }
+    societyCal.making = false;
+    loadSocietyCalendar();
+  } else if (at.dataset.societyCalAnswer) {
+    at.disabled = true;
+    if (await run(() => api.post("/api/society/calendar/respond",
+      { id: at.dataset.event, response: at.dataset.societyCalAnswer }), "Answered")) loadSocietyCalendar();
+    else at.disabled = false;
+  } else if (at.dataset.societyCalCancel) {
+    at.disabled = true;
+    if (await run(() => api.post("/api/society/calendar/do",
+      { op: "cancel", id: at.dataset.societyCalCancel }), "Cancelled - everyone on it is told")) loadSocietyCalendar();
+    else at.disabled = false;
+  }
+});
 
 /* -- THE ACCOUNT'S GROUPS (society/site_groups.py; the user, 2026-11-13: "群组 ... 发消息、建群、接受邀请"
    - "群发言不一定每个要回，agent可以自己判断。另外group的回复不要draft, 直接发送就行"): on the left the
@@ -29908,194 +30045,8 @@ setInterval(() => {
 }, 30000);
 if (location.hash === "#approvals") openApprovals();
 
-/* -- THE WAITING NOTIFICATIONS, A PANEL DOWN THE WHOLE SIDE OF THE SCREEN (the user, 2026-11-13: "你现在这个
-   notifications/recommendation的channel太不现代了，能不能直接占满整个侧边框的那种（类似reports每个事项点击之后弹出来
-   的内容)"): its own window, docked to the right edge, as tall as the screen; each by its title, opened in
-   place - its words, why it was told, its answers, and a reply in words. Answered, it folds away. -- */
-const NOTES_SOLO = new URLSearchParams(location.search).get("solo") === "notifications";
-const notesState = { sections: [], open: new Set(), leaving: new Set(), q: "", drawn: "", writing: "" };
-
-function notesAt(at) {
-  if (!at) return "";
-  const when = new Date(at);
-  if (Number.isNaN(when.getTime())) return "";
-  const today = new Date().toDateString() === when.toDateString();
-  return today ? when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : localStamp(at);
-}
-
-function notesCard(row, kind) {
-  const open = notesState.open.has(row.id) || !row.folds;
-  const words = String(row.detail || "");
-  const shown = notesState.q ? `${row.title} ${words}`.toLowerCase().includes(notesState.q) : true;
-  if (!shown) return "";
-  const answers = (row.actions || []).filter((one) => !one.writes).map((one, n) => `<button type="button"
-      class="small${n ? " secondary" : ""}" data-notes-act="${escapeHtml(row.id)}" data-key="${escapeHtml(one.key)}">${escapeHtml(one.label)}</button>`).join("");
-  const reply = (row.actions || []).find((one) => one.writes);
-  return `<li class="notes-card${open ? " open" : ""}${notesState.leaving.has(row.id) ? " leaving" : ""}">
-    <button type="button" class="notes-card-head" data-notes-open="${escapeHtml(row.id)}" aria-expanded="${open}">
-      <span class="notes-kind">${escapeHtml(kind)}</span>
-      <span class="notes-when">${escapeHtml(notesAt(row.at))}</span>
-      <span class="notes-title">${escapeHtml(row.title || "(untitled)")}</span>
-      ${open ? "" : `<span class="notes-preview">${escapeHtml(words.replace(/\s+/g, " ").slice(0, 220))}</span>`}
-    </button>
-    ${open ? `<div class="notes-body">
-      <div class="notes-text">${linkify(escapeHtml(words))}</div>
-      ${row.url ? `<p><a href="${escapeHtml(row.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml("Open the page")}</a></p>` : ""}
-      ${row.why ? `<p class="notes-why">${escapeHtml(row.why)}</p>` : ""}
-      ${row.note ? `<p class="notes-why">${escapeHtml(row.note)}</p>` : ""}
-      <div class="notes-answers">${answers}</div>
-      ${reply ? `<form class="report-chat notes-reply" data-notes-reply="${escapeHtml(row.id)}">
-        <textarea rows="1" placeholder="${escapeHtml((reply.fields || [])[0] || "Reply")}"></textarea>
-        <button type="submit" class="small">${escapeHtml(reply.yes || "Send")}</button></form>` : ""}
-    </div>` : ""}
-  </li>`;
-}
-
-function linkify(html) {
-  return html.replace(/https?:\/\/[^\s<]+/g, (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
-}
-
-function renderNotes(force = false) {
-  const page = $("#notes-page");
-  if (!page) return;
-  const typing = page.querySelector(".notes-reply textarea:focus");
-  const drawn = JSON.stringify([notesState.sections, [...notesState.open], [...notesState.leaving], notesState.q]);
-  if (!force && (drawn === notesState.drawn || typing)) return;
-  notesState.drawn = drawn;
-  const count = notesState.sections.reduce((n, part) => n + (part.rows || []).length, 0);
-  const lists = notesState.sections.map((part) => {
-    const cards = (part.rows || []).map((row) => notesCard(row, part.name)).join("");
-    return cards ? `<h3 class="notes-group">${escapeHtml(part.name)}</h3><ul class="notes-list">${cards}</ul>` : "";
-  }).join("");
-  const search = $("#notes-q");
-  const searchHad = Boolean(search) && search === document.activeElement;
-  page.innerHTML = `<header class="notes-head">
-      <div><h2 class="notes-heading">${escapeHtml("Waiting notifications")}</h2>
-        <span class="muted">${count ? escapeHtml("{0} waiting").replace("{0}", String(count)) : ""}</span></div>
-      ${NOTES_SOLO ? "" : `<button type="button" class="report-drawer-close" id="notes-close" aria-label="${escapeHtml("Close")}">×</button>`}
-    </header>
-    <div class="notes-search"><input id="notes-q" type="search" placeholder="${escapeHtml("Search")}" value="${escapeHtml(notesState.q)}"></div>
-    <div class="notes-scroll">${lists || `<p class="notes-empty">${escapeHtml("Nothing is waiting.")}</p>`}</div>`;
-  if (searchHad) { const box = $("#notes-q"); box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
-}
-
-async function loadNotes(force = false) {
-  try { notesState.sections = (await api.get("/api/notifications/waiting_list")).sections || []; }
-  catch (_err) { return; }
-  const here = new Set(notesState.sections.flatMap((part) => (part.rows || []).map((row) => row.id)));
-  notesState.leaving.forEach((id) => { if (!here.has(id)) notesState.leaving.delete(id); });
-  renderNotes(force);
-  // THE LAST ONE ANSWERED, IT GOES (the user, 2026-11-13: "waiting notification没有内容了之后不会自动关闭了") -
-  // opened with nothing in it, it stays.
-  // ITS LAST ONE GONE, HOWEVER IT WENT (the user, 2026-11-13: "这个好像消息结束了没有自动关闭窗口" - one answered
-  // beside the avatar or in the report left it open, empty): opened empty, it stays.
-  if (here.size) notesState.hadSome = true;
-  if ((notesState.answered || notesState.hadSome) && !here.size) {
-    notesState.answered = false;
-    notesState.hadSome = false;
-    closeNotes();
-  }
-}
-
-/* PUT AWAY, NOT CLOSED: slid out to the edge by the desktop and kept, to slide back in at once next
-   time; where it cannot be, closed. */
-async function closeNotes() {
-  notesState.open.clear();
-  let said = null;
-  try { said = await api.post("/api/notifications/panel_hide", {}); } catch (_err) { said = null; }
-  if (!said || !said.hidden) window.close();
-}
-
-function notesRow(id) {
-  for (const part of notesState.sections) {
-    const row = (part.rows || []).find((one) => one.id === id);
-    if (row) return row;
-  }
-  return null;
-}
-
-async function notesAnswer(id, action, extra = {}) {
-  notesState.leaving.add(id);                     // folded away on the press; back if it failed
-  renderNotes(true);
-  try {
-    await api.post(action.path, Object.assign({}, action.body || {}, extra));
-    notesState.answered = true;
-    setTimeout(() => loadNotes(true), 260);
-  } catch (err) {
-    notesState.leaving.delete(id);
-    toast(err.message, "error");
-    renderNotes(true);
-  }
-}
-
-if (NOTES_SOLO) {
-  document.documentElement.classList.add("notes-solo");
-  document.body.classList.add("notes-solo");
-  // The agent's name in it: the listener knows the agent's own windows by it.
-  document.title = "Waiting notifications - Personal Agent WaterMelon";
-  $("#notes-page").hidden = false;
-  // DOWN THE WHOLE RIGHT SIDE OF THE SCREEN, measured by the page, in the window's own units - unless
-  // the desktop put it there itself, before it was ever seen ("placed": moved here again, it jumped).
-  if (!new URLSearchParams(location.search).get("placed")) try {
-    const w = Math.min(460, screen.availWidth), h = screen.availHeight;
-    window.resizeTo(w, h);
-    window.moveTo((screen.availLeft || 0) + screen.availWidth - w, screen.availTop || 0);
-  } catch (_err) { /* a browser that does not let it: left as it opened */ }
-  renderNotes(true);
-  loadNotes(true);
-  setInterval(() => { if (!document.hidden) loadNotes(); }, 8000);
-  window.addEventListener("focus", () => loadNotes());
-  // SLID BACK IN: what waits now, at once.
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) loadNotes(true); });
-  // ITS LINKS IN THE USER'S OWN BROWSER, not a window of the panel's own (kept off the screen, signed in
-  // nowhere: "open the page 弹出来的google chrome没法显示").
-  document.addEventListener("click", async (event) => {
-    const link = event.target.closest && event.target.closest("#notes-page a[href^='http']");
-    if (!link) return;
-    event.preventDefault();
-    let said = null;
-    try { said = await api.post("/api/notifications/open_link", { url: link.href }); } catch (_err) { said = null; }
-    if (!said || !said.opened) window.open(link.href, "_blank", "noopener");
-  });
-  document.addEventListener("click", (event) => {
-    const at = event.target.closest && event.target.closest("#notes-page button");
-    if (!at) return;
-    if (at.id === "notes-close") { closeNotes(); return; }
-    if (at.dataset.notesOpen) {
-      const id = at.dataset.notesOpen;
-      if (notesState.open.has(id)) notesState.open.delete(id); else notesState.open.add(id);
-      renderNotes(true);
-      return;
-    }
-    if (at.dataset.notesAct) {
-      const row = notesRow(at.dataset.notesAct);
-      const action = row && (row.actions || []).find((one) => one.key === at.dataset.key);
-      if (action) notesAnswer(row.id, action);
-    }
-  });
-  document.addEventListener("submit", (event) => {
-    const form = event.target.closest && event.target.closest("[data-notes-reply]");
-    if (!form) return;
-    event.preventDefault();
-    const text = form.querySelector("textarea").value.trim();
-    const row = notesRow(form.dataset.notesReply);
-    const action = row && (row.actions || []).find((one) => one.writes);
-    if (text && action) notesAnswer(row.id, action, { text });
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !event.target.closest(".notes-reply")) closeNotes();
-    const box = event.target.closest && event.target.closest(".notes-reply textarea");
-    if (box && event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      box.form.requestSubmit();
-    }
-  });
-  document.addEventListener("input", (event) => {
-    if (event.target.id !== "notes-q") return;
-    notesState.q = event.target.value.trim().toLowerCase();
-    renderNotes(true);
-  });
-}
+/* THE WAITING NOTIFICATIONS are a page of their own now - notes.html, notes.js (the user, 2026-11-14:
+   "精简页面是可以的"): the panel no longer loads the whole application. */
 
 /* TURNED TO THE TAB THE APP ASKS FOR (2026-11-13: the desktop's Report opens here, in the app's own
    window, not the browser): asked as the window comes to the front. */
@@ -30118,13 +30069,13 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) turn
 const monState = { open: new Set(), drawn: { tree: "", firings: "" }, data: null,
   // THE ONE BEING EDITED (the user, 2026-11-07), and whether its form is on the page: while it is,
   // the list is not drawn again under the user's hands.
-  editing: null, drawnFor: null,
+  editing: null, drawnFor: null, renaming: null,
   // THE KINDS FOLDED BY THE USER (each open at first).
   closedKinds: new Set() };
 /* WHAT IT TELLS, BY KIND (the user, 2026-11-13: "recommendation, event notifications, summary, risks, closing up the
    evening和the day ahead ... 其它都取消"; "系统类的可以保留"). */
 const MON_GROUPS = [["recommend", "Recommendations"], ["calendar", "Event notifications"],
-  ["deadline", "Deadlines"], ["summary", "Summary"], ["risk", "Risks"], ["rest", "Your day"], ["system", "The application itself"],
+  ["deadline", "Deadlines"], ["summary", "Summary"], ["risk", "Risks"], ["rest", "Your day"], ["system", "System"],
   ["other", "Other"]];
 const MON_GROUP_SAID = {
   recommend: "Pages and news worth your time, at the moments it is worth telling you.",
@@ -30196,11 +30147,13 @@ function renderMonitor(data) {
     : `<p class="muted mon-sub">${escapeHtml("Your habits show once there are a few days like today.")}</p>`}`;
   // IN LEVELS (the user, 2026-11-13: "monitor其实应该是多级的，blocker在最上级 ... 你的monitor的display也用分级展示"): the
   // silences over everything; what it tells, by kind; each kind's Activators.
-  const tree = monSilences(data) + monTree(data);
-  const holding = monState.editing && monState.drawnFor === monState.editing;
+  const tree = monSilences(data, monTree(data));
+  // A form open - an edit, a new name - is not drawn again under the user's hands.
+  const form = monState.editing || (monState.renaming ? `rename:${monState.renaming}` : null);
+  const holding = form && monState.drawnFor === form;
   if (tree !== monState.drawn.tree && !holding) {
     monState.drawn.tree = tree;
-    monState.drawnFor = monState.editing;
+    monState.drawnFor = form;
     $("#mon-tree").innerHTML = tree;
     for (const button of $("#mon-tree").querySelectorAll("[data-mon-undo]")) {
       button.addEventListener("click", async (event) => {
@@ -30227,32 +30180,62 @@ function renderMonitor(data) {
 
 /* THE TOP LEVEL - THE SILENCES, OVER EVERYTHING: the user's own "No notifications" ("点击之后所有notification都不会弹，
    但是其它功能正常"), then each rule of quiet (presenting, a meeting). While one holds nothing pops. */
-function monSilences(data) {
+/* ABOVE THE REST, AND SEEN SO (the user, 2026-11-14: "不能体现silence的那几个其实是在其它的之上的，看起来他们的平级的"):
+   what it tells is drawn INSIDE the silences, under a gate - it passes only while no silence holds; while one
+   does, it is shown held. */
+function monSilences(data, under = "") {
   const off = !!data.no_notifications;
+  const held = off || !!data.blocker;
   return `<section class="mon-level mon-level-top">
       <h3 class="mon-level-head">${escapeHtml("Silences")} <span class="muted">${escapeHtml(
         "Over everything: while one holds, nothing pops - it waits in the list, and no recommendation is made.")}</span></h3>
       <label class="mon-no-notes${off ? " on" : ""}"><input type="checkbox" data-mon-no-notes${off ? " checked" : ""}>
         <strong>${escapeHtml("No notifications")}</strong>
         <span class="muted">${escapeHtml("Nothing pops; everything else goes on as it does.")}</span></label>
-      ${monBlocked(data)}${monQuiet(data.quiet || [])}
+      ${monQuiet(data.quiet || [])}
+      <div class="mon-under${held ? " mon-held" : ""}">
+        <p class="mon-gate">${escapeHtml(held
+          ? `Held now by ${off ? "No notifications" : data.blocker}: what follows waits until it is over`
+          : "Only when none of the silences above holds:")}${held && Number(data.reminders_waiting || 0)
+          ? ` <span class="muted">(${escapeHtml(`${Number(data.reminders_waiting)} waiting`)})</span>` : ""}</p>
+        ${under}
+      </div>
     </section>`;
 }
 
-/* RULES OF QUIET: said once, they hold all that speaks for itself. */
-function monBlocked(data) {
-  if (!data.blocker) return "";
-  const count = Number(data.reminders_waiting || 0);
-  return `<p class="muted">${escapeHtml(`Blocked now: ${data.blocker}`)}${
-    count ? ` - ${escapeHtml(`${count} waiting`)}` : ""}</p>`;
-}
 
+/* A SILENCE IS A MONITOR TOO (the user, 2026-11-14: "也是一个monitor, 也可以修改和开关"): its switch, its protection,
+   the user's name for it, and what it holds for - as an Activator's. */
 function monQuiet(rules) {
   if (!rules.length) return "";
-  return `<ul class="mon-quiet">${rules.map((one) =>
-    `<li><strong>${escapeHtml(one.name)}</strong><span class="muted">${escapeHtml(monCond(one.when))}</span>
-     <button type="button" class="secondary" data-quiet-remove="${escapeHtml(one.id)}">${
-       escapeHtml("Remove")}</button></li>`).join("")}</ul>`;
+  return `<div class="mon-quiet">${rules.map((one) => {
+    const fixed = !!one.builtin && !!one.protected;
+    const editing = monState.editing === one.id && !fixed;
+    return `<div class="mon-act mon-quiet-one${one.enabled === false ? " mon-off" : ""}">
+      <div class="mon-quiet-head"><span class="mon-name">${escapeHtml(one.display_name || one.name)}</span>
+        ${one.display_name && one.display_name !== one.name
+          ? `<span class="muted mon-real-name" title="${escapeHtml("The name the agent knows it by")}">${escapeHtml(one.name)}</span>` : ""}
+        <span class="muted">${escapeHtml(monCond(one.when))}</span>
+        ${fixed ? `<span class="mon-badge mon-badge-quiet" title="${escapeHtml("Built in: it can only be switched on or off")}">${escapeHtml("Built in · fixed")}</span>`
+          : one.builtin ? `<span class="mon-badge mon-badge-quiet">${escapeHtml("Built in")}</span>` : ""}
+        <span class="mon-switches">
+          <label><input type="checkbox" data-mon-quiet-switch="${escapeHtml(one.id)}"${one.enabled === false ? "" : " checked"}> ${escapeHtml("On")}</label>
+          <label title="${escapeHtml("Protected: the agent can neither change, switch nor remove it")}"><input type="checkbox" data-mon-quiet-protect="${escapeHtml(one.id)}"${one.protected ? " checked" : ""}> ${escapeHtml("Protected")}</label>
+        </span></div>
+      ${monState.renaming === one.id ? monRenameForm(one, true) : ""}
+      ${editing ? `<form class="mon-edit-form" data-mon-quiet-form="${escapeHtml(one.id)}">
+          <label>${escapeHtml("Holds while")}
+            <textarea name="when" rows="5" class="mon-json">${escapeHtml(JSON.stringify(one.when || {}, null, 2))}</textarea></label>
+          <p class="mon-edit-error" hidden></p>
+          <div class="mon-edit-row"><button type="submit">${escapeHtml("Save")}</button>
+            <button type="button" class="secondary" data-mon-cancel="${escapeHtml(one.id)}">${escapeHtml("Cancel")}</button></div>
+        </form>` : `<div class="mon-actions">
+          <button type="button" class="secondary mon-edit" data-mon-rename="${escapeHtml(one.id)}">${escapeHtml("Rename")}</button>
+          ${fixed ? "" : `<button type="button" class="secondary mon-edit" data-mon-edit="${escapeHtml(one.id)}">${escapeHtml("Edit")}</button>
+          <button type="button" class="secondary mon-edit" data-quiet-remove="${escapeHtml(one.id)}">${escapeHtml("Remove")}</button>`}
+        </div>`}
+    </div>`;
+  }).join("")}</div>`;
 }
 
 function monCond(cond) {
@@ -30297,21 +30280,30 @@ function monTree(data) {
       <div class="mon-kind-items">${mine.map((one) => {
       const history = changes.filter((change) => change.activator_id === one.id).slice(0, 6);
       const open = monState.open.has(one.id);
+      // FIXED: one of the application's own while protected (the user, 2026-11-14: its protection theirs to take off).
+      const fixed = !!one.builtin && !!one.protected;
       return `<details class="mon-act${one.enabled ? "" : " mon-off"}" data-mon-act="${escapeHtml(one.id)}"${open ? " open" : ""}>
         <summary><span class="mon-name">${escapeHtml(one.display_name || one.name)}</span>
           ${one.display_name && one.display_name !== one.name
             ? `<span class="muted mon-real-name" title="${escapeHtml("The name the agent knows it by")}">${
               escapeHtml(one.name)}</span>` : ""}
-          ${one.builtin ? `<span class="mon-badge mon-badge-quiet" title="${escapeHtml("Built in: it can only be switched on or off")}">${escapeHtml("Built in · fixed")}</span>`
+          ${fixed ? `<span class="mon-badge mon-badge-quiet" title="${escapeHtml("Built in: it can only be switched on or off")}">${escapeHtml("Built in · fixed")}</span>`
+            : one.builtin ? `<span class="mon-badge mon-badge-quiet" title="${escapeHtml("Built in, its protection off: the agent and you can change it")}">${escapeHtml("Built in")}</span>`
             : one.protected ? `<span class="mon-badge">${escapeHtml("Protected")}</span>` : ""}
           <span class="mon-switches">
             <label><input type="checkbox" data-mon-switch="${escapeHtml(one.id)}"${one.enabled ? " checked" : ""}> ${escapeHtml("On")}</label>
-            ${one.builtin ? "" : `<label title="${escapeHtml("Protected: the agent can neither change nor delete it")}"><input type="checkbox" data-mon-protect="${escapeHtml(one.id)}"${one.protected ? " checked" : ""}> ${escapeHtml("Protected")}</label>`}
+            <label title="${escapeHtml(one.builtin
+              ? "Protected: the agent cannot change it, and it stays as the application gives it. Off: the agent may change it; protected again, it is the application's again"
+              : "Protected: the agent can neither change nor delete it")}"><input type="checkbox" data-mon-protect="${escapeHtml(one.id)}"${one.protected ? " checked" : ""}> ${escapeHtml("Protected")}</label>
           </span></summary>
-        ${monState.editing === one.id && !one.builtin ? monEditForm(one) : `
+        ${monState.renaming === one.id ? monRenameForm(one) : ""}
+        ${monState.editing === one.id && !fixed ? monEditForm(one) : `
         <p class="muted">${escapeHtml(one.purpose || "")}</p>
-        ${one.builtin ? "" : `<button type="button" class="secondary mon-edit" data-mon-edit="${escapeHtml(one.id)}">${
-          escapeHtml("Edit")}</button>`}
+        <div class="mon-actions">
+          <button type="button" class="secondary mon-edit" data-mon-rename="${escapeHtml(one.id)}">${escapeHtml("Rename")}</button>
+          ${fixed ? "" : `<button type="button" class="secondary mon-edit" data-mon-edit="${escapeHtml(one.id)}">${
+            escapeHtml("Edit")}</button>`}
+        </div>
         <dl class="mon-dl">
           <dt>${escapeHtml("Watches for")}</dt><dd>${escapeHtml(monCond(one.when))}</dd>
           <dt>${escapeHtml("Then")}</dt><dd>${(one.then || []).map((tier) => escapeHtml(monThen(tier))).join("<br>")}</dd>
@@ -30360,6 +30352,47 @@ function monEditForm(one) {
   </form>`;
 }
 
+/* EVERY ONE RENAMED (the user, 2026-11-14: "每个monitor要支持重命名"): the user's name for it, built in too - the
+   agent never changes it; empty gives it back its own. */
+function monRenameForm(one, quiet = false) {
+  return `<form class="mon-rename-form" data-mon-rename-form="${escapeHtml(one.id)}"${quiet ? " data-mon-quiet=\"1\"" : ""}>
+    <input type="text" name="display_name" maxlength="60" value="${escapeHtml(one.display_name || one.name)}"
+      aria-label="${escapeHtml("Its name")}">
+    <button type="submit" class="small">${escapeHtml("Save")}</button>
+    <button type="button" class="small secondary" data-mon-rename-cancel="1">${escapeHtml("Cancel")}</button>
+    <span class="muted">${escapeHtml("Yours alone: the agent never changes it. Empty gives it back its own name.")}</span>
+  </form>`;
+}
+
+document.addEventListener("click", (event) => {
+  const start = event.target.closest && event.target.closest("[data-mon-rename]");
+  const stop = event.target.closest && event.target.closest("[data-mon-rename-cancel]");
+  if (!start && !stop) return;
+  event.preventDefault();
+  monState.renaming = start ? start.dataset.monRename : null;
+  if (start) monState.open.add(start.dataset.monRename);
+  monState.drawn.tree = "";
+  monState.drawnFor = null;
+  loadMonitor();
+});
+
+document.addEventListener("submit", async (event) => {
+  const form = event.target.closest && event.target.closest("[data-mon-rename-form]");
+  if (!form) return;
+  event.preventDefault();
+  try {
+    await api.post(form.dataset.monQuiet ? "/api/monitor/quiet/edit" : "/api/monitor/edit",
+      { id: form.dataset.monRenameForm, display_name: form.elements.display_name.value });
+  } catch (err) {
+    toast(err.message, "error");
+    return;
+  }
+  monState.renaming = null;
+  monState.drawn.tree = "";
+  monState.drawnFor = null;
+  loadMonitor();
+});
+
 document.addEventListener("click", (event) => {
   const start = event.target.closest && event.target.closest("[data-mon-edit]");
   const stop = event.target.closest && event.target.closest("[data-mon-cancel]");
@@ -30393,6 +30426,33 @@ document.addEventListener("submit", async (event) => {
       changes: { purpose: fields.purpose.value, when, then, delivery: fields.delivery.value,
         cooldown_minutes: Number(fields.cooldown_minutes.value),
         most_per_day: Number(fields.most_per_day.value) } });
+  } catch (err) {
+    said.textContent = err.message;
+    said.hidden = false;
+    return;
+  }
+  monState.editing = null;
+  monState.drawn.tree = "";
+  monState.drawnFor = null;
+  loadMonitor();
+});
+
+/* A SILENCE CHANGED BY THE USER: what it holds while. */
+document.addEventListener("submit", async (event) => {
+  const form = event.target.closest && event.target.closest("[data-mon-quiet-form]");
+  if (!form) return;
+  event.preventDefault();
+  const said = form.querySelector(".mon-edit-error");
+  let when;
+  try {
+    when = JSON.parse(form.elements.when.value);
+  } catch (err) {
+    said.textContent = `What it holds while is written as JSON: ${err.message}`;
+    said.hidden = false;
+    return;
+  }
+  try {
+    await api.post("/api/monitor/quiet/edit", { id: form.dataset.monQuietForm, when });
   } catch (err) {
     said.textContent = err.message;
     said.hidden = false;
@@ -30457,10 +30517,14 @@ document.addEventListener("change", async (event) => {
   }
   const on = event.target.closest && event.target.closest("[data-mon-switch]");
   const guard = event.target.closest && event.target.closest("[data-mon-protect]");
-  if (!on && !guard) return;
+  const quietOn = event.target.closest && event.target.closest("[data-mon-quiet-switch]");
+  const quietGuard = event.target.closest && event.target.closest("[data-mon-quiet-protect]");
+  if (!on && !guard && !quietOn && !quietGuard) return;
   try {
     if (on) await api.post("/api/monitor/switch", { id: on.dataset.monSwitch, on: on.checked });
-    else await api.post("/api/monitor/protect", { id: guard.dataset.monProtect, protected: guard.checked });
+    else if (guard) await api.post("/api/monitor/protect", { id: guard.dataset.monProtect, protected: guard.checked });
+    else if (quietOn) await api.post("/api/monitor/quiet/switch", { id: quietOn.dataset.monQuietSwitch, on: quietOn.checked });
+    else await api.post("/api/monitor/quiet/protect", { id: quietGuard.dataset.monQuietProtect, protected: quietGuard.checked });
   } catch (err) {
     toast(err.message, "error");
   }

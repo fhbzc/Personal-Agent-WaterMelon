@@ -36,6 +36,7 @@ OPTIONAL_IMPORTS = [
     ("pystray", "the icon in the notification area"),
     ("keyring", "OS keychain credential storage"),
     ("comtypes", "reading the window in front (Windows only)"),
+    ("webview", "the side panel in WebView2 (Windows only; else the browser's app mode)"),
 ]
 
 REQUIRED_ASSETS = [

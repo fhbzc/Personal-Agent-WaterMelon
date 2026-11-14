@@ -823,7 +823,7 @@ class TheSidePanelTests(unittest.TestCase):
             self.skipTest("no node here")
         from test_chat_debugger_ui import ESCAPE
         from test_overview_todo_scroll import _function
-        source = (ROOT / "personalized_agent" / "api" / "web" / "app.js").read_text(encoding="utf-8")
+        source = (ROOT / "personalized_agent" / "api" / "web" / "notes.js").read_text(encoding="utf-8")
         start = source.index("const notesState = ")
         script = ("const window=globalThis;" + ESCAPE + """
 const page = { innerHTML: "", querySelector: () => null };
@@ -864,7 +864,7 @@ const NOTES_SOLO = true;
                 mock.patch.object(aw, "open_side_window", return_value=True) as opened:
             DesktopAgent.open_notifications(desk)
         # PLACED BY THE DESKTOP before it is seen, the page not moving it (2026-11-13: "要先在左边跳一下").
-        self.assertEqual(opened.call_args[0][0], "http://here/?solo=notifications&placed=1")
+        self.assertEqual(opened.call_args[0][0], "http://here/notes.html?placed=1")
         self.assertEqual(opened.call_args[0][2], aw.NOTES_SIZE)
         # PUT AWAY, SLID BACK IN (2026-11-13: "现在打开好像太慢了"): no browser started again.
         with mock.patch.object(aw, "slide_in_titled", return_value=True) as slid, \
@@ -933,7 +933,7 @@ const NOTES_SOLO = true;
             [(kind, made)] = calls
             self.assertEqual(kind, "call", "made on the main thread")
             made()
-        self.assertEqual(slid.call_args[0], ("http://here/?solo=notifications&placed=1", 460,
+        self.assertEqual(slid.call_args[0], ("http://here/notes.html?placed=1", 460,
                                              DesktopAgent.NOTES_TITLE))
         calls.clear()
         with mock.patch.object(mac_panel, "has_side_panel", return_value=True),                 mock.patch.object(mac_panel, "hide_side_panel") as hid:
@@ -952,7 +952,7 @@ const NOTES_SOLO = true;
             self.skipTest("no node here")
         from support import ROOT
         from test_overview_todo_scroll import _function
-        source = (ROOT / "personalized_agent" / "api" / "web" / "app.js").read_text(encoding="utf-8")
+        source = (ROOT / "personalized_agent" / "api" / "web" / "notes.js").read_text(encoding="utf-8")
         script = ("const posted = []; let closed = 0; let rows = [];"
                   "const window = {close: () => { closed += 1; }};"
                   "const api = {get: async () => ({sections: [{name: 'x', rows}]}),"

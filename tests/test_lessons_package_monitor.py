@@ -36,7 +36,8 @@ class MonitorCarriedTests(unittest.TestCase):
                               "then": [{"do": "notify", "title": "Tides", "message": "New tables"}]},
                              "user", "my own")
         quiet = store.quiet_rules()[0]
-        store.remove_quiet(quiet["id"], "user", "not this one")
+        store.protect_quiet(quiet["id"], False)              # the application's own: fixed until then
+        self.assertTrue(store.remove_quiet(quiet["id"], "user", "not this one"))
         time.sleep(0.01)
         report = self._carry()
         there = self.there.app

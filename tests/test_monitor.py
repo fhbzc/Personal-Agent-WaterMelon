@@ -134,8 +134,6 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual({key for key, one in listed.items() if one["protected"]}, set(listed))
         with self.assertRaisesRegex(ValueError, "only be switched on or off"):
             self.store.user_edit(listed["leisure"]["id"], {"cooldown_minutes": 5})
-        with self.assertRaisesRegex(ValueError, "only be switched on or off"):
-            self.store.protect(listed["leisure"]["id"], False)
         with self.assertRaisesRegex(ValueError, "protected"):
             self.store.delete(listed["leisure"]["id"], "chat", "the user rests without the agent")
         self.store.switch(listed["leisure"]["id"], False)
@@ -203,9 +201,99 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(self.store.get(spam["id"])["cooldown_minutes"], 45)
         ops = [(one["by"], one["op"]) for one in self.store.changes(spam["id"])]
         self.assertEqual(ops[:2], [("heartbeat", "edit"), ("user", "unprotect")])
-        # A built-in one: protected for good.
+        # A built-in one: protected unless the user takes it off (2026-11-14) - and while it is, fixed.
+        said = apply_program(self.store, {"op": "switch", "id": self._builtin("spam_risk")["id"], "on": False,
+                                          "why": "x"}, "chat")
+        self.assertIn("protected", said["error"])
+        self.assertTrue(self._builtin("spam_risk")["enabled"])
+
+    def test_a_built_in_one_unprotected_is_the_agents_to_change_and_protected_again_the_applications(self) -> None:
+        """2026-11-14: "所有monitor要有protected按钮（不是protected的话agent是允许改monitor的)"."""
+        from personalized_agent.heartbeat.monitor.builtins import builtins
+        risk = self._builtin("spam_risk")
+        given = risk["cooldown_minutes"]
+        self.store.protect(risk["id"], False)
+        said = apply_program(self.store, {"op": "edit", "id": risk["id"], "changes": {"cooldown_minutes": given + 30},
+                                          "why": "fewer"}, "work")
+        self.assertNotIn("error", said)
+        said = apply_program(self.store, {"op": "switch", "id": risk["id"], "on": False, "why": "not wanted"}, "chat")
+        self.assertEqual(said, {"op": "switch", "id": risk["id"], "on": False})
+        self.assertFalse(self._builtin("spam_risk")["enabled"])
+        self.assertIn("on is true or false", apply_program(
+            self.store, {"op": "switch", "id": risk["id"], "on": "no", "why": "x"}, "chat")["error"])
+        # The user may change it too, now; the application's next start keeps what was changed.
+        self.store.user_edit(risk["id"], {"most_per_day": 3})
+        self.store.refresh(builtins())
+        kept = self._builtin("spam_risk")
+        self.assertEqual((kept["cooldown_minutes"], kept["most_per_day"]), (given + 30, 3))
+        # Protected again: the application's own again, and the agent kept out.
+        self.store.protect(risk["id"], True)
+        back = self._builtin("spam_risk")
+        self.assertEqual(back["cooldown_minutes"], given)
+        self.assertEqual(self.store.changes(risk["id"])[0]["why"], "the application's own again")
+        self.assertIn("protected", apply_program(self.store, {"op": "edit", "id": risk["id"],
+                                                             "changes": {"cooldown_minutes": 1}, "why": "x"},
+                                                 "chat")["error"])
         with self.assertRaisesRegex(ValueError, "only be switched on or off"):
-            self.store.protect(self._builtin("spam_risk")["id"], False)
+            self.store.user_edit(risk["id"], {"cooldown_minutes": 5})
+
+    def test_a_silence_is_a_monitor_too(self) -> None:
+        """2026-11-14: "也是一个monitor, 也可以修改和开关" - switched, protected, renamed, changed."""
+        rules = {one["builtin"]: one for one in self.store.quiet_rules()}
+        presenting = rules["presenting"]
+        self.assertTrue(presenting["protected"] and presenting["enabled"])
+        # The user's switch; switched off, it holds nothing.
+        self.store.switch_quiet(presenting["id"], False)
+        self.monitor.latest = {"presenting": True}
+        self.assertNotEqual(self.monitor._quieted(), "While presenting")
+        self.store.switch_quiet(presenting["id"], True)
+        self.assertEqual(self.monitor._quieted(), "While presenting")
+        # Their name for it, said when it holds.
+        self.store.rename_quiet(presenting["id"], "Sharing my screen")
+        self.assertEqual(self.monitor._quieted(), "Sharing my screen")
+        # Protected: the agent neither changes, switches nor removes it; the user only switches it.
+        for doing in (lambda: self.store.edit_quiet(presenting["id"], {"when": {"event": "back"}}, "chat"),
+                      lambda: self.store.switch_quiet(presenting["id"], False, "work"),
+                      lambda: self.store.remove_quiet(presenting["id"], "chat")):
+            with self.assertRaisesRegex(ValueError, "protected"):
+                doing()
+        with self.assertRaisesRegex(ValueError, "only be switched on or off"):
+            self.store.edit_quiet(presenting["id"], {"when": {"event": "back"}}, "user")
+        self.assertFalse(self.store.remove_quiet(presenting["id"], "user"), "the application's own, fixed")
+        # Unprotected: the agent's to change.
+        self.store.protect_quiet(presenting["id"], False)
+        changed = self.store.edit_quiet(presenting["id"], {"when": {"signal": "in_meeting", "op": "==",
+                                                                    "value": True}}, "chat", "the user asked")
+        self.assertEqual(changed["when"]["signal"], "in_meeting")
+        self.assertFalse(self.store.switch_quiet(presenting["id"], False, "chat")["enabled"])
+        # Protected again: the application's own again.
+        back = self.store.protect_quiet(presenting["id"], True)
+        self.assertEqual(back["when"]["signal"], "presenting")
+        # One of the user's own: theirs to change and remove, the agent's while not protected.
+        ident = self.store.add_quiet("Lunch", {"signal": "hour", "op": "==", "value": 12}, "chat", "asked")
+        self.assertFalse(self.store.quiet(ident)["protected"])
+        self.store.edit_quiet(ident, {"when": {"signal": "hour", "op": "==", "value": 13}}, "user")
+        self.assertTrue(self.store.remove_quiet(ident, "chat", "asked"))
+
+    def test_delegated_work_has_the_monitors_tools_too(self) -> None:
+        """2026-11-14: "chat/delegate什么的都要有改monitor的工具" - each change kept as the work's."""
+        from personalized_agent.agent.work.tools import WorkTools
+        tools = object.__new__(WorkTools)
+        tools.monitor, tools._monitor_made = None, None
+        self.assertEqual(tools._monitor_tools(), {}, "no Monitor given: none")
+        tools.monitor = self.monitor
+        made = tools._monitor_tools()
+        for name in ("monitor_list", "monitor_add", "monitor_edit", "monitor_switch", "monitor_delete",
+                     "monitor_quiet_list", "monitor_quiet_edit", "monitor_quiet_switch"):
+            self.assertIn(name, made)
+        self.assertTrue(made["monitor_list"][0].read_only)
+        ident, _w = self.store.add(dict(GARDEN, name="Tide watch"), "user", "the user's own")
+        said = made["monitor_switch"][1]({"id": ident, "on": False, "why": "the user asked"})
+        self.assertNotIn("error", said)
+        self.assertEqual([(one["by"], one["op"]) for one in self.store.changes(ident)][0], ("work", "off"))
+        presenting = next(one for one in self.store.quiet_rules() if one["builtin"] == "presenting")
+        self.assertIn("protected", made["monitor_quiet_switch"][1]({"id": presenting["id"], "on": False,
+                                                                     "why": "x"})["error"])
 
     def test_said_at_once_with_why_it_was_made_and_held_to_its_limits(self) -> None:
         brk = _a_break(self.store)
@@ -519,7 +607,10 @@ class MonitorTests(unittest.TestCase):
     def test_a_rule_of_quiet_taken_away_stays_away(self) -> None:
         from personalized_agent.heartbeat.monitor.builtins import QUIET
         one = self.store.quiet_rules()[0]
-        self.store.remove_quiet(one["id"], "user")
+        # The application's own, protected: fixed (2026-11-14) - its protection taken off, the user's to remove.
+        self.assertFalse(self.store.remove_quiet(one["id"], "user"))
+        self.store.protect_quiet(one["id"], False)
+        self.assertTrue(self.store.remove_quiet(one["id"], "user"))
         self.assertEqual(self.store.seed_quiet(QUIET), 0)
         self.assertEqual(len(self.store.quiet_rules()), 1)
 

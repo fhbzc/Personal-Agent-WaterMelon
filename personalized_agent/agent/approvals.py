@@ -106,11 +106,16 @@ HELD_ASKS = {
     "after_todo_close": "Approving closes this reminder",
     "after_todo_finish": "Approving ticks this project step",
     "event_tool": "Approving lets your agent do this",
-    "check_happened": "Saying it happened marks it done on your plate"}
+    "check_happened": "Saying it happened marks it done on your plate",
+    # THE AGENTS SOCIETY CALENDAR (society/site_calendar.py, 2026-11-14): an invitation the agent could not
+    # tell how to answer, or the user set to be asked; a thing the agent would do there.
+    "society_invitation": "Accepting tells the one who invited you, and puts it on your calendar",
+    "society_calendar_action": "Approving lets your agent do this on your Agents Society calendar"}
 
 #: A held thing's own answers, where approving is not the word: a question of fact - never answered by
 #: "approve all".
-HELD_ANSWERS = {"check_happened": {"yes": "It happened", "no": "It didn't", "batch": False}}
+HELD_ANSWERS = {"check_happened": {"yes": "It happened", "no": "It didn't", "batch": False},
+                "society_invitation": {"yes": "Accept", "no": "Decline", "batch": False}}
 
 
 #: WHAT WAS DONE, said back in the thread once approved - by what approving does (`asks.lead`): each
@@ -132,6 +137,9 @@ DONE_SAID = {
     "Approving lets the run do this, outside its sandbox":
         "The run goes on and does it, outside its sandbox: {0}.",
     "Approving tries its model again now": "Trying its model again now: {0}.",
+    "Accepting tells the one who invited you, and puts it on your calendar":
+        "Accepted, and put on your calendar: {0}.",
+    "Approving lets your agent do this on your Agents Society calendar": "Done on your calendar: {0}.",
     "Approving sends this message": "Sent: {0}.",
     "Approving takes it off your to-do list": "Taken off your to-do list: {0}.",
     "Approving marks it done on your to-do list": "Marked it done on your to-do list: {0}.",
@@ -146,6 +154,7 @@ DONE_DEFAULT = "Done as you approved: {0}."
 DONE_PLAN = "Approved - carrying out its plan now: {0}. I'll say here when it is done."
 DONE_ALREADY = "Noted - it was done already: {0}. Marked done; I won't bring it up again."
 DONE_NO = "Left as it was - not done: {0}. Tell me here what you would like instead."
+DONE_DECLINED = "Declined - the one who invited you is told: {0}."
 DONE_TEXT = "Got it - going on with your answer."
 
 
@@ -166,6 +175,9 @@ def done_said(item: Dict[str, Any], how: str, config: Any = None) -> str:
     if how == "already":
         return display_words(DONE_ALREADY, config, title)
     if how == "no":
+        # A NO THAT IS ITSELF AN ANSWER: a calendar invitation declined - sent, not "left as it was".
+        if item.get("kind") == "society_invitation":
+            return display_words(DONE_DECLINED, config, title)
         return display_words(DONE_NO, config, title)
     if how == "text":
         return display_words(DONE_TEXT, config)
@@ -212,6 +224,9 @@ class Approvals:
             conn.executescript(SCHEMA)
         #: How each kind held is carried out, approved: (kind) -> fn(payload) -> None.
         self.carriers: Dict[str, Callable[[Dict[str, Any]], Any]] = {}
+        #: A NO THAT IS ITSELF AN ANSWER (a calendar invitation declined goes to the one who invited):
+        #: (kind) -> fn(payload) -> None, carried out on the user's no. Other kinds: nothing is done.
+        self.on_no: Dict[str, Callable[[Dict[str, Any]], Any]] = {}
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -735,6 +750,13 @@ class Approvals:
                     self.db.execute("UPDATE approvals_held SET status = 'failed', decided_at = ? "
                                     "WHERE id = ?", (_now(), ident))
                     raise
+            elif row["kind"] in self.on_no:
+                try:
+                    self.on_no[row["kind"]](json.loads(row["payload"] or "{}"))
+                except Exception:
+                    self.db.execute("UPDATE approvals_held SET status = 'failed', decided_at = ? "
+                                    "WHERE id = ?", (_now(), ident))
+                    raise
             self.db.execute("UPDATE approvals_held SET status = ?, decided_at = ? WHERE id = ?",
                             (status, _now(), ident))
             self._same_held(ident, status)
@@ -836,7 +858,9 @@ class Approvals:
             at = _local(row["due"])
             if at is not None and at < now:
                 self._settle(row["id"], "past")
-                out.append({"title": row["title"], "why": "Its time has passed.", "at": _now()})
+                # ITS ID KEPT: what it was about is found from it - its event in the report (2026-11-14).
+                out.append({"title": row["title"], "why": "Its time has passed.", "at": _now(),
+                            "ref": row["id"]})
         return out
 
     def _drafts_overtaken(self) -> List[Dict[str, Any]]:

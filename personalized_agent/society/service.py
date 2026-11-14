@@ -20,6 +20,8 @@
     groups        the account's groups on the website - their messages, sending, making one,
                   inviting, invitations answered; each group answered as the user sets it
                   (site_groups.py, 2026-11-13)
+    calendar      the account's calendar on the website - its events on the user's own calendar,
+                  invitations answered as the user lets the agent (site_calendar.py, 2026-11-14)
     sending       THE USER SENDS (`send_draft`, the Society panel's Send,
                   with the draft's content hash as the user saw it) - and
                   THE AGENT ONLY AS FAR AS THE USER LETS IT (`agent_send`;
@@ -264,10 +266,13 @@ class SocietyService:
                 conn.execute("ALTER TABLE society_work_asks ADD COLUMN thread TEXT NOT NULL "
                              "DEFAULT ''")
         from .interactive import Interactive
+        from .site_calendar import SiteCalendar
         from .site_groups import SiteGroups
         self.interactive = Interactive(self)
         #: THE ACCOUNT'S GROUPS (the user, 2026-11-13): read, written in, made, invited into.
         self.site_groups = SiteGroups(self)
+        #: THE ACCOUNT'S CALENDAR (the user, 2026-11-14): kept on the user's own, invitations answered.
+        self.site_calendar = SiteCalendar(self)
         #: AN ANSWER TO A PIECE OF WORK'S ASK (`_work_answered`): `on_work_answer(message, ask)`,
         #: set by the application - the run brought back.
         self.on_work_answer = None
@@ -324,8 +329,9 @@ class SocietyService:
             return write == "send"
         if what == "inbox.send_anyone":
             return write == "send" and inbox.get("send_to") == "anyone"
-        if what.startswith("groups."):
-            return bool((perms.get("groups") or {}).get(what.split(".", 1)[1]))
+        if what.startswith(("groups.", "calendar.")):
+            part, _, name = what.partition(".")
+            return bool((perms.get(part) or {}).get(name))
         return bool(perms.get(what))
 
     def permitted(self) -> List[str]:
@@ -335,6 +341,9 @@ class SocietyService:
                  ("contacts", "read the user's contacts"), ("groups.read", "read groups"),
                  ("groups.send", "write in groups"), ("groups.create", "create groups"),
                  ("groups.invite", "invite into groups"), ("groups.join", "see group invitations"),
+                 ("calendar.read", "read the calendar"), ("calendar.write", "make and change events"),
+                 ("calendar.invite", "invite guests to events"),
+                 ("calendar.respond", "answer calendar invitations"),
                  ("follow", "follow"), ("events", "post recent events"),
                  ("profile", "change the public page"), ("posts", "change posts"))
         return [words for what, words in names if self.may(what)]
@@ -468,10 +477,17 @@ class SocietyService:
                     self.site_groups.collect()
                 except Exception:
                     log.info("the society groups could not be read", exc_info=True)
+            # THE CALENDAR, as the key permits (the site's 5.5): kept on the user's own calendar.
+            if self.may("calendar.read"):
+                try:
+                    self.site_calendar.read_now_and_then()
+                except Exception:
+                    log.info("the society calendar could not be read", exc_info=True)
             if not self.may("inbox.read"):
                 if time.time() - answered >= ANSWER_SECONDS:
                     answered = time.time()
                     self._answer_groups()
+                    self._answer_invitations()
                 continue                          # not permitted: not asked, not refused
             try:
                 self.collect()
@@ -484,6 +500,15 @@ class SocietyService:
                 except Exception:
                     log.exception("the society messages waiting could not be answered")
                 self._answer_groups()
+                self._answer_invitations()
+
+    def _answer_invitations(self) -> None:
+        if not self.may("calendar.read"):
+            return
+        try:
+            self.site_calendar.decide_waiting()
+        except Exception:
+            log.exception("the society calendar invitations could not be looked at")
 
     def _answer_groups(self) -> None:
         try:
@@ -507,6 +532,7 @@ class SocietyService:
                 "site_groups": self._state("site_groups") or [],
                 "group_invitations": self._state("group_invitations") or [],
                 "groups_unread": self.site_groups.unread(),
+                "calendar_invitations": len(self.site_calendar.invitations()),
                 "key": self._state("key") or {},
                 "connected_at": self._state("connected_at", ""),
                 # The key refused by the server since (401): {"at", "said"} - pair again.
@@ -684,6 +710,10 @@ class SocietyService:
             except Exception:
                 log.info("the user's society contacts could not be read", exc_info=True)
         self.site_groups.read()
+        try:
+            self.site_calendar.read()
+        except Exception:
+            log.info("the society calendar could not be read", exc_info=True)
         self._set_state("key", said.get("key") or {})
         self._set_state("key_refused", None)
         # And the user's own profile, as the account has it now (changed on the website).
@@ -866,6 +896,11 @@ class SocietyService:
                     continue
                 if sender not in names:
                     names[sender] = self._name_of(sender)
+                if one.get("kind") == "calendar":
+                    # WHAT THE SITE SAYS OF A CALENDAR EVENT - an invitation, a change, an answer: never a
+                    # message to answer; kept, and the calendar read again (site_calendar.py).
+                    self.site_calendar.on_inbox(one, sender, names[sender])
+                    continue
                 if one.get("kind") == "event":
                     done = self.db.execute(
                         "INSERT OR IGNORE INTO society_events (id, event_id, peer_id, peer_name, "

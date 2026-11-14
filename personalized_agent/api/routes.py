@@ -814,6 +814,39 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         return _society(lambda: app.society.site_groups.set_mode(
             str(request.require("group")), str(request.require("mode"))))
 
+    # -- THE ACCOUNT'S CALENDAR (society/site_calendar.py; the user, 2026-11-14) -----------------------
+    @route("GET", "/api/society/calendar")
+    def society_calendar(request: Any) -> Any:
+        """The events ahead, the invitations waiting, how the agent handles them, what the key permits.
+        `fresh=1`: read from the website first."""
+        if request.get("fresh"):
+            _society(app.society.site_calendar.read)
+        return _society(app.society.site_calendar.shown)
+
+    @route("POST", "/api/society/calendar/mode")
+    def society_calendar_mode(request: Any) -> Any:
+        """How the agent handles invitations - judge, ask or read: one setting for answering, inviting
+        and changing (the user, 2026-11-14)."""
+        return _society(lambda: app.society.site_calendar.set_mode(str(request.require("mode"))))
+
+    @route("POST", "/api/society/calendar/respond")
+    def society_calendar_respond(request: Any) -> Any:
+        """THE USER'S OWN ANSWER to an invitation: accepted, tentative or declined."""
+        return _society(lambda: app.society.site_calendar.respond(
+            str(request.require("id")), str(request.require("response")),
+            str(request.get("scope") or ""), by="user"))
+
+    @route("POST", "/api/society/calendar/do")
+    def society_calendar_do(request: Any) -> Any:
+        """The user's own doing on their calendar: create, edit, invite, uninvite, cancel."""
+        fields = {key: request.get(key) for key in (
+            "id", "title", "description", "location", "start", "end", "all_day", "timezone",
+            "attendees", "account", "recurrence", "scope") if request.get(key) is not None}
+        op = str(request.require("op"))
+        if op == "respond":
+            raise ApiError("an answer goes to /api/society/calendar/respond", 400)
+        return _society(lambda: app.society.site_calendar.do(op, fields, by="user"))
+
     @route("GET", "/api/record_log")
     def record_log(request: Any) -> Any:
         """THE RECORD LOG: the latest things recorded, from every source,
@@ -4159,6 +4192,38 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     @route("POST", "/api/monitor/quiet/remove")
     def monitor_quiet_remove(request: Any) -> Any:
         return {"removed": app.monitor.store.remove_quiet(str(request.require("id")), "user")}
+
+    # A SILENCE IS A MONITOR TOO (the user, 2026-11-14: "也是一个monitor, 也可以修改和开关"): switched, protected,
+    # renamed and changed by the user as an Activator is.
+    @route("POST", "/api/monitor/quiet/switch")
+    def monitor_quiet_switch(request: Any) -> Any:
+        try:
+            return {"quiet": app.monitor.store.switch_quiet(str(request.require("id")),
+                                                            bool(request.get("on")))}
+        except ValueError as exc:
+            raise ApiError(str(exc), 404)
+
+    @route("POST", "/api/monitor/quiet/protect")
+    def monitor_quiet_protect(request: Any) -> Any:
+        try:
+            return {"quiet": app.monitor.store.protect_quiet(str(request.require("id")),
+                                                             bool(request.get("protected")))}
+        except ValueError as exc:
+            raise ApiError(str(exc), 404)
+
+    @route("POST", "/api/monitor/quiet/edit")
+    def monitor_quiet_edit(request: Any) -> Any:
+        """The user's name for it, and what it holds for."""
+        ident = str(request.require("id"))
+        store = app.monitor.store
+        try:
+            if request.get("when") is not None:
+                store.edit_quiet(ident, {"when": request.get("when")}, "user")
+            if request.get("display_name") is not None:
+                store.rename_quiet(ident, request.get("display_name"))
+            return {"quiet": store.quiet(ident)}
+        except ValueError as exc:
+            raise ApiError(str(exc), 400)
 
     @route("POST", "/api/monitor/edit")
     def monitor_edit(request: Any) -> Any:

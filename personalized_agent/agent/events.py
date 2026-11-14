@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -53,6 +54,10 @@ THREAD_SHOWN = 8
 #: So many open events are shown to the model that joins what is new to them.
 MOST_OPEN = 60
 ORDER_KEY = "events.order."
+#: Once the entries joined before `thing` was kept have had theirs worked out.
+THINGS_KEPT = "events.things_kept"
+#: A thing of the plate named in what the agent did ("about agenda_...").
+ABOUT_A_THING = re.compile(r"\bagenda_[0-9a-f]{6,}\b")
 
 JOIN_SYSTEM = """You keep the user's report by EVENTS - EACH ONE PROJECT OR ONE COLLABORATION, as the
 user thinks of it: the work with one person or group on one project (their reports, the replies about
@@ -143,6 +148,9 @@ class Events:
             if "conversation_id" not in have:
                 conn.execute("ALTER TABLE report_event_items ADD COLUMN conversation_id TEXT NOT NULL "
                              "DEFAULT ''")
+            if "thing" not in have:
+                conn.execute("ALTER TABLE report_event_items ADD COLUMN thing TEXT NOT NULL DEFAULT ''")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_report_event_things ON report_event_items(thing)")
         #: The thread being answered (an event, or one thing in it - its key) -> when it began.
         self._going: Dict[str, str] = {}
         self._lock = threading.Lock()
@@ -151,6 +159,81 @@ class Events:
         #: ONE JOINING AT A TIME (2026-11-13: two reports made at once each made the same three events,
         #: one set left empty for ever).
         self._joining = threading.RLock()
+        self._things_kept()
+
+    # -- what each entry is about: the same thing, the same event --------------------------------------
+    def _things_kept(self) -> None:
+        """What the entries joined before this was kept are about - worked out once."""
+        if self.db.query_one("SELECT value FROM kv WHERE key = ?", (THINGS_KEPT,)):
+            return
+        for row in self.db.query("SELECT key FROM report_event_items WHERE thing = ''"):
+            thing = self._thing(row["key"])
+            if thing:
+                self.db.execute("UPDATE report_event_items SET thing = ? WHERE key = ?", (thing, row["key"]))
+        self.db.execute("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET "
+                        "value = excluded.value", (THINGS_KEPT, _now()))
+
+    def _thing(self, key: str) -> str:
+        """THE THING AN ENTRY IS ABOUT, by code - the plate's thing ("agenda:<id>"), a to-do, a work
+        run - or "" when it cannot be said. ONE THING IS ONE EVENT (the user, 2026-11-14: "同一件事只留一条":
+        an evening call on the plate was three events - put away, checked, asked again - each made new
+        by the model while the one before was open)."""
+        kind, _, rest = str(key or "").partition(":")
+        if kind == "approve":
+            source, _, ident = rest.partition(":")
+            if source == "agenda":
+                return "agenda:" + ident
+            if source == "todo":
+                return "todo:" + ident
+            if source == "work":
+                return "run:" + ident.split("|", 1)[0]
+            if source == "held":
+                return self._of_held(ident)
+            return ""
+        if kind == "mine":
+            return ("agenda:" if self._row("SELECT id FROM agenda_items WHERE id = ?", rest)
+                    else "todo:") + rest
+        if kind == "did":
+            row = self._row("SELECT ref, detail FROM agent_did WHERE id = ?", rest) or {}
+            for part in [one.strip() for one in str(row.get("ref") or "").split(",") if one.strip()]:
+                if part.startswith("agenda_"):
+                    return "agenda:" + part
+                if part.startswith("ck_"):
+                    check = self._row("SELECT item FROM agent_checks WHERE id = ?", part) or {}
+                    if check.get("item"):
+                        return "agenda:" + str(check["item"])
+                if part.startswith("ap_"):
+                    held = self._of_held(part)
+                    if held:
+                        return held
+            found = ABOUT_A_THING.search(str(row.get("detail") or ""))
+            return "agenda:" + found.group(0) if found else ""
+        return ""
+
+    def _of_held(self, ident: str) -> str:
+        row = self._row("SELECT payload FROM approvals_held WHERE id = ?", ident) or {}
+        try:
+            item = str((json.loads(row.get("payload") or "{}") or {}).get("item") or "")
+        except (ValueError, AttributeError):
+            item = ""
+        return "agenda:" + item if item.startswith("agenda_") else ""
+
+    def _row(self, sql: str, ident: str) -> Optional[Dict[str, Any]]:
+        try:
+            return self.db.query_one(sql, (ident,))
+        except Exception:                        # its table not made here (yet)
+            return None
+
+    def _event_of_thing(self, thing: str) -> str:
+        """The event a thing's entries went to last - the one it became, if it was put together."""
+        if not thing:
+            return ""
+        row = self.db.query_one("SELECT event_id FROM report_event_items WHERE thing = ? "
+                                "ORDER BY added_at DESC, rowid DESC LIMIT 1", (thing,))
+        if row is None:
+            return ""
+        event = self.merged_into(str(row["event_id"]))
+        return event if self.db.query_one("SELECT id FROM report_events WHERE id = ?", (event,)) else ""
 
     # -- entries joined to events -------------------------------------------------------------------
     def _open(self) -> List[Dict[str, Any]]:
@@ -176,19 +259,35 @@ class Events:
         new = [one for one in entries if one["key"] not in joined]
         if not new:
             return joined
-        open_events = self._open()
+        # THE SAME THING, THE SAME EVENT - by code, before the model is asked: an entry about a thing
+        # already in an event goes to that event, opened again if it was closed (the user, 2026-11-14:
+        # "同一个事项只对应一条 report 事件，关掉旧的时不再生出新的"). The model joins only the rest.
+        things = {one["key"]: self._thing(one["key"]) for one in new}
+        by_thing: Dict[str, str] = {}
+        for thing in sorted({one for one in things.values() if one}):
+            event = self._event_of_thing(thing)
+            if event:
+                by_thing[thing] = event
+        asked = [one for one in new if not by_thing.get(things[one["key"]])]
+        open_events = self._open() if asked else []
         known = {one["id"] for one in open_events}
-        said = self._ask_join(open_events, new)
+        said = self._ask_join(open_events, asked) if asked else {}
         names: Dict[str, str] = {}
         for one in new:
-            choice = said.get(one["key"]) or {}
-            event = str(choice.get("event") or "")
-            if event not in known:
-                name = " ".join(str(choice.get("new") or one["title"] or "").split())[:120] or "Other"
-                event = names.get(name) or self._new_event(name)
-                names[name] = event
-            self.db.execute("INSERT OR IGNORE INTO report_event_items (key, event_id, title, added_at) "
-                            "VALUES (?, ?, ?, ?)", (one["key"], event, str(one["title"])[:300], _now()))
+            thing = things[one["key"]]
+            event = by_thing.get(thing, "")
+            if not event:
+                choice = said.get(one["key"]) or {}
+                event = str(choice.get("event") or "")
+                if event not in known:
+                    name = " ".join(str(choice.get("new") or one["title"] or "").split())[:120] or "Other"
+                    event = names.get(name) or self._new_event(name)
+                    names[name] = event
+                if thing:                         # the rest of the same thing with it
+                    by_thing[thing] = event
+            self.db.execute("INSERT OR IGNORE INTO report_event_items (key, event_id, title, added_at, thing) "
+                            "VALUES (?, ?, ?, ?, ?)", (one["key"], event, str(one["title"])[:300], _now(),
+                                                       thing))
             self.db.execute("UPDATE report_events SET updated_at = ?, closed_at = '' WHERE id = ?",
                             (_now(), event))
             joined[one["key"]] = event
@@ -203,12 +302,12 @@ class Events:
         and said in the report. [{"into", "from", "name", "why"}]."""
         with self._joining:
             self._close_empty()
+            done: List[Dict[str, Any]] = self._fold_same_things()
             open_events = [one for one in self._open() if one["items"]]
             if len(open_events) < 2:
-                return []
+                return self._said_merged(done)
             said = self._ask_merge(open_events)
             known = {one["id"]: one for one in open_events}
-            done: List[Dict[str, Any]] = []
             used: set = set()
             for group in said:
                 into = str(group.get("into") or "")
@@ -222,12 +321,55 @@ class Events:
                 done.append({"into": into, "from": folded, "name": name,
                              "why": " ".join(str(group.get("why") or "").split())[:300],
                              "titles": [known[one]["title"] for one in folded]})
+        return self._said_merged(done)
+
+    def _said_merged(self, done: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if done:
             from .reports import did
             for one in done:
                 did(self.db, "events_merged", self._words("Put together as one: {0} - with {1}", one["name"],
                                                           "; ".join(one["titles"])),
                     one["why"], source="report", ref=one["into"])
+        return done
+
+    def _fold_same_things(self) -> List[Dict[str, Any]]:
+        """OPEN EVENTS ABOUT THE SAME THING ARE ONE - by code, no model (the user, 2026-11-14: "同一件事只留
+        一条"): each group folded into the first made; its name kept."""
+        rows = self.db.query("SELECT i.thing, e.id, e.title, e.created_at FROM report_event_items i "
+                             "JOIN report_events e ON e.id = i.event_id WHERE i.thing != '' AND "
+                             "e.closed_at = '' ORDER BY e.created_at, e.rowid")
+        parent: Dict[str, str] = {}
+        first: Dict[str, str] = {}
+        made: Dict[str, tuple] = {}
+
+        def root(ident: str) -> str:
+            while parent[ident] != ident:
+                parent[ident] = parent[parent[ident]]
+                ident = parent[ident]
+            return ident
+
+        for n, row in enumerate(rows):
+            parent.setdefault(row["id"], row["id"])
+            made.setdefault(row["id"], (n, row["title"]))
+            if row["thing"] in first:
+                one, other = root(row["id"]), root(first[row["thing"]])
+                if one != other:                  # the earlier made is kept
+                    keep, fold = sorted((one, other), key=lambda ident: made[ident][0])
+                    parent[fold] = keep
+            else:
+                first[row["thing"]] = row["id"]
+        groups: Dict[str, List[str]] = {}
+        for ident in parent:
+            if root(ident) != ident:
+                groups.setdefault(root(ident), []).append(ident)
+        done = []
+        for into, folded in groups.items():
+            folded.sort(key=lambda ident: made[ident][0])
+            name = made[into][1]
+            self._fold(into, folded, name)
+            done.append({"into": into, "from": folded, "name": name,
+                         "why": self._words("They are about the same thing."),
+                         "titles": [made[one][1] for one in folded]})
         return done
 
     def _fold(self, into: str, folded: List[str], name: str) -> None:

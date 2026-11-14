@@ -226,7 +226,7 @@ WRITING_TOOLS = ("write_file", "edit_file", "edit_notebook", "delete_file", "run
                  "run_tests",
                  "run_command", "install_packages", "download", "git_fetch",
                  "job_status", "stop_job", "wait_for", "run_outside",
-                 "request_approval", "hand_over")
+                 "request_approval", "hand_over", "society_calendar_act")
 #: A job's own tools: whoever may start one (run_python, run_tests) may look
 #: at it, wait for it and stop it - even where nothing else is written.
 JOB_TOOLS = ("job_status", "stop_job", "wait_for")
@@ -998,6 +998,7 @@ class WorkTools:
             "hand_over": self.give_to_user,
             "search_people": self.search_people, "open_person": self.open_person,
             "society_find_agent": self.society_find_agent, "society_write": self.society_write,
+            "society_calendar": self.society_calendar, "society_calendar_act": self.society_calendar_act,
             "how_the_user_writes": self.how_the_user_writes,
         }
         #: WHAT THE USER GETS (handed.py): `on_hand_over(item)` keeps an item
@@ -1018,6 +1019,11 @@ class WorkTools:
         #: THE AGENTS SOCIETY (society/service.py), to ask another person's agent - and the run
         #: whose asks they are. None where the work is given none.
         self.society: Any = None
+        #: THE MONITOR (heartbeat/monitor/tools.py), its Activators changed as the chat changes them - never
+        #: a protected one (the user, 2026-11-14: "chat/delegate什么的都要有改monitor的工具"). None where the
+        #: work is given none.
+        self.monitor: Any = None
+        self._monitor_made: Optional[Dict[str, Any]] = None
         self.run_id = ""
         self._records_index: Any = None
         #: Where the user's own way of writing was looked at (`how_the_user_writes`)
@@ -1084,7 +1090,22 @@ class WorkTools:
                 and (not one.name.startswith("society_") or self.society is not None)
                 # AS THE KEY PERMITS NOW (2026-11-12): no writing tool for a key that may not write.
                 and (one.name != "society_write" or self._society_may("inbox.write"))
-                and (one.name != "how_the_user_writes" or self._voice_known())]
+                and (one.name != "society_calendar" or self._society_may("calendar.read"))
+                and (one.name != "society_calendar_act" or any(
+                    self._society_may("calendar." + part) for part in ("write", "invite", "respond")))
+                and (one.name != "how_the_user_writes" or self._voice_known())] + [
+            spec for spec, _handler in self._monitor_tools().values()
+            if (writing or spec.read_only) and (self.only is None or spec.name in self.only)]
+
+    def _monitor_tools(self) -> Dict[str, Any]:
+        """The Monitor's tools, {name: (spec, handler)} - none where the work has no Monitor."""
+        if self.monitor is None:
+            return {}
+        if self._monitor_made is None:
+            from ...heartbeat.monitor.tools import tools_for
+            self._monitor_made = {spec.name: (spec, handler)
+                                  for spec, handler in tools_for(self.monitor, "work")}
+        return self._monitor_made
 
     def _specs(self) -> List[ToolSpec]:
         from .parallel import READ_ONLY
@@ -1094,6 +1115,7 @@ class WorkTools:
         return specs
 
     def _all_specs(self) -> List[ToolSpec]:
+        from ...society import tools as _society_tools      # its words, the chat's own
         where = ", ".join(str(one) for one in self.writable)
         return [
             ToolSpec("list_dir", "List a folder: its files and subfolders, with each "
@@ -1449,6 +1471,10 @@ class WorkTools:
                      "answer comes back to this work.",
                      _schema({"to": {"type": "string"}, "text": {"type": "string"},
                               "subject": {"type": "string"}}, ["to", "text"])),
+            # THE USER'S CALENDAR ON THE AGENTS SOCIETY (society/site_calendar.py, 2026-11-14) - acting
+            # on it held by the user's own setting, as the chat's is.
+            ToolSpec("society_calendar", _society_tools.CALENDAR_READ, _schema({}, [])),
+            ToolSpec("society_calendar_act", _society_tools.CALENDAR_ACT, _society_tools.CALENDAR_SCHEMA),
             ToolSpec("open_person", "One of the user's contacts whole: who they are, their "
                      "accounts and public profiles, what they have been doing, dated - and how "
                      "the user writes to them, in their own words.",
@@ -1594,6 +1620,21 @@ class WorkTools:
         except Exception:
             return False
 
+    def society_calendar(self, _args: Dict[str, Any]) -> Any:
+        """The user's calendar on the website - as the chat reads it (society/tools.py)."""
+        if self.society is None or getattr(self.society, "site_calendar", None) is None:
+            return {"error": "no Agents Society here"}
+        from ...society.tools import calendar_listed
+        return calendar_listed(self.society)
+
+    def society_calendar_act(self, args: Dict[str, Any]) -> Any:
+        """On the user's calendar, as the user set it - judged and reviewed, held for them, or not at all
+        (society/site_calendar.agent_act); kept as this work's."""
+        if self.society is None or getattr(self.society, "site_calendar", None) is None:
+            return {"error": "no Agents Society here"}
+        from ...society.tools import calendar_act
+        return calendar_act(self.society, args, "work")
+
     def society_find_agent(self, args: Dict[str, Any]) -> Any:
         """A person's agent on the Agents Society - sure, or by their own claim."""
         if self.society is None:
@@ -1688,7 +1729,7 @@ class WorkTools:
                 "note": "the user opens it - nothing was sent or saved for them"}
 
     def call(self, name: str, arguments: Dict[str, Any]) -> Any:
-        handler = self.handlers.get(name)
+        handler = self.handlers.get(name) or (self._monitor_tools().get(name) or (None, None))[1]
         if handler is None or (self.only is not None and name not in self.only):
             return {"error": f"unknown tool {name}"}
         if self.halted():

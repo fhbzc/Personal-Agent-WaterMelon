@@ -241,7 +241,7 @@ class NotificationService:
     def system(self, title: str, message: str, *, kind: str = "warning", level: Optional[str] = None,
                startup: bool = False, **said: Any) -> Any:
         """WHAT THE USER MUST KNOW OF THE APPLICATION ITSELF ("系统类的可以保留") - signed out, a model down, the
-        agent stopped, an update - through the Monitor's "The application itself": its switch, its
+        agent stopped, an update - through the Monitor's "System": its switch, its
         silences. `level` "collapse": rather waiting. Without a Monitor nothing is said - but the
         agent not starting at all (`startup`), which no Monitor is there to say."""
         relay = self.relay

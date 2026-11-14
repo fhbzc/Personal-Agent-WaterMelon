@@ -1114,7 +1114,12 @@ def apply_program(store: act.ActivatorStore, change: Any, by: str) -> Dict[str, 
         if op == "delete":
             store.delete(str(change.get("id") or ""), by, why)
             return {"op": "delete", "id": change.get("id")}
-        return {"error": f"op is add, edit or delete, not {op!r}"}
+        if op == "switch":
+            if not isinstance(change.get("on"), bool):
+                return {"op": op, "id": change.get("id"), "error": "on is true or false"}
+            store.model_switch(str(change.get("id") or ""), change["on"], by, why)
+            return {"op": "switch", "id": change.get("id"), "on": change["on"]}
+        return {"error": f"op is add, edit, delete or switch, not {op!r}"}
     except ValueError as exc:
         return {"op": op, "id": change.get("id"), "error": str(exc)}
 

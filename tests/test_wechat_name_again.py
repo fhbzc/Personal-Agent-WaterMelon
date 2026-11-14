@@ -96,5 +96,54 @@ class StillNoNameTests(unittest.TestCase):
                 db.close()
 
 
+class _Rect:
+    def __init__(self, left, top, width, height):
+        self.left, self.top, self.right, self.bottom = left, top, left + width, top + height
+
+
+class _Label:
+    def __init__(self, ident, name, rect):
+        self.CachedAutomationId = self.CurrentAutomationId = ident
+        self.CachedName = self.CurrentName = name
+        self.CachedBoundingRectangle = self.CurrentBoundingRectangle = rect
+
+
+class _Found:
+    def __init__(self, labels):
+        self.labels, self.Length = labels, len(labels)
+
+    def GetElement(self, index):
+        return self.labels[index]
+
+
+class NameAmongAllTextsTests(unittest.TestCase):
+    """2026-11-14, read from the user's own WeChat: a panel open right of the chat put 39 texts ahead
+    of the chat's name - the 41st - and the first 40 were all that was looked at."""
+
+    def _window(self, cached=True):
+        side = [_Label("side_panel.text", f"line {n}", _Rect(1376, 182 + 50 * n, 479, 37)) for n in range(39)]
+        labels = side + [_Label("chat.row", "Robin", _Rect(300, 50, 868, 26)),
+                         _Label("content_view.left_ui_.current_chat_name_label", "Robin", _Rect(300, 50, 76, 26)),
+                         _Label("chat.status", "", _Rect(378, 50, 35, 26))]
+        window = mock.Mock()
+        if cached:
+            window.FindAllBuildCache.return_value = _Found(labels)
+        else:
+            window.FindAllBuildCache.side_effect = OSError("no cache here")
+        window.FindAll.return_value = _Found(labels)
+        reader = object.__new__(wt.WindowTextReader)
+        reader._automation = mock.Mock()
+        return reader, window
+
+    def test_the_41st_text_is_found(self) -> None:
+        reader, window = self._window()
+        self.assertEqual(reader._wechat_headers(window, (0, 0)), [{"text": "Robin", "box": (300, 50, 76, 26)}])
+        window.FindAll.assert_not_called()
+
+    def test_asked_one_by_one_when_the_cache_cannot_be_had(self) -> None:
+        reader, window = self._window(cached=False)
+        self.assertEqual(reader._wechat_headers(window, (100, 10)), [{"text": "Robin", "box": (200, 40, 76, 26)}])
+
+
 if __name__ == "__main__":
     unittest.main()

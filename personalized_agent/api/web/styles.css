@@ -4720,6 +4720,25 @@ label.delegate-see-tries input { width: auto; margin: 3px 3px 3px 4px; flex: non
 .mon-switches label { display: inline-flex; flex-direction: row; align-items: center; gap: 4px;
   cursor: pointer; margin: 0; font-size: inherit; color: var(--ink); }
 .mon-switches input { width: auto; margin: 0; }
+.mon-actions { display: flex; gap: 8px; margin: 4px 0; }
+/* THE SOCIETY CALENDAR (2026-11-14). */
+.society-cal { max-width: 760px; padding: 4px 2px 12px; }
+.society-cal-mode { margin: 4px 0 10px; font-size: 13px; color: var(--ink); }
+.society-cal-mode select { margin-top: 4px; }
+.society-cal-list { list-style: none; margin: 0 0 12px; padding: 0; }
+.society-cal-item { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 0 0 6px;
+  background: var(--panel); font-size: 13px; display: grid; gap: 3px; }
+.society-cal-invite { border-left: 3px solid var(--accent); }
+.society-cal-description { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
+.society-cal-decided { font-size: 12px; }
+.society-cal-item button.on { outline: 2px solid var(--accent); }
+.society-cal-make { display: grid; gap: 6px; margin: 0 0 10px; }
+.society-cal-times { display: flex; gap: 10px; flex-wrap: wrap; }
+.society-cal-times label { flex: 1 1 200px; }
+.mon-actions .mon-edit { margin: 0; }
+.mon-rename-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.mon-rename-form input { width: auto; flex: 1 1 220px; max-width: 360px; }
+.mon-rename-form button { width: auto; }
 .mon-dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0; font-size: .86rem; }
 .mon-dl dt { color: var(--muted); }
 .mon-dl dd { margin: 0; overflow-wrap: anywhere; }
@@ -4808,9 +4827,9 @@ label.delegate-see-tries input { width: auto; margin: 3px 3px 3px 4px; flex: non
 .chat-actions { margin-top: 6px; color: var(--muted); font-size: .78rem; line-height: 1.45; }
 .chat-actions .chat-fold-undo { margin: 2px 0 0; }
 .chat-fold-asks { color: var(--accent, #4a8); }
-.mon-quiet { margin: 6px 0 14px; padding: 0; list-style: none; }
-.mon-quiet li { display: flex; align-items: center; gap: 10px; padding: 3px 0; }
-.mon-quiet button { width: auto; padding: 1px 8px; font-size: .8rem; }
+.mon-quiet { margin: 6px 0 4px; }
+.mon-quiet-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mon-quiet button { width: auto; }
 .mon-undo { width: auto; margin-left: 6px; padding: 0 7px; font-size: .75rem; }
 
 /* A link in a reply (chat.js, writeWithLinks). */
@@ -5053,6 +5072,8 @@ html.notes-solo, html.notes-solo body { margin: 0; height: 100%; background: var
 .notes-search { padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .notes-search input { width: 100%; box-sizing: border-box; border-radius: 18px; padding: 7px 14px; }
 .notes-scroll { flex: 1 1 auto; overflow-y: auto; padding: 6px 14px 24px; }
+/* A THIN SCROLLBAR, as Windows' own (measured 2026-11-14: WebView2 drew the classic one, with arrows). */
+.notes-scroll { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .notes-group { margin: 14px 4px 6px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
 .notes-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .notes-card { border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
@@ -5334,18 +5355,56 @@ button.report-deliverable-title:focus-visible { outline: 2px solid var(--accent)
 }
 
 /* THE MONITOR IN LEVELS (2026-11-13): the silences over everything, then what it tells by kind. */
-.mon-level { margin: 0 0 18px; }
-.mon-level-head { margin: 0 0 8px; font-size: 15px; }
-.mon-level-head .muted { font-weight: 400; font-size: 12.5px; margin-left: 6px; }
-.mon-level-top { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
-  background: color-mix(in srgb, var(--line) 22%, transparent); }
-.mon-no-notes { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 4px 0 8px; cursor: pointer; }
+/* THREE LEVELS YOU CAN SEE (the user, 2026-11-14: "monitor里display的分层不明显"):
+   1 - a section (Silences, What it tells you): a tinted panel, its title large, what it is under it;
+   2 - a kind: a white box with an accent edge, a caret to fold it, its count as a pill;
+   3 - each Activator or silence: a smaller row hung from its kind by a guide line. */
+.mon-level { margin: 0 0 16px; padding: 12px 14px 6px; border: 1px solid var(--line); border-radius: 12px;
+  background: color-mix(in srgb, var(--line) 26%, var(--panel)); }
+.card .mon-level-head { margin: 0 0 10px; font-size: 16px; font-weight: 700; color: var(--ink);
+  text-transform: none; letter-spacing: normal; }
+.card .mon-level-head .muted { display: block; margin: 3px 0 0; font-weight: 400; font-size: 12.5px;
+  color: var(--muted); }
+/* ON ONE LINE (the user, 2026-11-14: "no notifications 的选项没有排整齐"): the box its own size, not the
+   page's full-width input; the words beside it as in the switches. */
+.mon-no-notes { display: flex; flex-direction: row; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 4px 0 8px; cursor: pointer; font-size: 13px; color: var(--ink); }
+.mon-no-notes input[type="checkbox"] { width: 16px; height: 16px; margin: 0; padding: 0; flex: none; }
+.mon-no-notes .muted { font-size: 12.5px; }
 .mon-no-notes.on strong { color: var(--accent); }
-.mon-kind { border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; margin: 0 0 10px; }
-.mon-kind > summary { cursor: pointer; display: flex; align-items: baseline; gap: 8px; padding: 4px 0; }
-.mon-kind-name { font-weight: 600; }
-.mon-kind-count { font-size: 12.5px; }
-.mon-kind-said { margin: 2px 0 6px; font-size: 12.5px; }
-.mon-kind-note { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 13px; }
-.mon-kind-items { padding-left: 6px; }
+.mon-kind { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+  border-radius: 6px 10px 10px 6px; padding: 6px 12px 8px; margin: 0 0 10px; }
+.mon-kind > summary { cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 4px 0;
+  list-style: none; }
+.mon-kind > summary::-webkit-details-marker { display: none; }
+.mon-actions button { width: auto; padding: 3px 10px; font-size: 12px; }
+.mon-kind > summary::before { content: "▸"; color: var(--muted); font-size: 16px; width: 14px; line-height: 1;
+  transition: transform .15s; }
+.mon-kind[open] > summary::before { transform: rotate(90deg); }
+.mon-kind-name { font-weight: 650; font-size: 14.5px; color: var(--ink); }
+.mon-kind-count { font-size: 11.5px; padding: 1px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--ink); }
+.mon-kind-said { margin: 0 0 8px 20px; font-size: 12.5px; }
+.mon-kind-note { display: flex; align-items: center; gap: 8px; margin: 0 0 8px 20px; font-size: 13px; }
+.mon-kind-items, .mon-quiet { margin: 0 0 0 5px; padding-left: 14px; border-left: 2px solid var(--line); }
+.mon-kind-items .mon-act, .mon-quiet .mon-act { background: var(--bg); border-radius: 8px; padding: 6px 10px;
+  margin: 0 0 6px; }
+.mon-kind-items .mon-name, .mon-quiet .mon-name { font-weight: 550; font-size: 13.5px; }
+.mon-kind-items .mon-act > summary { list-style: none; }
+.mon-kind-items .mon-act > summary::-webkit-details-marker { display: none; }
+.mon-kind-items .mon-act > summary::before { content: "▸"; color: var(--muted); font-size: 13px; width: 11px;
+  line-height: 1;
+  transition: transform .15s; }
+.mon-kind-items .mon-act[open] > summary::before { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .mon-kind > summary::before, .mon-act > summary::before { transition: none; } }
+/* THE SILENCES OVER THE REST (2026-11-14): what it tells sits inside them, under a gate. */
+.mon-under { margin: 12px 0 6px; }
+.mon-gate { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 12.5px; color: var(--muted); }
+.mon-gate::before { content: "↓"; display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel);
+  color: var(--ink); font-size: 12px; flex: none; }
+.mon-under > .mon-level { margin: 0 0 6px 10px; background: var(--panel); }
+.mon-held .mon-gate { color: var(--warn); font-weight: 600; }
+.mon-held .mon-gate::before { content: "⏸"; border-color: var(--warn); color: var(--warn); }
+.mon-held > .mon-level { opacity: .6; }
 .report-notify { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; cursor: pointer; }

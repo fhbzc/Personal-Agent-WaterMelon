@@ -2754,14 +2754,19 @@ class DesktopAgent:
             if app_window.slide_in_titled(titles, width=app_window.NOTES_SIZE[0]):
                 return
             url = self.app.sign_in_url(self.NOTES_PATH)
-            # The first time too: put down the side before it is shown, then slid in.
+            # IN WEBVIEW2, STARTED BEFORE IT WAS WANTED (panel_host.py; the user, 2026-11-14: "接进") - else, as
+            # before, the browser's app mode. The first time too: put down the side before it is shown, then
+            # slid in.
+            if app_window.open_hosted_side_window(getattr(self, "panel_host", None), url,
+                                                  app_window.NOTES_SIZE, self.NOTES_TITLE, titles):
+                return
             if not app_window.open_side_window(url, self.app.paths.data_dir / app_window.NOTES_PROFILE,
                                                app_window.NOTES_SIZE, titles=titles):
                 webbrowser.open(url)
         self._off_this_thread(go, "open-notifications")
 
     #: The side panel's page - placed by the desktop, not moving itself.
-    NOTES_PATH = "/?solo=notifications&placed=1"
+    NOTES_PATH = "/notes.html?placed=1"          # its own small page (2026-11-14), not the whole application
     #: How often the open side panel is looked for; how long one being started is waited for.
     NOTES_WATCH_MS, NOTES_COMING_SECONDS = 700, 15.0
 
@@ -3703,7 +3708,31 @@ class DesktopAgent:
             log.debug("could not report the failure", exc_info=True)
 
     def run(self) -> None:
+        self._start_panel_host()
         self.root.mainloop()
+
+    def _start_panel_host(self) -> None:
+        """THE SIDE PANEL'S OWN PROCESS, WEBVIEW2 STARTED BEFORE IT IS WANTED (panel_host.py; the user,
+        2026-11-14: "这个做") - on Windows, a while after the agent starts. Where it cannot be (no pywebview, no
+        WebView2 runtime), nothing: the panel opens in the browser as before."""
+        if sys.platform != "win32" or os.environ.get("PA_NO_DIALOGS"):
+            return
+        try:
+            from ..platform_layer.panel_host import PanelHost
+            self.panel_host = PanelHost(self.app.paths.data_dir / "notes_webview")
+            self.panel_host.start_later(then=self._prepare_notes)
+        except Exception:        # pragma: no cover - the panel opens as before
+            log.info("the side panel's host could not be set up", exc_info=True)
+
+    def _prepare_notes(self) -> None:
+        """THE PANEL MADE BEFORE IT IS WANTED, HIDDEN: the first open only shows it (slide_in_titled finds one put
+        away) - unless one is there already."""
+        from ..platform_layer import app_window
+        if app_window._windows_page(self._notes_titles(), hidden=True) is not None:
+            return
+        self.panel_host.open(self.app.sign_in_url(self.NOTES_PATH), self.NOTES_TITLE, app_window.NOTES_SIZE[0],
+                             app_window.NOTES_SIZE[1], app_window.OFF_SCREEN[0], app_window.OFF_SCREEN[1],
+                             hidden=True)
 
     def quit(self) -> None:
         """Stop the agent. Quit is an explicit choice, so it is not queried.
@@ -3774,6 +3803,14 @@ class DesktopAgent:
             tray.stop()
         # THE OVERVIEW'S WINDOW GOES WITH IT (the user, 2026-11-09: "agent关闭之后，自动把overview panel
         # 也关了"): a page with no agent behind it only says it cannot reach it.
+        # The side panel's own process FIRST, its windows with it: a WebView2 form does not close on WM_CLOSE
+        # (measured 2026-11-14), and close_titled would wait two seconds on each.
+        host = getattr(self, "panel_host", None)
+        if host is not None:
+            try:
+                host.stop()
+            except Exception:    # pragma: no cover
+                log.debug("the side panel's host could not be stopped", exc_info=True)
         try:
             from ..platform_layer.app_window import close_the_page, close_titled
             close_the_page()

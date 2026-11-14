@@ -19,6 +19,8 @@
 <script>if (/[?&]solo=delegate(&|$)/.test(location.search)) document.documentElement.classList.add("delegate-solo");
 if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classList.add("learn-solo");
 if (/[?&]solo=report(&|$)/.test(location.search)) document.documentElement.classList.add("report-solo");
+/* THE WAITING NOTIFICATIONS are their own page now (notes.html): a window opened at the old address goes there. */
+if (/[?&]solo=notifications(&|$)/.test(location.search)) location.replace("/notes.html" + (/[?&]placed=1/.test(location.search) ? "?placed=1" : ""));
 /* The panels' list folded away as it was left, from the first frame (app.js). */
 try { if (localStorage.getItem("side-closed") === "true") document.documentElement.classList.add("side-closed"); } catch (_) { /* open, then */ }</script>
 <link rel="stylesheet" href="/styles.css">
@@ -28,8 +30,6 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
 <body>
 <!-- THE REPORT ALONE, in a window of its own (?solo=report; agent/reports.py). -->
 <section id="report-page" class="report" hidden></section>
-<!-- THE WAITING NOTIFICATIONS, the whole side of the screen (the user, 2026-11-13). -->
-<section id="notes-page" hidden></section>
 <header>
   <h1>WaterMelon</h1>
   <nav id="tabs">
@@ -757,6 +757,9 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
       <!-- THE ACCOUNT'S GROUPS (the user, 2026-11-13): written in, made, invited into. -->
       <button type="button" class="society-view-button" data-society-view="groups">Groups
         <span class="society-count" id="society-groups-unread" hidden></span></button>
+      <!-- THE ACCOUNT'S CALENDAR (the user, 2026-11-14): invitations, events, one setting for the agent. -->
+      <button type="button" class="society-view-button" data-society-view="calendar">Calendar
+        <span class="society-count" id="society-cal-waiting" hidden></span></button>
       <button type="button" class="society-view-button" data-society-view="settings">Settings</button>
     </nav>
     <div id="society-view-chats" class="society-view">
@@ -787,6 +790,9 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
           <p class="muted society-pick">Pick a group.</p>
         </section>
       </div>
+    </div>
+    <div id="society-view-calendar" class="society-view" hidden>
+      <div id="society-cal" class="society-cal"></div>
     </div>
     <div id="society-view-settings" class="society-view" hidden>
       <div id="society-me"></div>

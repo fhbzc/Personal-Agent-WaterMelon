@@ -267,7 +267,7 @@ def _builtins() -> List[Dict[str, Any]]:
          "when": {"event": "report_due"},
          "then": [{"do": "notify", "title": "{title}", "message": "{message}"}],
          "cooldown_minutes": 1, "most_per_day": 50, "delivery": "pop"},
-        {"builtin": "system", "protected": True, "name": "The application itself", "group": "system",
+        {"builtin": "system", "protected": True, "name": "System", "group": "system",
          "purpose": "What you must know of the application: a model to sign in to again or down, "
                     "the agent stopped, work that could not start, an update.",
          "when": {"event": "system"},

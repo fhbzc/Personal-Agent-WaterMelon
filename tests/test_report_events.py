@@ -327,6 +327,84 @@ class EventsTests(unittest.TestCase):
         self.assertIn("If the user has asked, in their own words, for another language",
                       display_instruction(chinese))
 
+    def _plate(self) -> None:
+        """What the entries are about, made here: a thing held, a check of it, what the agent did."""
+        from personalized_agent.agent import approvals, checks
+        from personalized_agent.agent.reports import _ready
+        _ready(self.db)
+        with self.db.write() as conn:
+            conn.executescript(approvals.SCHEMA)
+            conn.executescript(checks.SCHEMA)
+        for ident, kind, title in (("ap_put_away", "agenda_clean_up", "Take off: Evening call with the tide club"),
+                                   ("ap_asked", "check_happened", "Did it happen? Evening call with the tide club")):
+            self.db.execute("INSERT INTO approvals_held (id, at, kind, title, payload) VALUES (?, 'x', ?, ?, ?)",
+                            (ident, kind, title, json.dumps({"item": "agenda_0000000000e1"})))
+        self.db.execute("INSERT INTO agent_checks (id, item, due_at, made_at) VALUES "
+                        "('ck_tide', 'agenda_0000000000e1', 'x', 'x')")
+        self.db.execute("INSERT INTO agent_did (id, at, kind, title, ref, source) VALUES "
+                        "('did_checked', 'x', 'check_done', 'Checked ck_tide: nothing shows it happened', "
+                        "'ck_tide', 'plan')")
+
+    def test_one_thing_one_event_even_once_it_was_closed(self) -> None:
+        """2026-11-14: "同一件事只留一条：同一个事项只对应一条 report 事件，关掉旧的时不再生出新的" - an evening call
+        on the plate was three events: put away, checked, asked again, each made new by the model."""
+        self._plate()
+        names = iter(["Evening call", "Evening call, contact unknown", "Evening call again", "Garden plan"])
+
+        def join(request):
+            new = json.loads(request.messages[0]["content"])["new_entries"]
+            return json.dumps({"join": [{"key": one["key"], "new": next(names)} for one in new]})
+        events = self._events({"report_events": join})
+        put_away = [{"key": "held:ap_put_away", "title": "Take off: Evening call with the tide club", "why": ""}]
+        first = events.tabs(put_away, [], [])
+        [event] = first["needs_you"]
+        self.assertEqual(event["title"], "Evening call")
+        events.close([event["id"]])
+        asked = len(self.app.models.asked)
+        checked = [{"key": "did:did_checked", "title": "Checked ck_tide: nothing shows it happened", "why": ""}]
+        again = events.tabs([], checked, [])
+        self.assertEqual([one["id"] for one in again["done"]], [event["id"]], "the same event, opened again")
+        self.assertEqual(self.db.query_one("SELECT closed_at FROM report_events WHERE id = ?",
+                                           (event["id"],))["closed_at"], "")
+        self.assertEqual([one.task for one in self.app.models.asked[asked:]], [], "nothing asked of the model")
+        # Asked again, with something else new beside it: that one alone goes to the model.
+        asked_again = [{"key": "held:ap_asked", "title": "Did it happen? Evening call with the tide club",
+                        "why": ""}]
+        garden = [{"key": "todo:g1", "title": "Plant the beans", "why": ""}]
+        third = events.tabs(asked_again, [], garden)
+        self.assertEqual([one["id"] for one in third["needs_you"]], [event["id"]])
+        self.assertEqual([one["title"] for one in third["yours"]], ["Evening call, contact unknown"],
+                         "the model's next name went to the garden, the only one it was asked about")
+        [handed] = [json.loads(one.messages[0]["content"]) for one in self.app.models.asked[asked:]
+                    if one.task == "report_events"]
+        self.assertEqual([one["key"] for one in handed["new_entries"]], ["mine:g1"])
+        self.assertEqual(self.db.query_one("SELECT COUNT(*) AS n FROM report_events")["n"], 2)
+
+    def test_open_events_about_the_same_thing_put_together_by_code(self) -> None:
+        """The ones made before (2026-11-14): open events about the same thing folded into the first made,
+        their things worked out once - no model asked."""
+        events = self._events({})
+        first = events._new_event("Seminar brief")
+        second = events._new_event("Seminar, the room")
+        other = events._new_event("Garden plan")
+        for key, event in (("approve:agenda:agenda_00000000005e", first), ("mine:agenda_00000000005e", second),
+                           ("mine:g1", other)):
+            self.db.execute("INSERT INTO report_event_items (key, event_id, title, added_at) VALUES (?, ?, ?, 'x')",
+                            (key, event, key))
+        self.db.execute("INSERT INTO agenda_items (id, source, ref_id, title, created_at, updated_at) VALUES "
+                        "('agenda_00000000005e', 'x', 'r1', 'Seminar', 'x', 'x')")
+        self.db.execute("DELETE FROM kv WHERE key = 'events.things_kept'")
+        events = self._events({})                 # made again: the things of what was there worked out
+        done = events.merge_open()
+        self.assertEqual([(one["into"], one["from"]) for one in done], [(first, [second])])
+        self.assertEqual(events.merged_into(second), first)
+        self.assertEqual(self.db.query_one("SELECT event_id FROM report_event_items WHERE key = ?",
+                                           ("mine:agenda_00000000005e",))["event_id"], first)
+        self.assertEqual(self.db.query_one("SELECT closed_at FROM report_events WHERE id = ?", (other,))["closed_at"],
+                         "", "another thing stays its own")
+        self.assertEqual([one.task for one in self.app.models.asked], ["report_merge"],
+                         "the model asked only about what is left: the brief and the garden")
+
     def test_without_the_model_each_new_one_an_event_of_its_own(self) -> None:
         events = self._events({})
         tabs = events.tabs(APPROVE, DONE, MINE)

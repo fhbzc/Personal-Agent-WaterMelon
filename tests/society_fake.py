@@ -26,6 +26,8 @@ gives it on 2026-11-12), not to how the server is built:
               key's follow and events permissions)
     the page  GET /v2/profile (any key), POST /v2/profile (profile); /v2/posts (any
               key to read; posts to add, edit, delete - 10 at most, 409 past them)
+    calendar  /v2/calendar, /calendar/event, /calendar/invitations, /calendar/events (+ edit, invite,
+              uninvite, respond, cancel) - each part its own calendar.* permission (2026-11-14)
     public    GET /v1/suggest, /v1/people, /v1/agents/{id} - a name and a
               description, no keys; every other v1 call answers 410
 Every name in the tests is made up.
@@ -52,7 +54,10 @@ DEFAULT_PERMISSIONS = {"inbox": {"read": True, "write": "draft", "send_to": "rep
                        "follow": False, "events": False, "profile": False, "posts": False,
                        "contacts": True,
                        "groups": {"read": False, "send": False, "create": False, "invite": False,
-                                  "join": False}}
+                                  "join": False},
+                       "calendar": {"read": False, "write": False, "invite": False, "respond": False}}
+#: The calendar's parts, all given (a test gives them by name: the site gives none by default).
+CALENDAR_ALL = {"read": True, "write": True, "invite": True, "respond": True}
 #: Every permission a key can be given.
 ALL_PERMISSIONS = {"inbox": {"read": True, "write": "send", "send_to": "anyone"},
                    "follow": True, "events": True, "profile": True, "posts": True, "contacts": True,
@@ -123,6 +128,9 @@ class FakeSociety:
         self.posts: Dict[str, Dict[str, Any]] = {}
         #: Whether it has the API's recent events for agents (/v2/events).
         self.events_api = True
+        #: THE CALENDAR (5.5): each event by its id; those an agent made through the API.
+        self.cal_events: Dict[str, Dict[str, Any]] = {}
+        self.cal_made: List[str] = []
 
     # -- what the tests do on the server's side (the website's users) ------------------------
     def website_account(self, name: str, listed: bool = False, verified: bool = True,
@@ -447,6 +455,9 @@ class FakeSociety:
                     "updated_at": max([one.get("updated_at", 0) for one in listed] or [0])}
         if path.startswith("/v2/groups"):
             return self._rooms(method, path, query, account, can, said if isinstance(said, dict) else {})
+        if path.startswith("/v2/calendar"):
+            return self._calendar(method, path, query or {}, account, can,
+                                  said if isinstance(said, dict) else {})
         if method == "POST" and path == "/v2/inbox/send":
             return self._send(account, inbox, said)
         if method == "GET" and path == "/v2/inbox":
@@ -604,12 +615,153 @@ class FakeSociety:
 
     # -- the server's own doings --------------------------------------------------------------
     def _deliver(self, sender: str, to: str, subject: str, text: str, thread: str,
-                 kind: str, status: str = "sent") -> str:
+                 kind: str, status: str = "sent", event: str = "") -> str:
         ident = "m_" + secrets.token_hex(8)
         self.inbox.append({"id": ident, "from": sender, "to": to, "subject": subject,
                            "text": text, "thread": thread or ident, "status": status,
-                           "kind": kind, "at": float(next(self._clock)), "read": False})
+                           "kind": kind, "at": float(next(self._clock)), "read": False,
+                           **({"event": event} if event else {})})
         return ident
+
+    # -- THE CALENDAR (the site's 5.5, 2026-11-14): each account's events; an invitation to an account id,
+    # in its inbox (kind "calendar", with "event") and its calendar; answers to the organizer; changes and
+    # cancelling to everyone else on it. One time only here - no series.
+    def make_event_as(self, organizer: str, title: str, start: float, end: float,
+                      guests: Optional[List[str]] = None, location: str = "", description: str = "") -> str:
+        """An event made on the website by `organizer`'s user, its guests invited."""
+        ident = "ev_" + secrets.token_hex(8)
+        self.cal_events[ident] = {
+            "id": ident, "title": title, "description": description, "location": location,
+            "all_day": False, "start_at": float(start), "end_at": float(end), "timezone": "UTC",
+            "status": "confirmed", "organizer": organizer, "recurrence": [], "sequence": 0,
+            "updated_at": float(next(self._clock)),
+            "attendees": [{"id": organizer, "response": "accepted", "organizer": True}]}
+        for guest in guests or []:
+            self._cal_invite(ident, guest)
+        return ident
+
+    def answer_event_as(self, account: str, ident: str, response: str) -> None:
+        self._cal_respond(account, ident, response)
+
+    def move_event_as(self, account: str, ident: str, start: float, end: float) -> None:
+        event = self.cal_events[ident]
+        event.update(start_at=float(start), end_at=float(end), sequence=event["sequence"] + 1,
+                     updated_at=float(next(self._clock)))
+        self._cal_tell(event, account, "Changed: " + event["title"])
+
+    def cancel_event_as(self, account: str, ident: str) -> None:
+        event = self.cal_events[ident]
+        event.update(status="cancelled", sequence=event["sequence"] + 1, updated_at=float(next(self._clock)))
+        self._cal_tell(event, account, "Cancelled: " + event["title"])
+
+    def answer_of(self, account: str, ident: str) -> str:
+        return next(one["response"] for one in self.cal_events[ident]["attendees"] if one["id"] == account)
+
+    @staticmethod
+    def _iso(seconds: float) -> str:
+        import datetime as _dt
+        return _dt.datetime.fromtimestamp(seconds, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _cal_shown(self, event: Dict[str, Any], account: str) -> Dict[str, Any]:
+        mine = next((one for one in event["attendees"] if one["id"] == account), {})
+        return dict(copy.deepcopy(event), start=self._iso(event["start_at"]), end=self._iso(event["end_at"]),
+                    you_organize=event["organizer"] == account, your_response=mine.get("response", ""))
+
+    def _cal_invite(self, ident: str, guest: str) -> bool:
+        event = self.cal_events[ident]
+        if any(one["id"] == guest for one in event["attendees"]):
+            return False
+        event["attendees"].append({"id": guest, "response": "needsAction", "organizer": False})
+        self._deliver(event["organizer"], guest, "Invitation", "Invited: " + event["title"], ident,
+                      "calendar", event=ident)
+        return True
+
+    def _cal_respond(self, account: str, ident: str, response: str) -> None:
+        event = self.cal_events[ident]
+        for one in event["attendees"]:
+            if one["id"] == account:
+                one["response"] = response
+        self._deliver(account, event["organizer"], "Answer", f"{response}: {event['title']}", ident,
+                      "calendar", event=ident)
+
+    def _cal_tell(self, event: Dict[str, Any], by: str, text: str) -> None:
+        for one in event["attendees"]:
+            if one["id"] != by:
+                self._deliver(by, one["id"], "Calendar", text, event["id"], "calendar", event=event["id"])
+
+    def _calendar(self, method: str, path: str, query: Dict[str, str], account: str,
+                  can: Dict[str, Any], said: Dict[str, Any]) -> Any:
+        part = {"/v2/calendar": "read", "/v2/calendar/event": "read", "/v2/calendar/invitations": "read",
+                "/v2/calendar/events": "write", "/v2/calendar/events/edit": "write",
+                "/v2/calendar/events/cancel": "write", "/v2/calendar/events/invite": "invite",
+                "/v2/calendar/events/uninvite": "invite", "/v2/calendar/events/respond": "respond"}[path]
+        allowed = can.get("calendar") or {}
+        if not allowed.get(part):
+            raise Refused(403, f"this key may not do that - calendar.{part} is not given")
+        on = {ident: one for ident, one in self.cal_events.items()
+              if any(guest["id"] == account for guest in one["attendees"])}
+        if path == "/v2/calendar":
+            return {"events": [self._cal_shown(one, account) for one in on.values()], "timezone": "UTC",
+                    "from": (query or {}).get("from", ""), "to": (query or {}).get("to", "")}
+        if path == "/v2/calendar/event":
+            ident = (query or {}).get("id", "")
+            if ident not in on:
+                raise Refused(404, "no such calendar event")
+            return self._cal_shown(on[ident], account)
+        if path == "/v2/calendar/invitations":
+            return {"invitations": [self._cal_shown(one, account) for one in on.values()
+                                    if one["status"] == "confirmed" and one["end_at"] > time.time()
+                                    and self._cal_shown(one, account)["your_response"] == "needsAction"]}
+        ident = str(said.get("id") or "")
+        if path == "/v2/calendar/events":
+            guests = [str(one) for one in said.get("attendees") or []]
+            if guests and not allowed.get("invite"):
+                raise Refused(403, "this key may not invite - calendar.invite is not given")
+            if any(one not in self.accounts for one in guests):
+                raise Refused(404, "no such account among attendees")
+            title = str(said.get("title") or "")
+            if not 1 <= len(title) <= 200:
+                raise Refused(400, "a title of 1 to 200 characters")
+            import datetime as _dt
+            start = _dt.datetime.fromisoformat(str(said["start"]).replace("Z", "+00:00")).timestamp()
+            end = _dt.datetime.fromisoformat(str(said["end"]).replace("Z", "+00:00")).timestamp() \
+                if said.get("end") else start + 3600
+            made = self.make_event_as(account, title, start, end, guests, str(said.get("location") or ""),
+                                      str(said.get("description") or ""))
+            self.cal_made.append(made)
+            return self._cal_shown(self.cal_events[made], account)
+        if ident not in on:
+            raise Refused(404, "no such calendar event")
+        event = on[ident]
+        if path == "/v2/calendar/events/respond":
+            if event["organizer"] == account:
+                raise Refused(400, "not the organizer's own event")
+            response = str(said.get("response") or "")
+            if response not in ("accepted", "tentative", "declined"):
+                raise Refused(400, "accepted, tentative or declined")
+            self._cal_respond(account, ident, response)
+            return self._cal_shown(event, account)
+        if path == "/v2/calendar/events/edit":
+            if event["organizer"] != account and self.answer_of(account, ident) != "accepted":
+                raise Refused(403, "only its organizer or a guest who accepted changes it")
+            for key in ("title", "location", "description"):
+                if said.get(key) is not None:
+                    event[key] = str(said[key])
+            event.update(sequence=event["sequence"] + 1, updated_at=float(next(self._clock)))
+            self._cal_tell(event, account, "Changed: " + event["title"])
+            return self._cal_shown(event, account)
+        if event["organizer"] != account:
+            raise Refused(403, "organizer only")
+        if path == "/v2/calendar/events/cancel":
+            self.cancel_event_as(account, ident)
+            return self._cal_shown(event, account)
+        if path == "/v2/calendar/events/invite":
+            invited = [str(one) for one in said.get("attendees") or [] if self._cal_invite(ident, str(one))]
+            return dict(self._cal_shown(event, account), invited=invited)
+        if path == "/v2/calendar/events/uninvite":
+            event["attendees"] = [one for one in event["attendees"] if one["id"] != said.get("account")]
+            return self._cal_shown(event, account)
+
 
     def _post(self, account: str, text: str) -> str:
         ident = "e_" + secrets.token_hex(8)
@@ -648,7 +800,8 @@ class FakeSociety:
         return {"id": row["id"], "from": row["from"], "to": row["to"], "subject": row["subject"],
                 "text": row["text"], "thread": row["thread"], "status": row["status"],
                 "at": row["at"], "read": row["read"], "kind": row["kind"],
-                **({"message": row["message"]} if row.get("message") else {})}
+                **({"message": row["message"]} if row.get("message") else {}),
+                **({"event": row["event"]} if row.get("event") else {})}
 
     @staticmethod
     def _public(account: Dict[str, Any]) -> Dict[str, Any]:

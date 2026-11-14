@@ -321,7 +321,10 @@ def hidden_import_arguments(target: str) -> List[str]:
 # ctranslate2 and av their libraries: bundled whole, or a video's speech
 # cannot be read in the packaged application (runtime/video.py).
 _VIDEO = ["av", "faster_whisper", "ctranslate2"]
-COLLECT_ALL_PACKAGES = {"windows": ["winpty", "comtypes", "pystray", "tzdata", *_VIDEO],
+# pywebview's WebView2 window needs its .NET assemblies and pythonnet's loader as files (the side panel,
+# platform_layer/panel_host.py): bundled whole - without them the panel opens in the browser, as before.
+COLLECT_ALL_PACKAGES = {"windows": ["winpty", "comtypes", "pystray", "tzdata", "webview", "clr_loader",
+                                    "pythonnet", *_VIDEO],
                         "macos": ["pystray", *_VIDEO], "linux": ["tkinterdnd2", "pystray", *_VIDEO]}
 
 

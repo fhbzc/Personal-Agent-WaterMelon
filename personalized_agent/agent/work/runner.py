@@ -5338,6 +5338,9 @@ class Run:
         # THE AGENTS SOCIETY, to ask another person's agent (the user, 2026-11-10) - the user's own
         # work only.
         self.tools.society = getattr(owner, "society", None) if local and not self.debug else None
+        # THE MONITOR, changed as the chat changes it - never a protected one (the user, 2026-11-14) - the
+        # user's own work only.
+        self.tools.monitor = getattr(owner, "monitor", None) if local and not self.debug else None
         self.tools.run_id = self.id
         #: Its versions, kept in its own folder - written through the work's
         #: policy, like everything else it writes.

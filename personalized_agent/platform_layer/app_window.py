@@ -118,6 +118,13 @@ PAGE_SIZE = (1400, 900)
 PAGE_TITLE = "WaterMelon"
 #: The window class of Edge and of Chrome.
 BROWSER_WINDOW = "Chrome_WidgetWin_1"
+#: THE SIDE PANEL IN WEBVIEW2 (panel_host.py, 2026-11-14): its window a .NET form's, its class named so.
+HOSTED_WINDOW = "WindowsForms10.Window"
+
+
+def _ours(window_class: str) -> bool:
+    """A window of the kinds the agent's own titled windows are: the browser's, or the panel host's."""
+    return window_class == BROWSER_WINDOW or window_class.startswith(HOSTED_WINDOW)
 #: ONE WINDOW, HOWEVER MANY DOUBLE CLICKS (the user, 2026-11-06: two in a row made two): a browser
 #: takes seconds to start and the window is known by its title only once the page has loaded, so a
 #: second double click found nothing and opened another. Held while one is coming; asked again
@@ -154,7 +161,7 @@ def _windows_page(titles: Optional[set] = None, hidden: bool = False) -> Optiona
             kind, title = ctypes.create_unicode_buffer(64), ctypes.create_unicode_buffer(64)
             user32.GetClassNameW(handle, kind, 64)
             user32.GetWindowTextW(handle, title, 64)
-            if (kind.value == BROWSER_WINDOW and title.value in titles) if titles \
+            if (_ours(kind.value) and title.value in titles) if titles \
                     else is_the_page(kind.value, title.value):
                 found.append(handle)
                 return False
@@ -257,7 +264,7 @@ def _close_others(titles: set, keep: int) -> None:
         kind, title = ctypes.create_unicode_buffer(64), ctypes.create_unicode_buffer(64)
         user32.GetClassNameW(handle, kind, 64)
         user32.GetWindowTextW(handle, title, 64)
-        if kind.value == BROWSER_WINDOW and title.value in titles and handle != keep:
+        if _ours(kind.value) and title.value in titles and handle != keep:
             others.append(handle)
         return True
     user32.EnumWindows(call(look), 0)
@@ -416,6 +423,15 @@ def open_side_window(url: str, profile: Path, size: Tuple[int, int], titles: Opt
         log.warning("could not open %s in a window of its own", program, exc_info=True)
         return False
 
+    place_side_window(size, titles, started.pid)
+    return True
+
+
+def place_side_window(size: Tuple[int, int], titles: Optional[set], pid: int = 0) -> None:
+    """The side window, once it is there off every screen - the process's own (`pid`), or one by its title
+    - put at the right edge as tall as the work area and slid in. In its own thread."""
+    import ctypes
+
     def place() -> None:
         user32 = ctypes.windll.user32
         try:                                                  # in pixels, whatever the scaling
@@ -427,9 +443,10 @@ def open_side_window(url: str, profile: Path, size: Tuple[int, int], titles: Opt
         width, height = round(size[0] * dpi / 96), bottom - top
         end = time.monotonic() + SIDE_OPENING_SECONDS
         while time.monotonic() < end:
-            # ITS OWN, OR - HANDED TO THE BROWSER ALREADY RUNNING ON THAT PROFILE - ONE BY ITS TITLE STILL OFF
-            # EVERY SCREEN (2026-11-13: the window made off the screens and never brought in).
-            found = list(_windows_of(started.pid))
+            # ITS OWN, OR - HANDED TO THE BROWSER ALREADY RUNNING ON THAT PROFILE, OR OPENED BY THE PANEL'S HOST -
+            # ONE BY ITS TITLE STILL OFF EVERY SCREEN (2026-11-13: the window made off the screens and never
+            # brought in).
+            found = list(_windows_of(pid)) if pid else []
             titled = _windows_page(set(titles), hidden=False) if titles else None
             if titled is not None and _off_every_screen(titled) and titled not in found:
                 found.append(titled)
@@ -438,9 +455,25 @@ def open_side_window(url: str, profile: Path, size: Tuple[int, int], titles: Opt
                     continue
                 user32.SetWindowPos(handle, 0, right, top, width, height, 0x0004 | 0x0010)
                 _slide(handle, right, right - width, top, width, height)
+                user32.SetForegroundWindow(handle)
                 return
             time.sleep(0.005)
     threading.Thread(target=place, name="side-window", daemon=True).start()
+
+
+def open_hosted_side_window(host: object, url: str, size: Tuple[int, int], title: str,
+                            titles: Optional[set] = None) -> bool:
+    """THE SIDE PANEL IN WEBVIEW2 (panel_host.py): opened by the host off every screen, then slid in as the
+    browser's was. False when the host cannot - for the browser's way."""
+    if sys.platform != "win32" or _no_windows_here() or host is None:
+        return False
+    try:
+        if not host.open(url, title, size[0], size[1], OFF_SCREEN[0], OFF_SCREEN[1]):  # type: ignore[attr-defined]
+            return False
+    except Exception:
+        log.info("the side panel's host could not open it", exc_info=True)
+        return False
+    place_side_window(size, titles or {title})
     return True
 
 

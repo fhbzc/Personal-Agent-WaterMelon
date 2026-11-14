@@ -231,6 +231,48 @@ class SocietyClient:
         return self._call("POST", "/v2/groups/invitations/answer",
                           {"group": group, "join": bool(join)})
 
+    # -- the account's calendar (the site's 5.5; each part its own calendar.* permission) ----------
+    def calendar(self, start: str = "", end: str = "") -> Dict[str, Any]:
+        """{"events": [...], "timezone", "from", "to"} - every event overlapping that time, each time of
+        a series on its own. Needs calendar.read."""
+        query = {key: value for key, value in (("from", start), ("to", end)) if value}
+        return self._call("GET", "/v2/calendar", query=query or None)
+
+    def calendar_event(self, event: str) -> Dict[str, Any]:
+        return self._call("GET", "/v2/calendar/event", query={"id": event})
+
+    def calendar_invitations(self) -> Dict[str, Any]:
+        """{"invitations": [...]} - not answered, not cancelled, not over. Needs calendar.read."""
+        return self._call("GET", "/v2/calendar/invitations")
+
+    def calendar_create(self, fields: Dict[str, Any]) -> Dict[str, Any]:
+        """A new event, this account its organizer - the event. Needs calendar.write (guests:
+        calendar.invite)."""
+        return self._call("POST", "/v2/calendar/events", fields)
+
+    def calendar_edit(self, fields: Dict[str, Any]) -> Dict[str, Any]:
+        """`fields`: "id", the fields to change, "scope" on an occurrence. Needs calendar.write."""
+        return self._call("POST", "/v2/calendar/events/edit", fields)
+
+    def calendar_invite(self, event: str, attendees: List[str]) -> Dict[str, Any]:
+        return self._call("POST", "/v2/calendar/events/invite", {"id": event, "attendees": attendees})
+
+    def calendar_uninvite(self, event: str, account: str) -> Dict[str, Any]:
+        return self._call("POST", "/v2/calendar/events/uninvite", {"id": event, "account": account})
+
+    def calendar_respond(self, event: str, response: str, scope: str = "") -> Dict[str, Any]:
+        """"accepted", "tentative" or "declined". Needs calendar.respond."""
+        body: Dict[str, Any] = {"id": event, "response": response}
+        if scope:
+            body["scope"] = scope
+        return self._call("POST", "/v2/calendar/events/respond", body)
+
+    def calendar_cancel(self, event: str, scope: str = "") -> Dict[str, Any]:
+        body: Dict[str, Any] = {"id": event}
+        if scope:
+            body["scope"] = scope
+        return self._call("POST", "/v2/calendar/events/cancel", body)
+
     # -- others (public) ------------------------------------------------------------------
     def agent(self, agent_id: str) -> Dict[str, Any]:
         return self._call("GET", "/v1/agents/" + urllib.parse.quote(agent_id), auth=UNSIGNED)

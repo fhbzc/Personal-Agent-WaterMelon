@@ -548,6 +548,8 @@ class AgentApplication:
         # THE WORK ASKS THROUGH IT (the user, 2026-11-10): another person's agent, written to by a
         # piece of work; their answer brings the work back.
         self.work.society = self.society
+        # THE MONITOR for delegated work, changed as the chat changes it (2026-11-14) - never a protected one.
+        self.work.monitor = self.monitor
         self.society.on_work_answer = self._society_work_answer
         from .society.tools import add_tools as _society_tools
         _society_tools(self.agent.tools, self.society)
@@ -1691,7 +1693,15 @@ class AgentApplication:
             "close_a_calendar_reminder": heartbeat("_close_notifications"),
             "keep_a_thing_waiting_for_a_time": heartbeat("pending"),
             "calendar_event": society("_put_on_calendar"),
-            "todo": society("_add_todo")})
+            "todo": society("_add_todo"),
+            # THE AGENTS SOCIETY CALENDAR (society/site_calendar.py): the user's yes - and, to an
+            # invitation, their no, which is itself the answer sent.
+            "society_invitation": lambda payload: self.society.site_calendar.respond(
+                str(payload.get("event") or ""), "accepted", by="user"),
+            "society_calendar_action": lambda payload: self.society.site_calendar.carry(payload)})
+        self.approvals.on_no.update({
+            "society_invitation": lambda payload: self.society.site_calendar.respond(
+                str(payload.get("event") or ""), "declined", by="user")})
 
     def _clean_up_carry(self, payload: Dict[str, Any]) -> None:
         """A THING TAKEN OFF THE PLAN - and said so only when it was (2026-11-13: "Let go of as done already"

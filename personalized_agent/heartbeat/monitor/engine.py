@@ -427,8 +427,8 @@ class Monitor:
             return self.NO_NOTIFICATIONS_NAME
         moment = {"signals": self.latest or {}, "events": (self.latest or {}).get("events") or []}
         for rule in self.store.quiet_rules():
-            if act.evaluate(rule["when"], moment)[0]:
-                return str(rule["name"])
+            if rule.get("enabled", True) and act.evaluate(rule["when"], moment)[0]:
+                return str(rule.get("display_name") or rule["name"])
         # ONLY ITS OWN SILENCES, SHOWN AT ITS TOP (the user, 2026-11-13: "blocker在最上级") - the plan's deep
         # blocks no longer hold anything unseen.
         return ""

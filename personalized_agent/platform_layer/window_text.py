@@ -121,6 +121,12 @@ _LIST_ITEM = 50007
 
 _CONTROL_TYPE_PROPERTY = 30003
 _AUTOMATION_ID_PROPERTY = 30011
+_NAME_PROPERTY = 30005
+_BOUNDING_RECTANGLE_PROPERTY = 30001
+#: The end of the id of WeChat's label naming the conversation in front.
+WECHAT_NAME_ID = "current_chat_name_label"
+#: So many of WeChat's texts looked through for it, at most - a long panel beside the chat holds hundreds.
+WECHAT_TEXTS_AT_MOST = 2000
 _IS_PASSWORD_PROPERTY = 30019
 
 #: Whether the element is in the tree but not being shown.
@@ -458,17 +464,42 @@ class WindowTextReader:
             if self._is_hidden(item) or self._is_a_password(item):
                 continue
             items.append({"text": item.CurrentName or "", "box": box(item)})
-        headers = []
-        texts = element.FindAll(_DESCENDANTS, self._automation.CreatePropertyCondition(
-            _CONTROL_TYPE_PROPERTY, _TEXT))
-        for index in range(min(texts.Length, 40)):
-            label = texts.GetElement(index)
-            # Its id is a path ending in this; the input box is never asked.
-            if (label.CurrentAutomationId or "").endswith("current_chat_name_label"):
-                headers.append({"text": label.CurrentName or "", "box": box(label)})
+        headers = self._wechat_headers(element, origin)
         capture = parse_wechat_items(picture, box(chat), items, headers)
         text = "\n".join(item["text"].strip() for item in items if item["text"].strip())
         return text, capture, len(items)
+
+    def _wechat_headers(self, element: Any, origin: tuple) -> List[Dict[str, Any]]:
+        """The conversation's name label(s) - among ALL the window's texts, not the first 40 (measured
+        2026-11-14: a panel open right of the chat put 39 texts ahead of it in the window's order, the
+        name the 41st - unread, so every message's sender and the chat itself went unknown, 80% of
+        readings at one window size). Their id, name and place fetched in one call; the input box
+        never asked."""
+        condition = self._automation.CreatePropertyCondition(_CONTROL_TYPE_PROPERTY, _TEXT)
+        headers: List[Dict[str, Any]] = []
+
+        def keep(ident: str, name: str, rect: Any) -> None:
+            # Its id is a path ending in this.
+            if (ident or "").endswith(WECHAT_NAME_ID):
+                headers.append({"text": name or "", "box": (rect.left - origin[0], rect.top - origin[1],
+                                                            rect.right - rect.left, rect.bottom - rect.top)})
+        try:
+            request = self._automation.CreateCacheRequest()
+            for prop in (_AUTOMATION_ID_PROPERTY, _NAME_PROPERTY, _BOUNDING_RECTANGLE_PROPERTY):
+                request.AddProperty(prop)
+            texts = element.FindAllBuildCache(_DESCENDANTS, condition, request)
+            for index in range(min(texts.Length, WECHAT_TEXTS_AT_MOST)):
+                label = texts.GetElement(index)
+                keep(label.CachedAutomationId, label.CachedName, label.CachedBoundingRectangle)
+            return headers
+        except Exception:
+            log.debug("WeChat's texts could not be fetched at once: asked one by one", exc_info=True)
+        headers = []
+        texts = element.FindAll(_DESCENDANTS, condition)
+        for index in range(min(texts.Length, WECHAT_TEXTS_AT_MOST)):
+            label = texts.GetElement(index)
+            keep(label.CurrentAutomationId, label.CurrentName, label.CurrentBoundingRectangle)
+        return headers
 
     def _ask_the_window(self, element: Any,
                         still: Callable[[], bool] = lambda: False) -> tuple:
