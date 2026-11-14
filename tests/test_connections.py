@@ -88,11 +88,23 @@ class TheStoreAndTheLessonsTests(_Base):
         self.assertEqual(self.store.get(ana["id"])["tags"], ["climbing", "piano"])
         self.assertEqual(self.store.actions("user")[-1]["action"], "add", "kept in history")
 
-    def test_on_their_own_profile_what_the_user_set_stays(self) -> None:
+    def test_their_own_profile_is_their_society_accounts_alone(self) -> None:
+        """The user, 2026-11-12: "现在不允许用户在connections里自己写自己profile了，所有用户自己的profile
+        来源于他连的agentsociety账户"."""
         me = self.store.me()
-        self.store.edit(me["id"], by="user", profession="researcher", org="UCLA")
+        self.store.edit(me["id"], by=self.store.SOCIETY, profession="researcher", org="UCLA")
+        with self.assertRaises(ValueError) as said:
+            self.store.edit(me["id"], by="user", profession="engineer")
+        self.assertIn("Agents Society account", str(said.exception))
         me = self.store.edit(me["id"], by="agent", profession="engineer", org="Acme")
         self.assertEqual((me["profession"], me["org"]), ("researcher", "UCLA"))
+        with self.assertRaises(ValueError):
+            self.store.add_profile(me["id"], "https://me.example")
+        self.store.add_profile(me["id"], "https://me.example", by=self.store.SOCIETY)
+        account = self.store.me()["accounts"][0]
+        with self.assertRaises(ValueError):
+            self.store.remove_profile(me["id"], account["id"])
+        self.assertEqual(account["source"], "your Agents Society account")
 
     def test_past_a_hundred_the_oldest_are_summarised(self) -> None:
         person = self.store.add("P", by="user")
@@ -764,12 +776,12 @@ class TheRoutesTests(_Base):
         self.assertEqual(set(light), {"briefing", "progress", "issues", "schedule", "says",
                                       # the stories kept, across issues
                                       "collection", "collected"})
-        # A profile of the user's own: on the one profile that is theirs, never
-        # among the contacts.
-        self._post("/api/connections/source", {"url": "https://github.com/me-myself"})
+        # A profile of the user's own is their Agents Society account's (2026-11-12): not
+        # added from here - and never among the contacts.
+        with self.assertRaises(ApiError):
+            self._post("/api/connections/source", {"url": "https://github.com/me-myself"})
         listed = self._get("/api/connections")
-        self.assertEqual([one["url"] for one in listed["me"]["accounts"]],
-                         ["https://github.com/me-myself"])
+        self.assertEqual(listed["me"]["accounts"], [])
         self.assertEqual([one["name"] for one in listed["people"]], ["Ana"])
         with self.assertRaises(ApiError):
             self._post("/api/connections/source", {"url": "file:///etc/passwd"})
@@ -830,7 +842,7 @@ class YourOwnProfileTests(_Base):
         self.assertNotIn(me["id"], [one["id"] for one in self.store.search("")])
         # Step 2 never writes the user from their screen - not even by an
         # account of theirs it saw.
-        self.store.add_profile(me["id"], "https://github.com/me-myself")
+        self.store.add_profile(me["id"], "https://github.com/me-myself", by=self.store.SOCIETY)
         said = people_step.apply(self.store, [{
             "name": "Someone", "accounts": [{"url": "https://github.com/me-myself"}],
             "activity": [{"at": "2026-10-11", "what": "Typed an email"}]}])
@@ -839,7 +851,7 @@ class YourOwnProfileTests(_Base):
 
     def test_a_second_you_is_folded_into_the_first(self) -> None:
         me = self.store.me()
-        self.store.add_profile(me["id"], "https://me.example")
+        self.store.add_profile(me["id"], "https://me.example", by=self.store.SOCIETY)
         self.app.db.execute(
             "INSERT INTO connection_people (id, name, org, created_at, updated_at, is_self) "
             "VALUES ('person_other_me', 'Robin H', 'Northfield University', '2099-01-01', '2099-01-01', 1)")
@@ -870,9 +882,9 @@ class YourOwnProfileTests(_Base):
     def _post(self, path, body):
         return _route(self.app, "POST", path, body)
 
-    def test_your_own_step_records_what_you_did_and_asks_about_your_details(self) -> None:
+    def test_your_own_step_records_what_you_did_and_asks_nothing_of_your_details(self) -> None:
         me = self.store.me()
-        self.store.add_profile(me["id"], "https://me.example")
+        self.store.add_profile(me["id"], "https://me.example", by=self.store.SOCIETY)
         ana = self.store.add("Ana", by="user", closeness=5)
         models = _MeLookedUp(me["id"], ana["id"])
         fetched = []
@@ -881,19 +893,17 @@ class YourOwnProfileTests(_Base):
                                   fetch=lambda url: fetched.append(url) or {"text": "hi"})
         said = round_.run()
         self.assertEqual(said["me"]["activity"], 1)
-        self.assertEqual(said["me"]["asked"], 1)
+        # Your details are your Society account's (2026-11-12): nothing found is asked about.
+        self.assertEqual(said["me"]["asked"], 0)
         self.assertEqual(fetched, ["https://me.example"])
         me = self.store.me()
         # What you did in public: recorded at once, only with its page.
         self.assertEqual([(one["what"], one["source"]) for one in me["activity"]],
                          [("Gave a talk at PyCon", "your public page")])
         self.assertTrue(me["activity"][0]["found_at"] and me["activity"][0]["created_at"])
-        # Your details: NOT changed - waiting in your inbox.
+        # Your details: NOT changed, and nothing waits in your inbox.
         self.assertEqual(me["role"], "")
-        inbox = self.store.inbox()
-        self.assertEqual([one["change"] for one in inbox],
-                         [{"field": "role", "value": "Research Scientist", "before": ""}])
-        self.assertEqual(inbox[0]["sources"], ["https://me.example"])
+        self.assertEqual(self.store.inbox(), [])
         # The contacts' step could not write to you.
         self.assertNotEqual(self.store.me()["role"], "Nope")
         # Looked up lately: not again, unless asked.
@@ -913,10 +923,10 @@ class YourOwnProfileTests(_Base):
         to themselves is "myself", whoever tries to change it."""
         me = self.store.me()
         self.assertEqual((me["relationship"], me["relationships"]), ("myself", ["myself"]))
-        asked = self.store.propose_for_me({"field": "name", "value": "Robin Hale"}, "the page")
-        self.store.decide(asked["id"], True)
-        self.store.edit(me["id"], by="user", reason="my role", role="PhD student",
-                        relationship="friend")
+        self.assertIsNone(self.store.propose_for_me({"field": "name", "value": "Robin Hale"},
+                                                    "the page"), "nothing asked: the account's")
+        self.store.edit(me["id"], by=self.store.SOCIETY, reason="from your account",
+                        name="Robin Hale", role="PhD student", relationship="friend")
         self.store.edit(me["id"], by="agent", relationships=["colleague"])
         me = self.store.me()
         self.assertEqual((me["name"], me["role"]), ("Robin Hale", "PhD student"))
@@ -944,30 +954,15 @@ class YourOwnProfileTests(_Base):
         # Its picture went with the last issue that had it.
         self.assertIsNone(store.briefing_picture_path(old_picture))
 
-    def test_the_inbox_accepted_dismissed_and_not_asked_again(self) -> None:
-        me = self.store.me()
-        asked = self.store.propose_for_me({"field": "name", "value": "Robin Hale"}, "the page")
-        self.assertIsNotNone(asked)
-        self.assertIsNone(self.store.propose_for_me({"field": "name", "value": "Robin Hale"}),
-                          "the same is waiting already")
-        done = self.store.decide(asked["id"], True, "yes")
-        self.assertEqual(done["status"], "accepted")
-        me = self.store.me()
-        self.assertEqual(me["name"], "Robin Hale")
-        self.assertIn("name", me["user_set"], "checked by the user: theirs")
-        self.assertIsNone(self.store.propose_for_me({"field": "name", "value": "robin hale"}),
-                          "already so")
-        link = self.store.propose_for_me({"field": "add_profile",
-                                          "url": "https://x.com/someone"}, "maybe")
-        self.store.decide(link["id"], False, "not mine")
-        self.assertEqual(self.store.me()["accounts"], [])
-        self.assertIsNone(self.store.propose_for_me({"field": "add_profile",
-                                                     "url": "https://x.com/someone"}),
-                          "dismissed: not asked again")
-        with self.assertRaises(ValueError):
-            self.store.decide(link["id"], True)
-        with self.assertRaises(ValueError):
-            self.store.propose_for_me({"field": "summary", "value": "x"})
+    def test_nothing_of_yours_is_proposed_your_account_has_it(self) -> None:
+        """Was: a change to the user's own details found on the web, waiting in their inbox.
+        Since 2026-11-12 their details are their Society account's: none is proposed."""
+        for change in ({"field": "name", "value": "Robin Hale"},
+                       {"field": "add_profile", "url": "https://x.com/someone"},
+                       {"field": "summary", "value": "x"}):
+            self.assertIsNone(self.store.propose_for_me(change, "the page"))
+        self.assertEqual(self.store.inbox(), [])
+        self.assertEqual(self.store.me()["name"], "You")
 
     def test_pages_given_before_are_not_made_yours_without_asking(self) -> None:
         ana = self.store.add("Ana", by="user")
@@ -981,9 +976,8 @@ class YourOwnProfileTests(_Base):
         self.assertEqual([one["url"] for one in self.store.get(ana["id"], True)["accounts"]],
                          ["https://ana.example"])
         self.assertEqual(self.store.me()["accounts"], [], "nobody's page is not yours")
-        inbox = self.store.inbox()
-        self.assertEqual(inbox[0]["change"]["url"], "https://who.example")
-        self.assertEqual(inbox[0]["found_at"], "2026-01-03T00:00:00")
+        # Nor asked about (2026-11-12): the user's own accounts are their Society account's.
+        self.assertEqual(self.store.inbox(), [])
         self.assertEqual(self.store.sources(), [])
 
 
@@ -1223,22 +1217,19 @@ class SeveralRelationshipsAndOrganisationsTests(_Base):
         self.assertEqual([one["org"] for one in kept["affiliations"]], ["Acme", "MIT"])
         self.assertEqual(kept["profession"], "accountant")
 
-    def test_your_own_profession_and_organisation_wait_in_the_inbox(self) -> None:
+    def test_your_own_profession_and_organisation_are_not_proposed(self) -> None:
+        """Since 2026-11-12 the user's own details are their Society account's: what is found
+        of their job is not put to them."""
         me = self.store.me()
-        self.store.edit(me["id"], by="user", affiliations=[{"org": "Northfield University", "role": "PhD student"}])
-        item = self.store.propose_for_me({"field": "profession", "value": "researcher"}, "seen")
-        self.assertIn("Your profession", item["title"])
-        moved = self.store.propose_for_me({"field": "affiliation", "org": "Globex",
-                                           "role": "research scientist"}, "a new job")
-        self.assertIn("research scientist at Globex", moved["title"])
-        self.assertIsNone(self.store.propose_for_me(
-            {"field": "affiliation", "org": "Northfield University", "role": "PhD student"}, "already so"))
-        self.store.decide(item["id"], True)
-        self.store.decide(moved["id"], True)
+        self.store.edit(me["id"], by=self.store.SOCIETY,
+                        affiliations=[{"org": "Northfield University", "role": "PhD student"}])
+        self.assertIsNone(self.store.propose_for_me({"field": "profession",
+                                                     "value": "researcher"}, "seen"))
+        self.assertIsNone(self.store.propose_for_me({"field": "affiliation", "org": "Globex",
+                                                     "role": "research scientist"}, "a new job"))
         me = self.store.me()
-        self.assertEqual(me["profession"], "researcher")
-        self.assertEqual([one["org"] for one in me["affiliations"]], ["Globex", "Northfield University"])
-        self.assertEqual(me["role"], "research scientist")
+        self.assertEqual([one["org"] for one in me["affiliations"]], ["Northfield University"])
+        self.assertEqual(self.store.inbox(), [])
 
     def test_the_agent_heartbeat_writes_them(self) -> None:
         said = people_step.apply(self.store, [{

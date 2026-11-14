@@ -28,7 +28,8 @@ def GROUPS(source: str, stamp: bool = True) -> str:
     """The lists' groups (list_groups.py), none given here: the list as it is. `stamp`: the page's
     own localStamp, where the harness has none of its own."""
     return ("let activeTab='overview';const renderCollections=()=>{};const ovMarkOpening=()=>{};"
-            + _function(source, "ovPartOf") + (_function(source, "localStamp") if stamp else "")
+            + _function(source, "ovPartOf") + _function(source, "ovTodoSuggested")
+            + (_function(source, "localStamp") if stamp else "")
             + _function(source, "ovMadeAt")
             + "const ovGroups={todo:null,assigned:null};"
             "const ovGroupEdit={renaming:'',moving:'',adding:''};"
@@ -395,6 +396,69 @@ class WhenItWasMadeTests(unittest.TestCase):
         source = (WEB / "app.js").read_text(encoding="utf-8")
         self.assertIn("ovMadeAt(one.at)", _function(source, "ovAssignedBox"))
         self.assertIn("ovMadeAt(one.created_at)", _function(source, "ovTodoBox"))
+
+
+class DeletedWhereItIsTests(unittest.TestCase):
+    """The user, 2026-11-09: "delete task, 不要弹出来一个框询问，而是和remove to do 一样，有一个button
+    询问是否删除"."""
+
+    def test_asked_in_place_with_yes_and_no(self) -> None:
+        import shutil
+        if not shutil.which("node"):
+            self.skipTest("no node here")
+        source = (WEB / "app.js").read_text(encoding="utf-8")
+        script = ("const window=globalThis;" + ESCAPE + "let pjDeleting = '';"
+                  + _function(source, "pjUserSay") + """
+const before = pjUserSay("task", "t1", "Prune the pears");
+pjDeleting = "task:t1";
+const asking = pjUserSay("task", "t1", "Prune the pears");
+const other = pjUserSay("task", "t2", "Water the beds");
+process.stdout.write(JSON.stringify({before, asking, other}));""")
+        said = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                                         encoding="utf-8", timeout=60).stdout)
+        self.assertIn("data-pj-delete=", said["before"])
+        self.assertIn("Delete it?", said["asking"])
+        self.assertIn("data-pj-delete-yes", said["asking"])
+        self.assertIn("data-pj-delete-no", said["asking"])
+        self.assertNotIn("Delete it?", said["other"], "only the one asked about")
+
+    def test_no_dialog_of_the_browser(self) -> None:
+        source = (WEB / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn("window.confirm(", source)
+
+
+class EveryDelegatePressSweepsTests(unittest.TestCase):
+    """The user, 2026-11-09: "delegate work (包括整个project或者是to do item的) 也要有从左向右的闪光" -
+    not only its arrow."""
+
+    def test_the_button_is_lit_across_once(self) -> None:
+        import shutil
+        if not shutil.which("node"):
+            self.skipTest("no node here")
+        source = (WEB / "app.js").read_text(encoding="utf-8")
+        script = (_function(source, "delegateSweep") + """
+const classes = new Set(), heard = [];
+const whole = {classList: {add: (c) => classes.add(c), remove: (c) => classes.delete(c)},
+               offsetWidth: 1, addEventListener: (kind, fn) => heard.push([kind, fn])};
+const button = {closest: (s) => s === ".delegate-split" ? whole : null};
+delegateSweep(button);
+const lit = classes.has("delegate-sweep");
+heard[0][1]();
+delegateSweep(null); delegateSweep({closest: () => null});
+process.stdout.write(JSON.stringify({lit, kind: heard[0][0], after: classes.has("delegate-sweep")}));""")
+        said = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8",
+                              timeout=60)
+        self.assertEqual(json.loads(said.stdout), {"lit": True, "kind": "animationend", "after": False},
+                         said.stderr)
+
+    def test_each_delegate_work_press_sweeps(self) -> None:
+        source = (WEB / "app.js").read_text(encoding="utf-8")
+        for pressed in (".pj-whole-delegate", ".pj-step-delegate", ".ov-todo-delegate"):
+            at = source.index(f'closest("{pressed}")')
+            handler = source[at:source.index("\n});", at)]
+            self.assertIn("delegateSweep(", handler, pressed)
+            self.assertIn("openDelegate(", handler, pressed)
+        self.assertIn("delegateSweep(button)", _function(source, "delegateQuick"), "the arrow as before")
 
 
 if __name__ == "__main__":

@@ -28,9 +28,18 @@ log = logging.getLogger(__name__)
 #: How near the side it is let go to go in; how much of its width stays out.
 WITHIN = 24
 PEEK = 34 / 128
-#: How much of it is out when it looks round: both eyes, its face being
-#: nearer the top of it than the bottom.
-HEAD_OUT = {"left": 88 / 128, "right": 88 / 128, "top": 100 / 128, "bottom": 84 / 128}
+#: IN THE SIDE, A LITTLE OF THE MELON SHOWS (the user, 2026-11-09: "西瓜留出来一点，鼠标点西瓜藤蔓或者
+#: 出来的部分西瓜就会跳出来" - and no head coming out to look when the pointer is on it): how far the
+#: body goes off the leaves there, of all the way - at 1 only the leaves showed; at this a round of
+#: the melon between them, to be clicked - MORE OF IT (the user, 2026-11-09: "西瓜的实体可以再出来一
+#: 点"): at 0.4 a sliver; below 0.25 half an eye stood cut by the side of the screen.
+TUCK_REST = 0.3
+#: HALF OF IT OUT WHEN THE POINTER IS ON IT (the user, 2026-11-09: "西瓜还是有探头的动作，但是探头是半个
+#: 身子 ... 鼠标移过去会弹出半个身子，单击半个身子弹出chat, 双击overview, 拖动是把他拉出来").
+#: OUT OF THE TOP, FURTHER (the user, 2026-11-09: "上边框的问题是叶子的位置和探头的位置有问题"): it hangs
+#: upside down there, its face just under the leaves holding the side - half out, a leaf lay over
+#: an eye; at 88 of 128 both eyes are clear of them, measured on the frames.
+HALF_OUT = {"left": 0.5, "right": 0.5, "top": 88 / 128, "bottom": 0.5}
 #: How far from the side it comes back to: still beside it.
 BACK_AT = WITHIN - 8
 #: How long it is left alone before it sneaks in.
@@ -204,8 +213,8 @@ def tucked_at(side: str, x: int, y: int, width: int, sides: Sides) -> Tuple[int,
 
 
 def peek_at(side: str, x: int, y: int, width: int, sides: Sides) -> Tuple[int, int]:
-    """Where the window is with its head out."""
-    return _out_by(side, int(round(width * HEAD_OUT[side])), x, y, width, sides)
+    """Where the window is with half of it out."""
+    return _out_by(side, int(round(width * HALF_OUT[side])), x, y, width, sides)
 
 
 def back_at(side: str, x: int, y: int, width: int, sides: Sides) -> Tuple[int, int]:

@@ -11,6 +11,34 @@ from typing import Any, Dict, List, Optional, Tuple
 #: What a window never read is painted over with on a picture of the screen.
 BLANKED = (128, 128, 128)
 
+#: THE MOUSE POINTER, DRAWN ON THE PICTURE (the user, 2026-11-13: "你现在chat打开的那个截屏，你要能截取我的鼠标位置"):
+#: a picture of the screen holds no pointer - it is drawn where it was, an arrow as the system draws
+#: one, its size for a screen this tall.
+POINTER_SHAPE = ((0, 0), (0, 17), (4, 13), (7, 20), (10, 19), (7, 12), (12, 12))
+POINTER_FOR_HEIGHT = 1080
+
+
+def draw_pointer(image: Any, screen: Any, pointer: Optional[Tuple[int, int]]) -> Any:
+    """`image` of `screen` (left, top, right, bottom) with the mouse pointer drawn where `pointer` is -
+    and kept with it (`info["pointer"]`: where, out of its width and height); as it was when the pointer
+    is off it."""
+    if image is None or pointer is None or screen is None:
+        return image
+    x, y = pointer[0] - screen[0], pointer[1] - screen[1]
+    if not (0 <= x < image.width and 0 <= y < image.height):
+        return image
+    try:
+        from PIL import ImageDraw
+        size = max(1.0, image.height / POINTER_FOR_HEIGHT) * 1.4
+        shape = [(x + px * size, y + py * size) for px, py in POINTER_SHAPE]
+        draw = ImageDraw.Draw(image)
+        draw.polygon(shape, fill=(255, 255, 255), outline=(0, 0, 0))
+        draw.line(shape + [shape[0]], fill=(0, 0, 0), width=max(1, int(size)))
+        image.info["pointer"] = (x, y, image.width, image.height)
+    except Exception:
+        pass                                     # the picture as it is, then
+    return image
+
 
 def blank_windows(image: Any, screen: tuple, windows: List[Dict[str, Any]],
                   hidden: Optional[Any] = None) -> Any:

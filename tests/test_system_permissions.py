@@ -114,7 +114,16 @@ class TheRoutesAndThePageTests(unittest.TestCase):
         self.assertIn('api.get("/api/permissions")', script)
         # Looked at as the settings open and when asked - never each time the
         # window comes back to the front (on a Mac each look asks System Events).
-        self.assertNotIn('window.addEventListener("focus"', script)
+        # (Other looks may come with the focus - the side panel's notes, the tab the app asks for.)
+        import re
+        for listener in re.findall(r'window\.addEventListener\("focus",\s*([^;]+);', script):
+            self.assertNotIn("Permissions", listener)
+            self.assertNotIn("/api/permissions", listener)
+        for name in re.findall(r'window\.addEventListener\("focus",\s*(\w+)\)', script):
+            at = script.index(f"function {name}(")
+            body = script[at:script.index("\n}\n", at)]
+            self.assertNotIn("/api/permissions", body)
+            self.assertNotIn("refreshSysPermissions", body)
 
 
 if __name__ == "__main__":

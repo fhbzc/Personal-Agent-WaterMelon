@@ -17,6 +17,10 @@ the chat bubble's card, not the system's title bar and buttons.
 IT SEES WHAT IS IN FRONT (the user, 2026-11-04: "应该让他看到屏幕的focus (当然告诉模型work
 可能和屏幕的focus无关)"): the box says what will go with the work, and it can be
 taken off; the model is told it may have nothing to do with it.
+
+SIZED BY ITS EDGES (the user, 2026-11-09: "直接快捷键显示的delegate work panel不能鼠标拉动调整大小"):
+as the chat bubble is (chat_bubble.edge_strips) - never smaller than what is in it - and the size
+kept for the next time it opens (`quick_delegate_size`).
 """
 
 from __future__ import annotations
@@ -34,6 +38,10 @@ from .on_top import borderless, keys_on_hover, on_release, rounded, stay_on_top
 log = logging.getLogger(__name__)
 
 WIDTH, HEIGHT = 540, 520
+#: Kept (internal setting): the size it was last made, in pixels.
+SIZE_KEPT = "quick_delegate_size"
+#: The least width it is made, before the zoom.
+LEAST_WIDTH = 380
 
 
 class QuickDelegate:
@@ -54,6 +62,9 @@ class QuickDelegate:
         self.front: Dict[str, str] = {}
         self._drag = (0, 0)
         self._sending = False
+        #: Being sized by an edge: where it began (chat_bubble.sized_to); the size it was made.
+        self._resizing: Any = None
+        self._size: Any = None
 
     def _read_front(self) -> Dict[str, str]:
         try:
@@ -119,6 +130,19 @@ class QuickDelegate:
                 "selectbackground": LOOK["select"], "selectforeground": LOOK["ink"],
                 "font": self._font()}
 
+    def toggle(self) -> None:
+        """THE SAME KEYS CLOSE IT (the user, 2026-11-09: "c+a+d, delegate work要能关掉（打开一次，再输入
+        关掉）"), as its ✕ does; closed, they open it."""
+        if self.window is not None:
+            try:
+                if self.window.winfo_exists():
+                    self.close()
+                    return
+            except Exception:
+                pass
+            self.window = None
+        self.show()
+
     def show(self) -> None:
         if self.window is not None:
             try:
@@ -140,13 +164,21 @@ class QuickDelegate:
         window.attributes("-topmost", True)
         window.configure(bg=LOOK["outline"])
         window.title(_("Delegate work"))
-        # In the middle of the screen the pointer is on.
-        wide, high = sizes.px(window, WIDTH), sizes.px(window, HEIGHT)
+        # In the middle of the screen the pointer is on - as large as it was last made.
+        self._size = self._kept_size()
+        wide, high = self._size or (sizes.px(window, WIDTH), sizes.px(window, HEIGHT))
         x = window.winfo_pointerx() - wide // 2
         y = window.winfo_pointery() - high // 2
         window.geometry(f"{wide}x{high}+{max(0, x)}+{max(0, y)}")
-        frame = tk.Frame(window, bg=LOOK["bg"], padx=16, pady=12)
-        frame.pack(fill="both", expand=True, padx=1, pady=1)
+        # ITS EDGES ARE A RIM OF THEIR OWN, as the chat's (the user, 2026-11-09: "delegate work的边框
+        # 好像挡到字了"): strips scaled with the screen, laid on the card's own padding, stood over
+        # its words at the corners. Now the card sits inside a ring they have to themselves.
+        edge = sizes.px(window, 6)
+        rim = tk.Frame(window, bg=LOOK["bg"])
+        rim.pack(fill="both", expand=True, padx=1, pady=1)
+        frame = tk.Frame(rim, bg=LOOK["bg"], padx=max(4, sizes.px(window, 16) - edge),
+                         pady=max(4, sizes.px(window, 12) - edge))
+        frame.pack(fill="both", expand=True, padx=edge, pady=edge)
         # Its line: what it is, ✕ - moved by it.
         head = tk.Frame(frame, bg=LOOK["bg"])
         head.pack(fill="x", pady=(0, 10))
@@ -174,8 +206,12 @@ class QuickDelegate:
         self.text.bind("<Tab>", lambda _e: (self.next_button.focus_set(), "break")[1])
         picks = tk.Frame(frame, bg=LOOK["bg"])
         picks.pack(fill="x")
-        self._button(picks, _("Add folder"), self._add_folder).pack(side="left")
-        self._button(picks, _("Add files"), self._add_files).pack(side="left", padx=6)
+        # ONE BUTTON (the user, 2026-11-09: "为什么要add folder和add file分开，不是用一个就行吗"): the
+        # system's picker is for files or for a folder, never both - so a choice of the two under it;
+        # and either dropped on the box.
+        self.add_button = self._button(picks, _("Add files or a folder"), self._add_menu)
+        self.add_button.pack(side="left")
+        self._label(picks, _("or drop them here"), muted=True, more=-1).pack(side="left", padx=8)
         self.chosen = tk.Frame(frame, bg=LOOK["bg"])
         self.chosen.pack(fill="x", pady=(6, 0))
         self.front_row = tk.Frame(frame, bg=LOOK["bg"])
@@ -202,7 +238,16 @@ class QuickDelegate:
         window.bind(f"<{modifier}-MouseWheel>",
                     lambda event: self._zoom(1 if event.delta > 0 else -1))
         keys_on_hover(window)
-        self._frame = frame
+        try:
+            from .file_drop import accept_files
+            accept_files(window, self._dropped)
+        except Exception:                        # added with the button, then
+            log.debug("nothing can be dropped on the box here", exc_info=True)
+        self._frame = rim
+        from .chat_bubble import edge_strips
+        # On the rim, inside the outline: the strips are its ground, the outline stays drawn.
+        edge_strips(rim, self._edge_start, self._edge_move, self._edge_end,
+                    corner=2 * edge, rim_width=edge)
         self._fit()
         rounded(window)
         stay_on_top(window)
@@ -215,7 +260,59 @@ class QuickDelegate:
         if window is None:
             return
         window.update_idletasks()
-        window.geometry(f"{sizes.px(window, WIDTH)}x{self._frame.winfo_reqheight() + 2}")
+        need = self._frame.winfo_reqheight() + 2
+        if self._size:
+            # Made a size by its edges: that size - taller when what is in it needs more.
+            window.geometry(f"{self._size[0]}x{max(self._size[1], need)}")
+            return
+        window.geometry(f"{sizes.px(window, WIDTH)}x{need}")
+
+    # -- sized by its edges ------------------------------------------------
+    def _kept_size(self) -> Any:
+        try:
+            kept = self.app.config.get(SIZE_KEPT, None)
+            if isinstance(kept, (list, tuple)) and len(kept) == 2:
+                return int(kept[0]), int(kept[1])
+        except (AttributeError, TypeError, ValueError):
+            pass
+        return None
+
+    def _edge_start(self, event: Any, edge: str) -> None:
+        window = self.window
+        self._resizing = (event.x_root, event.y_root, window.winfo_width(),
+                          window.winfo_height(), window.winfo_x(), window.winfo_y(), edge)
+
+    def _edge_move(self, event: Any) -> None:
+        if self._resizing is None or self.window is None:
+            return
+        from .chat_bubble import sized_to
+        # Never smaller than what is in it: its buttons always on it.
+        least = (sizes.px(self.window, LEAST_WIDTH), self._frame.winfo_reqheight() + 2)
+        width, height, left, top = sized_to(self._resizing, event.x_root, event.y_root, least)
+        self._asked = f"{width}x{height}+{left}+{top}"
+        self._size = (width, height)
+        # Given once Tk has drawn the last one, not on every move of the pointer (chat_bubble).
+        if getattr(self, "_due", None) is None:
+            self._due = self.window.after_idle(self._give)
+
+    def _give(self) -> None:
+        self._due = None
+        if self.window is not None and getattr(self, "_asked", ""):
+            self.window.geometry(self._asked)
+
+    def _edge_end(self, _event: Any = None) -> None:
+        if self._resizing is None or self.window is None:
+            return
+        self._resizing = None
+        if getattr(self, "_due", None) is not None:
+            self.window.after_cancel(self._due)
+            self._give()
+        self.window.update_idletasks()
+        self._size = (self.window.winfo_width(), self.window.winfo_height())
+        try:
+            self.app.config.set(SIZE_KEPT, list(self._size), internal=True)
+        except AttributeError:               # nowhere to keep it
+            pass
 
     def _grab(self, event: Any) -> None:
         self._drag = (event.x_root - self.window.winfo_x(), event.y_root - self.window.winfo_y())
@@ -244,6 +341,11 @@ class QuickDelegate:
         window, self.window = self.window, None
         if window is not None:
             try:
+                from .file_drop import let_go
+                let_go(window)
+            except Exception:
+                pass
+            try:
                 window.destroy()
             except Exception:
                 pass
@@ -268,6 +370,40 @@ class QuickDelegate:
         self._fit()
 
     # -- what it is about --------------------------------------------------
+    def _add_menu(self) -> None:
+        """ONE PICKER, files and folders alike, each told from the disk (ui/pick_both.py); only
+        where the system cannot, a choice of which."""
+        import tkinter as tk
+        _ = self.words
+        from .pick_both import pick
+        chosen = pick(self.window, _)
+        if chosen is not None:
+            self._take(chosen)
+            self._to_front()
+            return
+        menu = tk.Menu(self.window, tearoff=0)
+        menu.add_command(label=_("Files…"), command=self._add_files)
+        menu.add_command(label=_("A folder…"), command=self._add_folder)
+        button = self.add_button
+        try:
+            menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height())
+        finally:
+            menu.grab_release()
+
+    def _take(self, paths: List[str]) -> None:
+        """A folder as a folder, a file as a file - told from the disk."""
+        for one in paths:
+            where = Path(str(one))
+            kept = self.folders if where.is_dir() else self.files
+            if str(where) not in kept:
+                kept.append(str(where))
+        self._draw_chosen()
+
+    def _dropped(self, paths: List[str]) -> None:
+        """Dropped on it: taken when Tk is next free."""
+        if self.window is not None:
+            self.window.after(0, lambda: self._take(list(paths)))
+
     def _add_folder(self) -> None:
         from tkinter import filedialog
         chosen = filedialog.askdirectory(parent=self.window, mustexist=True)

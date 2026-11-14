@@ -255,7 +255,7 @@ class TheAppLearnsFromEveryKindTests(unittest.TestCase):
         self.assertNotIn("maybe Thursday", text)
         ada = self.app.connections.add("Ada", by="user", reason="my advisor")
         me = self.app.connections.me()
-        self.app.connections.edit(me["id"], by="user", role="student")
+        self.app.connections.edit(me["id"], by="society", role="student")
         self.app.lessons.wait()
         sources = {row["source_id"] for row in self.app.db.query(
             "SELECT source_id FROM lesson_evidence WHERE kind = 'connections'")}

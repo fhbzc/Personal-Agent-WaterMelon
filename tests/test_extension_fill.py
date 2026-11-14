@@ -27,7 +27,7 @@ FILL = (WEB / "fill.js").read_text("utf-8") if HAS_SOURCE else ""
 SOURCES = "the extension's sources are in the private repository alone"
 
 #: What the filling script may never hold: a press, a submit, a key or a pointer, a page left, a word sent.
-FORBIDDEN = [r"\.click\s*\(", r"\.submit\s*\(", r"requestSubmit", r"\bKeyboardEvent\b", r"\bMouseEvent\b",
+FORBIDDEN = [r"\.click\s*\(", r"\.submit\s*\(", r"requestSubmit", r"\bKeyboardEvent\b",
              r"\bPointerEvent\b", r"\bTouchEvent\b", r"\bInputEvent\b", r"\bfetch\s*\(", r"XMLHttpRequest",
              r"sendBeacon", r"\blocation\s*=", r"location\.(assign|replace|reload)", r"location\.href\s*=",
              r"history\.(pushState|replaceState|back|go)", r"\.focus\s*\(", r"window\.open\s*\(",
@@ -42,8 +42,19 @@ class WhatItMayDoTests(unittest.TestCase):
         code = re.sub(r"//[^\n]*", "", code)
         for pattern in FORBIDDEN:
             self.assertIsNone(re.search(pattern, code), f"fill.js holds {pattern!r}")
+        # A PRESS IN ONE PLACE ONLY (the user, 2026-11-13: "可以动单选和网页自制的下拉框 ... 只选选项，绝不按按钮"):
+        # `choose`, which looks first that it is an option or a radio, inside no button or link.
+        start = code.index("function choose(el)")
+        chooser = code[start:code.index("\n  }\n", start)]
+        self.assertEqual(code.count("MouseEvent"), chooser.count("MouseEvent"), "a press only in choose")
+        self.assertIn('role !== "option"', chooser)
+        self.assertIn('el.closest("a, button, [type=submit], [role=button], [role=link]")', chooser)
+        self.assertLess(chooser.index("return false"), chooser.index("MouseEvent"), "looked at first")
         events = re.findall(r"new\s+Event\s*\(\s*['\"](\w+)['\"]", code)
         self.assertEqual(set(events), {"input", "change"}, "only that its words changed")
+        # ITS FILES NEVER PUT INTO THE PAGE (the user, 2026-11-13: "所有附件不上传").
+        self.assertNotIn("DataTransfer", code)
+        self.assertNotIn(".files", code)
         self.assertIn('addEventListener("submit"', code, "the page's own submit stopped a while")
 
     def test_only_the_agents_order_starts_it(self) -> None:
@@ -78,6 +89,11 @@ class TheOrderTests(unittest.TestCase):
             self.assertIsNone(extension.take_fill_order(self.dir, "https://forms.example.org/apply"))
         self.assertEqual(list((extension.folder(self.dir) / "fill").glob("*.json")), [], "let go of")
         self.assertEqual(extension.leave_fill_order(self.dir, "not a page", parts), "")
+        # Its files, given to the page to say - never to put in (2026-11-13).
+        extension.leave_fill_order(self.dir, "https://forms.example.org/apply", parts,
+                                   [{"field": "Resume", "name": "cv.pdf", "path": "C:/w/cv.pdf"}])
+        said = extension.take_fill_order(self.dir, "https://forms.example.org/apply")
+        self.assertEqual(said["attach"], [{"field": "Resume", "name": "cv.pdf", "path": "C:/w/cv.pdf"}])
 
     def test_the_host_answers_a_page_from_the_orders_kept_until_one_fills_it(self) -> None:
         """A side agent's note, 2026-11-08: a site's sign-in page, opened first, took the order and
@@ -143,7 +159,7 @@ class OnARealPageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as work:
             path = Path(work) / "form.html"
             path.write_text(page, encoding="utf-8")
-            done = subprocess.run([_chrome(), "--headless=new", "--disable-gpu", "--no-first-run",
+            done = subprocess.run([_chrome(), "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                                    f"--user-data-dir={work}/profile", "--virtual-time-budget=6000",
                                    "--dump-dom", path.as_uri()],
                                   capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -159,6 +175,83 @@ class OnARealPageTests(unittest.TestCase):
         self.assertIn("Filled by your agent: 3 boxes", said["note"])
         self.assertIn("submit it yourself", said["note"])
         self.assertIn("Shoe size", said["note"], "what found no box, said to copy")
+
+
+@unittest.skipUnless(HAS_SOURCE, SOURCES)
+@unittest.skipUnless(_chrome(), "no browser here to fill a page in")
+class ChoicesAndFilesTests(unittest.TestCase):
+    """2026-11-13: "可以动单选和网页自制的下拉框" (only an option chosen, never a button); "所有附件不上传，但是
+    instruction告诉我传什么"."""
+
+    def test_a_radio_and_a_pages_own_list_chosen_a_link_never_files_told_no_submit(self) -> None:
+        order = {"parts": [{"field": "Full name", "text": "Ada Quill"},
+                           {"field": "Are you authorized to work here?", "text": "No"},
+                           {"field": "Will you relocate?", "text": "Yes"},
+                           {"field": "Sponsorship", "text": "Maybe"}],
+                 "attach": [{"field": "Resume", "name": "cv.pdf", "path": "C:/work/cv.pdf"}]}
+        page = """<!doctype html><html><head><meta charset="utf-8"></head><body>
+<form id="f" onsubmit="document.body.dataset.submitted='yes'; return false">
+  <label for="name">Full name</label> <input id="name">
+  <fieldset><legend>Are you authorized to work here?</legend>
+    <label><input type="radio" name="auth" value="y"> Yes</label>
+    <label><input type="radio" name="auth" value="n"> No</label></fieldset>
+  <label id="rl">Will you relocate?</label>
+  <input id="reloc" role="combobox" aria-labelledby="rl" aria-controls="list1"><ul id="list1" role="listbox"></ul>
+  <input type="hidden" id="reloc_value">
+  <label id="sl">Sponsorship</label>
+  <input id="spon" role="combobox" aria-labelledby="sl" aria-controls="list2"><div id="list2" role="listbox"></div>
+  <input type="hidden" id="spon_value">
+  <label for="cv">Resume</label> <input id="cv" type="file">
+  <button type="submit" id="go">Submit application</button>
+</form>
+<script>
+  // A LIST OF THE PAGE'S OWN MAKING: typed into, it offers its options; one chosen by a press on it.
+  document.getElementById('reloc').addEventListener('input', () => {
+    const list = document.getElementById('list1');
+    list.innerHTML = '<li role="option">Yes</li><li role="option">No</li>';
+    for (const one of list.children) one.addEventListener('click', () => {
+      document.getElementById('reloc_value').value = one.textContent; list.innerHTML = ''; });
+  });
+  // ITS OPTION A LINK THAT WOULD SUBMIT: never pressed.
+  document.getElementById('spon').addEventListener('input', () => {
+    const list = document.getElementById('list2');
+    list.innerHTML = '<a href="#" role="option" id="maybe">Maybe</a>';
+    document.getElementById('maybe').addEventListener('click', () => {
+      document.getElementById('spon_value').value = 'Maybe'; document.getElementById('f').requestSubmit(); });
+  });
+  document.getElementById('go').addEventListener('click', () => { document.body.dataset.pressed = 'yes'; });
+  globalThis.browser = {runtime: {lastError: null, sendMessage: (m, answer) => answer && answer(%s)}};
+</script>
+<script>%s</script>
+<script>
+  setTimeout(() => {
+    const v = (id) => document.getElementById(id).value;
+    const auth = (document.querySelector('input[name=auth]:checked') || {}).value || '';
+    document.title = JSON.stringify({name: v('name'), auth, reloc: v('reloc_value'), spon: v('spon_value'),
+      cv: document.getElementById('cv').files.length, submitted: document.body.dataset.submitted || 'no',
+      pressed: document.body.dataset.pressed || 'no',
+      note: (document.querySelector('[role=status]') || {}).textContent || ''});
+  }, 4500);
+</script></body></html>""" % (json.dumps({"order": order}), FILL)
+        with tempfile.TemporaryDirectory() as work:
+            path = Path(work) / "apply.html"
+            path.write_text(page, encoding="utf-8")
+            done = subprocess.run([_chrome(), "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
+                                   f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
+                                   "--dump-dom", path.as_uri()],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                  timeout=120)
+        said = json.loads(re.search(r"<title>(.*?)</title>", done.stdout, re.S).group(1)
+                          .replace("&quot;", '"').replace("&amp;", "&"))
+        self.assertEqual(said["name"], "Ada Quill")
+        self.assertEqual(said["auth"], "n", "the radio chosen")
+        self.assertEqual(said["reloc"], "Yes", "the page's own list: its option chosen")
+        self.assertEqual(said["spon"], "", "an option that is a link: never pressed")
+        self.assertEqual((said["submitted"], said["pressed"]), ("no", "no"), "nothing submitted, no button")
+        self.assertEqual(said["cv"], 0, "no file put in")
+        self.assertIn("Attach these yourself", said["note"])
+        self.assertIn("Resume: cv.pdf", said["note"])
+        self.assertIn("Sponsorship", said["note"], "what was not chosen, said")
 
 
 @unittest.skipUnless(HAS_SOURCE, SOURCES)
@@ -183,7 +276,7 @@ class ASignInPageFirstTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as work:
             path = Path(work) / "login.html"
             path.write_text(page, encoding="utf-8")
-            done = subprocess.run([_chrome(), "--headless=new", "--disable-gpu", "--no-first-run",
+            done = subprocess.run([_chrome(), "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                                    f"--user-data-dir={work}/profile", "--virtual-time-budget=6000",
                                    "--dump-dom", path.as_uri()],
                                   capture_output=True, text=True, encoding="utf-8", errors="replace",

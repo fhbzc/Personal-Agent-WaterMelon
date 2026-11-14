@@ -271,7 +271,8 @@ class ScreenProvider(ListenerProvider):
         self._typing = self._recent_keyboard_input()
         picture = None
         image_of = getattr(self.platform.activity, 'front_window_image', None)
-        if callable(image_of):
+        from ...common.privacy_folders import why_no_picture
+        if callable(image_of) and not why_no_picture(self.config):
             try:
                 picture = fast_reading.fingerprint(image_of())
             except Exception:
@@ -346,8 +347,9 @@ class ScreenProvider(ListenerProvider):
 
     # -- the reading --------------------------------------------------------
     def _look(self) -> None:
+        from ...common.privacy_folders import recording
         if (not bool(self.config.get("listener_screen_enabled", True))
-                or not bool(self.config.get("listener_enabled", True))):
+                or not recording(self.config)):
             self._gathering = None
             self._pace.forget()
             return
@@ -579,10 +581,14 @@ class ScreenProvider(ListenerProvider):
     def _allowed_front(self, front: Any) -> bool:
         from ..core.privacy import PrivacyFilter
         privacy = PrivacyFilter(self.config)
+        from ...common.privacy_folders import window_not_to_read
         return (privacy.category_enabled("screen")
                 and privacy.application_allowed(front.application)
                 and not self._excluded(front.application, front.title)
-                and not self._is_the_agent_itself(front))
+                and not self._is_the_agent_itself(front)
+                # Showing a file in a privacy folder, or a private web page: not read (the user,
+                # 2026-11-12).
+                and not window_not_to_read(front.application, front.title, self.config))
 
     def _somebody_is_here(self) -> bool:
         """The same question the filesystem provider asks, for the same reason.

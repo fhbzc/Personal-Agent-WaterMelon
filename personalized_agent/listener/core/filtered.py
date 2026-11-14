@@ -32,6 +32,10 @@ WHY = {
     "excluded_folder": "an excluded folder",
     "ignored_name": "an ignored file name",
     "credentials": "a screenshot whose words held a password or a code",
+    "private_mode": "private mode was on",
+    "private_page": "a private web page: its site asked agents not to watch it, or it is at one "
+                    "of your private web addresses",
+    "privacy_folder": "a window showing a file in a privacy folder",
 }
 
 _lock = threading.Lock()

@@ -41,7 +41,7 @@ def _run_browser_probe(engine: str, page: str, size: str = "1280,900",
         probe = Path(work) / "probe.html"
         probe.write_text(page, encoding="utf-8")
         process = subprocess.Popen(
-            [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+            [engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
              f"--user-data-dir={work}/profile", f"--window-size={size}",
              f"--virtual-time-budget={budget}", "--dump-dom", probe.as_uri()],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,

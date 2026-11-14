@@ -78,6 +78,19 @@ def block(path: Any) -> Optional[Dict[str, str]]:
         return None
 
 
+def pointer_said(pointer: Any) -> str:
+    """Where the mouse pointer is in a picture, in words a model can find it by: "" when not on it."""
+    try:
+        x, y, width, height = (int(one) for one in pointer)
+    except (TypeError, ValueError):
+        return ""
+    if width <= 0 or height <= 0:
+        return ""
+    across, down = round(100 * x / width), round(100 * y / height)
+    return (f"at {across}% across and {down}% down the picture (pixel {x}, {y} of {width}x{height}), "
+            f"drawn there as a white arrow")
+
+
 class FrontPictures:
     """The latest picture of the screen."""
 
@@ -127,6 +140,14 @@ class FrontPictures:
         self._preview, self.why = None, ""
         self._grabbed = threading.Event()
         if not self._on():
+            self._grabbed.set()
+            return
+        # NONE AT ALL, NOT ONE PAINTED OVER (the user, 2026-11-12: "隐私文件打开就整屏不截 ... private
+        # mode打开也是不截图"), and the chat says why ("加个注释").
+        from ..common.privacy_folders import why_no_picture
+        held = why_no_picture(self.config)
+        if held:
+            self.why = held
             self._grabbed.set()
             return
         if callable(getattr(self.activity, "user_screen_image", None)) \
@@ -229,8 +250,11 @@ class FrontPictures:
 
     def _kept_of(self, image: Any, said: Dict[str, str]) -> Dict[str, Any]:
         small = _small(image)
+        # WHERE THE MOUSE POINTER WAS, drawn on it (platform_layer/screen_picture.py) - said in words too
+        # (the user, 2026-11-13: "你要能截取我的鼠标位置"); the pointer moved, not the same picture.
+        pointer = pointer_said(getattr(image, "info", {}).get("pointer"))
         if self._small is not None and self._kept and same_screen(small, self._small) \
-                and Path(self._kept["path"]).is_file():
+                and self._kept.get("pointer", "") == pointer and Path(self._kept["path"]).is_file():
             return dict(self._kept, title=said.get("title", ""))
         reading = getattr(self, "_reading", True)
         words = self._words_of(image) if reading else ""
@@ -244,7 +268,8 @@ class FrontPictures:
         picture.save(path, "JPEG", quality=85)
         self._let_go_of_old()
         self._small = small
-        self._kept = {"path": str(path), "words": words.strip(), "title": said.get("title", "")}
+        self._kept = {"path": str(path), "words": words.strip(), "title": said.get("title", ""),
+                      **({"pointer": pointer} if pointer else {})}
         return dict(self._kept)
 
     def _let_go_of_old(self) -> None:

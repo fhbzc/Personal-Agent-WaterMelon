@@ -8,7 +8,9 @@ fictional projects (a grant on coastal erosion, a restored motorcycle)."""
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -16,6 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 from personalized_agent.data_manage.storage.database import Database
+from personalized_agent.learning import reasons as rs
 from personalized_agent.learning import records
 from personalized_agent.learning.find import Finder
 from personalized_agent.learning.match import coverage, fits_its_cases
@@ -31,6 +34,13 @@ from personalized_agent.learning.vocab import Vocabulary
 #: files, which learning never reads: here it is a folder of its own instead.
 _PASSING = Path(tempfile.gettempdir()) / "made-up-passing-files"
 _temp_roots = mock.patch.object(records, "_temp_roots", lambda: [str(_PASSING)])
+
+
+def reading_prompts():
+    """The prompts a unit is read with: the user's own work, someone else's, the earlier learning."""
+    from personalized_agent.learning.activity import EARLIER_PROMPT
+    from personalized_agent.learning.reading import READ_OTHERS_PROMPT, READ_PROMPT
+    return READ_PROMPT, READ_OTHERS_PROMPT, EARLIER_PROMPT
 
 
 def setUpModule() -> None:
@@ -489,6 +499,115 @@ class ReadingTests(_Base):
         reader.pending(self.unit, datetime.now(timezone.utc).isoformat(), [])
         self.assertFalse((self.dir / "copies").exists() and any((self.dir / "copies").iterdir()))
 
+    # -- the token savings the user approved, 2026-11-11 ---------------------------------
+    def _git(self, *args, hours_ago=None):
+        env = None
+        if hours_ago is not None:
+            at = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime(
+                "%Y-%m-%dT%H:%M:%S+00:00")
+            env = dict(os.environ, GIT_AUTHOR_DATE=at, GIT_COMMITTER_DATE=at)
+        return subprocess.run(["git", "-C", str(self.folder), *args], capture_output=True,
+                              text=True, check=True, env=env)
+
+    def test_the_commit_already_seen_is_no_new_piece(self) -> None:
+        """--since took in the commit at the mark: every unit with git was read again, every
+        update, for nothing."""
+        if not shutil.which("git"):
+            self.skipTest("no git here")
+        self._git("init", "-q")
+        self._git("config", "user.email", "tide@example.com")
+        self._git("config", "user.name", "Tide Keeper")
+        self._git("add", "notes.md")
+        self._git("commit", "-q", "-m", "First notes on the dunes", hours_ago=3)
+        reader = self._reader(_Answers({"cases": [], "judgments": []}))
+        cutoff = datetime.now(timezone.utc).isoformat()
+        pieces, marks = reader.pending(self.unit, cutoff, [])
+        self.assertTrue([one for one in pieces if one.mark[0] == "git"], "the first commit")
+        reader.read(self.unit, pieces, marks)
+        self.unit = self.store.unit("place:1")
+        self.unit["first_read"] = cutoff
+        self.store.save_unit(self.unit)
+        pieces, _marks = reader.pending(self.unit, datetime.now(timezone.utc).isoformat(), [])
+        self.assertEqual([one for one in pieces if one.mark[0] == "git"], [],
+                         "the commit already seen is nothing new")
+        (self.folder / "notes.md").write_text("# Talk\ntwo paragraphs\n", encoding="utf-8")
+        self._git("commit", "-q", "-am", "Shorter notes on the dunes", hours_ago=1)
+        pieces, _marks = reader.pending(self.unit, datetime.now(timezone.utc).isoformat(), [])
+        commits = [one.text for one in pieces if one.mark[0] == "git"]
+        self.assertEqual(len(commits), 1)
+        self.assertIn("Shorter notes on the dunes", commits[0])
+        self.assertNotIn("First notes on the dunes", commits[0])
+
+    def test_a_little_new_waits_and_some_things_never(self) -> None:
+        from personalized_agent.learning import reading
+        from personalized_agent.learning.reading import Piece, waits
+        cutoff = datetime.now(timezone.utc)
+
+        def piece(chars, days, kind="sessions", rule=None):
+            return Piece((cutoff - timedelta(days=days)).isoformat(), "x" * chars,
+                         (kind, "k", "v"), rule)
+        read_before = {"id": "place:1", "kind": "place", "first_read": "2026-05-01", "marks": {}}
+        now = cutoff.isoformat()
+        self.assertTrue(waits(read_before, [piece(800, 1), piece(800, 0.5)], now))
+        self.assertFalse(waits(read_before, [piece(1200, 1), piece(900, 0.5)], now),
+                         "counted together, it is enough")
+        self.assertFalse(waits(read_before, [piece(100, reading.WAIT_DAYS + 0.1), piece(100, 0)],
+                               now), "the oldest of it has waited long enough")
+        self.assertFalse(waits(dict(read_before, marks={"waiting_since": (
+            cutoff - timedelta(days=reading.WAIT_DAYS)).isoformat()}), [piece(100, 0)], now),
+            "it has waited since then")
+        self.assertFalse(waits(dict(read_before, first_read=""), [piece(100, 0)], now),
+                         "a first read, at once")
+        self.assertFalse(waits(dict(read_before, kind="rules"), [piece(100, 0)], now))
+        self.assertFalse(waits(read_before, [piece(100, 0, "rules", {"kind": "rule",
+                                                                     "path": "CLAUDE.md"})], now),
+                         "the user's rules for the agents, at once")
+        self.assertTrue(waits(read_before, [piece(100, 0, "rules", {"kind": "memory",
+                                                                    "path": "m.md"})], now))
+        self.assertFalse(waits(read_before, [], now), "nothing: nothing to wait for")
+
+    def test_a_continued_case_says_only_what_changed_and_keeps_the_rest(self) -> None:
+        self.assertIn("ONLY what changed", reading_prompts()[0])
+        self.assertIn("ONLY what changed", reading_prompts()[1])
+        self.assertIn("ONLY what this pattern changes", reading_prompts()[2])
+        case_id = self.store.save_case({
+            "unit_id": "place:1", "title": "Grant defence slides",
+            "facets": {"deliverable": ["deliverable:slides"]}, "looks_like": "Twelve pages.",
+            "how_made": "Drafted in the editor.", "items": ["the budget page"],
+            "locations": [{"path": "slides.pptx", "what": "final", "at": "2026-05-01"}]})
+        answer = {"cases": [{"ref": case_id, "items": ["the map"],
+                             "version": {"at": "2026-05-03", "what": "a map added"}},
+                            {"ref": "C-00000000", "items": ["nothing kept"]}],
+                  "judgments": [{"case": case_id, "aspect": "output", "object": "object:colour",
+                                 "direction": "grey", "by": "user", "strength": "changed"}]}
+        reader = self._reader(_Answers(answer))
+        pieces, marks = reader.pending(self.unit, datetime.now(timezone.utc).isoformat(), [])
+        reader.read(self.unit, pieces, marks)
+        case = self.store.case(case_id)
+        self.assertEqual(case["title"], "Grant defence slides")
+        self.assertEqual(case["facets"], {"deliverable": ["deliverable:slides"]})
+        self.assertEqual((case["looks_like"], case["how_made"]), ("Twelve pages.",
+                                                                  "Drafted in the editor."))
+        self.assertEqual(case["items"], ["the budget page", "the map"])
+        self.assertEqual(len(case["locations"]), 1)
+        self.assertEqual(case["versions"][-1]["what"], "a map added")
+        self.assertEqual(len(self.store.cases("place:1")), 1, "an id that is no case makes none")
+        self.assertEqual(len(self.store.judgments_of(case_id)), 1)
+
+    def test_the_word_list_is_in_the_fixed_instructions_the_same_each_time(self) -> None:
+        ask = _Answers({"cases": [], "judgments": []}, {"cases": [], "judgments": []})
+        reader = self._reader(ask)
+        pieces, marks = reader.pending(self.unit, datetime.now(timezone.utc).isoformat(), [])
+        reader.read(self.unit, pieces, marks)
+        reader._ask_part(self.unit, None, ["THE UNIT: Coastal grant"], pieces)
+        (_k, first, text), (_k2, second, _text2) = ask.asked
+        listing = self.vocab.listing(["deliverable", "audience", "presentation", "purpose",
+                                      "environment", "object"])
+        self.assertTrue(first.endswith("THE WORD LIST:\n" + listing))
+        self.assertNotIn("THE WORD LIST", text)
+        self.assertNotIn("deliverable:slides", text)
+        self.assertEqual(first, second, "the same words, the same text, byte for byte")
+
 
 class ReasonsTests(_Base):
 
@@ -535,6 +654,9 @@ class ReasonsTests(_Base):
         self.assertEqual(reason["state"], "competing")
         self.assertTrue(reason["rival"])
         self.assertIn("the user's own words", ask.asked[2][1], "told why it was refused")
+        # The word list in the fixed instructions, not the call's own text (2026-11-11).
+        self.assertIn("THE WORD LIST:", ask.asked[0][1])
+        self.assertNotIn("THE WORD LIST", ask.asked[0][2])
 
     def test_a_change_over_time_cannot_set_aside_what_came_after_it(self) -> None:
         case = self.case("Lecture slides", presentation=["presentation:presented in person"])
@@ -562,10 +684,15 @@ class ReasonsTests(_Base):
                        {"reasons": [dict(reason, explains=[one, two])]},
                        {"reasons": [dict(reason, explains=[one, two], fails_when="a novel")]})
         reasons = Reasons(self.db, ask)
+        def forget():
+            # The same pool and reasons are not asked again (2026-11-11): forgotten, to ask anew.
+            self.db.execute("DELETE FROM kv WHERE key = ?", (rs.ABDUCE_SEEN,))
         reasons.abduce()
         self.assertEqual(self.store.reasons(), [], "one judgment, not the user's own word")
+        forget()
         reasons.abduce()
         self.assertEqual(self.store.reasons(), [], "no way to fail: not kept")
+        forget()
         reasons.abduce()
         kept = self.store.reasons()
         self.assertEqual(len(kept), 1)
@@ -579,6 +706,141 @@ class ReasonsTests(_Base):
                                 {"strength": "approved", "case_id": "b"}]))
         self.assertFalse(enough([{"strength": "accepted", "case_id": c} for c in "ab"]))
         self.assertTrue(enough([{"strength": "accepted", "case_id": c} for c in "abc"]))
+
+    # -- the token savings the user approved, 2026-11-11 ---------------------------------
+    def _work(self, title, obj="object:amount of text", **facets):
+        return self.judgment(self.case(title, **facets), obj=obj, state="linked")
+
+    def _answer(self, person, kind="notifications", obj="object:interruptions"):
+        """The user's answer to what their agent told them, about `person` (made up)."""
+        evidence = f"evi-{kind}-{len(self.store.cases())}"
+        self.db.execute("INSERT INTO lesson_evidence (id, kind, at, action, summary, features) "
+                        "VALUES (?, ?, '2026-10-01T00:00:00+00:00', 'delete', 'told', ?)",
+                        (evidence, kind, json.dumps({"person": person})))
+        case = self.store.save_case({"unit_id": "lessons", "title": f"{kind}: reminders", "facets": {
+            "deliverable": ["deliverable:notification"], "audience": ["audience:self"],
+            "presentation": ["presentation:read alone"]}})
+        return self.store.save_judgment({"case_id": case, "aspect": "attention", "object": obj,
+                                         "direction": "not wanted", "strength": "changed",
+                                         "at": "2026-10-01", "state": "linked", "refs": [evidence]})
+
+    SLIDES = {"deliverable": ["deliverable:slides"], "audience": ["audience:reviewers"],
+              "presentation": ["presentation:presented in person"]}
+
+    def test_abduce_is_shown_the_reasons_that_match_and_the_rest_only_with_room_left(self) -> None:
+        """The user: "一个是基于情景，一个是基于人，一个是基于类型 ... 三个type找match"."""
+        all_three = self._reason([self._work("Defence slides", **self.SLIDES)],
+                                 statement="Reviewers listen, they do not read.")
+        two = self._reason([self._work("A report", deliverable=["deliverable:report"])],
+                           statement="Reports are short.")
+        none = self._reason([self._answer("Ada Quill")], statement="No reminders at night.",
+                            objects=["object:interruptions"])
+        for _ in range(2):
+            self.judgment(self.case("Lecture slides", **self.SLIDES), state="pool")
+        ask = _Answers({"belongs": [], "reasons": []}, {"belongs": [], "reasons": []})
+        with mock.patch.object(rs, "ABDUCE_PER_JUDGMENT", 2):
+            Reasons(self.db, ask).abduce()
+        _kind, system, text = ask.asked[0]
+        shown = text.split("REASONS KEPT:")[1]
+        self.assertIn(all_three, shown)
+        self.assertIn(two, shown)
+        self.assertNotIn(none, shown, "it matches on no kind, and there is no room left")
+        self.assertLess(shown.index(all_three), shown.index(two), "three kinds before two")
+        self.assertIn("THE WORD LIST:", system, "the word list in the fixed instructions")
+        self.assertNotIn("THE WORD LIST", text)
+        # With room left, the one that matches on none comes too, after the rest.
+        self.db.execute("DELETE FROM kv WHERE key = ?", (rs.ABDUCE_SEEN,))
+        Reasons(self.db, ask).abduce()
+        shown = ask.asked[1][2].split("REASONS KEPT:")[1]
+        self.assertLess(shown.index(two), shown.index(none))
+
+    def test_across_is_shown_the_answers_reasons_and_what_they_meet_elsewhere(self) -> None:
+        theirs = self._reason([self._answer("Ada Quill")], statement="Nothing of Ada's at night.",
+                              objects=["object:interruptions"], aspect="attention")
+        same_person = self._reason(
+            [self._answer("Ada Quill", kind="recommendations", obj="object:what is recommended")],
+            statement="Ada's papers are worth reading.", objects=["object:what is recommended"])
+        same_type = self._reason([self._work("Writing days", obj="object:interruptions")],
+                                 statement="No calls while writing.",
+                                 objects=["object:interruptions"])
+        unrelated = self._reason([self._work("Poster", obj="object:colour",
+                                             audience=["audience:collaborators"])],
+                                 statement="Posters in two colours.", objects=["object:colour"])
+        tags, _of_judgment = Reasons(self.db, _Answers())._tags()
+        self.assertIn("person:ada quill", tags[same_person][rs.PEOPLE])
+        ask = _Answers({"motives": []})
+        with mock.patch.object(rs, "ACROSS_REASONS_MOST", 3):
+            Reasons(self.db, ask).across({"notifications"})
+        text = ask.asked[0][2]
+        for kept in (theirs, same_person, same_type):
+            self.assertIn(kept, text)
+        self.assertNotIn(unrelated, text, "of another context, and shares neither people nor type")
+
+    def test_nothing_new_nothing_asked_again(self) -> None:
+        case = self.case("Report", deliverable=["deliverable:report"])
+        self.judgment(case, state="pool")
+        self.judgment(case, state="pool")
+        ask = _Answers({"belongs": [], "reasons": []})
+        Reasons(self.db, ask).run(False)
+        self.assertEqual(len(ask.asked), 1, "the pool, once")
+        report = Reasons(self.db, ask).run(False)
+        self.assertEqual(len(ask.asked), 1, "nothing changed: nothing asked")
+        self.assertIn("nothing new", report["unchanged"])
+        reasons = Reasons(self.db, ask)
+        reasons.abduce()
+        self.assertEqual(len(ask.asked), 1, "nor ABDUCE on its own")
+        self.assertEqual(reasons.report["abduce_unchanged"], 1)
+        self.judgment(case, state="pool")
+        Reasons(self.db, ask).run(False)
+        self.assertEqual(len(ask.asked), 2, "a judgment more in the pool: asked")
+
+    def test_the_words_are_asked_about_again_only_where_they_changed(self) -> None:
+        for term, definition in (("slide titles", "the title of each slide"),
+                                 ("headings", "the heading of a section")):
+            self.vocab.add("object", term, "object:wording and tone", definition)
+        case = self.case("Report")
+        for _ in range(61):
+            self.judgment(case, obj="object:numbers and units", state="linked")
+        ask = _Answers(*[{"same": [], "terms": [], "judgments": {}}] * 6)
+        reasons = Reasons(self.db, ask)
+
+        def asked(prompt):
+            return len([one for one in ask.asked if one[1] == prompt])
+        reasons.tend_terms(False)
+        self.assertEqual((asked(rs.TERMS_PROMPT), asked(rs.SPLIT_PROMPT)), (1, 1))
+        reasons.tend_terms(False)
+        self.assertEqual((asked(rs.TERMS_PROMPT), asked(rs.SPLIT_PROMPT)), (1, 1),
+                         "the same children, the same judgments: not asked")
+        self.vocab.add("object", "captions", "object:wording and tone", "a figure's caption")
+        self.judgment(case, obj="object:numbers and units", state="linked")
+        reasons.tend_terms(False)
+        self.assertEqual((asked(rs.TERMS_PROMPT), asked(rs.SPLIT_PROMPT)), (2, 2))
+
+    def test_two_reasons_found_not_the_same_are_not_asked_again_while_unchanged(self) -> None:
+        shared = [self._work("Report") for _ in range(2)]
+        self._reason(shared, statement="Reports are short.")
+        two = self._reason(shared, statement="Reviewers skim.")
+        ask = _Answers({"same": False}, {"same": False})
+        reasons = Reasons(self.db, ask)
+        reasons.merge_same(None)
+        reasons.merge_same(None)
+        self.assertEqual(len(ask.asked), 1)
+        self.assertEqual(reasons.report["same_unchanged"], 1)
+        reason = self.store.reason(two)
+        reason["statement"] = "Reviewers skim, then read the summary."
+        self.store.save_reason(reason)
+        reasons.merge_same(None)
+        self.assertEqual(len(ask.asked), 2, "said anew: asked again")
+
+    def test_a_first_learning_asks_only_the_pairs_with_something_new(self) -> None:
+        shared = [self._work("Report") for _ in range(2)]
+        self._reason(shared, statement="Reports are short.")
+        self._reason(shared, statement="Reviewers skim.")
+        self.db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)",
+                        (rs.MERGED_ALL, "2026-11-07"))
+        ask = _Answers()
+        Reasons(self.db, ask).run(True)
+        self.assertEqual([one for one in ask.asked if one[1] == rs.SAME_PROMPT], [])
 
 
 class TheClockTests(_Base):

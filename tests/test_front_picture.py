@@ -80,6 +80,27 @@ class PicturesTests(unittest.TestCase):
         self.assertEqual(len(self.taken), 3)
         self.assertEqual(third["path"], second["path"], "the same screen: the same picture")
 
+    def test_the_mouse_pointer_drawn_and_said(self) -> None:
+        """2026-11-13: "你现在chat打开的那个截屏，你要能截取我的鼠标位置"."""
+        from personalized_agent.platform_layer.screen_picture import draw_pointer
+        plain = _screen(shade=200)
+        pointed = draw_pointer(_screen(shade=200), (100, 50, 100 + plain.width, 50 + plain.height), (300, 250))
+        self.assertEqual(pointed.info["pointer"], (200, 200, plain.width, plain.height))
+        self.assertEqual(pointed.getpixel((201, 205)), (255, 255, 255), "a white arrow where it was")
+        self.assertNotEqual(plain.getpixel((201, 205)), (255, 255, 255))
+        off = draw_pointer(_screen(), (0, 0, plain.width, plain.height), (plain.width + 50, 10))
+        self.assertNotIn("pointer", off.info, "off the picture: nothing drawn")
+        self.image = pointed
+        shot = self._press()
+        self.assertIn(f"pixel 200, 200 of {plain.width}x{plain.height}", shot["pointer"])
+        moved = draw_pointer(_screen(), (0, 0, plain.width, plain.height), (40, 40))
+        self.image = moved
+        again = self._press()
+        self.assertNotEqual(again["path"], shot["path"], "the pointer moved: not the same picture")
+        from personalized_agent.agent.front_screen import note_of
+        self.assertIn("The mouse pointer in the picture of the screen: at",
+                      note_of({"title": "Tides", "pointer": again["pointer"]}))
+
     def test_the_same_screen_is_reused_a_clock_is_not_a_change(self) -> None:
         first = self._press()
         self.image = _screen(clock="10:01")

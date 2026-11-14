@@ -38,11 +38,16 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual((why["by"], why["op"]), ("built in", "edit"))
         self.assertEqual(self.store.refresh(self._as_given(cooldown_minutes=30)), 0, "said once")
 
-    def test_one_the_user_changed_stays_theirs(self) -> None:
+    def test_fixed_it_follows_the_application_and_only_its_switch_is_theirs(self) -> None:
+        """2026-11-13: "现在设置的几个monitor都是protected, 不允许改" - switched off by the user, it still follows the
+        application's word, and stays off."""
         one = self._old_project()
-        self.store.edit(one["id"], {"cooldown_minutes": 12}, "user", "fewer looks")
-        self.assertEqual(self.store.refresh(self._as_given(cooldown_minutes=30)), 0)
-        self.assertEqual(self._old_project()["cooldown_minutes"], 12)
+        self.store.switch(one["id"], False)
+        self.store.rename(one["id"], "Old work")
+        self.assertEqual(self.store.refresh(self._as_given(cooldown_minutes=30)), 1)
+        kept = self._old_project()
+        self.assertEqual((kept["cooldown_minutes"], kept["enabled"], kept["display_name"]),
+                         (30, False, "Old work"))
 
     def test_taken_out_of_the_application_only_where_no_one_changed_it(self) -> None:
         mine, _w = self.store.add({"name": "New work begins", "group": "recommend", "purpose": "x",
@@ -84,7 +89,7 @@ class HeldOnceTests(unittest.TestCase):
     def test_held_the_same_way_it_is_written_once_with_why(self) -> None:
         from datetime import datetime, timezone
         from unittest import mock
-        one = next(a for a in self.monitor.store.list() if a["builtin"] == "evening")
+        one = next(a for a in self.monitor.store.list() if a["builtin"] == "evening_closing")
         reasons = iter(["the evening report is done today"] * 5 + ["not now - the user said so"])
         with mock.patch.object(self.monitor, "_held", side_effect=lambda *a: next(reasons)):
             for _minute in range(6):
@@ -95,6 +100,17 @@ class HeldOnceTests(unittest.TestCase):
         self.assertEqual(len(rows), 2, "once for each reason, not each minute")
         self.assertIn("done today", rows[0]["outcome"])
         self.assertIn("the user said so", rows[1]["outcome"])
+
+
+class InTheirLanguageTests(unittest.TestCase):
+    """The user, 2026-11-09: "monitor的description打开好像没有中文翻译"."""
+
+    def test_every_built_in_ones_name_and_description_has_chinese(self) -> None:
+        from personalized_agent.common.interface_words import translated
+        from personalized_agent.heartbeat.monitor.builtins import builtins
+        for one in builtins():
+            for said in (one.get("name"), " ".join(str(one.get("purpose") or "").split())):
+                self.assertNotEqual(translated(said, "zh"), said, said)
 
 
 if __name__ == "__main__":

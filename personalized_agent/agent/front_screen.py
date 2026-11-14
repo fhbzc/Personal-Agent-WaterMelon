@@ -50,6 +50,11 @@ def front_now(db: Any, config: Any) -> Dict[str, str]:
     "title", and where they can be told "address", "file" and "text"."""
     if db is None or not config.get("listener_enabled", True):
         return {}
+    # NOTHING OF THE SCREEN in private mode, or while a file in a privacy folder is open (the
+    # user, 2026-11-12: "整个chat不会输出屏幕内容").
+    from ..common.privacy_folders import why_no_picture
+    if why_no_picture(config):
+        return {}
     window = next((one for one in _rows(db, "application.focused", 40)
                    if one["data"].get("pid") != os.getpid()), None)
     if window is None:
@@ -104,7 +109,8 @@ def note_of(said: Dict[str, str]) -> str:
         return ""
     names = (("application", "Program"), ("title", "Window title"), ("address", "Web address"),
              ("file", "File"), ("text", "On the screen"),
-             ("picture_words", "Words read in a picture of the screen"))
+             ("picture_words", "Words read in a picture of the screen"),
+             ("pointer", "The mouse pointer in the picture of the screen"))
     return FRONT_NOTE.format(lines="\n".join(f"{name}: {said[key]}" for key, name in names
                                              if said.get(key)))
 

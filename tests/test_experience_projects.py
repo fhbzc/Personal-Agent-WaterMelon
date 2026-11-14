@@ -276,7 +276,7 @@ class ThePanelTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=15000",
                  "--dump-dom", probe.as_uri()],
                 capture_output=True, text=True,

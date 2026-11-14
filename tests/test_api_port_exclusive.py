@@ -58,6 +58,33 @@ class OneProgramOnThePortTests(unittest.TestCase):
         finally:
             other.close()
 
+    def test_a_page_opening_while_the_agent_is_busy_is_not_refused(self) -> None:
+        """2026-11-11: the page opened while the agent was busy, and its app.js was refused
+        (ERR_CONNECTION_REFUSED) - the frame drawn, nothing in it. The connections a page
+        opens at once wait to be taken; none is refused."""
+        import threading
+
+        httpd = self.server._httpd
+        busy = threading.Event()
+        taken = httpd.get_request
+        httpd.get_request = lambda: (busy.wait(10), taken())[1]
+        clients, refused = [], 0
+        try:
+            for _ in range(20):
+                client = socket.socket()
+                client.settimeout(3)
+                try:
+                    client.connect(("127.0.0.1", self.port))
+                    clients.append(client)
+                except OSError:
+                    refused += 1
+                    client.close()
+        finally:
+            busy.set()
+            for client in clients:
+                client.close()
+        self.assertEqual(refused, 0)
+
     def test_the_port_is_free_again_once_the_agent_stops(self) -> None:
         from personalized_agent.api.server import ApiServer
 

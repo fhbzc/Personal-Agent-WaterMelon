@@ -41,7 +41,7 @@ def _render(engine, tasks, steps):
         probe = Path(work) / "probe.html"
         probe.write_text(page + harness, encoding="utf-8")
         done = subprocess.run(
-            [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+            [engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
              f"--user-data-dir={work}/profile", "--virtual-time-budget=10000",
              "--window-size=1300,900", "--dump-dom", probe.as_uri()],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)

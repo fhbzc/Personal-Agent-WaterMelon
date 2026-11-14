@@ -534,6 +534,12 @@ class FilesystemProvider(ListenerProvider):
         path = str(data.get("path") or "")
         if not path:
             return
+        # A PRIVACY FOLDER'S: never opened (the user, 2026-11-12) - the manager keeps only
+        # the folder's name (listener/core/privacy.to_privacy_folder).
+        from ...common.privacy_folders import is_private
+        if is_private(path, self.config):
+            data["content_withheld"] = "in a privacy folder: only its name is kept"
+            return
         name = os.path.basename(path).lower()
         # The name check comes FIRST, before the suffix one. `secrets.json`
         # and `credentials.yaml` are text files by every test this code can

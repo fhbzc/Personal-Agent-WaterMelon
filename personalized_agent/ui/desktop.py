@@ -23,6 +23,7 @@ from __future__ import annotations
 import collections
 import json
 import logging
+import os
 import queue
 import re
 import sys
@@ -286,7 +287,7 @@ def zoom_popups(desk: Any, step: int) -> None:
     except Exception:                        # pragma: no cover - the windows still follow
         log.debug("the windows' zoom could not be kept", exc_info=True)
     chat, note = getattr(desk, "_chat_bubble", None), getattr(desk, "_handed_note", None)
-    told = [getattr(desk, "_redraw_bubble", None)]
+    told = [getattr(desk, "_redraw_bubble", None), getattr(desk, "_redraw_waiting", None)]
     if chat is not None:
         told.append(lambda: chat.zoom_to(ZOOM_START + step))
     if note is not None and note.zooms:
@@ -394,7 +395,11 @@ class DesktopAgent:
         self._bind_events()
         self._own_panel_for_the_box()
         self.app.bus.subscribe("notification.created", self._on_notification)
+        # READ ANYWHERE - the page, the report, a button: the line beside the avatar drawn again now.
+        self.app.bus.subscribe("notification.read", lambda _topic, _said: self.queue.put(("waiting", None)))
         self.app.bus.subscribe("agent.proactive_message", self._on_proactive)
+        # The side panel's × puts it away through the desktop (api/routes.py), off this thread.
+        self.app.hide_notes_panel = self.hide_notes_panel
         self.app.bus.subscribe("agent.speaking", self._on_speaking)
         self.app.bus.subscribe("character.changed", self._on_character_changed)
         self.app.bus.subscribe("work.handed_opened", self._on_handed_opened)
@@ -485,7 +490,8 @@ class DesktopAgent:
             (say("Chat"), later(self.open_chat_bubble)),
             (say("To do"), later(lambda: self._quick_panel("todo"))),
             (say("Collections"), later(lambda: self._quick_panel("collection"))),
-            (say("Waiting notifications"), later(lambda: self._quick_panel("waiting"))),
+            (say("Waiting notifications"), later(self.open_notifications)),
+            (say("Report"), later(self.open_report)),
             (say("Overview"), later(lambda: self.open_url("/#overview"))),
             (say("Show avatar" if self.character_hidden else "Hide avatar"),
              later(self.toggle_character))])
@@ -576,6 +582,8 @@ class DesktopAgent:
     def _present_frame(self, frame: Any) -> None:
         """One frame of the avatar: to the native view where there is one,
         else drawn by Tk - kept, or Tk draws nothing."""
+        if self._private_mode():
+            frame = self._in_private_colours(frame)
         if self._native_avatar is not None:
             try:
                 self._native_avatar.show(frame)
@@ -603,10 +611,12 @@ class DesktopAgent:
         self._wear_on_taskbar(str(package.get("name") or name))
         # A FACE DRAWN LIVE: its eyes on the pointer, its moods drawn as they
         # happen - rather than frames played in turn.
-        if (package.get("rig") or {}).get("kind") == "watermelon":
+        from ..agent.character.manager import drawn_live
+        art = drawn_live(package)
+        if art is not None:
             try:
-                from ..agent.character.watermelon import Watermelon
-                self._rig = Watermelon(scale=2, package=package.get("path"))
+                self._rig = art.Watermelon(scale=2, package=package.get("path"))
+                self._rig_art = art
                 return
             except Exception:
                 log.warning("the avatar could not be drawn live; its pictures instead",
@@ -688,7 +698,9 @@ class DesktopAgent:
         if (px, py) != live["pointer"]:
             live["pointer"], live["moved"] = (px, py), now
         # From between its eyes, toward the pointer: all the way at 150 px.
-        from ..agent.character.watermelon import RIG, facing_for
+        from ..agent.character import watermelon
+        art = getattr(self, "_rig_art", None) or watermelon      # the flat one: its own middle
+        RIG, facing_for = art.RIG, art.facing_for
         # Toward the middle of the screen: on the right half it faces left.
         # Turning round, it TURNS - narrows to its edge and opens the other
         # way (TURN_SECONDS) - rather than flipping in one frame.
@@ -750,6 +762,10 @@ class DesktopAgent:
                 getattr(self, "_hover", None) is not None
                 or getattr(self, "_hover_wait", None) is not None):
             self._on_hover_leave()
+        # IN THE SIDE, HALF OF IT OUT UNDER THE POINTER (the user, 2026-11-09: "鼠标移过去会弹出半个
+        # 身子，单击半个身子弹出chat, 双击overview, 拖动是把他拉出来"), back in when it goes; a hand
+        # on it, for it is pressed.
+        self._hand_when_tucked()
         self._peek_on(live)
         mood = self.state if self.state != "idle" else (
             "hover" if live["hover"] and not tucked else "idle")
@@ -927,20 +943,6 @@ class DesktopAgent:
                 live["parting"] = False
         return float(live.get("part") or 0.0)
 
-    def _peek_on(self, live: Dict[str, Any]) -> None:
-        """In the side, the pointer on its leaf: its head out, to look; the
-        pointer gone, back in."""
-        side = getattr(self, "_tucked", "")
-        if not side or live.get("slide"):
-            return
-        looking = bool(live.get("hover"))
-        if looking == bool(live.get("peeking")):
-            return
-        from . import avatar_tuck
-        live["peeking"] = looking
-        place = avatar_tuck.peek_at if looking else avatar_tuck.tucked_at
-        self._slide_from_here(self._placed(place, side), 0.0 if looking else 1.0, 1.0)
-
     def _placed(self, place: Any, side: str) -> tuple:
         """Where `place` (ui/avatar_tuck.py) puts it, in the side it is in."""
         from . import avatar_tuck
@@ -981,7 +983,7 @@ class DesktopAgent:
             # MORE THAN HALF OF IT PAST THE SIDE: in it jumps, now (the user, 2026-11-08).
             self._live["edge"] = avatar_tuck.edge_of(self._beside, sides)
             self._slide_from_here(avatar_tuck.tucked_at(self._beside, x, y, self.size, sides),
-                                  1.0, 1.0, leap=self._beside)
+                                  avatar_tuck.TUCK_REST, 1.0, leap=self._beside)
             self._live["slide"]["into_side"] = True
             self._look_now()
 
@@ -1025,16 +1027,45 @@ class DesktopAgent:
         y = int(round(sneak["y"] + (sneak["to"][1] - sneak["y"]) * step.walk))
         window.geometry(f"+{x}+{y}")
         live["at"] = (x, y)
-        live["tuck"] = live["grip"] = step.tuck
+        # The body only partly off its leaves at the last: a little of the melon shows.
+        from . import avatar_tuck as _tuck
+        live["tuck"], live["grip"] = step.tuck * _tuck.TUCK_REST, step.tuck
         return step
 
     def _sneaked_in(self, live: Dict[str, Any]) -> None:
+        from . import avatar_tuck
         self._tucked, self._beside = self._beside, ""
         live.pop("sneak", None)
-        live["tuck"] = live["grip"] = 1.0
+        live["tuck"], live["grip"] = avatar_tuck.TUCK_REST, 1.0
         vine = getattr(self, "_chat_vine", None)
         if vine is not None:
             vine.place()                         # hidden: out it comes
+
+    def _hand_when_tucked(self) -> None:
+        """The pointer a hand over it while it is in a side; as it was when it is out."""
+        wanted = "hand2" if getattr(self, "_tucked", "") else ""
+        if wanted == getattr(self, "_cursor_shown", ""):
+            return
+        try:
+            self.canvas.configure(cursor=wanted)
+            self._cursor_shown = wanted
+        except (tk.TclError, AttributeError):    # pragma: no cover - closing
+            pass
+
+    def _peek_on(self, live: Dict[str, Any]) -> None:
+        """In the side, the pointer on it: half of it out; the pointer gone, back in - a little of
+        the melon left out."""
+        side = getattr(self, "_tucked", "")
+        if not side or live.get("slide"):
+            return
+        looking = bool(live.get("hover"))
+        if looking == bool(live.get("peeking")):
+            return
+        from . import avatar_tuck
+        live["peeking"] = looking
+        place = avatar_tuck.peek_at if looking else avatar_tuck.tucked_at
+        self._slide_from_here(self._placed(place, side),
+                              0.0 if looking else avatar_tuck.TUCK_REST, 1.0)
 
     def _untuck(self) -> None:
         """The leaf clicked: it jumps back out - beside the side, and goes in
@@ -1092,6 +1123,10 @@ class DesktopAgent:
         self.canvas.bind("<B1-Motion>", self._on_drag)
         self.canvas.bind("<ButtonPress-1>", self._start_drag, add="+")
         self.canvas.bind("<ButtonRelease-1>", self._end_drag, add="+")
+        # WHAT STANDS BESIDE IT MOVES WITH IT, AT ONCE (the user, 2026-11-09: "移动西瓜logo, 1
+        # recommendation 这个框很慢才会跟着西瓜一起走" - it was placed again only when the count was
+        # read again, seconds on): every move of its window - dragged, sliding, jumping out.
+        self.agent_window.bind("<Configure>", self._avatar_moved, add="+")
         self.agent_window.bind("<Escape>", lambda _event: self.quit())
 
     #: How far the pointer moves, pressed, before it is a drag and not a
@@ -1154,9 +1189,9 @@ class DesktopAgent:
             self._look_now()
         elif not pressed:
             return
-        elif getattr(self, "_tucked", ""):
-            self._untuck()
         elif event is not None:
+            # In the side as anywhere: once the chat, twice the Overview (the user, 2026-11-09);
+            # pulled, it comes out (`_on_drag`).
             self._on_click(event)
 
     #: How far apart, on the screen, two presses may be and still be one
@@ -1188,8 +1223,6 @@ class DesktopAgent:
         presses 300 ms apart opened the chat AND the Overview. Now the
         presses are counted: a second within the system's double-click time,
         and near the first, is a double click; a single waits that long."""
-        if getattr(self, "_tucked", ""):                 # only comes out (`_end_drag`)
-            return
         # A hop for being clicked.
         self._live["poked"] = time.monotonic() - self._live["start"]
         now = time.monotonic()
@@ -1233,10 +1266,18 @@ class DesktopAgent:
         menu.add_command(label=say("To do"), command=lambda: self._quick_panel("todo"))
         menu.add_command(label=say("Collections"), command=lambda: self._quick_panel("collection"))
         menu.add_command(label=say("Waiting notifications"),
-                         command=lambda: self._quick_panel("waiting"))
+                         command=self.open_notifications)
+        # THE REPORT, IN A WINDOW OF ITS OWN (the user, 2026-11-12: what waits for approval, what
+        # the agent did, what is theirs to do - agent/reports.py).
+        menu.add_command(label=say("Report"), command=self.open_report)
         for panel in getattr(self, "_quick_panels", {}).values():
             panel.prepare()                  # what they will show, read while the menu is open
         menu.add_command(label=say("Overview"), command=lambda: self.open_url("/#overview"))
+        # PRIVATE MODE, on and off here (the user, 2026-11-12): nothing recorded meanwhile, and
+        # the watermelon red.
+        menu.add_separator()
+        menu.add_command(label=say("End private mode") if self._private_mode()
+                         else say("Private mode"), command=self.toggle_private_mode)
         # Hidden, it comes back from the tray's menu: offered only with one.
         if getattr(getattr(self, "tray", None), "icon", None) is not None:
             menu.add_command(label=say("Hide avatar"), command=self.toggle_character)
@@ -1261,6 +1302,51 @@ class DesktopAgent:
             menu.tk_popup(x, y)
         finally:
             menu.grab_release()
+
+    # -- private mode (common/privacy_folders.py) ---------------------------------------------
+    def _private_mode(self) -> bool:
+        from ..common.privacy_folders import private_mode
+        config = getattr(self, "config", None) or getattr(getattr(self, "app", None),
+                                                          "config", None)
+        return config is not None and private_mode(config)
+
+    def toggle_private_mode(self) -> None:
+        """On: nothing of the user's activity recorded - no screen read or pictured, no file -
+        until turned off; off: as before. Kept through a restart; the listener stops and starts
+        its sources on the change (app._on_settings_changed)."""
+        on = not self._private_mode()
+        try:
+            (getattr(self, "config", None) or self.app.config).set("listener_private_mode", on)
+        except Exception:
+            log.warning("private mode could not be %s", "turned on" if on else "turned off",
+                        exc_info=True)
+            return
+        log.info("private mode %s", "on" if on else "off")   # red from its next frame
+
+    def _in_private_colours(self, frame: Any) -> Any:
+        """THE WATERMELON RED IN PRIVATE MODE (the user, 2026-11-12): its green - the rind, the
+        leaves - turned red, the rest as it is. BY ITS HUE, GREEN TO TEAL (the user, 2026-11-12:
+        "logo的叶子也要变成红色" - the flat watermelon's leaves are teal, their darker half and veins
+        bluer than green): each such colour, clear enough to be one, red at its own lightness; a
+        grey-green (its eyes), white, pink and a tear's blue as they are."""
+        try:
+            import numpy
+            from PIL import Image
+            rgba = frame.convert("RGBA")
+            pixels = numpy.array(rgba)
+            hsv = numpy.array(rgba.convert("RGB").convert("HSV")).astype(numpy.int16)
+            hue, sat = hsv[..., 0], hsv[..., 1]
+            # PIL's hue is 0-255: 40 is about 56 degrees, 136 about 192 - yellow-green to teal.
+            leafy = (hue >= 40) & (hue <= 136) & (sat >= 50) & (pixels[..., 3] > 0)
+            hsv[..., 0] = numpy.where(leafy, 0, hue)
+            hsv[..., 1] = numpy.where(leafy, numpy.maximum(sat, 150), sat)
+            red = numpy.array(Image.fromarray(hsv.astype(numpy.uint8), "HSV").convert("RGB"))
+            out = pixels.copy()
+            out[..., :3] = numpy.where(leafy[..., None], red, pixels[..., :3])
+            return Image.fromarray(out, "RGBA")
+        except Exception:                          # pragma: no cover - drawn as it is
+            log.debug("the avatar could not be drawn red", exc_info=True)
+            return frame
 
     # -- delegate work -----------------------------------------------------------------------
     def _delegate_face(self, size: int = 16) -> Any:
@@ -1301,20 +1387,15 @@ class DesktopAgent:
         self._selection.start()
 
     def _start_avatar_buttons(self) -> None:
-        """The vine out of the side, and the panels of the avatar's menu made ahead."""
-        from .avatar_buttons import ChatVine
+        """The panels of the avatar's menu made ahead. NO VINE, NO BUTTONS OUT OF THE SIDE (the user,
+        2026-11-09: "不需要出来藤蔓(那两个logo也不要了)"): in a side, half of it comes out under the
+        pointer, and a click on it is the chat, two the Overview (`_peek_on`, `_on_click`)."""
         self._quick_panels: Dict[str, Any] = {}
+        self._chat_vine = None
         try:
-            # A CHAT AND AN OVERVIEW ON IT (the user, 2026-11-08): the Overview as a double click.
-            self._chat_vine = ChatVine(self.root, self._words("Chat"), self.toggle_chat_bubble,
-                                       self._avatar_box, self._popup_font(),
-                                       self._vine_side, self.agent_window,
-                                       overview=(self._words("Overview"), self._on_double_click))
-            # It moves as the avatar moves: sliding into a side, its head coming out.
-            self.agent_window.bind("<Configure>", self._chat_vine.place, add="+")
             self.root.after(1500, self._prepare_panels)
-        except Exception:                    # the avatar goes on without it
-            log.exception("the vine out of the avatar could not be drawn")
+        except Exception:                    # the avatar goes on without them
+            log.exception("the avatar's panels could not be made ahead")
 
     def _vine_side(self) -> str:
         """The side the vine comes out of. In a side the leaves, the vine and its button stay on
@@ -1345,10 +1426,11 @@ class DesktopAgent:
         panel = self._quick_panels.get(which)
         if panel is None:
             todo, waiting = which == "todo", which == "waiting"
+            approving = which == "approvals"
             group = {"label": self._words("+ Add group"), "keys": ["name"],
                      "fields": [self._words("The new group's name")],
                      "path": "/api/lists/groups/add", "fixed": {"list": which}}
-            adds = [] if waiting else [group]
+            adds = [] if waiting or approving else [group]
             if todo:
                 adds.insert(0, {"label": self._words("+ Add a to-do"), "keys": ["text", "detail"],
                                 "fields": [self._words("What to do"),
@@ -1356,13 +1438,15 @@ class DesktopAgent:
                                 "path": "/api/todos/add"})
             panel = self._quick_panels[which] = QuickPanel(
                 self.root, self._words("To do" if todo else "Waiting notifications" if waiting
-                                       else "Collections"),
+                                       else "For your approval" if approving else "Collections"),
                 lambda: self.app.quick_sections(which),
                 lambda fn: self.queue.put(("call", fn)), self._words, self._popup_font(),
-                self._words("Nothing is waiting." if waiting else "Nothing yet."), searches=True,
-                act=self._panel_act,
+                self._words("Nothing is waiting." if waiting else
+                            "Nothing is waiting for your approval." if approving else "Nothing yet."),
+                searches=True, act=self._panel_act,
                 zoom=sizes.popup_zoom(self.config), on_zoom=lambda zoom: zoom_popups(self, zoom),
-                adds=adds, closes_emptied=waiting,
+                adds=adds, closes_emptied=waiting or approving,
+                on_open=self._waiting_list_open if waiting else None,
                 size=self.config.get(f"quick_panel_size_{which}", None) or None,
                 on_size=lambda size: self.config.set(f"quick_panel_size_{which}",
                                                      [int(size[0]), int(size[1])], internal=True))
@@ -1370,7 +1454,16 @@ class DesktopAgent:
 
     def _panel_act(self, action: Dict[str, Any], done: Any) -> None:
         """What a panel's row offers, as the Overview does it - off Tk's thread. To
-        delegate opens the Delegate work box; what came of it, its own program."""
+        delegate opens the Delegate work box; what came of it, its own program. A notification
+        answered in the waiting list: not counted beside the avatar from the press, and the line
+        drawn again the moment its answer is kept."""
+        notification = str((action.get("body") or {}).get("id") or "") \
+            if str(action.get("path") or "").startswith("/api/notifications/") else ""
+        if notification:
+            if not hasattr(self, "_answering"):
+                self._answering = {}
+            self._answering.setdefault(notification, "list")
+
         def work() -> None:
             try:
                 if action["key"] == "delegate":
@@ -1384,8 +1477,13 @@ class DesktopAgent:
                     self.app.local_post(action["path"], action["body"])
             except Exception as exc:
                 log.warning("what a panel asked could not be done", exc_info=True)
-                self.queue.put(("call", lambda: self.notify_bubble(str(exc)[:300])))
+                said = str(exc)[:300]           # `exc` is gone once the except ends
+                self.queue.put(("call", lambda: self.notify_bubble(said)))
             finally:
+                if notification:
+                    # Kept (or not): counted as the database now says, at once.
+                    getattr(self, "_answering", {}).pop(notification, None)
+                    self.on_main_thread(self._show_waiting)
                 done()
         threading.Thread(target=work, name="panel-act", daemon=True).start()
 
@@ -1417,8 +1515,8 @@ class DesktopAgent:
 
     def _delegate_by_shortcut(self) -> None:
         """The shortcut pressed: the quick Delegate work box, empty, on the
-        screen at once - a title and a description to write (ui/quick_delegate.py).
-        Nothing is read from the program in front."""
+        screen at once - a title and a description to write (ui/quick_delegate.py);
+        pressed again while it is open, it closes. Nothing is read from the program in front."""
         self.queue.put(("call", self._show_quick_delegate))
 
     def _chat_by_shortcut(self) -> None:
@@ -1445,11 +1543,12 @@ class DesktopAgent:
             self.open_chat_bubble()
 
     def _show_quick_delegate(self) -> None:
+        """Opened by the shortcut - and closed by it, pressed again (QuickDelegate.toggle)."""
         if getattr(self, "_quick", None) is None:
             from .quick_delegate import QuickDelegate
             self._quick = QuickDelegate(self.root, self.app, self.open_box, self._words,
                                         lambda fn: self.queue.put(("call", fn)))
-        self._quick.show()
+        self._quick.toggle()
 
     #: THE ICON BESIDE SELECTED TEXT (the user, 2026-11-01: "像搜狗输入法, 选择
     #: 一段文字弹出来...用一个西瓜图标，然后点击弹出delegate work菜单"): the
@@ -1731,26 +1830,34 @@ class DesktopAgent:
         # this one opening and for two minutes - so the tray, the menu, the
         # chat and every "#tab" open the page signed in, and none of them
         # leaves a link behind that would sign anyone else in later.
-        if fragment == "/#overview":
-            self._off_this_thread(self._open_the_page)
+        # A TAB OF THE PAGE, IN THE APP'S OWN WINDOW (the user, 2026-11-13: "现在open the report打开的
+        # 是网站，而不是那个app，应该改成在app端打开") - the report as the overview: brought back where
+        # it is open, and turned to that tab; opened at it where it is not.
+        if re.fullmatch(r"/#[a-z_]+", fragment):
+            self._off_this_thread(lambda: self._open_the_page(fragment))
             return
         self._off_this_thread(lambda: webbrowser.open(self.app.sign_in_url(fragment)))
 
-    def _open_the_page(self) -> None:
+    def _open_the_page(self, fragment: str = "/#overview") -> None:
         """THE PAGE IN ONE WINDOW, BROUGHT BACK AS IT WAS LEFT (the user, 2026-11-05: each double
-        click was one more tab). No browser to make that window: a tab, as before."""
+        click was one more tab) - turned to `fragment`'s tab when it is not the overview (the page
+        asks for it as it comes to the front: `page_wants`). No browser to make that window: a tab,
+        as before."""
         from . import mac_panel
         from ..platform_layer import app_window
+        tab = fragment[2:] if fragment.startswith("/#") else ""
+        # Asked for BEFORE the window comes to the front: the page asks as it does.
+        self.app.page_wants = {"tab": tab, "at": time.time()} if tab and tab != "overview" else None
         if sys.platform == "darwin" and mac_panel.available():
             # Apple's WebKit, whatever browser the Mac has: on the main thread.
-            self.queue.put(("call", self._open_the_page_on_a_mac))
+            self.queue.put(("call", lambda: self._open_the_page_on_a_mac(fragment)))
             return
         if not app_window.OPENING.acquire(blocking=False):
             return                                   # it is on its way
         try:
             if app_window.bring_back_the_page():
                 return
-            url = self.app.sign_in_url("/#overview")
+            url = self.app.sign_in_url(fragment)
             if app_window.open_the_page(url, self.app.paths.data_dir / app_window.PAGE_PROFILE):
                 app_window.wait_for_the_page()
             else:
@@ -1765,11 +1872,11 @@ class DesktopAgent:
         self._off_this_thread(lambda: app_window.open_page(
             self.app.sign_in_url(fragment), self.app.paths.data_dir / app_window.PROFILE))
 
-    def _open_the_page_on_a_mac(self) -> None:
+    def _open_the_page_on_a_mac(self, fragment: str = "/#overview") -> None:
         from . import mac_panel
         if mac_panel.bring_back_the_page():
             return
-        url = self.app.sign_in_url("/#overview")
+        url = self.app.sign_in_url(fragment)
         if not mac_panel.open_the_page(url):
             webbrowser.open(url)
 
@@ -1886,6 +1993,8 @@ class DesktopAgent:
         shot = (taking if callable(taking) else pictures.latest)(title=said.get("title", ""))
         if shot.get("words"):
             said = dict(said, picture_words=shot["words"][:MOST_TEXT])
+        if shot.get("pointer"):
+            said = dict(said, pointer=shot["pointer"])    # where the mouse was (2026-11-13)
         seen = pictures.blocks(shot)
         if showing:
             sees = getattr(self, "_chat_model_sees", lambda: True)()
@@ -1899,6 +2008,13 @@ class DesktopAgent:
                     # Nothing read of it (the chat's): a model that sees no pictures has none.
                     how, why = "not", "this model sees no pictures"
                 self.queue.put(("call", lambda: bubble.picture_settled(how, why)))
+            else:
+                # NONE TAKEN, AND WHY (the user, 2026-11-12: "加个注释，这个时候没图是因为private mode,
+                # 或者privacy directory保护").
+                from ..common.privacy_folders import withheld
+                held = str(getattr(pictures, "why", "") or "")
+                if withheld(held) and callable(getattr(bubble, "picture_withheld", None)):
+                    self.queue.put(("call", lambda: bubble.picture_withheld(held)))
         return note_of(said), seen
 
     def _chat_model_sees(self) -> bool:
@@ -2180,6 +2296,7 @@ class DesktopAgent:
             self._frame_index = 0
             self._load_character()
             self._enable_native_avatar()
+            self._look_now()                     # worn at once, not at the next slow frame
             # Its name, which the avatar's may have changed with it.
             for window in (self.root, self.agent_window):
                 window.title(self.app.avatar_name())
@@ -2371,8 +2488,14 @@ class DesktopAgent:
         # ONE OF EACH KIND (the user, 2026-11-08: "per to do 的内容，如果打开下一个per to do的to do panel,
         # 上一个自动关掉，但是per project的to do panel 只会被下一个per project的panel关掉"): a newer
         # note takes the place of the one of its own kind only.
-        scope = "project" if note.get("scope") == "project" else "todo"
+        scope = "project" if note.get("scope") == "project" else \
+            "approval" if note.get("scope") == "approval" else "todo"
         notes = self.__dict__.setdefault("_handed_notes", {})
+
+        def current() -> Dict[str, Any]:
+            """THE APPROVALS PANEL'S ITEM AS IT IS NOW - each of its rows is another work's."""
+            panel = notes.get(scope)
+            return panel.note if scope == "approval" and panel is not None else note
         old = notes.get(scope)
         if old is not None:
             old.close()
@@ -2395,8 +2518,8 @@ class DesktopAgent:
             """Saved where the work keeps it (WorkRuns.save_handed) - True,
             else why not, in words."""
             try:
-                said = self.app.work.save_handed(str(note.get("run") or ""),
-                                                 int(note.get("n") or 0), words)
+                said = self.app.work.save_handed(str(current().get("run") or ""),
+                                                 int(current().get("n") or 0), words)
             except Exception:                    # pragma: no cover - said not saved
                 log.warning("what was handed over could not be saved", exc_info=True)
                 return False
@@ -2428,6 +2551,41 @@ class DesktopAgent:
             self.app.db.execute("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) "
                                 "DO UPDATE SET value = excluded.value",
                                 (tick_key(shown or note), json.dumps(list(words), ensure_ascii=False)))
+
+        def approval_item(k: int, opening: bool = False) -> None:
+            """A row of the approvals panel: what the agent made for it, shown below the rows."""
+            rows = (note.get("approval") or {}).get("rows") or []
+            if not 0 <= k < len(rows):
+                return
+            row = rows[k]
+
+            def ask() -> None:
+                try:
+                    said = self.app.approval_item(row)
+                    said = ticked_of(said) if said.get("run") else said
+                except Exception:
+                    log.info("a thing to approve could not be shown", exc_info=True)
+                    return
+                panel = self.__dict__.get("_handed_notes", {}).get("approval")
+                if panel is not None:
+                    self.queue.put(("call", lambda: panel.show_item(said)))
+            threading.Thread(target=ask, name="approval-item", daemon=True).start()
+
+        def approve(k: int, how: str) -> None:
+            """An answer to a row - kept off Tk's thread, then said on its row."""
+            rows = (note.get("approval") or {}).get("rows") or []
+            ident = str(rows[k].get("id") or "") if 0 <= k < len(rows) else ""
+
+            def ask() -> None:
+                ok = False
+                try:
+                    ok = self.app.agenda_approved(ident, how) is not None
+                except Exception:
+                    log.warning("an approval could not be kept", exc_info=True)
+                panel = self.__dict__.get("_handed_notes", {}).get("approval")
+                if panel is not None:
+                    self.queue.put(("call", lambda: panel.approved(k, how, ok)))
+            threading.Thread(target=ask, name="approval-answer", daemon=True).start()
 
         def item(n: int, opening: bool = False) -> None:
             """One of a whole project's items, shown below the project's part of its panel -
@@ -2475,7 +2633,7 @@ class DesktopAgent:
             if opening is None:
                 return "It cannot be opened from here - open it from the Overview"
             try:
-                opening(str(note.get("run") or ""), int(note.get("n") or 0))
+                opening(str(current().get("run") or ""), int(current().get("n") or 0))
             except Exception as exc:             # the API's own refusal, in its words
                 return str(getattr(exc, "message", "") or exc) or "It could not be opened"
             return ""
@@ -2494,16 +2652,19 @@ class DesktopAgent:
                     self.config.set("handed_note_split", round(float(split), 4), internal=True)
             except Exception:                    # pragma: no cover - this note keeps it
                 log.debug("the note's size could not be kept", exc_info=True)
+        approving = scope == "approval"
         self._handed_note = HandedNote(self.root, note, self._words, font[0], font[1],
                                        zoom=zooms, on_zoom=kept,
-                                       on_save=save if note.get("run") else None,
-                                       on_open=again if note.get("run") else None,
-                                       on_item=item if note.get("run") and note.get("items")
+                                       on_save=save if note.get("run") or approving else None,
+                                       on_open=again if note.get("run") or approving else None,
+                                       on_item=approval_item if approving else
+                                       item if note.get("run") and note.get("items") else None,
+                                       on_tick=ticked if note.get("run") or approving else None,
+                                       on_folder=folder if note.get("run") and not approving
                                        else None,
-                                       on_tick=ticked if note.get("run") else None,
-                                       on_folder=folder if note.get("run") else None,
                                        kept_size=size or None, split=split, on_layout=laid_out,
-                                       palette=PROJECT_PALETTE if scope == "project" else None)
+                                       palette=PROJECT_PALETTE if scope == "project" else None,
+                                       on_approve=approve if approving else None)
         notes[scope] = self._handed_note
         self._handed_note.show()
 
@@ -2552,16 +2713,161 @@ class DesktopAgent:
         threading.Thread(target=look, name="work-waiting", daemon=True).start()
 
     def _open_waiting(self) -> None:
-        """Pressed: what a blocker held, one at a time, as any bubble; what was kept in the list,
-        the list."""
+        """Pressed: what was kept, the list - the bubbles held while it is open, and coming again
+        when it closes; nothing kept, what a blocker held, one at a time, as any bubble."""
         self._bubbles_opened = True
         self._hide_waiting()
-        self._show_next_bubble()
         if self.app.notifications.waiting_count():
-            self._quick_panel("waiting")
+            self.open_notifications()
+        else:
+            self._show_next_bubble()
+
+    #: Its window's title, as the page sets it (app.js, NOTES_SOLO) - in English and as shown.
+    NOTES_TITLE = "Waiting notifications - Personal Agent WaterMelon"
+
+    def open_notifications(self) -> None:
+        """THE WAITING NOTIFICATIONS DOWN THE WHOLE SIDE OF THE SCREEN (the user, 2026-11-13: "你现在这个
+        notifications/recommendation的channel太不现代了，能不能直接占满整个侧边框的那种（类似reports每个事项点击之后
+        弹出来的内容)"): a page in a window of its own, docked to the right edge as tall as the screen -
+        brought back when it is open already. The line beside the avatar goes as each is answered."""
+        from ..platform_layer import app_window
+        titles = self._notes_titles()
+        on_a_mac = self._notes_on_a_mac()
+        # NOT BESIDE THE OPEN PANEL (the user, 2026-11-13: "打开1 recommendation 之后, 1 recommendation的通知还
+        # 存在"): the line and the bubbles held while it is shown - drawn again, those still unread, once
+        # it is put away (`_watch_notes`). Where the panel cannot be seen from here, as before.
+        if (sys.platform == "win32" or on_a_mac) and not os.environ.get("PA_NO_DIALOGS"):
+            self._waiting_list_open(True)
+            self._notes_since = time.monotonic()
+            self._notes_seen = False
+            if not getattr(self, "_notes_watching", False):
+                self._notes_watching = True
+                self.root.after(self.NOTES_WATCH_MS, self._watch_notes)
+        if on_a_mac:
+            # ON A MAC THE SAME (the user, 2026-11-13: "Mac上的面板为什么不改呢"): a panel of the agent's own,
+            # Apple's WebKit, down the right side - made on the main thread, at once (no browser).
+            self.queue.put(("call", self._open_notes_on_a_mac))
+            return
+
+        def go() -> None:
+            # PUT AWAY, NOT CLOSED: slid back in at once - a browser started only the first time.
+            if app_window.slide_in_titled(titles, width=app_window.NOTES_SIZE[0]):
+                return
+            url = self.app.sign_in_url(self.NOTES_PATH)
+            # The first time too: put down the side before it is shown, then slid in.
+            if not app_window.open_side_window(url, self.app.paths.data_dir / app_window.NOTES_PROFILE,
+                                               app_window.NOTES_SIZE, titles=titles):
+                webbrowser.open(url)
+        self._off_this_thread(go, "open-notifications")
+
+    #: The side panel's page - placed by the desktop, not moving itself.
+    NOTES_PATH = "/?solo=notifications&placed=1"
+    #: How often the open side panel is looked for; how long one being started is waited for.
+    NOTES_WATCH_MS, NOTES_COMING_SECONDS = 700, 15.0
+
+    def _notes_on_a_mac(self) -> bool:
+        if sys.platform != "darwin":
+            return False
+        from . import mac_panel
+        return mac_panel.available()
+
+    def _open_notes_on_a_mac(self) -> None:
+        from . import mac_panel
+        from ..platform_layer import app_window
+        url = self.app.sign_in_url(self.NOTES_PATH)
+        if not mac_panel.side_panel(url, app_window.NOTES_SIZE[0], self.NOTES_TITLE):
+            webbrowser.open(url)
+
+    def _notes_titles(self) -> set:
+        from ..common.interface_words import shown
+        return {self.NOTES_TITLE, shown(self.NOTES_TITLE, getattr(self.app, "config", None))}
+
+    def _notes_open_now(self) -> bool:
+        """Whether the side panel is on the screen now - however it was opened."""
+        try:
+            if self._notes_on_a_mac():
+                from . import mac_panel
+                return mac_panel.side_panel_shown(self.NOTES_TITLE)
+            if sys.platform != "win32":
+                return False
+            from ..platform_layer import app_window
+            return app_window.shown_titled(self._notes_titles())
+        except Exception:
+            return False
+
+    def _watch_notes(self) -> None:
+        """While the side panel is shown, nothing beside the avatar; put away or closed - by its ×, by
+        the window's own, or empty - what still waits is drawn again."""
+        shown = self._notes_open_now()
+        if shown:
+            self._notes_seen = True
+        elif self._notes_seen or time.monotonic() - getattr(self, "_notes_since", 0) > self.NOTES_COMING_SECONDS:
+            self._notes_watching = False
+            self._waiting_list_open(False)
+            return
+        self.root.after(self.NOTES_WATCH_MS, self._watch_notes)
+
+    def hide_notes_panel(self) -> bool:
+        """THE SIDE PANEL PUT AWAY - slid out and kept, hidden, to be slid back in (its × and Escape,
+        and when the last in it is answered). False where it cannot be: the page closes itself."""
+        from ..platform_layer import app_window
+        if self._notes_on_a_mac():
+            from . import mac_panel
+            if not mac_panel.has_side_panel(self.NOTES_TITLE):
+                return False
+            self.queue.put(("call", lambda: mac_panel.hide_side_panel(self.NOTES_TITLE)))   # main thread
+            return True
+        return app_window.slide_out_titled(self._notes_titles())
+
+    def _waiting_list_open(self, opened: bool) -> None:
+        """THE WAITING LIST OPEN, NO BUBBLE BESIDE IT (the user, 2026-11-11: "我打开waiting
+        notifications时...那些通知先隐藏，关闭之后如果还有再显示"): the one shown back to the head of the
+        line, unanswered, and none drawn while it is open; closed, they come again - those still
+        unread (one answered in the list meanwhile is not shown again)."""
+        self._list_holds = opened
+        if opened:
+            # The line of what waits, too: the list is what it says (`_show_waiting` draws none
+            # while the list is open).
+            self._hide_waiting()
+            if self._bubble is not None and self._showing is not None:
+                self._bubble_queue.appendleft(self._showing)
+                try:
+                    self._bubble.destroy()
+                except tk.TclError:          # pragma: no cover - already gone
+                    pass
+                self._bubble = None
+                self._showing = None
+            return
+        # ANSWERED IN THE LIST, NOT YET KEPT (the user, 2026-11-13: "这个1 summary还是要很久才关掉。你已经
+        # 修这个好多次了，好好修一下"): the list closes on the press of its last answer, BEFORE the
+        # answer is written - and the line was drawn from the database then, "1 summary" again, and
+        # stayed until the next look. Those answered are not counted while they are kept
+        # (`_panel_act` lets go of each once kept, and draws the line again at once).
+        if not hasattr(self, "_answering"):
+            self._answering = {}
+        panel = getattr(self, "_quick_panels", {}).get("waiting")
+        for ident in getattr(panel, "gone", ()) or ():
+            self._answering.setdefault(str(ident), "list")
+        answering = self._answering
+        unread = self._still_unread
+        kept = [one for one in self._bubble_queue
+                if not one.get("notification_id") or (one["notification_id"] not in answering
+                                                      and unread(one["notification_id"]))]
+        self._bubble_queue.clear()
+        self._bubble_queue.extend(kept)
+        self.root.after(300, self._show_next_bubble)
+        self._show_waiting()
+
+    def _still_unread(self, notification_id: str) -> bool:
+        try:
+            shown = self.app.notifications.get(notification_id)
+        except Exception:                    # pragma: no cover - shown, then
+            return True
+        return shown is None or not shown.get("read")
 
     def _hide_waiting(self) -> None:
-        line, self._waiting_line = self._waiting_line, None
+        line, self._waiting_line = getattr(self, "_waiting_line", None), None
+        self._waiting_at = None
         if line is not None:
             try:
                 line.destroy()
@@ -2571,8 +2877,19 @@ class DesktopAgent:
     def _show_waiting(self) -> None:
         """The small line beside the avatar: how many wait, a row a kind in its colour (the user,
         2026-11-07: "要写清楚category", "分行", "每行不同的颜色"). It takes no focus."""
-        from ..common.notifications import waiting_lines
-        counts = self.app.notifications.waiting_by_category()
+        from ..common.notifications import category_of, waiting_lines
+        # ONE JUST ANSWERED IS NOT COUNTED, whether or not its answer is kept yet (the user,
+        # 2026-11-12: after Good to know "1 recommendation" still stayed two seconds).
+        answering = getattr(self, "_answering", None) or {}
+        if not answering:
+            counts = self.app.notifications.waiting_by_category()
+        else:
+            counts = {}
+            for row in self.app.notifications.waiting(1000):
+                if str(row.get("id") or "") in answering:
+                    continue
+                name = category_of(row)
+                counts[name] = counts.get(name, 0) + 1
         kept = sum(counts.values())
         if self._blocked():
             for item in self._bubble_queue:
@@ -2580,11 +2897,25 @@ class DesktopAgent:
                         "Recommended content" if item.get("recommended") else "Reminders")
                 counts[name] = counts.get(name, 0) + 1
         count = sum(counts.values())
+        self._waiting_counts = dict(counts)
         panel = getattr(self, "_quick_panels", {}).get("waiting")
         if panel is not None and panel.is_open and kept != getattr(self, "_waiting_kept", kept):
             panel._read_it(quiet=True)
         self._waiting_kept = kept
-        if not count:
+        # NOT BESIDE THE SIDE PANEL, HOWEVER IT CAME TO BE OPEN (the user, 2026-11-13: the panel open, "1
+        # recommendation" still beside the avatar - it was open from before the agent started again): seen
+        # open, held - and watched, drawn again once it is put away.
+        open_now = getattr(self, "_notes_open_now", None)
+        if count and not getattr(self, "_list_holds", False) and callable(open_now) and open_now():
+            self._waiting_list_open(True)
+            self._notes_since, self._notes_seen = time.monotonic(), True
+            if not getattr(self, "_notes_watching", False):
+                self._notes_watching = True
+                self.root.after(self.NOTES_WATCH_MS, self._watch_notes)
+            return
+        # NOT BESIDE THE OPEN LIST (the user, 2026-11-11: the list open, "1 recommendation" still
+        # there - the blockers' watch drew it again every few seconds). Drawn when it closes.
+        if not count or getattr(self, "_list_holds", False):
             self._hide_waiting()
             return
         rows = waiting_lines(counts, self._words)
@@ -2597,11 +2928,20 @@ class DesktopAgent:
         line.overrideredirect(True)
         line.attributes("-topmost", True)
         line.configure(bg=look["outline"])
-        self._waiting_box = tk.Frame(line, bg=look["bg"], padx=10, pady=4, cursor="hand2")
+        self._waiting_box = tk.Frame(line, bg=look["bg"], padx=8, pady=3, cursor="hand2")
         self._waiting_box.pack(padx=1, pady=1)
         self._waiting_line = line
         self._draw_waiting(rows)
         stay_on_top(line)
+        # ZOOMED AS EVERY OTHER WINDOW OF THE AGENT'S (the user, 2026-11-09: "1 recommendation的字体也
+        # 太大了，应该这个也是鼠标放上面可以滚轮调整"): the pointer on it, Ctrl and the wheel, or Ctrl
+        # + and -; one zoom for them all (zoom_popups).
+        self._zoom_keys(line)
+
+    def _redraw_waiting(self) -> None:
+        """The line drawn again at the zoom just chosen."""
+        if self._waiting_line is not None:
+            self._show_waiting()
 
     def _draw_waiting(self, rows: List[Tuple[str, str]]) -> None:
         """Its rows, drawn again, and the line placed for its new size."""
@@ -2615,15 +2955,37 @@ class DesktopAgent:
                 old.destroy()
             for kind, said in rows:
                 row = tk.Label(box, text=said, bg=look["bg"], fg=WAITING_INK.get(kind, look["ink"]),
-                               font=(font[0], sizes.zoomed(font[1] - 1, self._bubble_zoom())),
+                               # SMALLER THAN A BUBBLE'S WORDS (the user, 2026-11-09: "字体也太大了"):
+                               # it is a hint beside the avatar, not something to read.
+                               font=(font[0], sizes.zoomed(max(6, font[1] - 2), self._bubble_zoom())),
                                anchor="w", justify="left", cursor="hand2")
                 row.pack(fill="x")
                 on_release(row, self._open_waiting)
             on_release(box, self._open_waiting)
             line.update_idletasks()
-            x, y = beside(self._beside_box(), (line.winfo_reqwidth(), line.winfo_reqheight()),
+        except tk.TclError:                  # pragma: no cover - the line went
+            return
+        self._place_waiting()
+
+    def _avatar_moved(self, event: Any = None) -> None:
+        """The avatar's window moved (or its child's changed - not that): the line beside it, too."""
+        if event is not None and getattr(event, "widget", None) is not self.agent_window:
+            return
+        self._place_waiting()
+
+    def _place_waiting(self) -> None:
+        """The line beside the avatar where it is now - as large as it is drawn."""
+        from .chat_bubble import beside, work_area
+        line = getattr(self, "_waiting_line", None)
+        if line is None:
+            return
+        try:
+            size = (line.winfo_reqwidth(), line.winfo_reqheight())
+            x, y = beside(self._beside_box(), size,
                           (line.winfo_screenwidth(), line.winfo_screenheight()), work_area(line))
-            line.geometry(f"+{x}+{y}")
+            if (x, y) != getattr(self, "_waiting_at", None):
+                line.geometry(f"+{x}+{y}")
+                self._waiting_at = (x, y)
         except tk.TclError:                  # pragma: no cover - the line went
             pass
 
@@ -2717,6 +3079,59 @@ class DesktopAgent:
         self._bubble_answered("", "", item["emphasis"], item.get("notification_id", ""))
         self.open_chat()
 
+    def _bubble_approvals(self, notification_id: str) -> Optional[tuple]:
+        """(the things, until when) when this notification is the plan's call to approve them."""
+        if not notification_id or getattr(self.app, "notifications", None) is None:
+            return None
+        try:
+            said = (self.app.notifications.get(notification_id) or {}).get("metadata") or {}
+        except Exception:
+            return None
+        agenda = said.get("agenda") or {}
+        if not isinstance(agenda, dict) or not agenda.get("approve"):
+            return None
+        return [str(one) for one in agenda["approve"]], str(agenda.get("until") or "")
+
+    def _open_summary(self, item: Dict[str, Any]) -> None:
+        """The report opened from its notification: the notification read and closed."""
+        self._bubble_answered("", "", item.get("emphasis"), item.get("notification_id", ""))
+        self.open_report()
+
+    def open_report(self) -> None:
+        """THE REPORT, IN ITS OWN TAB OF THE PAGE (the user, 2026-11-12: "summary要和newspaper一样单独有一个
+        panel") - its latest issue first; not a panel beside the avatar ("现在汇报的那个窗口很卡"). Opened,
+        its summaries are read: "1 summary" goes from beside the avatar at once."""
+        def read() -> None:
+            try:
+                self.app.notifications.read_report_summaries()
+            except Exception:                    # pragma: no cover - read at the page's opening
+                log.debug("the report's summaries could not be read", exc_info=True)
+        threading.Thread(target=read, name="report-read", daemon=True).start()
+        self.open_url("/#report")
+
+    def _bubble_is_summary(self, notification_id: str) -> bool:
+        """Whether this notification is a summary of what waits for approval (agent/approvals.py)."""
+        if not notification_id or getattr(self.app, "notifications", None) is None:
+            return False
+        try:
+            said = (self.app.notifications.get(notification_id) or {}).get("metadata") or {}
+        except Exception:
+            return False
+        return bool(said.get("approvals"))
+
+    def _open_approvals(self, ids: List[str], until: str) -> None:
+        """The approvals panel, made off Tk's thread (it reads what each work made)."""
+        opening = getattr(self.app, "open_agenda_approvals", None)
+        if opening is None:
+            return
+
+        def ask() -> None:
+            try:
+                opening(ids, until)
+            except Exception:
+                log.warning("the approvals panel could not be opened", exc_info=True)
+        threading.Thread(target=ask, name="open-approvals", daemon=True).start()
+
     def _bubble_part_of(self, notification_id: str) -> str:
         """The work a notification is part of, read as it is drawn: the link is
         made by the state heartbeat, after the notification was."""
@@ -2755,7 +3170,10 @@ class DesktopAgent:
         return None
 
     def _show_next_bubble(self) -> None:
-        """Draw the next bubble, if the last one has been dealt with."""
+        """Draw the next bubble, if the last one has been dealt with - not while the waiting list
+        is open (`_waiting_list_open`)."""
+        if getattr(self, "_list_holds", False):
+            return
         item = None if self._bubble is not None else self._next_bubble()
         if item is None:
             return
@@ -2870,6 +3288,17 @@ class DesktopAgent:
                 face.pack(side="right", padx=(6, 0))
         if item.get("conversation"):
             button(self._words("Read the whole reply"), lambda: self._bubble_read_reply(item),
+                   primary=True)
+        # THE PLAN'S APPROVALS, OPENED FROM ITS REMINDER (the user, 2026-11-09: "点提醒就打开"): in
+        # the approvals panel - the rows to answer, what the agent made below.
+        approving = self._bubble_approvals(item.get("notification_id", ""))
+        if approving is not None:
+            button(self._words("Open the approvals"), lambda: self._open_approvals(*approving),
+                   primary=True)
+        elif self._bubble_is_summary(item.get("notification_id", "")):
+            # THE SUMMARY OF WHAT WAITS FOR APPROVAL (2026-11-12): all of it, in one panel - and the
+            # summary closed as it opens (the user: "我点open approval之后，这个notification应该关掉").
+            button(self._words("Open the report"), lambda: self._open_summary(item),
                    primary=True)
         for option in options:
             # A button with no words on it is not a button. Whatever the
@@ -3024,14 +3453,16 @@ class DesktopAgent:
         scheduler, and a button that stays down while that happens reads as a
         button that did not work.
         """
+        self._answered_now()
         self._close_bubble()
         if question_id and key:
             threading.Thread(
-                target=self._answer_question, args=(question_id, key, notification_id),
+                target=self._then_waiting(self._answer_question),
+                args=(question_id, key, notification_id),
                 name="bubble-answer", daemon=True).start()
         elif notification_id:
             # "Got it (no more notifications)": read, and that is the end of it.
-            threading.Thread(target=self.app.notification_got_it,
+            threading.Thread(target=self._then_waiting(self.app.notification_got_it, read=True),
                              args=(notification_id,), name="bubble-read",
                              daemon=True).start()
         # Dismissing a proactive message completes the interaction. Do not
@@ -3041,9 +3472,64 @@ class DesktopAgent:
 
     def _bubble_later(self, notification_id: str) -> None:
         """Close this bubble; the same reminder comes back in half an hour."""
+        self._answered_now()
         self._close_bubble()
-        threading.Thread(target=self._remind_later, args=(notification_id,),
+        threading.Thread(target=self._then_waiting(self._remind_later, read=True),
+                         args=(notification_id,),
                          name="bubble-later", daemon=True).start()
+
+    def _then_waiting(self, work: Any, read: bool = False) -> Any:
+        """`work`, then the line of what waits drawn again at once (the user, 2026-11-09: closed,
+        "1 recommendation" stayed a second or more) - not at the next look, seconds away. `read`:
+        its notification (the first of `args`) read FIRST and the line drawn then (the user,
+        2026-11-11: "X summary/notification 还是要等几秒才关闭" - the learning from the answer took
+        seconds, and the line waited for it)."""
+        def done(*args: Any) -> None:
+            try:
+                if read and args and args[0]:
+                    try:
+                        self.app.notifications.mark_read(str(args[0]))
+                    finally:
+                        self.on_main_thread(self._show_waiting)
+                work(*args)
+            finally:
+                # Kept now - read or not, as it was answered: counted as the database says.
+                for one in args:
+                    getattr(self, "_answering", {}).pop(str(one), None)
+                self.on_main_thread(self._show_waiting)
+        return done
+
+    def _answered_now(self) -> None:
+        """THE ANSWERED ONE OFF THE LINE BESIDE THE AVATAR AT ONCE - on the press, before anything
+        is kept (the user, 2026-11-12: after Good to know "1 recommendation" still stayed two
+        seconds): the line drawn from what it last showed, less this one, touching no database;
+        and not counted again until its answer is kept (`_show_waiting`)."""
+        item = self._showing or {}
+        notification_id = str(item.get("notification_id") or "")
+        if not notification_id:
+            return
+        if not hasattr(self, "_answering"):
+            self._answering = {}
+        if notification_id in self._answering:
+            return
+        name = ("Summaries" if item.get("summary") else
+                "Recommended content" if item.get("recommended") else "Reminders")
+        counts = dict(getattr(self, "_waiting_counts", None) or {})
+        if name == "Reminders" and not counts.get(name) and counts.get("Other"):
+            name = "Other"                   # one not a reminder: counted with the rest (category_of)
+        self._answering[notification_id] = name
+        if counts.get(name):
+            counts[name] -= 1
+        counts = {kind: n for kind, n in counts.items() if n > 0}
+        self._waiting_counts = counts
+        try:
+            if not counts:
+                self._hide_waiting()
+            elif getattr(self, "_waiting_line", None) is not None:
+                from ..common.notifications import waiting_lines
+                self._draw_waiting(waiting_lines(counts, self._words))
+        except tk.TclError:                  # pragma: no cover - drawn at the next look
+            pass
 
     def _remind_later(self, notification_id: str) -> None:
         try:
@@ -3054,8 +3540,9 @@ class DesktopAgent:
     def _bubble_todo(self, notification_id: str) -> None:
         """Close this bubble; no more notifications about it, and it is on
         the to-do list."""
+        self._answered_now()
         self._close_bubble()
-        threading.Thread(target=self._to_todo, args=(notification_id,),
+        threading.Thread(target=self._then_waiting(self._to_todo, read=True), args=(notification_id,),
                          name="bubble-todo", daemon=True).start()
 
     def _to_todo(self, notification_id: str) -> None:
@@ -3066,8 +3553,9 @@ class DesktopAgent:
 
     def _bubble_bad(self, notification_id: str) -> None:
         """Close this bubble, keep it as a bad notification, show the next."""
+        self._answered_now()
         self._close_bubble()
-        threading.Thread(target=self._mark_bad, args=(notification_id,),
+        threading.Thread(target=self._then_waiting(self._mark_bad, read=True), args=(notification_id,),
                          name="bubble-bad", daemon=True).start()
 
     def _mark_bad(self, notification_id: str) -> None:
@@ -3079,10 +3567,14 @@ class DesktopAgent:
 
     def _answer_question(self, question_id: str, key: str,
                          notification_id: str = "") -> None:
+        """READ FIRST, THEN ANSWERED (the user, 2026-11-10: after "Add to collection" "N
+        recommendation" still took two seconds to go): the notification is read and the line beside
+        the avatar drawn again at once; then the answer, which may keep a page in the collection."""
         try:
-            self.app.feedback.answer(question_id, key, notification_id=notification_id)
             if notification_id:
                 self.app.notifications.mark_read(notification_id)
+                self.on_main_thread(self._show_waiting)
+            self.app.feedback.answer(question_id, key, notification_id=notification_id)
         except Exception:                  # pragma: no cover - reported, not fatal
             log.exception("could not record the answer to %s", question_id)
 
@@ -3189,11 +3681,8 @@ class DesktopAgent:
                     f"{'' if tasks == 1 else 's'}, all of them grouped.")
         else:
             said = "I am watching again. Nothing grouped yet."
-        try:
-            self.app.notifications.notify(name, said, kind="info",
-                                          dedupe_key="greeting")
-        except Exception:        # pragma: no cover - a greeting, not the work
-            log.debug("could not say hello", exc_info=True)
+        # NO GREETING AS A NOTIFICATION (the user, 2026-11-13: "其它都取消"): said on the avatar.
+        self._hover_said = f"{name}\n{said}"
 
     def say_it_could_not_start(self) -> None:
         """And when it did not start, which matters more than a greeting.
@@ -3205,11 +3694,11 @@ class DesktopAgent:
         self._hover_said = (f"{self.app.avatar_name()}\n"
                             "Could not start - the log in internal/logs says why")
         try:
-            self.app.notifications.notify(
+            self.app.notifications.system(
                 self.app.avatar_name(),
                 "I could not start. The log in internal/logs has the "
                 "reason; nothing has been recorded in the meantime.",
-                kind="error", dedupe_key="start-failed")
+                kind="error", dedupe_key="start-failed", startup=True)
         except Exception:        # pragma: no cover
             log.debug("could not report the failure", exc_info=True)
 
@@ -3283,6 +3772,14 @@ class DesktopAgent:
         tray = getattr(self, "tray", None)
         if tray is not None:
             tray.stop()
+        # THE OVERVIEW'S WINDOW GOES WITH IT (the user, 2026-11-09: "agent关闭之后，自动把overview panel
+        # 也关了"): a page with no agent behind it only says it cannot reach it.
+        try:
+            from ..platform_layer.app_window import close_the_page, close_titled
+            close_the_page()
+            close_titled(self._notes_titles())          # the side panel too - put away or not
+        except Exception:        # pragma: no cover - the agent stops whatever
+            log.debug("the page's window could not be closed", exc_info=True)
         try:
             self.app.stop()
         finally:

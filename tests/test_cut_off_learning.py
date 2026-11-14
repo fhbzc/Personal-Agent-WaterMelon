@@ -400,7 +400,8 @@ class TheConnectionsTests(unittest.TestCase):
 
     def test_your_look_up_cut_off_is_said_to_have_failed_and_not_made_again_at_once(self) -> None:
         me = self.store.me()
-        self.store.add_profile(me["id"], "https://me.example")
+        # The user's own accounts are their Society account's (2026-11-12).
+        self.store.add_profile(me["id"], "https://me.example", by=self.store.SOCIETY)
         model = _Fake(lambda request: ("I looked at your page and found", CUT))
         round_ = self._round(model)
         said = round_._look_me_up(self._used(), lambda: True)

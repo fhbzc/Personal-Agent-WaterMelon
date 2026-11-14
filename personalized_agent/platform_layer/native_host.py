@@ -95,7 +95,8 @@ def answer(message: Dict[str, Any], data_dir: Path,
         return {"ok": finish_fill_order(data_dir, str(message.get("id") or ""))}
     if kind == "visible":
         from .browser_extension import keep_visible
-        keep_visible(data_dir, str(message.get("title") or ""), str(message.get("text") or ""))
+        keep_visible(data_dir, str(message.get("title") or ""), str(message.get("text") or ""),
+                     str(message.get("url") or ""))
         return {"ok": True}
     if kind in ("delegate", "learn"):
         picked = message.get("picked")

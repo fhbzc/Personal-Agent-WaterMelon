@@ -181,8 +181,15 @@ class ApiTests(unittest.TestCase):
 
     def test_the_monitor_panel_edits_and_names_one(self) -> None:
         """The user, 2026-11-07: the user edits a Monitor and gives it a display name."""
-        spam = next(one for one in self.get("/api/monitor")["activators"]
-                    if one["builtin"] == "spam_risk")
+        built_in = next(one for one in self.get("/api/monitor")["activators"]
+                        if one["builtin"] == "spam_risk")
+        with self.assertRaises(urllib.error.HTTPError) as fixed:     # fixed: on or off alone
+            self.post("/api/monitor/edit", {"id": built_in["id"], "changes": {"cooldown_minutes": 75}})
+        self.assertEqual(fixed.exception.code, 400)
+        ident, _w = self.app.monitor.store.add({"name": "Tide watch", "group": "other", "purpose": "the tide tables, when back",
+            "when": {"event": "back"},
+            "then": [{"do": "notify", "title": "Tides", "message": "New tables"}]}, "user", "the user's own")
+        spam = self.app.monitor.store.get(ident)
         said = self.post("/api/monitor/edit", {"id": spam["id"], "display_name": "Scam watch",
                                                "changes": {"cooldown_minutes": 75}})
         self.assertEqual(said["activator"]["display_name"], "Scam watch")

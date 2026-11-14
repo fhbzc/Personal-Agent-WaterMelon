@@ -134,16 +134,30 @@ class WorkStatusAsksTests(unittest.TestCase):
     def test_a_version_not_going_is_not_asked(self) -> None:
         self.assertEqual(self.app._work_asks([{"state": "finished", "run": "r1"}]), ([], []))
 
+    def _due_soon(self) -> None:
+        """Its work due before the next summary: told at once (the user, 2026-11-12: "带上ddl")."""
+        self.app.run_deadline = lambda run: "2026-11-13 09:00"
+        self.app.approvals.urgent = lambda due, now=None: True
+
+    def test_a_command_with_no_deadline_waits_for_the_report(self) -> None:
+        """2026-11-12: "作为approve的一环" - with the rest of what is to be approved, not at once."""
+        self.app.run_deadline = lambda run: ""
+        self.app.tell_work_waiting()
+        self.assertEqual(self.app.notifications.recent(), [])
+
     def test_told_once_and_it_pops(self) -> None:
+        self._due_soon()
         self.app.tell_work_waiting()
         self.app.tell_work_waiting()
         said = self.app.notifications.recent()
         self.assertEqual(len(said), 1)
         self.assertEqual(said[0]["kind"], "approval")
         self.assertIn("tide --update", said[0]["message"])
+        self.assertIn("2026-11-13 09:00", said[0]["message"], "its deadline said")
         self.assertEqual(self.app.notifications.waiting_count(), 0, "not kept in the list")
 
     def test_a_new_thing_asked_is_told_too(self) -> None:
+        self._due_soon()
         self.app.tell_work_waiting()
         self.pending = [dict(COMMAND, id="act_2", what="tide --again")]
         self.app.tell_work_waiting()

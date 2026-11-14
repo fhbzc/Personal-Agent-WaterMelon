@@ -750,7 +750,7 @@ class ThePageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as work:
             probe = Path(work) / "probe.html"
             probe.write_text(page, encoding="utf-8")
-            done = subprocess.run([engine, "--headless=new", "--disable-gpu", "--no-first-run",
+            done = subprocess.run([engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                                    f"--user-data-dir={work}/profile",
                                    "--virtual-time-budget=2000", "--dump-dom", probe.as_uri()],
                                   capture_output=True, text=True, encoding="utf-8",

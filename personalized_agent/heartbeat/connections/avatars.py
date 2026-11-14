@@ -153,6 +153,9 @@ def fetch_avatar(store: ConnectionsStore, person_id: str,
     person = store.get(person_id)
     if person is None:
         return {"ok": False, "error": "no such person"}
+    if person.get("is_self"):
+        # The user's own picture is their Agents Society account's (society/service.pull_profile).
+        return {"ok": False, "error": store.FROM_SOCIETY}
     if store.folder is None:
         return {"ok": False, "error": "no folder for pictures"}
     store.avatar_tried(person_id)

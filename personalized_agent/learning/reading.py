@@ -62,7 +62,7 @@ from ..models import answers
 from .authorship import init_made, line_authors, memory_source
 from .scrub import scrub
 from .store import STRENGTHS, LearningStore, dumps, now
-from .vocab import ASPECTS, ASPECT_WORDS, DIMENSIONS, OBJECT, Vocabulary
+from .vocab import ASPECTS, ASPECT_WORDS, DIMENSIONS, OBJECT, Vocabulary, with_word_list
 
 #: One call reads at most this much of a unit.
 CHUNK_CHARS = 50_000
@@ -80,6 +80,11 @@ FILES_LISTED = 120
 #: The first reading of a unit goes back this far first; what is older is
 #: read at the end of the update (`older`).
 RECENT_DAYS = 180
+#: SMALL CHANGES WAIT (the user, 2026-11-11): a unit read before is read again once all that
+#: waits in it since comes to this many characters, together...
+WAIT_CHARS = 2000
+#: ...or once the oldest of it has waited this many days (`waits`).
+WAIT_DAYS = 3
 DELIVERABLE_SUFFIXES = {".docx", ".doc", ".pptx", ".ppt", ".pdf", ".md", ".tex", ".txt",
                         ".html", ".rtf", ".odt", ".odp", ".key", ".pages", ".xlsx", ".ipynb"}
 #: What ask.Asker says of an answer that came and could not be taken (models/answers.py): asked
@@ -96,6 +101,9 @@ UNREADABLE = {answers.Answer(None, False, "").why_not, answers.Answer(None, Fals
               answers.Answer(None, True, "x").why_not}
 DATA_SUFFIXES = {".csv", ".tsv", ".jsonl", ".ndjson", ".log", ".json", ".parquet", ".npy"}
 
+#: A CONTINUED CASE, ONLY WHAT CHANGED (the user, 2026-11-11): an existing case was written whole
+#: again each time its unit was read; now its id and what changed, the rest kept as it was (`_keep`).
+#: The same in READ_OTHERS_PROMPT and activity.EARLIER_PROMPT.
 READ_PROMPT = """WRITE WHAT THIS PIECE OF THE USER'S WORK SHOWS: ITS CASES AND THE USER'S JUDGMENTS.
 
 You are shown one unit of the user's work - a project, or a group of their
@@ -109,9 +117,8 @@ user did as summarised from their screen.
 THIS RECORD IS FOR DOING THE USER'S WORK THE WAY THEY WOULD. Write:
 
 CASES - each one deliverable the work is about: a paper, a slide deck, an
-app, an email, a figure, a dataset. An existing case (listed with its id)
-is continued, never written again; a new one gets a ref "new1", "new2"...
-For each case:
+app, an email, a figure, a dataset. A NEW case gets a ref "new1", "new2"...
+and is written in full:
   - title: a few words naming the thing (which paper, which talk, which app);
   - facets: the terms from the WORD LIST it is, in each dimension -
     deliverable, audience (who it is for), presentation (how it reaches
@@ -126,6 +133,11 @@ For each case:
     budget page);
   - version: when a new version of it appeared in this stretch,
     {"at": "YYYY-MM-DD", "what": "what changed in it"}; otherwise null.
+AN EXISTING CASE (listed with its id) is continued, never written again:
+its id as "ref" and ONLY what changed in this stretch - a "version", the
+"looks_like" if it looks different now, new "locations" or "items", a facet
+or "how_made" newly shown. What you leave out is kept as it was. A case
+nothing changed in is not listed: its judgments name it by its id.
 
 JUDGMENTS - what THE USER decided, changed, sent back, asked for, approved
 or let stand, in a case. One judgment is one decision:
@@ -161,8 +173,9 @@ THE WORD LIST - choose from it. Only when no term fits, add one in
 with a one-line definition; then use its id "<dimension>:<term>".
 
 Return ONLY this JSON object:
-{"cases": [{"ref": "C-... or new1", "title": "", "facets": {"deliverable": ["deliverable:..."], ...},
-            "looks_like": "", "how_made": "", "locations": [], "items": [], "version": null}],
+{"cases": [{"ref": "new1", "title": "", "facets": {"deliverable": ["deliverable:..."], ...},
+            "looks_like": "", "how_made": "", "locations": [], "items": [], "version": null},
+           {"ref": "C-...", "version": {"at": "", "what": ""}, "items": ["only the new ones"]}],
  "judgments": [{"case": "", "item": "", "aspect": "", "object": "object:...", "direction": "",
                 "said": "", "why": "", "by": "user", "strength": "", "at": "", "refs": []}],
  "new_terms": [{"dim": "", "term": "", "parent": "", "definition": ""}]}"""
@@ -190,8 +203,8 @@ they want. With no angle, learn what makes it worth following.
 Write:
 
 CASES - the work itself, as a reference (one, or a few when it holds
-several distinct pieces of work). An existing case (listed with its id) is
-continued, a new one gets a ref "new1", "new2"...:
+several distinct pieces of work). A NEW case gets a ref "new1", "new2"...
+and is written in full:
   - title: a few words naming it;
   - facets: the terms from the WORD LIST it is, in each dimension -
     deliverable, audience, presentation, purpose, environment - as term ids;
@@ -200,6 +213,10 @@ continued, a new one gets a ref "new1", "new2"...:
     concrete);
   - how_made: how it is made, as far as it shows (1-2 sentences);
   - items: its parts that show what is endorsed (a chapter, a section).
+AN EXISTING CASE (listed with its id) is continued, never written again:
+its id as "ref" and ONLY what changed - the "looks_like" if it looks
+different now, new "items", a facet newly shown. What you leave out is kept
+as it was; a case nothing changed in is not listed.
 
 ENDORSED - what of it the user endorses, as their judgments, one each:
   - case: its id or ref; item: which part, if one;
@@ -222,8 +239,9 @@ THE WORD LIST - choose from it; only when no term fits, add one in
 definition) and use its id "<dimension>:<term>".
 
 Return ONLY this JSON object:
-{"cases": [{"ref": "C-... or new1", "title": "", "facets": {}, "looks_like": "", "how_made": "",
-            "items": []}],
+{"cases": [{"ref": "new1", "title": "", "facets": {}, "looks_like": "", "how_made": "",
+            "items": []},
+           {"ref": "C-...", "items": ["only the new ones"]}],
  "endorsed": [{"case": "", "item": "", "aspect": "", "object": "object:...", "direction": "",
                "why": ""}],
  "rules": [],
@@ -244,6 +262,38 @@ def _iso(stamp: float) -> str:
 
 def _sha(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _when(text: str) -> Optional[datetime]:
+    """A moment as written (ISO, a date alone, "Z" for UTC), in UTC; None when it is none."""
+    text = str(text or "").strip()
+    if not text:
+        return None
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def waits(unit: Dict[str, Any], pieces: Sequence["Piece"], cutoff: str) -> bool:
+    """SMALL CHANGES WAIT (the user, 2026-11-11): whether a unit read before waits for more,
+    its pieces left pending - not marked read, so nothing is lost. All that waits in it since it
+    was last read is counted together (`WAIT_CHARS`), and it waits at most `WAIT_DAYS` from the
+    oldest of it, or from when it first waited. Never its first read, nor the user's rules for
+    the agents (the rules unit, a CLAUDE.md or AGENTS.md): those are read at once. The update the
+    user started ("Update now", or an item added to learn now) does not ask (service.py)."""
+    if not pieces or not unit.get("first_read") or unit.get("kind") == "rules":
+        return False
+    if any(one.mark[0] == "rules" and (one.rule or {}).get("kind") == "rule" for one in pieces):
+        return False
+    if UnitReader.size(pieces) >= WAIT_CHARS:
+        return False
+    moments = [_when(one.at) for one in pieces]
+    moments.append(_when(str((unit.get("marks") or {}).get("waiting_since") or "")))
+    known = [one for one in moments if one is not None]
+    until = _when(cutoff) or datetime.now(timezone.utc)
+    return not known or until - min(known) < timedelta(days=WAIT_DAYS)
 
 
 class Piece:
@@ -544,6 +594,13 @@ class UnitReader:
             except (OSError, subprocess.SubprocessError):
                 continue
             lines = [line for line in (done.stdout or "").splitlines() if line.strip()]
+            # THE COMMIT ALREADY SEEN IS NOT NEW (the user, 2026-11-11): --since takes in the
+            # commit at the mark itself, so every unit with git came back with a "COMMITS" piece,
+            # and a read call, on every update. What is at or before the mark is left out.
+            mark = _when(str(seen.get(folder) or ""))
+            if mark is not None:
+                lines = [line for line in lines
+                         if (_when(line.split("|", 1)[0]) or mark) > mark]
             if not lines:
                 continue
             latest = lines[0].split("|", 1)[0]
@@ -795,6 +852,8 @@ class UnitReader:
             size += len(text)
         if not flush():
             return report
+        # Read whole: it waits no more (`waits`).
+        marks.pop("waiting_since", None)
         unit["marks"] = marks
         self.store.save_unit(unit)
         return report
@@ -895,23 +954,29 @@ class UnitReader:
             f"{one['looks_like'][:200]} items: {', '.join(one['items'][:12])}"
             for one in cases[-40:]] if cases else ["THE CASES OF THIS UNIT SO FAR: none"]
         text = "\n".join([
-            *head, "", *known, "", "THE WORD LIST:",
-            self.vocab.listing(list(DIMENSIONS) + [OBJECT]), "",
+            *head, "", *known, "",
             "WHAT IS THERE:" if item else "WHAT HAPPENED, IN ORDER:", *[one.text for one in part]])
+        # THE WORD LIST IN THE FIXED INSTRUCTIONS (the user, 2026-11-11): in the text of each call
+        # it was written to the cache anew every time; after the fixed prompt it is part of what
+        # stays the same from call to call, and read back from the cache (vocab.with_word_list).
+        dims = list(DIMENSIONS) + [OBJECT]
         if item and item["whose"] == "others":
             from .reasons import REASON_SHAPE
             prompt = READ_OTHERS_PROMPT.replace("{reason_shape}", REASON_SHAPE)
-            return self.ask("read", prompt, text, 8000, "the case, what is endorsed and its rules")
+            return self.ask("read", with_word_list(prompt, self.vocab, dims), text, 8000,
+                            "the case, what is endorsed and its rules")
         if unit.get("kind") == "earlier":
             prompt = EARLIER_PROMPT.replace("{aspects}", "; ".join(
                 f'"{name}" - {words}' for name, words in ASPECT_WORDS.items()))
-            return self.ask("read", prompt, text, 8000, "the cases and judgments")
+            return self.ask("read", with_word_list(prompt, self.vocab, dims), text, 8000,
+                            "the cases and judgments")
         prompt = READ_PROMPT
         if any(one.mark[0] == "activity" for one in part):
             prompt += "\n\n" + ACTIVITY_NOTE
         if item and item["kind"] == "url":
             prompt += "\n\n" + MATERIAL
-        return self.ask("read", prompt, text, 8000, "the cases and judgments")
+        return self.ask("read", with_word_list(prompt, self.vocab, dims), text, 8000,
+                        "the cases and judgments")
 
     def _keep_earlier(self, unit: Dict[str, Any], said: Dict[str, Any], shown: str,
                       report: Dict[str, Any], part: Sequence[Piece]) -> None:
@@ -991,6 +1056,11 @@ class UnitReader:
                 continue
             ref = str(one.get("ref") or "")
             existing = self.store.case(ref) if ref.startswith("C-") else None
+            # ONLY WHAT CHANGED (the user, 2026-11-11): what a continued case leaves out keeps
+            # what it was - each field below is set only when given. An id that is no case, with
+            # no title, is a change of nothing kept: not made a case of its own.
+            if ref.startswith("C-") and existing is None and not one.get("title"):
+                continue
             case = existing or {"unit_id": unit["id"], "began": "", "ended": ""}
             if one.get("title"):
                 case["title"] = str(one["title"])[:200]
@@ -1095,9 +1165,9 @@ class UnitReader:
         self._keep(unit, {"cases": cases, "judgments": [],
                           "new_terms": said.get("new_terms") or []}, shown, report)
         refs = dict(self._last_refs or {})
-        if not refs:
-            for case in self.store.cases(unit["id"]):
-                refs[case["id"]] = case["id"]
+        # A case nothing changed in is not listed (2026-11-11): still found by its id.
+        for case in self.store.cases(unit["id"]):
+            refs.setdefault(case["id"], case["id"])
         first_case = next(iter(refs.values()), "")
         added: Dict[str, str] = {}
         angle = (item.get("angle") or "").strip()

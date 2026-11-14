@@ -103,6 +103,12 @@ def _task_value(value: ast.AST, constants: Dict[str, str]) -> str:
     if isinstance(value, ast.Call) and _callee(value) == "model_task":
         part = _text(value.args[1]) if len(value.args) > 1 else None
         return f"experience_{part}" if part else "experience"
+    if isinstance(value, ast.BoolOp):
+        # `getattr(self, "task_name", "") or model_task(...)`: the first part read.
+        for one in value.values:
+            said = _task_value(one, constants)
+            if said:
+                return said
     return ""
 
 

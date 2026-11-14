@@ -141,7 +141,13 @@ def forbidden(text: str, places: Sequence[Path]) -> Optional[str]:
     for pattern, why in _OUT:
         if pattern.search(words):
             return f"{why} - never done here, approved or not"
-    low = words.replace("\\\\", "\\").lower()
+    return names_kept_place(words, places)
+
+
+def names_kept_place(text: Any, places: Sequence[Path]) -> Optional[str]:
+    """Why a command may never run because of WHERE it reaches - the agent's own data, where
+    sign-ins are kept - or None. Held even for a command the user approved in a plan."""
+    low = str(text or "").replace("\\\\", "\\").lower()
     for place in places:
         for spelled in _spellings(place):
             if spelled and spelled in low:

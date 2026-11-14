@@ -244,6 +244,14 @@ class TheBubbleTests(unittest.TestCase):
         self.root.update()
         return bubble
 
+    def test_no_link_to_the_full_chat_in_its_line(self) -> None:
+        """The user, 2026-11-09: "那个chat里不需要open the full chat"."""
+        bubble = self._bubble(lambda *_a, **_k: {})
+        said = [str(one.cget("text")) for one in bubble.head.winfo_children()
+                if one.winfo_class() == "Label"]
+        self.assertNotIn("Open the full chat", said)
+        self.assertIn("✕", said)
+
     def test_it_says_what_goes_with_a_message_and_it_can_be_taken_off(self) -> None:
         front = {"title": "Tide tables - Chrome", "address": "https://example.com/tides"}
         bubble = self._bubble(lambda *_a, **_k: {}, front=lambda: dict(front))
@@ -259,6 +267,28 @@ class TheBubbleTests(unittest.TestCase):
         bubble._draw_front({"title": "Notes - Word"})
         self.assertEqual(bubble.front_off, "", "another window: told again")
         self.assertTrue(bubble.front_row.winfo_children())
+
+    def test_a_window_switched_to_neither_scrolls_the_chat_nor_changes_its_height(self) -> None:
+        """The user, 2026-11-11: "我做一个屏幕/窗口的切换他就会自动拖到chat的最底下"; "窗口名不一样长
+        也会导致chat不断变化"."""
+        front = {"title": "Short"}
+        bubble = self._bubble(lambda *_a, **_k: {}, front=lambda: dict(front))
+        self._settle(0.3)
+        for one in range(40):
+            bubble._write("You", "you", f"Line {one} of a long chat, read from its top")
+        self.root.update()
+        bubble.said.yview_moveto(0.0)
+        self.root.update()
+        tall = bubble.window.winfo_height()
+        for title in ("A much longer window title, as a browser has with its page - " * 3, "Mid"):
+            bubble._draw_front({"title": title})
+            self.root.update()
+            self.assertEqual(bubble.said.yview()[0], 0.0, "still where they were reading")
+            self.assertEqual(bubble.window.winfo_height(), tall, title[:20])
+        shown = bubble.front_row.winfo_children()[0]
+        bubble._draw_front({"title": "A much longer window title, as a browser has with its page - " * 3})
+        shown = bubble.front_row.winfo_children()[0]
+        self.assertTrue(str(shown.cget("text")).endswith("…"), "cut, and said to be")
 
     def test_the_picture_that_went_with_a_message_is_shown_under_it(self) -> None:
         """The user, 2026-11-08: "每次发出去的时候，显示当前发给模型的屏幕截屏长什么样"."""

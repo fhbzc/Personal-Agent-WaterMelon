@@ -111,6 +111,8 @@ def _classes() -> Tuple[Any, Any]:
             closing = note.object()
             _open[:] = [one for one in _open if one[0] is not closing
                         and one[0].windowNumber() != closing.windowNumber()]
+            for title in [key for key, one in _side.items() if one[0] is closing]:
+                _side.pop(title, None)
 
     _UI, _WINDOW = _PageDelegate, _WindowDelegate
     return _UI, _WINDOW
@@ -127,8 +129,8 @@ def _asked(message: Any, *buttons: str) -> Any:
 
 
 def open_panel(url: str, size: Tuple[int, int] = (780, 900), title: str = TITLE,
-               keeps: bool = False) -> bool:
-    """`url` in a panel of its own, in the middle of the screen, in front -
+               keeps: bool = False, frame: Any = None, front: bool = True) -> bool:
+    """`url` in a panel of its own, in the middle of the screen (or at `frame`), in front -
     False where one cannot be made, for the caller to open it otherwise. `keeps`: what the page
     stores is there the next time."""
     try:
@@ -139,8 +141,8 @@ def open_panel(url: str, size: Tuple[int, int] = (780, 900), title: str = TITLE,
         seen = AppKit.NSScreen.mainScreen().visibleFrame()
         width = min(float(size[0]), seen.size.width - 40)
         height = min(float(size[1]), seen.size.height - 40)
-        frame = ((seen.origin.x + (seen.size.width - width) / 2,
-                  seen.origin.y + (seen.size.height - height) / 2), (width, height))
+        frame = frame or ((seen.origin.x + (seen.size.width - width) / 2,
+                           seen.origin.y + (seen.size.height - height) / 2), (width, height))
         style = (AppKit.NSWindowStyleMaskTitled | AppKit.NSWindowStyleMaskClosable
                  | AppKit.NSWindowStyleMaskResizable | AppKit.NSWindowStyleMaskMiniaturizable)
         window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
@@ -160,11 +162,112 @@ def open_panel(url: str, size: Tuple[int, int] = (780, 900), title: str = TITLE,
         view.loadRequest_(Foundation.NSURLRequest.requestWithURL_(
             Foundation.NSURL.URLWithString_(url)))
         _open.append((window, view, page, closing))
-        AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-        window.makeKeyAndOrderFront_(None)
+        if front:                                  # else ordered in by the caller (`side_panel`)
+            AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            window.makeKeyAndOrderFront_(None)
         return True
     except Exception:
         log.warning("no panel of its own for the box - the browser instead", exc_info=True)
+        return False
+
+
+#: THE PANELS DOWN THE SIDE OF THE SCREEN (the waiting notifications, the user, 2026-11-13: "直接占满整个
+#: 侧边框的那种"; "有没有更natural的方式从侧边弹出"; "Mac上的面板为什么不改呢"): by title - slid in from the
+#: right edge as tall as the screen, slid out and kept (ordered out), slid back in at once.
+_side: dict = {}
+
+
+def _side_frames(window: Any, width: float) -> Tuple[Any, Any]:
+    """(off the right edge, in place) for a side panel `width` wide, on the screen it is on."""
+    import AppKit
+    screen = (window.screen() if window is not None else None) or AppKit.NSScreen.mainScreen()
+    seen = screen.visibleFrame()
+    width = min(float(width), seen.size.width)
+    right = seen.origin.x + seen.size.width
+    return (((right, seen.origin.y), (width, seen.size.height)),
+            ((right - width, seen.origin.y), (width, seen.size.height)))
+
+
+#: How long it slides, in or out, and in so many steps (the system's own animation of a window's
+#: frame did not move it, tried on the lab Mac 2026-11-13: it stayed where it was).
+SIDE_SLIDE_SECONDS, SIDE_SLIDE_STEPS = 0.18, 12
+
+
+def _slide_to(window: Any, frame: Any) -> None:
+    """`window` slid to `frame`: quick, then easing into place."""
+    import time
+    x0, x1 = float(window.frame().origin.x), float(frame[0][0])
+    for step in range(1, SIDE_SLIDE_STEPS + 1):
+        done = 1 - (1 - step / SIDE_SLIDE_STEPS) ** 3
+        window.setFrame_display_(((x0 + (x1 - x0) * done, frame[0][1]), frame[1]), True)
+        time.sleep(SIDE_SLIDE_SECONDS / SIDE_SLIDE_STEPS)
+
+
+def side_panel(url: str, width: float, title: str) -> bool:
+    """`url` in a panel down the right side, slid in - the one put away by `hide_side_panel` slid back
+    in, one shown already to the front. False where one cannot be made. On the main thread."""
+    try:
+        import AppKit
+        found = _side.get(title)
+        if found is None:
+            off, _in_place = _side_frames(None, width)
+            if not open_panel(url, (width, 900), title, frame=off, front=False):
+                return False
+            found = next((one for one in _open if str(one[0].title()) == title), None)
+            if found is None:
+                return False
+            _side[title] = found
+        window = found[0]
+        if window.isVisible() and not window.isMiniaturized() and window.alphaValue() > 0:
+            AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            window.makeKeyAndOrderFront_(None)
+            return True
+        if window.isMiniaturized():
+            window.deminiaturize_(None)
+        off, in_place = _side_frames(window, window.frame().size.width or width)
+        # Unseen while it is put off the edge - the system would pull a window ordered in off the
+        # screen back onto it - then slid in.
+        window.setAlphaValue_(0.0)
+        AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        window.makeKeyAndOrderFront_(None)
+        window.setFrame_display_(off, False)
+        window.setAlphaValue_(1.0)
+        _slide_to(window, in_place)
+        return True
+    except Exception:
+        log.warning("the side panel could not be slid in", exc_info=True)
+        return False
+
+
+def hide_side_panel(title: str) -> bool:
+    """The side panel titled `title` slid out to the right edge and put away - kept, for
+    `side_panel`. On the main thread."""
+    found = _side.get(title)
+    if found is None:
+        return False
+    try:
+        window = found[0]
+        if window.isVisible():
+            off, _in_place = _side_frames(window, window.frame().size.width)
+            _slide_to(window, off)
+            window.orderOut_(None)
+        return True
+    except Exception:
+        log.warning("the side panel could not be slid out", exc_info=True)
+        return False
+
+
+def has_side_panel(title: str) -> bool:
+    """Whether a side panel titled `title` is made (shown or put away) - asked from any thread."""
+    return title in _side
+
+
+def side_panel_shown(title: str) -> bool:
+    """Whether the side panel titled `title` is on the screen. On the main thread."""
+    found = _side.get(title)
+    try:
+        return found is not None and bool(found[0].isVisible()) and not found[0].isMiniaturized()
+    except Exception:
         return False
 
 
@@ -247,4 +350,5 @@ def open_the_page(url: str) -> bool:
 
 
 __all__ = ["available", "open_panel", "TITLE", "PAGE_TITLE", "open_the_page",
-           "bring_back_the_page", "zoomed"]
+           "bring_back_the_page", "zoomed", "side_panel", "hide_side_panel", "has_side_panel",
+           "side_panel_shown"]

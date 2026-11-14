@@ -5,15 +5,19 @@ agent id, 是一个unique的，存在用户本机上 (放在data里，卸载也�
 * TWO KEYS, made on this computer the first time the agent starts without
   them: Ed25519, to sign what the agent says; X25519, to open what is sealed
   for it - its public half signed by the first, so no one can put another in.
-* ITS PUBLIC ID is the Ed25519 public key's hash, short, for people:
-  `pa-XXXX-XXXX-XXXX-XXXX` (the server's society/ids.py makes it
-  the same way). The private keys are never shown, never sent.
+* THE KEY'S OWN ID is the Ed25519 public key's hash, short:
+  `pa-XXXX-XXXX-XXXX-XXXX` - the agent's id under the site's old v1 API.
+  Since v2 (2026-11-10) the agent acts for the USER'S ACCOUNT, made on the
+  website (`pa-XXXX-XXXX` since 2026-11-12): a key of it is GIVEN to this
+  agent, which the site knows by its AGENT ID - its public key's
+  fingerprint (`key_code`, the pairing's request code, `XXXX-XXXX-XXXX`).
+  The private keys are never shown, never sent.
 * KEPT IN THE DATA FOLDER (credentials/), not the system keychain: it stays
   when the program is uninstalled, and moves with the user's data. Encrypted
   there with a key file beside it that only this user may read.
-* A BACKUP (`export`): the public id alone, or - when the user says so - the
-  private keys too, sealed with a PASSPHRASE of theirs (scrypt, then
-  AES-GCM): without it the file opens for no one. `restore` takes it back.
+* NO BACKUP OF IT (the user, 2026-11-13: "去掉，全部用新的key形式"): the site gives this
+  agent a key of the user's account; lost - a new computer, the data gone - the agent
+  makes a new identity and is paired again, the old key taken back on the website.
 """
 
 from __future__ import annotations
@@ -22,7 +26,6 @@ import base64
 import hashlib
 import json
 import os
-import secrets
 import stat
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -31,15 +34,9 @@ from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 FILE, KEY_FILE = "society_identity.json", "society_identity.secret"
-BACKUP_KIND = "personal-agent-identity"
-#: A passphrase at least this long.
-LEAST_PASSPHRASE = 8
-SCRYPT = {"n": 2 ** 15, "r": 8, "p": 1}
 
 
 def b64(raw: bytes) -> str:
@@ -63,21 +60,26 @@ def short_id(public_key: bytes) -> str:
 
 
 def key_code(public_key: bytes) -> str:
-    """A key's fingerprint as the server names it (v2's X-Key): 60 bits of
-    its hash in Crockford's base32, `XXXX-XXXX-XXXX`. Of the PUBLIC key."""
+    """A key's fingerprint as the server names it (v2's X-Key, and the
+    pairing's request code): the low 60 bits of the first 8 bytes of
+    sha256(b"pa-key\\0" + the raw 32-byte PUBLIC key), big-endian, in
+    Crockford's base32, `XXXX-XXXX-XXXX`."""
     number = int.from_bytes(hashlib.sha256(b"pa-key\x00" + public_key).digest()[:8], "big")
     chars = "".join(CROCKFORD[(number >> (5 * n)) & 31] for n in range(12))[::-1]
     return "-".join(chars[at:at + 4] for at in range(0, 12, 4))
 
 
 def normal_id(text: Any) -> Optional[str]:
+    """An account id as the site writes it - in any case, with or without its dashes. SHORT now
+    (the site's API, 2026-11-12): `pa-XXXX-XXXX`; one made before ids were short,
+    `pa-XXXX-XXXX-XXXX-XXXX`, is still found by the site under that id, and kept as it is."""
     raw = "".join(str(text or "").split()).replace("-", "").upper()
     if raw.startswith("PA"):
         raw = raw[2:]
     raw = raw.replace("O", "0").replace("I", "1").replace("L", "1")
-    if len(raw) != 16 or any(ch not in CROCKFORD for ch in raw):
+    if len(raw) not in (8, 16) or any(ch not in CROCKFORD for ch in raw):
         return None
-    return "pa-" + "-".join(raw[at:at + 4] for at in range(0, 16, 4))
+    return "pa-" + "-".join(raw[at:at + 4] for at in range(0, len(raw), 4))
 
 
 def _raw(key: Any) -> bytes:
@@ -173,45 +175,5 @@ def load_or_make(folder: Path) -> Identity:
     return made
 
 
-# -- a backup, and taking it back -------------------------------------------------------------
-def export(identity: Identity, passphrase: Optional[str] = None) -> Dict[str, Any]:
-    """A backup of the identity: its public id alone - or, with a passphrase,
-    its private keys too, sealed with it."""
-    said: Dict[str, Any] = dict(identity.public(), kind=BACKUP_KIND, v=1)
-    if passphrase is None:
-        said["private"] = False
-        return said
-    if len(passphrase) < LEAST_PASSPHRASE:
-        raise ValueError(f"a passphrase is at least {LEAST_PASSPHRASE} characters")
-    salt, nonce = secrets.token_bytes(16), secrets.token_bytes(12)
-    key = Scrypt(salt=salt, length=32, **SCRYPT).derive(passphrase.encode("utf-8"))
-    box = AESGCM(key).encrypt(nonce, json.dumps(identity._private()).encode("utf-8"),
-                              f"{BACKUP_KIND}-v1:{identity.id}".encode("utf-8"))
-    said.update(private=True, sealed={"kdf": "scrypt", **SCRYPT, "salt": b64(salt),
-                                      "nonce": b64(nonce), "box": b64(box)})
-    return said
-
-
-def restore(backup: Dict[str, Any], passphrase: str) -> Identity:
-    """The identity a backup holds - only with its passphrase."""
-    if not isinstance(backup, dict) or backup.get("kind") != BACKUP_KIND:
-        raise ValueError("this is not a backup of an agent's key")
-    if not backup.get("private"):
-        raise ValueError("this backup holds the agent's id alone, not its key")
-    sealed = backup.get("sealed") or {}
-    try:
-        key = Scrypt(salt=unb64(sealed["salt"]), length=32, n=int(sealed["n"]),
-                     r=int(sealed["r"]), p=int(sealed["p"])).derive(passphrase.encode("utf-8"))
-        keys = json.loads(AESGCM(key).decrypt(unb64(sealed["nonce"]), unb64(sealed["box"]),
-                                              f"{BACKUP_KIND}-v1:{backup['id']}"
-                                              .encode("utf-8")))
-    except Exception:
-        raise ValueError("the passphrase does not open this backup") from None
-    identity = Identity._from_private(keys)
-    if identity.id != backup.get("id"):
-        raise ValueError("this backup's key is not its id's")
-    return identity
-
-
-__all__ = ["Identity", "load", "load_or_make", "save", "export", "restore", "short_id",
-           "normal_id", "b64", "unb64"]
+__all__ = ["Identity", "load", "load_or_make", "save", "short_id",
+           "normal_id", "key_code", "b64", "unb64"]

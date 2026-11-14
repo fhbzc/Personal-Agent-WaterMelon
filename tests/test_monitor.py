@@ -119,19 +119,29 @@ class MonitorTests(unittest.TestCase):
     def _builtin(self, key):
         return next(one for one in self.store.list() if one["builtin"] == key)
 
-    def test_the_built_in_ones_three_protected(self) -> None:
+    def test_the_built_in_ones_all_protected_and_fixed(self) -> None:
         listed = {one["builtin"]: one for one in self.store.list()}
         for key in ("invitation", "time_agreed", "spam_risk", "day_began", "back", "old_project",
-                    "new_text", "leisure", "morning", "evening",
-                    "evening_closing"):
+                    "new_text", "leisure", "morning", "evening_closing",
+                    "calendar_reminder", "summary", "system"):
             self.assertIn(key, listed)
-        # No break reminder by default (the user, 2026-11-07): the user's own to add.
+        # No break reminder by default (the user, 2026-11-07): the user's own to add. And the evening
+        # report by the hours, gone (2026-11-13: "closing up the evening和the day ahead 这两个保留").
         self.assertNotIn("break", listed)
         self.assertNotIn("work_break", listed)
-        self.assertEqual({key for key, one in listed.items() if one["protected"]},
-                         {"invitation", "time_agreed", "spam_risk"})
-        # Written once: one deleted is not brought back.
-        self.store.delete(listed["leisure"]["id"], "chat", "the user rests without the agent")
+        self.assertNotIn("evening", listed)
+        # EVERY ONE PROTECTED AND FIXED (the user, 2026-11-13: "现在设置的几个monitor都是protected, 不允许改").
+        self.assertEqual({key for key, one in listed.items() if one["protected"]}, set(listed))
+        with self.assertRaisesRegex(ValueError, "only be switched on or off"):
+            self.store.user_edit(listed["leisure"]["id"], {"cooldown_minutes": 5})
+        with self.assertRaisesRegex(ValueError, "only be switched on or off"):
+            self.store.protect(listed["leisure"]["id"], False)
+        with self.assertRaisesRegex(ValueError, "protected"):
+            self.store.delete(listed["leisure"]["id"], "chat", "the user rests without the agent")
+        self.store.switch(listed["leisure"]["id"], False)
+        self.assertFalse(self.store.get(listed["leisure"]["id"])["enabled"], "switched off, as ever")
+        # Written once: one taken out is not brought back.
+        self.store.delete(listed["leisure"]["id"], "built in", "taken out of the application")
         from personalized_agent.heartbeat.monitor.builtins import builtins
         self.assertEqual(self.store.seed(builtins()), 0)
 
@@ -175,7 +185,10 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(len([one for one in self.store.changes(ident) if one["op"] == "delete"]), 1)
 
     def test_a_protected_one_is_never_changed_by_the_model(self) -> None:
-        spam = self._builtin("spam_risk")
+        ident, _w = self.store.add({"name": "Tide watch", "group": "other", "purpose": "the tide tables, when back",
+            "when": {"event": "back"},
+            "then": [{"do": "notify", "title": "Tides", "message": "New tables"}]}, "user", "the user's own")
+        spam = self.store.protect(ident, True)
         said = apply_program(self.store, {"op": "edit", "id": spam["id"],
                                           "changes": {"cooldown_minutes": 1}, "why": "x"}, "heartbeat")
         self.assertIn("protected", said["error"])
@@ -190,6 +203,9 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(self.store.get(spam["id"])["cooldown_minutes"], 45)
         ops = [(one["by"], one["op"]) for one in self.store.changes(spam["id"])]
         self.assertEqual(ops[:2], [("heartbeat", "edit"), ("user", "unprotect")])
+        # A built-in one: protected for good.
+        with self.assertRaisesRegex(ValueError, "only be switched on or off"):
+            self.store.protect(self._builtin("spam_risk")["id"], False)
 
     def test_said_at_once_with_why_it_was_made_and_held_to_its_limits(self) -> None:
         brk = _a_break(self.store)
@@ -390,7 +406,7 @@ class MonitorTests(unittest.TestCase):
         plain = dict(self.FIRST, then=[{"do": "notify", "min_score": 8, "title": "Careful"}])
         ident, _warnings = self.store.add(plain, "chat", "the user asked")
         self.assertNotIn("and_then", self.store.get(ident)["then"][0])
-        self.assertNotIn("and_then", self._builtin("evening")["then"][0])
+        self.assertNotIn("and_then", self._builtin("evening_closing")["then"][0])
 
     def test_what_may_follow_is_held_by_code(self) -> None:
         for follow in ({"do": "notify"}, {"do": "ask_model", "handler": "judge"},
@@ -892,7 +908,10 @@ class TheUsersOwnNameAndEditTests(unittest.TestCase):
         self.assertEqual(self.store.get(ident)["display_name"], "Another")
 
     def test_the_user_edits_even_a_protected_one_and_it_is_theirs(self) -> None:
-        spam = self._spam()
+        ident, _w = self.store.add({"name": "Tide watch", "group": "other", "purpose": "the tide tables, when back",
+            "when": {"event": "back"},
+            "then": [{"do": "notify", "title": "Tides", "message": "New tables"}]}, "user", "the user's own")
+        spam = self.store.protect(ident, True)
         self.assertTrue(spam["protected"])
         clean, _warnings = self.store.user_edit(spam["id"], {"cooldown_minutes": 90,
                                                              "delivery": "wait", "name": "x"})
@@ -902,6 +921,9 @@ class TheUsersOwnNameAndEditTests(unittest.TestCase):
         self.assertFalse(self.store._untouched(spam["id"]), "kept as theirs")
         with self.assertRaises(ValueError):
             self.store.user_edit(spam["id"], {"when": {"signal": "no_such", "op": "==", "value": 1}})
+        # A built-in one, not even by the user: on or off alone.
+        with self.assertRaisesRegex(ValueError, "only be switched on or off"):
+            self.store.user_edit(self._spam()["id"], {"cooldown_minutes": 90})
 
     def test_the_page_edits_and_the_name_is_what_they_see(self) -> None:
         from personalized_agent.common.notifications import told_from
@@ -1059,7 +1081,14 @@ class EarnedByEvidenceTests(unittest.TestCase):
         self.monitor, self.tools = self.app.monitor, self.app.agent.tools
         self.store = self.monitor.store
         self.app.lesson_retriever.embedder = None
+        # THE USER'S OWN, NOT PROTECTED - the built-in ones are fixed (2026-11-13: "不允许改").
+        for n in range(5):
+            self.store.add({"name": f"Tide watch {n}", "group": "other", "purpose": f"tides {n}",
+                            "when": {"event": "back"}, "cooldown_minutes": 30 + n,
+                            "then": [{"do": "notify", "title": f"Tides {n}", "message": "New tables"}]},
+                           "user", "the user's own")
         self.free = [one for one in self.store.list() if not one["protected"]]
+        self.assertGreaterEqual(len(self.free), 5)
 
     def tearDown(self) -> None:
         self.agent.cleanup()
@@ -1483,7 +1512,7 @@ class TheUsersOwnWorkTests(unittest.TestCase):
         engine.latest = {"present": False, "events": []}
         listed = {one["builtin"]: one for one in engine.store.list()}
         now = datetime.now(timezone.utc)
-        self.assertEqual(engine._held(listed["evening"], "tick", now), "")
+        self.assertEqual(engine._held(listed["evening_closing"], "tick", now), "")
         self.assertEqual(engine._held(listed["leisure"], "tick", now), "the user is away")
 
     def test_the_day_ahead_is_written_once_from_what_today_holds(self) -> None:

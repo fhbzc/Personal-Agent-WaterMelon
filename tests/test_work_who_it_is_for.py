@@ -38,7 +38,8 @@ class WhoItIsForTests(unittest.TestCase):
         self.app.connections.add_account(ada["id"], platform="email",
                                          handle="ada@northmoor.example")
         me = self.app.connections.me()
-        self.app.connections.edit(me["id"], summary="A doctoral student who studies star maps.")
+        self.app.connections.edit(me["id"], by="society",
+                                  summary="A doctoral student who studies star maps.")
         _state(self.app, "st_1", "Ada asked about a talk",
                "Prof. Quillfeather wrote that the lab is busy in November and asked about "
                "December.", "2026-10-30T09:00:00+00:00")

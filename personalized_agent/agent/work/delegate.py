@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -234,6 +235,17 @@ FRONT_NOTE = ("What was on the user's screen when they delegated this, read by t
               "their words point to it. Its \"picture\" is a screenshot, which read_file shows.")
 
 
+#: WORK THE AGENT STARTS BY ITSELF (the day's plan, heartbeat/agenda/execute.py): it writes only in
+#: its own work folder - no folder granted, none read but to read, never outside the sandbox.
+OWN_FOLDER_ONLY = ("agenda",)
+
+
+def started_by(draft: Optional[Dict[str, Any]]) -> str:
+    """The module a piece of work was started by, when not by the user (common/modules.py
+    STARTED_BY_SOURCE): its calls are that module's."""
+    from ...common.modules import STARTED_BY_SOURCE
+    return STARTED_BY_SOURCE.get(str((draft or {}).get("source") or ""), "")
+
 class Drafts:
     """The `work_drafts` rows: each piece of work handed over, from its
     context to its run."""
@@ -248,7 +260,16 @@ class Drafts:
         self._lock = threading.Lock()
         #: The drafts waiting for their plan to be started (`_when_ready`).
         self._waiting: set = set()
-        self._resume_waiting()
+        #: The drafts set collecting or drafting by this agent since it started: one still collecting
+        #: or drafting and not among them was left so when the agent closed (`carry_on`) - a
+        #: draft's own process ends with the agent (common/children.py `popen`).
+        self._going: set = set()
+        # ONLY THE APPLICATION ITSELF WAITS TO START THEM (2026-11-11): a run's child, building its
+        # own application, took up a draft waiting to start, refused it - "a run is already going",
+        # its own - and took the wish to start away from the agent's wait (runner.CHILD_ENV).
+        from .runner import CHILD_ENV
+        if not os.environ.get(CHILD_ENV):
+            self._resume_waiting()
 
     # -- the agent's side ---------------------------------------------------------------------
     def create(self, text: str = "", folders: Optional[List[str]] = None,
@@ -608,6 +629,7 @@ class Drafts:
     def _collect_apart(self, draft_id: str) -> None:
         """Collected and drafted in a process of its own - or, where runs go
         in this process, on a thread of its own."""
+        self._going.add(draft_id)
         work = self.app.work
         if getattr(work, "in_subprocess", False) and getattr(work, "paths", None) is not None:
             from .child import spawn_draft
@@ -956,6 +978,12 @@ class Drafts:
 
     # -- collecting and drafting (in the draft's own process) -----------------------------------
     def collect_and_plan(self, draft_id: str) -> Optional[Dict[str, Any]]:
+        """Collected and planned - its calls counted for whoever started it (`started_by`)."""
+        from ...common.observability.started import on_behalf
+        with on_behalf(started_by(self.get(draft_id))):
+            return self._collect_and_plan(draft_id)
+
+    def _collect_and_plan(self, draft_id: str) -> Optional[Dict[str, Any]]:
         draft = self.get(draft_id)
         if draft is None or draft["status"] not in (COLLECTING, FAILED):
             return draft
@@ -1366,13 +1394,16 @@ class Drafts:
                 said = {"error": f"{type(exc).__name__}: {exc}"[:600]}
             if said.get("error"):
                 self._set(draft_id, status=before, error=str(said["error"])[:600])
-                self._did_not_start(draft_id, str(said["error"]))
-            else:
-                self._started_after_all(draft_id)
+            # ITS START OVER AS SOON AS IT IS WRITTEN: what is told of it after (a notification
+            # takes a moment) is not part of it - a draft read meanwhile was still "starting".
             with self._lock:
                 self._started[draft_id] = {k: v for k, v in said.items()
                                            if isinstance(v, (str, int, float, bool, type(None)))}
                 self._starting.discard(draft_id)
+            if said.get("error"):
+                self._did_not_start(draft_id, str(said["error"]))
+            else:
+                self._started_after_all(draft_id)
 
         threading.Thread(target=go, name=f"work-start-{draft_id}", daemon=True).start()
         return {"starting": True, "draft": draft_id}
@@ -1390,7 +1421,7 @@ class Drafts:
         if notifications is None:
             return
         try:
-            notifications.notify("Delegated work did not start",
+            notifications.system("Delegated work did not start",
                                  f"{self._title_of(draft)}: {str(why)[:300]}",
                                  kind="warning", dedupe_key=f"work-start-failed-{draft_id}",
                                  action_hint="Open it under Work assigned on the Overview, "
@@ -1454,6 +1485,14 @@ class Drafts:
                                      folders=wanted.get("folders", draft.get("folders")),
                                      options={"plan_unseen": True})
                     return
+                ended = self._drafting_ended(draft_id)
+                if ended:
+                    # ITS OWN PROCESS ENDED IN AN ERROR (2026-11-11: "database is locked" - it
+                    # could not write even that, and this waited the full half hour): failed, and
+                    # started on the next look as any plan not drafted - from what was handed over.
+                    log.warning("the draft %s ended without its plan: %s", draft_id, ended)
+                    self._set(draft_id, status=FAILED, error=f"could not draft the plan: {ended}"[:500])
+                    continue
                 time.sleep(every)
             why = "its plan was not drafted in time - start it again"
             draft = self.get(draft_id) or {}
@@ -1463,6 +1502,42 @@ class Drafts:
         finally:
             with self._lock:
                 self._waiting.discard(draft_id)
+
+    def _drafting_ended(self, draft_id: str) -> str:
+        """Why the process drafting it ended without a plan, as its reply says - "" while it goes,
+        when it ended well, or when it is drafted here, in this process."""
+        work = getattr(self.app, "work", None)
+        if not getattr(work, "in_subprocess", False) or getattr(work, "paths", None) is None:
+            return ""
+        from .child import REPLY, children_dir, read_json
+        said = read_json(children_dir(work.paths) / ("draft-" + draft_id) / REPLY)
+        return str(said.get("error") or "") if isinstance(said, dict) else ""
+
+    def carry_on(self, draft_id: str) -> bool:
+        """LEFT HALF DONE, CARRIED ON WHEN OPENED (the user, 2026-11-09: "点开之后就是自动运行的"): a
+        draft still collecting or drafting that nothing here is working on - the agent closed while
+        it was - collected and drafted again. False when it is not such a draft."""
+        draft = self.get(draft_id)                    # `get` takes the lock itself
+        if draft is None or draft["status"] not in (COLLECTING, DRAFTING):
+            return False
+        with self._lock:
+            if draft_id in self._going:
+                return False
+            self._going.add(draft_id)
+        log.info("the draft %s was left %s: carried on", draft_id, draft["status"])
+        self._set(draft_id, status=COLLECTING)
+        self._collect_apart(draft_id)
+        return True
+
+    def carry_on_waiting(self) -> int:
+        """At the agent's start (app.py `start`, never in a run's own process): the drafts to be
+        started once drafted, left half drafted, carried on - they were to go without the user."""
+        try:
+            rows = self.db.query("SELECT id FROM work_drafts WHERE options LIKE ? AND status IN (?, ?)",
+                                 ("%start_when_ready%", COLLECTING, DRAFTING))
+        except Exception:                        # pragma: no cover - a database before drafts
+            return 0
+        return sum(1 for row in rows if self.carry_on(row["id"]))
 
     def _resume_waiting(self) -> None:
         """Drafts started before their plan was drafted, when the application
@@ -1495,6 +1570,16 @@ class Drafts:
             != plan_of(draft.get("plan") or {}, thorough=self._thorough())
         folders = [str(one) for one in (folders if folders is not None
                                         else draft.get("folders") or []) if str(one).strip()]
+        # STARTED BY THE AGENT ITSELF, ONLY ITS OWN FOLDER (the user, 2026-11-10: "现在agent只能在自己的
+        # work directory里，其它任何动作当前都是需要approve的"; "代码要拦住"): no folder is granted it to
+        # write - the ones its plan named are read only - and it never runs outside the sandbox, so
+        # what it would do anywhere else waits for the user, written out.
+        own_only = str(draft.get("source") or "") in OWN_FOLDER_ONLY
+        if own_only:
+            read_only = list(dict.fromkeys(
+                [*folders, *[str(one) for one in (draft.get("options") or {}).get("read_from")
+                             or []]]))[:8]
+            folders = []
         experience = self.app.state_heartbeat.experience
         work = self.app.work
         held = work.folder_in_use(folders) if hasattr(work, "folder_in_use") else None
@@ -1505,6 +1590,10 @@ class Drafts:
         options = dict(draft.get("options") or {},
                        **{k: v for k, v in given_options.items()
                           if k in ("sound", "unconfined", "see_tries")})
+        if own_only:
+            options.pop("unconfined", None)
+            if read_only:
+                options["read_from"] = read_only
         # A PLAN THE USER NEVER SAW (started before it was drafted, by itself
         # once it was - `_wait_then_start`): said so to the work. Started from
         # the box, its plan in front of them, it is theirs again.
@@ -1583,6 +1672,8 @@ class Drafts:
                           sound=options.get("sound"),
                           way=approved["way"],
                           **({"unconfined": True} if options.get("unconfined") else {}),
+                          # Started by the agent itself: its calls counted under that module.
+                          **({"started_by": started_by(draft)} if started_by(draft) else {}),
                           **tried)
         if said.get("error"):
             if made is not None:

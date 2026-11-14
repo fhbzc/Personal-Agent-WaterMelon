@@ -241,6 +241,19 @@ class ScreenshotProvider(ListenerProvider):
             return False
         if not bool(self.config.get("listener_enabled", True)):
             return False
+        # NO PICTURE AT ALL - not one painted over - in private mode or while a file in a
+        # privacy folder is open (the user, 2026-11-12), said in the Record log once a window.
+        from ...common.privacy_folders import private_mode, why_no_picture
+        why = why_no_picture(self.config)
+        if why:
+            if (application, title) != getattr(self, "_held_for_privacy", None):
+                self._held_for_privacy = (application, title)
+                from ..core.filtered import note
+                note(self.provider_id, self.category, "screen.shot",
+                     "private_mode" if private_mode(self.config) else "privacy_folder",
+                     application)
+            return False
+        self._held_for_privacy = None
         if pid and pid == os.getpid():
             return False
         if names_the_agent(application, title):

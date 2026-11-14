@@ -196,6 +196,15 @@ function notificationToast(n, inList = null) {
       item.remove();
     } catch (err) { toast(err.message, "error"); }
   });
+  // THE SUMMARY OF WHAT WAITS FOR APPROVAL (2026-11-12): all of it, on the Overview.
+  if (meta.approvals || meta.report) {
+    buttons.append(button("Open the report", async () => {
+      // OPENED, THE NOTIFICATION CLOSED (the user, 2026-11-12).
+      try { await api.post("/api/notifications/read", { id: n.id }); } catch (_err) { /* opened all the same */ }
+      openApprovals(meta.issue || "");
+      item.remove();
+    }));
+  }
   if (meta.chat_conversation) {
     buttons.append(button("Read the whole reply", () => {
       const page = new URL("chat.html", location.href);
@@ -7948,6 +7957,12 @@ const calendarState = {
   anchor: startOfDay(new Date()),   // any date inside the displayed period
   selected: startOfDay(new Date()),
   tasks: [],
+  //: CURRENT OR PLANNED (the user, 2026-11-09): what is on the calendar, or that with the agent's plan
+  //  on it - and under either, the month or the day.
+  mode: (() => {
+    try { return localStorage.getItem("calendar-mode") === "planned" ? "planned" : "current"; }
+    catch (err) { return "current"; }
+  })(),
   //: THE VIEW: the month, or one day hour by hour - as the user left it.
   view: (() => {
     try { return localStorage.getItem("calendar-view") === "day" ? "day" : "month"; }
@@ -8006,6 +8021,9 @@ async function loadCalendar() {
     `/api/tasks?limit=500&expand=1&start=${encodeURIComponent(dayAfter(from, -1).toISOString())}`
     + `&end=${encodeURIComponent(dayAfter(to, 1).toISOString())}`);
   calendarState.tasks = data.tasks || [];
+  if (calendarState.mode === "planned") {
+    try { calendarState.agenda = await api.get("/api/agenda"); } catch (_err) { calendarState.agenda = null; }
+  }
   renderCalendar();
 }
 
@@ -8270,7 +8288,12 @@ function renderCalendar() {
   $("#cal-period").textContent = periodLabel();
   $$("[data-cal-view]").forEach((button) => button.classList.toggle(
     "active", button.dataset.calView === calendarState.view));
-  if (calendarState.view === "day") renderDayView();
+  $$("[data-cal-mode]").forEach((button) => button.classList.toggle(
+    "active", button.dataset.calMode === calendarState.mode));
+  if (calendarState.mode === "planned") {
+    if (calendarState.view === "day") renderPlannedDay();
+    else renderPlanned();
+  } else if (calendarState.view === "day") renderDayView();
   else renderMonth();
   renderDayPanel();
   // A time of the day clicked: an event at it.
@@ -8367,10 +8390,16 @@ function renderDayView() {
   $("#cal-dayview").scrollTop = Math.max(0, (Math.min(first, 7 * 60) / 30) * CAL_ROW_PX - 8);
 }
 
+function setCalendarMode(mode) {
+  calendarState.mode = mode === "planned" ? "planned" : "current";
+  try { localStorage.setItem("calendar-mode", calendarState.mode); } catch (err) { /* this page only */ }
+  loadCalendar();
+}
+
 function setCalendarView(view) {
   calendarState.view = view === "day" ? "day" : "month";
   try { localStorage.setItem("calendar-view", calendarState.view); } catch (err) { /* this page only */ }
-  if (calendarState.view === "month") calendarState.anchor = startOfDay(calendarState.selected);
+  if (calendarState.view !== "day") calendarState.anchor = startOfDay(calendarState.selected);
   loadCalendar();
 }
 
@@ -8470,6 +8499,251 @@ function renderMonth() {
       <div class="cal-weekdays">${WEEKDAYS.map((d) => `<div>${d}</div>`).join("")}</div>
       ${weeks.join("")}
     </div>`;
+}
+
+/* THE PLANNED CALENDAR (the user, 2026-11-09: "加一个planned calender view, 是一个加了所有排好内容的
+   calender"; "不止往后14天 ... 几个月后都行"): the month, each day with what is fixed on it, the plan's
+   blocks on the day planned, and every thing put on a day ahead in its order - coloured by its kind
+   (the agent does it and you approve for now; you always approve; your own work) - and how full it is. */
+const PLANNED_CHIPS = 6;
+
+function plannedByDay(agenda) {
+  const out = new Map();
+  if (!agenda || !agenda.plan) return out;
+  const plan = agenda.plan.plan || {};
+  const things = new Map((agenda.things || []).map((one) => [String(one.id), one]));
+  const add = (day, entry) => {
+    if (!out.has(day)) out.set(day, []);
+    out.get(day).push(entry);
+  };
+  const planned = agenda.plan.day;
+  for (const block of plan.blocks || []) {
+    const ids = (block.items || []).map(String);
+    const who = ids.map((ident) => ((things.get(ident) || {}).triage || {}).who).find(Boolean) || "human";
+    add(planned, { at: block.start, text: block.title || "", kind: block.kind, who, order: 0, block, ids,
+      minutes: (agendaMinutes(block.end) ?? 0) - (agendaMinutes(block.start) ?? 0) });
+  }
+  for (const one of plan.agent_does || []) {
+    if (!one.start) continue;
+    add(planned, { at: one.start, text: one.what || (things.get(String(one.item)) || {}).title || "",
+      kind: "agent", who: "agent", order: 0, minutes: 0, agent: one, ids: [String(one.item)] });
+  }
+  for (const one of plan.later || []) {
+    const thing = things.get(String(one.item));
+    if (!thing || !one.day) continue;
+    const t = thing.triage || {};
+    // THE USER'S APPROVING, ON ITS DAY: what the agent made, theirs to approve that day.
+    const approving = t.who === "delegable" || t.who === "approve";
+    add(String(one.day).slice(0, 10), { at: "", text: approving ? `Approve: ${thing.title}` : thing.title,
+      kind: approving ? "review" : t.focus || "", who: t.who || "",
+      order: Number(one.order) || 99, minutes: Number(t.minutes) || 0, ids: [String(one.item)] });
+  }
+  for (const [day, list] of out.entries()) {
+    list.sort((a, b) => (a.at || "99") .localeCompare(b.at || "99") || a.order - b.order);
+    list.forEach((one, n) => { one.day = day; one.key = `${day}#${n}`; });
+  }
+  calendarState.plannedEntries = new Map([...out.values()].flat().map((one) => [one.key, one]));
+  return out;
+}
+
+/* A PLANNED THING OPENED (the user, 2026-11-09: "现在蓝色的event不能点开。有的黄的也不行"): what it is,
+   whose, by when, how long, why it is where it is, what the agent would do, its work note - and the
+   day, to open. Taken before the day's own click, which draws the calendar again. */
+function plannedThingLines(thing) {
+  const t = thing.triage || {};
+  const lines = [["Kind of work", t.kind], ["Due", t.deadline ? (t.hard ? t.deadline : `${t.deadline} (likely)`) : ""],
+    ["Takes you", t.minutes ? `${t.minutes} min` : ""], ["Belongs with", t.context], ["Where", thing.place],
+    ["Needs from you", t.who === "approve" ? t.missing : ""], ["The agent would", t.agent_part], ["Why", t.why]]
+    .filter(([, value]) => value);
+  return `<div class="pl-pop-thing"><div class="pl-pop-title">${escapeHtml(thing.title)}</div>${
+    AGENDA_WHO[t.who] ? `<div class="pl-pop-kind">${escapeHtml(AGENDA_WHO[t.who])}</div>` : ""}${
+    lines.map(([label, value]) => `<div><span class="muted">${escapeHtml(label)}:</span> ${escapeHtml(value)}</div>`).join("")}${
+    agendaActions(thing)}</div>`;
+}
+
+/* THE USER'S WORD ON A THING OF THE PLAN (phase 2, heartbeat/agenda/act.py): done, put off, to the
+   agent or theirs, more time, let go - the day planned again around it. */
+function agendaActions(thing) {
+  const t = thing.triage || {};
+  const mine = t.who === "human";
+  const acts = [["done", "Done"], ["later_today", "Later today"], ["tomorrow", "Tomorrow"],
+    [mine ? "to_agent" : "mine", mine ? "Give it to the agent" : "I'll do it"], ["more_time", "30 min more"],
+    ["drop", "Let it go"]];
+  // ITS WORK, AND THE USER'S APPROVING OF IT (phase 3): what the agent made opened, and approved as
+  // it was, changed, or not right - all that goes out waits for this, for now.
+  const work = (((calendarState || {}).agenda || {}).work || {})[thing.id];
+  // NOTHING IS SENT FOR THEM YET (the user, 2026-11-09: "把这个按钮改名、加一句提示"): marked here once
+  // they sent it themselves - the to-do it came from is then done.
+  const approving = work && (t.who === "delegable" || t.who === "approve") ? `<div class="ag-approve">
+      <p class="muted ag-approve-note">${escapeHtml(
+        "Approve it, and the agent does what it said it would - only that, its evidence kept. Or send it yourself, then mark it here.")}</p>
+      <button type="button" class="small" data-ag-open-work="${escapeHtml(work)}">${escapeHtml("Open its work")}</button>
+      <button type="button" class="small" data-ag-approve="go">${escapeHtml("Approve - let it do it")}</button>
+      ${[["as_it_was", "I sent it as it was"], ["changed", "I sent it, changed"], ["not_right", "Not right"]].map(([how, label]) =>
+        `<button type="button" class="small secondary" data-ag-approve="${how}">${escapeHtml(label)}</button>`).join("")}</div>`
+    : work ? `<div class="ag-approve"><button type="button" class="small" data-ag-open-work="${escapeHtml(work)}">${
+      escapeHtml("Open its work")}</button></div>` : "";
+  return `<div class="ag-acts" data-ag-thing="${escapeHtml(thing.id)}">${approving}${acts.map(([action, label]) =>
+    `<button type="button" class="small secondary" data-ag-act="${action}">${escapeHtml(label)}</button>`).join("")}
+    <label class="ag-on-day"><span class="muted">${escapeHtml("Another day")}</span>
+      <input type="date" data-ag-act-day></label></div>`;
+}
+
+function plannedOpen(entry, anchor) {
+  plannedClose();
+  const agenda = calendarState.agenda || {};
+  const things = new Map((agenda.things || []).map((one) => [String(one.id), one]));
+  const block = entry.block || entry.agent || null;
+  const when = entry.at ? `${entry.day} ${entry.at}${block && block.end ? `–${block.end}` : ""}` : entry.day;
+  const items = (entry.ids || []).map((ident) => things.get(ident)).filter(Boolean);
+  const pop = document.createElement("div");
+  pop.className = "pl-pop ag-scope";
+  pop.dataset.plKey = entry.key;
+  pop.setAttribute("role", "dialog");
+  pop.innerHTML = `<div class="pl-pop-head"><b>${escapeHtml(entry.text)}</b>
+      <button type="button" class="small secondary" data-pl-close aria-label="Close">&times;</button></div>
+    <div class="muted">${escapeHtml(when)}${entry.kind && AGENDA_KIND[entry.kind] ? ` · ${escapeHtml(AGENDA_KIND[entry.kind])}` : ""}${
+      entry.agent ? ` · ${escapeHtml("The agent works on it")}` : ""}</div>
+    ${block && block.why ? `<p>${escapeHtml(block.why)}</p>` : ""}
+    ${block && block.note ? `<div class="ag-open">${agendaNote(block.note)}</div>` : ""}
+    ${items.map(plannedThingLines).join("")}
+    <div class="pl-pop-foot"><button type="button" class="small" data-pl-day="${escapeHtml(entry.day)}">${
+      escapeHtml("Open this day")}</button></div>`;
+  document.body.appendChild(pop);
+  const box = anchor.getBoundingClientRect();
+  const wide = Math.min(380, window.innerWidth - 24);
+  pop.style.width = `${wide}px`;
+  pop.style.left = `${Math.max(12, Math.min(box.left, window.innerWidth - wide - 12))}px`;
+  const below = box.bottom + 6;
+  pop.style.top = `${below + pop.offsetHeight > window.innerHeight - 12 ? Math.max(12, box.top - pop.offsetHeight - 6) : below}px`;
+}
+
+function plannedClose() {
+  $$(".pl-pop").forEach((one) => one.remove());
+}
+
+document.addEventListener("click", (event) => {
+  const chip = event.target.closest && event.target.closest("[data-pl-open]");
+  if (chip) {
+    const entry = (calendarState.plannedEntries || new Map()).get(chip.dataset.plOpen);
+    if (entry) {
+      event.stopPropagation();
+      event.preventDefault();
+      // PRESSED AGAIN, CLOSED (the user, 2026-11-09: "不能和calender event一样，点了之后再点关掉").
+      const open = $(".pl-pop");
+      if (open && open.dataset.plKey === entry.key) plannedClose();
+      else plannedOpen(entry, chip);
+    }
+    return;
+  }
+  const day = event.target.closest && event.target.closest("[data-pl-day]");
+  if (day) {
+    event.stopPropagation();
+    plannedClose();
+    const [y, m, d] = day.dataset.plDay.split("-").map(Number);
+    calendarState.selected = new Date(y, m - 1, d);
+    setCalendarView("day");
+    return;
+  }
+  if (event.target.closest && (event.target.closest("[data-pl-close]") || !event.target.closest(".pl-pop"))) {
+    plannedClose();
+  }
+}, true);
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") plannedClose(); });
+
+/* The calendar's reminders that are things in the plan (to be done from their day, not at a time). */
+function plannedReminders(agenda) {
+  return new Set(((agenda || {}).things || []).filter((one) => one.from === "calendar" && one.not_before)
+    .map((one) => String(one.ref)));
+}
+
+function renderPlanned() {
+  const { from, monthStart } = periodBounds();
+  const today = new Date();
+  const agenda = calendarState.agenda;
+  const byDay = plannedByDay(agenda);
+  const capacity = Number(((agenda || {}).frame || {}).capacity) || 360;
+  const key10 = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${
+    String(date.getDate()).padStart(2, "0")}`;
+  const weeks = [];
+  for (let week = 0; week < 6; week += 1) {
+    const days = [];
+    for (let day = 0; day < 7; day += 1) {
+      const date = dayAfter(from, week * 7 + day);
+      const outside = date.getMonth() !== monthStart.getMonth();
+      const key = String(startOfDay(date).getTime());
+      const open = calendarState.expandedDays.has(key);
+      // A REMINDER IN THE PLAN IS SHOWN AS THE PLAN'S THING, coloured by its kind - not twice.
+      const fixed = tasksOn(date).filter((task) => !((task.metadata || {}).event === "explore")
+        && !plannedReminders(agenda).has(String(task.id)));
+      const planned = byDay.get(key10(date)) || [];
+      const all = [...fixed.map((task) => ({ fixed: task })), ...planned];
+      const shown = open ? all : all.slice(0, PLANNED_CHIPS);
+      const hidden = all.length - shown.length;
+      // What is fixed on the day counts too - a day of meetings is not an empty day.
+      const fixedMinutes = ((agenda || {}).things || []).filter((one) => !one.quiet
+        && String(one.fixed_local || "").slice(0, 10) === key10(date))
+        .reduce((sum, one) => sum + (Number((one.triage || {}).minutes) || 60), 0);
+      const load = planned.reduce((sum, one) => sum + (one.who === "agent" ? 0 : one.minutes), 0)
+        + (key10(date) === ((agenda || {}).plan || {}).day ? 0 : fixedMinutes);
+      days.push(`
+        <div class="cal-day pl-day${outside ? " outside" : ""}${sameDay(date, today) ? " today" : ""}${
+          sameDay(date, calendarState.selected) ? " selected" : ""}${open ? " expanded" : ""}"
+          data-date="${date.getTime()}">
+          <div class="cal-date">${date.getDate()}</div>${load ? `<span class="pl-load${load > capacity ? " over" : ""}"
+            title="${escapeHtml(`${load} of about ${capacity} min of work`)}">${escapeHtml(`${load}/${capacity} min`)}</span>` : ""}
+          <div class="cal-chips">${shown.map((one) => one.fixed ? taskChip(one.fixed)
+            : `<div class="pl-chip pl-${escapeHtml(one.who || "none")}" title="${escapeHtml(one.text)}"
+                data-pl-open="${escapeHtml(one.key)}" tabindex="0">${
+              one.at ? `<span class="pl-at">${escapeHtml(one.at)}</span> ` : ""}${escapeHtml(one.text)}</div>`).join("")}${
+            hidden > 0 ? `<button type="button" class="cal-more" data-expand-day="${key}">+${hidden} more</button>` : ""}${
+            open && all.length > PLANNED_CHIPS ? `<button type="button" class="cal-more" data-expand-day="${key}">show fewer</button>` : ""}</div>
+        </div>`);
+    }
+    weeks.push(`<div class="cal-week">${days.join("")}</div>`);
+  }
+  const note = !agenda || !agenda.plan
+    ? `<p class="muted">${escapeHtml(agenda && agenda.planning ? "Planning the day…" : "Nothing planned yet.")}</p>` : "";
+  const legend = `<div class="pl-legend"><span><i class="pl-chip pl-delegable"></i>${escapeHtml(AGENDA_WHO.delegable)}</span>
+    <span><i class="pl-chip pl-approve"></i>${escapeHtml(AGENDA_WHO.approve)}</span>
+    <span><i class="pl-chip pl-human"></i>${escapeHtml(AGENDA_WHO.human)}</span>
+    <span><i class="pl-chip pl-agent"></i>${escapeHtml("The agent works on it")}</span></div>`;
+  $("#calendar-surface").innerHTML = `${note}${legend}
+    <div class="cal-grid month planned">
+      <div class="cal-weekdays">${WEEKDAYS.map((d) => `<div>${d}</div>`).join("")}</div>
+      ${weeks.join("")}
+    </div>`;
+}
+
+/* THE PLANNED DAY (Planned, Day): the day the plan was made for - its blocks, the user's and the
+   agent's lanes, the work notes; a day ahead - its things in order, and what is fixed on it. */
+function renderPlannedDay() {
+  const date = calendarState.selected;
+  const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  const agenda = calendarState.agenda || {};
+  const things = agenda.things || [];
+  const byId = new Map(things.map((one) => [String(one.id), one]));
+  const kept = agenda.plan || null;
+  const frame = agenda.frame || {};
+  let html;
+  if (kept && kept.day === key) {
+    const plan = kept.plan || {};
+    html = agendaCalendar(plan.blocks || [], byId, key, frame, true, plan.agent_does || []);
+  } else {
+    const clock = (at) => new Date(at).toTimeString().slice(0, 5);
+    const fixed = tasksOn(date).filter((task) => !((task.metadata || {}).event === "explore")
+      && !plannedReminders(agenda).has(String(task.id))).map((task) => ({
+      start: clock(task.scheduled_at), end: agendaClock(Math.min((agendaMinutes(clock(task.scheduled_at)) || 0) + 60, 1439)),
+      kind: "meeting", title: task.title, items: [] }));
+    const planned = (plannedByDay(agenda).get(key) || []).filter((one) => !one.at);
+    const list = planned.length ? `<div class="pl-dayplan"><h4>${escapeHtml("This day, in order")}</h4><ol>${
+      planned.map((one) => `<li><span class="pl-chip pl-${escapeHtml(one.who || "none")}" data-pl-open="${
+        escapeHtml(one.key)}" tabindex="0">${escapeHtml(one.text)}</span>${
+        one.minutes ? ` <span class="muted">${escapeHtml(`${one.minutes} min`)}</span>` : ""}</li>`).join("")}</ol></div>`
+      : `<p class="muted">${escapeHtml(kept ? "Nothing planned on this day." : "Nothing planned yet.")}</p>`;
+    html = list + agendaCalendar(fixed, byId, key, frame, true, []);
+  }
+  $("#calendar-surface").innerHTML = `<div class="ag-scope">${html}</div>`;
 }
 
 function selectDay(date) {
@@ -9596,6 +9870,8 @@ $("#cal-prev").addEventListener("click", () => stepCalendar(-1));
 $("#cal-next").addEventListener("click", () => stepCalendar(1));
 $$("[data-cal-view]").forEach((button) =>
   button.addEventListener("click", () => setCalendarView(button.dataset.calView)));
+$$("[data-cal-mode]").forEach((button) =>
+  button.addEventListener("click", () => setCalendarMode(button.dataset.calMode)));
 /* + Add event: on the day shown, at the next whole hour of today - or at
    nine on another day. */
 $("#cal-add")?.addEventListener("click", (event) => {
@@ -10658,6 +10934,20 @@ const CHOOSERS = {
     valueOf: (result) => result.selected,
     check: async (value) => api.post("/api/settings/check-directory", { path: value }),
   },
+  // A FOLDER OR A FILE (the privacy folders, the user 2026-11-12: "可以add folder或者file"): a
+  // button for each.
+  place: {
+    endpoint: "/api/settings/choose-directory",
+    addLabel: "Add folder…",
+    oneLabel: "Choose folder…",
+    more: [{ endpoint: "/api/settings/choose-file", label: "Add file…" }],
+    // A WEB ADDRESS, typed (the user, 2026-11-12: "也可以允许我加url"): every page under it private.
+    address: { label: "Add web address…", placeholder: "https://example.org/private/ - press Enter" },
+    empty: "No folder, file or web address added.",
+    typed: "no chooser on this machine - type a path and press Enter",
+    valueOf: (result) => result.selected,
+    check: async (value) => api.post("/api/settings/check-place", { path: value }),
+  },
   application: {
     endpoint: "/api/settings/choose-application",
     addLabel: "Add application…",
@@ -10915,15 +11205,16 @@ function chosenValueControl(field, value) {
 
     const actions = document.createElement("div");
     actions.className = "dir-actions";
+    const chooseWith = (endpoint, label) => {
     const choose = document.createElement("button");
     choose.type = "button";
     choose.className = "small";
-    choose.textContent = single ? kind.oneLabel : kind.addLabel;
+    choose.textContent = label;
     choose.addEventListener("click", async () => {
       choose.disabled = true;
       choose.textContent = "Choosing…";
       try {
-        const result = await api.post(kind.endpoint, {
+        const result = await api.post(endpoint, {
           title: field.label, start_at: entries[entries.length - 1] || null,
         });
         const chosen = result.selected ? kind.valueOf(result) : null;
@@ -10942,6 +11233,30 @@ function chosenValueControl(field, value) {
       }
     });
     actions.appendChild(choose);
+    };
+    chooseWith(kind.endpoint, single ? kind.oneLabel : kind.addLabel);
+    // Another kind of thing to add beside it - a file beside the folder (CHOOSERS.place).
+    if (!single) (kind.more || []).forEach((one) => chooseWith(one.endpoint, one.label));
+    if (!single && kind.address) {
+      const box = document.createElement("input");
+      box.type = "url";
+      box.className = "dir-typed";
+      box.placeholder = kind.address.placeholder;
+      box.hidden = true;
+      box.addEventListener("keydown", async (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        const said = box.value.trim();
+        if (said) await add(said);
+      });
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "small";
+      open.textContent = kind.address.label;
+      open.addEventListener("click", () => { box.hidden = !box.hidden; if (!box.hidden) box.focus(); });
+      actions.appendChild(open);
+      actions.appendChild(box);
+    }
 
     // Section 12, as amended: a location is browsed to, not typed. A typed
     // path is a path that can be misspelt, can name something that is not a
@@ -12128,7 +12443,8 @@ function modulesChanged() {
   const values = {};
   $$("#modules-list [data-module]").forEach((box) => {
     const one = ((modulesEdit.data || {}).modules || []).find((m) => m.setting === box.dataset.module);
-    if (one && one.enabled !== box.checked) values[box.dataset.module] = box.checked;
+    // Its own switch (`on`): a part of a function that is off keeps its own as it was set.
+    if (one && (one.on ?? one.enabled) !== box.checked) values[box.dataset.module] = box.checked;
   });
   return values;
 }
@@ -12177,16 +12493,23 @@ function renderModules() {
       The bar on the left: what each spent in the last ${days} hours beside the others -
       pale for little, deep red for the most.</p>
     <ul class="modules-list">
-      ${(data.modules || []).map((one, at) => `<li class="module-row${one.enabled ? "" : " module-off"}"
+      ${(data.modules || []).map((one, at) => {
+        // A PART OF A FUNCTION (the user, 2026-11-10: "大功能关了子功能也关，但是允许子功能关大功能不关"):
+        // under it, and with it off, off whatever its own switch says - its box held.
+        const parent = one.parent && (data.modules || []).find((m) => m.key === one.parent);
+        const held = Boolean(parent && !parent.enabled);
+        return `<li class="module-row${one.enabled ? "" : " module-off"}${parent ? " module-sub" : ""}"
         style="--heat:${heat(shares[at])}%">
         <label><input type="checkbox" data-module="${escapeHtml(one.setting)}"${
-          one.enabled ? " checked" : ""}>
+          (one.on ?? one.enabled) ? " checked" : ""}${held ? " disabled" : ""}>
           <strong>${escapeHtml(one.name)}</strong>${one.enabled ? ""
             : ' <span class="badge warn">off</span>'}</label>
+        ${parent ? `<div class="module-part-of muted">${escapeHtml(held
+          ? `Off while ${parent.name} is off.` : `Part of ${parent.name}.`)}</div>` : ""}
         <div class="module-what">${escapeHtml(one.what)}</div>
         <div class="module-off-says"><strong>If turned off:</strong> ${escapeHtml(one.off)}</div>
-        <div class="module-spent muted">${escapeHtml(moduleSpent(one.spent, days))}</div></li>`)
-        .join("")}
+        <div class="module-spent muted">${escapeHtml(moduleSpent(one.spent, days))}</div></li>`;
+      }).join("")}
     </ul>
     ${(data.unassigned || []).map((one) => `<p class="muted">${escapeHtml(one.name
       === "heartbeat (before modules)" ? "The agent heartbeat, before its steps were counted "
@@ -12488,7 +12811,8 @@ function settingsEditBar(host) {
 
 /* A setting changed in `row`: held, and its card's Save shown. */
 function settingsChanged(row, key, value, label) {
-  const host = row.closest?.("#settings-form, #settings-form-display, "
+  // The avatar's card too: its name, typed, had no Save to show.
+  const host = row.closest?.("#settings-form, #settings-form-display, #settings-form-avatar, "
     + "#settings-form-heartbeats, #settings-form-privacy, #settings-form-startup");
   settingsEdit.pending[key] = value;
   settingsEdit.labels[key] = label;
@@ -12701,6 +13025,17 @@ function renderSettings(data) {
         control.addEventListener("change", async () => {
           // HELD UNTIL SAVE: the card's Save sends it all.
           const raw = field.type === "bool" ? control.checked : control.value;
+          // AN AVATAR CHOSEN IS WORN AT ONCE (the user, 2026-11-10: "选中新的avatar之后切换"): on
+          // the desktop as it is chosen here, no Save.
+          if (field.key === "character") {
+            try {
+              await api.post("/api/settings", { values: { character: raw } });
+              toast(`${field.label} saved`);
+            } catch (err) {
+              toast(err.message, "error");
+            }
+            return;
+          }
           settingsChanged(row, field.key, field.key in HEARTBEAT_MINUTES
             ? HEARTBEAT_MINUTES[field.key].kept(Number(raw) || 1) : raw, field.label);
           if (settingsEdit.pending) return;
@@ -13164,6 +13499,93 @@ function avatarFace(rig, mood, look, blink, t) {
   return parts.join("");
 }
 
+/* THE FLAT WATERMELON'S FACE (agent/character/watermelon_flat.py, from PR #9): its peaked
+   brows, its eyes' whites shaded and their sparkles, its own mouth colours. The first
+   watermelon's face is avatarFace's, untouched. */
+function avatarFlatFace(rig, mood, look, blink, t) {
+  const c = rig.colours || {};
+  const happy = mood === "hover";
+  const [lx, ly] = look;
+  const parts = [];
+  rig.eyes.forEach(([cx, cy, rx, ry, ir], i) => {
+    const lift = (mood === "notification" || happy ? -2.2 : 0) + (rig.brow_drop || 0);
+    const tilt = mood === "thinking" && i === 0 ? 2 : 0;
+    const bx = cx + (rig.brow_shift ?? -1);
+    const [from, to] = rig.brow_arc || [200, 320];
+    if (rig.brow_shape === "peaked") {
+      const slope = cx > rig.mouth[0] ? 1 : -1;
+      const by = cy - ry - 3 + lift - (rig.brow_drop || 0) - tilt;
+      parts.push(`<path d="M${bx-rx*.8},${by-slope*1.8} L${bx+rx*.8},${by+slope*1.8}" stroke="${c.brow}" stroke-width="2.6" stroke-linecap="round" fill="none"/>`);
+    } else {
+    parts.push(`<path d="${avatarBoxArc(bx - rx * 0.95, cy - ry - 8 + lift - tilt,
+      bx + rx * 0.95, cy - ry + 2 + lift, from, to)}" stroke="${c.brow}" stroke-width="1.6"
+      fill="none" stroke-linecap="round"/>`);
+    }
+    if (happy) {
+      parts.push(`<path d="${avatarBoxArc(cx - rx * 0.8, cy - ry * 0.5, cx + rx * 0.8,
+        cy + ry * 0.7, 200, 340)}" stroke="${c.iris}" stroke-width="1.8" fill="none"
+        stroke-linecap="round"/>`);
+      return;
+    }
+    const open = Math.max(0, 1 - blink);
+    if (open < 0.15) {
+      parts.push(`<path d="${avatarBoxArc(cx - rx, cy - ry * 0.4, cx + rx, cy + ry * 0.4,
+        10, 170)}" stroke="${c.iris}" stroke-width="1.6" fill="none" stroke-linecap="round"/>`);
+      return;
+    }
+    const ery = ry * open;
+    const ix=Math.min(ir,rx*.84), iy=Math.min(ir,ery*.84);
+    const ratio = Math.max(ix/rx, iy/ery), norm = Math.max(1, Math.hypot(lx,ly));
+    const px=cx+lx/norm*rx*(1-ratio)*.75, py=cy+ly/norm*ery*(1-ratio)*.75;
+    parts.push(`<ellipse cx="${cx}" cy="${cy}" rx="${rx+1.1}" ry="${ery+1.1}" fill="${c.ink}"/>
+      <ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ery}" fill="url(#avatar-eye-white)"/>
+      <ellipse cx="${px}" cy="${py}" rx="${ix}" ry="${iy}" fill="${c.iris}"/>
+      <ellipse cx="${px}" cy="${py}" rx="${ix*.76}" ry="${iy*.76}" fill="${c.pupil}"/>
+      ${[[-.39,.13,.10],[0,.19,.16],[.39,.13,.10]].map(([dx,rw,rh]) =>
+        `<ellipse cx="${px+ix*dx}" cy="${py+iy*.10}" rx="${ix*rw}" ry="${iy*rh}" fill="${c.cream}"/>`).join("")}
+      <ellipse cx="${px+ix*.56}" cy="${py-iy*.56}" rx="${ix*.18}" ry="${iy*.18}" fill="${c.cream}"/>`);
+
+  });
+  const [mx, my] = rig.mouth;
+  if (mood === "talking") {
+    const h = 3.5 + 2.5 * Math.abs(Math.sin(t * 9));
+    parts.push(`<ellipse cx="${mx}" cy="${my + 1}" rx="4.2" ry="${h}" fill="${c.mouth_inner || "#461814"}"
+      stroke="${c.ink}" stroke-width="1.1"/>
+      <ellipse cx="${mx}" cy="${my + 1 + h * 0.5}" rx="2.6" ry="${h * 0.35}" fill="${c.tongue || "#d65c5c"}"/>`);
+  } else if (mood === "thinking") {
+    parts.push(`<path d="M${mx - 3},${my + 1} L${mx + 3},${my - 0.5}" stroke="${c.ink}"
+      stroke-width="1.4" stroke-linecap="round"/>`);
+  } else {
+    const w = happy ? 6.5 : 5;
+    parts.push(`<path d="${avatarBoxArc(mx - w, my - 4, mx + w, my + 3.5, 20, 160)}"
+      stroke="${c.ink}" stroke-width="1.5" fill="none" stroke-linecap="round"/>`);
+  }
+  if (mood === "notification") {
+    (rig.cheeks || [[76, 69], [112, 64]]).forEach(([x, y]) => parts.push(
+      `<ellipse cx="${x}" cy="${y}" rx="3.6" ry="2" fill="${c.blush}" fill-opacity="0.43"/>`));
+  }
+  const scale = rig.face_scale || 1;
+  const [ox, oy] = rig.face_origin || [63, 66];
+  return `<g transform="translate(${ox*(1-scale)} ${oy*(1-scale)}) scale(${scale})">${parts.join("")}</g>`;
+}
+
+const AVATAR_FLAT_DEFS = `<defs><linearGradient id="avatar-eye-white" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stop-color="#fff"/><stop offset="60%" stop-color="#fff"/>
+    <stop offset="100%" stop-color="#e0eefb"/>
+  </linearGradient><filter id="avatar-face-grain" x="-5%" y="-5%" width="110%" height="110%"
+      color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency=".8" numOctaves="2" seed="28" result="grain"/>
+    <feColorMatrix in="grain" type="saturate" values="0" result="paper"/>
+    <feComponentTransfer in="paper" result="soft-paper">
+      <feFuncR type="linear" slope=".15" intercept=".425"/>
+      <feFuncG type="linear" slope=".15" intercept=".425"/>
+      <feFuncB type="linear" slope=".15" intercept=".425"/>
+    </feComponentTransfer>
+    <feComposite in="soft-paper" in2="SourceGraphic" operator="in" result="clipped"/>
+    <feBlend in="SourceGraphic" in2="clipped" mode="soft-light"/>
+    <feComposite in2="SourceGraphic" operator="in"/>
+  </filter></defs>`;
+
 function avatarExtras(rig, mood, t) {
   const c = rig.colours || {};
   if (mood === "notification") {
@@ -13200,12 +13622,17 @@ function drawAvatarStage() {
     avatarStage.svg = null;
     return;
   }
+  // The flat one's leaves in front of it, its eyes' whites shaded, its face grained.
+  const flat = rig.variant === "flat";
+  const leaves = `<image href="${layers.leaves}" x="0" y="0" width="128" height="128"/>`;
   host.innerHTML = `<svg viewBox="0 0 128 128" class="avatar-svg" role="img"
       aria-label="${escapeHtml(one.display_name || one.name)}">
+    ${flat ? AVATAR_FLAT_DEFS : ""}
     <g class="avatar-extras"></g>
-    <image href="${layers.leaves}" x="0" y="0" width="128" height="128"/>
+    ${flat ? "" : leaves}
     <g class="avatar-body"><image href="${layers.body}" x="0" y="0" width="128" height="128"/>
-      <g class="avatar-face"></g></g>
+      <g class="avatar-face"${flat ? ' filter="url(#avatar-face-grain)"' : ""}></g></g>
+    ${flat ? leaves : ""}
     <g class="avatar-over"></g>
   </svg>`;
   avatarStage.svg = host.querySelector("svg");
@@ -13252,7 +13679,8 @@ function avatarTick(now) {
   const ground = rig.ground || 97;
   svg.querySelector(".avatar-body").setAttribute("transform",
     `translate(64 ${ground - hop}) scale(${sx.toFixed(4)} ${squash.toFixed(4)}) translate(-64 ${-ground})`);
-  svg.querySelector(".avatar-face").innerHTML = avatarFace(rig, mood, avatarStage.look, blink, t);
+  svg.querySelector(".avatar-face").innerHTML = (rig.variant === "flat" ? avatarFlatFace
+    : avatarFace)(rig, mood, avatarStage.look, blink, t);
   svg.querySelector(".avatar-over").innerHTML = avatarExtras(rig, mood, t);
   requestAnimationFrame(avatarTick);
 }
@@ -13650,7 +14078,7 @@ function renderCxPerson(person) {
       ${a.handle ? escapeHtml(a.handle) : ""}
       ${a.url ? cxLink(a.url, a.url) : ""}
       <span class="muted">${escapeHtml(cxTimes(a.found_at, a.updated_at, a.created_at))}</span>
-      <button type="button" class="small secondary cx-x" data-cx-profile-remove
+      ${person.is_self ? "" : `<button type="button" class="small secondary cx-x" data-cx-profile-remove
         title="Take this profile off" aria-label="Remove">×</button>
       <div class="cx-sure" data-cx-profile-box hidden>
         <span>Take this profile off ${escapeHtml(person.name)}?</span>
@@ -13667,7 +14095,7 @@ function renderCxPerson(person) {
         <input type="text" data-cx-move-reason placeholder="Reason (optional)">
         <button type="button" class="small" data-cx-move-yes="${escapeHtml(a.id)}">Move it</button>
         <button type="button" class="small secondary" data-cx-ask-no>No</button>
-      </div>` : ""}</li>`).join("");
+      </div>` : ""}`}</li>`).join("");
   const activity = (person.activity || []).map((a) => `<li class="cx-activity">
       <span class="cx-activity-when">${a.at ? escapeHtml(cxWhen(a.at)) : "date unknown"}</span>
       <span>${escapeHtml(a.what)}</span>
@@ -13676,7 +14104,8 @@ function renderCxPerson(person) {
   const actions = (person.actions || []).map((a) => {
     const change = cxChangeWords(a);
     return `<li><span class="muted">${escapeHtml(cxWhen(a.at))}</span>
-      ${a.by === "user" ? "by you" : "by the agent"}: <strong>${escapeHtml(a.action)}</strong>${
+      ${a.by === "user" ? "by you" : a.by === "society" ? "from your Agents Society account"
+        : "by the agent"}: <strong>${escapeHtml(a.action)}</strong>${
       change ? ` <span class="muted">${escapeHtml(change)}</span>` : ""}${
       a.reason ? ` <span class="cx-reason">- ${escapeHtml(a.reason)}</span>` : ""}</li>`;
   }).join("");
@@ -13685,15 +14114,14 @@ function renderCxPerson(person) {
     <div class="cx-person-head">
       ${cxAvatar(person, true)}
       <h4>${escapeHtml(person.name)}</h4>
-      <button type="button" class="small secondary" data-cx-avatar-get
+      ${person.is_self ? "" : `<button type="button" class="small secondary" data-cx-avatar-get
         title="Look for their picture on their public profiles">${
-        person.avatar ? "New picture" : "Get picture"}</button>
+        person.avatar ? "New picture" : "Get picture"}</button>`}
       <span class="muted">${person.is_self ? "you" : `added by ${
         person.added_by === "user" ? "you" : "the agent"}`}${
         person.checked_at ? ` · last looked up ${escapeHtml(cxWhen(person.checked_at, false))}`
           : ""}</span>
-      ${person.is_self ? `<button type="button" class="small secondary" data-cx-me-run
-        title="Look yourself up on the public web now">Look me up now</button>` : ""}
+
     </div>
     ${editing ? cxEditForm(person, mark) : cxFacts(person, mark, others)}
     <div class="lesson-sure cx-sure" id="cx-delete-ask" hidden>
@@ -13716,13 +14144,13 @@ function renderCxPerson(person) {
     <h4>Accounts and profiles</h4>
     ${accounts ? `<ul class="cx-list-plain">${accounts}</ul>`
       : `<p class="muted">No accounts known.</p>`}
-    <form class="cx-source-add" data-cx-profile-add>
+    ${person.is_self ? "" : `<form class="cx-source-add" data-cx-profile-add>
       <input type="url" placeholder="https://&hellip;" required
         aria-label="Address of another public profile of ${escapeHtml(person.name)}">
       <input name="label" list="cx-label-list" placeholder="Label (e.g. LinkedIn)"
         aria-label="Label of the profile" autocomplete="off">
       <button type="submit" class="small">Add a profile</button>
-    </form>
+    </form>`}
     <h4>What happened</h4>
     ${activity ? `<ul class="cx-list-plain">${activity}</ul>`
       : `<p class="muted">No news yet.</p>`}
@@ -13785,10 +14213,9 @@ function cxFacts(person, mark, others) {
         `<span class="cx-summary">${escapeHtml(person.summary)}</span>`) : ""}
     </dl>
     <div class="ov-lp-buttons">
-      <button type="button" data-cx-edit-open>Edit</button>
-      ${person.is_self ? `<span class="muted cx-me-note">Your own profile: what you
-        change is made at once; what the agent finds on your public pages waits in
-        the Inbox for you.</span>` : `<button type="button"
+      ${person.is_self ? `<span class="muted cx-me-note">${escapeHtml(
+        "Your own profile comes from your Agents Society account - your name, your description, your picture and the accounts it verified. Change it on the website; it is brought here when your agent is paired, and again now and then.")}</span>`
+        : `<button type="button" data-cx-edit-open>Edit</button><button type="button"
         class="secondary danger" data-cx-ask="delete">Delete</button>
       <button type="button" class="secondary" data-cx-ask="merge"${
         others.length ? "" : " disabled"}>Merge&hellip;</button>`}
@@ -20331,7 +20758,7 @@ document.addEventListener("click", (event) => {
   const handed = pjWholeHanded(whole || wholeQuick);
   if (!handed) return;
   if (wholeQuick) delegateQuick(handed, wholeQuick);
-  else openDelegate(handed);
+  else { delegateSweep(whole); openDelegate(handed); }
 });
 
 document.addEventListener("click", (event) => {
@@ -20342,7 +20769,7 @@ document.addEventListener("click", (event) => {
   const handed = pjStepHanded(box || quick);
   if (!handed) return;
   if (quick) delegateQuick(handed, quick);
-  else openDelegate(handed);
+  else { delegateSweep(box); openDelegate(handed); }
 });
 
 document.addEventListener("change", async (event) => {
@@ -20548,9 +20975,20 @@ document.addEventListener("click", (event) => {
 /* THE USER'S OWN SAY, on a project's card and on each of its tasks. A name
    they write stays: later runs still say what it is and where it stands. What
    they put away is not shown, not grouped again and not brought back. */
+/* ASKED IN PLACE, AS A TO-DO'S REMOVE IS (the user, 2026-11-09: "delete task, 不要弹出来一个框询问，而是
+   和remove to do 一样，有一个button询问是否删除"): "kind:id" of the one being asked about. */
+let pjDeleting = "";
+
 function pjUserSay(kind, id, name, before = "") {
   const held = `data-pj-kind="${kind}" data-pj-id="${escapeHtml(String(id))}"
     data-pj-name="${escapeHtml(String(name || ""))}"`;
+  if (pjDeleting === `${kind}:${id}`) {
+    return `<span class="pj-user-say">${before}<span class="ov-todo-confirm" title="${escapeHtml(
+        kind === "project" ? "It and its tasks are not shown again, and new work does not bring them back."
+          : "It is not shown again, and new work does not bring it back.")}">Delete it?
+      <button type="button" class="small danger" data-pj-delete-yes="1" ${held}>Yes</button>
+      <button type="button" class="small secondary" data-pj-delete-no="1">No</button></span></span>`;
+  }
   // `before`: what goes first in the row - a project's Delegate work (the user, 2026-11-08:
   // "delegate work 对project的要放到renmae, delete 这一行（放在renmae的左边)").
   return `<span class="pj-user-say">${before}
@@ -20616,7 +21054,8 @@ function pjKeep(kind, id, title) {
 }
 
 document.addEventListener("click", async (event) => {
-  const button = event.target.closest && event.target.closest("[data-pj-rename],[data-pj-delete]");
+  const button = event.target.closest && event.target.closest(
+    "[data-pj-rename],[data-pj-delete],[data-pj-delete-yes],[data-pj-delete-no]");
   if (!button) return;
   const { pjKind: kind, pjId: id, pjName: name } = button.dataset;
   const route = `/api/state_heartbeat/${kind}/${button.dataset.pjRename ? "rename" : "delete"}`;
@@ -20626,11 +21065,12 @@ document.addEventListener("click", async (event) => {
       if (said === null || !said.trim()) return;
       const named = await api.post(route, { id, title: said });
       pjKeep(kind, id, named.title);
+    } else if (button.dataset.pjDelete) {
+      pjDeleting = `${kind}:${id}`;           // asked where it is: Yes deletes, No leaves it
+    } else if (button.dataset.pjDeleteNo) {
+      pjDeleting = "";
     } else {
-      const sure = window.confirm(kind === "project"
-        ? `Delete the project "${name}"?\n\nIt and its tasks are not shown again, and new work does not bring them back.`
-        : `Delete the task "${name}"?\n\nIt is not shown again, and new work does not bring it back.`);
-      if (!sure) return;
+      pjDeleting = "";
       await api.post(route, { id });
       pjKeep(kind, id, null);
     }
@@ -21517,6 +21957,22 @@ document.addEventListener("click", async (event) => {
   ovPlaceTodos();
 });
 
+/* WHAT THE AGENT SUGGESTS (the user, 2026-11-09: "suggest之后，那个to do会出现一个mark as done按钮，
+   让用户关闭更快"): done, or no longer wanted, with why - one press to close it, one to say no. Said
+   "not done", it is suggested again only on clear progress since (heartbeat/core/todo_check.py). */
+function ovTodoSuggested(one) {
+  if (!one.suggested_at) return "";
+  const removing = one.suggested_kind === "remove";
+  return `<span class="ov-todo-suggest">${escapeHtml(removing
+      ? "The agent suggests taking it off:" : "The agent suggests it is done:")} ${
+    escapeHtml(one.suggested_why || "")}
+    <span class="ov-todo-suggest-buttons">${removing
+      ? `<button type="button" class="small ov-todo-yes">Remove</button>
+         <button type="button" class="small secondary ov-todo-decline">Keep</button>`
+      : `<button type="button" class="small ov-todo-done">Mark as done</button>
+         <button type="button" class="small secondary ov-todo-decline">Not done</button>`}</span></span>`;
+}
+
 function ovTodoBox() {
   // WHAT IS LEFT TO DO, and only that: one done, or not wanted, is removed -
   // with a Yes first - not ticked and kept.
@@ -21535,7 +21991,7 @@ function ovTodoBox() {
     : `<li class="ov-todo-item" data-todo="${escapeHtml(one.id)}">
     <span class="ov-todo-text">${escapeHtml(one.text)}</span>${
       one.detail ? `<span class="muted ov-todo-detail">${escapeHtml(one.detail)}</span>` : ""}${
-      ovMadeAt(one.created_at)}${ovPartOf(one)}
+      ovMadeAt(one.created_at)}${ovPartOf(one)}${ovTodoSuggested(one)}
     <span class="ov-todo-actions">${ovTodoWork(one)}${
       delegateState.opened && delegateState.opened.has(one.id)
         ? ` <button type="button" class="small ov-todo-done">Mark as done</button>` : ""}
@@ -21714,8 +22170,9 @@ document.addEventListener("click", (event) => {
   const handed = event.target.closest && event.target.closest(".ov-todo-delegate");
   if (!handed) return;
   const one = ovTodos.find((todo) => todo.id === handed.closest("[data-todo]").dataset.todo);
-  if (one) openDelegate({ text: [one.text, one.detail].filter(Boolean).join("\n"),
-                          source: "todo", todo: one.id });
+  if (!one) return;
+  delegateSweep(handed);
+  openDelegate({ text: [one.text, one.detail].filter(Boolean).join("\n"), source: "todo", todo: one.id });
 });
 
 document.addEventListener("click", async (event) => {
@@ -22017,17 +22474,21 @@ function delegateQuickButton(cls, busy = false) {
     stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`;
 }
 
+/* A PRESS SWEEPS, LEFT TO RIGHT (the user, 2026-11-08: "箭头点击时，有从左往右高亮闪烁"; 2026-11-09:
+   "delegate work (包括整个project或者是to do item的) 也要有从左向右的闪光"): the button lit across once,
+   whichever part was pressed - its arrow, or Delegate work itself - so the press is seen. */
+function delegateSweep(button) {
+  const whole = button && button.closest && button.closest(".delegate-split");
+  if (!whole) return;
+  whole.classList.remove("delegate-sweep");
+  void whole.offsetWidth;                           // started again on a second press
+  whole.classList.add("delegate-sweep");
+  whole.addEventListener("animationend", () => whole.classList.remove("delegate-sweep"),
+                         { once: true });
+}
+
 async function delegateQuick(handed, button) {
-  // ITS ARROW SWEEPS, LEFT TO RIGHT (the user, 2026-11-08: "箭头点击时，有从左往右高亮闪烁"):
-  // the whole button lit across once, so the press is seen before the list changes.
-  const whole = button && button.closest(".delegate-split");
-  if (whole) {
-    whole.classList.remove("delegate-sweep");
-    void whole.offsetWidth;                         // started again on a second press
-    whole.classList.add("delegate-sweep");
-    whole.addEventListener("animationend", () => whole.classList.remove("delegate-sweep"),
-                           { once: true });
-  }
+  delegateSweep(button);
   if (button) button.disabled = true;
   try {
     const said = await api.post("/api/work/drafts", Object.assign({ write_first: true }, handed));
@@ -22693,6 +23154,12 @@ document.addEventListener("click", async (event) => {
       await api.post("/api/todos/done", { id: item.dataset.todo });
       delegateState.opened.delete(item.dataset.todo);
       ovTodoOpenedKeep();
+    } catch (err) { toast(err.message, "error"); }
+    loadTodos();
+  } else if (event.target.closest(".ov-todo-decline")) {
+    // NOT DONE / KEEP: the suggestion goes, and when they said so is kept.
+    try {
+      await api.post("/api/todos/decline", { id: item.dataset.todo });
     } catch (err) { toast(err.message, "error"); }
     loadTodos();
   } else if (event.target.closest(".ov-todo-delete")) {
@@ -26198,7 +26665,11 @@ function renderTokenChart() {
   // until seven of them can be put away. Each key carries its name and its
   // total - the colours alone are not enough to go by.
   const others = drawn.others;
-  legend.innerHTML = drawn.kinds.map((kind) => {
+  // HIGHEST SPEND FIRST (the user, 2026-11-11: "应该是从高到低显示花费最高的modular"), by what is
+  // shown - tokens or cost; "Other" last. Each keeps its colour, which is by its rank over time.
+  const ranked = [...drawn.kinds].sort((a, b) => (a === "other") - (b === "other")
+    || (drawn.totals[b] || 0) - (drawn.totals[a] || 0));
+  legend.innerHTML = ranked.map((kind) => {
     const off = dbgTokens.hidden.has(kind);
     // Other: what was removed from the application, and any kind past the
     // fourteenth - counted only for those.
@@ -26424,9 +26895,11 @@ function tokenTip(at) {
   if (!tip || !band) return;
   if (!at) { tip.hidden = true; band.hidden = true; return; }
   const name = (k) => (k === "other" ? "Other" : k);
+  // HIGHEST FIRST (the user, 2026-11-11: "按照花费高低（数字大小）从高到低排列"), "Other" last.
+  const rows = [...at.rows].sort(([a, x], [b, y]) => (a === "other") - (b === "other") || y - x);
   tip.innerHTML = `<strong>${escapeHtml(at.head)}</strong>
     <div class="muted">${escapeHtml(at.sub)}</div>
-    ${at.rows.length ? `<table>${at.rows.map(([k, v]) => `<tr><td><span
+    ${rows.length ? `<table>${rows.map(([k, v]) => `<tr><td><span
       class="dbg-token-swatch" style="background:${tokenSwatch(k)}"></span>
       ${escapeHtml(name(k))}</td><td>${formatTokenValue(v)}</td></tr>`).join("")}
     </table>` : ""}${at.rowsSay ? `<div class="muted">${escapeHtml(at.rowsSay)}</div>` : ""}`;
@@ -27647,7 +28120,7 @@ function wireDebuggerExperience() {
   });
 }
 
-if (DELEGATE_SOLO || LEARN_SOLO) {
+if (DELEGATE_SOLO || LEARN_SOLO || new URLSearchParams(location.search).get("solo") === "report") {
   // The box alone: its face, and nothing else of the page asked for.
   loadDelegateIcon();
 } else {
@@ -27733,12 +28206,13 @@ setInterval(pollNotifications, 20000);
    2026-11-01/02). On top, the agent: its id; its email confirmed - until
    then it is shown to no one; the user's own profile from Connections
    published, listed only when they say; what the agent may do; interactive;
-   the user's commands, above everything; the key's backup. Below, as a chat
+   the user's commands, above everything. Below, as a chat
    program lays it out ("类似微信桌面版"): the conversations on the left, one
    conversation on the right - other agents' words shown as text, never as
    markup; drafts, sent by the user; what the agent sent by itself, marked. */
-const societyState = { status: null, chats: [], peer: "", messages: [], contact: null,
-                       emailSent: false, backupOpen: false, restoreOpen: false,
+const societyState = { status: null, threads: [], thread: "", newTo: "", open: null,
+                       peer: "", messages: [], contact: null,
+                       emailSent: false,
                        asking: "", offers: [], offerAt: -1, timer: null, asked: "",
                        linking: false, follow: null, feed: null };
 
@@ -27746,10 +28220,15 @@ const societyState = { status: null, chats: [], peer: "", messages: [], contact:
    2026-11-02): each group holds people, and kinds of people; a person put in
    a group is in it whatever their kind. Held by the code, not the model. */
 const SOCIETY_GROUPS = [
-  ["instant", "Instant", "Answered at once - what they ask is done as if you asked it: answers, and events on your calendar. Nothing else of yours is changed."],
   ["reply", "Your agent replies", "Answered by your agent in a while - or not, when no answer is wanted; it says why."],
   ["draft", "Drafts for you", "Your agent drafts a reply in a while; you send it."],
   ["read", "Read only", "Kept, for you to read. Nothing is written."]];
+/* THREE TIERS (the user, 2026-11-12: "only read, read+ write draft for response, read + 直接send"),
+   for a kind of person and for one person alike - the Instant group of before is gone. */
+const SOCIETY_KIND_TIERS = [
+  ["read", "Read only"],
+  ["draft", "Read, and draft a reply for you to send"],
+  ["reply", "Read, and send a reply by itself"]];
 const SOCIETY_KINDS = {
   replied: "People you have written to",
   connections: "Others in your Connections",
@@ -27767,26 +28246,22 @@ async function loadSociety() {
     return;
   }
   renderSocietyMe();
-  const eventsBadge = $("#society-events-unread");
-  if (eventsBadge) {
-    const n = Number(societyState.status.events_unread || 0);
-    eventsBadge.hidden = !n || societyState.view === "following";
-    eventsBadge.textContent = String(n);
-  }
-  if (societyState.view === "following") loadSocietyFollowing(true);
-  // CONVERSATIONS FIRST; until the agent is registered, its settings.
-  if (!societyState.view) societyView(societyState.status.registered ? "chats" : "settings");
-  await loadSocietyChats();
-  if (societyState.peer) openSocietyChat(societyState.peer, false);
+  societyFollowPairing();
+  if (societyState.status.connected) loadSocietySite();
+  // THE INBOX FIRST; until the agent is registered, its settings.
+  if (!societyState.view) societyView(societyState.status.connected ? "chats" : "settings");
+  await loadSocietyThreads();
+  if (societyState.thread) openSocietyThread(societyState.thread, false);
   clearInterval(societyState.follow);
-  // FOLLOWED WHILE IT IS OPEN: a conversation an agent answers by itself goes
-  // on - the list and the open conversation read again now and then.
+  // FOLLOWED WHILE IT IS OPEN: a thread an agent answers by itself goes on - the
+  // list and the open thread read again now and then.
   societyState.follow = setInterval(() => {
     if (activeTab !== "society" || document.hidden) return;
-    loadSocietyChats();
-    if (societyState.peer && !societyState.asking && !societyHasTyping()) {
-      openSocietyChat(societyState.peer, false);
+    loadSocietyThreads();
+    if (societyState.thread && !societyState.asking && !societyHasTyping()) {
+      openSocietyThread(societyState.thread, false);
     }
+    if (societyState.view === "groups" && !($("#society-g-text")?.value || "").trim()) loadSocietyGroups();
   }, 15000);
 }
 
@@ -27816,25 +28291,153 @@ function societyRow(name, control, said = "") {
     said ? `<div class="desc muted">${escapeHtml(said)}</div>` : ""}</div>`;
 }
 
+/* PAIRING WITH THE USER'S ACCOUNT (the site's v2; the user, 2026-11-10: "注册账号用户会做，你就负责
+   注册好账号之后的发送和接收"): the user makes the account on the website and gives its id here; the
+   agent asks for a key, and the user checks the request code on their account page and Gives it. */
+const SOCIETY_WRITE = { none: "May not write", draft: "Writes drafts only - you send them on the website",
+  send: "May send" };
+const SOCIETY_SEND_TO = { replied: "Only to those you have written with", anyone: "To anyone" };
+
+function societyPairRows(s) {
+  const pair = s.pairing || {};
+  // ASKED AGAIN (after a key taken back, or one that expired): the request, not the old connection.
+  const asking = ["waiting", "key_expired"].includes(pair.status) && !societyState.pairAgain;
+  if (s.connected && !asking) {
+    const perms = s.permissions || {};
+    const inbox = perms.inbox || {};
+    const may = [
+      inbox.read ? "Reads the inbox" : "May not read the inbox",
+      SOCIETY_WRITE[inbox.write] || inbox.write || "",
+      inbox.write && inbox.write !== "none" ? SOCIETY_SEND_TO[inbox.send_to] || inbox.send_to || "" : "",
+      perms.follow ? "May follow" : "",
+      perms.events ? "May post recent events" : "",
+      perms.profile ? "May change your public page" : "",
+      perms.posts ? "May change your posts" : "",
+      perms.contacts ? "Reads your contacts" : "",
+      (perms.groups || {}).read ? "Reads your groups" : "",
+      (perms.groups || {}).send ? "Writes in your groups" : "",
+      (perms.groups || {}).create ? "May create groups" : "",
+      (perms.groups || {}).invite ? "May invite into groups" : "",
+      (perms.groups || {}).join ? "Sees your group invitations" : "",
+    ].filter(Boolean);
+    // THE USER'S CONTACTS ON THE WEBSITE, each with the person in Connections it is paired with (the user,
+    // 2026-11-12: "自动和本地manage的connections进行配对").
+    const sc = s.site_contacts || {};
+    const contactsRow = sc.may ? societyRow("Your contacts there", (sc.contacts || []).length
+      ? `<ul class="society-perms">${sc.contacts.map((one) => `<li><b>${escapeHtml(one.name || one.id)}</b>${
+          one.public_name && one.public_name !== one.name ? ` <span class="muted">(${escapeHtml(one.public_name)})</span>` : ""} <code>${escapeHtml(one.id)}</code>${
+          (one.labels || []).map((label) => ` <span class="society-kind">${escapeHtml(label)}</span>`).join("")}${
+          one.note ? ` - ${escapeHtml(one.note)}` : ""} · ${one.person_name
+          ? `${escapeHtml("paired with")} <b>${escapeHtml(one.person_name)}</b> ${escapeHtml("in Connections")} (${escapeHtml("by")} ${escapeHtml(one.matched_by)})`
+          : `<span class="muted">${escapeHtml("not in your Connections")}</span>`}</li>`).join("")}</ul>`
+      : `<span class="muted">${escapeHtml("None yet - add them on the website (My contacts).")}</span>`,
+      "Read from the website every few minutes; each paired with the same person in your Connections by an account you vouch for, else by your name for them or theirs - your labels telling apart people of the same name.") : "";
+    // WHAT THE KEY LACKS FOR WHAT THE AGENT DOES (the user, 2026-11-12: "可能之前的key权限不够，要求重新
+    // pair的"): said, with the way to more - change it on the website and read it again, or pair again.
+    const lacking = s.lacking || [];
+    const lacks = lacking.length ? `<div class="society-lacking">
+        <strong>${escapeHtml("This key can't do everything your agent does:")}</strong>
+        <ul>${lacking.map((one) => `<li><b>${escapeHtml(one.permission)}</b> - ${escapeHtml("for")} ${escapeHtml(one.for)}</li>`).join("")}</ul>
+        <p>${escapeHtml("Give it these on your account page (Keys) and read it again here - or pair again with a new key: take this agent off its key there first, then Pair again.")}</p>
+        <div class="society-actions">
+          ${pair.give_at || s.page ? `<button type="button" data-society-link="${escapeHtml(pair.give_at || s.page)}">${escapeHtml("Open your account page")}</button>` : ""}
+          <button type="button" class="secondary" id="society-refresh-lacking">${escapeHtml("I changed it - read it again")}</button>
+          <button type="button" class="secondary" id="society-pair-again">${escapeHtml("Pair again")}</button>
+        </div></div>` : "";
+    return `${s.key_refused ? `<p class="delegate-error">${escapeHtml(
+      "The website no longer accepts this agent's key (taken back or expired, or this computer's clock is off). Taken back: pair it again. Expired: extend it on your account page first.")}</p>` : ""}
+      ${pair.said && !s.key_refused ? `<p class="delegate-error">${escapeHtml(pair.said)}</p>` : ""}
+      ${lacks}
+      ${societyRow("Connected as", `<div class="society-inline"><code class="society-id">${escapeHtml(s.account)}</code>
+        <button type="button" class="small secondary" data-society-copy="${escapeHtml(s.account)}">${escapeHtml("Copy")}</button>
+        ${s.page ? `<a href="${escapeHtml(s.page)}" target="_blank" rel="noopener noreferrer">${escapeHtml("Your page")}</a>` : ""}</div>`)}
+      ${societyRow("What the key may do", `<ul class="society-perms">${may.map((one) => `<li>${escapeHtml(one)}</li>`).join("")}</ul>`,
+        "Change it on your account page on the website - it holds at once. Your agent reads it at the start, every hour and after any refusal, and uses only what it gives.")}
+      ${contactsRow}
+      <div class="society-actions">
+        <button type="button" class="secondary" id="society-refresh">${escapeHtml("Read it again")}</button>
+        ${s.key_refused && !lacking.length ? `<button type="button" id="society-pair-again">${escapeHtml("Pair again")}</button>` : ""}
+        <button type="button" class="secondary" id="society-unpair">${escapeHtml("Disconnect")}</button>
+      </div>`;
+  }
+  if (pair.status === "waiting" && !societyState.pairAgain) {
+    return `${societyRow("Request code", `<code class="society-pair-code">${escapeHtml(pair.code || "")}</code>`,
+        "Check that your account page shows this same code, then click Give there.")}
+      <p class="muted">${escapeHtml("Waiting for you to give the key on the website")}${pair.expires_at ? ` - ${escapeHtml(
+        "until")} ${escapeHtml(societyAt(pair.expires_at))}` : ""}.</p>
+      <div class="society-actions">
+        ${pair.give_at ? `<button type="button" data-society-link="${escapeHtml(pair.give_at)}">${
+          escapeHtml("Open your account page")}</button>` : ""}
+        <button type="button" class="secondary" id="society-pair-again">${escapeHtml("Pair again")}</button>
+      </div>`;
+  }
+  const ended = pair.status === "refused" ? "Refused on the website."
+    : pair.status === "expired" ? "Expired: the key was not given in time."
+      : pair.status === "key_expired" ? pair.said || "" : "";
+  return `${ended ? `<p class="delegate-error">${escapeHtml(ended)}</p>` : ""}
+    <p class="panel-note">${escapeHtml("Make your account on the website yourself (it needs an invitation code), then give your agent its id here: the agent asks for a key, and you give it on your account page.")}</p>
+    ${societyRow("Account id", `<input id="society-account" placeholder="pa-XXXX-XXXX" autocomplete="off"
+        spellcheck="false" value="${escapeHtml(pair.account || "")}">`,
+      "On the website, Your info has it, with a Copy button.")}
+    <div class="society-actions"><button type="button" id="society-pair">${escapeHtml("Pair")}</button></div>`;
+}
+
+/* THE POSTS ON THE WEBSITE (its API, 2026-11-12): read with any key; changed only on the user's
+   click, and only as the key permits - public at once. The profile itself is the account's, brought
+   here, never sent from here. */
+async function loadSocietySite() {
+  let posts;
+  try { posts = await api.get("/api/society/posts"); } catch (err) { posts = { error: err.message }; }
+  societyState.site = { posts };
+  const box = $("#society-site");
+  if (box) box.innerHTML = societySiteHtml();
+}
+
+function societySiteHtml() {
+  const held = societyState.site;
+  if (!held) return `<p class="muted">${escapeHtml("Reading your posts on the website…")}</p>`;
+  const posts = held.posts || {};
+  const list = (posts.posts || []).map((one) => `<li class="society-post"><strong>${escapeHtml(one.title)}</strong>
+      ${one.text ? `<div>${escapeHtml(one.text)}</div>` : ""}
+      ${posts.may_change ? `<button type="button" class="small secondary" data-society-post-delete="${
+        escapeHtml(one.id)}">${escapeHtml("Delete")}</button>` : ""}</li>`).join("");
+  const postRows = posts.error ? `<p class="delegate-error">${escapeHtml(posts.error)}</p>` : `
+    ${list ? `<ul class="society-posts">${list}</ul>` : `<p class="muted">${escapeHtml("No posts.")}</p>`}
+    ${posts.may_change && (posts.posts || []).length < (posts.most || 10) ? `<div class="society-sub">
+      ${societyRow("Title", `<input id="society-post-title" maxlength="120">`)}
+      ${societyRow("Text", `<textarea id="society-post-text" rows="3" maxlength="1000"></textarea>`,
+        "What you are working on, making or looking for. Public at once.")}
+      <div class="society-actions"><button type="button" id="society-post-add">${escapeHtml("Post")}</button></div></div>`
+      : posts.may_change ? "" : `<p class="panel-note">${escapeHtml("This key may not change your posts - give it that on your account page on the website.")}</p>`}`;
+  return `<h4 class="society-h4">${escapeHtml("Your posts")}</h4>${postRows}`;
+}
+
+/* WHILE THE KEY WAITS for the user's Give: its status read every 4 s (the site: every few seconds,
+   not faster), until it is given, refused or expired - or the panel is left. */
+function societyFollowPairing() {
+  clearInterval(societyState.pairPoll);
+  const pair = (societyState.status || {}).pairing || {};
+  if (pair.status !== "waiting") return;           // asked again while connected too
+  societyState.pairPoll = setInterval(async () => {
+    if (activeTab !== "society" || document.hidden) return;
+    let said;
+    try { said = await api.get("/api/society/pair/status"); } catch (_err) { return; }
+    if (said.status === "waiting") return;
+    clearInterval(societyState.pairPoll);
+    if (said.status === "given") toast("Connected - your agent is paired with your account");
+    loadSociety();
+  }, 4000);
+}
+
 function renderSocietyMe() {
   const s = societyState.status;
   if (!s) return;
   const profile = s.profile || {};
   const unread = $("#society-unread");
   if (unread) { unread.textContent = s.unread || ""; unread.hidden = !s.unread; }
-  const registered = s.registered
-    ? `<span class="society-ok">&#10003; ${escapeHtml("Registered - other agents can find it by its id")}${
-        s.listed ? `, ${escapeHtml("and you are in the public list of people")}` : ""}.</span>`
-    : `<span class="muted">${escapeHtml("Not shown to anyone yet: confirm an email address of yours. The address is never shown.")}</span>`;
-  const email = s.registered ? "" : societyRow("Your email address",
-    `<div class="society-inline"><input id="society-email" type="email" autocomplete="email">
-       <button type="button" id="society-email-send">${escapeHtml("Send the confirmation email")}</button></div>`)
-    + (societyState.emailSent || s.email_waiting ? societyRow("Code",
-      `<div class="society-inline"><input id="society-code" class="society-code" inputmode="numeric" maxlength="6"
-         autocomplete="one-time-code">
-       <button type="button" id="society-code-confirm">${escapeHtml("Confirm")}</button>
-       <button type="button" class="secondary" id="society-clicked">${escapeHtml("I clicked the link")}</button></div>`,
-      "Click the link in the email - or type its code here. It lasts two hours.") : "");
+  const groupsUnread = $("#society-groups-unread");
+  if (groupsUnread) { groupsUnread.textContent = s.groups_unread || ""; groupsUnread.hidden = !s.groups_unread; }
+  const pairing = societyPairRows(s);
   const groups = SOCIETY_GROUPS.map(([group, title, said]) => {
     const held = (s.groups || {})[group] || { people: [], kinds: [] };
     return `<div class="society-group"><strong>${escapeHtml(title)}</strong>
@@ -27847,43 +28450,24 @@ function renderSocietyMe() {
   }).join("");
   const kinds = Object.keys(SOCIETY_KINDS).map((kind) => {
     const now = SOCIETY_GROUPS.find(([group]) => (((s.groups || {})[group] || {}).kinds || []).includes(kind));
-    return societyRow(SOCIETY_KINDS[kind], `<select data-society-kind="${kind}">${SOCIETY_GROUPS.map(([group, title]) =>
-      `<option value="${group}"${now && now[0] === group ? " selected" : ""}>${escapeHtml(title)}</option>`).join("")}</select>`);
+    return societyRow(SOCIETY_KINDS[kind], `<select data-society-kind="${kind}">${SOCIETY_KIND_TIERS.map(([group, words]) =>
+      `<option value="${group}"${now && now[0] === group ? " selected" : ""}>${escapeHtml(words)}</option>`).join("")}</select>`);
   }).join("");
-  const backup = societyState.backupOpen ? `<div class="society-sub">
-      ${societyRow("Include the private key", `<input type="checkbox" id="society-with-key">`,
-        "Then the backup is the agent itself, and needs a passphrase.")}
-      <div id="society-pass-row" hidden>
-        ${societyRow("Passphrase", `<input type="password" id="society-pass" autocomplete="new-password">`)}
-        ${societyRow("Again", `<input type="password" id="society-pass-2" autocomplete="new-password">`,
-          "Forget it, and the key in this backup is lost: no one can open it.")}
-      </div>
-      <div class="society-actions"><button type="button" id="society-backup-save">${escapeHtml("Save the backup")}</button></div>
-    </div>` : "";
-  const restore = societyState.restoreOpen ? `<div class="society-sub">
-      ${societyRow("The backup file", `<input type="file" id="society-restore-file" accept=".json,application/json">`)}
-      ${societyRow("Its passphrase", `<input type="password" id="society-restore-pass">`,
-        "This agent's identity is replaced by the backup's.")}
-      <div class="society-actions"><button type="button" id="society-restore-go">${escapeHtml("Restore")}</button></div>
-    </div>` : "";
   $("#society-me").innerHTML = `
-    <div class="card"><h3>${escapeHtml("Your agent")}</h3>
-      ${societyRow("Agent id", `<div class="society-inline"><code class="society-id">${escapeHtml(s.id)}</code>
-        <button type="button" class="small secondary" data-society-copy="${escapeHtml(s.id)}">${escapeHtml("Copy")}</button>
-        ${s.registered ? `<a href="${escapeHtml(s.page)}" target="_blank" rel="noopener noreferrer">${
-          escapeHtml("Your page")}</a>` : ""}</div>`)}
-      ${societyRow("Status", registered)}${email}
-    </div>
+    <div class="card"><h3>${escapeHtml("Your agent")}</h3>${pairing}</div>
     <div class="card"><h3>${escapeHtml("Your profile")}</h3>
-      <p class="panel-note">${escapeHtml("As you set it in Connections - change it there.")}</p>
+      <p class="panel-note">${escapeHtml(s.connected
+        ? "From your account on the website - your name, your description, your picture and the accounts it verified. Change them there; they are brought here."
+        : "Brought from your account on the website once your agent is paired with it.")}</p>
       <div class="society-profile">${societyFace({ name: profile.name }, "large")}<div class="society-profile-text">
         <strong>${escapeHtml(profile.name || "Your name is not set in Connections")}</strong>
         ${profile.headline ? `<div>${escapeHtml(profile.headline)}</div>` : ""}
         ${profile.location ? `<div class="muted">${escapeHtml(profile.location)}</div>` : ""}
         ${profile.about ? `<p class="society-about">${escapeHtml(profile.about)}</p>` : ""}</div></div>
-      ${societyRow("Show me in the public list of people", `<input type="checkbox" id="society-listed"${s.listed ? " checked" : ""}>`,
-        "Ticked: anyone who opens the AGENTS of people website sees your card - your picture, name, headline and where you are - and can find you by your name. Not ticked: only people who know your agent id can find you.")}
-      <div class="society-actions"><button type="button" id="society-publish">${escapeHtml(s.published_at ? "Publish again" : "Publish")}</button></div>
+      ${s.connected ? `<div class="society-actions">${s.page ? `<button type="button" class="secondary"
+          data-society-link="${escapeHtml(s.page)}">${escapeHtml("Your page")}</button>` : ""}
+          <button type="button" class="secondary" id="society-profile-pull">${escapeHtml("Bring it again now")}</button></div>
+        <div id="society-site">${societySiteHtml()}</div>` : ""}
     </div>
     <div class="card"><h3>${escapeHtml("Who gets what answer")}</h3>
       <div class="society-groups">${groups}</div>
@@ -27898,139 +28482,130 @@ function renderSocietyMe() {
       <textarea id="society-commands" rows="4" placeholder="${escapeHtml(
         "For example: You may tell Ada more - she is on my team. Never discuss salary with recruiters. Answer in English.")}">${escapeHtml(s.commands || "")}</textarea>
       <div class="society-actions"><button type="button" id="society-commands-save">${escapeHtml("Save")}</button></div>
-    </div>
-    <div class="card"><h3>${escapeHtml("Your agent's key")}</h3>
-      <p class="panel-note">${escapeHtml("Kept in the agent's data folder; it stays when the program is uninstalled.")}</p>
-      <div class="society-actions">
-        <button type="button" class="secondary" id="society-backup-open">${escapeHtml("Back up the key")}</button>
-        <button type="button" class="secondary" id="society-restore-open">${escapeHtml("Restore from a backup")}</button>
-      </div>${backup}${restore}
     </div>`;
 }
 
 function societyView(which) {
   $$("[data-society-view]").forEach((one) => one.classList.toggle("on", one.dataset.societyView === which));
   $("#society-view-chats").hidden = which !== "chats";
-  $("#society-view-following").hidden = which !== "following";
+  $("#society-view-groups").hidden = which !== "groups";
   $("#society-view-settings").hidden = which !== "settings";
   societyState.view = which;
-  if (which === "following") loadSocietyFollowing(true);
+  if (which === "groups") loadSocietyGroups();
 }
 
-/* -- FOLLOWING (society/service.py; the user, 2026-11-02/03): the recent
-   events of those the agent follows - their words as text, never markup;
-   whom it follows; the user's own recent events, POSTED BY THE USER ALONE
-   (the agent may leave one as a draft). -------------------------------------------------- */
 function societyAt(seconds) {
   return seconds ? localStamp(new Date(Number(seconds) * 1000).toISOString()) : "";
 }
 
-async function loadSocietyFollowing(read) {
+/* -- THE INBOX, as an email program shows it (the user, 2026-11-12: "你只要一个inbox像email一样
+   处理thread就行"; "你的Inbox要记录发送和对面回复，并且要显示每个inbox的status(是否已经被agent read
+   等)"): on the left each thread - what was sent and what came back - with what has become of it;
+   on the right one thread, all of it, answered in it. Following and recent events are the
+   website's. --------------------------------------------------------------------------------- */
+const SOCIETY_THREAD_STATUS = {
+  new: "New - your agent has not read it yet",
+  kept: "Read only - kept for you, your agent writes nothing",
+  read: "Read by your agent - not answered",
+  draft_agent: "Your agent drafted a reply - waiting for you to send it",
+  draft_user: "Your draft - not sent yet",
+  site_draft: "Kept as a draft on the website - send it there",
+  sent_agent: "Your agent replied - no answer from them yet",
+  sent_user: "Sent - no answer from them yet",
+  seen_agent: "Your agent replied - read by them, no answer yet",
+  seen_user: "Sent - read by them, no answer yet",
+  event: "A recent event of someone you follow"};
+
+/* WHAT THE AGENT DECIDED for a thread after its last answer (the user, 2026-11-12: "每个thread, agent
+   当前的决定要记录"). */
+const SOCIETY_DECISIONS = {
+  waiting_for_them: "Waiting for their answer",
+  waiting_for_user: "Waiting for you",
+  nothing_more: "Settled - nothing more to do"};
+
+function societyDecisionLine(decision, full) {
+  if (!decision) return "";
+  const words = SOCIETY_DECISIONS[decision.decision] || decision.decision;
+  return `<div class="society-thread-decision ${escapeHtml(decision.decision)}">${escapeHtml("Your agent's decision")}: <strong>${
+    escapeHtml(words)}</strong>${full && decision.why ? ` - ${escapeHtml(decision.why)}` : ""}${
+    full && decision.at ? ` <span class="muted">${escapeHtml(localStamp(decision.at))}</span>` : ""}</div>`;
+}
+
+function societyStatusLine(status) {
+  return status ? `<div class="society-thread-status ${escapeHtml(status)}">${
+    escapeHtml(SOCIETY_THREAD_STATUS[status] || status)}</div>` : "";
+}
+
+async function loadSocietyThreads() {
   try {
-    societyState.feed = await api.get(`/api/society/events${read ? "?read=1" : ""}`);
-  } catch (err) {
-    $("#society-following").innerHTML = `<p class="delegate-error">${escapeHtml(err.message)}</p>`;
-    return;
-  }
-  if (read) {
-    const badge = $("#society-events-unread");
-    if (badge) badge.hidden = true;
-  }
-  renderSocietyFollowing();
+    societyState.threads = (await api.get("/api/society/threads")).threads || [];
+  } catch (_err) { societyState.threads = []; }
+  renderSocietyThreads();
 }
 
-function renderSocietyFollowing() {
-  const box = $("#society-following");
-  const feed = societyState.feed;
-  if (!box || !feed) return;
-  const typing = $("#society-event-text");
-  const kept = typing ? typing.value : null;
-  const draft = feed.draft;
-  const events = (feed.events || []).map((one) => `<li class="society-event">
-      ${societyFace({ name: one.peer_name || one.peer_id }, "small")}
-      <div class="society-event-text"><div class="society-chat-top"><strong>${escapeHtml(one.peer_name || one.peer_id)}</strong>
-        <span class="muted">${escapeHtml(societyAt(one.at))}</span></div>
-        <div class="society-event-words">${escapeHtml(one.text)}</div></div></li>`).join("");
-  const following = (feed.following || []).map((one) => `<li class="society-follow-row">
-      <span><strong>${escapeHtml(one.name || one.id)}</strong> <code class="muted">${escapeHtml(one.id)}</code></span>
-      <button type="button" class="small secondary" data-society-unfollow="${escapeHtml(one.id)}">${escapeHtml("Unfollow")}</button></li>`).join("");
-  const mine = (feed.mine || []).map((one) => `<li class="society-follow-row">
-      <span class="society-event-words">${escapeHtml(one.text)} <span class="muted">${escapeHtml(societyAt(one.at))}</span></span>
-      <button type="button" class="small secondary" data-society-withdraw="${escapeHtml(one.id)}">${escapeHtml("Withdraw")}</button></li>`).join("");
-  box.innerHTML = `
-    ${feed.error ? `<p class="delegate-error">${escapeHtml(feed.error)}</p>` : ""}
-    <div class="society-following">
-      <section class="card">
-        <div class="society-side-head"><strong>${escapeHtml("Recent events of those you follow")}</strong>
-          <button type="button" class="small secondary" id="society-events-collect">${escapeHtml("Check now")}</button></div>
-        <ul class="society-events">${events || `<li class="muted">${escapeHtml("Nothing yet. Follow someone below - what they post from then on comes here.")}</li>`}</ul>
-      </section>
-      <section class="card">
-        <strong>${escapeHtml("Your recent events")}</strong>
-        <p class="muted">${escapeHtml("Public on your page, and sent to everyone who follows you. Withdrawn, an event is deleted - from your page and from their inboxes.")}</p>
-        ${draft ? `<p class="muted">${escapeHtml(draft.written_by === "agent"
-          ? "Written by your agent - read it, change it if you like, then Post." : "Not posted yet.")}</p>` : ""}
-        <textarea id="society-event-text" rows="3" maxlength="1000" placeholder="${escapeHtml("What are you doing?")}"></textarea>
-        <div class="society-actions">
-          <button type="button" id="society-event-post">${escapeHtml("Post")}</button>
-          ${draft ? `<button type="button" class="secondary" id="society-event-drop">${escapeHtml("Discard the draft")}</button>` : ""}</div>
-        <ul class="society-follows">${mine}</ul>
-      </section>
-      <section class="card">
-        <strong>${escapeHtml("Whom you follow")}</strong>
-        <p class="muted">${escapeHtml("Seen by you alone. Your agent may follow and unfollow too, and says when it does.")}</p>
-        <div class="society-inline"><input id="society-follow-id" autocomplete="off"
-          placeholder="${escapeHtml("An agent id, pa-XXXX-XXXX-XXXX-XXXX")}" aria-label="${escapeHtml("An agent id, pa-XXXX-XXXX-XXXX-XXXX")}">
-          <button type="button" id="society-follow-go">${escapeHtml("Follow")}</button></div>
-        <ul class="society-follows">${following || `<li class="muted">${escapeHtml("You follow no one yet.")}</li>`}</ul>
-      </section>
-    </div>`;
-  const text = $("#society-event-text");
-  if (text) text.value = kept !== null && kept !== "" ? kept : (draft ? draft.text : "");
-}
-
-/* -- the conversations, on the left ---------------------------------------------------- */
-async function loadSocietyChats() {
-  try {
-    societyState.chats = (await api.get("/api/society/conversations")).conversations || [];
-  } catch (_err) { societyState.chats = []; }
-  renderSocietyChats();
-}
-
-function renderSocietyChats() {
+function renderSocietyThreads() {
   const list = $("#society-list");
   if (!list) return;
-  const chats = societyState.chats;
-  list.innerHTML = chats.length ? chats.map((one) => {
+  const threads = societyState.threads;
+  list.innerHTML = threads.length ? threads.map((one) => {
     const name = one.person_name || one.name || one.peer_id;
     const last = one.last || {};
     const lead = last.status === "draft" ? `${escapeHtml("Draft")}: `
       : last.direction === "out" ? (last.sent_by === "agent" ? `${escapeHtml("Your agent")}: ` : `${escapeHtml("You")}: `) : "";
-    return `<li class="society-chat-row${one.peer_id === societyState.peer ? " on" : ""}" data-society-open="${escapeHtml(one.peer_id)}">
+    const subject = one.kind === "event" ? "Recent event" : one.subject || "(no subject)";
+    return `<li class="society-chat-row${one.id === societyState.thread ? " on" : ""}${one.unread ? " unread" : ""}" data-society-thread="${escapeHtml(one.id)}">
       ${societyFace({ name }, "small")}
       <div class="society-chat-text"><div class="society-chat-top"><strong>${escapeHtml(name)}</strong>
         <span class="muted">${escapeHtml(localStamp(one.last_at))}</span></div>
-        <div class="society-chat-last muted">${lead}${escapeHtml(last.text || "")}</div></div>
+        <div class="society-thread-subject">${escapeHtml(subject)}${one.count > 1 ? ` <span class="muted">(${one.count})</span>` : ""}</div>
+        <div class="society-chat-last muted">${lead}${escapeHtml(last.text || "")}</div>
+        ${societyStatusLine(one.status)}${societyDecisionLine(one.decision, false)}</div>
       ${one.unread ? `<span class="society-count">${one.unread}</span>` : ""}</li>`;
-  }).join("") : `<li class="muted society-chat-none">${escapeHtml("No conversations yet. Search for someone above.")}</li>`;
+  }).join("") : `<li class="muted society-chat-none">${escapeHtml("Nothing in your inbox yet. Search for someone above to write to them.")}</li>`;
 }
 
-/* -- one conversation, on the right ----------------------------------------------------- */
-async function openSocietyChat(peer, read = true) {
-  societyState.peer = peer;
+function societyShown(said) {
+  societyState.peer = said.peer_id;
+  societyState.messages = said.messages || [];
+  societyState.contact = said.contact || { peer_id: said.peer_id };
+  societyState.group = said.group || "read";
+  societyState.open = said;
+}
+
+async function openSocietyThread(key, read = true) {
+  societyState.thread = key;
+  societyState.newTo = "";
+  let said;
   try {
-    const said = await api.get(`/api/society/conversation?peer=${encodeURIComponent(peer)}${read ? "&read=1" : ""}`);
-    societyState.messages = said.messages || [];
-    societyState.contact = said.contact || { peer_id: peer };
-    societyState.group = said.group || "read";
-  } catch (err) {
-    $("#society-main").innerHTML = `<p class="delegate-error">${escapeHtml(err.message)}</p>`;
+    said = await api.get(`/api/society/thread?id=${encodeURIComponent(key)}${read ? "&read=1" : ""}`);
+  } catch (_err) {
+    // Gone - a draft that was all of it, removed: nothing open.
+    societyState.thread = "";
+    societyState.open = null;
+    $("#society-main").innerHTML = `<p class="muted society-pick">${escapeHtml("Pick a thread - or search for someone, and Write.")}</p>`;
+    renderSocietyThreads();
     return;
   }
-  renderSocietyChat();
-  if (read) loadSocietyChats();
+  if (societyState.thread !== key) return;           // another opened since
+  societyShown(said);
+  renderSocietyThread();
+  if (read) loadSocietyThreads(); else renderSocietyThreads();
 }
 
+/* A NEW MESSAGE - a thread of its own once saved or sent. */
+async function startSocietyMessage(peer) {
+  let said;
+  try { said = await api.get(`/api/society/thread?peer=${encodeURIComponent(peer)}`); }
+  catch (err) { toast(err.message, "error"); return; }
+  societyState.thread = "";
+  societyState.newTo = said.peer_id;
+  societyShown(said);
+  renderSocietyThreads();
+  renderSocietyThread();
+  $("#society-compose-subject")?.focus();
+}
+
+/* -- one thread, on the right ----------------------------------------------------- */
 function societyBubble(one) {
   const at = escapeHtml(localStamp(one.sent_at || one.created_at));
   if (one.status === "note") {
@@ -28051,7 +28626,13 @@ function societyBubble(one) {
         <button type="button" class="small secondary" data-society-drop="${escapeHtml(one.id)}">${escapeHtml("Remove")}</button>`}</div></li>`;
   }
   const mine = one.direction === "out";
-  const who = mine ? (one.sent_by === "agent" ? `<span class="society-by">${escapeHtml("Sent by your agent")}</span>` : "") : "";
+  // What became of each: sent by whom, kept on the website, read by the agent or not yet.
+  const who = mine ? (one.status === "site_draft"
+      ? `<span class="society-by">${escapeHtml("Kept as a draft on the website")}</span>`
+      : `${one.sent_by === "agent" ? `<span class="society-by">${escapeHtml("Sent by your agent")}</span>` : ""}${
+        one.seen_at ? ` <span class="society-by">${escapeHtml("Read by them")}</span>` : ""}`)
+    : one.status === "received" ? `<span class="society-by">${escapeHtml(one.handled_at
+      ? "Read by your agent" : "Your agent has not read it yet")}</span>` : "";
   const body = one.status === "unreadable"
     ? `<p class="delegate-error">${escapeHtml("A message that could not be opened")}: ${escapeHtml(one.error)}</p>`
     : `${one.subject ? `<div class="society-subject">${escapeHtml(one.subject)}</div>` : ""}<div class="society-text">${escapeHtml(one.text)}</div>`;
@@ -28059,12 +28640,13 @@ function societyBubble(one) {
     <div class="society-bubble-foot muted">${who} ${at}</div></li>`;
 }
 
-function renderSocietyChat() {
+function renderSocietyThread() {
   const main = $("#society-main");
   if (!main) return;
   const contact = societyState.contact || {};
   const peer = societyState.peer;
-  const chat = societyState.chats.find((one) => one.peer_id === peer) || {};
+  const open = societyState.open || {};
+  const chat = societyState.threads.find((one) => one.peer_id === peer) || {};
   const name = chat.person_name || contact.name || peer;
   const linked = chat.person_name
     ? `${escapeHtml("This is")} <strong>${escapeHtml(chat.person_name)}</strong> ${escapeHtml("in your Connections")}
@@ -28087,13 +28669,21 @@ function renderSocietyChat() {
           <select id="society-peer-group">${SOCIETY_GROUPS.map(([group, title]) =>
             `<option value="${group}"${societyState.group === group ? " selected" : ""}>${escapeHtml(title)}</option>`).join("")}
           </select></label></div></header>
+    <div class="society-thread-head"><h3>${escapeHtml(open.kind === "event" ? "Recent event"
+      : societyState.newTo ? "New message" : open.subject || "(no subject)")}</h3>${societyStatusLine(open.status)}${
+      societyDecisionLine(open.decision, true)}</div>
     <ul class="society-bubbles">${societyState.messages.map(societyBubble).join("")
       || `<li class="muted">${escapeHtml("Nothing yet. Write the first message below.")}</li>`}</ul>
-    <div class="society-compose">
-      <input id="society-compose-subject" placeholder="${escapeHtml("Subject")}">
-      <textarea id="society-compose-text" rows="3" placeholder="${escapeHtml("Write a message")}"></textarea>
+    ${open.kind === "event" ? `<div class="society-compose"><p class="muted">${escapeHtml(
+        "Followed on the website. Answer it with a message of your own.")}</p>
+      <div class="ov-lp-buttons"><button type="button" data-society-open="${escapeHtml(peer)}">${escapeHtml("Write to them")}</button></div></div>`
+    : `<div class="society-compose">
+      <input id="society-compose-subject" placeholder="${escapeHtml("Subject")}" value="${escapeHtml(
+        !societyState.newTo && open.subject ? `Re: ${open.subject}` : "")}">
+      <textarea id="society-compose-text" rows="3" placeholder="${escapeHtml(societyState.newTo
+        ? "Write a message" : "Write a reply")}"></textarea>
       <div class="ov-lp-buttons"><button type="button" id="society-compose-send">${escapeHtml("Send")}</button>
-        <button type="button" class="secondary" id="society-compose-draft">${escapeHtml("Save as draft")}</button></div></div>`;
+        <button type="button" class="secondary" id="society-compose-draft">${escapeHtml("Save as draft")}</button></div></div>`}`;
   const list = main.querySelector(".society-bubbles");
   if (list) list.scrollTop = list.scrollHeight;
 }
@@ -28173,9 +28763,6 @@ document.addEventListener("input", (event) => {
     const words = event.target.value.trim();
     societyState.timer = setTimeout(() => societyLinkSearch(words), 200);
   }
-  if (event.target.id === "society-with-key") {
-    $("#society-pass-row").hidden = !event.target.checked;
-  }
 });
 
 document.addEventListener("keydown", (event) => {
@@ -28217,7 +28804,8 @@ document.addEventListener("change", async (event) => {
     renderSocietyMe();
     if (target.id === "society-peer-group") {
       societyState.group = target.value;
-      renderSocietyChat();
+      if (societyState.thread) openSocietyThread(societyState.thread, false);
+      else renderSocietyThread();
     }
     toast("Saved");
   } catch (err) {
@@ -28227,15 +28815,194 @@ document.addEventListener("change", async (event) => {
 });
 
 
-function societySaveFile(name, value) {
-  const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = name;
-  document.body.appendChild(link);
-  link.click();
-  setTimeout(() => { URL.revokeObjectURL(link.href); link.remove(); }, 1000);
+/* -- THE ACCOUNT'S GROUPS (society/site_groups.py; the user, 2026-11-13: "群组 ... 发消息、建群、接受邀请"
+   - "群发言不一定每个要回，agent可以自己判断。另外group的回复不要draft, 直接发送就行"): on the left the
+   invitations, a new group, each group; on the right one group, written in. Naming admins, removing
+   members, leaving and dissolving are the website's. ----------------------------------------- */
+const societyGroups = { data: null, open: "", thread: null, making: false };
+const SOCIETY_GROUP_MODES = [
+  ["reply", "Your agent answers where you would want it - sent by itself"],
+  ["read", "Read only - your agent writes nothing"]];
+const SOCIETY_GROUP_ROLES = { owner: "Owner", admin: "Admin", member: "Member" };
+const SOCIETY_GROUP_LACKS = {
+  read: "This key may not read your groups - give it Group read on your account page.",
+  send: "This key may not write in groups - give it Group write on your account page.",
+  join: "This key may not see your invitations - give it Accept invites on your account page."};
+
+async function loadSocietyGroups(fresh = false) {
+  try { societyGroups.data = await api.get(`/api/society/site_groups${fresh ? "?fresh=1" : ""}`); }
+  catch (err) { societyGroups.data = { error: err.message, groups: [], invitations: [], may: {} }; }
+  renderSocietyGroups();
+  if (societyGroups.open) openSocietyGroup(societyGroups.open, false);
 }
+
+function renderSocietyGroups() {
+  const side = $("#society-g-side");
+  const list = $("#society-g-list");
+  if (!side || !list) return;
+  const data = societyGroups.data || { groups: [], invitations: [], may: {} };
+  const may = data.may || {};
+  const badge = $("#society-groups-unread");
+  if (badge) { badge.textContent = data.unread || ""; badge.hidden = !data.unread; }
+  const lacks = ["read", "send", "join"].filter((part) => !may[part])
+    .map((part) => `<p class="panel-note">${escapeHtml(SOCIETY_GROUP_LACKS[part])}</p>`).join("");
+  const invitations = (data.invitations || []).map((one) => `<li class="society-g-invite">
+      <strong>${escapeHtml(one.name || one.group)}</strong>${one.public ? ` <span class="society-by">${escapeHtml("Public")}</span>` : ""}
+      ${one.description ? `<div class="muted">${escapeHtml(one.description)}</div>` : ""}
+      <div class="muted">${escapeHtml("Invited by")} ${escapeHtml(one.invited_by_name || one.invited_by || "")} · ${
+        escapeHtml(String(one.members || 0))} ${escapeHtml("members")}</div>
+      <div class="ov-lp-buttons"><button type="button" class="small" data-society-g-join="${escapeHtml(one.group)}">${escapeHtml("Accept")}</button>
+        <button type="button" class="small secondary" data-society-g-decline="${escapeHtml(one.group)}">${escapeHtml("Decline")}</button></div></li>`).join("");
+  const making = societyGroups.making ? `<div class="society-sub society-g-make">
+      <input id="society-g-name" maxlength="80" placeholder="${escapeHtml("The group's name")}">
+      <textarea id="society-g-description" rows="2" maxlength="600" placeholder="${escapeHtml("What it is for (optional)")}"></textarea>
+      <label class="society-in-group"><input type="checkbox" id="society-g-public"> ${escapeHtml("Public - listed on the site for anyone to see")}</label>
+      <div class="ov-lp-buttons"><button type="button" class="small" id="society-g-make-go">${escapeHtml("Make the group")}</button>
+        <button type="button" class="small secondary" id="society-g-make-no">${escapeHtml("Cancel")}</button></div></div>` : "";
+  side.innerHTML = `${data.error ? `<p class="delegate-error">${escapeHtml(data.error)}</p>` : ""}${lacks}
+    ${invitations ? `<div class="society-side-head"><span class="muted">${escapeHtml("Invitations")}</span></div>
+      <ul class="society-chats society-g-invites">${invitations}</ul>` : ""}
+    <div class="society-side-head"><span class="muted">${escapeHtml("Groups")}</span>
+      <span>${may.create ? `<button type="button" class="small secondary" id="society-g-new">${escapeHtml("New group")}</button>` : ""}
+        <button type="button" class="small secondary" id="society-g-check">${escapeHtml("Check now")}</button></span></div>
+    ${making}`;
+  const groups = data.groups || [];
+  list.innerHTML = groups.length ? groups.map((one) => {
+    const last = one.last || {};
+    const lead = last.mine ? `${escapeHtml(last.sent_by === "agent" ? "Your agent" : "You")}: `
+      : last.name ? `${escapeHtml(last.name)}: ` : "";
+    return `<li class="society-chat-row${one.id === societyGroups.open ? " on" : ""}${one.unread ? " unread" : ""}" data-society-g-open="${escapeHtml(one.id)}">
+      ${societyFace({ name: one.name }, "small")}
+      <div class="society-chat-text"><div class="society-chat-top"><strong>${escapeHtml(one.name || one.id)}</strong>
+        <span class="muted">${escapeHtml(societyAt(one.last_at))}</span></div>
+        <div class="society-chat-last muted">${lead}${escapeHtml(last.text || one.description || "")}</div>
+        <div class="society-thread-status">${escapeHtml(String(one.members || 0))} ${escapeHtml("members")} · ${
+          escapeHtml(SOCIETY_GROUP_ROLES[one.role] || one.role || "")}${one.mode === "read" ? ` · ${escapeHtml("Read only")}` : ""}</div></div>
+      ${one.unread ? `<span class="society-count">${one.unread}</span>` : ""}</li>`;
+  }).join("") : `<li class="muted society-chat-none">${escapeHtml(may.read
+    ? "No groups yet. Make one, or accept an invitation." : "Groups are not read with this key.")}</li>`;
+}
+
+async function openSocietyGroup(id, read = true) {
+  societyGroups.open = id;
+  let said;
+  try { said = await api.get(`/api/society/site_group?id=${encodeURIComponent(id)}${read ? "&read=1" : ""}`); }
+  catch (_err) {
+    societyGroups.open = "";
+    societyGroups.thread = null;
+    $("#society-g-main").innerHTML = `<p class="muted society-pick">${escapeHtml("Pick a group.")}</p>`;
+    renderSocietyGroups();
+    return;
+  }
+  if (societyGroups.open !== id) return;
+  societyGroups.thread = said;
+  renderSocietyGroup();
+  if (read) {
+    const one = ((societyGroups.data || {}).groups || []).find((group) => group.id === id);
+    if (one && one.unread) {
+      societyGroups.data.unread = Math.max(0, (societyGroups.data.unread || 0) - one.unread);
+      one.unread = 0;
+    }
+  }
+  renderSocietyGroups();
+}
+
+function renderSocietyGroup() {
+  const main = $("#society-g-main");
+  const held = societyGroups.thread;
+  if (!main || !held) return;
+  const group = held.group || {};
+  const may = (societyGroups.data || {}).may || {};
+  const typed = $("#society-g-text")?.value || "";
+  const bubbles = (held.messages || []).map((one) => `<li class="society-bubble ${one.mine ? "mine" : "theirs"}">
+      ${one.mine ? "" : `<div class="society-bubble-head">${escapeHtml(one.name || one.from)}</div>`}
+      <div class="society-text">${escapeHtml(one.text)}</div>
+      <div class="society-bubble-foot muted">${one.mine && one.sent_by === "agent"
+        ? `<span class="society-by">${escapeHtml("Sent by your agent")}</span> ` : ""}${escapeHtml(societyAt(one.at))}</div></li>`).join("");
+  const inviting = may.invite && ["owner", "admin"].includes(group.role) ? `<div class="society-inline">
+      <input id="society-g-invite" placeholder="pa-XXXX-XXXX" autocomplete="off" spellcheck="false">
+      <button type="button" class="small secondary" id="society-g-invite-go">${escapeHtml("Invite")}</button></div>` : "";
+  main.innerHTML = `<header class="society-main-head">${societyFace({ name: group.name }, "small")}
+      <div class="society-main-who"><strong>${escapeHtml(group.name || group.id)}</strong>
+        ${group.description ? `<span class="muted">${escapeHtml(group.description)}</span>` : ""}
+        <div class="muted">${escapeHtml(group.public ? "Public" : "Private")} · ${escapeHtml(String(group.members || 0))} ${
+          escapeHtml("members")} · ${escapeHtml("You are")} ${escapeHtml(SOCIETY_GROUP_ROLES[group.role] || group.role || "")}</div>
+        <label class="society-in-group">${escapeHtml("Your agent")}
+          <select data-society-g-mode="${escapeHtml(group.id)}">${SOCIETY_GROUP_MODES.map(([mode, words]) =>
+            `<option value="${mode}"${group.mode === mode ? " selected" : ""}>${escapeHtml(words)}</option>`).join("")}</select></label>
+        ${inviting}</div></header>
+    <ul class="society-bubbles">${bubbles || `<li class="muted">${escapeHtml("Nothing written here yet.")}</li>`}</ul>
+    ${may.send ? `<div class="society-compose">
+        <textarea id="society-g-text" rows="3" placeholder="${escapeHtml("Write to the group - every member reads it")}">${escapeHtml(typed)}</textarea>
+        <div class="ov-lp-buttons"><button type="button" id="society-g-send">${escapeHtml("Send")}</button></div></div>`
+      : `<div class="society-compose"><p class="muted">${escapeHtml(SOCIETY_GROUP_LACKS.send)}</p></div>`}`;
+  const box = main.querySelector(".society-bubbles");
+  if (box) box.scrollTop = box.scrollHeight;
+}
+
+document.addEventListener("click", async (event) => {
+  const at = event.target.closest && event.target.closest(
+    "#society-view-groups button, #society-view-groups [data-society-g-open]");
+  if (!at) return;
+  const run = async (call, done) => {
+    try { const said = await call(); if (done) toast(done); return said || true; }
+    catch (err) { toast(err.message, "error"); return null; }
+  };
+  if (at.dataset.societyGOpen) {
+    openSocietyGroup(at.dataset.societyGOpen);
+  } else if (at.id === "society-g-check") {
+    at.disabled = true;
+    await loadSocietyGroups(true);
+  } else if (at.id === "society-g-new" || at.id === "society-g-make-no") {
+    societyGroups.making = at.id === "society-g-new";
+    renderSocietyGroups();
+    if (societyGroups.making) $("#society-g-name")?.focus();
+  } else if (at.id === "society-g-make-go") {
+    at.disabled = true;
+    const made = await run(() => api.post("/api/society/site_group/create", {
+      name: $("#society-g-name").value, description: $("#society-g-description").value,
+      public: $("#society-g-public").checked }), "Group made");
+    if (!made) { at.disabled = false; return; }
+    societyGroups.making = false;
+    if (made.id) societyGroups.open = made.id;
+    loadSocietyGroups();
+  } else if (at.dataset.societyGJoin || at.dataset.societyGDecline) {
+    const join = Boolean(at.dataset.societyGJoin);
+    at.disabled = true;
+    if (await run(() => api.post("/api/society/site_group/invitation",
+      { group: at.dataset.societyGJoin || at.dataset.societyGDecline, join }), join ? "Joined" : "Declined")) {
+      loadSocietyGroups();
+    } else at.disabled = false;
+  } else if (at.id === "society-g-send") {
+    const box = $("#society-g-text");
+    if (!box.value.trim()) return;
+    at.disabled = true;
+    if (await run(() => api.post("/api/society/site_group/send",
+      { group: societyGroups.open, text: box.value }))) {
+      box.value = "";
+      openSocietyGroup(societyGroups.open, false);
+    } else at.disabled = false;
+  } else if (at.id === "society-g-invite-go") {
+    const box = $("#society-g-invite");
+    const said = await run(() => api.post("/api/society/site_group/invite",
+      { group: societyGroups.open, account: box.value.trim() }));
+    if (said) {
+      toast(said.status === "member" ? "Already in the group" : "Invited - they join when they accept");
+      box.value = "";
+    }
+  }
+});
+
+document.addEventListener("change", async (event) => {
+  const group = event.target.dataset && event.target.dataset.societyGMode;
+  if (!group) return;
+  try {
+    societyGroups.data = await api.post("/api/society/site_group/mode", { group, mode: event.target.value });
+    if (societyGroups.thread) societyGroups.thread.group.mode = event.target.value;
+    renderSocietyGroups();
+    toast("Saved");
+  } catch (err) { toast(err.message, "error"); }
+});
 
 function societyDraftOf(id) {
   const item = document.querySelector(`[data-society-draft="${CSS.escape(id)}"]`);
@@ -28243,14 +29010,15 @@ function societyDraftOf(id) {
            text: item.querySelector("[data-draft-text]").value };
 }
 
+/* A reply goes in its thread: answering the last message in it, theirs or one sent from here. */
 function societyReplyTo() {
-  const theirs = societyState.messages.filter((one) => one.direction === "in" && one.status === "received");
-  return theirs.length ? theirs[theirs.length - 1].id : "";
+  const said = societyState.messages.filter((one) => ["received", "sent", "site_draft"].includes(one.status));
+  return said.length ? said[said.length - 1].id : "";
 }
 
 document.addEventListener("click", async (event) => {
   const at = event.target.closest && event.target.closest(
-    "#society button, #society [data-society-open]");
+    "#society button, #society [data-society-open], #society [data-society-thread]");
   if (!at) return;
   const run = async (call) => {
     try { return await call(); } catch (err) { toast(err.message, "error"); return null; }
@@ -28260,101 +29028,70 @@ document.addEventListener("click", async (event) => {
   } else if (at.dataset.societyCopy) {
     try { await navigator.clipboard.writeText(at.dataset.societyCopy); toast("Copied"); }
     catch (_err) { toast("Select the id and copy it", "error"); }
+  } else if (at.dataset.societyThread) {
+    societyState.asking = "";
+    societyState.linking = false;
+    openSocietyThread(at.dataset.societyThread);
   } else if (at.dataset.societyOpen) {
     societyView("chats");
     societyState.asking = "";
     societyState.linking = false;
     $("#society-found").innerHTML = "";
-    openSocietyChat(at.dataset.societyOpen);
-  } else if (at.id === "society-publish") {
-    const said = await run(() => api.post("/api/society/publish",
-      { listed: $("#society-listed").checked }));
-    if (said) { societyState.status = said; renderSocietyMe(); toast("Published"); }
-  } else if (at.id === "society-email-send") {
-    const said = await run(() => api.post("/api/society/email/start",
-      { email: $("#society-email").value.trim() }));
+    startSocietyMessage(at.dataset.societyOpen);
+  } else if (at.dataset.societyLink) {
+    window.open(at.dataset.societyLink, "_blank", "noopener,noreferrer");
+  } else if (at.id === "society-pair") {
+    const account = $("#society-account").value.trim();
+    if (!account) { toast("Give the account id from your account page on the website", "error"); return; }
+    const said = await run(() => api.post("/api/society/pair", { account }));
     if (said) {
-      societyState.emailSent = true;
-      societyState.status = said.status;
-      renderSocietyMe();
-      toast("Sent - look in your mailbox");
+      societyState.pairAgain = false;
+      if (said.connected) toast("Connected - your agent is paired with your account");
+      loadSociety();
     }
-  } else if (at.id === "society-code-confirm") {
-    const said = await run(() => api.post("/api/society/email/confirm",
-      { code: $("#society-code").value.trim() }));
-    if (said) { societyState.status = said; renderSocietyMe(); }
-  } else if (at.id === "society-clicked") {
+  } else if (at.id === "society-pair-again") {
+    societyState.pairAgain = true;
+    clearInterval(societyState.pairPoll);
+    societyState.status = Object.assign({}, societyState.status, { connected: false });
+    renderSocietyMe();
+  } else if (at.id === "society-unpair") {
+    const said = await run(() => api.post("/api/society/unpair", {}));
+    if (said) { toast("Disconnected on this computer - take the key back on the website too"); loadSociety(); }
+  } else if (at.id === "society-refresh" || at.id === "society-refresh-lacking") {
     const said = await run(() => api.post("/api/society/refresh", {}));
-    if (said) {
-      societyState.status = said;
-      renderSocietyMe();
-      if (!said.registered) toast("Not confirmed yet: press Confirm on the email's page", "error");
+    if (said) loadSociety();
+  } else if (at.id === "society-profile-pull") {
+    at.disabled = true;
+    if (await run(() => api.post("/api/society/profile/pull", {}))) {
+      toast("Your profile is as your account has it");
+      loadSociety();
+    } else at.disabled = false;
+  } else if (at.id === "society-post-add") {
+    const title = $("#society-post-title").value.trim();
+    if (!title) { toast("A post needs a title", "error"); return; }
+    at.disabled = true;
+    if (await run(() => api.post("/api/society/posts/add", { title, text: $("#society-post-text").value }))) {
+      toast("Posted");
+      loadSocietySite();
+    } else at.disabled = false;
+  } else if (at.dataset.societyPostDelete) {
+    if (await run(() => api.post("/api/society/posts/delete", { id: at.dataset.societyPostDelete }))) {
+      loadSocietySite();
     }
   } else if (at.id === "society-commands-save") {
     const said = await run(() => api.post("/api/society/commands",
       { text: $("#society-commands").value }));
     if (said) { societyState.status = said; toast("Saved"); }
-  } else if (at.id === "society-backup-open") {
-    societyState.backupOpen = !societyState.backupOpen;
-    societyState.restoreOpen = false;
-    renderSocietyMe();
-  } else if (at.id === "society-restore-open") {
-    societyState.restoreOpen = !societyState.restoreOpen;
-    societyState.backupOpen = false;
-    renderSocietyMe();
-  } else if (at.id === "society-backup-save") {
-    const withKey = $("#society-with-key").checked;
-    const pass = withKey ? $("#society-pass").value : "";
-    if (withKey && pass !== $("#society-pass-2").value) { toast("The two passphrases differ", "error"); return; }
-    const said = await run(() => api.post("/api/society/backup", { with_key: withKey, passphrase: pass }));
-    if (said) {
-      societySaveFile(`agent-${societyState.status.id}${withKey ? "-key" : ""}.json`, said.backup);
-      societyState.backupOpen = false;
-      renderSocietyMe();
-    }
-  } else if (at.id === "society-restore-go") {
-    const file = $("#society-restore-file").files[0];
-    if (!file) { toast("Choose the backup file", "error"); return; }
-    const said = await run(async () => api.post("/api/society/restore",
-      { backup: await file.text(), passphrase: $("#society-restore-pass").value }));
-    if (said) { societyState.status = said; societyState.restoreOpen = false; renderSocietyMe(); toast("Restored"); }
   } else if (at.id === "society-collect") {
-    if (await run(() => api.post("/api/society/collect", {}))) loadSocietyChats();
-  } else if (at.id === "society-events-collect") {
-    if (await run(() => api.post("/api/society/events/collect", {}))) loadSocietyFollowing(true);
-  } else if (at.id === "society-follow-go") {
-    const id = $("#society-follow-id").value.trim();
-    if (!id) { $("#society-follow-id").focus(); return; }
-    if (await run(() => api.post("/api/society/follow", { id }))) {
-      toast("Followed");
-      loadSocietyFollowing(false);
-    }
-  } else if (at.dataset.societyUnfollow) {
-    if (await run(() => api.post("/api/society/follow",
-      { id: at.dataset.societyUnfollow, do: "unfollow" }))) loadSocietyFollowing(false);
-  } else if (at.id === "society-event-post") {
-    const text = $("#society-event-text").value;
-    if (!text.trim()) { $("#society-event-text").focus(); return; }
-    if (await run(() => api.post("/api/society/events/post", { text }))) {
-      $("#society-event-text").value = "";
-      toast("Posted");
-      loadSocietyFollowing(false);
-    }
-  } else if (at.id === "society-event-drop") {
-    await run(() => api.post("/api/society/events/draft", { text: "" }));
-    $("#society-event-text").value = "";
-    loadSocietyFollowing(false);
-  } else if (at.dataset.societyWithdraw) {
-    if (await run(() => api.post("/api/society/events/withdraw",
-      { id: at.dataset.societyWithdraw }))) { toast("Withdrawn"); loadSocietyFollowing(false); }
+    if (await run(() => api.post("/api/society/collect", {}))) loadSocietyThreads();
   } else if (at.dataset.societyLinkOpen) {
     societyState.linking = !societyState.linking;
-    renderSocietyChat();
+    renderSocietyThread();
     if (societyState.linking) { $("#society-link-q")?.focus(); societyLinkSearch(""); }
   } else if (at.dataset.societyLinkTo !== undefined) {
     const said = await run(() => api.post("/api/society/link",
       { peer: societyState.peer, person_id: at.dataset.societyLinkTo }));
-    if (said) { societyState.linking = false; await loadSocietyChats(); renderSocietyChat(); }
+    if (said) { societyState.linking = false; await loadSocietyThreads(); renderSocietyThread(); }
   } else if (at.id === "society-compose-draft" || at.id === "society-compose-send") {
     const text = $("#society-compose-text").value;
     if (!text.trim()) { $("#society-compose-text").focus(); return; }
@@ -28365,37 +29102,1012 @@ document.addEventListener("click", async (event) => {
       reply_to: societyReplyTo() }));
     if (!said) return;
     societyState.asking = at.id === "society-compose-send" ? said.draft.id : "";
-    await openSocietyChat(societyState.peer, false);
-    loadSocietyChats();
+    // A reply stays in its thread; a new message is a thread of its own.
+    await openSocietyThread(societyState.thread || said.draft.thread || said.draft.id, false);
+    loadSocietyThreads();
   } else if (at.dataset.societySave) {
     const one = societyDraftOf(at.dataset.societySave);
     const said = await run(() => api.post("/api/society/drafts/save",
       { id: one.id, to: societyState.peer, subject: one.subject, text: one.text }));
-    if (said) { toast("Saved"); openSocietyChat(societyState.peer, false); }
+    if (said) { toast("Saved"); openSocietyThread(societyState.thread, false); }
   } else if (at.dataset.societyDrop) {
     await run(() => api.post("/api/society/drafts/remove", { id: at.dataset.societyDrop }));
-    openSocietyChat(societyState.peer, false);
-    loadSocietyChats();
+    openSocietyThread(societyState.thread, false);
+    loadSocietyThreads();
   } else if (at.dataset.societySend) {
     const one = societyDraftOf(at.dataset.societySend);
     const said = await run(() => api.post("/api/society/drafts/save",
       { id: one.id, to: societyState.peer, subject: one.subject, text: one.text }));
     if (!said) return;
     societyState.asking = said.draft.id;
-    openSocietyChat(societyState.peer, false);
+    openSocietyThread(societyState.thread, false);
   } else if (at.dataset.societySendNo) {
     societyState.asking = "";
-    renderSocietyChat();
+    renderSocietyThread();
   } else if (at.dataset.societySendYes) {
     const said = await run(() => api.post("/api/society/send",
       { id: at.dataset.societySendYes, hash: at.dataset.hash }));
     societyState.asking = "";
-    if (said) toast("Sent");
-    await openSocietyChat(societyState.peer, false);
-    loadSocietyChats();
+    if (said) {
+      toast(said.sent.status === "site_draft" ? "Kept as a draft on the website - send it there" : "Sent");
+      // Sent, a new message's thread is named by the server.
+      societyState.thread = said.sent.thread || societyState.thread;
+    }
+    await openSocietyThread(societyState.thread, false);
+    loadSocietyThreads();
   }
 });
 
+
+/* ---------------------------------------------------------------- the report */
+/* THE REPORT BY EVENTS (agent/reports.py, agent/events.py; the user, 2026-11-12: "agent汇报task的时候，
+   是以事件为单位，一个事件可以对应多个to do, event之类的 ... 对每个时间有一个快速回复，或者聊天框 ... 所谓的人要approve
+   在display上和做完的没区别"): three tabs - needs your look, done by your agent, yours to do - the
+   same block in each: the event, what is in it (each with its why, its deadline, its details opened
+   in place; what waits for approval with its answers), and its own thread - the user's words, and the
+   agent answering and acting with the event's whole context. In a window of its own (?solo=report)
+   and on the Overview. */
+const REPORT_SOLO = new URLSearchParams(location.search).get("solo") === "report";
+const REPORT_TABS = [["needs_you", "Needs your look"], ["done", "Done by your agent"],
+  ["yours", "Yours to do"]];
+const REPORT_KINDS = { approve: "Needs your look", done: "Done", mine: "Yours to do" };
+// WHAT EACH RECORD IS, beside its id (the user, 2026-11-12: "加了什么notification(加上id之类)").
+const REPORT_RECORDS = { notifications_scheduled: "Calendar reminder", notifications_updated: "Calendar reminder",
+  notifications_closed: "Calendar reminder", calendar_added: "Calendar event", todo_added: "To-do",
+  reminder_closed: "Reminder", society_sent: "Agents Society thread", cleared: "Agenda item",
+  let_go: "Approval", work_done: "Agenda item", check_set: "Check", check_done: "Check",
+  check_failed: "Check", follow_up_set: "Follow-up", follow_up_done: "Follow-up",
+  follow_up_failed: "Follow-up", follow_up_seen: "Follow-up", follow_up_unconfirmed: "Follow-up", follow_up_none: "Agenda item",
+  found_done: "Agenda item", events_merged: "Report event" };
+const reportState = { data: null, drawn: "", tab: "", open: new Set(), threads: {}, talking: new Set(),
+  leaving: new Set(), saving: new Set(), busy: false, poll: null, issue: "", issues: null, chose: false, detail: "",
+  // EACH TAB'S ORDER (the user, 2026-11-13: "每个panel支持按照last active time 排序"): "importance" - the agent's
+  // order - or "active", the last active first; kept for the viewer.
+  sort: (() => { try { return JSON.parse(localStorage.getItem("pa.report.sort") || "{}") || {}; } catch (_err) { return {}; } })(),
+  drawerShown: "", askAll: false };
+
+function reportDue(due) {
+  if (!due) return "";
+  const at = new Date(String(due).replace(" ", "T"));
+  const soon = !Number.isNaN(at.getTime()) && at.getTime() - Date.now() < 24 * 3600 * 1000;
+  return `<span class="report-due${soon ? " report-due-soon" : ""}">${escapeHtml("Due")} ${escapeHtml(due)}</span>`;
+}
+
+function reportEntry(one, eventId = "") {
+  const key = one.key;
+  const open = reportState.open.has(key);
+  const details = [one.detail, one.place ? `${"Where"}: ${one.place}` : ""].filter(Boolean).join("\n\n");
+  const ref = one.ref || "";
+  // WHAT APPROVING DOES, SAID ABOVE ITS BUTTONS (the user, 2026-11-12: "你让我approve的是什么，你得写清楚").
+  const asks = one.kind === "approve" && !one.answered && one.asks ? `<div class="report-asks">
+      <strong>${escapeHtml(one.asks.lead || "")}${(one.asks.steps || []).length ? ":" : "."}</strong>
+      ${(one.asks.steps || []).length ? `<ol>${one.asks.steps.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol>` : ""}
+      ${(one.asks.yours || []).length ? `<div class="report-asks-yours"><strong>${escapeHtml("You send these yourself - your agent has no way to:")}</strong>
+        <ul>${one.asks.yours.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ul></div>` : ""}
+    </div>` : "";
+  // A REPLY IN WORDS, RIGHT UNDER IT ("我的回复可以是一个chat reply, 你得给我这个位置") - into the event's
+  // conversation, the agent told which thing it is about.
+  // Answered, the words go on in the thread with the chat agent - nothing left waiting for its work.
+  // AND UNDER EACH THING OF THE USER'S (the user, 2026-11-13: "yours to do 这个也要提供回复，并且用chat形式（比如
+  // 我会跟agent说我已经做了，或者让agent帮我做某些事情等)") - to the agent, with all its tools.
+  const mine = one.kind === "mine";
+  // EACH THING ITS OWN CONVERSATION (the user, 2026-11-13: "我不是说一个item有整个chat, 而是每个to do (比如这个
+  // approve)有单独的chat"; "chat history可以collapose"): what was said about it, folded until opened.
+  const chat = eventId ? reportItemChat(eventId, one) : "";
+  const replyHere = !(one.kind === "approve" && one.answer) && eventId ? `${chat}<form class="report-chat report-chat-here"
+      data-report-say="${escapeHtml(eventId)}" data-item="${escapeHtml(key)}" data-about="${escapeHtml(one.title || "")}" data-ref="${escapeHtml(one.answered ? "" : ref)}">
+      <textarea rows="1" placeholder="${escapeHtml(mine
+        ? "Tell your agent - say you did it, or ask it to do something for it..."
+        : one.kind === "done" ? "Ask about it, or tell your agent to change or undo it..."
+        : "Reply about this - change it, ask, or say what to do instead...")}"></textarea>
+      <button type="submit" class="small">${escapeHtml("Send")}</button></form>` : "";
+  // QUICK ANSWERS ARE MESSAGES (the user, 2026-11-12: "快速按钮只是让我快速发个chat而已，不是特殊的东西"): each
+  // said in the event's thread, the agent answering there what it did. Answered, nothing in its place:
+  // the thread shows it.
+  const ev = escapeHtml(eventId);
+  // QUICK REPLIES ON A THING OF THE USER'S TOO (the user, 2026-11-13: "这个也要有快速回复（比如i already did
+  // this)") - each a message in the event's thread: done by them, marked so; or handed to the agent.
+  // ITS PART BEING PREPARED, TOLD NOW IF THE USER SAYS ("人可以告诉他马上做").
+  const prep = mine && one.state !== "done" ? one.prep || null : null;
+  const prepNow = reportPreparing(one) && prep.status === "planned" && eventId
+    ? `<button type="button" class="small" data-report-prep-now="${escapeHtml(ref)}" data-event="${ev}">${escapeHtml("Prepare it now")}</button>` : "";
+  const quickMine = mine && eventId && one.state !== "done" ? `<div class="report-answers">
+      ${prepNow}
+      <button type="button" class="small${prepNow ? " secondary" : ""}" data-report-mine-done="${escapeHtml(ref)}" data-event="${ev}">${escapeHtml("I already did this")}</button>
+      <button type="button" class="small secondary" data-report-mine-do="${escapeHtml(ref)}" data-event="${ev}">${escapeHtml("Do it for me")}</button>
+    </div>` : "";
+  const prepLine = reportPreparing(one)
+    ? `<p class="report-prep"><strong>${escapeHtml("Your agent will")}:</strong> ${escapeHtml(prep.what || "")} <span class="report-prep-when">${escapeHtml(reportPrepWhen(prep))}</span></p>`
+    : prep && prep.note ? `<p class="report-prep">${escapeHtml(prep.note)}</p>` : "";
+  // DONE BY THE AGENT: OK, AND NOT SHOWN AGAIN (the user, 2026-11-13: "done by agents, 需要快速按钮有ok").
+  const quickOk = one.kind === "done" && eventId && String(ref).startsWith("did:") ? `<div class="report-answers">
+      <button type="button" class="small" data-report-ok="${escapeHtml(ref)}" data-event="${ev}">${escapeHtml("OK")}</button>
+    </div>` : "";
+  const answers = one.kind === "done" ? quickOk : one.kind !== "approve" || one.answered ? quickMine : `<div class="report-answers">
+      ${one.answer ? "" : one.user_acts
+        ? `<button type="button" class="small" data-report-already="${escapeHtml(ref)}" data-event="${ev}">${escapeHtml(one.yes || "I have done it")}</button>`
+        : `<button type="button" class="small" data-report-yes="${escapeHtml(ref)}" data-event="${ev}">${escapeHtml(one.yes || "Approve")}</button>`}
+      <button type="button" class="small secondary" data-report-no="${escapeHtml(ref)}" data-event="${ev}">${escapeHtml(one.no || "Not right")}</button>
+      ${one.already ? `<button type="button" class="small secondary" data-report-already="${escapeHtml(ref)}" data-event="${ev}">${escapeHtml("Already done")}</button>` : ""}
+    </div>
+    ${one.answer ? `<form class="report-reply" data-report-answer="${escapeHtml(ref)}" data-event="${ev}">
+      <textarea rows="2" placeholder="${escapeHtml("Your answer")}"></textarea>
+      <button type="submit" class="small">${escapeHtml("Send")}</button></form>` : ""}`;
+  // EACH DELIVERABLE, OPENED AND CHECKED (the user, 2026-11-12: "让我能够打开你的deliverable检查（给我一个
+  // evaluation的instruction panel)"): opened as the application opens it; its instructions - how it
+  // is used, what to check before approving - opened in place.
+  // DONE BY THE AGENT, ITS FILES TOO - the finished version to look at, nothing to approve (the user,
+  // 2026-11-13: "如果是已经完成的工作，让我看是让我看看完整版，而不是需要我批准才完成最后一步").
+  const finished = one.kind === "done";
+  const deliverables = (one.kind === "approve" && !one.answered || mine || finished) && one.run ? (one.deliverables || []).map((made) => {
+    const panel = `${key}#${made.n}`;
+    const checking = reportState.open.has(panel);
+    const how = made.how ? `<div class="report-eval-part"><strong>${escapeHtml("How to use it")}</strong><div class="report-eval-text">${escapeHtml(made.how)}</div></div>` : "";
+    const check = (made.check || []).length ? `<div class="report-eval-part"><strong>${escapeHtml(mine || finished ? "Check it before you use it" : "Check before you approve")}</strong><ul>${
+      made.check.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul></div>` : "";
+    // READ IN PLACE, NOTHING TO OPEN (the user, 2026-11-13: "这种先让我expand, 如果我要open email/file/folder有一个
+    // 单独的button open(然后弹出instruction)"): an answer's or a text's words, shown as it is expanded.
+    const words = made.text ? `<div class="report-eval-part report-made-words">${escapeHtml(made.text)}</div>` : "";
+    const opens = !["text", "answer"].includes(made.kind || "");
+    const after = one.plan && !mine && !finished ? `<div class="report-eval-part"><strong>${escapeHtml("Approved, your agent will")}</strong><div class="report-eval-text">${escapeHtml(one.plan)}</div></div>` : "";
+    return `<li class="report-deliverable"><div class="report-deliverable-head">
+        <span class="report-deliverable-kind">${escapeHtml(made.kind || "")}</span>
+        <button type="button" class="report-deliverable-title" data-report-open="${escapeHtml(panel)}" aria-expanded="${checking}"
+          title="${escapeHtml(checking ? "Hide it" : opens ? "Show how to check it" : "Show it")}">${escapeHtml(made.title || made.where || "(untitled)")}<span class="report-chevron" aria-hidden="true">${checking ? "▾" : "▸"}</span></button>
+        ${opens ? `<button type="button" class="small" data-report-deliver="${escapeHtml(one.run)}" data-n="${made.n}"
+          data-panel="${escapeHtml(panel)}">${escapeHtml("Open")}</button>` : ""}</div>
+      <div class="report-fold${checking ? " open" : ""}"><div class="report-fold-inner"><div class="report-eval">${
+        words || how || check || after ? words + how + check + after : `<p class="muted">${escapeHtml("The agent wrote no instructions for this one - open it and read it through.")}</p>`}</div></div></div></li>`;
+  }).join("") : "";
+  return `<li class="report-entry report-entry-${escapeHtml(one.kind)}${reportState.leaving.has(ref) ? " leaving" : ""}${
+    reportState.saving.has(ref) ? " saving" : ""}">
+    <div class="report-entry-head">${one.state === "done" && one.kind !== "done"
+        ? `<span class="report-kind report-kind-done">${escapeHtml("Done")}</span>`
+        : one.user_acts ? `<span class="report-kind report-kind-mine">${escapeHtml("Waiting for your action")}</span>`
+        : `<span class="report-kind report-kind-${escapeHtml(one.kind)}">${escapeHtml(REPORT_KINDS[one.kind] || "")}</span>`}
+      <span class="report-entry-title">${escapeHtml(one.title || "(untitled)")}</span>
+      <span class="report-meta">${reportDue(one.due)}${one.kind === "done" && one.at ? `<span class="report-when">${escapeHtml(localStamp(one.at))}</span>` : ""}</span></div>
+    ${one.state === "done" && one.state_said ? `<p class="report-state-said">${escapeHtml(one.state_said)}</p>` : ""}
+    ${one.why ? `<p class="report-why">${escapeHtml(one.why)}</p>` : ""}
+    ${prepLine}
+    ${one.kind === "done" && one.record && one.record.what === "found_done" && one.detail
+      ? `<p class="report-evidence"><strong>${escapeHtml("Shown by")}:</strong> ${escapeHtml(one.detail)}</p>` : ""}
+    ${one.kind === "done" && one.record && one.record.id ? `<p class="report-record">${escapeHtml(
+      REPORT_RECORDS[one.record.what] || one.record.what || "")} <code>${escapeHtml(one.record.id)}</code></p>` : ""}
+    ${asks}
+    ${deliverables && mine ? `<p class="report-made-for">${escapeHtml("Your agent made these for it:")}</p>` : ""}
+    ${deliverables && finished ? `<p class="report-made-for">${escapeHtml("Done - open the finished version:")}</p>` : ""}
+    ${deliverables ? `<ol class="report-deliverables">${deliverables}</ol>` : ""}
+    ${answers}
+    ${one.kind === "approve" && one.answer ? chat : ""}
+    ${replyHere}
+    ${details ? `<button type="button" class="report-more" data-report-open="${escapeHtml(key)}" aria-expanded="${open}">${
+      escapeHtml(open ? "Hide details" : "Details")}</button>
+      <div class="report-fold${open ? " open" : ""}"><div class="report-fold-inner"><div class="report-details">${
+        escapeHtml(details)}</div></div></div>` : ""}
+  </li>`;
+}
+
+function reportSaid(messages) {
+  return (messages || []).map((one) => `<li class="report-said report-said-${one.who}">
+      <span class="report-said-who">${escapeHtml(one.who === "you" ? "You" : "Your agent")}</span>
+      <div class="report-said-text">${escapeHtml(one.text)}</div></li>`).join("");
+}
+
+/* ONE THING'S OWN CONVERSATION, FOLDED (2026-11-13): "Conversation (n)" - opened, all of it; while the
+   agent answers, said so, and open. */
+function reportItemChat(eventId, one) {
+  const key = `${eventId}|${one.key}`;
+  const held = reportState.threads[key];
+  const meta = one.thread || {};
+  const count = held ? (held.messages || []).length : Number(meta.count || 0);
+  const going = held ? held.going : meta.going;
+  if (!count && !going) return "";
+  const open = reportState.open.has("chat:" + key) || going;
+  return `<div class="report-item-chat">
+      <button type="button" class="report-more" data-report-chat="${escapeHtml(key)}" aria-expanded="${open}">${
+        escapeHtml("Conversation")} (${count})<span class="report-chevron" aria-hidden="true">${open ? "▾" : "▸"}</span></button>
+      ${open ? `<div class="report-thread">${held ? `<ol class="report-said-list">${reportSaid(held.messages)}</ol>`
+        : `<p class="muted">${escapeHtml("Reading…")}</p>`}
+        ${going ? `<p class="report-working">${escapeHtml("Your agent is working on it…")}</p>` : ""}</div>` : ""}
+    </div>`;
+}
+
+function reportThread(_event) {
+  // THE CONVERSATIONS ARE EACH THING'S (2026-11-13): the event has none of its own to show - "不需要显示，
+  // 现在没这个了".
+  return "";
+}
+
+/* The thing in an event a quick answer is on, by what it answers. */
+function reportItemKey(eventId, ref) {
+  const event = Object.values((reportState.data || {}).tabs || {}).flat().find((one) => one.id === eventId);
+  const item = ((event || {}).items || []).find((one) => one.ref === ref);
+  return item ? item.key : "";
+}
+
+/* AN EVENT IN THE REPORT: a short block - what it is, where it stands, its deadline; opened, its panel
+   (the user, 2026-11-12: "每个event打开一个project instruction panel看细节 ... 在report panel里每个task会有简单的
+   description"). */
+function reportDescription(event) {
+  if (event.progress) return event.progress;
+  const waiting = (event.items || []).find((one) => one.kind === "approve" && one.why);
+  if (waiting) return waiting.why;
+  return (event.items || []).slice(0, 3).map((one) => one.title).filter(Boolean).join("; ");
+}
+
+function reportCard(event) {
+  const counts = {};
+  for (const one of event.items || []) counts[one.kind] = (counts[one.kind] || 0) + 1;
+  const chips = ["approve", "mine", "done"].filter((kind) => counts[kind]).map((kind) =>
+    `<span class="report-kind report-kind-${kind}">${counts[kind]} ${escapeHtml(REPORT_KINDS[kind].toLowerCase())}</span>`).join("");
+  const said = (event.thread && event.thread.count) || 0;
+  return `<li class="report-card${reportState.detail === event.id ? " on" : ""}">
+    <button type="button" class="report-card-open" data-report-detail="${escapeHtml(event.id)}">
+      <span class="report-card-head"><span class="report-title">${escapeHtml(event.title || "(untitled)")}</span>
+        <span class="report-meta">${reportDue(event.due)}</span></span>
+      <span class="report-card-text">${escapeHtml(reportDescription(event))}</span>
+      <span class="report-card-foot">${chips}${said ? `<span class="report-card-said">${escapeHtml("Conversation")} ${said}</span>` : ""}</span>
+    </button></li>`;
+}
+
+function reportEvent(event) {
+  const counts = {};
+  for (const one of event.items || []) counts[one.kind] = (counts[one.kind] || 0) + 1;
+  const status = ["approve", "mine", "done"].filter((kind) => counts[kind])
+    .map((kind) => `${counts[kind]} ${REPORT_KINDS[kind].toLowerCase()}`).join(", ");
+  // ITS PROGRESS, AS THE AGENT KEEPS IT (looked at again with each report, and after each answer).
+  const progress = event.progress ? `<p class="report-progress">${escapeHtml(event.progress)}${
+    event.progress_at ? ` <span class="report-when">${escapeHtml(localStamp(event.progress_at))}</span>` : ""}</p>` : "";
+  return `<li class="report-item">
+    <div class="report-item-head"><h4 class="report-title">${escapeHtml(event.title || "(untitled)")}</h4>
+      <div class="report-meta">${reportDue(event.due)}</div></div>
+    ${status ? `<p class="report-status">${escapeHtml(status)}</p>` : ""}
+    ${progress}
+    ${reportEntriesByState(event)}
+    ${reportThread(event)}
+  </li>`;
+}
+
+/* A THING OF THE USER'S WHOSE PART OF THE AGENT'S IS NOT DONE YET. */
+function reportPreparing(one) {
+  return Boolean(one && one.prep && one.prep.state === "preparing");
+}
+
+/* When the agent's part of it is done: at work now, starting, a time today, a day, or not placed yet. */
+function reportPrepWhen(prep) {
+  if (!prep) return "";
+  if (prep.status === "working") return "working on it now";
+  if (prep.status === "starting") return "starting now";
+  if (/^\d\d:\d\d/.test(prep.when || "")) return `today ${prep.when}`;
+  if (prep.when) return `on ${prep.when}`;
+  return "not scheduled yet";
+}
+
+/* On the heading of those being prepared: at work now, else the earliest time it begins. */
+function reportPrepEarliest(rows) {
+  const preps = rows.map((one) => one.prep || {});
+  if (preps.some((prep) => prep.status === "working" || prep.status === "starting")) return "working on it now";
+  const times = preps.map((prep) => prep.when || "").filter((when) => /^\d\d:\d\d/.test(when)).sort();
+  if (times.length) return `from ${times[0].slice(0, 5)}`;
+  const days = preps.map((prep) => prep.when || "").filter(Boolean).sort();
+  return days.length ? `from ${days[0]}` : "not scheduled yet";
+}
+
+/* AN EVENT'S THINGS, BY HOW THEY STAND (the user, 2026-11-13: "根据状态应该有一个分类，允许collapose"): what
+   is still open first; what is done or no longer on, folded under its own heading. */
+function reportEntriesByState(event) {
+  const items = event.items || [];
+  if (!items.length) return "";
+  const open = items.filter((one) => one.state !== "done");
+  const done = items.filter((one) => one.state === "done");
+  // NEEDS YOUR LOOK, NEEDS YOUR WORK (the user, 2026-11-13: "needs your work agent是做辅助性内容，needs your look是
+  // agent做绝大多数，人只需要批准或者发个消息即可"), and the user's work in two: READY - what the agent prepares for it
+  // is ready, or there is nothing it can prepare - open at first; YOUR AGENT IS PREPARING - its part not done
+  // yet, when it will do it - folded at first, the earliest time on its heading ("在准备默认折叠，标题上显示件数
+  // 和最早几点开始做").
+  const look = open.filter((one) => one.kind !== "mine");
+  const preparing = open.filter((one) => one.kind === "mine" && reportPreparing(one));
+  const ready = open.filter((one) => one.kind === "mine" && !reportPreparing(one));
+  // EACH A CATEGORY OF ITS OWN, FOLDED BY ITS HEADING (the user, 2026-11-13: "needs your work 也是一个category,
+  // 也是可以collapose的(default是展开的)").
+  const group = (rows, name, key, shownNow, extra = "", note = "") => `<div class="report-group">
+      <button type="button" class="report-more report-group-head" data-report-open="${escapeHtml(key)}" aria-expanded="${shownNow}">${
+        escapeHtml(name)} (${rows.length})${note ? ` <span class="report-group-note">${escapeHtml(note)}</span>` : ""}<span class="report-chevron" aria-hidden="true">${shownNow ? "▾" : "▸"}</span></button>
+      ${shownNow ? `<ol class="report-entries${extra}">${rows.map((one) => reportEntry(one, event.id)).join("")}</ol>` : ""}
+    </div>`;
+  const lookKey = `folded:${event.id}`, readyKey = `ready:${event.id}`, prepKey = `preparing:${event.id}`;
+  const doneKey = `settled:${event.id}`;
+  // ITS HEADING ALWAYS FOLDS IT (the user, 2026-11-13: "Done or no longer on (3) 这个要可以collapse"): shown at
+  // first when nothing else is left, folded at first beside what is still open - a click turns it either way.
+  const doneShown = reportState.open.has(doneKey) !== !open.length;
+  const oks = reportDoneKeys([event]);
+  const okAll = oks.length > 1 ? `<div class="report-answers report-ok-all"><button type="button" class="small"
+      data-report-ok-all="${escapeHtml(oks.join(" "))}">${escapeHtml("OK for all")} (${oks.length})</button></div>` : "";
+  return `${okAll}${look.length ? group(look, "Needs your look", lookKey, !reportState.open.has(lookKey)) : ""}
+    ${ready.length ? group(ready, "Needs your work - ready", readyKey, !reportState.open.has(readyKey)) : ""}
+    ${preparing.length ? group(preparing, "Needs your work - your agent is preparing", prepKey,
+      reportState.open.has(prepKey), " report-entries-preparing", reportPrepEarliest(preparing)) : ""}
+    ${done.length ? group(done, "Done or no longer on", doneKey, doneShown,
+      " report-entries-done") : ""}`;
+}
+
+/* What the agent did, in these events - each to be said OK to. */
+function reportDoneKeys(events) {
+  return events.flatMap((event) => event.items || [])
+    .filter((one) => one.kind === "done" && String(one.ref || "").startsWith("did:")).map((one) => one.ref);
+}
+
+/* A TAB'S EVENTS IN ITS ORDER: as the agent put them, or the last active first. */
+function reportSorted(tab, events) {
+  if (reportState.sort[tab] !== "active") return events;
+  return [...events].sort((a, b) => String(b.active_at || "").localeCompare(String(a.active_at || "")));
+}
+
+function reportSortControl(tab) {
+  const now = reportState.sort[tab] === "active" ? "active" : "importance";
+  return `<div class="report-sort" role="group" aria-label="${escapeHtml("Order")}">
+      <span class="report-sort-label">${escapeHtml("Order")}</span>
+      ${[["importance", "Most important first"], ["active", "Last active first"]].map(([key, label]) => `<button type="button"
+        class="small${now === key ? "" : " secondary"}" data-report-sort="${key}" data-tab="${escapeHtml(tab)}" aria-pressed="${now === key}">${escapeHtml(label)}</button>`).join("")}
+    </div>`;
+}
+
+function reportPanel(tab, data) {
+  const events = reportSorted(tab, (data.tabs || {})[tab] || []);
+  if (!events.length) {
+    const empty = { needs_you: "Nothing needs your look.", done: "Your agent has done nothing on its own since.",
+      yours: "Nothing is yours to do now." }[tab];
+    return `<p class="report-empty">${escapeHtml(empty)}</p>`;
+  }
+  const allYes = tab === "needs_you" ? events.flatMap((event) => event.items || [])
+    .filter((one) => one.kind === "approve" && one.batch && !one.answered) : [];
+  const letGo = tab === "done" ? (data.let_go || []).slice(0, 5) : [];
+  // OK FOR ALL OF THEM (the user, 2026-11-13: "要有ok for all 的选项"): what the agent did, in this tab.
+  const allOk = tab === "done" ? reportDoneKeys(events) : [];
+  const okAll = allOk.length > 1 ? `<div class="report-bulk"><button type="button" data-report-ok-all="${
+    escapeHtml(allOk.join(" "))}">${escapeHtml("OK for all")} (${allOk.length})</button></div>` : "";
+  // ASKED ON THE PAGE, not in a dialog of the browser's.
+  const bulk = !(allYes.length > 1) ? "" : reportState.askAll
+    ? `<div class="report-bulk"><span>${escapeHtml("Approve all of these?")} (${allYes.length})</span>
+        <button type="button" id="report-all-yes">${escapeHtml("Yes")}</button>
+        <button type="button" class="secondary" id="report-all-no">${escapeHtml("No")}</button></div>`
+    : `<div class="report-bulk"><button type="button" id="report-all">${escapeHtml("Approve all")} (${allYes.length})</button></div>`;
+  // YOURS TO DO, IN TWO (the user, 2026-11-13): an event with anything of the user's ready - open at first;
+  // those where the agent is still preparing everything - folded at first, the earliest time on the heading.
+  if (tab === "yours") {
+    const stillPreparing = (event) => {
+      const open = (event.items || []).filter((one) => one.state !== "done");
+      return open.length > 0 && open.every((one) => one.kind === "mine" && reportPreparing(one));
+    };
+    const readyEvents = events.filter((event) => !stillPreparing(event));
+    const preparingEvents = events.filter(stillPreparing);
+    const section = (list, name, key, shownNow, note = "") => list.length ? `<div class="report-group report-tab-group">
+        <button type="button" class="report-more report-group-head" data-report-open="${escapeHtml(key)}" aria-expanded="${shownNow}">${
+          escapeHtml(name)} (${list.length})${note ? ` <span class="report-group-note">${escapeHtml(note)}</span>` : ""}<span class="report-chevron" aria-hidden="true">${shownNow ? "▾" : "▸"}</span></button>
+        ${shownNow ? `<ol class="report-cards">${list.map(reportCard).join("")}</ol>` : ""}</div>` : "";
+    return `${reportSortControl(tab)}${section(readyEvents, "Ready for you", "yours:ready", !reportState.open.has("yours:ready"))}
+      ${section(preparingEvents, "Your agent is preparing", "yours:preparing", reportState.open.has("yours:preparing"),
+        reportPrepEarliest(preparingEvents.flatMap((event) => (event.items || []).filter(reportPreparing))))}`;
+  }
+  return `${reportSortControl(tab)}${bulk}${okAll}
+    <ol class="report-cards">${events.map(reportCard).join("")}</ol>
+    ${letGo.length ? `<details class="report-let-go"><summary>${escapeHtml("Done already - not asked")} (${letGo.length})</summary><ul>${
+      letGo.map((one) => `<li>${escapeHtml(one.title || "")}: <span class="muted">${escapeHtml(one.why || "")}</span></li>`).join("")}</ul></details>` : ""}`;
+}
+
+/* ITS PANEL: everything in the event - each thing with its why, its deliverables to open and check, its
+   answers - and its conversation with the agent; over the right of the report, closed with x or Esc. */
+function reportDrawer(data) {
+  const id = reportState.detail;
+  if (!id) return "";
+  const event = Object.values(data.tabs || {}).flat().find((one) => one.id === id);
+  if (!event) return "";
+  const fresh = reportState.drawerShown !== id ? " report-drawer-in" : "";
+  return `<div class="report-backdrop" data-report-close="1"></div>
+    <aside class="report-drawer${fresh}" role="dialog" aria-label="${escapeHtml(event.title || "")}">
+      <header class="report-drawer-head"><div><h3 class="report-drawer-title">${escapeHtml(event.title || "(untitled)")}</h3>
+        <div class="report-meta">${reportDue(event.due)}</div></div>
+        <button type="button" class="report-drawer-close" data-report-close="1" aria-label="${escapeHtml("Close")}">&times;</button></header>
+      <div class="report-drawer-body">${reportEvent(event)}</div>
+    </aside>`;
+}
+
+function reportHosts() {
+  return [REPORT_SOLO ? $("#report-page") : $("#report-main")].filter(Boolean);
+}
+
+function renderReport(force = false) {
+  const data = reportState.data;
+  if (!data) return;
+  const tabs = data.tabs || {};
+  const counts = Object.fromEntries(REPORT_TABS.map(([name]) => [name, (tabs[name] || []).length]));
+  if (!reportState.tab) reportState.tab = counts.needs_you ? "needs_you" : counts.yours ? "yours" : "done";
+  const drawn = JSON.stringify([data, reportState.tab, [...reportState.open], [...reportState.talking],
+    reportState.threads, [...reportState.leaving], reportState.detail]);
+  if (!force && drawn === reportState.drawn) return;      // nothing changed: not drawn again
+  for (const host of reportHosts()) {
+    if (host.querySelector("textarea:focus")) continue;   // not under the user's hands
+    // WHERE THE USER WAS, KEPT (the user, 2026-11-13: "report的item好像会自动刷新view, 我本来拉到下面的又回到
+    // 上面"): the panel's scroll and the page's, put back once it is drawn again.
+    const panel = host.querySelector(".report-drawer-body");
+    const panelAt = panel && reportState.drawerShown === reportState.detail ? panel.scrollTop : 0;
+    const pageAt = window.scrollY;
+    const since = data.since ? localStamp(data.since) : "";
+    const made = data.at ? localStamp(data.at) : "";
+    host.innerHTML = `<header class="report-head">
+        <div><h2 class="report-name">${escapeHtml(data.issue ? "Report" : "Now")}${made ? ` <span class="report-name-at">${escapeHtml(made)}</span>` : ""}</h2>
+          <p class="report-dateline">${escapeHtml(data.issue ? "As it was made - what still waits can be answered here." : "As things stand now.")}${
+            since ? ` ${escapeHtml("Since")} ${escapeHtml(since)}.` : ""}</p></div>
+      </header>
+      <div class="report-tabs" role="tablist">${REPORT_TABS.map(([name, label]) => `<button type="button" role="tab"
+          class="report-tab${reportState.tab === name ? " on" : ""}" aria-selected="${reportState.tab === name}" data-report-tab="${name}">
+          ${escapeHtml(label)} <span class="report-tab-count">${counts[name]}</span></button>`).join("")}</div>
+      <div class="report-panel" role="tabpanel">${reportPanel(reportState.tab, data)}</div>
+      ${reportDrawer(data)}`;
+    const again = host.querySelector(".report-drawer-body");
+    if (again && panelAt) again.scrollTop = panelAt;
+    if (window.scrollY !== pageAt) window.scrollTo(0, pageAt);
+  }
+  reportState.drawn = drawn;
+  reportState.drawerShown = reportState.detail || "";
+}
+
+async function loadReport(force = false) {
+  // THE LATEST ISSUE - the only one kept (the user, 2026-11-13: "只保留most recent issue").
+  if (reportState.issues && reportState.issues.length) reportState.issue = reportState.issues[0].id;
+  if (!reportState.issue) {                              // no issue yet: nothing made to read
+    const main = REPORT_SOLO ? $("#report-page") : $("#report-main");
+    if (main) main.innerHTML = `<p class="report-empty">${escapeHtml("No report yet - press Refresh now.")}</p>`;
+    renderReportLine();
+    return;
+  }
+  const asked = reportState.issue ? `/api/report?issue=${encodeURIComponent(reportState.issue)}` : "/api/report";
+  try { reportState.data = await api.get(asked); } catch (_err) { return; }
+  // ITS EVENT ALL DONE - GONE FROM THE REPORT (2026-11-13: "显示done了就从事件列表里删除"): its panel closed, said so.
+  if (reportState.detail && !Object.values(reportState.data.tabs || {}).flat()
+    .some((one) => one.id === reportState.detail)) {
+    reportState.detail = "";
+    toast("All done - it has left the report.");
+  }
+  reportState.drawn = force ? "" : reportState.drawn;
+  renderReport(force);
+  renderReportLine();
+  // LOOKED AT: its summaries read - gone from beside the avatar (2026-11-13).
+  const looking = REPORT_SOLO || (typeof activeTab !== "undefined" && activeTab === "report");
+  if (looking && !document.hidden) api.post("/api/report/seen", {}).catch(() => {});
+}
+
+/* THE ISSUES, beside it - "Now" first, then each, the latest first. */
+async function loadReportIssues() {
+  let said;
+  try { said = await api.get("/api/report/issues"); } catch (_err) { return; }
+  reportState.issues = said.issues || [];
+  // ONE ISSUE, THE LATEST (the user, 2026-11-13: "report不要多个issue, 而是只保留most recent issue"): no
+  // choosing - a newer one made meanwhile is shown at once.
+  const latestId = (reportState.issues[0] || {}).id || "";
+  const newer = Boolean(latestId && reportState.issue && latestId !== reportState.issue);
+  reportState.issue = latestId;
+  const side = $("#report-issues");
+  if (side) side.innerHTML = reportState.issues.length ? "" : `<span class="muted">${escapeHtml("No report yet.")}</span>`;
+  if (newer && !said.making) loadReport(true);
+  // WHEN THE LAST ONE WAS MADE, AND THE NEXT (the user, 2026-11-12: "也要记录上次report是什么时候").
+  const when = $("#report-when");
+  if (when) {
+    // KEPT UP TO DATE BY ITSELF; TOLD AT THE USER'S TIMES (the user, 2026-11-13: "report上的定时变成通知时间").
+    when.textContent = [said.last ? `${"Updated"}: ${localStamp(said.last)}` : "",
+      said.next ? `${"Next notification"}: ${localStamp(said.next)}` : ""].filter(Boolean).join(". ");
+  }
+  // BEING MADE, SAID ON THE BUTTON ITSELF - and not pressed meanwhile.
+  const make = $("#report-make");
+  if (make) {
+    make.disabled = Boolean(said.making);
+    make.classList.toggle("is-making", Boolean(said.making));
+    make.textContent = said.making ? "Refreshing…" : "Refresh now";
+  }
+  // BEING MADE: followed until it is there, then shown.
+  clearTimeout(reportState.following);
+  if (said.making) {
+    reportState.wasMaking = true;
+    reportState.following = setTimeout(() => loadReportIssues(), 2000);
+  } else if (reportState.wasMaking) {
+    reportState.wasMaking = false;
+    if (!newer) loadReport(true);
+    loadReportIssues();
+  }
+  // TOLD AT THESE TIMES, OR NOT - THE MONITOR'S "YOUR REPORT", the same switch (the user, 2026-11-13: "monitor那里
+  // 只有开关，然后时间具体在report, report里也要有一个button").
+  const notifyRow = $("#report-notify-row"), notify = $("#report-notify");
+  if (notifyRow && notify) {
+    notifyRow.hidden = !said.notify;
+    if (said.notify) {
+      notify.checked = !!said.notify.on;
+      notify.dataset.activator = said.notify.id;
+    }
+  }
+  // THE TIMES, ONE TO A LINE (the user, 2026-11-12: "每行一个time") - each changed where it stands,
+  // added or taken off, kept at once, as Newspaper's are.
+  const times = $("#report-times");
+  const value = (said.times || []).join(", ");
+  if (times && !times.contains(document.activeElement) && times.dataset.value !== value) {
+    times.dataset.value = value;
+    times.innerHTML = `<span class="report-times-label">${escapeHtml("Notify me each day at")}</span>`;
+    const control = recommendTimesControl(value, "No daily time: you are not told - the report still keeps itself up to date.");
+    control.classList.add("times-lines");
+    let waiting = null;
+    control.addEventListener("change", () => {
+      clearTimeout(waiting);
+      waiting = setTimeout(async () => {
+        try {
+          const saved = await api.post("/api/approvals/times", { times: control.value });
+          times.dataset.value = (saved.times || []).join(", ");
+          toast((saved.times || []).length ? `${"Notified at"} ${saved.times.join(", ")}` : "Not notified by itself now");
+          loadReportIssues();
+        } catch (err) { toast(err.message, "error"); }
+      }, 600);
+    });
+    times.appendChild(control);
+  }
+}
+
+/* THE LATEST, IN A LINE ON THE OVERVIEW: the issue itself in the Report tab. */
+function renderReportLine() {
+  const line = $("#ov-approvals-card");
+  const latest = (reportState.issues || [])[0];
+  if (!line) return;
+  const counts = (latest || {}).counts || {};
+  line.hidden = !latest || !(counts.needs_you || counts.yours);
+  if (line.hidden) return;
+  line.innerHTML = `<span>${escapeHtml("Report")} ${escapeHtml(localStamp(latest.at))}: ${escapeHtml(
+    `${counts.needs_you || 0} ${"need your look"}, ${counts.yours || 0} ${"yours to do"}, ${counts.done || 0} ${"done"}`)}</span>
+    <button type="button" class="small" data-report-go="1">${escapeHtml("Open the report")}</button>`;
+}
+// What asked for the approvals before (the toast, the Overview): the report now.
+const loadApprovals = loadReport;
+
+function openApprovals(_issue = "") {
+  // IN ITS OWN TAB (the user: "和newspaper一样单独有一个panel") - the latest, the only one kept.
+  reportState.issue = "";
+  const tab = document.querySelector('#tabs button[data-tab="report"]');
+  if (tab && activeTab !== "report") tab.click();
+  loadReportIssues().then(() => loadReport(true));
+}
+
+async function loadThread(event, item = "") {
+  const key = `${event}|${item}`;
+  let said;
+  try { said = await api.get(`/api/report/event?id=${encodeURIComponent(event)}${item ? `&item=${encodeURIComponent(item)}` : ""}`); }
+  catch (_err) { return; }
+  const was = reportState.threads[key];
+  reportState.threads[key] = said;
+  if (was && was.going && !said.going) loadReport();       // answered: its counts and progress
+  renderReport();                                          // drawn again only if it changed
+  // FOLLOWED WHILE THE AGENT ANSWERS: read again until it is done.
+  clearTimeout(reportState.poll);
+  if (said.going) reportState.poll = setTimeout(() => loadThread(event, item), 2500);
+}
+
+async function decideReport(ref, body, event = "") {
+  if (reportState.busy) return;
+  // IN THE EVENT'S THREAD: the quick word said there, and the agent's answer.
+  if (event) {
+    reportState.busy = true;
+    // SEEN AT ONCE (the user, 2026-11-13: "I already did this 无法点击" - it took seconds, nothing moved, and
+    // the next press was let fall): the thing greyed, its buttons still, until it is answered.
+    reportState.saving.add(ref);
+    renderReport(true);
+    const how = body.ok ? "ok" : body.mine === "do" ? "do" : body.mine === "now" ? "now" : body.already ? "already"
+      : body.text ? "text" : body.yes ? "yes" : "no";
+    try {
+      const said = await api.post("/api/report/event/answer", { id: event, ref, how, text: body.text || "",
+                                                               issue: reportState.issue || "" });
+      if (said && said.done === false) toast(said.said || "It could not be done", "error");
+    } catch (err) { toast(err.message, "error"); }
+    finally {
+      reportState.busy = false;
+      reportState.saving.delete(ref);
+      const item = reportItemKey(event, ref);
+      if (how !== "ok") {                                 // an OK: nothing said, it goes
+        reportState.open.add(`chat:${event}|${item}`);
+        loadThread(event, item);
+      }
+      if (how !== "do") loadReport(true);
+    }
+    return;
+  }
+  reportState.busy = true;
+  try {
+    const said = await api.post("/api/approvals/decide", Object.assign({ key: ref }, body));
+    if (!said.done) { toast(said.said || "It could not be done", "error"); return; }
+    reportState.leaving.add(ref);                         // GONE SMOOTHLY, then read again
+    renderReport(true);
+    await new Promise((resolve) => setTimeout(resolve, 220));
+  } catch (err) { toast(err.message, "error"); }
+  finally {
+    reportState.busy = false;
+    reportState.leaving.delete(ref);
+    loadReport(true);
+  }
+}
+
+document.addEventListener("click", async (event) => {
+  const at = event.target.closest && event.target.closest(".report button");
+  if (!at || at.type === "submit") return;
+  if (at.dataset.reportTab) {
+    reportState.tab = at.dataset.reportTab;
+    reportState.detail = "";
+    renderReport(true);
+  } else if (at.dataset.reportDetail) {
+    reportState.detail = at.dataset.reportDetail;
+    renderReport(true);
+  } else if (at.dataset.reportClose) {
+    reportState.detail = "";
+    renderReport(true);
+  } else if (at.dataset.reportWindow || at.dataset.reportGo) {
+    openApprovals();
+  } else if (at.dataset.reportOpen) {
+    const key = at.dataset.reportOpen;
+    if (reportState.open.has(key)) reportState.open.delete(key); else reportState.open.add(key);
+    renderReport(true);
+  } else if (at.dataset.reportChat) {
+    const key = at.dataset.reportChat;
+    const shut = reportState.open.has("chat:" + key);
+    if (shut) reportState.open.delete("chat:" + key); else reportState.open.add("chat:" + key);
+    renderReport(true);
+    if (!shut) { const [eventId, item] = key.split("|"); loadThread(eventId, item || ""); }
+  } else if (at.dataset.reportTalk) {
+    const id = at.dataset.reportTalk;
+    if (reportState.talking.has(id)) { reportState.talking.delete(id); renderReport(true); return; }
+    reportState.talking.add(id);
+    renderReport(true);
+    await loadThread(id);
+    document.querySelector(`[data-report-say="${CSS.escape(id)}"] textarea`)?.focus();
+  } else if (at.dataset.reportDeliver) {
+    // OPENED, ITS INSTRUCTIONS WITH IT (the user, 2026-11-12: "open的时候直接打开instruction panel显示how
+    // to check").
+    reportState.open.add(at.dataset.panel);
+    renderReport(true);
+    try { await api.post("/api/work/handed/open", { run: at.dataset.reportDeliver, n: Number(at.dataset.n || 0) }); }
+    catch (err) { toast(err.message, "error"); }
+  } else if (at.dataset.reportYes) {
+    decideReport(at.dataset.reportYes, { yes: true }, at.dataset.event || "");
+  } else if (at.dataset.reportNo) {
+    decideReport(at.dataset.reportNo, { yes: false }, at.dataset.event || "");
+  } else if (at.dataset.reportAlready) {
+    decideReport(at.dataset.reportAlready, { yes: false, already: true }, at.dataset.event || "");
+  } else if (at.dataset.reportMineDone) {
+    decideReport(at.dataset.reportMineDone, { yes: false, already: true }, at.dataset.event || "");
+  } else if (at.dataset.reportMineDo) {
+    decideReport(at.dataset.reportMineDo, { yes: true, mine: "do" }, at.dataset.event || "");
+  } else if (at.dataset.reportPrepNow) {
+    decideReport(at.dataset.reportPrepNow, { yes: true, mine: "now" }, at.dataset.event || "");
+  } else if (at.dataset.reportSort) {
+    reportState.sort[at.dataset.tab] = at.dataset.reportSort;
+    try { localStorage.setItem("pa.report.sort", JSON.stringify(reportState.sort)); } catch (_err) { /* kept for now */ }
+    renderReport(true);
+  } else if (at.dataset.reportOkAll) {
+    const keys = at.dataset.reportOkAll.split(" ").filter(Boolean);
+    keys.forEach((key) => reportState.saving.add(key));
+    renderReport(true);
+    try {
+      const said = await api.post("/api/report/ok_all", { keys });
+      toast(`${"OK"}: ${said.seen || 0}`);
+    } catch (err) { toast(err.message, "error"); }
+    keys.forEach((key) => reportState.saving.delete(key));
+    loadReport(true);
+  } else if (at.dataset.reportOk) {
+    decideReport(at.dataset.reportOk, { ok: true }, at.dataset.event || "");
+  } else if (at.id === "report-all" || at.id === "report-all-no") {
+    reportState.askAll = at.id === "report-all";
+    renderReport(true);
+  } else if (at.id === "report-all-yes") {
+    const keys = ((reportState.data.tabs || {}).needs_you || []).flatMap((one) => one.items || [])
+      .filter((one) => one.kind === "approve" && one.batch && !one.answered).map((one) => one.ref);
+    reportState.askAll = false;
+    at.disabled = true;
+    try {
+      const said = await api.post("/api/approvals/all", { keys });
+      const failed = (said.done || []).filter((one) => !one.done);
+      toast(failed.length ? `${failed.length} could not be done` : "Approved", failed.length ? "error" : undefined);
+    } catch (err) { toast(err.message, "error"); }
+    loadReport(true);
+  }
+});
+
+// THE ISSUES' SIDE, AND THE TAB'S OWN BUTTONS.
+document.addEventListener("click", async (event) => {
+  const at = event.target.closest && event.target.closest("#report button, #ov-approvals-card button");
+  if (!at) return;
+  if (at.dataset.reportGo) {
+    openApprovals();
+  } else if (at.id === "report-make") {
+    // MADE IN THE BACKGROUND (the model takes its time): followed, then shown.
+    at.disabled = true;
+    try {
+      await api.post("/api/report/make", {});
+      reportState.wasMaking = true;
+    } catch (err) { toast(err.message, "error"); at.disabled = false; }
+    loadReportIssues();
+  }
+});
+
+document.addEventListener("click", (event) => {
+  if (event.target.classList && event.target.classList.contains("report-backdrop")) {
+    reportState.detail = "";
+    renderReport(true);
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && reportState.detail) {
+    reportState.detail = "";
+    renderReport(true);
+    return;
+  }
+  const box = event.target;
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing || !box.closest) return;
+  const form = box.closest(".report-chat");
+  if (!form) return;
+  event.preventDefault();
+  form.requestSubmit();
+});
+
+document.addEventListener("submit", async (event) => {
+  const form = event.target.closest && event.target.closest(".report form");
+  if (!form) return;
+  event.preventDefault();
+  const box = form.querySelector("textarea");
+  const text = box.value.trim();
+  if (!text) { box.focus(); return; }
+  if (form.dataset.reportAnswer) {                        // the answer the agent asked for
+    decideReport(form.dataset.reportAnswer, { yes: true, text }, form.dataset.event || "");
+  } else if (form.dataset.reportSay) {                    // the event's thread
+    const id = form.dataset.reportSay;
+    form.querySelector("button").disabled = true;
+    try {
+      const item = form.dataset.item || "";
+      const said = await api.post("/api/report/event/reply", { id, text, issue: reportState.issue || "",
+                                                  about: form.dataset.about || "", ref: form.dataset.ref || "", item });
+      if (said && said.done === false) toast(said.said || "It could not be done", "error");
+      box.value = "";
+      box.blur();
+      const key = `${id}|${item}`;
+      reportState.threads[key] = Object.assign({ messages: [] }, reportState.threads[key] || {});
+      reportState.threads[key].messages = [...(reportState.threads[key].messages || []), { who: "you", text }];
+      reportState.threads[key].going = true;
+      reportState.open.add("chat:" + key);
+      renderReport(true);
+      setTimeout(() => loadThread(id, item), 1500);
+    } catch (err) {
+      toast(err.message, "error");
+      form.querySelector("button").disabled = false;
+    }
+  }
+});
+
+// BACK AT THE FRONT, READ AGAIN (2026-11-12: answered from a page shown before the agent settled the
+// thing): what it shows is never older than the last look away.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible" || reportState.busy) return;
+  if (!REPORT_SOLO && !String(location.hash || "").startsWith("#report")) return;
+  loadReportIssues && loadReportIssues();
+  loadReport(true);
+});
+
+if (REPORT_SOLO) {
+  document.body.classList.add("report-solo");
+  document.title = "Report - Personal Agent WaterMelon";
+  $("#report-page").hidden = false;
+  $("#report-page").innerHTML = `<p class="report-empty">${escapeHtml("Reading the report…")}</p>`;
+}
+loadReportIssues().then(() => loadReport(true));
+setInterval(() => {
+  if (document.hidden) return;
+  const here = typeof activeTab !== "undefined" ? activeTab : "";
+  if (REPORT_SOLO || here === "report" || here === "overview") loadReportIssues().then(() => loadReport());
+}, 30000);
+if (location.hash === "#approvals") openApprovals();
+
+/* -- THE WAITING NOTIFICATIONS, A PANEL DOWN THE WHOLE SIDE OF THE SCREEN (the user, 2026-11-13: "你现在这个
+   notifications/recommendation的channel太不现代了，能不能直接占满整个侧边框的那种（类似reports每个事项点击之后弹出来
+   的内容)"): its own window, docked to the right edge, as tall as the screen; each by its title, opened in
+   place - its words, why it was told, its answers, and a reply in words. Answered, it folds away. -- */
+const NOTES_SOLO = new URLSearchParams(location.search).get("solo") === "notifications";
+const notesState = { sections: [], open: new Set(), leaving: new Set(), q: "", drawn: "", writing: "" };
+
+function notesAt(at) {
+  if (!at) return "";
+  const when = new Date(at);
+  if (Number.isNaN(when.getTime())) return "";
+  const today = new Date().toDateString() === when.toDateString();
+  return today ? when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : localStamp(at);
+}
+
+function notesCard(row, kind) {
+  const open = notesState.open.has(row.id) || !row.folds;
+  const words = String(row.detail || "");
+  const shown = notesState.q ? `${row.title} ${words}`.toLowerCase().includes(notesState.q) : true;
+  if (!shown) return "";
+  const answers = (row.actions || []).filter((one) => !one.writes).map((one, n) => `<button type="button"
+      class="small${n ? " secondary" : ""}" data-notes-act="${escapeHtml(row.id)}" data-key="${escapeHtml(one.key)}">${escapeHtml(one.label)}</button>`).join("");
+  const reply = (row.actions || []).find((one) => one.writes);
+  return `<li class="notes-card${open ? " open" : ""}${notesState.leaving.has(row.id) ? " leaving" : ""}">
+    <button type="button" class="notes-card-head" data-notes-open="${escapeHtml(row.id)}" aria-expanded="${open}">
+      <span class="notes-kind">${escapeHtml(kind)}</span>
+      <span class="notes-when">${escapeHtml(notesAt(row.at))}</span>
+      <span class="notes-title">${escapeHtml(row.title || "(untitled)")}</span>
+      ${open ? "" : `<span class="notes-preview">${escapeHtml(words.replace(/\s+/g, " ").slice(0, 220))}</span>`}
+    </button>
+    ${open ? `<div class="notes-body">
+      <div class="notes-text">${linkify(escapeHtml(words))}</div>
+      ${row.url ? `<p><a href="${escapeHtml(row.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml("Open the page")}</a></p>` : ""}
+      ${row.why ? `<p class="notes-why">${escapeHtml(row.why)}</p>` : ""}
+      ${row.note ? `<p class="notes-why">${escapeHtml(row.note)}</p>` : ""}
+      <div class="notes-answers">${answers}</div>
+      ${reply ? `<form class="report-chat notes-reply" data-notes-reply="${escapeHtml(row.id)}">
+        <textarea rows="1" placeholder="${escapeHtml((reply.fields || [])[0] || "Reply")}"></textarea>
+        <button type="submit" class="small">${escapeHtml(reply.yes || "Send")}</button></form>` : ""}
+    </div>` : ""}
+  </li>`;
+}
+
+function linkify(html) {
+  return html.replace(/https?:\/\/[^\s<]+/g, (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
+}
+
+function renderNotes(force = false) {
+  const page = $("#notes-page");
+  if (!page) return;
+  const typing = page.querySelector(".notes-reply textarea:focus");
+  const drawn = JSON.stringify([notesState.sections, [...notesState.open], [...notesState.leaving], notesState.q]);
+  if (!force && (drawn === notesState.drawn || typing)) return;
+  notesState.drawn = drawn;
+  const count = notesState.sections.reduce((n, part) => n + (part.rows || []).length, 0);
+  const lists = notesState.sections.map((part) => {
+    const cards = (part.rows || []).map((row) => notesCard(row, part.name)).join("");
+    return cards ? `<h3 class="notes-group">${escapeHtml(part.name)}</h3><ul class="notes-list">${cards}</ul>` : "";
+  }).join("");
+  const search = $("#notes-q");
+  const searchHad = Boolean(search) && search === document.activeElement;
+  page.innerHTML = `<header class="notes-head">
+      <div><h2 class="notes-heading">${escapeHtml("Waiting notifications")}</h2>
+        <span class="muted">${count ? escapeHtml("{0} waiting").replace("{0}", String(count)) : ""}</span></div>
+      ${NOTES_SOLO ? "" : `<button type="button" class="report-drawer-close" id="notes-close" aria-label="${escapeHtml("Close")}">×</button>`}
+    </header>
+    <div class="notes-search"><input id="notes-q" type="search" placeholder="${escapeHtml("Search")}" value="${escapeHtml(notesState.q)}"></div>
+    <div class="notes-scroll">${lists || `<p class="notes-empty">${escapeHtml("Nothing is waiting.")}</p>`}</div>`;
+  if (searchHad) { const box = $("#notes-q"); box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+}
+
+async function loadNotes(force = false) {
+  try { notesState.sections = (await api.get("/api/notifications/waiting_list")).sections || []; }
+  catch (_err) { return; }
+  const here = new Set(notesState.sections.flatMap((part) => (part.rows || []).map((row) => row.id)));
+  notesState.leaving.forEach((id) => { if (!here.has(id)) notesState.leaving.delete(id); });
+  renderNotes(force);
+  // THE LAST ONE ANSWERED, IT GOES (the user, 2026-11-13: "waiting notification没有内容了之后不会自动关闭了") -
+  // opened with nothing in it, it stays.
+  // ITS LAST ONE GONE, HOWEVER IT WENT (the user, 2026-11-13: "这个好像消息结束了没有自动关闭窗口" - one answered
+  // beside the avatar or in the report left it open, empty): opened empty, it stays.
+  if (here.size) notesState.hadSome = true;
+  if ((notesState.answered || notesState.hadSome) && !here.size) {
+    notesState.answered = false;
+    notesState.hadSome = false;
+    closeNotes();
+  }
+}
+
+/* PUT AWAY, NOT CLOSED: slid out to the edge by the desktop and kept, to slide back in at once next
+   time; where it cannot be, closed. */
+async function closeNotes() {
+  notesState.open.clear();
+  let said = null;
+  try { said = await api.post("/api/notifications/panel_hide", {}); } catch (_err) { said = null; }
+  if (!said || !said.hidden) window.close();
+}
+
+function notesRow(id) {
+  for (const part of notesState.sections) {
+    const row = (part.rows || []).find((one) => one.id === id);
+    if (row) return row;
+  }
+  return null;
+}
+
+async function notesAnswer(id, action, extra = {}) {
+  notesState.leaving.add(id);                     // folded away on the press; back if it failed
+  renderNotes(true);
+  try {
+    await api.post(action.path, Object.assign({}, action.body || {}, extra));
+    notesState.answered = true;
+    setTimeout(() => loadNotes(true), 260);
+  } catch (err) {
+    notesState.leaving.delete(id);
+    toast(err.message, "error");
+    renderNotes(true);
+  }
+}
+
+if (NOTES_SOLO) {
+  document.documentElement.classList.add("notes-solo");
+  document.body.classList.add("notes-solo");
+  // The agent's name in it: the listener knows the agent's own windows by it.
+  document.title = "Waiting notifications - Personal Agent WaterMelon";
+  $("#notes-page").hidden = false;
+  // DOWN THE WHOLE RIGHT SIDE OF THE SCREEN, measured by the page, in the window's own units - unless
+  // the desktop put it there itself, before it was ever seen ("placed": moved here again, it jumped).
+  if (!new URLSearchParams(location.search).get("placed")) try {
+    const w = Math.min(460, screen.availWidth), h = screen.availHeight;
+    window.resizeTo(w, h);
+    window.moveTo((screen.availLeft || 0) + screen.availWidth - w, screen.availTop || 0);
+  } catch (_err) { /* a browser that does not let it: left as it opened */ }
+  renderNotes(true);
+  loadNotes(true);
+  setInterval(() => { if (!document.hidden) loadNotes(); }, 8000);
+  window.addEventListener("focus", () => loadNotes());
+  // SLID BACK IN: what waits now, at once.
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) loadNotes(true); });
+  // ITS LINKS IN THE USER'S OWN BROWSER, not a window of the panel's own (kept off the screen, signed in
+  // nowhere: "open the page 弹出来的google chrome没法显示").
+  document.addEventListener("click", async (event) => {
+    const link = event.target.closest && event.target.closest("#notes-page a[href^='http']");
+    if (!link) return;
+    event.preventDefault();
+    let said = null;
+    try { said = await api.post("/api/notifications/open_link", { url: link.href }); } catch (_err) { said = null; }
+    if (!said || !said.opened) window.open(link.href, "_blank", "noopener");
+  });
+  document.addEventListener("click", (event) => {
+    const at = event.target.closest && event.target.closest("#notes-page button");
+    if (!at) return;
+    if (at.id === "notes-close") { closeNotes(); return; }
+    if (at.dataset.notesOpen) {
+      const id = at.dataset.notesOpen;
+      if (notesState.open.has(id)) notesState.open.delete(id); else notesState.open.add(id);
+      renderNotes(true);
+      return;
+    }
+    if (at.dataset.notesAct) {
+      const row = notesRow(at.dataset.notesAct);
+      const action = row && (row.actions || []).find((one) => one.key === at.dataset.key);
+      if (action) notesAnswer(row.id, action);
+    }
+  });
+  document.addEventListener("submit", (event) => {
+    const form = event.target.closest && event.target.closest("[data-notes-reply]");
+    if (!form) return;
+    event.preventDefault();
+    const text = form.querySelector("textarea").value.trim();
+    const row = notesRow(form.dataset.notesReply);
+    const action = row && (row.actions || []).find((one) => one.writes);
+    if (text && action) notesAnswer(row.id, action, { text });
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !event.target.closest(".notes-reply")) closeNotes();
+    const box = event.target.closest && event.target.closest(".notes-reply textarea");
+    if (box && event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      box.form.requestSubmit();
+    }
+  });
+  document.addEventListener("input", (event) => {
+    if (event.target.id !== "notes-q") return;
+    notesState.q = event.target.value.trim().toLowerCase();
+    renderNotes(true);
+  });
+}
+
+/* TURNED TO THE TAB THE APP ASKS FOR (2026-11-13: the desktop's Report opens here, in the app's own
+   window, not the browser): asked as the window comes to the front. */
+async function turnToTheTabWanted() {
+  if (REPORT_SOLO || document.hidden) return;
+  let said;
+  try { said = await api.get("/api/page/wants"); } catch (_err) { return; }
+  const tab = said && said.tab && $(`#tabs button[data-tab="${CSS.escape(said.tab)}"]`);
+  if (tab) tab.click();
+}
+window.addEventListener("focus", turnToTheTabWanted);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) turnToTheTabWanted(); });
 
 /* ------------------------------------------------------------------ monitor */
 /* THE MONITOR (heartbeat/monitor/, the user, 2026-11-03): the signals now, the
@@ -28406,9 +30118,22 @@ document.addEventListener("click", async (event) => {
 const monState = { open: new Set(), drawn: { tree: "", firings: "" }, data: null,
   // THE ONE BEING EDITED (the user, 2026-11-07), and whether its form is on the page: while it is,
   // the list is not drawn again under the user's hands.
-  editing: null, drawnFor: null };
-const MON_GROUPS = [["recommend", "Recommendations"], ["risk", "Risks"], ["calendar", "Calendar"],
-  ["rest", "Breaks and the evening"], ["other", "Other"]];
+  editing: null, drawnFor: null,
+  // THE KINDS FOLDED BY THE USER (each open at first).
+  closedKinds: new Set() };
+/* WHAT IT TELLS, BY KIND (the user, 2026-11-13: "recommendation, event notifications, summary, risks, closing up the
+   evening和the day ahead ... 其它都取消"; "系统类的可以保留"). */
+const MON_GROUPS = [["recommend", "Recommendations"], ["calendar", "Event notifications"],
+  ["deadline", "Deadlines"], ["summary", "Summary"], ["risk", "Risks"], ["rest", "Your day"], ["system", "The application itself"],
+  ["other", "Other"]];
+const MON_GROUP_SAID = {
+  recommend: "Pages and news worth your time, at the moments it is worth telling you.",
+  calendar: "Meeting invitations and times agreed on the screen, and each reminder at its time.",
+  deadline: "A hard deadline near and the thing not done: told while there is still time for you to do it.",
+  summary: "Your report, told at the times set in the Report - here only on or off.",
+  risk: "Scams and phishing on what you read.",
+  rest: "The day ahead, the first time you sit down; and your day, as you close up for the evening.",
+  system: "What you must know of the application: a model to sign in to again, the agent stopped, an update."};
 
 async function loadMonitor() {
   try {
@@ -28469,7 +30194,9 @@ function renderMonitor(data) {
     ? `<h3 class="mon-sub">${escapeHtml(`Your habits (${habits.habit_days} days like today)`)}</h3>
        <div class="mon-facts">${usual.join("")}</div>`
     : `<p class="muted mon-sub">${escapeHtml("Your habits show once there are a few days like today.")}</p>`}`;
-  const tree = monBlocked(data) + monQuiet(data.quiet || []) + monTree(data);
+  // IN LEVELS (the user, 2026-11-13: "monitor其实应该是多级的，blocker在最上级 ... 你的monitor的display也用分级展示"): the
+  // silences over everything; what it tells, by kind; each kind's Activators.
+  const tree = monSilences(data) + monTree(data);
   const holding = monState.editing && monState.drawnFor === monState.editing;
   if (tree !== monState.drawn.tree && !holding) {
     monState.drawn.tree = tree;
@@ -28498,6 +30225,20 @@ function renderMonitor(data) {
   }
 }
 
+/* THE TOP LEVEL - THE SILENCES, OVER EVERYTHING: the user's own "No notifications" ("点击之后所有notification都不会弹，
+   但是其它功能正常"), then each rule of quiet (presenting, a meeting). While one holds nothing pops. */
+function monSilences(data) {
+  const off = !!data.no_notifications;
+  return `<section class="mon-level mon-level-top">
+      <h3 class="mon-level-head">${escapeHtml("Silences")} <span class="muted">${escapeHtml(
+        "Over everything: while one holds, nothing pops - it waits in the list, and no recommendation is made.")}</span></h3>
+      <label class="mon-no-notes${off ? " on" : ""}"><input type="checkbox" data-mon-no-notes${off ? " checked" : ""}>
+        <strong>${escapeHtml("No notifications")}</strong>
+        <span class="muted">${escapeHtml("Nothing pops; everything else goes on as it does.")}</span></label>
+      ${monBlocked(data)}${monQuiet(data.quiet || [])}
+    </section>`;
+}
+
 /* RULES OF QUIET: said once, they hold all that speaks for itself. */
 function monBlocked(data) {
   if (!data.blocker) return "";
@@ -28508,7 +30249,7 @@ function monBlocked(data) {
 
 function monQuiet(rules) {
   if (!rules.length) return "";
-  return `<h3 class="mon-sub">${escapeHtml("Blockers")}</h3><ul class="mon-quiet">${rules.map((one) =>
+  return `<ul class="mon-quiet">${rules.map((one) =>
     `<li><strong>${escapeHtml(one.name)}</strong><span class="muted">${escapeHtml(monCond(one.when))}</span>
      <button type="button" class="secondary" data-quiet-remove="${escapeHtml(one.id)}">${
        escapeHtml("Remove")}</button></li>`).join("")}</ul>`;
@@ -28545,7 +30286,15 @@ function monTree(data) {
   const groups = MON_GROUPS.map(([key, label]) => {
     const mine = (data.activators || []).filter((one) => (one.group || "other") === key);
     if (!mine.length) return "";
-    return `<h3 class="mon-group">${escapeHtml(label)}</h3>${mine.map((one) => {
+    const on = mine.filter((one) => one.enabled).length;
+    const shown = !monState.closedKinds.has(key);
+    const report = key === "summary" ? `<p class="mon-kind-note">${escapeHtml("Its times are set in the Report.")}
+        <button type="button" class="small secondary" data-mon-report-times="1">${escapeHtml("Set the times")}</button></p>` : "";
+    return `<details class="mon-kind" data-mon-kind="${escapeHtml(key)}"${shown ? " open" : ""}>
+      <summary><span class="mon-kind-name">${escapeHtml(label)}</span>
+        <span class="muted mon-kind-count">${escapeHtml(`${on} of ${mine.length} on`)}</span></summary>
+      <p class="muted mon-kind-said">${escapeHtml(MON_GROUP_SAID[key] || "")}</p>${report}
+      <div class="mon-kind-items">${mine.map((one) => {
       const history = changes.filter((change) => change.activator_id === one.id).slice(0, 6);
       const open = monState.open.has(one.id);
       return `<details class="mon-act${one.enabled ? "" : " mon-off"}" data-mon-act="${escapeHtml(one.id)}"${open ? " open" : ""}>
@@ -28553,16 +30302,16 @@ function monTree(data) {
           ${one.display_name && one.display_name !== one.name
             ? `<span class="muted mon-real-name" title="${escapeHtml("The name the agent knows it by")}">${
               escapeHtml(one.name)}</span>` : ""}
-          ${one.protected ? `<span class="mon-badge">${escapeHtml("Protected")}</span>` : ""}
-          ${one.builtin ? `<span class="mon-badge mon-badge-quiet">${escapeHtml("Built in")}</span>` : ""}
+          ${one.builtin ? `<span class="mon-badge mon-badge-quiet" title="${escapeHtml("Built in: it can only be switched on or off")}">${escapeHtml("Built in · fixed")}</span>`
+            : one.protected ? `<span class="mon-badge">${escapeHtml("Protected")}</span>` : ""}
           <span class="mon-switches">
             <label><input type="checkbox" data-mon-switch="${escapeHtml(one.id)}"${one.enabled ? " checked" : ""}> ${escapeHtml("On")}</label>
-            <label title="${escapeHtml("Protected: the agent can neither change nor delete it")}"><input type="checkbox" data-mon-protect="${escapeHtml(one.id)}"${one.protected ? " checked" : ""}> ${escapeHtml("Protected")}</label>
+            ${one.builtin ? "" : `<label title="${escapeHtml("Protected: the agent can neither change nor delete it")}"><input type="checkbox" data-mon-protect="${escapeHtml(one.id)}"${one.protected ? " checked" : ""}> ${escapeHtml("Protected")}</label>`}
           </span></summary>
-        ${monState.editing === one.id ? monEditForm(one) : `
+        ${monState.editing === one.id && !one.builtin ? monEditForm(one) : `
         <p class="muted">${escapeHtml(one.purpose || "")}</p>
-        <button type="button" class="secondary mon-edit" data-mon-edit="${escapeHtml(one.id)}">${
-          escapeHtml("Edit")}</button>
+        ${one.builtin ? "" : `<button type="button" class="secondary mon-edit" data-mon-edit="${escapeHtml(one.id)}">${
+          escapeHtml("Edit")}</button>`}
         <dl class="mon-dl">
           <dt>${escapeHtml("Watches for")}</dt><dd>${escapeHtml(monCond(one.when))}</dd>
           <dt>${escapeHtml("Then")}</dt><dd>${(one.then || []).map((tier) => escapeHtml(monThen(tier))).join("<br>")}</dd>
@@ -28576,9 +30325,10 @@ function monTree(data) {
             ? ` <button type="button" class="secondary mon-undo" data-mon-undo="${escapeHtml(change.id)}">${
               escapeHtml("Undo")}</button>` : ""}</li>`).join("")}</ul>` : ""}
       </details>`;
-    }).join("")}`;
+    }).join("")}</div></details>`;
   });
-  return groups.join("") || `<p class="muted">${escapeHtml("No Activators yet.")}</p>`;
+  return `<section class="mon-level"><h3 class="mon-level-head">${escapeHtml("What it tells you")}</h3>${
+    groups.join("") || `<p class="muted">${escapeHtml("No Activators yet.")}</p>`}</section>`;
 }
 
 /* THE USER'S OWN CHANGE (the user, 2026-11-07): their name for it - the agent can never change
@@ -28669,6 +30419,11 @@ function monFirings(rows) {
 }
 
 document.addEventListener("toggle", (event) => {
+  const kind = event.target.matches && event.target.matches("[data-mon-kind]") ? event.target : null;
+  if (kind) {
+    if (kind.open) monState.closedKinds.delete(kind.dataset.monKind); else monState.closedKinds.add(kind.dataset.monKind);
+    return;
+  }
   const box = event.target.closest && event.target.closest("[data-mon-act]");
   if (!box) return;
   if (box.open) monState.open.add(box.dataset.monAct); else monState.open.delete(box.dataset.monAct);
@@ -28677,9 +30432,29 @@ document.addEventListener("toggle", (event) => {
 document.addEventListener("click", (event) => {
   // The switches sit in the summary: a click on them is not a fold.
   if (event.target.closest && event.target.closest(".mon-switches")) event.stopPropagation();
+  // THE REPORT'S TIMES, where they are set.
+  if (event.target.closest && event.target.closest("[data-mon-report-times]")) openApprovals();
 }, true);
 
 document.addEventListener("change", async (event) => {
+  // NO NOTIFICATIONS: over every Activator; the rest goes on.
+  if (event.target.matches && event.target.matches("[data-mon-no-notes]")) {
+    try {
+      await api.post("/api/monitor/no_notifications", { on: event.target.checked });
+      toast(event.target.checked ? "No notifications - nothing pops until you turn this off" : "Notifications back on");
+    } catch (err) { toast(err.message, "error"); }
+    monState.drawn.tree = "";
+    loadMonitor();
+    return;
+  }
+  // THE REPORT'S OWN SWITCH: the Monitor's "Your report".
+  if (event.target.id === "report-notify") {
+    try {
+      await api.post("/api/monitor/switch", { id: event.target.dataset.activator, on: event.target.checked });
+      toast(event.target.checked ? "You are told at these times" : "Not told - the report still keeps itself up to date");
+    } catch (err) { toast(err.message, "error"); event.target.checked = !event.target.checked; }
+    return;
+  }
   const on = event.target.closest && event.target.closest("[data-mon-switch]");
   const guard = event.target.closest && event.target.closest("[data-mon-protect]");
   if (!on && !guard) return;
@@ -28691,3 +30466,399 @@ document.addEventListener("change", async (event) => {
   }
   loadMonitor();
 });
+
+/* THE DAY'S AGENDA, A PREVIEW (the user, 2026-11-09: "agent给我安排线性的日程" - heartbeat/agenda/):
+   everything on the plate gathered and judged - who does it, its deadline, how long - and the day
+   planned into a line of blocks by a builder, held to the hard rules by code (every deadline caught,
+   large blocks, few switches) and reviewed as the user would judge it. Phase 1: shown, never acted
+   on - nothing deleted, started or said from it. Asked every minute on the Overview; every few
+   seconds while a plan is being made. */
+let agendaShown = "";
+let agendaAgain = null;
+const AGENDA_KIND = { deep: "Deep work", batch: "Small things", review: "Look over", meeting: "Meeting",
+  errand: "Errand", travel: "Travel", break: "Break", buffer: "Buffer", free: "Free" };
+/* THE THREE KINDS (the user, 2026-11-09): what the agent does and the user approves for now - to be
+   handed over in time; what the user always approves; the user's own deep work, the agent helping. */
+const AGENDA_WHO = { delegable: "The agent does it - you approve for now",
+  approve: "The agent does it - you always approve",
+  human: "Your own work - the agent helps", gone: "Looks done or no longer wanted" };
+const AGENDA_LANE_BADGE = { delegable: "you approve, for now", approve: "you always approve",
+  human: "helps you" };
+const AGENDA_FOCUS = { deep: "deep work", shallow: "a small thing", meeting: "a meeting", review: "to look over",
+  errand: "an errand" };
+
+async function loadAgenda() {
+  const box = $("#ov-agenda");
+  if (!box) return;
+  let said;
+  try {
+    said = await api.get("/api/agenda");
+  } catch (_err) {
+    return;                                 // left as it was
+  }
+  // THE PLANNING BUTTON ON THE CALENDAR: held and saying what it does while the thread works.
+  const things = (said && said.things) || [];
+  const unsortedNow = things.filter((one) => one.judged === false || !AGENDA_WHO[(one.triage || {}).who]).length;
+  const plan = $("#cal-plan");
+  if (plan) {
+    plan.disabled = !!(said && said.planning);
+    plan.textContent = said && said.planning ? "Planning…" : said && said.plan ? "Plan again" : "Plan now";
+  }
+  const status = $("#cal-plan-status");
+  if (status) {
+    status.textContent = !(said && said.planning) ? ""
+      : said.doing === "planning" ? "Planning the day…"
+        : said.doing === "planning_ahead" ? "The day is planned; planning the days ahead…"
+        : `Sorting what is on your plate (${things.length - unsortedNow} of ${things.length} done), then planning the day…`;
+  }
+  const before = JSON.stringify((calendarState.agenda || {}).plan || null);
+  calendarState.agenda = said;
+  if (activeTab === "calendar" && calendarState.mode === "planned"
+      && before !== JSON.stringify((said || {}).plan || null)) {
+    renderCalendar();
+  }
+  const html = agendaBox(said || {});
+  if (html !== agendaShown) {
+    const open = new Set($$("#ov-agenda details[open]").map((one) => one.dataset.agOpen));
+    const event = $("#ov-agenda .ag-event.ag-open");
+    const opened = event ? event.dataset.agEvent : null;
+    box.innerHTML = html;
+    agendaShown = html;
+    $$("#ov-agenda details[data-ag-open]").forEach((one) => {
+      if (open.has(one.dataset.agOpen)) one.open = true;
+    });
+    if (opened !== null) {
+      const again = $(`#ov-agenda [data-ag-event="${opened}"]`);
+      if (again) again.classList.add("ag-open");
+    }
+  }
+  clearTimeout(agendaAgain);
+  agendaAgain = setTimeout(loadAgenda, said && said.planning ? 5000 : 60000);
+}
+
+function agendaTitles(ids, byId) {
+  return (ids || []).map((ident) => {
+    const one = byId.get(String(ident));
+    return one ? one.title : "";
+  }).filter(Boolean);
+}
+
+function agendaBox(said) {
+  const things = said.things || [];
+  const byId = new Map(things.map((one) => [String(one.id), one]));
+  const kept = said.plan || null;
+  const plan = (kept && kept.plan) || {};
+  const checked = (kept && kept.checked) || {};
+  const review = (kept && kept.review) || {};
+  // THE DETAILS UNDER THE CALENDAR (the user, 2026-11-09: the plan on the calendar itself, its
+  // button on the calendar's bar): the kinds, what is at risk, every thing - its kind changed here.
+  const head = `<div class="ag-head"><h3 class="ov-head">${escapeHtml("The plan's details")}</h3>
+    <span class="ag-badge">${escapeHtml("Preview")}</span></div>
+    <p class="muted ag-note">${escapeHtml("Its reminders come when their time does; the agent does its part when its time comes. Nothing it makes is sent or written to anyone before you approve it.")}</p>`;
+  if (!kept) {
+    return head + `<p class="muted">${escapeHtml(
+      `Not planned yet. ${things.length} things are on your plate; the day is planned when it begins, or now.`)}</p>`
+      + agendaKinds(things) + agendaThings(things);
+  }
+  const counted = `<p class="ag-counted muted">${escapeHtml(
+    `${checked.switches ?? "?"} switches · longest deep block ${checked.longest_deep ?? 0} min · ${checked.deep_minutes ?? 0} min deep`)}${
+    kept.made_at ? ` · ${escapeHtml(`planned ${localStamp(kept.made_at)}`)}` : ""}</p>`;
+  const summary = plan.summary ? `<p class="ag-summary">${escapeHtml(plan.summary)}</p>` : "";
+  // STILL BEING SORTED (the user, 2026-11-09: "你现在还有这么多not sorted, 这些怎么办"): said, not hidden.
+  const unsorted = things.filter((one) => one.judged === false || !AGENDA_WHO[(one.triage || {}).who]).length;
+  const sorting = unsorted ? `<p class="muted ag-sorting">${escapeHtml(
+    `Still being sorted: ${unsorted}. They go into the plan when it is made again.`)}</p>` : "";
+  const list = (title, entries, line, kind = "") => (entries && entries.length
+    ? `<div class="ag-side ${kind}"><h4>${escapeHtml(title)} <span class="muted">(${entries.length})</span></h4><ul>${
+      entries.map(line).join("")}</ul></div>` : "");
+  const named = (entry) => escapeHtml((byId.get(String(entry.item)) || {}).title || entry.item || "");
+  const sides = list("At risk", plan.at_risk, (one) => `<li><b>${named(one)}</b> - ${escapeHtml(one.why || "")}${
+      (one.options || []).length ? `<span class="muted"> ${escapeHtml(`Could be saved by: ${one.options.join("; ")}`)}</span>` : ""}</li>`, "ag-risk")
+    + list("The agent would do, at no set time", (plan.agent_does || []).filter((one) => !(one.start && one.end)), (one) => `<li>${named(one)} <span class="muted">${escapeHtml(one.what || "")}</span></li>`)
+    + list("Would be cleared away", plan.clean_up, (one) => `<li>${named(one)} <span class="muted">${escapeHtml(one.why || "")}</span></li>`);
+  const left = (checked.problems || []).length ? `<details class="ag-left" data-ag-open="left"><summary>${
+    escapeHtml(`The check still finds ${checked.problems.length}`)}</summary><ul>${
+    checked.problems.map((one) => `<li>${escapeHtml(one)}</li>`).join("")}</ul></details>` : "";
+  const reviewed = (review.changes || []).length ? `<details class="ag-review" data-ag-open="review"><summary>${
+    escapeHtml("The reviewer's last word")}</summary><ul>${review.changes.map((one) => `<li>${escapeHtml(one.what || "")}${
+      (one.because || []).length ? ` <span class="muted">(${escapeHtml(one.because.join(", "))})</span>` : ""}</li>`).join("")}</ul></details>` : "";
+  // WHAT THE AGENT CLEARED AWAY (phase 3), each undone within a week.
+  const cleared = (said.cleared || []).length ? `<div class="ag-side ag-cleared"><h4>${escapeHtml(
+    "Cleared away by the agent")} <span class="muted">(${said.cleared.length})</span></h4><ul>${said.cleared.map((one) =>
+    `<li>${escapeHtml(one.title)} <span class="muted">${escapeHtml(one.why || "")}</span>
+      <button type="button" class="small secondary" data-ag-undo="${escapeHtml(one.id)}">${escapeHtml("Undo")}</button></li>`).join("")}</ul>
+    <p class="muted">${escapeHtml("Each can be undone for a week.")}</p></div>` : "";
+  return head + summary + counted + sorting + agendaKinds(things) + cleared
+    + (sides ? `<div class="ag-sides-row">${sides}</div>` : "") + left + reviewed + agendaThings(things);
+}
+
+/* THE DAY AS ONE DAY OF A CALENDAR (the user, 2026-11-09: "这个预览，你要用一个单日calender的方式
+   display"): the hours down the left, each block where its time is and as tall as it lasts, coloured
+   by what it is; a line at now, on today. A block pressed opens out: what is in it, and why. */
+const AGENDA_PX_MIN = 1.1;               // pixels a minute: ten hours, 660 px
+
+function agendaMinutes(text) {
+  const [h, m] = String(text || "").split(":").map((one) => parseInt(one, 10));
+  return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
+}
+
+function agendaClock(minutes) {
+  const h = Math.floor(minutes / 60) % 24;
+  return `${String(h).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+/* WHAT EACH COLOUR IS, AND WHOSE (the user, 2026-11-09: "你现在plan不同的颜色是什么意思，calender上也没写
+   哪些是我做，哪些是agent做的"): a legend over the calendar; the user's blocks in their lane, the
+   agent's work beside them in its own. */
+const AGENDA_LEGEND = [["deep", "Deep work"], ["batch", "Small things and looking over"],
+  ["meeting", "Meetings and errands"], ["break", "Breaks and travel"], ["agent", "The agent works on it"]];
+
+function agendaNote(note) {
+  if (!note || typeof note !== "object") return "";
+  const lines = [["Last time", note.left_off], ["Folder", note.folder],
+    ["Files", (note.files || []).filter(Boolean).join(", ")], ["The agent prepares", note.agent_prepares]]
+    .filter(([, value]) => value);
+  if (!lines.length) return "";
+  return `<div class="ag-note-box"><div class="ag-note-head">${escapeHtml("Work note")}</div>${
+    lines.map(([label, value]) => `<div><span class="muted">${escapeHtml(label)}:</span> ${escapeHtml(value)}</div>`).join("")}</div>`;
+}
+
+/* Side by side where they overlap: the agent may work on two things at once. */
+function agendaColumns(events) {
+  const sorted = events.map((one, n) => ({ one, n, from: agendaMinutes(one.start), to: agendaMinutes(one.end) }))
+    .sort((a, b) => a.from - b.from);
+  const ends = [];
+  for (const one of sorted) {
+    let column = ends.findIndex((end) => end <= one.from);
+    if (column < 0) { column = ends.length; ends.push(0); }
+    ends[column] = one.to;
+    one.one.column = column;
+  }
+  for (const one of sorted) {
+    const along = sorted.filter((other) => other.from < one.to && one.from < other.to);
+    one.one.columns = Math.max(...along.map((other) => other.one.column)) + 1;
+  }
+  return events;
+}
+
+function agendaEvent(block, n, first, byId, lane) {
+  const from = agendaMinutes(block.start);
+  const to = agendaMinutes(block.end);
+  const top = Math.round((from - first) * AGENDA_PX_MIN);
+  const columns = Math.max(1, block.columns || 1);
+  const across = columns > 1 ? `left:calc(${(100 * (block.column || 0)) / columns}% + 4px);width:calc(${100 / columns}% - 8px);right:auto;` : "";
+  const height = Math.max(20, Math.round((to - from) * AGENDA_PX_MIN) - 2);
+  const titles = agendaTitles(block.items, byId);
+  const things = (block.items || []).map((ident) => byId.get(String(ident))).filter(Boolean);
+  const where = [block.context, block.place].filter(Boolean).join(" · ");
+  const kind = lane === "agent" ? "agent" : String(block.kind || "");
+  const note = lane === "agent" ? "" : agendaNote(block.note);
+  return `<div class="ag-event ag-${escapeHtml(kind)}${height < 56 ? " ag-short" : ""}" style="top:${top}px;height:${height}px;${across}"
+      data-ag-event="${lane}-${n}" tabindex="0" title="${escapeHtml([block.title, block.why].filter(Boolean).join(" - "))}">
+    <div class="ag-event-line"><span class="ag-time">${escapeHtml(`${block.start}–${block.end}`)}</span>
+      <span class="ag-kind">${escapeHtml(lane === "agent" ? "Agent" : AGENDA_KIND[kind] || kind)}</span>${
+      lane === "agent" && AGENDA_LANE_BADGE[block.who] ? `<span class="ag-who ag-who-${escapeHtml(block.who)}">${
+        escapeHtml(AGENDA_LANE_BADGE[block.who])}</span>` : ""}
+      <span class="ag-title">${escapeHtml(block.title || "")}</span>${
+      note ? ` <span class="ag-has-note">${escapeHtml("Work note")}</span>` : ""}</div>${
+    where ? `<div class="muted ag-where">${escapeHtml(where)}</div>` : ""}${
+    // A FREE STRETCH (the user, 2026-11-10: "不要限制user做什么"): what they might do in it, with
+    // why - suggestions, never what they must do.
+    kind === "free" ? `${things.length ? `<div class="muted ag-might">${escapeHtml("You might want to do:")}</div>
+      <ul class="ag-items ag-suggested">${things.map((one) => {
+        const why = ((block.might_do || []).find((m) => String(m.item) === String(one.id)) || {}).why || "";
+        return `<li>${escapeHtml(one.title)}${why ? ` <span class="muted">(${escapeHtml(why)})</span>` : ""}${
+          agendaActions(one)}</li>`;
+      }).join("")}</ul>` : ""}`
+      : things.length ? `<ul class="ag-items">${things.map((one) => `<li>${escapeHtml(one.title)}${agendaActions(one)}</li>`).join("")}</ul>`
+      : titles.length ? `<ul class="ag-items">${titles.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>` : ""}${
+    block.why ? `<div class="muted ag-why">${escapeHtml(block.why)}</div>` : ""}${note}</div>`;
+}
+
+async function agendaAct(ident, action, day = "") {
+  try {
+    await api.post("/api/agenda/feedback", { id: ident, action, day });
+    toast(action === "done" ? "Marked done - the day is planned again around it."
+      : action === "drop" ? "Let go of - the day is planned again."
+        : "Noted - the day is planned again around it.");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+  plannedClose();
+  agendaShown = "";
+  loadAgenda();
+  if (typeof loadCalendar === "function" && activeTab === "calendar") loadCalendar();
+}
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest && event.target.closest("[data-ag-act]");
+  if (!button || !button.dataset.agAct) return;
+  const holder = button.closest("[data-ag-thing]");
+  if (!holder) return;
+  event.preventDefault();
+  event.stopPropagation();
+  button.disabled = true;
+  agendaAct(holder.dataset.agThing, button.dataset.agAct);
+}, true);
+document.addEventListener("click", async (event) => {
+  const open = event.target.closest && event.target.closest("[data-ag-open-work]");
+  const approve = event.target.closest && event.target.closest("[data-ag-approve]");
+  const undo = event.target.closest && event.target.closest("[data-ag-undo]");
+  if (!open && !approve && !undo) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (open) {
+    // In the page's own box for delegated work, as Work assigned opens it.
+    plannedClose();
+    if (typeof openDelegateDraft === "function") openDelegateDraft(open.dataset.agOpenWork);
+    return;
+  }
+  try {
+    if (approve) {
+      const holder = approve.closest("[data-ag-thing]");
+      await api.post("/api/agenda/approval", { id: holder.dataset.agThing, how: approve.dataset.agApprove });
+      toast(approve.dataset.agApprove === "not_right" ? "Noted: not right - it stays on your plate."
+        : "Marked as sent - the day is planned again around it.");
+    } else {
+      await api.post("/api/agenda/undo", { id: undo.dataset.agUndo });
+      toast("Back as it was.");
+    }
+  } catch (err) {
+    toast(err.message, "error");
+  }
+  plannedClose();
+  agendaShown = "";
+  loadAgenda();
+  if (typeof loadCalendar === "function" && activeTab === "calendar") loadCalendar();
+}, true);
+
+document.addEventListener("change", (event) => {
+  const input = event.target.closest && event.target.closest("[data-ag-act-day]");
+  if (!input || !input.value) return;
+  const holder = input.closest("[data-ag-thing]");
+  if (holder) agendaAct(holder.dataset.agThing, "on_day", input.value);
+}, true);
+
+function agendaCalendar(blocks, byId, day, frame, empty = false, agentDoes = []) {
+  const valid = (one) => {
+    const from = agendaMinutes(one.start);
+    const to = agendaMinutes(one.end);
+    return from !== null && to !== null && to > from;
+  };
+  const mine = blocks.filter(valid);
+  const theirs = (agentDoes || []).filter(valid).map((one) => ({
+    start: one.start, end: one.end, items: [one.item],
+    title: one.what || (byId.get(String(one.item)) || {}).title || "", why: "",
+    who: (((byId.get(String(one.item)) || {}).triage) || {}).who || "" }));
+  agendaColumns(theirs);
+  if (!mine.length && !theirs.length && !empty) {
+    return `<div class="ag-cal"><p class="muted">${escapeHtml("No blocks in the plan.")}</p></div>`;
+  }
+  // The whole working day, from when it usually begins - not only from when it was planned.
+  const begins = agendaMinutes(frame.begins) ?? agendaMinutes(frame.plan_from) ?? 9 * 60;
+  const endsAt = agendaMinutes(frame.ends) ?? 18 * 60;
+  const all = [...mine, ...theirs];
+  const first = Math.floor(Math.min(begins, ...all.map((one) => agendaMinutes(one.start))) / 60) * 60;
+  const last = Math.ceil(Math.max(endsAt, ...all.map((one) => agendaMinutes(one.end))) / 60) * 60;
+  const tall = Math.round((last - first) * AGENDA_PX_MIN);
+  const hours = [];
+  for (let at = first; at <= last; at += 60) {
+    const top = Math.round((at - first) * AGENDA_PX_MIN);
+    hours.push(`<div class="ag-hour" style="top:${top}px"><span>${escapeHtml(agendaClock(at))}</span></div>`);
+  }
+  let now = "";
+  const today = new Date();
+  const isToday = day === `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const nowMin = today.getHours() * 60 + today.getMinutes();
+  if (isToday && nowMin >= first && nowMin <= last) {
+    now = `<div class="ag-now" style="top:${Math.round((nowMin - first) * AGENDA_PX_MIN)}px"></div>`;
+  }
+  const nothing = !mine.length ? `<div class="ag-nothing muted">${escapeHtml(
+    "Nothing is at a fixed time today yet - the plan fills the day in.")}</div>` : "";
+  const legend = `<div class="ag-legend">${AGENDA_LEGEND.map(([kind, label]) =>
+    `<span><i class="ag-swatch ag-${kind}"></i>${escapeHtml(label)}</span>`).join("")}</div>`;
+  const heads = `<div class="ag-lane-heads"><span class="ag-lane-you">${escapeHtml("You")}</span><span class="ag-lane-agent">${
+    escapeHtml("The agent")}</span></div>`;
+  return `<div class="ag-cal">${legend}${heads}<div class="ag-grid" style="height:${tall}px">${hours.join("")}${now}
+    <div class="ag-lane ag-lane-you">${mine.map((one, n) => agendaEvent(one, n, first, byId, "you")).join("")}${nothing}</div>
+    <div class="ag-lane ag-lane-agent">${theirs.map((one, n) => agendaEvent(one, n, first, byId, "agent")).join("")}</div>
+  </div></div>`;
+}
+
+document.addEventListener("click", (event) => {
+  const one = event.target.closest && event.target.closest("[data-ag-event]");
+  if (!one || event.target.closest(".ag-acts")) return;
+  const opened = one.classList.contains("ag-open");
+  $$(".ag-event.ag-open").forEach((other) => other.classList.remove("ag-open"));
+  if (!opened) one.classList.add("ag-open");
+});
+
+document.addEventListener("change", async (event) => {
+  const chosen = event.target.closest && event.target.closest("[data-ag-who]");
+  if (!chosen) return;
+  const ident = chosen.dataset.agWho;
+  const kindToo = $(`#ov-agenda [data-ag-kind-too="${ident}"]`);
+  chosen.disabled = true;
+  try {
+    await api.post("/api/agenda/who", { id: ident, who: chosen.value, for_kind: !!(kindToo && kindToo.checked) });
+  } catch (err) {
+    toast(err.message, "error");
+  }
+  agendaShown = "";
+  loadAgenda();
+});
+
+/* THE THREE KINDS, IN SIGHT (the user, 2026-11-09: "现在没看到3分类呀"): how many of each over the
+   calendar; the list below by kind, each a heading of its own. */
+const AGENDA_KIND_ORDER = ["delegable", "approve", "human", "gone"];
+
+function agendaKinds(things) {
+  const count = (who) => things.filter((one) => (one.triage || {}).who === who).length;
+  const unsorted = things.filter((one) => !AGENDA_WHO[(one.triage || {}).who]).length;
+  return `<div class="ag-kinds">${AGENDA_KIND_ORDER.map((who) => `<span class="ag-kind-chip ag-kind-${who}">
+    <b>${count(who)}</b> ${escapeHtml(AGENDA_WHO[who])}</span>`).join("")}${
+    unsorted ? `<span class="ag-kind-chip"><b>${unsorted}</b> ${escapeHtml("not sorted yet")}</span>` : ""}</div>`;
+}
+
+function agendaThings(things) {
+  if (!things.length) return "";
+  const titles = new Map(things.map((one) => [String(one.id), one.title]));
+  const row = (one) => {
+    const t = one.triage || {};
+    // Each a span of its own, so that each is said in the page's language.
+    const bits = [t.deadline ? (t.hard ? `by ${t.deadline}` : `by ${t.deadline}, likely`) : "",
+      t.minutes ? `${t.minutes} min` : "", AGENDA_FOCUS[t.focus] || "", t.context || "", one.place || "",
+      t.same_as && titles.get(String(t.same_as)) ? `the same as "${titles.get(String(t.same_as))}"` : "",
+      // WHAT MUST COME FROM THE USER, for what the agent cannot decide alone.
+      t.who === "approve" && t.missing ? `needs from you: ${t.missing}` : ""].filter(Boolean);
+    const choose = AGENDA_WHO[t.who] ? `<span class="ag-choose"><select data-ag-who="${escapeHtml(one.id)}">${
+      Object.entries(AGENDA_WHO).map(([key, label]) => `<option value="${key}"${t.who === key ? " selected" : ""}>${
+        escapeHtml(label)}</option>`).join("")}</select>${t.kind ? `<label class="muted"><input type="checkbox"
+        data-ag-kind-too="${escapeHtml(one.id)}"> ${escapeHtml(`every "${t.kind}"`)}</label>` : ""}</span>` : "";
+    return `<li><span class="ag-thing">${escapeHtml(one.title)}</span>${choose} <span class="muted">${
+      bits.map((bit) => `<span>${escapeHtml(bit)}</span>`).join(" · ")}</span>${
+      t.why ? `<span class="muted ag-why">${escapeHtml(t.why)}</span>` : ""}</li>`;
+  };
+  const groups = [...AGENDA_KIND_ORDER.map((who) => [AGENDA_WHO[who], things.filter((one) => (one.triage || {}).who === who), who]),
+    ["not sorted yet", things.filter((one) => !AGENDA_WHO[(one.triage || {}).who]), "none"]]
+    .filter(([, list]) => list.length);
+  return `<details class="ag-things" data-ag-open="things"><summary>${escapeHtml(
+    `Everything on your plate, as sorted (${things.length})`)}</summary>${groups.map(([label, list, who]) =>
+    `<h4 class="ag-group ag-kind-${who}">${escapeHtml(label)} <span class="muted">(${list.length})</span></h4><ul>${
+      list.map(row).join("")}</ul>`).join("")}</details>`;
+}
+
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest && event.target.closest("[data-ag-plan]");
+  if (!button) return;
+  event.preventDefault();
+  button.disabled = true;
+  try {
+    await api.post("/api/agenda/plan", {});
+  } catch (err) {
+    toast(err.message, "error");
+  }
+  loadAgenda();
+});
+
+if (typeof DELEGATE_SOLO === "undefined" || !DELEGATE_SOLO) loadAgenda();

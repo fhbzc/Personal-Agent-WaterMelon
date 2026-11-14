@@ -85,16 +85,8 @@ STEPS: List[ChecklistItem] = [
                   "contacts already known, with what they are doing - dated, "
                   "resting on the activity - and the user's own changes to "
                   "their contacts followed. Written to the Connections panel."),
-    # Who the user is - kept, and paused (heartbeat/core/heartbeat.py,
-    # PAUSED_STEPS): learned from their lessons now. Never run while paused.
-    ChecklistItem("step_nature", 2,
-                  "Determine what kind of person the user is: their habits, "
-                  "their working rhythm, their character, and what they find "
-                  "difficult.",
-                  "Habits, character, how they work, what they find difficult. "
-                  "Written to the knowledge graph, where it keeps. This is what "
-                  "makes you this user's agent rather than a general one."),
-    ChecklistItem("step_notify", 3,
+    # Who the user is was step 2 - taken out (the user, 2026-11-10): learned from their lessons.
+    ChecklistItem("step_notify", 2,
                   "Determine which notifications need to be added and which "
                   "need to be disabled.",
                   "Read from the same activity as step one, the states it has "

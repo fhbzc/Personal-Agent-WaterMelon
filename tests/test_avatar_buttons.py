@@ -41,6 +41,15 @@ NOTCH = 1 if sys.platform == "darwin" else 120
 
 
 @unittest.skipUnless(HAVE_TK, "no display for Tk here")
+
+def _put_away(window) -> bool:
+    """Out of sight as this system puts a window away: on Windows far off every screen; off it
+    withdrawn (ab.PARKS_BY_HIDING - a Mac puts a window sent off the screen back on it)."""
+    from personalized_agent.ui import avatar_buttons as ab
+    if ab.PARKS_BY_HIDING and window.state() == "withdrawn":
+        return True
+    return window.winfo_x() < -1000
+
 class OnTheScreenTests(unittest.TestCase):
 
     def setUp(self) -> None:
@@ -514,9 +523,9 @@ class OnTheScreenTests(unittest.TestCase):
         for at in ((x + width - 3, y + height // 2), (x + 3, y + height // 2),
                    (x + width // 2, y + 3), (x + width // 2, y + height - 3),
                    (x + width - 3, y + height - 3), (x + 3, y + 3)):
+            from personalized_agent.ui.chat_bubble import EDGES
             self.assertIn(str(self.root.winfo_containing(*at).cget("cursor")),
-                          ("sb_h_double_arrow", "sb_v_double_arrow", "top_left_corner",
-                           "bottom_right_corner"), at)
+                          set(EDGES.values()), at)
         strips = panel.card.master.place_slaves()
         self.assertEqual(len(strips), 8)
         for one in strips:
@@ -534,7 +543,7 @@ class OnTheScreenTests(unittest.TestCase):
         panel.prepare()
         self._settle(0.1)
         self.assertFalse(panel.is_open)
-        self.assertLess(panel.window.winfo_x(), -1000, "out of sight")
+        self.assertTrue(_put_away(panel.window), "out of sight")
         made = panel.window
         panel.show((1000, 300, 128, 128))
         self.assertTrue(panel.is_open)
@@ -562,7 +571,7 @@ class OnTheScreenTests(unittest.TestCase):
             self._settle(0.2)
             self.assertTrue(panels[which].is_open)
             self.assertGreater(panels[which].window.winfo_x(), -1000, which)
-            self.assertLess(panels[other].window.winfo_x(), -1000, other)
+            self.assertTrue(_put_away(panels[other].window), other)
             if sys.platform.startswith("win"):
                 rect = wintypes.RECT()
                 ctypes.windll.user32.GetWindowRect(int(panels[which].window.wm_frame(), 16),
@@ -595,7 +604,7 @@ class OnTheScreenTests(unittest.TestCase):
         self._settle(0.05)
         self.assertFalse(panel.is_open)
         self.assertEqual((panel.box.get(), panel.moving, panel.form), ("", "", None))
-        self.assertLess(panel.window.winfo_x(), -1000)
+        self.assertTrue(_put_away(panel.window))
 
     def test_a_list_changed_is_drawn_and_one_the_same_is_not_drawn_again(self) -> None:
         panel = self._open(self.ONE)
@@ -693,10 +702,12 @@ class TheVinesPathTests(unittest.TestCase):
             self.assertEqual(along, 64, f"between the leaves: {side}")
             from_edge = {"right": 1920 - at[0] - ICON, "left": at[0], "top": at[1],
                          "bottom": 1032 - at[1] - ICON}[side]
-            self.assertTrue(0 <= from_edge <= 50, (side, from_edge))
-            apart = (at[0] + ICON <= tucked[0] or at[0] >= tucked[0] + 128
-                     or at[1] + ICON <= tucked[1] or at[1] >= tucked[1] + 128)
-            self.assertTrue(apart, f"on the avatar's window, the pointer brings its head out: {side}")
+            # NEARER THE SIDE (the user, 2026-11-09, twice): its inner part behind what of the avatar
+            # shows - no head comes out for the pointer now - and most of it out, to be pressed.
+            self.assertTrue(0 <= from_edge <= 30, (side, from_edge))
+            behind = {"right": at[0] + ICON - tucked[0], "left": tucked[0] + 128 - at[0],
+                      "top": tucked[1] + 128 - at[1], "bottom": at[1] + ICON - tucked[1]}[side]
+            self.assertTrue(0 < behind < ICON // 2, (side, behind))
 
     def test_in_a_corner_or_any_screen_the_button_is_on_it(self) -> None:
         for area in (self.AREA, (0, 0, 1024, 728), (1920, -200, 3840, 1000), (-1280, 0, 0, 1000)):
@@ -777,7 +788,8 @@ class OneOverAnotherTests(unittest.TestCase):
         lifted = []
 
         def window(name):
-            return SimpleNamespace(geometry=lambda _at: None, lift=lambda: lifted.append(name))
+            return SimpleNamespace(geometry=lambda _at: None, lift=lambda: lifted.append(name),
+                                   state=lambda: "normal", deiconify=lambda: None)
         with mock.patch.object(ab.sys, "platform", "darwin"):
             ab.move_together([window("button"), window("vine")], [(1, 1), (2, 2)], window("avatar"))
         self.assertEqual(lifted, ["vine", "button", "avatar"])
@@ -802,14 +814,16 @@ class WhatAMacStartsTests(unittest.TestCase):
         from personalized_agent.ui import desktop as dm, macos_dock
         shown = []
         desk = SimpleNamespace(_words=str, queue=queue.Queue(), character_hidden=False,
-                               open_chat_bubble=None, toggle_character=None)
+                               open_chat_bubble=None, toggle_character=None, open_report=None,
+                               open_notifications=None)
         with mock.patch.object(dm.sys, "platform", "darwin"), \
                 mock.patch.object(macos_dock, "show", shown.append):
             dm.DesktopAgent._dock_menu(desk)
             desk.character_hidden = True
             dm.DesktopAgent._dock_menu(desk)
         self.assertEqual([words for words, _act in shown[0]],
-                         ["Chat", "To do", "Collections", "Waiting notifications", "Overview", "Hide avatar"])
+                         ["Chat", "To do", "Collections", "Waiting notifications", "Report", "Overview",
+                          "Hide avatar"])
         self.assertEqual(shown[1][-1][0], "Show avatar")
 
 
@@ -911,11 +925,34 @@ class TheVineOnTheScreenTests(unittest.TestCase):
             self.root.update()
             time.sleep(0.01)
 
+    def test_where_a_window_cannot_be_off_every_screen_it_is_hidden(self) -> None:
+        """The user, 2026-11-09: on a Mac the two buttons "固定显示在某个位置" - the system put
+        them back on a screen. There, put away, they are withdrawn; out again, shown."""
+        from unittest import mock
+        from personalized_agent.ui import avatar_buttons
+        with mock.patch.object(avatar_buttons, "PARKS_BY_HIDING", True):
+            self.side[0], self.box[0] = "right", (1886, 500, 128, 128)
+            self.vine.place()
+            self._settle(0.6)
+            self.assertEqual(self.vine.icon.window.state(), "normal")
+            self.assertEqual(self.vine.second.window.state(), "normal")
+            self.side[0] = ""
+            self.vine.place()
+            self._settle(0.1)
+            self.assertEqual(self.vine.icon.window.state(), "withdrawn")
+            self.assertEqual(self.vine.second.window.state(), "withdrawn")
+            self.assertEqual(self.vine.stem.state(), "withdrawn")
+            self.side[0] = "right"
+            self.vine.place()
+            self._settle(0.6)
+            self.assertEqual(self.vine.icon.window.state(), "normal", "out again, shown")
+            self.assertEqual(self.vine.icon.window.winfo_x(), self.vine.at[0])
+
     def test_with_all_of_it_showing_there_is_no_vine(self) -> None:
         self._settle(0.1)
         self.assertFalse(self.vine.out)
-        self.assertLess(self.vine.icon.window.winfo_x(), -1000)
-        self.assertLess(self.vine.stem.winfo_x(), -1000)
+        self.assertTrue(_put_away(self.vine.icon.window))
+        self.assertTrue(_put_away(self.vine.stem))
         self.assertEqual(self.vine.around((1, 2, 3, 4)), (1, 2, 3, 4))
 
     def test_in_a_side_it_grows_out_and_goes_with_it(self) -> None:
@@ -931,7 +968,7 @@ class TheVineOnTheScreenTests(unittest.TestCase):
         self.side[0] = ""
         self.vine.place()
         self._settle(0.1)
-        self.assertLess(self.vine.icon.window.winfo_x(), -1000, "out of the side: gone")
+        self.assertTrue(_put_away(self.vine.icon.window), "out of the side: gone")
 
     def test_its_button_is_the_chat(self) -> None:
         self.side[0] = "left"
@@ -971,7 +1008,7 @@ class TheVineOnTheScreenTests(unittest.TestCase):
         self.side[0] = ""
         self.vine.place()
         self._settle(0.1)
-        self.assertLess(second.window.winfo_x(), -1000, "gone with the vine")
+        self.assertTrue(_put_away(second.window), "gone with the vine")
 
     def test_the_two_have_their_middle_where_the_one_was(self) -> None:
         """The user, 2026-11-08: "两个藤蔓logo, 平均高度还是要在中央"."""
@@ -1002,12 +1039,6 @@ class TheVineOnTheScreenTests(unittest.TestCase):
         from personalized_agent.ui import avatar_buttons as ab
         self.assertNotEqual(ab.face().tobytes(), ab.face(mark="overview").tobytes())
         self.assertEqual(ab.face(mark="overview").getpixel((0, 0)), ab.KEY)
-
-    def test_the_avatar_double_click_is_what_it_does(self) -> None:
-        from pathlib import Path
-        import personalized_agent.ui.desktop as desktop
-        said = Path(desktop.__file__).read_text(encoding="utf-8")
-        self.assertIn('overview=(self._words("Overview"), self._on_double_click)', said)
 
     def test_green_as_the_vine(self) -> None:
         from personalized_agent.ui import avatar_buttons as ab

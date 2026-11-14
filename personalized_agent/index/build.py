@@ -75,6 +75,9 @@ def walk(root: Path, never: Iterable[Path]) -> Iterable[Tuple[Path, os.stat_resu
                     if not skipped_folder(path, never):
                         stack.append(path)
                 elif entry.is_file(follow_symlinks=False):
+                    # A privacy FILE is among the places never gone into (index/service.never).
+                    if never and any(_inside(_key(entry.path), _key(one)) for one in never):
+                        continue
                     yield Path(entry.path), entry.stat(follow_symlinks=False)
             except OSError:
                 continue
@@ -144,9 +147,16 @@ def build(store: IndexStore, roots: List[Dict[str, Any]], never: Iterable[Path] 
             store.mark(key, state="missing")
             store.commit()
             continue
+        if any(_inside(_key(root), _key(one)) for one in never):
+            # The folder itself in a place never gone into (a privacy folder): nothing kept.
+            store.drop_root(key)
+            store.commit()
+            continue
         store.mark(key, state="building", started_at=time.time())
         store.commit()
         known = store.known_under(key)
+        # What was kept of a place since made never to be gone into - a privacy folder added
+        # (the user, 2026-11-12) - is forgotten below with whatever else is gone: never `seen`.
         seen = set()
         files = texts = 0
         for count, (path, info) in enumerate(walk(root, never), start=1):

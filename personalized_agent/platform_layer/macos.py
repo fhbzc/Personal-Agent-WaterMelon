@@ -274,7 +274,18 @@ class MacActivityProvider(PlatformActivityProvider):
             import io
             image = Image.open(io.BytesIO(bytes(data)))
             image.load()
-            return image.convert("RGB")
+            image = image.convert("RGB")
+            # THE MOUSE POINTER, DRAWN WHERE IT WAS (2026-11-13: "你要能截取我的鼠标位置") - its place in points,
+            # the picture in pixels (twice as many on a Retina screen).
+            try:
+                from .screen_picture import draw_pointer
+                at = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))
+                scale = image.width / max(1, screen[2] - screen[0])
+                image = draw_pointer(image, (0, 0, image.width, image.height),
+                                     (int((at.x - screen[0]) * scale), int((at.y - screen[1]) * scale)))
+            except Exception:
+                log.debug("the mouse pointer could not be drawn", exc_info=True)
+            return image
         except Exception:
             log.debug("could not take the screen", exc_info=True)
             return None

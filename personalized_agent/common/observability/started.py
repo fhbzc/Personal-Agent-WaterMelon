@@ -19,7 +19,7 @@ from __future__ import annotations
 import threading
 import time
 from contextlib import contextmanager
-from typing import Callable, Iterator, List, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Sequence, Tuple
 
 _lock = threading.Lock()
 #: Open windows: the task prefixes, whether the run is still going, and when
@@ -65,10 +65,62 @@ def by_user(task: str) -> bool:
         return any(task.startswith(prefix) for prefixes, _, _ in alive for prefix in prefixes)
 
 
+# -- MADE FOR A MODULE, NOT BY THE USER (the user, 2026-11-10: the work the day's plan starts by
+# itself counted under the plan, not under "Started by you", so that turned off its tokens are
+# gone). Three ways a call is known to be such: the process it runs in was started for it (a
+# work's own process, agent/work/child.py), the thread it runs on said so (`on_behalf`), or the run
+# or draft it names in its metadata was marked (`mark`) - a run going in this process.
+_process_module = [""]
+_marked: Dict[Tuple[str, str], str] = {}
+_here = threading.local()
+
+
+def for_this_process(module: str) -> None:
+    """Every call this process makes is made for `module` ("" for none)."""
+    _process_module[0] = str(module or "")
+
+
+def mark(kind: str, ident: str, module: str) -> None:
+    """The calls naming this run or draft (`metadata["run"]` / `["draft"]`) are `module`'s."""
+    if ident and module:
+        with _lock:
+            _marked[(str(kind), str(ident))] = str(module)
+
+
+@contextmanager
+def on_behalf(module: str) -> Iterator[None]:
+    """The calls made on this thread meanwhile are `module`'s."""
+    before = getattr(_here, "module", "")
+    _here.module = str(module or "") or before
+    try:
+        yield
+    finally:
+        _here.module = before
+
+
+def module_for(request: Any) -> str:
+    """The module a call was made for, where that was said; "" when it was not."""
+    here = getattr(_here, "module", "")
+    if here:
+        return here
+    said = getattr(request, "metadata", None) or {}
+    if isinstance(said, dict):
+        with _lock:
+            for kind in ("run", "draft"):
+                ident = str(said.get(kind) or "")
+                if ident and (kind, ident) in _marked:
+                    return _marked[(kind, ident)]
+    return _process_module[0]
+
+
 def clear() -> None:
-    """No window open - for a test."""
+    """No window open, nothing marked - for a test."""
     with _lock:
         _open.clear()
+        _marked.clear()
+    _process_module[0] = ""
+    _here.module = ""
 
 
-__all__ = ["while_running", "now", "by_user", "clear", "STARTING"]
+__all__ = ["while_running", "now", "by_user", "clear", "STARTING", "for_this_process", "mark",
+           "on_behalf", "module_for"]

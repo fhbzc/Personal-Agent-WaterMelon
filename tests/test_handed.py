@@ -94,6 +94,21 @@ class TheKindsTests(unittest.TestCase):
         self.assertIn("error", handed.checked({"kind": "email", "title": "x"}, lambda p: None))
         self.assertIn("error", handed.checked({"kind": "file", "title": "x", "path": "a.md"},
                                               lambda path: None))
+        # A FORM: as many boxes as it has; its files told, never uploaded (2026-11-13).
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            cv = Path(folder) / "cv.pdf"
+            cv.write_bytes(b"%PDF-1.4")
+            look = lambda path: Path(folder) / path if (Path(folder) / path).exists() else None  # noqa: E731
+            form = handed.checked({"kind": "form", "title": "Apply", "url": "https://jobs.example.org/1",
+                                   "parts": [{"field": f"Q{n}", "text": "x"} for n in range(120)],
+                                   "attach": [{"field": "Resume", "path": "cv.pdf"}]}, look)
+            self.assertEqual(len(form["parts"]), 120, "a very large limit")
+            self.assertEqual(form["attach"], [{"field": "Resume", "path": str(cv), "name": "cv.pdf"}])
+            self.assertIn("ATTACH YOURSELF - [Resume]", handed.shown(form))
+            self.assertIn("error", handed.checked({"kind": "form", "url": "https://jobs.example.org/1",
+                                                   "parts": [{"field": "Q", "text": "x"}],
+                                                   "attach": [{"field": "CV", "path": "nowhere.pdf"}]}, look))
         # The same kind and title again: the newer in its place.
         items = handed.kept([], dict(EMAIL, body="one"))
         items = handed.kept(items, dict(EMAIL, body="two"))

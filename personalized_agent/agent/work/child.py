@@ -257,8 +257,9 @@ class ChildRun:
     def release(self, now: bool = False) -> None:
         self._tell("stop", now=bool(now or self.stop_now))
 
-    def answer(self, request_id: str, allow: bool) -> Optional[Dict[str, Any]]:
-        self._tell("answer", request=request_id, allow=bool(allow))
+    def answer(self, request_id: str, allow: bool, note: str = "") -> Optional[Dict[str, Any]]:
+        # The user's own words with it (2026-11-12) go to the run in its process too.
+        self._tell("answer", request=request_id, allow=bool(allow), note=str(note or ""))
         return {"id": request_id, "status": "answered", "allow": bool(allow)}
 
 
@@ -270,6 +271,8 @@ def spawn_draft(owner: Any, draft_id: str) -> None:
     import subprocess
     folder = children_dir(owner.paths) / ("draft-" + draft_id)
     folder.mkdir(parents=True, exist_ok=True)
+    # What its last process said is not this one's (delegate `_drafting_ended` reads it).
+    (folder / REPLY).unlink(missing_ok=True)
     _write_json(folder / SPEC, {"kind": "draft", "root": str(owner.paths.root),
                                 "draft": draft_id, "agent_pid": os.getpid()})
     flags = (getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -386,6 +389,9 @@ def child_main(argv: List[str]) -> int:
     logging.basicConfig(level=logging.INFO, filename=str(folder / LOG),
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     began = time.monotonic()
+    # A CHILD SETTLES NO RUN (runner.CHILD_ENV, 2026-11-11): the others are going in theirs.
+    from .runner import CHILD_ENV
+    os.environ[CHILD_ENV] = "1"
     try:
         from ...app import AgentApplication
         app = AgentApplication(root=Path(spec["root"]), configure_logs=False)
@@ -398,7 +404,11 @@ def child_main(argv: List[str]) -> int:
         # takes minutes - written where the agent reads it.
         work.on_progress = lambda said: _write_json(folder / STARTING, said)
         work.code_held_elsewhere = bool(spec.get("code_held"))
+        from ...common.observability.started import for_this_process
         if spec.get("kind") == "draft":
+            # Its process's calls all its starter's (the plan's own work): every thread of it.
+            from .delegate import started_by
+            for_this_process(started_by(app.drafts.get(str(spec.get("draft") or ""))))
             app.drafts.collect_and_plan(str(spec.get("draft") or ""))
             return 0
         unit = _unit_of(app, str(spec.get("unit") or ""))
@@ -407,6 +417,7 @@ def child_main(argv: List[str]) -> int:
             _write_json(folder / REPLY, {"error": "no such project or task"})
             return 2
         args = dict(spec.get("args") or {})
+        for_this_process(str(args.get("started_by") or ""))
         if spec.get("kind") == "continue":
             said = work.continue_run(str(args.pop("run_id")), unit, **args)
         else:
@@ -515,7 +526,8 @@ def _obey(run: Any, order: Dict[str, Any]) -> None:
                 run.stop_now = True
             run.release(bool(order.get("now")))
         elif what == "answer":
-            run.answer(str(order.get("request") or ""), bool(order.get("allow")))
+            run.answer(str(order.get("request") or ""), bool(order.get("allow")),
+                       str(order.get("note") or ""))
         elif what == "close":
             run.close_for(str(order.get("why") or ""))
     except Exception:                          # pragma: no cover - told again

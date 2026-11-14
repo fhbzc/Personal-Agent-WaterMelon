@@ -206,9 +206,12 @@ matched by. Return ONLY this JSON object:
                                 "person": "the person it is about or with, if any, as named",
                                 "keywords": ["3 to 8 words that say what it is about"],
                                 "category": "its class: two to four words naming the kind of case, reusing one of the classes below when it fits",
-                                "english": "one or two sentences: what the situation was and what the user did or answered - in general terms, by which a like moment finds it"}}}}}}
+                                "english": "one or two sentences: what the situation was and what the user did or answered - in general terms, by which a like moment finds it",
+                                "why": "one sentence: the reason the user most likely had, as the evidence shows it",
+                                "sure": true or false}}}}}}
 
-Lower case, but for "english".
+Lower case, but for "english" and "why".
+{why_rules}
 
 THE CLASSES THERE ARE SO FAR: {categories}
 
@@ -226,6 +229,10 @@ might bear on it, the most relevant first. For each pair, judge:
   - "unrelated": the lesson's conditions do not all hold. A case outside a
     lesson's scope never counts against it.
 
+BY THE USER'S REASON: each record says why the user did it, as it was read from what they
+were doing and their mail and chats. Judge by that reason, not by what was shown alone: a record
+whose reason is another than the lesson's does not support it, nor contradict it.
+
 WEIGH IT BOTH WAYS: a lesson marked "close to" another is about much the
 same thing. When a record supports one lesson, look at the others listed
 with it: one whose conditions hold but which says the opposite of what the
@@ -241,7 +248,9 @@ INDUCE_PROMPT = """You keep the lessons on how one person wants things done - fr
 These records of what the user did share something. Is there ONE rule that
 explains them - when this, the user wants that? State it with its
 conditions, as narrow as the records need. If they do not share a rule,
-say so.
+say so. A rule rests on the REASON the user had, as each record's "why" reads it -
+not on the surface of what was shown; records whose reason is not sure do not
+make a rule about more than they show.
 
 Return ONLY this JSON object:
 {{"rule": {{"statement": "the rule, one sentence, said to the agent: when ..., do / do not ...",
@@ -799,6 +808,8 @@ class LessonEngine:
 
     # -- the cycle ------------------------------------------------------------------------------
     def learn_in_background(self, kind: str) -> None:
+        if not self.learning_on():
+            return                             # kept, learned from once learning is on
         with self._lock:
             self._queued.add(kind)
             if self._worker is not None and self._worker.is_alive():
@@ -824,11 +835,19 @@ class LessonEngine:
         if worker is not None:
             worker.join(timeout)
 
+    def learning_on(self) -> bool:
+        """LEARNING FROM YOUR ANSWERS on (common/modules.py, the user, 2026-11-10): off, every
+        piece of evidence is still written down (`record`), and nothing is learned from it."""
+        from ...common.modules import enabled as module_on
+        return module_on(self.config, "learning")
+
     def due(self) -> List[str]:
         """The kinds with something new to learn from: the user's edits not
         read yet - or, for the work, natures and stages not brought in yet."""
         out = []
         from ...common.modules import enabled as module_on
+        if not self.learning_on():
+            return out
         for kind in LEARNED_KINDS:
             if not module_on(self.config, KIND_MODULE.get(kind, "core")):
                 continue
@@ -903,6 +922,8 @@ class LessonEngine:
         # THE UPKEEP (the user, 2026-11-07: keeping the rules is the system's job, not hand
         # edits): each kind whose rules or waiting evidence changed since the last one.
         from ...common.modules import enabled as module_on
+        if not self.learning_on():
+            return said
         for kind in LEARNED_KINDS:
             if not module_on(self.config, KIND_MODULE.get(kind, "core")) or \
                     not self._upkeep_due(kind):
@@ -983,6 +1004,8 @@ class LessonEngine:
 
     def learn(self, kind: str) -> Dict[str, Any]:
         """One cycle over everything new (module docstring)."""
+        if not self.learning_on():
+            return {"kind": kind, "off": "learning from your answers is off"}
         with self._lock:
             self._learning = kind
             report: Dict[str, Any] = {"kind": kind}
@@ -1025,16 +1048,20 @@ class LessonEngine:
         wanting = [row for row in rows if row.get("features") is None]
 
         def ask(part: Sequence[Dict[str, Any]]) -> Any:
-            records = "\n".join(f"[{row['id']}] ({row['action']}) {row['summary'][:900]}"
+            from .looking import RULES as WHY_RULES, local_time
+            # AT ITS TIME (the user's clock): what they were doing then is looked up by it.
+            records = "\n".join(f"[{row['id']}] at {local_time(row.get('at')) or '?'} "
+                                f"({row['action']}) {row['summary'][:900]}"
                                 + (f" - the user's reason: {row['reason']}" if row["reason"]
                                    else "") for row in part)
             classes = [row["category"] for row in self.db.query(
                 "SELECT DISTINCT category FROM lesson_evidence WHERE kind = ? AND category != '' "
                 "LIMIT 60", (kind,))]
             return self._read(FEATURES_PROMPT.format(about=about, records=records,
-                                                     categories=", ".join(classes) or "none yet"),
-                              language=in_english("the features, the classes and keywords"),
-                              wants=("features",))
+                                                     categories=", ".join(classes) or "none yet",
+                                                     why_rules=WHY_RULES),
+                              language=in_english("the features, the classes, keywords and why"),
+                              wants=("features",), looking=True)
         for start in range(0, len(wanting), BATCH):
             self._at(kind, "reading the new edits", start, len(wanting))
             for part, read in answers.in_parts(wanting[start:start + BATCH], ask):
@@ -1065,7 +1092,10 @@ class LessonEngine:
                         "event_type": str(one.get("event_type") or "")[:60].lower(),
                         "person": str(one.get("person") or "")[:80],
                         "keywords": [str(k).lower()[:40] for k in one.get("keywords") or []][:10],
-                        "action": row["action"]}
+                        "action": row["action"],
+                        # WHY, AS FOUND BY LOOKING (looking.py): what the lessons go by.
+                        "why": " ".join(str(one.get("why") or "").split())[:400],
+                        "sure": bool(one.get("sure"))}
             self.db.execute(
                 "UPDATE lesson_evidence SET features = ?, category = ?, english = ? WHERE id = ?",
                 (json.dumps(features, ensure_ascii=False),
@@ -1123,7 +1153,10 @@ class LessonEngine:
                 if not listed:
                     continue
                 lines = [f"NEW RECORD [{row['id']}] ({row['action']}) {row['summary'][:900]}"
-                         + (f"\n  the user's reason: {row['reason']}" if row["reason"] else "")]
+                         + (f"\n  the user's reason: {row['reason']}" if row["reason"] else "")
+                         + (f"\n  why, as read: {features['why']}"
+                            f" ({'sure' if features.get('sure') else 'not sure'})"
+                            if features.get("why") else "")]
                 listed = list(listed) + [(f"close to lesson {near}", rule) for rule, near in close]
                 for score, rule in listed:
                     examples = self.db.query(
@@ -1210,7 +1243,10 @@ class LessonEngine:
                 continue
             records = "\n".join(f"[{one['id']}] ({one['action']}) {one['summary'][:600]}"
                                 + (f" - the user's reason: {one['reason']}" if one["reason"]
-                                   else "") for one in group[:12])
+                                   else "")
+                                + (f" - why, as read: {one['features']['why']}"
+                                   f" ({'sure' if one['features'].get('sure') else 'not sure'})"
+                                   if one["features"].get("why") else "") for one in group[:12])
             said = self._ask(INDUCE_PROMPT.format(about=about, records=records),
                              language=in_english("the statement")
                              + in_english("its conditions and keywords"))
@@ -1808,22 +1844,28 @@ class LessonEngine:
         read = self._read(prompt, language=language)
         return read.data if read.ok else None
 
-    def _read(self, prompt: str, language: Any = None, wants: Sequence[str] = ()) -> Any:
+    def _read(self, prompt: str, language: Any = None, wants: Sequence[str] = (),
+              looking: bool = False) -> Any:
         """The model's answer, read (models/answers.py): `.ok` only when whole, readable and
-        saying every key in `wants`."""
+        saying every key in `wants`. `looking`: with the searches of the user's own records
+        (looking.py), to find why before it answers."""
         from ...models import answers
         if self.models is None:
             return answers.Answer(data=None, cut=False, text="")
         from ...models.base import ModelRequest
         try:
-            response = self.models.invoke(ModelRequest(
+            request = ModelRequest(
                 messages=[{"role": "user", "content": prompt}],
                 system="You keep the lessons of a personal agent, faithfully and briefly. "
                        "Return only the JSON object asked for.",
                 # Counted under the module of the kind being learned.
                 max_tokens=4000, task=f"lessons_{getattr(self, '_learning', '') or 'other'}",
-                language=language),
-                role="heartbeat")
+                language=language)
+            if looking and self.db is not None:
+                from .looking import Looking, ask_looking
+                response = ask_looking(self.models, request, Looking(self.db))
+            else:
+                response = self.models.invoke(request, role="heartbeat")
         except Exception as exc:
             log.info("the lessons could not be asked: %s", exc)
             return answers.Answer(data=None, cut=False, text="")

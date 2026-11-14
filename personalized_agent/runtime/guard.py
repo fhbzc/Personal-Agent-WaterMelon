@@ -91,6 +91,16 @@ CODE_REASON = "that is this application's own code: the agents may not read it"
 CLOSED_ENV = "AGENT_CLOSED_PATHS"
 CLOSED_REASON = ("that is the project's run logs - the record of what happened: "
                  "the agents may not read it")
+#: The user's privacy folders and files (common/privacy_folders.py): neither read nor listed
+#: by code a run runs. Separated by os.pathsep.
+PRIVATE_ENV = "AGENT_PRIVATE_PATHS"
+PRIVATE_REASON = ("that is in one of the user's privacy folders: what is in it is never read")
+#: THE APPLICATION'S SOURCE (runtime/isolation.source_root): read as any folder, never written
+#: by code a run runs - not even through a folder granted that holds it (the user, 2026-11-12:
+#: "只要他不会直接改源代码（只能在自己的directory里改)就行").
+SOURCE_ENV = "AGENT_SOURCE_ROOT"
+SOURCE_REASON = ("that is this application's own source code: no run changes it - change a "
+                 "copy in the run's own folder instead")
 RUNTIME_DIR = ".agent_runtime"
 #: Where to write what the code read, wrote and listed, as it ends - asked
 #: by run_python (agent/work/reuse.py), to give a result again only on
@@ -106,6 +116,8 @@ _sealed: list = []
 _code_root = None
 _code_open: list = []
 _closed: list = []
+_private: list = []
+_source = None
 _granted: list = []
 _readonly_names: set = set()
 
@@ -327,8 +339,38 @@ def _is_closed(path) -> bool:
 # warning in the log each time, for a script that only wanted the work's
 # files. Listed, such a folder is not there; asked for by name, it is still
 # refused, saying why.
+def _is_source(path) -> bool:
+    if not _source:
+        return False
+    try:
+        resolved = _normcase(_resolve(path))
+    except (TypeError, ValueError):
+        return True
+    return _within(resolved, _normcase(_source))
+
+
+def _in_own_folder(path) -> bool:
+    """In the run's own folder - not a folder granted it (`_inside_workspace` counts those)."""
+    if _workspace is None:
+        return False
+    try:
+        return _within(_normcase(_resolve(path)), _normcase(_workspace))
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_private(path) -> bool:
+    if not _private:
+        return False
+    try:
+        resolved = _normcase(_resolve(path))
+    except (TypeError, ValueError):
+        return True
+    return any(_within(resolved, _normcase(root)) for root in _private)
+
+
 def _hidden_roots() -> set:
-    return {_normcase(root) for root in (*_protected, *_sealed, *_closed) if root}
+    return {_normcase(root) for root in (*_protected, *_sealed, *_closed, *_private) if root}
 
 
 def _listing(func, name):
@@ -429,6 +471,9 @@ def _check_write(path, operation: str) -> None:
     if _in_readonly_folder(path):
         _deny(path, operation, "the run's saved versions and installed packages are "
                                "kept by the application; code cannot change them")
+    if _is_source(path) and not _in_own_folder(path):
+        # Not even through a folder granted that holds it (the user, 2026-11-12).
+        _deny(path, operation, SOURCE_REASON)
     if _is_granted(path):
         # The user chose this folder for the work: it outranks the
         # read-only layers.
@@ -458,6 +503,8 @@ def _check_read(path, operation: str) -> None:
         _deny(path, operation, CODE_REASON)
     if _is_closed(path):
         _deny(path, operation, CLOSED_REASON)
+    if _is_private(path):
+        _deny(path, operation, PRIVATE_REASON)
 
 
 def _is_write_mode(mode: str) -> bool:
@@ -572,7 +619,7 @@ _ISOLATING_BACKENDS = ("appcontainer", "seatbelt", "bubblewrap", "landlock")
 _POLICY_NAMES = (WORKSPACE_ENV, GRANTED_ENV, NO_NETWORK_ENV, NETWORK_ALLOW_ENV,
                  SYS_PATH_ENV, READONLY_NAMES_ENV, OS_ISOLATION_ENV, READABLE_ENV,
                  READONLY_ENV, PROTECTED_ENV, SEALED_ENV, CODE_ENV, CODE_OPEN_ENV,
-                 CLOSED_ENV, OWN_LOOPBACK_ENV, BROWSER_ENV)
+                 CLOSED_ENV, PRIVATE_ENV, SOURCE_ENV, OWN_LOOPBACK_ENV, BROWSER_ENV)
 
 #: What a child runs first (`child_command`): this file, from the folder this
 #: process loaded it from, compiled in memory alone and taken off the path
@@ -1515,7 +1562,7 @@ def install(workspace: str | None = None, protected: list | None = None,
             readonly: list | None = None, readable: str | None = None) -> None:
     """Patch the filesystem surface of the standard library. Idempotent."""
     global _installed, _workspace, _readable, _readonly, _protected, _granted, _sealed
-    global _readonly_names, _code_root, _code_open, _closed
+    global _readonly_names, _code_root, _code_open, _closed, _private, _source
     if _installed:
         return
     _readonly_names = {name for name in (os.environ.get(READONLY_NAMES_ENV) or "")
@@ -1545,6 +1592,9 @@ def install(workspace: str | None = None, protected: list | None = None,
                   (os.environ.get(CODE_OPEN_ENV) or "").split(os.pathsep) if entry]
     _closed = [_resolve(entry) for entry in
                (os.environ.get(CLOSED_ENV) or "").split(os.pathsep) if entry]
+    _private = [_resolve(entry) for entry in
+                (os.environ.get(PRIVATE_ENV) or "").split(os.pathsep) if entry]
+    _source = _resolve(os.environ[SOURCE_ENV]) if os.environ.get(SOURCE_ENV) else None
     if not _workspace:
         return
     # Roots are resolved as the paths checked against them are - a short

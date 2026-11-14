@@ -530,14 +530,29 @@ class ConnectionsStore:
     # -- the inbox: what the user is asked to check ------------------------------
     #: The user's own details the agent may suggest; never changed without them.
     MY_FIELDS = ("name", "org", "role", "location", "profession")
+    #: WHO CHANGES THE USER'S OWN PROFILE: their Agents Society account alone (the user,
+    #: 2026-11-12: "现在不允许用户在connections里自己写自己profile了，所有用户自己的profile来源于他连的
+    #: agentsociety账户（在key连接之后直接从账户profile pull下来)") - society/service.pull_profile.
+    SOCIETY = "society"
+    FROM_SOCIETY = ("your profile comes from your Agents Society account: change it on the "
+                    "website, and it is brought here")
 
     def propose_for_me(self, change: Dict[str, Any], why: str = "",
                        sources: Iterable[str] = (), found_at: str = "") -> Optional[Dict[str, Any]]:
-        """A change to THE USER'S OWN profile details, found on a public page
+        """NONE NOW: the user's own profile is their Agents Society account's (`SOCIETY`), not
+        found on the web.
+
+        Was: a change to THE USER'S OWN profile details, found on a public page
         - their name, organisation, role or place, or a profile of theirs to
         add or one to take off. Never made: put in their inbox, to accept or
         dismiss. None when there is nothing to ask - it already says so, the
         same is waiting, or they dismissed the same before."""
+        return None
+
+    def _propose_for_me_before(self, change: Dict[str, Any], why: str = "",
+                               sources: Iterable[str] = (),
+                               found_at: str = "") -> Optional[Dict[str, Any]]:
+        """What `propose_for_me` did before 2026-11-12 - no longer called."""
         me = self.me()
         field = str(change.get("field") or "").strip()
         if field in self.MY_FIELDS:
@@ -1150,13 +1165,19 @@ class ConnectionsStore:
             if person is None:
                 raise KeyError("no such person")
             if person["is_self"]:
+                # THEIR AGENTS SOCIETY ACCOUNT'S ALONE (`SOCIETY`): neither the user here nor
+                # the agent changes it.
+                if by != self.SOCIETY:
+                    if by == "user":
+                        raise ValueError(self.FROM_SOCIETY)
+                    return person
                 # Who the user is to themselves is not theirs or the agent's
                 # to change.
                 fields = {key: value for key, value in fields.items()
                           if key not in ("relationship", "relationships")}
             given = set(self._clean(fields))
             values = self._shaped(self._spelled(self._clean(fields)), person, by)
-            if by != "user":
+            if by not in ("user", self.SOCIETY):
                 # On their own profile, the lists the agent only adds to
                 # (`_shaped`); the main one the user chose stays. A contact's
                 # the agent may correct.
@@ -1535,8 +1556,11 @@ class ConnectionsStore:
         person = self.get(person_id)
         if person is None or person["deleted"]:
             raise KeyError("no such person")
+        if person["is_self"] and by != self.SOCIETY:
+            raise ValueError(self.FROM_SOCIETY)
         account = self.add_account(person_id, platform or platform_of(url), handle, url,
-                                   source="added by you" if by == "user" else "")
+                                   source="added by you" if by == "user" else
+                                   "your Agents Society account" if by == self.SOCIETY else "")
         self._record(by, "add a profile", person, {},
                      {"account": {k: v for k, v in (account or {}).items()
                                   if k in ("platform", "handle", "url") and v}}, reason)
@@ -1578,6 +1602,8 @@ class ConnectionsStore:
                                 "person_id = ?", (str(account_id), str(person_id)))
         if row is None:
             raise KeyError("no such profile")
+        if (self.get(person_id) or {}).get("is_self") and by != self.SOCIETY:
+            raise ValueError(self.FROM_SOCIETY)
         self.db.execute("DELETE FROM connection_accounts WHERE id = ?", (row["id"],))
         account = {key: row[key] for key in ("platform", "handle", "url") if row[key]}
         self._record(by, "remove a profile", self.get(person_id), {"account": account}, {},
@@ -1624,8 +1650,10 @@ class ConnectionsStore:
         path = self.folder / "avatars" / Path(str(person["avatar"])).name
         return path if path.is_file() else None
 
-    def set_avatar(self, person_id: str, data: bytes, ext: str, came_from: str) -> str:
-        """A picture of a person, kept: the file named for them."""
+    def set_avatar(self, person_id: str, data: bytes, ext: str, came_from: str,
+                   by: str = "") -> str:
+        """A picture of a person, kept: the file named for them. The user's own: their Agents
+        Society account's alone (`SOCIETY`) - any other kept as it was, and said so."""
         if self.folder is None:
             raise RuntimeError("no folder for pictures")
         ext = ext if ext in ("png", "jpg", "gif", "webp") else "png"
@@ -1634,6 +1662,8 @@ class ConnectionsStore:
         person = self.get(person_id)
         if person is None:
             raise KeyError("no such person")
+        if person["is_self"] and by != self.SOCIETY:
+            raise ValueError(self.FROM_SOCIETY)
         name = f"{person_id}.{ext}"
         partial = folder / f".{name}.partial"
         partial.write_bytes(data)

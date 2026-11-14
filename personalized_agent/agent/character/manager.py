@@ -54,6 +54,21 @@ def avatar_name(config: Any, characters: Any = None) -> str:
         return DISPLAY_NAME
     return chosen.replace("-", " ").replace("_", " ").title()
 
+def drawn_live(package: Any) -> Any:
+    """THE MODULE A PACKAGE'S FACE IS DRAWN LIVE WITH (its `Watermelon`, `RIG`, `facing_for`), or
+    None for one shown as its pictures. The flat watermelon (the user, 2026-11-10: "把这个新的扁平西瓜
+    变成另外一个可选的avatar, 不要改之前的avatar") is drawn by its own module; every other
+    watermelon by the first one's."""
+    rig = (package or {}).get("rig") or {}
+    if rig.get("kind") != "watermelon":
+        return None
+    if rig.get("variant") == "flat":
+        from . import watermelon_flat as art
+    else:
+        from . import watermelon as art
+    return art
+
+
 try:
     from PIL import Image, ImageDraw
 

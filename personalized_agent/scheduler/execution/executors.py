@@ -217,6 +217,12 @@ class TaskExecutor:
         self.config = config
         self.bus = bus
         self.agent_runner = agent_runner
+        #: THE PLAN'S WORD on a notification marked for it (heartbeat step 3; the user, 2026-11-11):
+        #: (task) -> "agent" | "gone" | "notify". Unset: told as ever.
+        self.plan_decides: Optional[Callable[[ScheduledTask], str]] = None
+        #: THROUGH THE MONITOR (the user, 2026-11-13: "所有的通知必须在monitor里"): (builtin, title, message,
+        #: **said) -> the notification, or None. Unset: nothing is said.
+        self.relay: Optional[Callable[..., Any]] = None
         self.system_actions: Dict[str, Callable[[Dict[str, Any]], str]] = {
             "clear_workspace_tmp": self._action_clear_tmp,
         }
@@ -261,14 +267,25 @@ class TaskExecutor:
         message = task.task_payload.get("message") or task.description or task.title
         if not _wants_notification(task):
             return ExecutionOutcome(True, message)
+        if task.task_payload.get("agenda_decides") and self.plan_decides is not None:
+            try:
+                decided = self.plan_decides(task)
+            except Exception:
+                log.warning("the plan's word on %s could not be had; told", task.id, exc_info=True)
+                decided = "notify"
+            if decided == "agent":
+                return ExecutionOutcome(True, "not told: the agent does it, and shows it to the "
+                                              "user when it is ready")
+            if decided == "gone":
+                return ExecutionOutcome(True, "not told: the plan found it no longer needed")
         # WHICH KIND, as the task says. Every scheduled notification
         # arrived as a reminder, asking "shall I remind you again?" about a
         # sentence that wanted only to be read; a notice is now a notice.
         template = task.task_payload.get("template")
         if template not in (REMINDER, PASSIVE):
             template = REMINDER
-        self.notifications.notify(
-            task.title, message, kind="proactive",
+        self._tell(
+            task.title, message,
             metadata={"task_id": task.id, "source": "scheduler",
                       # WHY THE AGENT ADDED IT, shown with it (the user, 2026-11-04);
                       # one the user added themselves has none.
@@ -277,6 +294,14 @@ class TaskExecutor:
         )
         self._ask_whether_it_was_worth_it(task)
         return ExecutionOutcome(True, "notification delivered")
+
+    def _tell(self, title: str, message: str, **said: Any) -> Any:
+        """A reminder at its time, told through the Monitor's "A reminder at its time" (its switch, its
+        silences) - nothing where there is no Monitor to say it."""
+        if self.relay is None:
+            log.info("no Monitor to say it through: %s", title)
+            return None
+        return self.relay("calendar_reminder", title, message, kind="proactive", **said)
 
     def _check_status(self, task: ScheduledTask) -> ExecutionOutcome:
         """Settle the task this check was made for.
@@ -444,8 +469,8 @@ class TaskExecutor:
         instruction = task.task_payload.get("instruction") or task.description or task.title
         answer = self.agent_runner(instruction, {"task_id": task.id, "origin": "scheduler"})
         if _wants_notification(task):
-            self.notifications.notify(
-                task.title, answer[:500], kind="proactive",
+            self._tell(
+                task.title, answer[:500],
                 metadata={"task_id": task.id, **_made_by(task)},
                 template=REMINDER, question=self._reply_for(task),
             )
@@ -474,8 +499,8 @@ class TaskExecutor:
             note = "\n\n" + shown(CUT_NOTE, self.config)
             log.info("scheduled task %s: its answer was cut off at the output limit", task.id)
         if _wants_notification(task):
-            self.notifications.notify(
-                task.title, text[:500] + note, kind="proactive",
+            self._tell(
+                task.title, text[:500] + note,
                 template=REMINDER, question=self._reply_for(task),
                 metadata={"task_id": task.id, **_made_by(task)},
             )

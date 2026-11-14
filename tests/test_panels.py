@@ -244,7 +244,7 @@ class NotificationVisibilityTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  "--window-size=1400,900",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
@@ -428,7 +428,7 @@ class DebuggerModulePanelTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  "--window-size=1400,900",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
@@ -682,7 +682,7 @@ class AssistantTickListTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  "--window-size=1400,900",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
@@ -1027,7 +1027,7 @@ class FrontendSyntaxTests(unittest.TestCase):
                 "</script>", encoding="utf-8")
             out = Path(work) / "dump.txt"
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=4000",
                  "--dump-dom", probe.as_uri()],
                 capture_output=True, text=True, timeout=300)
@@ -1121,7 +1121,7 @@ class ModelPanelRenderTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=8000",
                  "--dump-dom", probe.as_uri()],
                 # The page carries the application's own text, which is not
@@ -1256,7 +1256,7 @@ class OverviewInteractionRenderTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
                 capture_output=True, text=True,
@@ -1460,7 +1460,7 @@ class OverviewInteractionRenderTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--window-size={width},900",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=6000",
                  "--dump-dom", probe.as_uri()],
@@ -2782,7 +2782,7 @@ class ScriptActuallyRunsTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=8000",
                  "--dump-dom", probe.as_uri()],
                 capture_output=True, text=True,
@@ -3000,7 +3000,7 @@ class ChatProgressRenderTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
                 capture_output=True, text=True,
@@ -3251,7 +3251,7 @@ class CalendarMonthOnlyTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
                 capture_output=True, text=True,
@@ -3343,7 +3343,7 @@ class ChatFollowUpPanelTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--window-size={width},900",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
@@ -3554,7 +3554,7 @@ class LessonsPanelTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  "--window-size=1400,900",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
@@ -3839,7 +3839,7 @@ class EventDetailTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  "--window-size=1400,900",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
@@ -4176,7 +4176,7 @@ class PopoverPlacementTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--window-size={width},900",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
@@ -4333,7 +4333,7 @@ class TokenUsageChartTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
                 capture_output=True, text=True,
@@ -4386,6 +4386,9 @@ class TokenUsageChartTests(unittest.TestCase):
                 "  clientY:r.top+40,bubbles:true}));"
                 "const tip=document.querySelector('#dbg-tokens-tip');"
                 "more={tip:tip.hidden?'':tip.textContent.replace(/\s+/g,' '),"
+                "  tipValues:Array.from(tip.querySelectorAll('tr td:last-child')).map(td=>td.textContent),"
+                "  legendValues:Array.from(document.querySelectorAll('#dbg-tokens-legend .dbg-token-key .muted'))"
+                "    .map(one=>one.textContent),"
                 "  asked:window.__asked.filter(u=>u.includes('by_day')),"
                 "  daysShown:!document.querySelector('#dbg-tokens-days-label').hidden};")
         result = self._run(days)
@@ -4398,6 +4401,13 @@ class TokenUsageChartTests(unittest.TestCase):
         self.assertIn("Activity and states", result["more"]["tip"])
         self.assertIn("Activityandstates$0.0070", result["more"]["tip"].replace(" ", ""))
         self.assertIn("42 calls", result["note"])
+        # HIGHEST FIRST, under the pointer and in the legend (the user, 2026-11-11: "按照花费高低（数字
+        # 大小）从高到低排列").
+        def amounts(texts):
+            return [float(str(one).replace("$", "").replace(",", "").strip() or 0) for one in texts]
+        for said in (result["more"]["tipValues"], result["more"]["legendValues"]):
+            self.assertTrue(said)
+            self.assertEqual(amounts(said), sorted(amounts(said), reverse=True), said)
 
     def test_every_kind_that_runs_its_own_and_only_past_twenty_eight_other(self) -> None:
         # Twenty-eight of their own - seven colours, then the same seven
@@ -4530,7 +4540,7 @@ class TheComponentGraphIsDrawnTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  "--window-size=1400,900",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
@@ -4616,7 +4626,7 @@ class ADayWithTooMuchOnItOpensTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  "--window-size=1400,1000",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
@@ -4766,7 +4776,7 @@ class TheDebuggerChartsAreDrawnWhenOpenedTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  "--window-size=1400,1000",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
@@ -5206,7 +5216,7 @@ class PinnedMemoryLanguagesReadAsTwoTicksTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
                 capture_output=True, text=True,
@@ -5378,7 +5388,7 @@ class AnIntervalIsSetInTheUnitYouThinkIn(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
                 capture_output=True, text=True,
@@ -5961,7 +5971,7 @@ class EveryPanelSaysWhatPeriodItCoversTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  "--window-size=1400,900",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
@@ -6060,7 +6070,7 @@ class TheStateHeartbeatHasAPageOfItsOwnTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  "--window-size=1400,900",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
@@ -6459,7 +6469,7 @@ class RunningOneHeartbeatAndSeeingItTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  "--window-size=1400,900",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
@@ -7802,7 +7812,7 @@ class TheExperiencePanelTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],
                 capture_output=True, text=True,
@@ -7926,7 +7936,7 @@ class NatureExamplesPanelTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  "--window-size=1400,900",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=9000",
                  "--dump-dom", probe.as_uri()],

@@ -27,6 +27,8 @@ class _Item:
 class LessonPatternBuilder(PatternBuilder):
     """Patterns and principles over one kind's lessons in force."""
 
+    #: Counted under Learning from your answers (common/modules.py), not Work learning.
+    task_name = "lessons_groups"
     #: Fewer lessons than natures: principles from the first few patterns.
     principles_from = 3
     principles_fewest = 1

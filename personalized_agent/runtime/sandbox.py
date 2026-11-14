@@ -304,6 +304,17 @@ class SandboxRuntime:
         closed = getattr(self.policy, "closed_paths", None) or []
         if closed:
             env[CLOSED_ENV] = os.pathsep.join(str(p) for p in closed)
+        # The application's source: read, never written - by any run (the user, 2026-11-12).
+        source = isolation.source_root()
+        if source is not None:
+            from .guard import SOURCE_ENV
+            env[SOURCE_ENV] = str(source)
+        # The user's privacy folders and files: neither read nor listed (the user, 2026-11-12).
+        from ..common.privacy_folders import roots as privacy_roots
+        private = privacy_roots()
+        if private:
+            from .guard import PRIVATE_ENV
+            env[PRIVATE_ENV] = os.pathsep.join(str(p) for p in private)
         # A run of the Experience debugger: the application's code is not
         # read - but the interpreter, when it lives in it.
         code = getattr(self.policy, "child_code_root", None)

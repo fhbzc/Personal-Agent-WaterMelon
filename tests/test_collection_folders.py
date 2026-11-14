@@ -149,8 +149,12 @@ class WhatTheModelRecommendsTests(_Base):
 
     def test_a_bad_one_is_a_lesson_of_that_kind_too(self) -> None:
         said = self._said()
+        before = len(self.lessons())
         self.app.bad_notification(said["notification_id"], "not while I work")
-        self.assertIn("recommendations", [one["kind"] for one in self.lessons()])
+        made = self.lessons()[before:]
+        # ONCE, AS A RECOMMENDATION (the user, 2026-11-09): it was kept among the notifications'
+        # lessons as well, and one mark made the same lesson twice.
+        self.assertEqual([one["kind"] for one in made], ["recommendations"])
 
     def test_the_monitor_retrieves_the_newspapers_lessons(self) -> None:
         nature = self.app.calendar_nature

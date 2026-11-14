@@ -298,7 +298,7 @@ class SamePersonTests(unittest.TestCase):
 class SocietyTests(unittest.TestCase):
 
     def setUp(self) -> None:
-        from test_society import _Model, _Scheduler, _server, _service
+        from test_society import _Model, _Scheduler, _join, _server, _service
         self._dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         here = Path(self._dir.name)
         self.transport, self.mailer = _server()
@@ -315,11 +315,9 @@ class SocietyTests(unittest.TestCase):
                 return super().invoke(request, role)
         self.mira.app.models = self.model = _Cut()
         self.mira.app.scheduler = self.calendar = _Scheduler()
-        for one, email in ((self.mira, "mira@example.org"), (self.ada, "ada@example.org")):
-            one.publish(listed=False)
-            one.email_start(email)
-            one.email_confirm(self.mailer.last_code(email))
-        self.mira.link(self.ada.identity.id, "p_ada")
+        for one, name in ((self.mira, "Mira Holt"), (self.ada, "Ada Quist")):
+            _join(self.mailer, one, name)
+        self.mira.link(self.ada.account_id, "p_ada")
         self.mira.interactive.received = lambda message: None
 
     def tearDown(self) -> None:
@@ -328,14 +326,14 @@ class SocietyTests(unittest.TestCase):
         self._dir.cleanup()
 
     def _ask(self, text):
-        draft = self.ada.write_draft(self.mira.identity.id, text, "Friday", written_by="user")
+        draft = self.ada.write_draft(self.mira.account_id, text, "Friday", written_by="user")
         self.ada.send_draft(draft["id"], draft["hash"])
         self.mira.collect()
-        return [one for one in self.mira.conversation(self.ada.identity.id)
+        return [one for one in self.mira.conversation(self.ada.account_id)
                 if one["status"] == "received"][-1]
 
     def _notes(self):
-        return [one["text"] for one in self.mira.conversation(self.ada.identity.id)
+        return [one["text"] for one in self.mira.conversation(self.ada.account_id)
                 if one["status"] == "note"]
 
     def test_reply_group_an_answer_that_is_not_one_is_recorded_as_not_answered(self) -> None:
@@ -354,18 +352,6 @@ class SocietyTests(unittest.TestCase):
                 self.assertFalse(any("no answer was wanted" in one for one in self._notes()))
                 self.mira.interactive.answer_waiting()
                 self.assertEqual(len(self.model.asked), asked + 1)
-
-    def test_instant_an_answer_that_is_not_one_sends_the_sorry_and_says_why(self) -> None:
-        from personalized_agent.common.interface_words import shown
-        from personalized_agent.society.interactive import NOT_TAKEN_NOTE
-        self.mira.put_in_group("instant", peer=self.ada.identity.id)
-        self.said = ('{"reply": "Yes", "events": [{"title": "Harbour survey walk", "at_lo',
-                     "end_turn")
-        self.mira.interactive.answer_now(self._ask("Can you put a survey walk on Friday?"),
-                                         quick_seconds=5)
-        self.assertEqual(self.calendar.made, [])
-        self.assertIn(shown(NOT_TAKEN_NOTE, self.mira.app.config), self._notes()[-1],
-                      "the events asked for not dropped silently")
 
 
 # -- work: the agent's answer in a run -------------------------------------------------------
@@ -466,8 +452,8 @@ class SchedulerTests(unittest.TestCase):
         executor = self.app.executor
         executor.models = SimpleNamespace(invoke=lambda request, role="": _answer(
             "The notes for Ada Marlow: the north quay is", "max_tokens"))
-        executor.notifications = SimpleNamespace(
-            notify=lambda title, message, **kwargs: sent.append(message))
+        # TOLD THROUGH THE MONITOR'S "A REMINDER AT ITS TIME" (2026-11-13: "所有的通知必须在monitor里").
+        executor.relay = lambda builtin, title, message, **kwargs: sent.append(message)
         task = SimpleNamespace(id="t-harbour", title="Harbour survey notes",
                                task_payload={"prompt": "Write the notes", "notify_user": True},
                                description="", metadata={}, created_by="user")

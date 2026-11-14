@@ -299,8 +299,8 @@ def browse_folder_or_file(title: str, owner: int = 0, start_at: Optional[str] = 
     info.hwndOwner = owner or None
     info.pszDisplayName = ctypes.cast(shown, ctypes.c_wchar_p)
     info.lpszTitle = title
-    info.ulFlags = (BIF_NEWDIALOGSTYLE | BIF_EDITBOX | BIF_BROWSEINCLUDEFILES
-                    | BIF_NONEWFOLDERBUTTON)
+    # A NEW FOLDER MAY BE MADE HERE (the user, 2026-11-09: "不支持新建文件夹的操作，这个要支持").
+    info.ulFlags = BIF_NEWDIALOGSTYLE | BIF_EDITBOX | BIF_BROWSEINCLUDEFILES
     info.lpfn = callback
     ole32.OleInitialize(None)                       # the new style needs it
     chosen = shell32.SHBrowseForFolderW(ctypes.byref(info))

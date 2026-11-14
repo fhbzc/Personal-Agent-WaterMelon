@@ -63,6 +63,16 @@ def category_of(row: Dict[str, Any]) -> str:
     return "Reminders" if row.get("kind") == "proactive" else "Other"
 
 
+def _is_report_summary(metadata: Any) -> bool:
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata or "{}")
+        except ValueError:
+            return False
+    metadata = metadata if isinstance(metadata, dict) else {}
+    return bool(metadata.get("approvals") or metadata.get("agent_did"))
+
+
 def waiting_lines(counts: Dict[str, int], words: Any) -> List[Tuple[str, str]]:
     """The rows beside the avatar - (kind, "2 notifications") - for each kind something waits of,
     in LINE_KINDS' order; `words` puts each in the display language."""
@@ -221,6 +231,26 @@ class NotificationService:
             return False  # section 91: the error type changed - notify again
         elapsed = (datetime.now(timezone.utc) - previous["at"]).total_seconds()
         return elapsed < cooldown
+
+    # -- through the Monitor --------------------------------------------------
+    #: THE MONITOR'S WAY TO SAY IT (the user, 2026-11-13: "所有的通知必须在monitor里，收到monitor的统一调配"): (builtin,
+    #: title, message, **said) - set by the application to `Monitor.relay`. Nothing else is said but
+    #: through it: `notify` is the Monitor's own.
+    relay: Optional[Any] = None
+
+    def system(self, title: str, message: str, *, kind: str = "warning", level: Optional[str] = None,
+               startup: bool = False, **said: Any) -> Any:
+        """WHAT THE USER MUST KNOW OF THE APPLICATION ITSELF ("系统类的可以保留") - signed out, a model down, the
+        agent stopped, an update - through the Monitor's "The application itself": its switch, its
+        silences. `level` "collapse": rather waiting. Without a Monitor nothing is said - but the
+        agent not starting at all (`startup`), which no Monitor is there to say."""
+        relay = self.relay
+        if relay is None:
+            if startup:
+                return self.notify(title, message, kind=kind, **said)
+            log.info("no Monitor to say it through: %s", title)
+            return None
+        return relay("system", title, message, kind=kind, wait=level == COLLAPSE, **said)
 
     # -- api ----------------------------------------------------------------
     def notify(
@@ -427,11 +457,34 @@ class NotificationService:
             row["metadata"] = {}
         return row
 
+    def _told_read(self, ids: List[str]) -> None:
+        """READ, SAID AT ONCE (the user, 2026-11-13: "这个1 summary还是要很久才关掉"): whoever read it -
+        the page, the report, a button - the line beside the avatar is drawn again now, not at its
+        next look."""
+        if self.bus is not None and ids:
+            try:
+                self.bus.publish("notification.read", {"ids": list(ids)})
+            except Exception:                    # pragma: no cover - drawn at the next look
+                pass
+
     def mark_read(self, notification_id: str) -> None:
         self.db.execute("UPDATE notifications SET read = 1 WHERE id = ?", (notification_id,))
+        self._told_read([notification_id])
 
     def mark_all_read(self) -> None:
         self.db.execute("UPDATE notifications SET read = 1 WHERE read = 0")
+        self._told_read(["*"])
+
+    def read_report_summaries(self) -> int:
+        """THE REPORT OPENED IS ITS NOTIFICATIONS READ: those that say what waits for approval, and
+        what the agent did - each told in the report, read there. How many."""
+        ids = [row["id"] for row in self.db.query(
+            "SELECT id, metadata FROM notifications WHERE read = 0")
+            if _is_report_summary(row.get("metadata"))]
+        for ident in ids:
+            self.db.execute("UPDATE notifications SET read = 1 WHERE id = ?", (ident,))
+        self._told_read(ids)
+        return len(ids)
 
     def purge_older_than(self, days: int = 30) -> int:
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)

@@ -246,13 +246,14 @@ class ItsBarAndItsSmallestWordsTests(unittest.TestCase):
 
 class AReplyTheChatClosedOnTests(unittest.TestCase):
 
-    def test_it_comes_as_a_notification_opened_in_the_chat(self) -> None:
+    def test_no_longer_a_notification_it_is_in_its_conversation(self) -> None:
+        """2026-11-13: only recommendations, the calendar, the report, risks, the day ahead, closing up and
+        the application itself are told - "其它都取消"."""
         agent = TemporaryAgent()
         self.addCleanup(agent.cleanup)
+        before = len(agent.app.notifications.recent(50))
         agent.app.chat_reply_notice("On the calendar", "conv_3")
-        shown = agent.app.notifications.get(agent.app.notifications.recent(1)[0]["id"])
-        self.assertEqual(shown["message"], "On the calendar")
-        self.assertEqual(shown["metadata"]["chat_conversation"], "conv_3")
+        self.assertEqual(len(agent.app.notifications.recent(50)), before)
 
 
 if __name__ == "__main__":

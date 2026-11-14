@@ -41,9 +41,9 @@ _ROLE_OVERRIDE_KEYS = {
     "fast_reply": "chat_fast_model",
 }
 
-#: The quick reply in Chat (agent/two_speed.py), left unset: the small model of a
-#: provider that has one; elsewhere whatever the chat runs on.
-FAST_MODELS = {"claude_code": "claude-haiku-5-5", "anthropic": "claude-haiku-5-5"}
+#: The quick reply in Chat (agent/two_speed.py) - THE SMALL MODEL - left unset: THE SAME MODEL
+#: the chat runs on, at the least effort it takes (the user, 2026-11-11: "default是low effort模式，
+#: 模型和正常保持一致"); it was Claude Haiku. Another is the user's choice (chat_fast_model).
 
 #: What a usage limit says, for a provider that files it as a rate limit
 #: (Claude Code's session limit): it does not pass in seconds, so the next
@@ -144,6 +144,9 @@ class ModelManager:
         #: The model that last answered each role - on the list, the first
         #: that worked.
         self.answered: Dict[str, str] = {}
+        #: Every call kept for testing, in a build with the Debugger (models/call_history.py; the
+        #: user, 2026-11-11): set by the application; None keeps nothing.
+        self.history: Any = None
         self._register_defaults()
         # A stored provider/model pair that cannot work is repaired here rather
         # than at every use: it outlives the edit that created it (section 82).
@@ -386,8 +389,6 @@ class ModelManager:
             if parsed:
                 return ResolvedModel(role, parsed[0], parsed[1], True)
         chain = self.chain(role)
-        if role == "fast_reply" and chain and chain[0].provider_id in FAST_MODELS:
-            return ResolvedModel(role, chain[0].provider_id, FAST_MODELS[chain[0].provider_id], True)
         # With the list emptied, what there was before it - only to be named:
         # `invoke` asks none.
         return chain[0] if chain else self._primary(role)
@@ -786,6 +787,8 @@ class ModelManager:
                        if _takes(self.observability.record_model_call, "language") else {}),
                     **({"by_user": _by_user(request)}
                        if _takes(self.observability.record_model_call, "by_user") else {}),
+                    **({"module": _module_for(request)}
+                       if _takes(self.observability.record_model_call, "module") else {}),
                 )
             raise ModelUnavailable(resolved, exc.availability) from exc
 
@@ -796,6 +799,7 @@ class ModelManager:
         with self._lock:
             self._availability[resolved.label] = (time.time(), good)
         self._emit_state(resolved, good)
+        kept_cost: Optional[float] = None
         if self.observability is not None:
             descriptor = next(
                 (m for m in provider.list_models() if m.id == resolved.model_id), None
@@ -822,6 +826,7 @@ class ModelManager:
                     + usage.output_tokens / 1e6 * (descriptor.output_cost_per_mtok or 0),
                     6,
                 )
+            kept_cost = cost
             figures = dict(
                 provider=resolved.provider_id, model=answered, task=request.task,
                 input_tokens=usage.input_tokens,
@@ -842,7 +847,17 @@ class ModelManager:
             # And whether the user started the run it was made in.
             if _takes(self.observability.record_model_call, "by_user"):
                 figures.update(by_user=_by_user(request))
+            # And the module it was made for, where its run said (the plan's own work).
+            if _takes(self.observability.record_model_call, "module"):
+                figures.update(module=_module_for(request))
             self.observability.record_model_call(**figures)
+        # KEPT FOR TESTING, in a build with the Debugger only (models/call_history.py).
+        if self.history is not None:
+            self.history.keep(request, role=role, provider=resolved.provider_id,
+                              model=resolved.model_id,
+                              answered=str(getattr(response, "model", "") or "") or resolved.model_id,
+                              response=response, latency_ms=latency, cost=kept_cost,
+                              module=str(_module_for(request) or ""), by_user=_by_user(request))
         return response
 
     # -- settings surface ---------------------------------------------------
@@ -911,6 +926,15 @@ def _by_user(request: Any) -> bool:
         return by_user(getattr(request, "task", ""))
     except Exception:                    # pragma: no cover - measurement
         return False
+
+
+def _module_for(request: Any) -> str:
+    """The module the call was made for, where it was said (common/observability/started.py)."""
+    try:
+        from ..common.observability.started import module_for
+        return module_for(request)
+    except Exception:                    # pragma: no cover - measurement
+        return ""
 
 
 def _language_of(request: Any) -> str:

@@ -44,6 +44,34 @@ class RawActivityIsLetGoByAgeTests(unittest.TestCase):
         self.assertEqual([e.id for e in self.app.raw_store.events_by_ids([kept.id])],
                          [kept.id])
 
+    def test_in_batches_the_lock_let_go_and_stopped_when_closing(self) -> None:
+        """2026-11-12 ("怎么一直卡住没有退出"): one DELETE of them all held every writer and quitting -
+        now a batch at a time, and between batches it stops when the application closes."""
+        store = self.app.raw_store
+        store.PRUNE_BATCH = 2
+        for _n in range(5):
+            self._event(30)
+        kept = self._event(1)
+        batches = []
+
+        def going() -> bool:
+            batches.append(store.count_events())
+            return len(batches) < 2                       # closing after the first batch
+        said = store.prune_older_than(8, going=going)
+        self.assertEqual(said["events"], 2, "one batch, then stopped")
+        self.assertEqual(store.count_events(), 4)
+        said = store.prune_older_than(8)
+        self.assertEqual((said["events"], store.count_events()), (3, 1), "the rest the next time")
+        self.assertEqual([one.id for one in store.events_by_ids([kept.id])], [kept.id])
+
+    def test_what_points_at_a_raw_event_is_indexed(self) -> None:
+        """A raw event deleted no longer has the WeChat tables read whole to unlink it."""
+        names = {row["name"] for row in self.app.db.query(
+            "SELECT name FROM sqlite_master WHERE type = 'index'")}
+        for name in ("idx_wechat_capture_event", "idx_wechat_observation_event",
+                     "idx_wechat_observation_capture", "idx_wechat_alias_capture"):
+            self.assertIn(name, names)
+
     def test_nothing_waits_on_being_read_first(self) -> None:
         """There is no step that marks activity as read any more, so age
         alone decides - an old row is let go whether or not anything read it."""

@@ -19,6 +19,9 @@ class _Model:
         self.answer, self.asked = answer, []
 
     def invoke(self, request, role=""):
+        # Its search words are asked for first (heartbeat/core/related.py): none, here.
+        if str(getattr(request, "task", "")).endswith("_words"):
+            return SimpleNamespace(text=json.dumps({"things": []}))
         self.asked.append((request, role))
         return SimpleNamespace(text=json.dumps(self.answer))
 

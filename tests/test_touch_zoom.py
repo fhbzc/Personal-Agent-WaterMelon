@@ -61,6 +61,7 @@ class ThePageInOneWindowTests(unittest.TestCase):
         self.assertFalse(aw.is_the_page("Chrome_WidgetWin_1", "WaterMelon - Google Chrome"))
         self.assertFalse(aw.is_the_page("TkTopLevel", "WaterMelon"), "the avatar's own")
 
+    @unittest.skipIf(sys.platform == "darwin", "a Mac opens the page its own way, on Tk's thread (_open_the_page_on_a_mac)")
     def test_open_it_is_brought_back_shut_it_is_opened_with_no_browser_a_tab(self) -> None:
         from types import SimpleNamespace
         from unittest import mock
@@ -87,6 +88,7 @@ class ThePageInOneWindowTests(unittest.TestCase):
             dm.DesktopAgent._open_the_page(desk)
         tab.assert_called_once_with("http://here/#overview")
 
+    @unittest.skipIf(sys.platform == "darwin", "a Mac opens the page its own way, on Tk's thread (_open_the_page_on_a_mac)")
     def test_two_double_clicks_make_one_window_while_it_is_coming(self) -> None:
         import threading
         from pathlib import Path
@@ -151,6 +153,30 @@ class ThePageInOneWindowTests(unittest.TestCase):
         from personalized_agent.platform_layer import app_window as aw
         self.assertFalse(aw.bring_back_the_page())
         self.assertFalse(aw.open_the_page("http://here/", "nowhere"))
+        self.assertEqual(aw.close_the_page(), 0, "nor closed")
+
+    @unittest.skipUnless(sys.platform == "win32", "the page's own window is Windows'")
+    def test_the_pages_window_closed_with_the_agent(self) -> None:
+        """The user, 2026-11-09: "agent关闭之后，自动把overview panel也关了"."""
+        from unittest import mock
+        from personalized_agent.platform_layer import app_window as aw
+        open_ = [101]
+        posted = []
+
+        class User32:
+            def PostMessageW(self, handle, message, _w, _l):
+                posted.append((handle, message))
+                open_.remove(handle)
+                return 1
+        with mock.patch.object(aw, "_no_windows_here", return_value=False), \
+                mock.patch.object(aw, "_windows_page", side_effect=lambda: open_[0] if open_ else None), \
+                mock.patch.object(aw.ctypes if hasattr(aw, "ctypes") else ctypes, "windll",
+                                  mock.Mock(user32=User32()), create=True):
+            self.assertEqual(aw.close_the_page(), 1)
+        self.assertEqual(posted, [(101, 0x0010)], "asked to close, as its own button would")
+        desktop = __import__("personalized_agent.ui.desktop", fromlist=["DesktopAgent"])
+        import inspect
+        self.assertIn("close_the_page()", inspect.getsource(desktop.DesktopAgent.quit))
 
 
 class TheAgentKnowsItsOwnPageTests(unittest.TestCase):
@@ -183,6 +209,51 @@ class TheAgentKnowsItsOwnPageTests(unittest.TestCase):
             self.assertFalse(names_the_agent("Browser", title), title)
 
 
+class TheReportInTheAppsWindowTests(unittest.TestCase):
+    """The user, 2026-11-13: "现在open the report打开的是网站，而不是那个app，应该改成在app端打开"."""
+
+    @unittest.skipIf(sys.platform == "darwin", "a Mac opens the page its own way")
+    def test_a_tab_goes_to_the_apps_window_turned_to_it(self) -> None:
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest import mock
+        from personalized_agent.platform_layer import app_window as aw
+        from personalized_agent.ui import desktop as dm
+        desk = SimpleNamespace(app=SimpleNamespace(sign_in_url=lambda path: "http://here" + path,
+                                                   paths=SimpleNamespace(data_dir=Path("data"))))
+        desk._off_this_thread = lambda what, name="": what()
+        desk._open_the_page = lambda fragment="/#overview": dm.DesktopAgent._open_the_page(desk, fragment)
+        # Open already: brought back, and the page is asked to turn to the report - no browser.
+        with mock.patch.object(aw, "bring_back_the_page", return_value=True),                 mock.patch.object(dm.webbrowser, "open") as tab:
+            dm.DesktopAgent.open_url(desk, "/#report")
+        tab.assert_not_called()
+        self.assertEqual(desk.app.page_wants["tab"], "report")
+        # Shut: opened at the report.
+        with mock.patch.object(aw, "bring_back_the_page", return_value=False),                 mock.patch.object(aw, "open_the_page", return_value=True) as opened,                 mock.patch.object(aw, "wait_for_the_page"):
+            dm.DesktopAgent.open_url(desk, "/#report")
+        self.assertEqual(opened.call_args[0][0], "http://here/#report")
+        # The overview asks for no tab: brought back as it was left.
+        with mock.patch.object(aw, "bring_back_the_page", return_value=True):
+            dm.DesktopAgent.open_url(desk, "/#overview")
+        self.assertIsNone(desk.app.page_wants)
+
+    def test_the_page_is_told_once_and_only_for_a_minute(self) -> None:
+        import time
+        from types import SimpleNamespace
+        from personalized_agent.api.routes import build_routes
+        from support import TemporaryAgent
+        agent = TemporaryAgent()
+        self.addCleanup(agent.cleanup)
+        app = agent.app
+        route = build_routes(app)[("GET", "/api/page/wants")]
+        ask = SimpleNamespace(get=lambda *_a: None)
+        app.page_wants = {"tab": "report", "at": time.time()}
+        self.assertEqual(route(ask), {"tab": "report"})
+        self.assertEqual(route(ask), {"tab": ""}, "once")
+        app.page_wants = {"tab": "report", "at": time.time() - 120}
+        self.assertEqual(route(ask), {"tab": ""}, "not a minute later")
+
+
 class OnAMacTests(unittest.TestCase):
 
     def test_the_page_goes_to_webkit_whatever_the_browser_on_the_main_thread(self) -> None:
@@ -190,11 +261,17 @@ class OnAMacTests(unittest.TestCase):
         from types import SimpleNamespace
         from unittest import mock
         from personalized_agent.ui import desktop as dm, mac_panel
-        desk = SimpleNamespace(queue=queue.Queue(), _open_the_page_on_a_mac="on the main thread")
+        opened = []
+        desk = SimpleNamespace(queue=queue.Queue(), app=SimpleNamespace(),
+                               _open_the_page_on_a_mac=opened.append)
         with mock.patch.object(dm.sys, "platform", "darwin"), \
                 mock.patch.object(mac_panel, "available", return_value=True):
-            dm.DesktopAgent._open_the_page(desk)
-        self.assertEqual(desk.queue.get_nowait(), ("call", "on the main thread"))
+            dm.DesktopAgent._open_the_page(desk, "/#report")
+        kind, call = desk.queue.get_nowait()
+        self.assertEqual(kind, "call")
+        call()                                           # on the main thread
+        self.assertEqual(opened, ["/#report"])
+        self.assertEqual(desk.app.page_wants["tab"], "report")
 
     def test_open_it_comes_back_shut_it_opens_and_failing_a_browser(self) -> None:
         from types import SimpleNamespace

@@ -828,6 +828,48 @@ class TheNoteTests(unittest.TestCase):
         self.assertLessEqual(len(given), 2, "thirty moves, given once or twice - not thirty")
         note.close()
 
+    def test_by_its_top_an_outline_while_dragged_and_put_there_let_go(self) -> None:
+        """The user, 2026-11-09: "project instruction panel如果调整上边框巨卡" - moved as well as
+        sized, all of it was drawn again each step (150-260 ms, measured)."""
+        note = self._note(dict(NOTE, item=EMAIL))
+        window = note.window
+        # Low enough that 60 up is on the screen everywhere: a Mac keeps a window below its menu bar.
+        window.geometry(f"+{window.winfo_x()}+300")
+        self.root.update()
+        x, y, height = window.winfo_x(), window.winfo_y(), window.winfo_height()
+        note._edge_start(SimpleNamespace(x_root=x + 50, y_root=y), "n")
+        for step in range(1, 11):
+            note._edge_move(SimpleNamespace(x_root=x + 50, y_root=y - 6 * step))
+            self.root.update()
+        self.assertEqual((window.winfo_y(), window.winfo_height()), (y, height),
+                         "not moved while it is dragged")
+        self.assertEqual(len(note._ghost), 4, "its outline instead")
+        self.assertEqual(note._ghost[0].winfo_y(), y - 60, "where it will be")
+        note._resize_end()
+        self.root.update()
+        self.assertIsNone(note._ghost, "the outline gone")
+        self.assertEqual(window.winfo_y(), y - 60)
+        self.assertEqual(window.winfo_height(), height + 60, "put there at once, let go")
+        note.close()
+
+    def test_folded_its_bar_has_no_open_folder(self) -> None:
+        """The user, 2026-11-09: "open folder这些按键也在最小化的header上"."""
+        note = hn.HandedNote(self.root, dict(NOTE, item=EMAIL, many=True), lambda t: t, "Segoe UI",
+                             10, on_folder=lambda: None)
+        note.show()
+        self.root.update()
+        self.assertTrue(note._folder_button.winfo_ismapped())
+        note.fold()
+        self.root.update()
+        self.assertFalse(note._folder_button.winfo_ismapped(), "folded: its name, – and ✕")
+        note.unfold()
+        self.root.update()
+        self.assertTrue(note._folder_button.winfo_ismapped(), "opened: back")
+        bar = note._bar_frame.pack_slaves()
+        self.assertLess(bar.index(note._fold_button), bar.index(note._folder_button),
+                        "in its place, left of –")
+        note.close()
+
     def test_as_long_as_the_work_made_it(self) -> None:
         """The user, 2026-11-01: a review of a paper is long - shown whole,
         scrolled within itself."""
@@ -924,6 +966,178 @@ class OpenedThroughTheDesktopTests(unittest.TestCase):
                          "it is done; copy it so it is not lost")
         DesktopAgent._show_handed_note(fake, payload)       # a newer one in its place
         self.assertIsNone(note.window)
+        fake._handed_note.close()
+
+    def test_folded_and_opened_again_the_list_on_top_comes_back(self) -> None:
+        """The user, 2026-11-10: "在最小化之后他就不会显示Item list (只有这个Item的内容了"."""
+        import queue
+        from personalized_agent.ui.desktop import DesktopAgent
+        root = tk.Tk()
+        root.withdraw()
+        self.addCleanup(gc.collect)
+        self.addCleanup(root.destroy)
+        kept = {}
+        config = SimpleNamespace(get=lambda key, default=None: kept.get(key, default),
+                                 set=lambda key, value, internal=False: kept.update({key: value}))
+        app = SimpleNamespace(work=SimpleNamespace(save_handed=lambda *a: {}),
+                              db=SimpleNamespace(query_one=lambda *a: None, execute=lambda *a: None),
+                              agenda_approved=lambda ident, how: {"kind": "replies"},
+                              approval_item=lambda row: dict(NOTE, item=EMAIL, run=row["run"], n=0))
+        fake = SimpleNamespace(queue=queue.Queue(), root=root, config=config, app=app,
+                               _words=lambda text: text, _popup_font=lambda: ("Segoe UI", 10))
+        rows = [{"id": f"agenda_{n}", "title": f"Reply {n}", "run": f"run_{n}", "n": 0,
+                 "state": "ready", "answered": ""} for n in range(3)]
+        DesktopAgent._show_handed_note(fake, dict(NOTE, item=EMAIL, run="run_0", n=0, scope="approval",
+                                                  work="To approve", approval={"rows": rows},
+                                                  approval_at=0))
+        root.update()
+        note = fake._handed_note
+        [part] = note._stack_parts
+        before = part.winfo_height()
+        self.assertGreater(before, 48, "the list on top, shown")
+        note.fold()
+        root.update()
+        note.unfold()
+        root.update()
+        self.assertGreaterEqual(part.winfo_height(), before - 2, "as tall again as it was")
+        note.close()
+
+    def test_a_question_in_the_approvals_panel_is_answered_in_a_line(self) -> None:
+        """The user, 2026-11-10: "make the question clear" - asked in its row, answered there."""
+        import queue
+        from personalized_agent.ui.desktop import DesktopAgent
+        root = tk.Tk()
+        root.withdraw()
+        self.addCleanup(gc.collect)
+        self.addCleanup(root.destroy)
+        kept = {}
+        config = SimpleNamespace(get=lambda key, default=None: kept.get(key, default),
+                                 set=lambda key, value, internal=False: kept.update({key: value}))
+        answered = []
+        app = SimpleNamespace(
+            work=SimpleNamespace(save_handed=lambda *a: {}),
+            db=SimpleNamespace(query_one=lambda *a: None, execute=lambda *a: None),
+            agenda_approved=lambda ident, how: answered.append((ident, how)) or {"how": "answered"},
+            approval_item=lambda row: {"title": row["title"], "question": "Who is the call with?",
+                                       "check": [], "item": {}})
+        fake = SimpleNamespace(queue=queue.Queue(), root=root, config=config, app=app,
+                               _words=lambda text: text, _popup_font=lambda: ("Segoe UI", 10))
+        rows = [{"id": "agenda_q", "title": "Evening call on the garden chat", "run": "", "n": 0,
+                 "state": "needs_answer", "answered": "",
+                 "question": "Is the evening call with Wren Halloway, on Tuesday at 23:00?"}]
+        DesktopAgent._show_handed_note(fake, dict(title="Evening call on the garden chat",
+                                                  question="Who is the call with?", check=[],
+                                                  item={}, scope="approval", work="To approve",
+                                                  approval={"rows": rows}, approval_at=0))
+        root.update()
+        note = fake._handed_note
+        row = [one for one in note._made_rows.winfo_children() if isinstance(one, tk.Frame)][0]
+        frames = [one for one in row.winfo_children() if isinstance(one, tk.Frame)]
+        words = [child.cget("text") for frame in frames for child in frame.winfo_children()
+                 if isinstance(child, tk.Label)]
+        self.assertIn("Is the evening call with Wren Halloway, on Tuesday at 23:00?", words)
+        self.assertIn("Answer it below.", words)
+        # "你得给我一个回答的窗口呀": under the question, a box to answer in.
+        self.assertIsNotNone(note._answer_box, "a window to answer in, under the question")
+        note._answer_box.insert("1.0", "With Wren, Tuesday 23:00")
+        note._send_answer()
+        for _ in range(200):
+            try:
+                kind, call = fake.queue.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            if kind == "call":
+                call()
+                root.update()
+                break
+        self.assertEqual(answered, [("agenda_q", "answer:With Wren, Tuesday 23:00")])
+        self.assertTrue(rows[0]["answered"].startswith("answer:"), "said answered on its row")
+        self.assertIsNone(note._answer_box, "answered: said so where the box was")
+        fake._handed_note.close()
+
+    def test_the_approvals_panel_its_answers_on_top_the_one_chosen_below(self) -> None:
+        """The user, 2026-11-09: "每个审批session可以用类似project instruction的panel。但是现在最上面那个
+        project level instruction可以删去，就一个是选项，一个是instruction进行审批"."""
+        import queue
+        from personalized_agent.ui.desktop import DesktopAgent
+        root = tk.Tk()
+        root.withdraw()
+        self.addCleanup(gc.collect)
+        self.addCleanup(root.destroy)
+        kept = {}
+        config = SimpleNamespace(get=lambda key, default=None: kept.get(key, default),
+                                 set=lambda key, value, internal=False: kept.update({key: value}))
+        answered, shown = [], []
+        app = SimpleNamespace(
+            work=SimpleNamespace(save_handed=lambda *a: {}),
+            db=SimpleNamespace(query_one=lambda *a: None, execute=lambda *a: None),
+            agenda_approved=lambda ident, how: answered.append((ident, how)) or {"kind": "replies"},
+            approval_item=lambda row: shown.append(row["id"]) or dict(NOTE, item=EMAIL, run=row["run"], n=0))
+        fake = SimpleNamespace(queue=queue.Queue(), root=root, config=config, app=app,
+                               _words=lambda text: text, _popup_font=lambda: ("Segoe UI", 10))
+        rows = [{"id": "agenda_a", "title": "Reply to the seed club", "run": "run_a", "n": 0, "state": "ready",
+                 "answered": ""},
+                {"id": "agenda_b", "title": "Answer Wren Halloway", "run": "run_b", "n": 0, "state": "ready",
+                 "answered": ""},
+                {"id": "agenda_c", "title": "Book the orchard hall", "run": "", "n": 0, "state": "working",
+                 "answered": ""}]
+        DesktopAgent._show_handed_note(fake, dict(NOTE, item=EMAIL, run="run_a", n=0, scope="approval",
+                                                  work="To approve, until 11:00",
+                                                  approval={"rows": rows}, approval_at=0))
+        root.update()
+        note = fake._handed_note
+        self.assertEqual(len(note._top_scrolls), 1, "no project's guide on top: the rows alone")
+        def titles():
+            return [[child.cget("text") for child in row.winfo_children()
+                     if isinstance(child, tk.Label)][0]
+                    for row in note._made_rows.winfo_children() if isinstance(row, tk.Frame)]
+        # READY ON TOP, THE REST FOLDED (the user, 2026-11-10): the one still being worked on under
+        # a line of its own, opened when pressed.
+        self.assertEqual(titles(), ["▸  Reply to the seed club", "Answer Wren Halloway"])
+        self.assertEqual(note._approval_fold.cget("text"), "▸  Not ready yet (1)")
+        note._fold_approval_later()
+        root.update()
+        self.assertEqual(titles(),
+                         ["▸  Reply to the seed club", "Answer Wren Halloway", "Book the orchard hall"])
+        note._fold_approval_later()
+        root.update()
+        self.assertEqual(len(titles()), 2, "folded again")
+        # The one-click answer first (the user, 2026-11-10: "要给我一个一键approve按钮").
+        first_row = [row for row in note._made_rows.winfo_children() if isinstance(row, tk.Frame)][0]
+        buttons = [child for frame in first_row.winfo_children() if isinstance(frame, tk.Frame)
+                   for child in frame.winfo_children()]
+        said = [str(one.cget("text")) for one in buttons if "text" in one.keys()]
+        self.assertTrue(said and said[0] == "Approve - let it do it", said)
+
+        def run_queued():
+            for _ in range(200):
+                try:
+                    kind, call = fake.queue.get(timeout=0.05)
+                except queue.Empty:
+                    continue
+                if kind == "call":
+                    call()
+                    root.update()
+                    return
+            self.fail("nothing came back")
+        note._answer(0, "as_it_was")
+        run_queued()
+        self.assertEqual(answered, [("agenda_a", "as_it_was")])
+        self.assertEqual(rows[0]["answered"], "as_it_was")
+        note._answer(0, "changed")
+        self.assertEqual(len(answered), 1, "answered once")
+        # CHOSEN BY ANY PART OF ITS ROW BUT ITS BUTTONS (the user, 2026-11-11: "approval的一行的非
+        # button位置都能选中"): here the space beside its buttons, under its title.
+        second_row = [row for row in note._made_rows.winfo_children() if isinstance(row, tk.Frame)][1]
+        under = [frame for frame in second_row.winfo_children() if isinstance(frame, tk.Frame)][0]
+        self.assertEqual(str(under.cget("cursor")), "hand2")
+        root.update()
+        under.event_generate("<ButtonPress-1>", x=2, y=2)
+        under.event_generate("<ButtonRelease-1>", x=2, y=2)
+        run_queued()
+        self.assertEqual(shown, ["agenda_b"])
+        self.assertEqual(fake._handed_note.note["run"], "run_b", "the one chosen, below")
+        self.assertEqual(fake._handed_note.note["approval_at"], 1)
         fake._handed_note.close()
 
     def test_a_whole_projects_note_stands_apart_from_a_to_dos(self) -> None:

@@ -6,6 +6,12 @@ and keeps the thing here, shown beside the progress bars of the Overview's
 Summary task until the user removes it. "+ Add a to-do" under the list adds
 one of their own, with no notification behind it. ONLY THE USER REMOVES ONE, by hand,
 after a Yes: the agent never marks one done.
+
+IT MAY SAY ONE LOOKS DONE, OR IS NO LONGER WANTED (the user, 2026-11-09: "允许模型suggest代办已做完，
+模型不能直接删to do, 但是suggest之后，那个to do会出现一个mark as done按钮"; "包括chat, 现在也要有把to do
+建议删掉的功能"): `suggest` keeps which and why, and the list offers Mark as done or Remove with it.
+The user may turn it down (`decline`); then done is suggested again only on clear progress since
+(heartbeat/core/todo_check.py). And `rename` names who one is about, its first words kept.
 """
 
 from __future__ import annotations
@@ -55,6 +61,47 @@ class TodoList:
         self.db.execute("UPDATE todo_items SET text = ?, detail = ? WHERE id = ?",
                         (str(text or "").strip()[:300] or there["text"],
                          str(detail or "").strip()[:1000], todo_id))
+        return self.get(todo_id)
+
+    def suggest(self, todo_id: str, why: str, evidence: Any = (),
+                kind: str = "done") -> Optional[Dict[str, Any]]:
+        """LOOKS DONE ("done") or NO LONGER WANTED ("remove"), says the agent - with why, and what
+        it rests on. Never done by it."""
+        import json
+        there = self.get(todo_id)
+        if there is None or there.get("deleted_at") or there.get("done_at"):
+            return None
+        self.db.execute(
+            "UPDATE todo_items SET suggested_kind = ?, suggested_at = ?, suggested_why = ?, "
+            "suggested_from = ? WHERE id = ?",
+            ("remove" if kind == "remove" else "done", utcnow().isoformat(),
+             " ".join(str(why or "").split())[:600],
+                             json.dumps([str(one)[:120] for one in list(evidence or [])[:10]],
+                                        ensure_ascii=False), todo_id))
+        return self.get(todo_id)
+
+    def decline(self, todo_id: str, why: str = "") -> Optional[Dict[str, Any]]:
+        """NOT DONE, says the user: the suggestion goes, and when they said so is kept."""
+        there = self.get(todo_id)
+        if there is None:
+            return None
+        self.db.execute(
+            "UPDATE todo_items SET suggested_kind = '', suggested_at = '', suggested_why = '', "
+            "suggested_from = '[]', declined_at = ?, declined_why = ? WHERE id = ?",
+            (utcnow().isoformat(), str(why or "")[:600], todo_id))
+        return self.get(todo_id)
+
+    def rename(self, todo_id: str, text: str, detail: Optional[str] = None
+               ) -> Optional[Dict[str, Any]]:
+        """Named by who it is about (the agent's): its first words kept."""
+        there = self.get(todo_id)
+        text = " ".join(str(text or "").split())[:300]
+        if there is None or there.get("deleted_at") or not text or text == there["text"]:
+            return None
+        self.db.execute(
+            "UPDATE todo_items SET text = ?, detail = ?, renamed_from = ? WHERE id = ?",
+            (text, there["detail"] if detail is None else str(detail).strip()[:1000],
+             there.get("renamed_from") or there["text"], todo_id))
         return self.get(todo_id)
 
     def get(self, todo_id: str) -> Optional[Dict[str, Any]]:

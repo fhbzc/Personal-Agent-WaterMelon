@@ -327,6 +327,9 @@ class Browser:
     # -- the page -----------------------------------------------------------
     def goto(self, url: str, timeout: Optional[float] = None) -> "Browser":
         """Open `url` and wait until it has loaded."""
+        from ..common.privacy_folders import address_is_private
+        if address_is_private(url):
+            raise BrowserError(f"{url} is at one of the user's private web addresses: never opened")
         self._loaded = False
         result = self._call("Page.navigate", {"url": url})
         if result.get("errorText"):
@@ -336,6 +339,16 @@ class Browser:
             raise BrowserError(f"could not open {url}: {result['errorText']}{hint}")
         if not self._pump(lambda: self._loaded, timeout or self.timeout):
             raise BrowserError(f"{url} did not finish loading in time")
+        # A PAGE IN ITS SITE'S PRIVATE MODE (agent-private-mode): not read, not operated - left.
+        if self.evaluate('document.documentElement.dataset.agentPrivateMode === "on" || '
+                         '!!document.querySelector(\'meta[name="agent-private-mode" i]'
+                         '[content="on" i]\')'):
+            try:
+                self._call("Page.navigate", {"url": "about:blank"})
+            except Exception:
+                pass
+            raise BrowserError(f"{url} asks agents not to watch it (its site's private mode): "
+                               "not read, not operated")
         return self
 
     def evaluate(self, expression: str) -> Any:

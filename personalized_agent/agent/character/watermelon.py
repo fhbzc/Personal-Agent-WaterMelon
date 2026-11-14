@@ -422,7 +422,8 @@ class Watermelon:
             body = layer
         leaves = self.leaves_moved(part, flail) if part or any(flail) else self.leaves
         leaves = self.leaves_at(grip, reach, edge, leaves) if grip else leaves
-        # On end it is as tall as they are: they hold on in front of it.
+        # On end it is as tall as they are: they hold on in front of it (the user, 2026-11-09: "叶子在
+        # 前面") - where its face is out of their way is the peek's to say (ui/avatar_tuck.py).
         out = Image.alpha_composite(body, leaves) if turn > 0.5 else \
             Image.alpha_composite(leaves, body)
         _extras(out, self.scale, mood, t)

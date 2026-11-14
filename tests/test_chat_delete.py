@@ -149,7 +149,7 @@ class TheMenuOnEachRowTests(unittest.TestCase):
             page = Path(work) / "chat.html"
             page.write_text(PAGE % script, encoding="utf-8")
             done = subprocess.run(
-                [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=10000",
                  "--dump-dom", page.as_uri()],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
@@ -209,7 +209,7 @@ class TheListsPartsTests(unittest.TestCase):
             page = Path(work) / "chat.html"
             page.write_text(LIST_PAGE % script, encoding="utf-8")
             done = subprocess.run(
-                [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=10000",
                  "--dump-dom", page.as_uri()],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)

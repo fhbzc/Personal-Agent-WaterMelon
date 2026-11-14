@@ -51,7 +51,7 @@ def _render(engine, stub, steps, budget=30000, flags=()):
         probe = Path(work) / "probe.html"
         probe.write_text(page + harness, encoding="utf-8")
         completed = subprocess.run(
-            [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+            [engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
              f"--user-data-dir={work}/profile", f"--virtual-time-budget={budget}",
              "--window-size=1200,800", *flags, "--dump-dom", probe.as_uri()],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)

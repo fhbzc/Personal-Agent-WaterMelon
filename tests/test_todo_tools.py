@@ -44,8 +44,13 @@ class ToolsTests(unittest.TestCase):
         self.assertEqual(self.todos.open(), [])
 
     def test_no_tool_takes_one_off(self) -> None:
+        # The agent may SUGGEST one done or gone (2026-11-09, a button on the to-do); no tool of
+        # the chat's takes one off by itself.
         self.assertEqual(sorted(spec.name for spec in self.registry.specs),
-                         ["todo_add", "todo_list"], "only the user removes one")
+                         ["todo_add", "todo_list", "todo_suggest_done", "todo_suggest_remove"])
+        for spec in self.registry.specs:
+            self.assertFalse(spec.name.endswith(("_delete", "_remove", "_done"))
+                             and not spec.name.startswith("todo_suggest_"), spec.name)
 
 
 class TheChatHasThemTests(unittest.TestCase):

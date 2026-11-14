@@ -72,6 +72,7 @@ class Observability:
         cache_written_tokens: int = 0,
         language: str = "",
         by_user: bool = False,
+        module: str = "",
     ) -> None:
         total = int(input_tokens) + int(output_tokens)
         if self.store is not None:
@@ -87,7 +88,7 @@ class Observability:
                     estimated_cost=estimated_cost,
                     cached_input_tokens=cached_input_tokens,
                     cache_written_tokens=cache_written_tokens, language=language,
-                    by_user=by_user)
+                    by_user=by_user, module=module)
             except Exception:        # pragma: no cover - measurement, not work
                 log.debug("could not write a model call", exc_info=True)
         from ..modules import module_name, module_of
@@ -97,8 +98,8 @@ class Observability:
             "model": model,
             "task": task,
             # Its module, and whether the user started it: for the chart.
-            "module": module_of(task, by_user),
-            "module_name": module_name(module_of(task, by_user)),
+            "module": module_of(task, by_user, module),
+            "module_name": module_name(module_of(task, by_user, module)),
             "input_tokens": int(input_tokens),
             "output_tokens": int(output_tokens),
             "cached_input_tokens": int(cached_input_tokens or 0),

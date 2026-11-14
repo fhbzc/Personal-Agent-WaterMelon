@@ -52,7 +52,63 @@ class PrivacyFilter:
 
     # -- category level -----------------------------------------------------
     def monitoring_enabled(self) -> bool:
-        return bool(self.config.get("listener_enabled", True))
+        # PRIVATE MODE (the user, 2026-11-12): nothing recorded until it is turned off - every
+        # provider stopped as monitoring off stops them (manager.apply_settings).
+        from ...common.privacy_folders import recording
+        return recording(self.config)
+
+    # -- the privacy folders (common/privacy_folders.py) --------------------------------------
+    #: What an event about a file in one keeps of it: the folder's name, nothing from inside.
+    CONTENT_KEYS = ("content", "content_cut", "content_chars", "content_from", "content_of",
+                    "excerpt", "text", "preview")
+
+    def to_privacy_folder(self, event: ListenerEvent) -> Optional[str]:
+        """An event about something in a privacy folder made into one about the folder alone:
+        each path the outermost folder or file the user added, whatever was read of it
+        dropped, a window's title its name. A window showing one is not read: its text and
+        pictures are refused ("privacy_folder"). None when the event is kept."""
+        from ...common.privacy_folders import covering, names_private
+        if not self.config.lines("listener_privacy_paths"):
+            return None
+        data: Dict[str, Any] = event.data if isinstance(event.data, dict) else {}
+        kind = str(event.event_type)
+        title_root = None
+        for key in ("window_title", "while_showing", "title"):
+            if isinstance(data.get(key), str) and data.get(key):
+                title_root = title_root or names_private(data[key], self.config)
+        if title_root is not None and kind.startswith("screen."):
+            return "privacy_folder"
+        touched = False
+        for key in ("path", "source_path", "destination_path"):
+            root = covering(data.get(key), self.config) if data.get(key) else None
+            if root is not None:
+                data[key] = str(root)
+                touched = True
+        url = data.get("url")
+        if isinstance(url, str) and url.lower().startswith("file:"):
+            from urllib.parse import unquote, urlparse
+            local = unquote(urlparse(url).path or "")
+            if os.name == "nt":
+                local = local.lstrip("/")
+            root = covering(local, self.config) if local else None
+            if root is not None:
+                data["url"] = root.as_uri()
+                for key in ("page_title", "title"):
+                    if key in data:
+                        data[key] = root.name
+                touched = True
+        if title_root is not None:
+            for key in ("window_title", "while_showing", "title"):
+                if isinstance(data.get(key), str) and data.get(key):
+                    data[key] = title_root.name or str(title_root)
+            touched = True
+        if touched:
+            for key in self.CONTENT_KEYS:
+                data.pop(key, None)
+            data["content_withheld"] = "in a privacy folder: only its name is kept"
+            data["privacy_folder"] = True
+            event.data = data
+        return None
 
     def category_enabled(self, category: str) -> bool:
         if not self.monitoring_enabled():
@@ -276,8 +332,18 @@ class PrivacyFilter:
     def refusal(self, event: ListenerEvent, category: str, *,
                 trusted_screenshot_root: Optional[Path] = None) -> Optional[str]:
         """The blocking rule, without retaining content the user excluded."""
+        # A PRIVATE WEB PAGE - its site asking (agent-private-mode), or at one of the user's
+        # private addresses: nothing of it kept, whatever the screen was last judged to show.
+        from ...common.privacy_folders import private_page_of
+        if private_page_of(event.data or {}, self.config):
+            return "private_page"
+        if self.monitoring_enabled() is False and bool(self.config.get("listener_enabled", True)):
+            return "private_mode"
         if not self.category_enabled(category):
             return "switch_off"
+        held = self.to_privacy_folder(event)
+        if held is not None:
+            return held
         if not self.application_allowed(event.application):
             return "application_list"
         data: Dict[str, Any] = event.data or {}
@@ -326,6 +392,8 @@ class PrivacyFilter:
     def describe(self) -> Dict[str, Any]:
         return {
             "monitoring_enabled": bool(self.config.get("listener_enabled", True)),
+            "private_mode": bool(self.config.get("listener_private_mode", False)),
+            "privacy_paths": self.config.lines("listener_privacy_paths"),
             "categories": {name: self.category_enabled(name) for name in CATEGORY_SETTINGS},
             "application_allowlist": self.config.lines("listener_application_allowlist"),
             "application_denylist": self.config.lines("listener_application_denylist"),

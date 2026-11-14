@@ -7,9 +7,9 @@ bubbles, beside it, with what was said in it - selectable - and a box to
 write in: Enter sends, Shift+Enter starts a new line. What is sent goes to
 the same conversation the chat page has (`agent.handle_message`), on a
 thread of its own - the avatar is never held up while the agent thinks -
-and the answer comes back on Tk's thread (`post`). "Open the full chat"
-opens the page on that conversation. Pressed again while it is open, the
-avatar puts the writing back in it.
+and the answer comes back on Tk's thread (`post`). No link to the full chat
+page in it (the user, 2026-11-09: "chat里不需要open the full chat"). Pressed
+again while it is open, the avatar puts the writing back in it.
 
 MINIMISED TO A BAR, CLOSED FOR A NEW ONE (the user, 2026-11-03: "要有最小化
 功能，最小化之后是一个bar, expand之后内容不会丢，点击关闭之后再打开就是一个新的
@@ -138,9 +138,14 @@ ZOOMS, ZOOM_START = sizes.ZOOMS, sizes.ZOOM_START
 #: The smallest it is dragged to; its rim, where its edges are taken; and the
 #: pointer over each edge and corner.
 LEAST, RIM = (300, 160), 7
+#: AT THE CORNERS, THE SYSTEM'S OWN DIAGONAL POINTER (the user, 2026-11-09: "左下角右下角那个为什么不用和
+#: 其他边框拉动大小一样的鼠标"): on Windows the X corner cursors were brackets, unlike any window's.
+_NW_SE, _NE_SW = (("size_nw_se", "size_ne_sw") if sys.platform.startswith("win")
+                  else ("top_left_corner", "top_right_corner"))
 EDGES = {"w": "sb_h_double_arrow", "e": "sb_h_double_arrow", "n": "sb_v_double_arrow",
-         "s": "sb_v_double_arrow", "nw": "top_left_corner", "ne": "top_right_corner",
-         "sw": "bottom_left_corner", "se": "bottom_right_corner"}
+         "s": "sb_v_double_arrow", "nw": _NW_SE, "ne": _NE_SW,
+         "sw": _NE_SW if sys.platform.startswith("win") else "bottom_left_corner",
+         "se": _NW_SE if sys.platform.startswith("win") else "bottom_right_corner"}
 
 
 #: How far from the avatar a bubble stands, and from the screen's edges.
@@ -407,7 +412,7 @@ class ChatBubble:
         card = tk.Frame(rim, bg=LOOK["bg"], padx=sizes.px(self.root, 14) - rim_px,
                         pady=sizes.px(self.root, 12) - rim_px)
         card.pack(fill="both", expand=True, padx=rim_px, pady=rim_px)
-        # Its line: who it is with; the full chat; ✕.
+        # Its line: who it is with; minimise; ✕.
         head = self.head = tk.Frame(card, bg=LOOK["bg"])
         head.pack(fill="x")
         dot = tk.Canvas(head, width=10, height=10, bg=LOOK["bg"], highlightthickness=0, bd=0)
@@ -428,10 +433,6 @@ class ChatBubble:
         self._close_label = close
         on_release(self.fold, self._fold_or_open)
         self._draw_fold()
-        full = tk.Label(head, text=self.words("Open the full chat"), bg=LOOK["bg"],
-                        fg=LOOK["muted"], font=self._font(-2, underline=True), cursor="hand2")
-        full.pack(side="right", padx=(0, 10))
-        on_release(full, self._open_full)
         self._line_parts = (head, dot, title)
         self._mark_line()
         for one in (head, dot, title):
@@ -681,9 +682,53 @@ class ChatBubble:
 
     def _focus(self) -> None:
         try:
+            self._take_the_keys()
             self.window.focus_force()
             self.box.focus_set()
         except tk.TclError:
+            pass
+        # WRITTEN IN AT ONCE, NO MOUSE (the user, 2026-11-13: "快捷键打开chat的时候，自动获取焦点（也就是我不用移鼠标)"):
+        # asked again a moment after, when the system had not given it yet.
+        try:
+            self.window.after(150, self._focus_again)
+        except (tk.TclError, AttributeError):
+            pass
+
+    def _focus_again(self) -> None:
+        try:
+            if self.window is not None and self.window.focus_get() is None:
+                self._take_the_keys()
+                self.window.focus_force()
+                self.box.focus_set()
+        except (KeyError, tk.TclError):
+            pass
+
+    def _take_the_keys(self) -> None:
+        """ON WINDOWS, THE KEYS TO IT: a program in the background is not let bring its window in front -
+        Tk's own asking was let fall, the keys left with the window before. Its input joined a moment to
+        the one in front, it may (as platform_layer/wechat_open.py does)."""
+        import os
+        if not sys.platform.startswith("win") or os.environ.get("PA_NO_DIALOGS"):
+            return                                       # under the tests: never the screen's keys
+        try:
+            import ctypes
+            user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+            self.window.update_idletasks()
+            handle = user32.GetParent(self.window.winfo_id()) or self.window.winfo_id()
+            front = user32.GetForegroundWindow()
+            if front == handle:
+                return
+            theirs = user32.GetWindowThreadProcessId(front, None)
+            mine = kernel32.GetCurrentThreadId()
+            joined = theirs and theirs != mine and user32.AttachThreadInput(mine, theirs, True)
+            try:
+                user32.SetForegroundWindow(handle)
+                user32.BringWindowToTop(handle)
+                user32.SetFocus(handle)
+            finally:
+                if joined:
+                    user32.AttachThreadInput(mine, theirs, False)
+        except Exception:                                # pragma: no cover - Tk's own asking, then
             pass
 
     def _place(self, near: Optional[tuple]) -> None:
@@ -854,10 +899,6 @@ class ChatBubble:
         self._asked_geometry = f"+{x}+{y}"
         if getattr(self, "_geometry_due", None) is None:
             self._geometry_due = self.window.after_idle(self._give_geometry)
-
-    def _open_full(self) -> None:
-        self.open_full(self.conversation_id)
-        self.close()
 
     # -- talking ---------------------------------------------------------------------------
     def _enter(self, event: Any) -> str:
@@ -1096,13 +1137,37 @@ class ChatBubble:
             row.pack_forget()
         else:
             words = self.words("On your screen, given as context: {0}").replace("{0}", line[:110])
+            # ONE LINE, CUT TO FIT (the user, 2026-11-11: "窗口名不一样长也会导致chat不断变化"): a
+            # longer title wrapped to two, a shorter one back to one - the bubble's height changed
+            # at every switch of window.
+            font = self._font(-2)
             # NO ✕ (the user, 2026-11-08: "on your screen, given XX as context 这个，不用叉叉"): what is in
             # front is told, not to be taken off here.
-            tk.Label(row, text=words, bg=LOOK["bg"], fg=LOOK["muted"], font=self._font(-2),
-                     wraplength=self.width - 40, justify="left", anchor="w").pack(
-                side="left", fill="x", expand=True)
+            shown = tk.Label(row, text=self._cut_to(words, font, self.width - 40), bg=LOOK["bg"],
+                             fg=LOOK["muted"], font=font, justify="left", anchor="w")
+            shown.pack(side="left", fill="x", expand=True)
             self._place_front()
-        self._fit()
+        # NOT SCROLLED TO THE END (the user, 2026-11-11: "我做一个屏幕/窗口的切换他就会自动拖到chat的
+        # 最底下"): a window switched to is no reason to move what they are reading.
+        self._fit(to_end=False)
+
+    def _cut_to(self, words: str, font: Any, room: int) -> str:
+        """`words` as one line of at most `room` pixels: cut, and "…" said so."""
+        from tkinter import font as tkfont
+        try:
+            measure = tkfont.Font(root=self.window, font=font).measure
+            if measure(words) <= room:
+                return words
+            low, high = 0, len(words)
+            while low < high:                    # the longest beginning that fits with "…"
+                middle = (low + high + 1) // 2
+                if measure(words[:middle].rstrip() + "…") <= room:
+                    low = middle
+                else:
+                    high = middle - 1
+            return words[:low].rstrip() + "…"
+        except tk.TclError:                      # pragma: no cover - as it was
+            return words
 
     def _place_front(self) -> None:
         """RIGHT UNDER ITS HEAD, always (the user, 2026-11-05: over Send one moment, under the
@@ -1290,6 +1355,8 @@ class ChatBubble:
             answer = self.words("It could not answer:") + " " + str(said["error"])
         self._write(self.name, "agent", "")
         self._write_reply(answer or "…", "fast" if said.get("layer") == "fast" else "")
+        if not said.get("layer"):
+            self._write_said("end-1c", list(said.get("actions") or []))
         self.button.configure(bg=LOOK["primary"], fg=LOOK["on_primary"])
         self._focus()
 
@@ -1340,14 +1407,19 @@ class ChatBubble:
             return
         answer = str(done.get("answer") or done.get("error") or "").strip()
         did = done.get("did") or {}
+        actions = list(done.get("actions") or []) or self._did_words(did)
         said.configure(state="normal")
+        at = said.index(found[0])
         said.delete(found[0], found[1])
-        if answer or did:
-            title = " · ".join(
-                [*self._did_words(did),
-                 *([self.words("A correction" if done.get("kind") == "correction" else "More detail")]
-                   if answer else [])])
-            at = said.index(found[0])
+        # NEVER FOLDED (the user, 2026-11-09): what it did, in small grey words - after its fold's
+        # line, in the order they come (a mark that moves on past each thing written at it).
+        said.mark_set("fold_said", at)
+        said.mark_gravity("fold_said", "right")
+        if answer:
+            title = self.words("A correction" if done.get("kind") == "correction" else "More detail")
+            # QUESTIONS TO ANSWER (the user, 2026-11-09): said on its line, so that it is opened.
+            if done.get("asks"):
+                title += " · " + self.words("Questions to answer")
             said.tag_configure(head, foreground=LOOK["slow"], font=self._font(-1, "bold"),
                                underline=True)
             said.tag_configure(body, foreground=LOOK["slow"], elide=True)
@@ -1359,6 +1431,20 @@ class ChatBubble:
             said.tag_bind(head, "<Button-1>", lambda _e: self._fold_toggle(body))
             said.tag_bind(head, "<Enter>", lambda _e: said.configure(cursor="hand2"))
             said.tag_bind(head, "<Leave>", lambda _e: said.configure(cursor="xterm"))
+        said.configure(state="disabled")
+        self._write_said("fold_said", actions)
+        said.mark_unset("fold_said")
+        self._fit()
+
+    def _write_said(self, at: str, actions: list) -> None:
+        """WHAT IT DID, a small grey line each - written at `at`, in the conversation itself."""
+        if not actions:
+            return
+        said = self.said
+        said.tag_configure("action", foreground=LOOK["muted"], font=self._font(-2))
+        said.configure(state="normal")
+        for line in actions:
+            said.insert(at, "\n" + str(line), ("action",))
         said.configure(state="disabled")
         self._fit()
 
@@ -1450,6 +1536,21 @@ class ChatBubble:
         self._fit()
         if sees is not None:
             self.picture_settled("sent" if sees else "words")
+
+    def picture_withheld(self, why: str) -> None:
+        """NO PICTURE OF THE SCREEN WENT WITH THE MESSAGE, under it, and why (the user, 2026-11-12):
+        private mode, or a file in a privacy folder open - none was taken."""
+        if not self.is_open or "sent_end" not in self.said.mark_names():
+            return
+        said = self.said
+        tag = "sent_withheld"
+        said.tag_configure(tag, foreground=LOOK["muted"], font=self._font(-2))
+        said.configure(state="normal")
+        line = self.words("No picture of your screen went with it") + f" ({self.words(why)})"
+        said.insert("sent_end", line + "\n", (tag,))
+        said.configure(state="disabled")
+        said.mark_unset("sent_end")
+        self._fit()
 
     def picture_settled(self, how: str, why: str = "") -> None:
         """What became of the picture last shown: "sent", "words" (only its words: the model sees

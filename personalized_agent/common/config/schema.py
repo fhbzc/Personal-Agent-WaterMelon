@@ -461,8 +461,8 @@ SETTINGS_SCHEMA: List[SettingField] = [
                  "Answer at once with a small model, and let the full agent add to it below. "
                  "Off: every message waits for the full agent."),
     SettingField("chat_fast_model", "Quick reply model", "string", "", "Models",
-                 "The small model that answers at once in Chat. Empty means: Claude Haiku on "
-                 "Claude, otherwise the model the chat runs on. Format: provider/model."),
+                 "The small model that answers at once in Chat. Empty means: the model the chat "
+                 "runs on, at its lowest thinking effort. Format: provider/model."),
     SettingField("heartbeat_model_override", "Heartbeat model override", "string", "", "Models",
                  "Model used for the periodic background heartbeat instead of the "
                  "primary model. A cheaper model here reduces the cost of work you "
@@ -790,6 +790,15 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
                  hidden=True),
     SettingField("module_monitor_enabled", "Monitor", "bool", True, "Modules",
                  "The real-time signals and the Activators run on them.", hidden=True),
+    SettingField("module_agenda_enabled", "The day's plan", "bool", True, "Modules",
+                 "Everything on your plate sorted and planned into your day, with its reminders.",
+                 hidden=True),
+    SettingField("module_agenda_work_enabled", "Work the plan hands to the agent", "bool", True,
+                 "Modules", "The plan's things the agent can do, started when their time comes.",
+                 hidden=True),
+    SettingField("module_learning_enabled", "Learning from your answers", "bool", True,
+                 "Modules", "Lessons learned from what you do with what the agent tells you.",
+                 hidden=True),
     # THE MONITOR (heartbeat/monitor/, the user, 2026-11-03).
     SettingField("monitor_tick_seconds", "Look at what you are doing every (s)", "int", 10,
                  "Monitor", "How often the signals are read and the Activators run.",
@@ -1027,6 +1036,21 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
                  "activity - which is what makes watching a whole home directory "
                  "practical. Add your own with the picker.",
                  chooser="directory"),
+    # TWO PRIVACY PROTECTIONS (the user, 2026-11-12; common/privacy_folders.py).
+    SettingField("listener_privacy_paths", "Privacy folders, files and web addresses", "multiline",
+                 "", "Listener",
+                 "Folders and files whose contents the agent never reads. The monitor "
+                 "records only the name of the folder or file added here - never a name "
+                 "inside it, never what is in it; no search reads it; and while one of its "
+                 "files is open (its name in a window's title), no picture of the screen is "
+                 "taken at all and that window is not read. A web address (https://...) "
+                 "does the same for every page under it: never read, and no picture while "
+                 "one is open - as for a page whose own site asks agents not to watch it.",
+                 chooser="place"),
+    SettingField("listener_private_mode", "Private mode", "bool", False, "Listener",
+                 "On: nothing of your activity is recorded - no screen read or pictured, no "
+                 "file recorded - until it is turned off. Turned on and off from the "
+                 "avatar's right-click menu; the watermelon is red meanwhile.", hidden=True),
     SettingField("listener_only_while_present", "Only while you are here", "bool",
                  True, "Listener",
                  "Record file activity only when the keyboard or mouse has been "
@@ -1177,6 +1201,13 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
                  "risks the same warning arriving repeatedly. Section 91 deduplication "
                  "window.",
                  minimum=60, maximum=604800),
+    # FOR YOUR APPROVAL, TOGETHER (the user, 2026-11-12: "default现在是早中晚3次"; agent/approvals.py).
+    SettingField("approval_summary_times", "Summaries of what waits for your approval, at",
+                 "string", "08:00, 12:00, 18:00", "Notifications",
+                 "When the agent shows you, in one summary, everything waiting for your approval - "
+                 "one or more times of day, in this computer's time zone. Between them nothing "
+                 "asks you one by one, except what is due before the next time. You can also tell "
+                 "the agent in the chat."),
     SettingField("quiet_hours", "Quiet hours", "string", "", "Notifications",
                  "A daily period during which nothing is delivered; anything raised "
                  "then waits until the period ends. Example: 22:00-08:00. Empty "

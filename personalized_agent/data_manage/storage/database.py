@@ -9,13 +9,31 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import threading
+import time
+import traceback
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 
 log = logging.getLogger(__name__)
+
+#: A WRITE HOLDING THE DATABASE THIS LONG IS SAID IN THE LOG, with what was doing it - in a build
+#: with the Debugger only (the user, 2026-11-11: "对debugger版本可以": a draft's process could not
+#: write for over 30 s - "database is locked" - and nothing said what held it).
+SLOW_WRITE_SECONDS = 5.0
+#: Set in a run's or a draft's own process (agent/work/runner.py CHILD_ENV): said with the write.
+CHILD_ENV = "PA_WORK_CHILD"
+
+
+def _watching_writes() -> bool:
+    try:
+        from ...build_flags import debugger_available
+        return debugger_available()
+    except Exception:                       # pragma: no cover - not watched, then
+        return False
 
 
 class Database:
@@ -24,6 +42,7 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
         self._write_lock = threading.RLock()
+        self._watch_writes = _watching_writes()
         self._init_schema()
 
     # -- connections --------------------------------------------------------
@@ -43,12 +62,44 @@ class Database:
     def write(self) -> Iterator[sqlite3.Connection]:
         with self._write_lock:
             conn = self.connection
+            depth = getattr(self._local, "depth", 0)
+            self._local.depth = depth + 1
+            began = time.monotonic()
+            ended = ""
             try:
                 yield conn
                 conn.commit()
-            except Exception:
+            except Exception as exc:
+                ended = f"{type(exc).__name__}: {exc}"[:200]
                 conn.rollback()
                 raise
+            finally:
+                self._local.depth = depth
+                if not depth and self._watch_writes:
+                    held = time.monotonic() - began
+                    if held >= SLOW_WRITE_SECONDS:
+                        self._slow_write(held, ended)
+
+    def _slow_write(self, held: float, ended: str) -> None:
+        """The write that took `held` seconds said: by which process and thread, from where in
+        the code - one that ended in "database is locked" was the one waiting, not the one
+        holding."""
+        here = os.path.normcase(os.path.abspath(__file__))
+        # THE PROJECT'S OWN CODE - under the folder that holds the package, whatever that folder is
+        # called (a copy in ~/v1113_test said "?"), libraries installed there left out.
+        root = os.path.normcase(str(Path(__file__).resolve().parents[3])) + os.sep
+
+        def ours(name: str) -> bool:
+            path = os.path.normcase(os.path.abspath(name))
+            return path.startswith(root) and path != here \
+                and "site-packages" not in path and "dist-packages" not in path
+        frames = [one for one in traceback.extract_stack()[:-1] if ours(one.filename)]
+        where = " < ".join(f"{Path(one.filename).name}:{one.lineno} {one.name}"
+                           for one in reversed(frames[-6:]))
+        log.warning("a database write took %.1f s in %s %d, thread %s%s: %s", held,
+                    "a work child" if os.environ.get(CHILD_ENV) else "the application",
+                    os.getpid(), threading.current_thread().name,
+                    f", ending in {ended}" if ended else "", where or "?")
 
     def execute(self, sql: str, params: Sequence[Any] = ()) -> sqlite3.Cursor:
         with self.write() as conn:
@@ -227,6 +278,14 @@ class Database:
 #: SQLite can only add a column with a constant default, which is why each of
 #: these is nullable rather than NOT NULL.
 ADDED_COLUMNS = (
+    # A to-do the agent suggests is done or no longer wanted, turned down; renamed (2026-11-09).
+    ("todo_items", "suggested_kind", "TEXT NOT NULL DEFAULT ''"),
+    ("todo_items", "suggested_at", "TEXT NOT NULL DEFAULT ''"),
+    ("todo_items", "suggested_why", "TEXT NOT NULL DEFAULT ''"),
+    ("todo_items", "suggested_from", "TEXT NOT NULL DEFAULT '[]'"),
+    ("todo_items", "declined_at", "TEXT NOT NULL DEFAULT ''"),
+    ("todo_items", "declined_why", "TEXT NOT NULL DEFAULT ''"),
+    ("todo_items", "renamed_from", "TEXT NOT NULL DEFAULT ''"),
     # A lesson's example: its class, its exact content, its English (the user,
     # 2026-11-03: the lessons kept as learning keeps its work).
     ("lesson_evidence", "category", "TEXT NOT NULL DEFAULT ''"),
@@ -267,6 +326,8 @@ ADDED_COLUMNS = (
     ("model_calls", "language", "TEXT DEFAULT ''"),
     # Whether the user started the run it was made in, with a button.
     ("model_calls", "by_user", "INTEGER DEFAULT 0"),
+    # The module it was made for, where its run said so: the day's plan's own work.
+    ("model_calls", "module", "TEXT DEFAULT ''"),
     # A project the user made of several folders.
     ("experience_workspaces", "paths", "TEXT DEFAULT '[]'"),
     # The cutoff of a run of a project the user made that has not finished -
@@ -341,6 +402,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_wechat_capture_position ON listener_wechat
 CREATE INDEX IF NOT EXISTS idx_wechat_capture_content ON listener_wechat_captures(content_key);
 CREATE INDEX IF NOT EXISTS idx_context_uses_linked ON context_uses(linked, created_at);
 CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project_id);
+-- THE COLUMNS THAT POINT AT A ROW DELETED (2026-11-12): with foreign keys on, a raw event deleted had
+-- every WeChat capture and observation read to set its link to nothing - a few thousand rows deleted,
+-- tens of millions read, the write lock held all the while, and quitting waited behind it.
+CREATE INDEX IF NOT EXISTS idx_wechat_capture_event ON listener_wechat_captures(source_event_id);
+CREATE INDEX IF NOT EXISTS idx_wechat_observation_event ON listener_wechat_observations(source_event_id);
+CREATE INDEX IF NOT EXISTS idx_wechat_observation_capture ON listener_wechat_observations(capture_id);
+CREATE INDEX IF NOT EXISTS idx_wechat_alias_capture ON listener_wechat_message_aliases(capture_id);
 """
 
 
@@ -1195,7 +1263,9 @@ CREATE TABLE IF NOT EXISTS model_calls (
     -- Which language it was told to write in: JSON rows, "" when not told.
     language       TEXT DEFAULT '',
     -- 1 when the user started the run it was made in, with a button.
-    by_user        INTEGER DEFAULT 0
+    by_user        INTEGER DEFAULT 0,
+    -- The module it was made for, where its run said so (the day's plan's own work).
+    module         TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_model_calls_when ON model_calls(created_at);
 CREATE INDEX IF NOT EXISTS idx_model_calls_task ON model_calls(task, created_at);
@@ -1380,7 +1450,101 @@ CREATE TABLE IF NOT EXISTS todo_items (
     done_at         TEXT NOT NULL DEFAULT '',
     done_by         TEXT NOT NULL DEFAULT '',
     done_why        TEXT NOT NULL DEFAULT '',
-    deleted_at      TEXT NOT NULL DEFAULT ''
+    deleted_at      TEXT NOT NULL DEFAULT '',
+    -- DONE, OR NO LONGER WANTED, the agent suggests (the user, 2026-11-09): never done by it;
+    -- "Mark as done" or "Remove" offered with its why. Turned down, done is said again only after
+    -- clear progress since (heartbeat/core/todo_check.py).
+    suggested_kind  TEXT NOT NULL DEFAULT '',
+    suggested_at    TEXT NOT NULL DEFAULT '',
+    suggested_why   TEXT NOT NULL DEFAULT '',
+    suggested_from  TEXT NOT NULL DEFAULT '[]',
+    declined_at     TEXT NOT NULL DEFAULT '',
+    declined_why    TEXT NOT NULL DEFAULT '',
+    -- Its words as first written, when it was renamed to name who it is about.
+    renamed_from    TEXT NOT NULL DEFAULT ''
+);
+-- THE DAY'S AGENDA (the user, 2026-11-09: "对所有我的activity, agent要进行安排 ... 给我安排线性的日程"):
+-- every thing on the user's plate, gathered from where it is kept (heartbeat/agenda/items.py) -
+-- one row for each, by where it came from and its id there; what the model said of it (`triage`)
+-- kept with the words it said it of, said again only when they change.
+CREATE TABLE IF NOT EXISTS agenda_items (
+    id           TEXT PRIMARY KEY,
+    source       TEXT NOT NULL,
+    ref_id       TEXT NOT NULL,
+    title        TEXT NOT NULL DEFAULT '',
+    detail       TEXT NOT NULL DEFAULT '',
+    fixed_at     TEXT NOT NULL DEFAULT '',
+    place        TEXT NOT NULL DEFAULT '',
+    project      TEXT NOT NULL DEFAULT '',
+    status       TEXT NOT NULL DEFAULT 'open',
+    fingerprint  TEXT NOT NULL DEFAULT '',
+    triage       TEXT NOT NULL DEFAULT '{}',
+    triaged_for  TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    closed_at    TEXT NOT NULL DEFAULT '',
+    UNIQUE (source, ref_id)
+);
+-- Each agenda made: the plan, what the code's check found, what the reviewer said, round by round.
+CREATE TABLE IF NOT EXISTS agenda_plans (
+    id           TEXT PRIMARY KEY,
+    day          TEXT NOT NULL,
+    made_at      TEXT NOT NULL,
+    why          TEXT NOT NULL DEFAULT '',
+    plan         TEXT NOT NULL DEFAULT '{}',
+    checked      TEXT NOT NULL DEFAULT '{}',
+    review       TEXT NOT NULL DEFAULT '{}',
+    rounds       TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_agenda_plans_day ON agenda_plans(day, made_at);
+-- THE USER'S WORD ON THE PLAN (phase 2, heartbeat/agenda/act.py): each thing they marked done, put
+-- off, handed to the agent or took back, let go, gave more time - with the plan it was said of: the
+-- reviewer's cases of how they change a plan.
+-- WHAT THE AGENT CLEARED AWAY (phase 3, heartbeat/agenda/execute.py; the user, 2026-11-09: "agent现在允许
+-- 直接删除to do, 清理work assigned之类"): each with why, undone within a week.
+CREATE TABLE IF NOT EXISTS agenda_cleared (
+    id         TEXT PRIMARY KEY,
+    at         TEXT NOT NULL,
+    item_id    TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    ref_id     TEXT NOT NULL,
+    title      TEXT NOT NULL DEFAULT '',
+    why        TEXT NOT NULL DEFAULT '',
+    undone_at  TEXT NOT NULL DEFAULT ''
+);
+-- HOW LONG A THING REALLY TOOK (phase 4, heartbeat/agenda/plan.py, learn_times): the minutes it was
+-- given and the minutes from its block's start to its being done - by kind of work, for the next
+-- sorting's "minutes".
+CREATE TABLE IF NOT EXISTS agenda_estimates (
+    item_id   TEXT PRIMARY KEY,
+    at        TEXT NOT NULL,
+    kind      TEXT NOT NULL DEFAULT '',
+    planned   INTEGER NOT NULL DEFAULT 0,
+    actual    INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS agenda_feedback (
+    id        TEXT PRIMARY KEY,
+    at        TEXT NOT NULL,
+    item_id   TEXT NOT NULL,
+    title     TEXT NOT NULL DEFAULT '',
+    action    TEXT NOT NULL,
+    detail    TEXT NOT NULL DEFAULT '',
+    plan_id   TEXT NOT NULL DEFAULT '',
+    by        TEXT NOT NULL DEFAULT 'page'
+);
+-- THE THREE KINDS, BY KIND OF WORK (the user, 2026-11-09: "agent做一些，人类现在审批，之后可以完全delegate
+-- agent的 ... 人类现在和之后都要审批的 ... 人的deep work, agent作为辅助的 ... 可以interative 调整"): what
+-- each kind of work is - delegable, approve, human - and who said so; for a delegable kind, how
+-- often the user approved the agent's work as it was and how often they changed it, and when they
+-- handed it over for good (never by the agent alone).
+CREATE TABLE IF NOT EXISTS agenda_modes (
+    kind          TEXT PRIMARY KEY,
+    mode          TEXT NOT NULL,
+    set_by        TEXT NOT NULL DEFAULT 'agent',
+    approved      INTEGER NOT NULL DEFAULT 0,
+    changed       INTEGER NOT NULL DEFAULT 0,
+    handed_over_at TEXT NOT NULL DEFAULT '',
+    updated_at    TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS rec_feedback (
     id          TEXT PRIMARY KEY,

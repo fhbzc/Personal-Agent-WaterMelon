@@ -18,6 +18,7 @@
      opened from the shortcut, it looked like the home page first. -->
 <script>if (/[?&]solo=delegate(&|$)/.test(location.search)) document.documentElement.classList.add("delegate-solo");
 if (/[?&]solo=learn(&|$)/.test(location.search)) document.documentElement.classList.add("learn-solo");
+if (/[?&]solo=report(&|$)/.test(location.search)) document.documentElement.classList.add("report-solo");
 /* The panels' list folded away as it was left, from the first frame (app.js). */
 try { if (localStorage.getItem("side-closed") === "true") document.documentElement.classList.add("side-closed"); } catch (_) { /* open, then */ }</script>
 <link rel="stylesheet" href="/styles.css">
@@ -25,11 +26,16 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
 <link rel="stylesheet" href="/look.css">
 </head>
 <body>
+<!-- THE REPORT ALONE, in a window of its own (?solo=report; agent/reports.py). -->
+<section id="report-page" class="report" hidden></section>
+<!-- THE WAITING NOTIFICATIONS, the whole side of the screen (the user, 2026-11-13). -->
+<section id="notes-page" hidden></section>
 <header>
   <h1>WaterMelon</h1>
   <nav id="tabs">
     <button data-tab="overview" class="active">Overview</button>
     <button data-tab="recommend">Newspaper</button>
+    <button data-tab="report">Report</button>
     <button data-tab="collections">Collections</button>
     <button data-tab="calendar">Calendar</button>
     <button data-tab="connections">Connections</button>
@@ -67,6 +73,8 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
 <main>
   <!-- ------------------------------------------------------- Overview -->
   <section id="overview" class="tab active">
+    <!-- THE REPORT'S LATEST, IN A LINE (the user, 2026-11-12): the issue itself in its own tab. -->
+    <div class="card report-line" id="ov-approvals-card" hidden></div>
         <!-- FIRST ON THE PAGE, because it is the answer to the question the
          page is opened with: what am I in the middle of. The numbers
          under it - hours used, pending rows, record counts - are about
@@ -201,6 +209,28 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
         <div class="card rec-main" id="ov-know"><p class="muted">Reading&hellip;</p></div>
       </div>
     </div>
+  </section>
+
+  <!-- ------------------------------------------------------------ Report -->
+  <!-- THE REPORT, LIKE NEWSPAPER (the user, 2026-11-12: "summary要和newspaper一样单独有一个panel, 每个issue of
+       summary都可以让我在上面看和操作"): each issue kept, listed beside it; one read and acted on. -->
+  <section id="report" class="tab">
+    <div class="card report-tab-head">
+      <div class="report-tab-top">
+        <div class="report-tab-left">
+          <div class="ov-lp-buttons">
+            <button type="button" id="report-make">Refresh now</button>
+            <span id="report-when" class="muted"></span>
+          </div>
+          <div class="report-times" id="report-times"></div>
+          <label class="report-notify" id="report-notify-row" hidden><input type="checkbox" id="report-notify">
+            <span>Notify me at these times</span></label>
+        </div>
+        <!-- THE ISSUE CHOSEN, TOP RIGHT (the user, 2026-11-12): the report the whole width below. -->
+        <div class="report-issues" id="report-issues"></div>
+      </div>
+    </div>
+    <div class="card report" id="report-main"><p class="muted">Reading&hellip;</p></div>
   </section>
 
   <!-- ------------------------------------------------- Resource debugger -->
@@ -435,14 +465,28 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
         </div>
         <h3 id="cal-period"></h3>
         <span style="flex:1"></span>
+        <!-- CURRENT OR PLANNED, AND UNDER EITHER A DAY OR A MONTH (the user, 2026-11-09: "day 和month
+             view是在planned/current view 之下的"): what is on the calendar, or that with every
+             thing the agent planned on it (app.js, renderPlanned / renderPlannedDay). -->
+        <div class="cal-views" role="group" aria-label="Which calendar">
+          <button type="button" class="small secondary" data-cal-mode="current">Current</button>
+          <button type="button" class="small secondary" data-cal-mode="planned">Planned</button>
+        </div>
         <div class="cal-views" role="group" aria-label="View">
           <button type="button" class="small secondary" data-cal-view="month">Month</button>
           <button type="button" class="small secondary" data-cal-view="day">Day</button>
         </div>
         <button type="button" class="small" id="cal-add">+ Add event</button>
+        <!-- THE PLANNING BUTTON, ON THE CALENDAR (the user, 2026-11-09: "就把planning 按钮拿过来就行"):
+             held, saying what it does, while the agenda's thread works. -->
+        <button type="button" class="small" id="cal-plan" data-ag-plan>Plan now</button>
+        <span id="cal-plan-status" class="muted"></span>
       </div>
       <div id="calendar-surface"></div>
     </div>
+    <!-- THE PLAN'S DETAILS (app.js, agendaBox): the three kinds, what is at risk, every thing as sorted
+         - its kind changed in place - and what the check and the reviewer said. A preview. -->
+    <div class="card" id="ov-agenda-card"><div id="ov-agenda" class="ag-scope"><p class="muted">Loading the plan&hellip;</p></div></div>
     <!-- WAITING FOR A TIME: what you agreed whose time is not known yet - put
          on the calendar when its time is seen. -->
     <div class="card" id="pending-card">
@@ -706,13 +750,13 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
     <!-- TWO VIEWS (the user, 2026-11-02: "一个view是society的setting, 一个view是
          conversation (default是conversation)"). -->
     <nav class="society-views" aria-label="Society">
-      <button type="button" class="society-view-button on" data-society-view="chats">Conversations
+      <!-- THE INBOX, as an email program's (the user, 2026-11-12): following and recent
+           events are the website's. -->
+      <button type="button" class="society-view-button on" data-society-view="chats">Inbox
         <span class="society-count" id="society-unread" hidden></span></button>
-      <!-- FOLLOWING (the user, 2026-11-02/03): the recent events of those the
-           agent follows, whom it follows, and the user's own events -
-           posted by the user alone. -->
-      <button type="button" class="society-view-button" data-society-view="following">Following
-        <span class="society-count" id="society-events-unread" hidden></span></button>
+      <!-- THE ACCOUNT'S GROUPS (the user, 2026-11-13): written in, made, invited into. -->
+      <button type="button" class="society-view-button" data-society-view="groups">Groups
+        <span class="society-count" id="society-groups-unread" hidden></span></button>
       <button type="button" class="society-view-button" data-society-view="settings">Settings</button>
     </nav>
     <div id="society-view-chats" class="society-view">
@@ -724,17 +768,25 @@ try { if (localStorage.getItem("side-closed") === "true") document.documentEleme
             <ul id="society-offers" class="society-offers" hidden></ul>
           </div>
           <div id="society-found"></div>
-          <div class="society-side-head"><span class="muted">Conversations</span>
+          <div class="society-side-head"><span class="muted">Inbox</span>
             <button type="button" class="small secondary" id="society-collect">Check now</button></div>
           <ul id="society-list" class="society-chats"></ul>
         </aside>
         <section class="society-main" id="society-main">
-          <p class="muted society-pick">Pick a conversation - or search for someone, and Write.</p>
+          <p class="muted society-pick">Pick a thread - or search for someone, and Write.</p>
         </section>
       </div>
     </div>
-    <div id="society-view-following" class="society-view" hidden>
-      <div id="society-following"></div>
+    <div id="society-view-groups" class="society-view" hidden>
+      <div class="society-chat">
+        <aside class="society-side">
+          <div id="society-g-side"></div>
+          <ul id="society-g-list" class="society-chats"></ul>
+        </aside>
+        <section class="society-main" id="society-g-main">
+          <p class="muted society-pick">Pick a group.</p>
+        </section>
+      </div>
     </div>
     <div id="society-view-settings" class="society-view" hidden>
       <div id="society-me"></div>

@@ -73,7 +73,8 @@ class RawHousekeeping:
                 said["kept_first"] = self.before()
             except Exception:            # pragma: no cover - the records still go
                 log.warning("what is kept longer could not be taken first", exc_info=True)
-        said["pruned"] = self.raw_store.prune_older_than(keep_days)
+        said["pruned"] = self.raw_store.prune_older_than(
+            keep_days, going=lambda: not self._stop.is_set())
         swept = self.raw_store.prune_noise(**rules_from(self.config))
         if swept.get("removed"):
             said["swept"] = swept

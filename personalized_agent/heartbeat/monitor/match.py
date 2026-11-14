@@ -275,6 +275,11 @@ def visible_words(data_dir: Any, activity: Any, window: str,
     if report and time.time() - float(report.get("at") or 0) <= VISIBLE_FOR \
             and str(report.get("title") or "\0") in title:
         return str(report.get("text") or ""), "extension"
+    # No picture taken in private mode or while a file in a privacy folder is open (the user,
+    # 2026-11-12).
+    from ...common.privacy_folders import why_no_picture
+    if why_no_picture():
+        return "", ""
     try:
         from ...runtime import documents
         image = activity.front_window_image()

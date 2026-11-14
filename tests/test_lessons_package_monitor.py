@@ -29,9 +29,8 @@ class MonitorCarriedTests(unittest.TestCase):
 
     def test_what_the_user_made_of_it_goes_with_them(self) -> None:
         store = self.here.app.monitor.store
-        store.edit(self._builtin(self.here.app, "old_project")["id"], {"cooldown_minutes": 12},
-                   "user", "fewer looks")
-        store.delete(self._builtin(self.here.app, "leisure")["id"], "user", "rests alone")
+        # A BUILT-IN ONE IS FIXED (2026-11-13): what is the user's of it is its switch.
+        store.switch(self._builtin(self.here.app, "old_project")["id"], False)
         mine, _w = store.add({"name": "Tide tables updated", "group": "other", "purpose": "x",
                               "when": {"event": "back"},
                               "then": [{"do": "notify", "title": "Tides", "message": "New tables"}]},
@@ -41,9 +40,8 @@ class MonitorCarriedTests(unittest.TestCase):
         time.sleep(0.01)
         report = self._carry()
         there = self.there.app
-        self.assertEqual(self._builtin(there, "old_project")["cooldown_minutes"], 12,
-                         "the one the user changed, over the default there")
-        self.assertIsNone(self._builtin(there, "leisure"), "deleted here, deleted there")
+        self.assertFalse(self._builtin(there, "old_project")["enabled"],
+                         "the one the user switched off, off there")
         self.assertIn(mine, [one["id"] for one in there.monitor.store.list()])
         self.assertNotIn(quiet["data"]["name"] if "data" in quiet else quiet.get("name"),
                          [one.get("name") or (one.get("data") or {}).get("name")
@@ -51,15 +49,13 @@ class MonitorCarriedTests(unittest.TestCase):
         self.assertIn("monitor_activator", report["kinds"])
         # Started again there: the change carried says it is the user's, so the default stays off it.
         there.monitor._write_builtins()
-        self.assertEqual(self._builtin(there, "old_project")["cooldown_minutes"], 12)
-        self.assertIsNone(self._builtin(there, "leisure"), "and not written again")
+        self.assertFalse(self._builtin(there, "old_project")["enabled"], "and not switched on again")
 
     def test_what_the_user_changed_there_stays_over_a_default_from_here(self) -> None:
         there = self.there.app
-        there.monitor.store.edit(self._builtin(there, "old_project")["id"],
-                                 {"cooldown_minutes": 45}, "user", "theirs there")
+        there.monitor.store.switch(self._builtin(there, "old_project")["id"], False)
         self._carry()
-        self.assertEqual(self._builtin(there, "old_project")["cooldown_minutes"], 45)
+        self.assertFalse(self._builtin(there, "old_project")["enabled"])
 
     def test_loading_again_changes_nothing(self) -> None:
         self._carry()

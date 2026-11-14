@@ -136,6 +136,65 @@ class DraftsTests(unittest.TestCase):
         self.assertIn("THE PLAN THE USER APPROVED", told[-1])
         self.assertNotIn("plan_unseen", self.app.drafts.get(draft["id"])["options"])
 
+    def _waiting_to_start(self):
+        draft = self.app.drafts.create(text="Read the seminar papers", collect=False)
+        self.app.drafts._set(draft["id"], status=COLLECTING,
+                             options={"start_when_ready": {"way": "auto", "at": "x"}})
+        return draft["id"]
+
+    def test_only_the_application_itself_waits_to_start_a_draft(self) -> None:
+        """2026-11-11: a run's child, building its own application, took up a draft waiting to
+        start, refused it ("a run is already going" - its own) and took the wish to start away
+        from the agent's own wait: the plan's work never started."""
+        from personalized_agent.agent.work.delegate import Drafts
+        from personalized_agent.agent.work.runner import CHILD_ENV
+        draft_id = self._waiting_to_start()
+        with mock.patch.object(Drafts, "_wait_then_start") as waits, \
+                mock.patch.dict(os.environ, {CHILD_ENV: "1"}):
+            Drafts(self.app)
+        waits.assert_not_called()
+        with mock.patch.object(Drafts, "_wait_then_start") as waits, mock.patch.dict(os.environ):
+            os.environ.pop(CHILD_ENV, None)
+            Drafts(self.app)
+        waits.assert_called_once_with(draft_id)
+
+    def test_a_draft_whose_process_ended_in_an_error_is_started_not_waited_on(self) -> None:
+        """2026-11-11: the drafting process could not write even its failure ("database is
+        locked"); the draft stayed "collecting" and the agent waited the full half hour."""
+        from personalized_agent.agent.work.delegate import FAILED
+        draft_id = self._waiting_to_start()
+        self.app.work.in_subprocess = True
+        folder = child.children_dir(self.app.work.paths) / ("draft-" + draft_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / child.REPLY).write_text(json.dumps({"error": "the run could not start: "
+                                                                "database is locked"}), encoding="utf-8")
+        started = []
+        with mock.patch.object(self.app.drafts, "start_apart",
+                               side_effect=lambda draft_id, **kw: started.append(draft_id) or {}):
+            self.app.drafts._when_ready(draft_id, every=0.05, most=5)
+        self.assertEqual(started, [draft_id], "started from what was handed over, at once")
+        kept = self.app.drafts.get(draft_id)
+        self.assertEqual(kept["status"], FAILED)
+        self.assertIn("database is locked", kept["error"])
+
+    def test_a_draft_still_drafting_in_its_process_is_waited_on(self) -> None:
+        draft_id = self._waiting_to_start()
+        self.app.work.in_subprocess = True
+        started = []
+        with mock.patch.object(self.app.drafts, "start_apart",
+                               side_effect=lambda draft_id, **kw: started.append(draft_id) or {}):
+            self.app.drafts._when_ready(draft_id, every=0.05, most=0.3)
+        self.assertEqual(started, [], "no reply yet: still drafting")
+
+    def test_a_new_drafting_process_does_not_read_the_last_ones_reply(self) -> None:
+        draft_id = self._waiting_to_start()
+        folder = child.children_dir(self.app.work.paths) / ("draft-" + draft_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / child.REPLY).write_text(json.dumps({"error": "old"}), encoding="utf-8")
+        with mock.patch("personalized_agent.common.children.popen"):
+            child.spawn_draft(self.app.work, draft_id)
+        self.assertFalse((folder / child.REPLY).exists())
+
     def test_a_document_handed_over_is_read_and_one_missing_said(self) -> None:
         from personalized_agent.agent.work import delegate
         report = self.folder / "seed order.docx"
@@ -194,6 +253,30 @@ class DraftsTests(unittest.TestCase):
         units = self.app.state_heartbeat.experience.work_units()
         mine = [one for one in units if one["id"] == said["unit"]]
         self.assertTrue(mine and mine[0]["delegated"])
+        self.assertIn(str(self.folder), self.app.work.folders(said["unit"]))
+
+    def test_started_by_the_plan_it_writes_in_no_folder_but_its_own(self) -> None:
+        """The user, 2026-11-10: "现在agent只能在自己的work directory里，其它任何动作当前都是需要approve的" -
+        "代码要拦住": the plan's own work is granted no folder, even one its plan named; that one
+        it may read; it never runs outside the sandbox."""
+        self.app.models = _Models(PLAN)
+        draft = self.app.drafts.create(text="Deploy the waiting commits", folders=[str(self.folder)],
+                                       source="agenda", collect=False)
+        self.app.drafts.collect_and_plan(draft["id"])
+        started, read = [], []
+        self.app.work.start = lambda unit, instruction, **kw: (
+            started.append(kw) or {"run": "run_x", "folder": "f"})
+        self.app.work.let_read = lambda unit_id, folders: read.append(list(folders))
+        said = self.app.drafts.start(draft["id"], options={"unconfined": True})
+        self.assertEqual(said["run"], "run_x")
+        self.assertEqual(self.app.work.folders(said["unit"]), [], "no folder granted to write")
+        self.assertEqual(read, [[str(self.folder)]], "the folder its plan named: read only")
+        self.assertNotIn("unconfined", started[0], "never outside the sandbox")
+        # The user's own hand-over of the same folder is granted as before.
+        mine = self.app.drafts.create(text="Tidy these notes", folders=[str(self.folder)],
+                                      collect=False)
+        self.app.drafts.collect_and_plan(mine["id"])
+        said = self.app.drafts.start(mine["id"])
         self.assertIn(str(self.folder), self.app.work.folders(said["unit"]))
 
     def test_given_no_folder_it_writes_in_agent_work_under_its_name(self) -> None:
@@ -577,19 +660,19 @@ class AChildProcessTests(unittest.TestCase):
             def release(self, now=False):
                 done.append(("stop", now))
 
-            def answer(self, request, allow):
-                done.append(("answer", request, allow))
+            def answer(self, request, allow, note=""):
+                done.append(("answer", request, allow, note))
 
         held = child.ChildRun(SimpleNamespace(), self.dir, None, {"run": "run_1"}, {"id": "u"})
         held.alive = lambda: True
         held.pause(why="the computer is short of memory")
-        held.answer("req_1", True)
+        held.answer("req_1", True, note="Do it for the 3pm one")
         held.release(now=True)
         run, seen = _Run(), set()
         for order in child._orders(self.dir, seen):
             child._obey(run, order)
         self.assertEqual(done, [("pause", "the computer is short of memory"),
-                                ("answer", "req_1", True), ("stop", True)])
+                                ("answer", "req_1", True, "Do it for the 3pm one"), ("stop", True)])
         self.assertTrue(run.stop_now)
         self.assertEqual(child._orders(self.dir, seen), [], "each done once")
 

@@ -913,7 +913,7 @@ class PatternBuilder:
             response = self.models.invoke(
                 ModelRequest(messages=[{"role": "user", "content": items}],
                              system=prompt, max_tokens=tokens,
-                             task=model_task(self.store.scope),
+                             task=getattr(self, "task_name", "") or model_task(self.store.scope),
                              # Patterns and principles are grouped from
                              # natures, and kept with them, in English.
                              language=in_english("the patterns and principles"),

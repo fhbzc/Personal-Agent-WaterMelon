@@ -157,7 +157,7 @@ def _render(engine, steps, with_i18n=False):
         probe = Path(work) / "probe.html"
         probe.write_text(page + harness, encoding="utf-8")
         completed = subprocess.run(
-            [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+            [engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
              f"--user-data-dir={work}/profile", "--virtual-time-budget=10000",
              "--window-size=1300,900", "--dump-dom", probe.as_uri()],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
@@ -352,6 +352,47 @@ class SettingsViewsTests(unittest.TestCase):
         self.assertEqual(out["unsent"], 0, "held until Save")
         self.assertEqual(out["sent"], [{"values": {"heartbeat_interval_seconds": 600}}])
         self.assertTrue(out["saveGone"])
+
+    def test_an_avatar_chosen_is_worn_at_once_and_its_name_saved_with_save(self) -> None:
+        """The user, 2026-11-10: "选中新的avatar之后切换" - the avatar is sent as it is chosen, no
+        Save; its name, typed in the same card, shows that card's Save (it had none)."""
+        from unittest import mock
+        chosen = json.loads(json.dumps(SETTINGS))
+        chosen["values"]["character"] = "watermelon"
+        for field in chosen["schema"]:
+            if field["key"] == "character":
+                field.update(type="dynamic_choice", choices_source="characters")
+        chosen["choices"] = {"characters": ["watermelon", "watermelon_flat"]}
+        chosen["choice_labels"]["character"] = {"watermelon": "Watermelon",
+                                                "watermelon_flat": "Flat watermelon"}
+        steps = (
+            "click(document.querySelector('#tabs button[data-tab=\"settings\"]'));"
+            "await loadSettings();await wait();"
+            "const card=document.querySelector('#settings-form-avatar');"
+            "const pick=card.querySelector('select[data-key=\"character\"]');"
+            "out.options=[...pick.options].map(o=>o.textContent);"
+            "pick.value='watermelon_flat';pick.dispatchEvent(new Event('change',{bubbles:true}));"
+            "await wait();"
+            "out.sent=window.__posts.filter(x=>x.p==='/api/settings').map(x=>x.body);"
+            "out.barAfterPick=!card.querySelector('[data-save-bar]').hidden;"
+            "const named=card.querySelector('input[data-key=\"agent_name\"]');"
+            "named.value='Pip';named.dispatchEvent(new Event('input',{bubbles:true}));"
+            "out.barAfterName=!card.querySelector('[data-save-bar]').hidden;"
+            "out.sentBeforeSave=window.__posts.filter(x=>x.p==='/api/settings').length;"
+            "click(card.querySelector('[data-settings-save=\"settings-form-avatar\"]'));"
+            "await wait();"
+            "out.sentAfterSave=window.__posts.filter(x=>x.p==='/api/settings').map(x=>x.body);")
+        with mock.patch(__name__ + ".SETTINGS", chosen):
+            result = _render(self.engine, steps)
+        self.assertEqual(result["err"], "")
+        out = result["out"]
+        self.assertEqual(out["options"], ["Watermelon", "Flat watermelon"])
+        self.assertEqual(out["sent"], [{"values": {"character": "watermelon_flat"}}],
+                         "sent as it is chosen")
+        self.assertFalse(out["barAfterPick"], "no Save for it")
+        self.assertTrue(out["barAfterName"], "the name: its card's Save")
+        self.assertEqual(out["sentBeforeSave"], 1, "the name held until Save")
+        self.assertEqual(out["sentAfterSave"][-1], {"values": {"agent_name": "Pip"}})
 
     def test_starting_at_sign_in_is_on_general(self) -> None:
         """On General, its own card: changed where it stands, Save to keep it."""

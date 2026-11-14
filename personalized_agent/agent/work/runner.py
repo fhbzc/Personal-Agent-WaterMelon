@@ -363,6 +363,9 @@ STOPPED_AT_ONCE = "stopped at once"
 #: One of the two final checks - quality, privacy - still not passed after
 #: its rounds of fixes (`Run._final_checks`): the run ends saying which.
 CHECK_FAILED = "failed a final check"
+#: Set in a run's child process (child.py): its application settles no run - the others are going
+#: in children of their own (2026-11-11).
+CHILD_ENV = "PA_WORK_CHILD"
 CONTINUABLE = (NOT_FINISHED, STALLED, STOPPED_BY_REVIEW, BLOCKED, INTERRUPTED,
                CHECK_FAILED, "needs the thorough way", STOPPED_AT_ONCE, "failed")
 #: THE RUNS THAT DID NOT STOP CLEANLY (the user, 2026-10-26): cut off by the
@@ -1950,6 +1953,21 @@ notebooks, configuration - and, for a program, what it does when it runs:
 
 You can read files and run code (run_python)."""
 
+#: WHAT IT WOULD DO ON ITS OWN, READ BY THE PRIVACY CHECK (the user, 2026-11-11: "一键批准后要发出去或执行
+#: 的内容里，有没有不必要的私人信息"): carried out as written once approved with one click.
+OWN_PLAN_CHECK = """
+
+WHAT IT SAYS IT WOULD DO ON ITS OWN - carried out exactly as written once the user approves it
+with one click: each message sent as it is written, each command run, each thing booked,
+submitted or posted:
+{plan}
+
+CHECK THIS AS CLOSELY AS WHAT IT MADE: any private information - the user's or another real
+person's - in what would be sent, posted, booked, submitted or run that the task did not need:
+a detail the one it goes to has no use for, another person's contact details or messages passed
+on, private file contents quoted, an account, an id or a path that identifies the user. Each one
+is a problem: say which line, and what in it is not needed."""
+
 CHECK_ASK = """THE USER ASKED (their words, verbatim):
 {words}
 
@@ -3034,6 +3052,45 @@ class _NoConfig:
         return default
 
 
+#: Where what a run did on an approved plan is kept, in its folder (`Run._evidence`).
+EVIDENCE_DIR = "evidence"
+
+
+#: A step of a plan: a line begun with a number, or a mark of a list.
+_STEP = re.compile(r"^\s*(?:\d+[.)]|[-*\u2022])\s+")
+#: A step that says what is NOT done: no command of it is approved.
+_NOT = re.compile(r"\b(?:not|never|no|don't|won't|wouldn't|shouldn't|without|instead of)\b|[不别勿未]",
+                  re.IGNORECASE)
+
+
+def plan_commands(plan: str) -> List[str]:
+    """THE COMMANDS AN APPROVED PLAN RUNS: each whole command written in backticks in a step of it
+    - a numbered line, or one of a list - and none from a step that says it is not done."""
+    out: List[str] = []
+    for line in str(plan or "").splitlines():
+        if not _STEP.match(line) or _NOT.search(line):
+            continue
+        for found in re.findall(r"`([^`]+)`", line):
+            said = " ".join(found.split())
+            if len(said) >= 3 and said not in out:
+                out.append(said)
+    return out
+
+
+def plan_mentions(plan: str, token: str) -> bool:
+    """Whether a step of an approved plan names `token` (a draft's id) - not a step saying it is
+    not done."""
+    token = str(token or "").strip()
+    return bool(token) and any(token in line for line in str(plan or "").splitlines()
+                               if _STEP.match(line) and not _NOT.search(line))
+
+
+def in_plan(command: str, plan: str) -> bool:
+    """Whether a command IS one of an approved plan's commands (`plan_commands`) - the whole of it,
+    word for word, spacing aside: not a part of a longer one, not one a step says it would not run."""
+    return " ".join(str(command or "").split()) in plan_commands(plan)
+
+
 class WorkRuns:
     """Starts runs, one at a time, continues them, and reports on them."""
 
@@ -3112,7 +3169,10 @@ class WorkRuns:
         #: application itself, so it is heard with the page closed. Replaced
         #: in tests - which never play one (PA_NO_SOUND, besides).
         self.play_sound = play_end_sound
-        self._settle_interrupted()
+        # ONLY THE APPLICATION ITSELF SETTLES (2026-11-11): a run's child building its own did it
+        # too - and marked interrupted the runs going in the other children.
+        if not os.environ.get(CHILD_ENV):
+            self._settle_interrupted()
 
     def _settle_interrupted(self) -> None:
         """A run that was going when the application last closed: marked
@@ -3516,7 +3576,8 @@ class WorkRuns:
               limits: Any = None, packages: Any = None,
               sound: Any = False, given_room: bool = False,
               unconfined: Any = False, way: Any = FULL,
-              folder: str = "", tree: str = "", attempt: int = 0) -> Dict[str, Any]:
+              folder: str = "", tree: str = "", attempt: int = 0,
+              started_by: str = "") -> Dict[str, Any]:
         """Start a run. `packages` is "ask" - the user approves each install,
         the default - or "auto". `sound`: a sound is played when this
         session ends (see `Run._ring`). `given_room`: started from the
@@ -3549,7 +3610,7 @@ class WorkRuns:
                     return waits
             if self.in_subprocess:
                 tried = {k: v for k, v in (("folder", folder), ("tree", tree),
-                                           ("attempt", attempt)) if v}
+                                           ("attempt", attempt), ("started_by", started_by)) if v}
                 return self._apart("start", unit, instruction=instruction,
                                    limits=limits, packages=packages, sound=sound,
                                    unconfined=unconfined, way=way, **tried)
@@ -3559,6 +3620,9 @@ class WorkRuns:
                       sound=wants_sound(sound), unconfined=unconfined, way=way,
                       tree=str(tree or ""), attempt=int(attempt or 0))
             self._running[run.id] = run
+            if started_by:                   # its calls, by their run: that module's
+                from ...common.observability.started import mark
+                mark("run", run.id, started_by)
             run.start()
             return {"run": run.id, "folder": str(folder), "limits": run.limits,
                     "packages": run.packages_mode, "sound": run.sound,
@@ -3603,7 +3667,8 @@ class WorkRuns:
                      limits: Any = None, packages: Any = None,
                      from_version: str = "", instruction: str = "",
                      sound: Any = False, given_room: bool = False,
-                     unconfined: Any = False) -> Dict[str, Any]:
+                     unconfined: Any = False, started_by: str = "",
+                     approved_plan: str = "") -> Dict[str, Any]:
         """Carry a run on from where it stopped, with new limits - and, if
         `packages` is given, a new choice of asking; else the one it had.
         `sound` is this session's own choice: whether one is played when it
@@ -3655,7 +3720,9 @@ class WorkRuns:
                 return self._apart("continue", unit, run_id=run_id, limits=limits,
                                    packages=packages, from_version=from_version,
                                    instruction=instruction, sound=sound,
-                                   unconfined=unconfined)
+                                   unconfined=unconfined,
+                                   **({"started_by": started_by} if started_by else {}),
+                                   **({"approved_plan": approved_plan} if approved_plan else {}))
             rows = self.db.query("SELECT * FROM work_runs WHERE id = ?", (run_id,))
             if not rows:
                 return {"error": "no such run"}
@@ -3703,8 +3770,12 @@ class WorkRuns:
             run = Run(self, unit, row["instruction"], runtime,
                       limits_of(limits), resumed=row,
                       packages=mode_of(packages) if packages not in (None, "") else None,
-                      amend=instruction, sound=wants_sound(sound), unconfined=unconfined)
+                      amend=instruction, sound=wants_sound(sound), unconfined=unconfined,
+                      approved_plan=approved_plan)
             self._running[run.id] = run
+            if started_by:
+                from ...common.observability.started import mark
+                mark("run", run.id, started_by)
             run.start()
             return {"run": run.id, "folder": row["folder"], "limits": run.limits,
                     "packages": run.packages_mode, "sound": run.sound,
@@ -4322,14 +4393,15 @@ class WorkRuns:
                 if head and row["status"] in GOES_BACK else None}
 
     def approve(self, run_id: str, request_id: str,
-                allow: bool) -> Optional[Dict[str, Any]]:
+                allow: bool, note: str = "") -> Optional[Dict[str, Any]]:
         """The user's answer to a request to install packages. None when
         there is no such run going, or no such request of it; the request
-        as it now stands otherwise - unchanged if it was already settled."""
+        as it now stands otherwise - unchanged if it was already settled.
+        `note`: the user's own words with it (2026-11-12) - told to the run."""
         run = self._running.get(run_id)
         if run is None or not run.alive():
             return None
-        return run.answer(request_id, bool(allow))
+        return run.answer(request_id, bool(allow), note)
 
     def run_states(self) -> List[Dict[str, Any]]:
         """THE RUNS GOING NOW, AND HOW: going, paused or waiting for you -
@@ -5023,6 +5095,7 @@ class Run:
                  resumed: Optional[Dict[str, Any]] = None,
                  packages: Optional[str] = None, amend: str = "",
                  sound: bool = False, unconfined: bool = False,
+                 approved_plan: str = "",
                  way: str = FULL, tree: str = "", attempt: int = 0) -> None:
         from ...heartbeat.experience.stages import StageWriter
         from ...heartbeat.experience.store import ExperienceStore, LIVE
@@ -5214,6 +5287,12 @@ class Run:
         #: user's own work only. Kept with the session, and as the run's now.
         self.unconfined = bool(unconfined) and not self.debug
         self.plan["unconfined"] = self.unconfined
+        # A PLAN THE USER APPROVED, to carry out (`_run_approved`): for this session alone - a run
+        # carried on later without it runs none of its commands.
+        if str(approved_plan or "").strip():
+            self.plan["approved_plan"] = str(approved_plan)[:8000]
+        else:
+            self.plan.pop("approved_plan", None)
         self.plan.setdefault("sessions", []).append(
             {"started": _now(), "limits": limits, "used": self.used,
              "sound": self.sound, **({"unconfined": True} if self.unconfined else {})})
@@ -5256,6 +5335,10 @@ class Run:
         # THE USER'S CONTACTS, to look people up in (the user, 2026-10-31) -
         # their own work only, never a way of the Work debugger.
         self.tools.people = self._contacts() if local and not self.debug else None
+        # THE AGENTS SOCIETY, to ask another person's agent (the user, 2026-11-10) - the user's own
+        # work only.
+        self.tools.society = getattr(owner, "society", None) if local and not self.debug else None
+        self.tools.run_id = self.id
         #: Its versions, kept in its own folder - written through the work's
         #: policy, like everything else it writes.
         self.versions = VersionStore(self.run_dir, runtime.policy)
@@ -5327,9 +5410,17 @@ class Run:
         # WITHOUT THE SANDBOX (unconfined.py): the work agent's - and its
         # helpers' - commands on this computer, judged; asking the user.
         self._judged: Dict[str, Tuple[str, str]] = {}
-        if self.unconfined:
-            self.tools.outside = self._run_outside
-            self.tools.approve = self._request_approval
+        self._offer_outside()
+
+    def _offer_outside(self) -> None:
+        """WHAT IS OFFERED OUTSIDE THE SANDBOX: without it (the user's choice, `unconfined`),
+        run_outside and request_approval - and the client's own tools out of it too; a plan the
+        user approved ALONE (`approved_plan`), run_outside for that plan's commands and nothing
+        more - the rest of the run, the client's tools and all, stays in the sandbox (the user,
+        2026-11-10: "能开什么权限我到时候会说，现在是什么都开不了")."""
+        approved = bool(str(self.plan.get("approved_plan") or "").strip())
+        self.tools.outside = self._run_outside if (self.unconfined or approved) else None
+        self.tools.approve = self._request_approval if self.unconfined else None
 
     @property
     def run_dir(self) -> Path:
@@ -5566,7 +5657,7 @@ class Run:
             self._note(("approval " if request.get("kind") == "action" else "package request ")
                        + request["status"], request=request["id"])
 
-    def answer(self, request_id: str, allow: bool) -> Optional[Dict[str, Any]]:
+    def answer(self, request_id: str, allow: bool, note: str = "") -> Optional[Dict[str, Any]]:
         """The user's answer to a request; None for no such request. For a
         wait on the model, yes is "try again now", no "end the run"."""
         with self._model_lock:
@@ -5590,6 +5681,8 @@ class Run:
             if request["status"] == PENDING and request_id in self._answers:
                 request.update(status=APPROVED if allow else DENIED,
                                answered_at=_now())
+                if note:                         # the user's words with it: told to the run
+                    request["note"] = f"the user said: {note[:1000]}"
                 self._answers[request_id].set()
             return dict(request)
 
@@ -5881,8 +5974,7 @@ class Run:
             self.plan["unconfined"] = self.unconfined
             session = (self.plan.get("sessions") or [{}])[-1]
             session["unconfined"] = self.unconfined
-            self.tools.outside = self._run_outside if self.unconfined else None
-            self.tools.approve = self._request_approval if self.unconfined else None
+            self._offer_outside()
             said.append("WITHOUT the sandbox" if self.unconfined else "in the sandbox")
         if said:
             self._event("you", "settings", "You changed the settings, in effect now: "
@@ -8094,7 +8186,10 @@ class Run:
 
     def _run_outside(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """run_outside: a command on this computer - never what is never
-        done; judged, and refused when it needs the user's approval."""
+        done; judged, and refused when it needs the user's approval. A run carrying out a plan
+        the user approved (`approved_plan`): its commands alone, as written in it."""
+        if str(self.plan.get("approved_plan") or "").strip():
+            return self._run_approved(args, str(self.plan["approved_plan"]))
         command, shell, cwd, never = self._command_asked(args)
         if never:
             self._denied("run_outside", {"command": command}, never)
@@ -8110,6 +8205,55 @@ class Run:
         said = self._run_on_computer(command, shell, cwd, timeout)
         self._changed("ran outside the sandbox", [], {"command": _clip(command, 200)})
         return said
+
+    def _run_approved(self, args: Dict[str, Any], approved: str) -> Dict[str, Any]:
+        """A COMMAND OF THE PLAN THE USER APPROVED (the user, 2026-11-10: "只做计划里写的那几行"): run
+        outside the sandbox as the user's account - accounts and all - only when it is written in
+        that plan word for word; never where nothing may reach (the agent's own data, sign-ins).
+        What it did is kept, by itself, under the work's evidence/."""
+        command = str(args.get("command") or "").strip()
+        shell = str(args.get("shell") or "").strip().lower() or ("cmd" if os.name == "nt" else "bash")
+        cwd = Path(str(args.get("cwd") or self.folder))
+        if not command or "\x00" in command:
+            return {"error": "say the command to run", "refused": True}
+        if not cwd.is_dir():
+            return {"error": f"not a folder: {cwd}", "refused": True}
+        if not in_plan(command, approved):
+            self._denied("run_outside", {"command": command}, "not in the approved plan")
+            return {"error": "refused: it is not in the plan the user approved - only its commands "
+                             "run, word for word as written there. Say in your report what else "
+                             "would be needed, and why.", "refused": True}
+        from .unconfined import names_kept_place
+        places = self._unconfined_places()
+        never = names_kept_place(command, places) or names_kept_place(str(cwd), places)
+        if never:
+            self._denied("run_outside", {"command": command}, never)
+            return {"error": f"refused: {never} - not even in an approved plan", "refused": True}
+        from .tools import RUN_MOST_SECONDS, RUN_SECONDS
+        timeout = max(5, min(RUN_MOST_SECONDS, int(args.get("timeout") or RUN_SECONDS)))
+        said = self._run_on_computer(command, shell, cwd, timeout)
+        kept = self._evidence(command, shell, cwd, said)
+        self._changed("ran outside the sandbox, as approved", [], {"command": _clip(command, 200)})
+        return dict(said, approved=True, evidence=kept)
+
+    def _evidence(self, command: str, shell: str, cwd: Path, said: Dict[str, Any]) -> str:
+        """WHAT WAS DONE, KEPT (the user, 2026-11-10: "做好之后把做好的evidence存好"): the command, where
+        and when it ran, how it ended and what it printed - a file of its own under evidence/."""
+        folder = Path(self.folder) / EVIDENCE_DIR
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            n = len(list(folder.glob("*.txt"))) + 1
+            path = folder / f"{n:02d}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
+            lines = [f"when: {_now()}", f"where: {cwd}", f"shell: {shell}", f"command: {command}",
+                     f"ended: {'ok' if said.get('ok') else 'failed'} (exit {said.get('returncode')})",
+                     "", "printed:", str(said.get("stdout") or said.get("output") or "")[:40000]]
+            if said.get("stderr"):
+                lines += ["", "errors:", str(said.get("stderr"))[:20000]]
+            path.write_text("\n".join(lines), encoding="utf-8")
+            return str(path)
+        except OSError:
+            log.warning("the evidence of %s could not be kept", _clip(command, 80), exc_info=True)
+            return ""
 
     def _request_approval(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """request_approval: ONE exact command, asked of the user - only
@@ -10460,6 +10604,7 @@ class Run:
                  else (("quality", QUALITY_SYSTEM), ("privacy", PRIVACY_SYSTEM)))
         if not self._going(work=False):
             return "fix", []
+        own = self._own_plans_text()
 
         environments = self._environments_note()
         tested = self.plan.get("black_box") if isinstance(self.plan.get("black_box"), dict) \
@@ -10481,6 +10626,7 @@ class Run:
                     + (TESTED_FOR_QUALITY.format(tested=json.dumps(
                         {key: tested.get(key) for key in ("promises", "findings")},
                         ensure_ascii=False)[:8000]) if kind == "quality" and tested else "")
+                    + (OWN_PLAN_CHECK.format(plan=own) if kind == "privacy" and own else "")
                     + beside}],
                 self._testing_tools(), writing=False, work=False, who=kind)
         answers = self._at_once([check(kind, system) for kind, system in kinds])
@@ -11011,6 +11157,21 @@ class Run:
             if not passed:
                 found += [f"[{CHECK_LABELS[kind]}] {one.get('say', '')}" for one in serious]
         return not found, found
+
+    def _own_plans_text(self) -> str:
+        """WHAT IT SAYS IT WOULD DO ON ITS OWN (heartbeat/agenda/execute.py, OWN_PLAN_HEADING), as
+        the one-click approval reads it: in what it hands over, and in its last report - each once;
+        "" when it wrote none."""
+        from ...heartbeat.agenda.execute import own_plan
+        texts = [str(one.get("text") or "") for one in self.plan.get("handed") or []
+                 if isinstance(one, dict)]
+        texts.append(str(self.plan.get("last_report") or ""))
+        out: List[str] = []
+        for text in texts:
+            said = own_plan(text, most=6000)
+            if said and said not in out:
+                out.append(said)
+        return "\n\n".join(out)[:12000]
 
     def _handed_text(self) -> str:
         """What is handed to the user, as the checks and the reviewer read

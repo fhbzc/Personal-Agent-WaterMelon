@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List
+from typing import Optional, Any, Callable, Dict, List
 
 from ...common.events.models import ScheduledTask, parse_iso, utcnow
 from ...common.reason import BY_AGENT
@@ -41,9 +41,13 @@ class ToolRegistry:
         self._handlers: Dict[str, Callable[[Dict[str, Any]], Any]] = {}
         #: Tools that refuse an incomplete call in their own words.
         self._answers_for_itself: set = set()
+        #: Tools offered only while they may be used (name -> fn() -> "" when it may, else why not):
+        #: the Agents Society's, by what its key permits now (2026-11-12: "或者就不给他没权限的tool").
+        self._when: Dict[str, Callable[[], str]] = {}
 
     def add(self, spec: ToolSpec, handler: Callable[[Dict[str, Any]], Any],
-            answers_for_itself: bool = False) -> None:
+            answers_for_itself: bool = False,
+            unless: Optional[Callable[[], str]] = None) -> None:
         """Register a tool.
 
         ``answers_for_itself`` says this tool already refuses an incomplete
@@ -58,10 +62,22 @@ class ToolRegistry:
         self._handlers[spec.name] = handler
         if answers_for_itself:
             self._answers_for_itself.add(spec.name)
+        if unless is not None:
+            self._when[spec.name] = unless
+
+    def _barred(self, name: str) -> str:
+        check = self._when.get(name)
+        if check is None:
+            return ""
+        try:
+            return str(check() or "")
+        except Exception:
+            return "it cannot be used now"
 
     @property
     def specs(self) -> List[ToolSpec]:
-        return list(self._specs)
+        """The tools offered now - none that may not be used now."""
+        return [one for one in self._specs if not self._barred(one.name)]
 
     def has(self, name: str) -> bool:
         return name in self._handlers
@@ -70,6 +86,9 @@ class ToolRegistry:
         handler = self._handlers.get(name)
         if handler is None:
             return {"error": f"unknown tool {name}"}
+        barred = self._barred(name)
+        if barred:
+            return {"error": f"{name} may not be used now: {barred}"}
         arguments = arguments or {}
         missing = ([] if name in self._answers_for_itself
                    else self._missing(name, arguments))
@@ -139,6 +158,45 @@ def _schema(properties: Dict[str, Any], required: List[str]) -> Dict[str, Any]:
 # same estimator the retrieval budget uses, so "a token" means one thing
 # across the application.
 DESCRIPTION_TOKEN_LIMIT = 2000
+
+
+#: How near in time, and how alike in words, an entry must be to be shown as perhaps the same.
+ALREADY_WITHIN_HOURS = 24
+ALREADY_ALIKE_AT = 0.5
+
+
+def already_on_calendar(scheduler: Any, words: str, when: Any) -> list:
+    """What is waiting on the calendar within a day of `when` that shares most of the words - by
+    the shorter text's terms, as the heartbeat's check (heartbeat/core/heartbeat.py)."""
+    return [{"task_id": task.id, "title": task.title,
+             "at": task.scheduled_at.isoformat() if task.scheduled_at else "",
+             "notifies": bool((task.task_payload or {}).get("notify_user"))}
+            for task in alike_on_calendar(scheduler, words, when)]
+
+
+def alike_on_calendar(scheduler: Any, words: str, when: Any) -> list:
+    """The waiting tasks themselves that `already_on_calendar` says."""
+    from datetime import timedelta
+    from ..overview.keywords import terms
+    store = getattr(scheduler, "store", None)
+    if store is None or when is None:
+        return []
+    near = timedelta(hours=ALREADY_WITHIN_HOURS)
+    try:
+        waiting = store.list(status="pending", start=when - near, end=when + near, limit=200)
+    except Exception:                                # pragma: no cover - added unchecked
+        return []
+    mine = set(terms(words))
+    out = []
+    for task in waiting:
+        if task.execution_type != "notification":
+            continue
+        theirs = set(terms(f"{task.title}\n{task.description or ''}"))
+        if not mine or not theirs:
+            continue
+        if len(mine & theirs) / min(len(mine), len(theirs)) >= ALREADY_ALIKE_AT:
+            out.append(task)
+    return out[:6]
 
 
 def build_registry(
@@ -218,7 +276,7 @@ def build_registry(
     #: is the user's own time, said on the card (given.py).
     zone_asked: set = set()
 
-    def schedule_task(args: Dict[str, Any]) -> Any:
+    def schedule_task(args: Dict[str, Any]) -> Any:  # noqa: C901 - the calendar's one door
         # Section 52.1: a task says what it is, or it is not created.
         #
         # Substituting "Scheduled task" for a missing title does not rescue
@@ -286,7 +344,9 @@ def build_registry(
         # Only notifications: nothing on the calendar executes anything.
         execution_type = "notification"
         payload = dict(args.get("payload") or {})
-        payload["notify_user"] = notify == "notify"
+        # AN EVENT THAT MAY INTEREST THEM is on the calendar quietly (the user, 2026-11-09).
+        event = str(args.get("event") or "").strip().lower()
+        payload["notify_user"] = notify == "notify" and event != "explore"
         # Section 59, as amended: how this task is to be settled, decided now.
         # The one scheduling the work is the one who knows what finishing looks
         # like and how soon it is worth asking.
@@ -305,6 +365,40 @@ def build_registry(
         rationale = str(args.get("rationale") or "").strip()
         if rationale:
             metadata["rationale"] = rationale
+        if event in ("going", "explore"):
+            metadata["event"] = event
+        # WHERE IT IS, KEPT (the user, 2026-11-09: "如果有地点可以留下"): the day's agenda plans the
+        # way there and back by it (heartbeat/agenda/items.py reads details' place).
+        place = " ".join(str(args.get("place") or "").split())[:300]
+        if place:
+            metadata["details"] = dict(metadata.get("details") or {}, place=place)
+        # NOT TWICE (the user, 2026-11-09: one meeting went on the calendar five times in twenty
+        # minutes - from the heartbeat, the chat and a project's steps, none looking first) - AND
+        # HELD BACK ONLY WHEN A MODEL SAYS IT IS THE SAME THING ("要模型确认是同一件事拦截"): what is
+        # there within a day of it, alike in words, is put to the heartbeat's own check
+        # (`registry.same_check`, heartbeat._is_it_the_same); "different", or no answer, it goes on.
+        if not args.get("even_so"):
+            alike = alike_on_calendar(scheduler, f"{title}\n{description}", when)
+            checking = getattr(registry, "same_check", None)
+            if alike and checking is not None:
+                verdict = checking({"type": "reminder" if notify == "notify" else "notice",
+                                    "title": title, "message": description}, when, alike) or {}
+                same = str(verdict.get("same_as") or "")
+                if same and not verdict.get("create_anyway"):
+                    repeated = next((task for task in alike if task.id == same), alike[0])
+                    return {"error": f"already on the calendar as \u201c{repeated.title}\u201d",
+                            "same_as": repeated.id, "why": str(verdict.get("why") or ""),
+                            "said": "A check found it is the same thing: it was not added. Say "
+                                    "it is there already."}
+                if verdict.get("why"):
+                    metadata["checked_not_the_same"] = str(verdict["why"])[:300]
+            elif alike:
+                # No check to ask: the model that asked judges, told what is there.
+                return {"error": "something like it is on the calendar already",
+                        "already": already_on_calendar(scheduler, f"{title}\n{description}", when),
+                        "said": "If one of these is the same thing, do not add it: say it is "
+                                "there. If it is a different thing, call again with even_so: "
+                                "true and say in rationale how it differs."}
         task = ScheduledTask(
             title=title,
             description=description,
@@ -359,6 +453,22 @@ def build_registry(
                                   "description": "why you scheduled it, and on what "
                                                  "evidence; shown only on request"},
                     "notify": {"type": "string", "enum": ["silent", "notify"]},
+                    "event": {"type": "string", "enum": ["going", "explore"],
+                              "description": "for an event (a talk, a meetup): 'going' when "
+                                             "they will probably go - they said so, or it is "
+                                             "their own; 'explore' when it may interest them "
+                                             "and nothing says they will go: it goes on "
+                                             "quietly, never notifying. Leave it out for what "
+                                             "is not an event"},
+                    "place": {"type": "string",
+                              "description": "where it happens, exactly as it was given - a "
+                                             "room, a building, an address - when it is "
+                                             "somewhere; an online one's link goes in the "
+                                             "message. Leave it out when no place was given"},
+                    "even_so": {"type": "boolean",
+                                "description": "true only when you were told something like it "
+                                               "is on the calendar already and it is NOT the "
+                                               "same thing - say why in rationale"},
                     "recurrence": {
                         "type": "object",
                         "description": "omit for a task that runs once. To repeat: "
@@ -440,48 +550,8 @@ def build_registry(
     )
 
     # -- user interaction ---------------------------------------------------
-    def notify_user(args: Dict[str, Any]) -> Any:
-        notification = notifications.notify(
-            str(args.get("title") or "Agent"), str(args.get("message") or ""),
-            kind="proactive",
-            metadata={"origin": "agent", "reason": str(args.get("why") or "")[:300]},
-            template=str(args.get("template") or ""),
-            question={"task_id": getattr(registry, "task_id", "") or ""},
-            level=str(args.get("level") or "pop"),
-        )
-        return {"delivered": notification is not None}
-
-    registry.add(
-        ToolSpec("notify_user",
-                 "Interrupt the user with a short message. Every interruption "
-                 "is one of three kinds, and you say which:\n"
-                 "  reminder   - you are telling them something needs doing. "
-                 "They answer Got it (no more notifications), Add to to-do (no more "
-                 "notifications; kept on their to-do list on the Overview), Remind me later "
-                 "(it comes back in 30 minutes), or call it a bad "
-                 "notification - no more notifications, and fewer like it "
-                 "from then on.\n"
-                 "  permission - you are asking whether you may do something. "
-                 "They can reply Allow / Don't / Ask me later / Stop asking.\n"
-                 "  passive    - you are telling them something and want no "
-                 "decision from them. One button, OK, and it is closed.\n"
-                 "Choose the one that matches what you are actually saying. A "
-                 "notice dressed as a reminder asks the user to decide "
-                 "something you did not mean to ask. `why` is shown under it: one "
-                 "short line to the user, in their language, on why you are telling them.",
-                 _schema({"title": {"type": "string"},
-                          "message": {"type": "string"},
-                          "why": {"type": "string"},
-                          "template": {"type": "string",
-                                       "enum": ["reminder", "permission",
-                                                "passive"]},
-                          "level": {"type": "string", "enum": ["pop", "collapse"],
-                                    "description": "pop shows it at once; collapse keeps it in "
-                                                   "the list they open when they choose. Collapse "
-                                                   "what can wait."}},
-                         ["title", "message", "template", "why"])),
-        notify_user,
-    )
+    # NO TOOL TO INTERRUPT THE USER (the user, 2026-11-13: "所有的通知必须在monitor里 ... 其它都取消"): what the agent
+    # would tell them goes in its answer, the report, or a reminder on the calendar.
 
     def current_time(args: Dict[str, Any]) -> Any:
         now = utcnow()

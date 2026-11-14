@@ -42,9 +42,11 @@ PARKED = -32000
 AREA_FOR_SECONDS = 5.0
 #: The button's side; how far its middle stands past the avatar's window, level with the middle of
 #: the leaves (the user, 2026-11-04: "chat应该是整体在4个叶子中间的感觉") and all of it outside that
-#: window: on it, the pointer going to the button brought the head out. Where the vine starts:
-#: this far past the side of the screen, so that no end of it shows there.
-ICON, PAST, BEYOND = 44, 30, 4
+#: window. NEARER THE SIDE (the user, 2026-11-09: "藤蔓可以离边框更近一点", and again "chat/overview logo
+#: 可以再离边框近一点"): with no head coming out when the pointer is on it, the button's inner part is
+#: behind what of the avatar shows, as if grown from behind it. Where the vine starts: this far
+#: past the side of the screen, so that no end of it shows there.
+ICON, PAST, BEYOND = 44, 12, 4
 #: THE OVERVIEW BESIDE IT (the user, 2026-11-08: "藤蔓要有2个logo, 一个是chat, 一个是overview (等价于双击
 #: 的功能)"): the two along the side, this far apart, THEIR MIDDLE WHERE THE ONE WAS ("平均高度还是要在
 #: 中央"), between the leaves; the vine forks to them.
@@ -129,12 +131,31 @@ def _deferred() -> Any:
     return _DEFERRED[0]
 
 
+#: OFF EVERY SCREEN, OR HIDDEN (the user, 2026-11-09: on a Mac the vine's two buttons "固定显示在
+#: 某个位置" - the system keeps a window on a screen, and one sent to PARKED is put back on it):
+#: off Windows a window parked is withdrawn, and shown again where it is next put. On Windows it is
+#: moved off every screen, as before - shown again there, it took the keyboard from what was typed.
+PARKS_BY_HIDING = not sys.platform.startswith("win")
+
+
+def put(window: Any, x: int, y: int) -> None:
+    """A window to x, y - or, at PARKED, away."""
+    if (x, y) == (PARKED, PARKED) and PARKS_BY_HIDING:
+        if window.state() != "withdrawn":
+            window.withdraw()
+        return
+    if PARKS_BY_HIDING and window.state() == "withdrawn":
+        window.geometry(f"+{x}+{y}")         # where it is to be before it is seen
+        window.deiconify()
+    window.geometry(f"+{x}+{y}")
+
+
 def move_together(windows: Sequence[Any], spots: Sequence[Tuple[int, int]],
                   under: Any = None) -> None:
     """The icons moved as one step (the user, 2026-11-04: on a busy computer they followed in
     jerks): on Windows the system moves them all at once, at half the time of asking for each.
     `under`: the window they stay behind, in that same step ("时刻确保西瓜是在按钮前面的")."""
-    if sys.platform.startswith("win"):
+    if sys.platform.startswith("win") and not PARKS_BY_HIDING:
         try:
             user32 = _deferred()
             step = user32.BeginDeferWindowPos(len(windows))
@@ -149,12 +170,13 @@ def move_together(windows: Sequence[Any], spots: Sequence[Tuple[int, int]],
         except (OSError, ValueError, AttributeError):
             log.debug("the icons could not be moved as one", exc_info=True)
     for window, (x, y) in zip(windows, spots):
-        window.geometry(f"+{x}+{y}")
+        put(window, x, y)
     if under is not None:
         # In the order the system is told above: left to itself the vine lay over its button on a
         # Mac, and took every press of it (2026-11-05).
         for window in reversed(windows):
-            window.lift()
+            if not PARKS_BY_HIDING or window.state() != "withdrawn":
+                window.lift()
         under.lift()
 
 
@@ -378,7 +400,8 @@ class ChatVine:
 
     def __init__(self, root: Any, says: str, act: Callable[[], None], avatar: Callable[[], tuple],
                  font: tuple, side: Callable[[], str], front: Any = None,
-                 overview: Optional[Tuple[str, Callable[[], None]]] = None) -> None:
+                 overview: Optional[Tuple[str, Callable[[], None]]] = None,
+                 on_stem: Optional[Callable[[], None]] = None) -> None:
         self.avatar, self.side, self.front = avatar, side, front
         self.icon = _Icon(root, says, act, font)
         #: The Overview's button, beside the chat's: what a double click on the avatar opens.
@@ -391,6 +414,10 @@ class ChatVine:
         self.stem.configure(bg=ground)
         self.canvas = tk.Canvas(self.stem, bg=ground, highlightthickness=0, bd=0)
         self.canvas.pack(fill="both", expand=True)
+        # THE VINE ITSELF CLICKED: the avatar jumps out of the side (the user, 2026-11-09).
+        if on_stem is not None:
+            self.canvas.configure(cursor="hand2")
+            on_release(self.canvas, on_stem)
         stay_on_top(self.stem)
         stays_through_peek(self.stem)
         self.out = False
@@ -542,13 +569,16 @@ class QuickPanel:
                  zoom: int = 0, on_zoom: Optional[Callable[[int], None]] = None,
                  adds: Sequence[Dict[str, Any]] = (), size: Optional[tuple] = None,
                  on_size: Optional[Callable[[tuple], None]] = None,
-                 closes_emptied: bool = False) -> None:
+                 closes_emptied: bool = False,
+                 on_open: Optional[Callable[[bool], None]] = None) -> None:
         self.root, self.title, self.read, self.post, self.words = root, title, read, post, words
         self.font, self.empty, self.searches = font, empty, searches
         self.act, self.zoom, self.on_zoom = act, int(zoom or 0), on_zoom
         self.window: Any = None
         self.opened = False
         self.closes_emptied = closes_emptied
+        #: Told when it is opened (True) and closed (False): the waiting list holds the bubbles.
+        self.on_open = on_open
         #: Whether it held anything when it was opened: None until that has been read.
         self.opened_holding: Optional[bool] = None
         self.sections: List[Dict[str, Any]] = []
@@ -605,7 +635,13 @@ class QuickPanel:
         """Out of sight, and kept: opened again it is only moved back."""
         if self._save_due is not None:
             self._save_zoom()
+        was_open = self.opened
         self.opened = False
+        if was_open and self.on_open is not None:
+            try:
+                self.on_open(False)
+            except Exception:                # pragma: no cover - the list closes still
+                pass
         changed = bool(self.asking or self.moving)
         self.asking = self.moving = ""
         self._rolling = 0.0
@@ -619,7 +655,7 @@ class QuickPanel:
                 changed = True
             if changed:                      # now, not when it is opened again
                 self._draw()
-            self.window.geometry(f"+{PARKED}+{PARKED}")
+            put(self.window, PARKED, PARKED)
         except tk.TclError:
             pass
 
@@ -878,6 +914,11 @@ class QuickPanel:
             self._build()
         self.unfold()                        # opened again, it opens whole
         self.opened = True
+        if self.on_open is not None:
+            try:
+                self.on_open(True)
+            except Exception:                # pragma: no cover - the list opens still
+                pass
         self.opened_holding = None
         self._fit(near)
         self.list.yview_moveto(0)
@@ -969,6 +1010,9 @@ class QuickPanel:
         # What fits that screen, as it is: kept from a larger one, or a small one.
         size = (min(size[0], area[2] - area[0] - 20), min(size[1], area[3] - area[1] - 20))
         x, y = beside(near, size, (window.winfo_screenwidth(), window.winfo_screenheight()), area)
+        if PARKS_BY_HIDING and window.state() == "withdrawn":
+            window.geometry(f"{size[0]}x{size[1]}+{x}+{y}")
+            window.deiconify()               # hidden while it was put away (`put`)
         window.geometry(f"{size[0]}x{size[1]}+{x}+{y}")
         # Moved now: Tk moves a window when it is idle, and the system telling it where the
         # window was on taking the keyboard, next, wiped this out - it stayed out of sight.

@@ -41,16 +41,18 @@ wrote, two cases the user changed or approved, or three they accepted.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from . import from_lessons
 from .match import coverage, fits_its_cases
 from .vocab import OF_THE_ANSWERS
-from .store import WEIGHT, LearningStore, dumps, now
-from .vocab import DIMENSIONS, OBJECT, Vocabulary
+from .store import WEIGHT, LearningStore, dumps, loads, now
+from .vocab import DIMENSIONS, OBJECT, Vocabulary, with_word_list
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +78,26 @@ RIVAL_LEAD = 3.0
 RIVAL_DAYS = 90
 #: A reason shares this much of its support with another: the same, asked.
 SAME_SHARE = 0.5
+#: RELEVANT REASONS ONLY, MATCHED ON THREE KINDS OF TAG (the user, 2026-11-11: "一个是基于情景，一个是
+#: 基于人，一个是基于类型（比如是什么工作，有什么人参与，是什么类型的对象）三个type找match"): ABDUCE was
+#: shown every kept reason with every batch, ACROSS every one. Now ABDUCE is shown, for each
+#: judgment, the reasons matching it on most kinds - the SITUATION, the PEOPLE, the TYPE (`_tags`) -
+#: then nearest in meaning, at most this many for each judgment and this many for a batch...
+ABDUCE_PER_JUDGMENT = 8
+ABDUCE_REASONS_MOST = 40
+#: ...and ACROSS the reasons of the contexts with new answers, with those of other contexts that
+#: share their people or their type, at most this many in all.
+ACROSS_REASONS_MOST = 60
+SITUATION, PEOPLE, TYPE = "situation", "people", "type"
+KINDS_OF_TAG = (SITUATION, PEOPLE, TYPE)
+#: WHAT HAS NOT CHANGED IS NOT ASKED AGAIN (the user, 2026-11-11): what each step last saw, in kv -
+#: the pool and the kept reasons (a whole run, and ABDUCE), each parent's terms (TERMS_PROMPT), a
+#: term too wide (SPLIT_PROMPT), two reasons found not the same (SAME_PROMPT).
+RUN_SEEN = "learning.reasons_run_seen"
+ABDUCE_SEEN = "learning.reasons_abduce_seen"
+TERMS_SEEN = "learning.terms_children_asked"
+SPLIT_SEEN = "learning.terms_split_asked"
+SAME_SEEN = "learning.reasons_not_the_same"
 
 REASON_SHAPE = """{"statement": "one sentence: why the user judges so",
  "aspect": "requirement | output | evaluation | habit | attention | timing",
@@ -273,6 +295,19 @@ def _users_own(judgment: Dict[str, Any]) -> bool:
     return judgment.get("strength") in ("written", "noted") or bool(judgment.get("said"))
 
 
+def _sha(value: Any) -> str:
+    return hashlib.sha1(dumps(value).encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _words(text: str) -> Set[str]:
+    return {one for one in re.findall(r"\w+", str(text or "").lower()) if len(one) >= 3}
+
+
+def _kinds_matched(one: Dict[str, Set[str]], other: Dict[str, Set[str]]) -> int:
+    """On how many of the three kinds of tag two things meet (3 > 2 > 1; 0, none)."""
+    return sum(1 for kind in KINDS_OF_TAG if (one.get(kind) or set()) & (other.get(kind) or set()))
+
+
 class Reasons:
     def __init__(self, db: Any, ask: Callable[..., Dict[str, Any]], embedder: Any = None) -> None:
         self.db = db
@@ -282,6 +317,8 @@ class Reasons:
         #: To find the kept reasons nearest a new one in meaning (merge_near); None: not looked.
         self.embedder = embedder
         self.report: Dict[str, Any] = defaultdict(int)
+        #: What the embedder made of each text, in this run (`_likeness`).
+        self._vectors: Dict[str, Any] = {}
 
     # -- shown to a model -----------------------------------------------------
     def _case_line(self, case_id: str) -> Tuple[str, Dict[str, Any]]:
@@ -478,10 +515,12 @@ class Reasons:
                     + "\n\nTHE NEW JUDGMENTS THAT CONFLICT:\n"
                     + "\n".join(self._judgment_line(one) for one in news)
                     + "\n\nOTHER REASONS:\n" + "\n".join(
-                        f"{r['id']}: {r['statement']}" for r in others[:60])
-                    + "\n\nTHE WORD LIST:\n" + self.vocab.listing(list(DIMENSIONS) + [OBJECT]))
-            said = self.ask("reasons", REVISE_PROMPT.replace("{feedback}", feedback), text,
-                            4000, "the answer")
+                        f"{r['id']}: {r['statement']}" for r in others[:60]))
+            # THE WORD LIST IN THE FIXED INSTRUCTIONS (the user, 2026-11-11): after the prompt,
+            # where the cache reads it back, not in each call's own text (vocab.with_word_list).
+            said = self.ask("reasons", with_word_list(REVISE_PROMPT.replace("{feedback}", feedback),
+                                                      self.vocab, list(DIMENSIONS) + [OBJECT]),
+                            text, 4000, "the answer")
             if not said or said.get("_failed"):
                 self.report["revise_failed"] += 1
                 return ""
@@ -743,26 +782,202 @@ class Reasons:
         self.report["new_reasons"] += 1
         return rid
 
+    # -- the three kinds of tag (the user, 2026-11-11) ---------------------------
+    def _tags(self) -> Tuple[Dict[str, Dict[str, Set[str]]],
+                             Callable[[Dict[str, Any]], Dict[str, Set[str]]]]:
+        """THE SITUATION, THE PEOPLE, THE TYPE of every kept reason - and how to tell them of a
+        judgment. A judgment's come from the case it is in (its facets) and what it is about:
+          SITUATION - its context (the work, or the kind of thing the user answered: `_context_of`)
+                      and the case's presentation and purpose;
+          PEOPLE    - the case's audience, and, of an answer, the person what was told was about
+                      (the lesson's own "person");
+          TYPE      - the case's deliverable and the judgment's object.
+        A tag is matched by the term or by the top of its branch. A reason's are those of the
+        judgments that support it, with its own objects (TYPE)."""
+        terms = self.vocab.by_id()
+        cases = {row["id"]: dict(row) for row in self.db.query(
+            "SELECT id, unit_id, title, facets, alias_of FROM learn_cases")}
+        persons: Dict[str, str] = {}
+        holes = ", ".join("?" for _ in from_lessons.KINDS)
+        try:
+            for row in self.db.query(f"SELECT id, features FROM lesson_evidence WHERE kind IN ({holes})",
+                                     tuple(from_lessons.KINDS)):
+                person = " ".join(str(loads(row["features"], {}).get("person") or "").lower().split())
+                if person:
+                    persons[str(row["id"])] = person
+        except Exception:                    # no lessons kept here: no one to match on
+            persons = {}
+        tops: Dict[str, Set[str]] = {}
+
+        def expand(tags: Sequence[Any]) -> Set[str]:
+            out: Set[str] = set()
+            for tag in tags or []:
+                tag = str(tag or "")
+                if tag not in tops:
+                    chain = self.vocab.ancestors(tag, terms)
+                    tops[tag] = {chain[0], chain[-1]} if chain else ({tag} if tag else set())
+                out |= tops[tag]
+            return out
+
+        def facets_of(case_id: str) -> Dict[str, Any]:
+            row, seen = cases.get(case_id), set()
+            while row and row.get("alias_of") and row["id"] not in seen:
+                seen.add(row["id"])
+                row = cases.get(row["alias_of"])
+            return loads((row or {}).get("facets"), {})
+
+        def of_judgment(judgment: Dict[str, Any]) -> Dict[str, Set[str]]:
+            raw = cases.get(str(judgment.get("case_id") or "")) or {}
+            facets = facets_of(str(judgment.get("case_id") or ""))
+            answer = raw.get("unit_id") == from_lessons.UNIT
+            context = str(raw.get("title") or "").split(":")[0] if answer else "work"
+            people = expand(facets.get("audience") or [])
+            if answer:
+                people |= {"person:" + persons[ref] for ref in loads(judgment.get("refs"), [])
+                           if ref in persons}
+            return {SITUATION: {"context:" + context}
+                    | expand(list(facets.get("presentation") or []) + list(facets.get("purpose") or [])),
+                    PEOPLE: people,
+                    TYPE: expand(list(facets.get("deliverable") or []) + [judgment.get("object")])}
+
+        reasons: Dict[str, Dict[str, Set[str]]] = {}
+        for row in self.store.reasons(("candidate", "active", "competing")):
+            reasons[row["id"]] = {SITUATION: set(), PEOPLE: set(), TYPE: expand(row.get("objects") or [])}
+        for row in self.db.query(
+                "SELECT l.reason_id AS reason_id, j.case_id AS case_id, j.object AS object, "
+                "j.refs AS refs FROM learn_links l JOIN learn_judgments j ON j.id = l.judgment_id "
+                "WHERE l.role = 'supports'"):
+            mine = reasons.get(row["reason_id"])
+            if mine is None:
+                continue
+            for kind, tags in of_judgment(dict(row)).items():
+                mine[kind] |= tags
+        return reasons, of_judgment
+
+    @staticmethod
+    def _contexts(tags: Optional[Dict[str, Set[str]]]) -> Set[str]:
+        """Where a reason comes from, by its tags - as `_context_of` says it."""
+        return {tag.split(":", 1)[1] for tag in (tags or {}).get(SITUATION) or set()
+                if tag.startswith("context:")}
+
+    def _likeness(self, queries: Sequence[str], targets: Sequence[str]) -> List[List[float]]:
+        """How near in meaning each query is to each target: by the embedder, as `merge_near`
+        reads the reasons - or, without it, by the words they share."""
+        embedder = self.embedder
+        if embedder is not None and queries and targets:
+            try:
+                if embedder.available():
+                    wanted = [one for one in dict.fromkeys([*queries, *targets])
+                              if one not in self._vectors]
+                    if wanted:
+                        made = embedder.embed(wanted)
+                        if made and len(made) == len(wanted):
+                            self._vectors.update(zip(wanted, made))
+                    if all(one in self._vectors for one in [*queries, *targets]):
+                        from ..heartbeat.states.tasks import _cosine
+                        return [[_cosine(self._vectors[one], self._vectors[other]) for other in targets]
+                                for one in queries]
+            except Exception:
+                log.info("the reasons could not be read by meaning: by their words", exc_info=True)
+        words = [_words(one) for one in targets]
+        out = []
+        for one in queries:
+            mine = _words(one)
+            out.append([len(mine & other) / len(mine | other) if mine and other else 0.0
+                        for other in words])
+        return out
+
+    @staticmethod
+    def _meaning_of(judgment: Dict[str, Any]) -> str:
+        return " ".join(str(one or "") for one in (
+            str(judgment.get("object") or "").split(":", 1)[-1], judgment.get("item"),
+            judgment.get("direction"), str(judgment.get("why") or "")[:300], judgment.get("said")))
+
+    def _for_abduce(self, batch: Sequence[Dict[str, Any]], everyone: Sequence[Dict[str, Any]],
+                    reason_tags: Dict[str, Dict[str, Set[str]]],
+                    judgment_tags: Callable[[Dict[str, Any]], Dict[str, Set[str]]]
+                    ) -> List[Dict[str, Any]]:
+        """The kept reasons a batch of the pool is shown (the user, 2026-11-11): for each judgment,
+        those matching it on most kinds of tag, then nearest in meaning - ABDUCE_PER_JUDGMENT of
+        them; one matching on none only where that leaves room. Together, the best of each
+        judgment first, at most ABDUCE_REASONS_MOST."""
+        if not everyone:
+            return []
+        likeness = self._likeness([self._meaning_of(one) for one in batch],
+                                  [str(one.get("statement") or "") for one in everyone])
+        ranked = []
+        for n, judgment in enumerate(batch):
+            mine = judgment_tags(judgment)
+            scored = sorted(((_kinds_matched(mine, reason_tags.get(reason["id"]) or {}),
+                              likeness[n][k], -k) for k, reason in enumerate(everyone)), reverse=True)
+            ranked.append(scored[:ABDUCE_PER_JUDGMENT])
+        chosen: List[int] = []
+        # Those that match first, each judgment's best before anyone's next; then, with room
+        # left, those matching on none.
+        for matching in (True, False):
+            for rank in range(ABDUCE_PER_JUDGMENT):
+                for each in ranked:
+                    if rank >= len(each) or len(chosen) >= ABDUCE_REASONS_MOST:
+                        continue
+                    kinds, _like, minus = each[rank]
+                    if (kinds > 0) == matching and -minus not in chosen:
+                        chosen.append(-minus)
+        return [everyone[k] for k in chosen]
+
+    # -- what the pool and the reasons are now -----------------------------------
+    def _state_print(self) -> str:
+        """The pool and the kept reasons - each with its words, condition and links - as one
+        fingerprint: the same, nothing for ABDUCE or a run to find anew (2026-11-11)."""
+        pool = [row["id"] for row in self.db.query(
+            "SELECT id FROM learn_judgments WHERE state = 'pool' ORDER BY id")]
+        reasons = [[row["id"], row["state"], row["statement"], row["condition"], row["objects"]]
+                   for row in self.db.query(
+                       "SELECT id, state, statement, condition, objects FROM learn_reasons "
+                       "WHERE state IN ('candidate', 'active', 'competing') ORDER BY id")]
+        links = [[row["reason_id"], row["judgment_id"], row["role"]] for row in self.db.query(
+            "SELECT reason_id, judgment_id, role FROM learn_links ORDER BY reason_id, judgment_id")]
+        return _sha([pool, reasons, links])
+
+    def _supports(self) -> Dict[str, List[str]]:
+        out: Dict[str, List[str]] = defaultdict(list)
+        for row in self.db.query("SELECT reason_id, judgment_id FROM learn_links "
+                                 "WHERE role = 'supports' ORDER BY reason_id, judgment_id"):
+            out[row["reason_id"]].append(row["judgment_id"])
+        return dict(out)
+
     # -- abduce ---------------------------------------------------------------
     def abduce(self) -> None:
         pool = self.store.judgments("state = 'pool' ORDER BY at")
         if len(pool) < 1:
             return
+        # UNCHANGED, NOT ASKED AGAIN (the user, 2026-11-11): the same pool and the same reasons
+        # as when it last ran whole would be asked the same.
+        seen = self._state_print()
+        if seen == self._kv(ABDUCE_SEEN):
+            self.report["abduce_unchanged"] += 1
+            return
+        failed = False
         everyone = self.store.reasons()
+        reason_tags, judgment_tags = self._tags()
         for start in range(0, len(pool), ABDUCE_BATCH):
             batch = pool[start:start + ABDUCE_BATCH]
             if len(batch) < 2 and not any(_users_own(one) for one in batch):
                 continue
+            shown = self._for_abduce(batch, everyone, reason_tags, judgment_tags)
             text = ("JUDGMENTS NO REASON EXPLAINS:\n"
                     + "\n".join(self._judgment_line(one) for one in batch)
                     + "\n\nREASONS KEPT:\n" + ("\n".join(
-                        f"{r['id']}: {r['statement']}" for r in everyone) or "none yet")
-                    + "\n\nTHE WORD LIST:\n" + self.vocab.listing(list(DIMENSIONS) + [OBJECT]))
-            said = self.ask("reasons", ABDUCE_PROMPT, text, 6000, "the reasons")
+                        f"{r['id']}: {r['statement']}" for r in shown) or "none yet"))
+            # The word list after the fixed prompt, where the cache reads it back (2026-11-11).
+            said = self.ask("reasons", with_word_list(ABDUCE_PROMPT, self.vocab,
+                                                      list(DIMENSIONS) + [OBJECT]),
+                            text, 6000, "the reasons")
             if not said or said.get("_failed"):
                 self.report["abduce_failed"] += 1
+                failed = True
                 continue
-            known = {r["id"] for r in everyone}
+            self.report["abduce_reasons_shown"] += len(shown)
+            known = {r["id"] for r in shown}
             here = {one["id"]: one for one in batch}
             for one in said.get("belongs") or []:
                 if isinstance(one, dict) and one.get("judgment") in here \
@@ -778,6 +993,9 @@ class Reasons:
                 if len(ids) < 2 and not own:
                     continue
                 self._new_reason(one, ids, stated=bool(one.get("stated")))
+        if not failed:
+            # Read whole: what it leaves is what it saw (a part not answered is asked again).
+            self._set_kv(ABDUCE_SEEN, self._state_print())
 
     # -- rivals ---------------------------------------------------------------
     def compete(self) -> None:
@@ -842,10 +1060,14 @@ class Reasons:
     # -- the same reason twice -------------------------------------------------
     def merge_same(self, new: Optional[set] = None) -> None:
         """Reasons resting on much of the same evidence, asked whether they are one. `new`: only
-        pairs with one of these in them (an update's own); None: every pair (a first learning)."""
+        pairs with one of these in them (an update's own); None: every pair (once, MERGED_ALL)."""
         reasons = self.store.reasons(("candidate", "active"))
         support = {r["id"]: {one["id"] for one in self.store.evidence(r["id"])
                              if one["role"] == "supports"} for r in reasons}
+        # A PAIR FOUND NOT THE SAME IS NOT ASKED AGAIN (the user, 2026-11-11) while both reasons
+        # say what they said and rest on what they rested on.
+        verdicts = loads(self._kv(SAME_SEEN), {})
+        before = dict(verdicts)
         done = set()
         for one in reasons:
             for other in reasons:
@@ -856,11 +1078,23 @@ class Reasons:
                 a, b = support[one["id"]], support[other["id"]]
                 if not a or not b or len(a & b) / min(len(a), len(b)) < SAME_SHARE:
                     continue
+                pair = f"{one['id']}|{other['id']}"
+                mark = _sha([one["statement"], other["statement"], sorted(a), sorted(b)])
+                if verdicts.get(pair) == mark:
+                    self.report["same_unchanged"] += 1
+                    continue
                 said = self.ask("reasons", SAME_PROMPT, "ONE: " + self._reason_line(one, False)
                                 + "\nTWO: " + self._reason_line(other, False), 800, "the answer")
                 if not said.get("same"):
+                    if said and not said.get("_failed"):
+                        verdicts[pair] = mark
                     continue
                 done.add(self._merge(one, other, str(said.get("statement") or "")))
+        alive = {one["id"] for one in reasons} - done
+        verdicts = {pair: mark for pair, mark in verdicts.items()
+                    if all(part in alive for part in pair.split("|"))}
+        if verdicts != before:
+            self._set_kv(SAME_SEEN, dumps(verdicts))
 
     def _merge(self, one: Dict[str, Any], other: Dict[str, Any], statement: str) -> str:
         """Two reasons that are one, made one: the older kept, in `statement` when given, with
@@ -949,8 +1183,20 @@ class Reasons:
         for row in terms.values():
             if row["state"] in ("trial", "kept") and row["parent"]:
                 parents[row["parent"]].append(row)
+        # ASKED ONLY WHERE THE TERMS CHANGED (the user, 2026-11-11): each parent's children, as
+        # they were when last asked - their ids and definitions; the same, not asked again.
+        asked = loads(self._kv(TERMS_SEEN), {})
+        asked_before = dict(asked)
+
+        def children_mark(parent: str) -> str:
+            return _sha(sorted([row["id"], row["definition"] or ""]
+                               for row in self.vocab.children(parent)))
+
         for parent, children in parents.items():
             if len(children) < 2:
+                continue
+            if asked.get(parent) == children_mark(parent):
+                self.report["terms_unchanged"] += 1
                 continue
             siblings = self.vocab.children(parent)
             text = f"PARENT: {parent}\n" + "\n".join(
@@ -961,12 +1207,28 @@ class Reasons:
                     for gone in group[1:]:
                         if self.vocab.merge(str(gone), str(group[0])):
                             self.report["terms_merged"] += 1
-        # A term that grew too wide is split.
+            if said and not said.get("_failed"):
+                # As they are after what it said: its own merges are no change to ask about.
+                asked[parent] = children_mark(parent)
+        if asked != asked_before:
+            self._set_kv(TERMS_SEEN, dumps(asked))
+        # A term that grew too wide is split - asked again only when its judgments changed.
+        split_asked = loads(self._kv(SPLIT_SEEN), {})
+        split_before = dict(split_asked)
+
+        def members_mark(tag: str) -> str:
+            ids = [one["id"] for one in self.db.query(
+                "SELECT id FROM learn_judgments WHERE object = ? ORDER BY id", (tag,))]
+            return _sha([len(ids), ids])
+
         rows = self.db.query("SELECT object, COUNT(*) AS n FROM learn_judgments GROUP BY object "
                              "HAVING n > 60")
         for row in rows:
             tag = row["object"]
             if self.vocab.depth(tag) >= 3:
+                continue
+            if split_asked.get(tag) == members_mark(tag):
+                self.report["splits_unchanged"] += 1
                 continue
             judgments = self.store.judgments("object = ? ORDER BY at DESC LIMIT 120", (tag,))
             said = self.ask("terms", SPLIT_PROMPT, f"THE TERM: {tag}\n" + "\n".join(
@@ -985,6 +1247,10 @@ class Reasons:
                                     (new, jid))
             if made:
                 self.report["terms_split"] += 1
+            if said and not said.get("_failed"):
+                split_asked[tag] = members_mark(tag)
+        if split_asked != split_before:
+            self._set_kv(SPLIT_SEEN, dumps(split_asked))
 
     # -- one update's reasoning ---------------------------------------------------
     # -- every lesson, not only the work (from_lessons.py) ---------------------
@@ -1029,7 +1295,8 @@ class Reasons:
         for name, known_of_them in (("with_reasons", f"WHY THEY JUDGE AS THEY DO:\n{reasons}\n\n"
                                                      f"WHAT THEY DID BEFORE:\n{cases}"),
                                     ("without", f"WHAT THEY DID BEFORE:\n{cases}")):
-            answer = self.ask("reasons", PREDICT_PROMPT, f"{known_of_them}\n\nTOLD THEM:\n{shown}",
+            # Counted under Learning from your answers (ask.TASKS "answers"), not Work learning.
+            answer = self.ask("answers", PREDICT_PROMPT, f"{known_of_them}\n\nTOLD THEM:\n{shown}",
                               1500, "what they would answer")
             # NO GUESS KEPT FROM NO ANSWER (2026-11-07): a call that failed, was cut off or could
             # not be read keeps no prediction - an empty one would be read as a wrong guess.
@@ -1048,23 +1315,56 @@ class Reasons:
                  from_lessons.ANSWERS[one["action"]][3], at))
         self.report["predicted"] += len(rated)
 
-    def across(self) -> None:
+    def _for_across(self, reasons: Sequence[Dict[str, Any]], contexts: Dict[str, Set[str]],
+                    reason_tags: Dict[str, Dict[str, Set[str]]],
+                    answered: Optional[Set[str]]) -> List[Dict[str, Any]]:
+        """The reasons ACROSS is shown (the user, 2026-11-11): those of the contexts with new
+        answers - and, from the other contexts, those that share their PEOPLE or their TYPE,
+        ranked as ABDUCE ranks (`_for_abduce`): most kinds of tag matched, then nearest in
+        meaning; one sharing neither only where that leaves room. At most ACROSS_REASONS_MOST,
+        half of it kept for the other contexts while they have that many."""
+        fresh = set(answered or ()) or {one for where in contexts.values() for one in where} - {"work"}
+        base = [one for one in reasons if contexts[one["id"]] & fresh]
+        others = [one for one in reasons if not contexts[one["id"]] & fresh]
+        if len(base) + len(others) <= ACROSS_REASONS_MOST:
+            return list(reasons)
+        theirs = {kind: set().union(*[(reason_tags.get(one["id"]) or {}).get(kind) or set()
+                                      for one in base]) for kind in KINDS_OF_TAG}
+        likeness = self._likeness([str(one.get("statement") or "") for one in others],
+                                  [str(one.get("statement") or "") for one in base])
+        scored = []
+        for n, one in enumerate(others):
+            mine = reason_tags.get(one["id"]) or {}
+            shares = any((mine.get(kind) or set()) & theirs[kind] for kind in (PEOPLE, TYPE))
+            scored.append((shares, _kinds_matched(mine, theirs) if shares else 0,
+                           max(likeness[n], default=0.0), -n))
+        scored.sort(reverse=True)
+        sharing = sum(1 for one in scored if one[0])
+        # The strongest of the answers' own first, room kept for what they meet elsewhere.
+        base = sorted(base, key=lambda one: -float(one.get("support") or 0))[
+            :ACROSS_REASONS_MOST - min(sharing, ACROSS_REASONS_MOST // 2)]
+        return base + [others[-one[3]] for one in scored][:ACROSS_REASONS_MOST - len(base)]
+
+    def across(self, answered: Optional[Set[str]] = None) -> None:
         """WHAT DRIVES THEM, ACROSS THE CONTEXTS (the user, 2026-11-06: "在不同context下综合判断一个
         人的动机"): one call, when anything was learned from their answers. A motive or a tension
         stands on reasons from at least two contexts, and on the judgments under them, and is
         tested as any reason is. It is a hypothesis: never said to the user, and it goes with what
-        it came of."""
+        it came of. `answered`: the contexts with new answers (None: every one of the answers)."""
         reasons = self.store.reasons(("active", "candidate"))
-        contexts = {one["id"]: self._context_of(one["id"]) for one in reasons}
+        reason_tags, _of_judgment = self._tags()
+        contexts = {one["id"]: self._contexts(reason_tags.get(one["id"])) for one in reasons}
         if not any(where - {"work"} for where in contexts.values()):
             return
+        reasons = self._for_across(reasons, contexts, reason_tags, answered)
+        contexts = {one["id"]: contexts[one["id"]] for one in reasons}
         lines = [f"{one['id']} [{', '.join(sorted(contexts[one['id']])) or 'work'}]: {one['statement']}"
                  for one in reasons]
         principles = [str(row["statement"]) for row in self.db.query(
             # The user's own, never the Experience debugger's scopes ("work:dbg_...:<way>", 2026-11-07).
             "SELECT statement FROM experience_patterns WHERE layer = 'principle' "
             "AND scope NOT LIKE 'work:%'")]
-        said = self.ask("reasons", ACROSS_PROMPT, "REASONS:\n" + "\n".join(lines)
+        said = self.ask("answers", ACROSS_PROMPT, "REASONS:\n" + "\n".join(lines)
                         + "\n\nPRINCIPLES OF THEIR WORK:\n" + "\n".join(f"- {one}" for one in principles),
                         4000, "what drives them")
         if not said or said.get("_failed"):
@@ -1087,15 +1387,27 @@ class Reasons:
                 statement = f"In tension: {statement}"
             self._new_reason(dict(one, statement=statement, aspect="motive"), judgments, stated=False)
 
-    def run(self, first_learning: bool, stopped: Optional[Callable[[], bool]] = None
-            ) -> Dict[str, Any]:
+    def run(self, first_learning: bool, stopped: Optional[Callable[[], bool]] = None,
+            from_answers: bool = True) -> Dict[str, Any]:
+        """`from_answers`: Learning from your answers on (common/modules.py) - off, no answer is
+        taken in, guessed or tied across contexts; they wait, kept."""
         before = {one["id"]: str(one.get("statement") or "")
                   for one in self.store.reasons(("candidate", "active"))}
-        taken = from_lessons.take(self.db)
+        supports_before = self._supports()
+        taken = from_lessons.take(self.db) if from_answers else []
         self.report["lessons_taken"] = len(taken)
         if taken and (stopped is None or not stopped()):
             self.predict(taken)
         news = self.store.judgments("state = 'new' ORDER BY at")
+        # NOTHING NEW, NOTHING ASKED AGAIN (the user, 2026-11-11): no new judgment, no answer
+        # taken, and the pool and the kept reasons as the last run left them - ABDUCE, the
+        # merges and the word list would be asked what they were asked; they are not.
+        if not news and not taken and self._kv(RUN_SEEN) == self._state_print():
+            self.report["unchanged"] = ("nothing new since the last update: no reason looked "
+                                        "for, merged or worded again")
+            if stopped is None or not stopped():
+                self.compete()
+            return dict(self.report)
         if news:
             conflicts = self.explain(news)
             for rid, ids in conflicts.items():
@@ -1105,7 +1417,8 @@ class Reasons:
         if stopped is None or not stopped():
             self.abduce()
         if taken and (stopped is None or not stopped()):
-            self.across()
+            # The reasons of the contexts with new answers, and what they meet elsewhere.
+            self.across({str(one.get("kind") or "") for one in taken} - {""})
         if stopped is None or not stopped():
             self.compete()
         # THE SAME REASON MADE ONE, EVERY UPDATE (2026-11-07): it ran on a first learning only,
@@ -1116,11 +1429,22 @@ class Reasons:
             everyone = not self._kv(MERGED_ALL)
             new = {one["id"] for one in kept
                    if everyone or before.get(one["id"]) != str(one.get("statement") or "")}
-            self.merge_same(None if (first_learning or everyone) else new)
+            # A FIRST LEARNING NO LONGER ASKS EVERY PAIR (the user, 2026-11-11): only those with
+            # a reason new, said anew or resting on other judgments now - every pair only in the
+            # one pass of MERGED_ALL; a pair found not the same is not asked again (merge_same).
+            supports_now = self._supports()
+            changed = new | {one["id"] for one in kept
+                             if supports_now.get(one["id"]) != supports_before.get(one["id"])}
+            self.merge_same(None if everyone else changed)
             if new and (stopped is None or not stopped()):
                 self.merge_near(new)
             if everyone and (stopped is None or not stopped()):
                 self._set_kv(MERGED_ALL, now())
         if stopped is None or not stopped():
             self.tend_terms(first_learning)
+        # What this run leaves, for the next to tell whether anything changed - only when it ran
+        # whole: a step stopped or not answered is asked again.
+        if (stopped is None or not stopped()) and not any(
+                value for key, value in self.report.items() if key.endswith("_failed")):
+            self._set_kv(RUN_SEEN, self._state_print())
         return dict(self.report)

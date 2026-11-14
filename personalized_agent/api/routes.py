@@ -117,7 +117,7 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             },
             # Each option by its full name, where a code is what is stored.
             "choice_labels": {"character": {
-                c.get("name"): str(c.get("display_name") or c.get("name"))
+                c.get("name"): str(c.get("label") or c.get("display_name") or c.get("name"))
                 for c in app.characters.list_characters()},
                 "display_language": {
                 code: _language_label(code) for code in _display_codes()}},
@@ -225,6 +225,25 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
 
         path = str(request.require("path"))
         return {"path": path, **describe_directory(path)}
+
+    @route("POST", "/api/settings/check-place")
+    def check_place(request: Any) -> Any:
+        """A folder or a file - a privacy one - that is there; or a web address."""
+        import os
+        from pathlib import Path
+        path = str(request.require("path")).strip()
+        from ..common.privacy_folders import is_address
+        if is_address(path):
+            return {"path": path, "usable": True, "problem": ""}
+        if path.lower().startswith(("www.", "http:", "https:")):
+            return {"path": path, "usable": False,
+                    "problem": "a web address starts with https:// and a site's name"}
+        try:
+            there = bool(path) and Path(os.path.expanduser(path)).exists()
+        except (OSError, ValueError):
+            there = False
+        return {"path": path, "usable": there,
+                "problem": "" if there else "there is no folder or file there"}
 
     @route("GET", "/api/agent-state")
     def agent_state(_request: Any) -> Any:
@@ -383,20 +402,36 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         except SocietyError as exc:
             raise ApiError(str(exc) or "the society server did not answer",
                            exc.status if 400 <= exc.status < 500 else 502)
+        except PermissionError as exc:       # not as the key permits, or not the account's to do
+            raise ApiError(str(exc), 403)
         except ValueError as exc:
             raise ApiError(str(exc), 409)
 
     @route("GET", "/api/society")
     def society_status(_request: Any) -> Any:
-        """The agent's id, whether it is registered and listed, the user's own
-        profile as Connections holds it, and how many messages are unread."""
+        """The account the agent is paired with ("" until then), the pairing,
+        the key's permissions, the user's own profile as Connections holds it,
+        and how many messages are unread."""
         return _society(app.society.status)
 
-    @route("POST", "/api/society/publish")
-    def society_publish(request: Any) -> Any:
-        """The user's own profile put on the server - listed among the people
-        only when they say."""
-        return _society(lambda: app.society.publish(bool(request.get("listed"))))
+    @route("POST", "/api/society/pair")
+    def society_pair(request: Any) -> Any:
+        """PAIRING (the site's v2): the agent asks for a key of the user's account - the id they
+        copied from their account page on the website. The user Gives it there, checking the
+        request code."""
+        return _society(lambda: app.society.pair_start(str(request.require("account")),
+                                                       str(request.get("label") or "")))
+
+    @route("GET", "/api/society/pair/status")
+    def society_pair_status(_request: Any) -> Any:
+        """Whether the user gave the key on the website: waiting, given (connected), refused or
+        expired."""
+        return _society(app.society.pair_status)
+
+    @route("POST", "/api/society/unpair")
+    def society_unpair(_request: Any) -> Any:
+        """The pairing forgotten on this computer (the key is taken back on the website)."""
+        return _society(app.society.unpair)
 
     @route("POST", "/api/society/groups")
     def society_groups(request: Any) -> Any:
@@ -422,18 +457,219 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         return {"contact": _society(lambda: app.society.link(
             str(request.require("peer")), str(request.get("person_id") or "")))}
 
-    @route("GET", "/api/society/conversations")
-    def society_conversations(_request: Any) -> Any:
-        return {"conversations": app.society.conversations()}
+    # -- for the user's approval, together (the user, 2026-11-12; agent/approvals.py) --------------
+    @route("GET", "/api/approvals")
+    def approvals_listed(_request: Any) -> Any:
+        """Everything waiting for the user's yes, and when the next summary is."""
+        upcoming = app.approvals.next_time()
+        items = app.approvals.items()
+        return {"items": items, "times": app.approvals.times(),
+                "groups": [{"group": group["group"], "keys": [one["key"] for one in group["items"]]}
+                           for group in app.approvals.groups(items, ask=False)],
+                "next": upcoming.isoformat() if upcoming else "",
+                "let_go": app.approvals.let_go()[:10]}
 
-    @route("GET", "/api/society/conversation")
-    def society_conversation(request: Any) -> Any:
-        peer = str(request.require("peer"))
-        if request.get("read"):
-            app.society.read_all(peer)
-        return {"messages": app.society.conversation(peer),
-                "contact": app.society.contact(peer) or {"peer_id": peer},
-                "group": app.society.group_of(peer), "kind": app.society.kind_of(peer)}
+    @route("GET", "/api/report")
+    def report_shown(request: Any) -> Any:
+        """THE REPORT (agent/reports.py): one issue as it was made (`issue`) - each thing in it that
+        no longer waits marked so - else the report as it stands now."""
+        issue = str(request.get("issue") or "")
+        if issue:
+            try:
+                return app.reports.issue(issue)
+            except ValueError:
+                pass            # one before the latest (only the latest is kept): the latest
+        # The latest issue - never one made on the page's way (the model asked takes half a minute).
+        return app.reports.latest_issue() or {"tabs": {}, "issue": "", "at": "", "since": ""}
+
+    @route("GET", "/api/page/wants")
+    def page_wants(_request: Any) -> Any:
+        """THE TAB THE APP'S WINDOW IS TO TURN TO (the desktop's Report, 2026-11-13) - asked by the page
+        as it comes to the front; given once, and only for a minute."""
+        import time as _time
+        wants = getattr(app, "page_wants", None) or {}
+        app.page_wants = None
+        if not wants or _time.time() - float(wants.get("at") or 0) > 60:
+            return {"tab": ""}
+        return {"tab": str(wants.get("tab") or "")}
+
+    @route("POST", "/api/report/seen")
+    def report_seen(_request: Any) -> Any:
+        """The report looked at on the page: its summaries read (and gone from beside the avatar)."""
+        return {"read": app.notifications.read_report_summaries()}
+
+    @route("GET", "/api/report/issues")
+    def report_issues(_request: Any) -> Any:
+        """THE REPORT'S ISSUES, the latest first - and when the next one is made."""
+        upcoming = app.approvals.next_time()
+        issues = app.reports.issues()
+        # ITS NOTIFICATION, THE MONITOR'S "YOUR REPORT" (the user, 2026-11-13: "monitor那里只有开关，然后时间具体在
+        # report, report里也要有一个button"): on or off, the same switch from here.
+        row = app.db.query_one("SELECT id, enabled FROM monitor_activators WHERE builtin = 'summary' AND "
+                               "COALESCE(deleted_at, '') = '' ORDER BY created_at LIMIT 1")
+        return {"issues": issues, "times": app.approvals.times(),
+                "next": upcoming.isoformat() if upcoming else "",
+                "last": issues[0]["at"] if issues else "",
+                "making": bool(app.reports.making),
+                "notify": {"id": row["id"], "on": bool(row["enabled"])} if row else None}
+
+    @route("POST", "/api/report/make")
+    def report_make(_request: Any) -> Any:
+        """AN ISSUE NOW, asked for - made in the background and kept with the rest; nothing told.
+        The page follows `making` in /api/report/issues."""
+        return {"making": True, "began": app.reports.make_in_background("asked for")}
+
+    @route("GET", "/api/report/event")
+    def report_event(request: Any) -> Any:
+        """A thread - the event's, or one thing's in it (`item`, its own): the user's words and the
+        agent's answers."""
+        return _society(lambda: app.events.thread(str(request.require("id")),
+                                                  str(request.get("item") or "")))
+
+    def _report_held(request: Any) -> Any:
+        """The event as the issue the user answers from holds it - nothing made again on the way."""
+        event = str(request.require("id"))
+        issue = str(request.get("issue") or "")
+        shown = None
+        if issue:
+            try:
+                shown = app.reports.issue(issue)
+            except ValueError:
+                shown = None
+        shown = shown or app.reports.latest_issue() or {}
+        tabs = shown.get("tabs") or {}
+        return event, next((one for tab in tabs.values() for one in tab if one["id"] == event), None)
+
+    @route("POST", "/api/report/event/answer")
+    def report_event_answer(request: Any) -> Any:
+        """A QUICK ANSWER ON A THING IN AN EVENT, as a message in its thread (the user, 2026-11-12:
+        "每个answer之后都应该是用chat形式的回复"): Approve, Not right, Already done - or the answer the
+        agent asked for - said there; done; and what was done answered there."""
+        from ..agent.approvals import done_said
+        event, held = _report_held(request)
+        ref = str(request.require("ref"))
+        how = str(request.get("how") or "yes")
+        if how not in ("yes", "no", "already", "text", "do", "now", "ok"):
+            raise ValueError("how: yes, no, already, text, do, now or ok")
+        if how == "ok":
+            # SEEN - THE USER'S OK on a thing done by the agent: not shown again (2026-11-13).
+            from ..agent.reports import seen
+            if not ref.startswith("did:") or not seen(app.db, ref.partition(":")[2]):
+                raise ApiError("only a thing done by the agent is said OK to")
+            return {"id": event, "done": True}
+        item = next((one for one in (held or {}).get("items") or [] if one.get("ref") == ref), {})
+        # A THING OF THE USER'S (the user, 2026-11-13: "这个也要有快速回复（比如i already did this)"): done by
+        # them - marked done, said in the thread; or handed to the agent, which answers there.
+        key = str(item.get("key") or "")              # its own thread (the user, 2026-11-13)
+        if item.get("kind") == "mine":
+            from ..common.interface_words import shown
+            ident = ref.partition(":")[2]
+            if how == "already":
+                return _society(lambda: app.events.answer(
+                    event, shown("I already did this", app.config),
+                    lambda: app.yours_done(ident), done_said(item, "already", app.config), item=key))
+            if how == "do":
+                return _society(lambda: app.events.reply(
+                    event, shown("Please do this for me.", app.config),
+                    (held or {}).get("items") or [], about=str(item.get("title") or ""), item=key))
+            if how == "now":
+                # ITS PART NOW (the user, 2026-11-13: "人可以告诉他马上做，做好会归到需要的东西整理好了的部分").
+                return _society(lambda: app.events.answer(
+                    event, shown("Prepare your part now", app.config),
+                    lambda: app.agenda_prepare_now(ident),
+                    shown("Starting on my part now - it moves to ready once it is done.", app.config),
+                    item=key))
+            raise ValueError("a thing of yours is answered: already, do or now")
+        text = str(request.get("text") or "").strip()
+        words = {"yes": str(item.get("yes") or "Approve"), "no": str(item.get("no") or "Not right"),
+                 "already": str(item.get("yes") or "I have done it") if item.get("user_acts")
+                 else "Already done"}.get(how, text)
+        return _society(lambda: app.events.answer(
+            event, words,
+            lambda: app.approvals.decide(ref, how in ("yes", "text"), text if how == "text" else "",
+                                         already=how == "already"),
+            done_said(item, how, app.config), source=ref.partition(":")[0],
+            run_id=str(item.get("run") or ""), item=key))
+
+    @route("POST", "/api/report/ok_all")
+    def report_ok_all(request: Any) -> Any:
+        """OK FOR ALL OF THEM (the user, 2026-11-13: "要有ok for all 的选项"): each thing done by the agent given -
+        seen, not shown again. How many."""
+        from ..agent.reports import seen
+        keys = [str(one) for one in request.get("keys") or [] if str(one).startswith("did:")][:500]
+        return {"seen": sum(1 for key in keys if seen(app.db, key.partition(":")[2]))}
+
+    @route("POST", "/api/report/event/reply")
+    def report_event_reply(request: Any) -> Any:
+        """THE USER'S WORDS ON AN EVENT: the agent answers and acts, with the event's whole context."""
+        event, held = _report_held(request)
+        # UNDER A THING ITS WORK MADE: to that work, with all it has (the user, 2026-11-12: "满工具的chat基于
+        # work的context进行回答") - the plan's thing's run, a draft, a run's command; else the chat agent.
+        ref = str(request.get("ref") or "")
+        source = ref.partition(":")[0]
+        key = str(request.get("item") or "")
+        items = (held or {}).get("items") or []
+        item = next((one for one in items if (key and one.get("key") == key)
+                     or (not key and ref and one.get("ref") == ref)), {})
+        key = key or str(item.get("key") or "")
+        text = str(request.get("text") or "")
+        if ref and source in ("agenda", "society", "work") and item.get("kind") == "approve":
+            return _society(lambda: app.events.reply_to_work(
+                event, text, source, str(item.get("run") or ""),
+                lambda: app.approvals.decide(ref, False, text), item=key))
+        return _society(lambda: app.events.reply(event, text, items,
+                                                 about=str(request.get("about") or item.get("title") or ""),
+                                                 item=key))
+
+    @route("POST", "/api/approvals/check")
+    def approvals_check(_request: Any) -> Any:
+        """What is done already, looked for now - and let go of, with why."""
+        return {"let_go": app.approvals.check_done(force=True)}
+
+    @route("POST", "/api/approvals/decide")
+    def approvals_decide(request: Any) -> Any:
+        """One answered: `yes` - only a plain yes approves; `text` - an answer the agent asked for."""
+        yes = request.get("yes")
+        return app.approvals.decide(str(request.require("key")),
+                                    yes is True or str(yes).lower() in ("true", "1", "yes"),
+                                    str(request.get("text") or ""),
+                                    already=request.get("already") is True)
+
+    @route("POST", "/api/approvals/all")
+    def approvals_all(request: Any) -> Any:
+        """Approve all: each a plain yes approves - of `keys`, as the user saw them."""
+        keys = request.get("keys")
+        return {"done": app.approvals.approve_all([str(one) for one in keys]
+                                                  if isinstance(keys, list) else None)}
+
+    @route("POST", "/api/approvals/times")
+    def approvals_times(request: Any) -> Any:
+        return {"times": app.approvals.set_times(str(request.get("times") or ""))}
+
+    # -- the inbox, as an email program shows it (the user, 2026-11-12) ------------------------
+    @route("GET", "/api/society/threads")
+    def society_threads(_request: Any) -> Any:
+        """Each thread - what was sent and what came back - and what has become of it."""
+        return {"threads": app.society.threads()}
+
+    @route("GET", "/api/society/thread")
+    def society_thread(request: Any) -> Any:
+        """One thread, read by the user when `read` - or, for a new message, only whom to
+        (`peer`, no `id`)."""
+        key = str(request.get("id") or "")
+        if key:
+            said = _society(lambda: app.society.thread(key, read=bool(request.get("read"))))
+        else:
+            from ..society import identity as society_ids
+            peer = society_ids.normal_id(str(request.require("peer")))
+            if not peer:
+                raise ApiError("that is not an account id: pa-XXXX-XXXX", 400)
+            said = {"id": "", "kind": "message", "peer_id": peer, "subject": "", "status": "",
+                    "messages": []}
+        peer = said["peer_id"]
+        said.update(contact=app.society.contact(peer) or {"peer_id": peer},
+                    group=app.society.group_of(peer))
+        return said
 
     @route("GET", "/api/society/connections")
     def society_connections(request: Any) -> Any:
@@ -470,14 +706,6 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     @route("POST", "/api/society/refresh")
     def society_refresh(_request: Any) -> Any:
         return _society(app.society.refresh)
-
-    @route("POST", "/api/society/email/start")
-    def society_email_start(request: Any) -> Any:
-        return _society(lambda: app.society.email_start(str(request.require("email"))))
-
-    @route("POST", "/api/society/email/confirm")
-    def society_email_confirm(request: Any) -> Any:
-        return _society(lambda: app.society.email_confirm(str(request.require("code"))))
 
     @route("GET", "/api/society/people")
     def society_people(request: Any) -> Any:
@@ -517,74 +745,74 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     @route("POST", "/api/society/send")
     def society_send(request: Any) -> Any:
         """THE USER'S SEND - the one door a message leaves by: the draft, as
-        the user saw it (its content hash), sealed and left for its agent."""
+        the user saw it (its content hash), sent to its account - or kept on the
+        website as a draft ("status": "site_draft", "said") when the key may not send it."""
         return {"sent": _society(lambda: app.society.send_draft(
             str(request.require("id")), str(request.require("hash"))))}
 
-    # -- following and recent events (the user, 2026-11-03) ---------------------------------
-    @route("GET", "/api/society/events")
-    def society_events(request: Any) -> Any:
-        """The recent events of those followed - read once shown; whom the
-        agent follows; the user's own events; the draft one, if any."""
-        events = app.society.events()
-        if request.get("read"):
-            app.society.read_events()
-        following, mine, error = [], [], ""
-        try:
-            following = _society(app.society.following)
-            mine = _society(app.society.my_events)
-        except ApiError as exc:
-            error = str(exc)
-        return {"events": events, "following": following, "mine": mine,
-                "draft": app.society.status().get("event_draft"), "error": error}
+    # -- the user's own profile, from the account; the posts (the site's API, 2026-11-12) ---------
+    @route("POST", "/api/society/profile/pull")
+    def society_profile_pull(_request: Any) -> Any:
+        """The user's own profile brought from their Agents Society account now - as it is also
+        after the key is given and at every refresh."""
+        return {"pulled": _society(app.society.pull_profile)}
 
-    @route("POST", "/api/society/follow")
-    def society_follow(request: Any) -> Any:
-        peer = str(request.require("id"))
-        if str(request.get("do") or "follow") == "unfollow":
-            return _society(lambda: app.society.unfollow(peer))
-        return _society(lambda: app.society.follow(peer))
+    @route("GET", "/api/society/posts")
+    def society_posts(_request: Any) -> Any:
+        return _society(app.society.posts)
 
-    @route("POST", "/api/society/events/collect")
-    def society_events_collect(_request: Any) -> Any:
-        return _society(app.society.collect_v2)
+    @route("POST", "/api/society/posts/add")
+    def society_post_add(request: Any) -> Any:
+        """THE USER'S CLICK - a post, public at once."""
+        return {"post": _society(lambda: app.society.add_post(
+            str(request.require("title")), str(request.get("text") or "")))}
 
-    @route("POST", "/api/society/events/post")
-    def society_event_post(request: Any) -> Any:
-        """THE USER'S POST - the one door a recent event leaves by."""
-        return {"posted": _society(lambda: app.society.post_event(str(request.require("text"))))}
+    @route("POST", "/api/society/posts/delete")
+    def society_post_delete(request: Any) -> Any:
+        return _society(lambda: app.society.delete_post(str(request.require("id"))))
 
-    @route("POST", "/api/society/events/withdraw")
-    def society_event_withdraw(request: Any) -> Any:
-        return _society(lambda: app.society.withdraw_event(str(request.require("id"))))
+    # -- THE ACCOUNT'S GROUPS (society/site_groups.py; the user, 2026-11-13) --------------------
+    @route("GET", "/api/society/site_groups")
+    def society_site_groups(request: Any) -> Any:
+        """The groups, each with how the agent answers in it and its unread; the invitations; what
+        the key permits. `fresh=1`: read from the website first."""
+        if request.get("fresh"):
+            _society(app.society.site_groups.read)
+        return _society(app.society.site_groups.shown)
 
-    @route("POST", "/api/society/events/draft")
-    def society_event_draft(request: Any) -> Any:
-        """The draft event kept as the user left it - or let go of."""
-        text = str(request.get("text") or "")
-        if not text.strip():
-            app.society.discard_event_draft()
-            return {"draft": None}
-        return {"draft": _society(lambda: app.society.draft_event(text, written_by="user"))}
+    @route("GET", "/api/society/site_group")
+    def society_site_group(request: Any) -> Any:
+        return _society(lambda: app.society.site_groups.thread(
+            str(request.require("id")), read=bool(request.get("read"))))
 
-    @route("POST", "/api/society/backup")
-    def society_backup(request: Any) -> Any:
-        """A backup of the agent's key - its id alone, or with its private
-        keys, sealed with the user's passphrase."""
-        with_key = bool(request.get("with_key"))
-        return {"backup": _society(lambda: app.society.backup(
-            with_key, str(request.get("passphrase") or "")))}
+    @route("POST", "/api/society/site_group/send")
+    def society_site_group_send(request: Any) -> Any:
+        """THE USER'S OWN MESSAGE in a group - sent at once (no drafts in a group)."""
+        return _society(lambda: app.society.site_groups.send(
+            str(request.require("group")), str(request.require("text")), by="user"))
 
-    @route("POST", "/api/society/restore")
-    def society_restore(request: Any) -> Any:
-        backup = request.get("backup")
-        if isinstance(backup, str):
-            try:
-                backup = json.loads(backup)
-            except ValueError:
-                raise ApiError("this is not a backup of an agent's key", 400)
-        return _society(lambda: app.society.restore(backup or {},
-                                                    str(request.get("passphrase") or "")))
+    @route("POST", "/api/society/site_group/create")
+    def society_site_group_create(request: Any) -> Any:
+        return _society(lambda: app.society.site_groups.create(
+            str(request.require("name")), str(request.get("description") or ""),
+            bool(request.get("public")), by="user"))
+
+    @route("POST", "/api/society/site_group/invite")
+    def society_site_group_invite(request: Any) -> Any:
+        return _society(lambda: app.society.site_groups.invite(
+            str(request.require("group")), str(request.require("account")), by="user"))
+
+    @route("POST", "/api/society/site_group/invitation")
+    def society_site_group_invitation(request: Any) -> Any:
+        """The user accepts (join) or declines an invitation."""
+        return _society(lambda: app.society.site_groups.answer_invitation(
+            str(request.require("group")), bool(request.get("join")), by="user"))
+
+    @route("POST", "/api/society/site_group/mode")
+    def society_site_group_mode(request: Any) -> Any:
+        """How the agent answers in this group: reply (it judges, and sends) or read."""
+        return _society(lambda: app.society.site_groups.set_mode(
+            str(request.require("group")), str(request.require("mode"))))
 
     @route("GET", "/api/record_log")
     def record_log(request: Any) -> Any:
@@ -2166,6 +2394,12 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     def work_drafts(request: Any) -> Any:
         ident = str(request.get("id") or "")
         if ident:
+            # OPENED, IT GOES ON (the user, 2026-11-09): left half drafted when the agent closed, it is
+            # collected and drafted again now - not "Collecting the context" for ever.
+            try:
+                app.drafts.carry_on(ident)
+            except Exception:
+                log.warning("a draft left half done could not be carried on", exc_info=True)
             draft = app.drafts.get(ident)
             if draft is None:
                 raise ApiError("no such piece of work", 404)
@@ -2720,7 +2954,11 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                 # ITS BOXES FILLED BY THE EXTENSION, where it is in that browser (the user, 2026-11-08):
                 # an order left for the page, taken once - nothing pressed, the submit theirs.
                 from ..platform_layer.browser_extension import leave_fill_order
-                filling = bool(leave_fill_order(app.data_dir, str(item.get("url") or ""), parts))
+                filling = bool(leave_fill_order(app.data_dir, str(item.get("url") or ""), parts,
+                                                item.get("attach") or []))
+                # ITS FILES, TOLD - NEVER UPLOADED (the user, 2026-11-13: "所有附件不上传，但是instruction告诉我传什么").
+                for one in item.get("attach") or []:
+                    first.append(say(f"Attach it yourself - {one.get('field', '')}: {one.get('path', '')}"))
                 first.append(say(f"The page opens in your browser - where the agent's extension is, its boxes are filled for you and outlined: check them, then submit it yourself; where it is not, paste each part into its box, starting with {parts[0].get('field', '')}")
                              if filling else
                              say(f"The page opens in your browser - paste each part into its box, starting with {parts[0].get('field', '')}"))
@@ -3900,6 +4138,15 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         except ValueError as exc:
             raise ApiError(str(exc), 404)
 
+    @route("POST", "/api/monitor/no_notifications")
+    def monitor_no_notifications(request: Any) -> Any:
+        """NO NOTIFICATIONS (the user, 2026-11-13: "点击之后所有notification都不会弹，但是其它功能正常"): over every
+        Activator - all waits in the list; the rest runs on."""
+        on = bool(request.get("on"))
+        app.config.set(app.monitor.NO_NOTIFICATIONS, on)
+        app.monitor.blocker = app.monitor._quieted()
+        return {"no_notifications": on, "blocker": app.monitor.blocker}
+
     @route("POST", "/api/monitor/undo")
     def monitor_undo(request: Any) -> Any:
         """What a turn of the agent's changed, taken back: there is no asking
@@ -4004,14 +4251,7 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         return {"ok": True, "todo": todo}
 
     def _todo_gone(todo: Dict[str, Any], how: str, action: str) -> None:
-        """What every to-do leaving the list has after it: a lesson, its list grouped again, and
-        the model's look at what it leaves behind (agent/feedback/after_todo.py)."""
-        try:
-            app.lessons.the_user_did(action, f'A to-do {how} by the user: "{todo["text"][:300]}".')
-        except Exception:
-            log.warning("what the user did could not be kept as a lesson", exc_info=True)
-        app.list_groups.notice("todo", app.todos.open())
-        app.after_todo.check(todo, how)
+        app.todo_gone(todo, how, action)
 
     @route("POST", "/api/todos/delete")
     def todos_delete(request: Any) -> Any:
@@ -4021,6 +4261,118 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             raise ApiError("no such to-do", 404)
         _todo_gone(todo, "removed", "removed_todo")
         return {"ok": True}
+
+    @route("GET", "/api/agenda")
+    def agenda_shown(request: Any) -> Any:
+        """THE DAY'S AGENDA, A PREVIEW (heartbeat/agenda/, the user, 2026-11-09): the latest plan of
+        the day planned, the things on the plate as judged, and whether a plan is being made."""
+        agenda = getattr(app, "agenda", None)
+        if agenda is None:
+            return {"plan": None, "things": [], "planning": False}
+        # ASKED, IT GOES (the user, 2026-11-09): what is due set going now, not at the next
+        # heartbeat - on its own thread; a failed one is not tried again within half an hour.
+        allowed = getattr(app.heartbeat, "agenda_allowed", None)
+        if allowed is None or allowed():
+            try:
+                agenda.gather()
+                agenda.kick()
+            except Exception:
+                log.warning("the agenda could not be set going", exc_info=True)
+        return agenda.shown()
+
+    @route("POST", "/api/agenda/who")
+    def agenda_who(request: Any) -> Any:
+        """A thing moved to another of the three kinds by the user - and, asked, every thing of its
+        kind (heartbeat/agenda/plan.py, set_who). What they did is a lesson."""
+        agenda = getattr(app, "agenda", None)
+        if agenda is None:
+            raise ApiError("no agenda here", 404)
+        ident, who = str(request.require("id")), str(request.require("who"))
+        for_kind = bool(request.get("for_kind", False))
+        said = agenda.set_who(ident, who, for_kind)
+        if said is None:
+            raise ApiError("no such thing, or no such kind", 400)
+        try:
+            row = app.db.query_one("SELECT title FROM agenda_items WHERE id = ?", (ident,))
+            names = {"delegable": "the agent does it, the user approves for now and may hand it over",
+                     "approve": "the agent does it, the user always approves",
+                     "human": "the user's own work, the agent helping",
+                     "gone": "done already or no longer wanted"}
+            app.lessons.the_user_did(
+                "agenda_kind_set",
+                f'The user put "{(row or {}).get("title", "")[:200]}" (kind of work: '
+                f'"{said["kind"]}") among things where {names[who]}'
+                + (" - and every thing of that kind." if for_kind else "."))
+        except Exception:
+            log.warning("what the user did could not be kept as a lesson", exc_info=True)
+        return {"ok": True, **said}
+
+    @route("POST", "/api/agenda/feedback")
+    def agenda_feedback(request: Any) -> Any:
+        """THE USER'S WORD ON A THING OF THE PLAN (heartbeat/agenda/act.py, phase 2): done, put off,
+        to the agent or theirs, more time, let go - kept, a lesson, the day planned again around it."""
+        feedback = getattr(app, "agenda_feedback", None)
+        if feedback is None:
+            raise ApiError("no agenda here", 404)
+        said = feedback.apply(str(request.require("id")), str(request.require("action")),
+                              day=str(request.get("day", "") or ""))
+        if said is None:
+            raise ApiError("no such thing on the plan, or no such action", 400)
+        return {"ok": True, **said}
+
+    @route("POST", "/api/agenda/approval")
+    def agenda_approval(request: Any) -> Any:
+        """WHAT THE AGENT MADE, APPROVED (phase 3): as it was, changed, or not right - counted by its
+        kind of work; approved, the thing is done; not right, it stays on the plate."""
+        if getattr(app, "agenda_executor", None) is None:
+            raise ApiError("no agenda here", 404)
+        said = app.agenda_approved(str(request.require("id")), str(request.require("how")))
+        if said is None:
+            raise ApiError("no such thing, or no such answer", 400)
+        return {"ok": True, **said}
+
+    @route("POST", "/api/agenda/undo")
+    def agenda_undo(request: Any) -> Any:
+        """WHAT THE AGENT CLEARED AWAY, BACK (phase 3) - within a week."""
+        cleaner = getattr(app, "agenda_cleaner", None)
+        said = cleaner.undo(str(request.require("id"))) if cleaner is not None else None
+        if said is None:
+            raise ApiError("nothing to undo - or more than a week ago", 400)
+        return {"ok": True, **said}
+
+    @route("POST", "/api/agenda/plan")
+    def agenda_plan_now(request: Any) -> Any:
+        """Plan the day now - on a thread of its own; the page asks again until it is done."""
+        agenda = getattr(app, "agenda", None)
+        if agenda is None:
+            raise ApiError("no agenda here", 404)
+        started = agenda.plan_soon("asked on the Overview")
+        if started:
+            # PRESSED, THE USER'S (common/observability/started.py): its calls are counted as
+            # started by them, not as the plan's running cost.
+            from ..common.observability.started import while_running
+            while_running(("agenda_",), lambda: bool(agenda.planning))
+        return {"ok": True, "started": started}
+
+    @route("POST", "/api/todos/decline")
+    def todos_decline(request: Any) -> Any:
+        """NOT DONE / KEEP (the user, 2026-11-09): the agent's suggestion on a to-do turned down;
+        done is suggested again only on clear progress since (heartbeat/core/todo_check.py)."""
+        ident = str(request.require("id"))
+        before = app.todos.get(ident)
+        todo = app.todos.decline(ident, "the user said no on the Overview")
+        if todo is None:
+            raise ApiError("no such to-do", 404)
+        try:
+            kind = (before or {}).get("suggested_kind") or "done"
+            app.lessons.the_user_did(
+                "declined_todo_suggestion",
+                f'The agent suggested a to-do was {"no longer wanted" if kind == "remove" else "done"} '
+                f'and the user said no: "{todo["text"][:200]}" - its why was '
+                f'"{(before or {}).get("suggested_why", "")[:300]}".')
+        except Exception:
+            log.warning("what the user did could not be kept as a lesson", exc_info=True)
+        return {"ok": True, "todo": todo}
 
     @route("POST", "/api/todos/done")
     def todos_done(request: Any) -> Any:
@@ -4041,6 +4393,34 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         if not app.notification_chat(str(request.require("id")), str(request.require("text"))):
             raise ApiError("no such notification, or nothing written", 404)
         return {"ok": True}
+
+    @route("GET", "/api/notifications/waiting_list")
+    def notifications_waiting_list(_request: Any) -> Any:
+        """THE WAITING NOTIFICATIONS, AS THE SIDE PANEL SHOWS THEM (the user, 2026-11-13: "直接占满整个侧边框
+        的那种"): by kind, each with its words, why it was told and its answers."""
+        return {"sections": app.quick_sections("waiting")}
+
+    @route("POST", "/api/notifications/open_link")
+    def notifications_open_link(request: Any) -> Any:
+        """A LINK IN THE SIDE PANEL, IN THE USER'S OWN BROWSER (the user, 2026-11-13: "open the page 弹出来的google
+        chrome没法显示" - the panel's own browser, kept off the screen and signed in nowhere, opened it) -
+        a web address only."""
+        url = str(request.require("url")).strip()
+        if not url.lower().startswith(("http://", "https://")):
+            raise ApiError("only a web address is opened")
+        import webbrowser
+        return {"opened": bool(webbrowser.open(url))}
+
+    @route("POST", "/api/notifications/panel_hide")
+    def notifications_panel_hide(_request: Any) -> Any:
+        """THE SIDE PANEL PUT AWAY, slid out to the edge and kept for the next time (the user,
+        2026-11-13: "有没有更natural的方式从侧边弹出") - `hidden` False where the desktop cannot: the page
+        closes itself."""
+        hide = getattr(app, "hide_notes_panel", None)
+        try:
+            return {"hidden": bool(hide()) if callable(hide) else False}
+        except Exception:
+            return {"hidden": False}
 
     @route("POST", "/api/notifications/bad")
     def notifications_bad(request: Any) -> Any:

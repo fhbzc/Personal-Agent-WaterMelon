@@ -120,7 +120,25 @@ the computer today: what it holds. From what is listed only - what is on their c
 list, what is agreed and waits for a time, and the work under way. The times first, in order;
 then what is due or open, the most pressing first. A few short lines, plain, in the user's display
 language - no greeting, no advice on how to live. Nothing invented: what is not listed is not
-there. When nothing at all is listed, answer with nothing."""
+there. When nothing at all is listed, answer with nothing.
+
+TWO KINDS OF EVENT, said apart: those on their calendar today, which they are going to; and EVENTS
+THAT MAY INTEREST THEM, put on the calendar quietly - nothing says they will go - in a part of
+their own after the times, said as that ("might interest you"), never as their plans.
+TO-DOS: the few most pressing - five at most - and how many more there are. WHAT IS THEIRS TO DO
+GROUPED BY WHAT IT IS ABOUT - a project, a person, one matter - and the groups and what is in them in
+the order of importance and urgency, the most first (the user, 2026-11-12: "按照content group一下，并且
+按照重要性紧急性从前到后"). Those the agent
+suggests are done or no longer wanted are not listed as due: one line saying how many wait for the
+user to confirm on the Overview.
+A PERSON is named as the people listed name them - "Ilse Marrow", not "学姐" or "a junior colleague" - where
+it is plain who is meant; otherwise as the line says.
+SHORT: it is read at a glance - well under 1200 characters.
+THE DAY'S PLAN, when one is given (made for them on the calendar's Planned view): it is THE AGENT'S
+plan - what the agent does for them, what is fixed at a time, what is at risk, and the free stretches
+of their day with what they MIGHT want to do then. Never tell them what to do at a time: what is
+fixed is fixed; for the free stretches, suggestions only (the user, 2026-11-10: "不要限制user做什么").
+The rest above only as it adds to the plan; never two lists of the same day."""
 
 EVENING_SYSTEM = """You write the user's evening report of their day, from the windows of
 time and the work recorded: what they worked on and for how long, what moved,
@@ -129,6 +147,10 @@ unusual. A few short lines, warm and plain, in the user's display language. A wi
 a label: a terminal keeps its session's first request as its title for weeks of other work.
 ONLY WHAT TODAY'S LINES SHOW HAPPENED TODAY: the work still open is from any day, and may not have
 been touched - a talk, a meeting or a thread in it did not "come up today" for being on that list.
+THE DAY AS ITS PLAN WENT, when it is given: block by block what was planned and what they did, what
+they changed, what the agent made and cleared away - say where the day kept to the plan and where it
+did not, plainly and without blame; what is at risk; and tomorrow as it stands now, in a line or
+two, a first draft the plan will still change.
 Answer with the report's text alone."""
 
 STEP_SYSTEM = """You are the step of the agent heartbeat that looks after the MONITOR: the
@@ -252,6 +274,9 @@ class Decider:
         #: WHAT TODAY HOLDS, for the day ahead: `today(until)` -> {"scheduled", "todos",
         #: "waiting"}: lines each. Set by the application.
         self.today: Optional[Callable[[datetime], Dict[str, List[str]]]] = None
+        #: THE DAY'S AGENDA (heartbeat/agenda/plan.py, phase 4): the morning and evening reports are
+        #: written from its plan when there is one (the user, 2026-11-09: "可以的").
+        self.agenda: Any = None
         if search is None or fetch is None:
             from ...agent.work.tools import fetch as _fetch, search as _search
             search, fetch = search or _search, fetch or _fetch
@@ -778,15 +803,26 @@ class Decider:
         except Exception:
             log.warning("what today holds could not be read", exc_info=True)
         work = self._tasks()
-        if not any(held.get(part) for part in ("scheduled", "todos", "waiting")) and not work:
+        if not any(held.get(part) for part in ("scheduled", "explore", "todos", "looks_done",
+                                               "waiting")) and not work \
+                and not self._agenda_part("morning_text"):
             monitor._set_kv(key, "nothing")
             return {"sent": False, "why": "nothing listed for today"}
         local = datetime.now(timezone.utc).astimezone()
         parts = [f"NOW: {local.strftime('%A %d %B, %H:%M')}.",
                  "ON THEIR CALENDAR TODAY:\n" + ("\n".join(held.get("scheduled") or []) or "-"),
+                 "EVENTS TODAY THAT MAY INTEREST THEM (on the calendar quietly; nothing says they "
+                 "will go):\n" + ("\n".join(held.get("explore") or []) or "-"),
                  "ON THEIR TO-DO LIST:\n" + ("\n".join(held.get("todos") or []) or "-"),
+                 "TO-DOS THE AGENT SUGGESTS ARE DONE OR NO LONGER WANTED (waiting for the user to "
+                 "confirm):\n" + ("\n".join(held.get("looks_done") or []) or "-"),
+                 "PEOPLE WHO MAY BE MEANT IN THESE (as their contacts name them):\n"
+                 + ("\n".join(held.get("people") or []) or "-"),
                  "AGREED, WAITING FOR A TIME:\n" + ("\n".join(held.get("waiting") or []) or "-"),
                  "THE WORK UNDER WAY:\n" + ("\n".join(f"- {one}" for one in work) or "-")]
+        planned = self._agenda_part("morning_text")
+        if planned:
+            parts.insert(1, "THE DAY'S PLAN:\n" + planned)
         try:
             said = self._ask(MORNING_SYSTEM, "\n\n".join(parts), MORNING_TASK, max_tokens=900)
         except Exception:
@@ -802,9 +838,21 @@ class Decider:
             return {"sent": False, "why": "the answer was cut off at the output limit" if cut
                     else "nothing written"}
         from ...common.interface_words import shown
-        return monitor.say(shown("Your day ahead", self.config), text[:1400],
+        # NEVER CUT (the user, 2026-11-09: "不需要硬截"): it was cut mid-sentence at 1400.
+        return monitor.say(shown("Your day ahead", self.config), text,
                            dict(context, report=True), firing, why="the day ahead",
                            summary=True)
+
+    def _agenda_part(self, which: str) -> Any:
+        """The day's plan, for a report (phase 4): "" / [] when there is no agenda or no plan."""
+        agenda = getattr(self, "agenda", None)       # a Decider made without __init__, in tests
+        if agenda is None:
+            return ""
+        try:
+            return getattr(agenda, which)()
+        except Exception:
+            log.warning("the day's plan could not be read for the report", exc_info=True)
+            return ""
 
     def _day_of(self, context: Dict[str, Any]) -> Tuple[str, datetime]:
         """The user's day (its key) and when it began - from waking, not midnight (2026-11-07)."""
@@ -884,6 +932,9 @@ class Decider:
                  "WORK STILL OPEN, FROM ANY DAY - NOT WHAT HAPPENED TODAY:\n"
                  + ("\n".join(f"- {one}" for one in self._tasks()) or "-"),
                  "THEIR USUAL DAYS:\n" + self.signals.habits_text()]
+        went = self._agenda_part("evening_facts")
+        if went:
+            parts += ["THE DAY AS ITS PLAN WENT:"] + list(went)
         key = self._evening_key(day)
         try:
             said = self._ask(EVENING_SYSTEM, "\n\n".join(parts), EVENING_TASK, max_tokens=900)
@@ -911,7 +962,8 @@ class Decider:
         if not text:
             return {"sent": False, "why": "nothing written"}
         from ...common.interface_words import shown
-        return monitor.say(shown("Your day", self.config), text[:1400], dict(context, report=True),
+        # NEVER CUT (the user, 2026-11-09: "不需要硬截"), as the day ahead is not.
+        return monitor.say(shown("Your day", self.config), text, dict(context, report=True),
                            firing,
                            why="the evening report", summary=True)
 

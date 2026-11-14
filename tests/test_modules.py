@@ -25,7 +25,20 @@ class WhichModuleTests(unittest.TestCase):
         self.assertEqual(modules.module_of("connections"), "connections")
         self.assertEqual(modules.module_of("newspaper"), "recommend")
         self.assertEqual(modules.module_of("reading"), "recommend")
-        self.assertEqual(modules.module_of("lessons_work"), "experience")
+        # EVERY LESSON LEARNED FROM WHAT THE USER DID (the user, 2026-11-10): Learning from your
+        # answers - the work's lessons too, and their patterns.
+        for task in ("lessons_work", "lessons_connections", "lessons_notifications",
+                     "lessons_general", "lessons_recommendations", "lessons_groups",
+                     "notification_lessons", "learning_answers", "lessons_other"):
+            self.assertEqual(modules.module_of(task), "learning", task)
+        self.assertEqual(modules.module_of("lessons_package"), "manual_lessons", "the user's")
+        # The day's plan its own; what a to-do leaves behind, Task organisation's; back to a
+        # project left a while, the Monitor's.
+        for task in ("agenda_words", "agenda_triage", "agenda_build", "agenda_review"):
+            self.assertEqual(modules.module_of(task), "agenda", task)
+        self.assertEqual(modules.module_of("after_todo"), "tasks")
+        self.assertEqual(modules.module_of("monitor_old_project"), "monitor")
+        self.assertNotIn("heartbeat:step_nature", modules.TASK_MODULE, "the step is gone")
         # Natures grouped beside a round run by themselves; a task learned
         # into stages, and natures merged, the user starts.
         self.assertEqual(modules.module_of("experience"), "experience")
@@ -34,8 +47,33 @@ class WhichModuleTests(unittest.TestCase):
         # The learning's own steps (learning/): Work learning's.
         for task in ("learning_folders", "learning_read", "learning_reasons", "learning_terms"):
             self.assertEqual(modules.module_of(task), "experience", task)
-        self.assertEqual(modules.module_of("lessons_connections"), "connections")
         self.assertEqual(modules.module_of("heartbeat"), "heartbeat (before modules)")
+
+    def test_the_plans_own_work_is_counted_as_its_own(self) -> None:
+        """The user, 2026-11-10: the work the plan starts by itself is not "Started by you"."""
+        self.assertEqual(modules.module_of("work_run"), "manual_work")
+        self.assertEqual(modules.module_of("work_run", module="agenda_work"), "agenda_work")
+        self.assertEqual(modules.module_of("work_draft", by_user=True, module="agenda_work"),
+                         "agenda_work")
+        self.assertEqual(modules.module_of("work_run", module="no such module"), "manual_work")
+        self.assertEqual(modules.STARTED_BY_SOURCE, {"agenda": "agenda_work"})
+
+    def test_a_part_of_a_module_is_off_with_it(self) -> None:
+        """The user, 2026-11-10: "大功能关了子功能也关，但是允许子功能关大功能不关"."""
+        class Config(dict):
+            def get(self, key, default=None):
+                return super().get(key, default)
+        on = Config()
+        self.assertTrue(modules.enabled(on, "agenda_work"))
+        alone = Config(module_agenda_work_enabled=False)
+        self.assertTrue(modules.enabled(alone, "agenda"), "the part off, the plan on")
+        self.assertFalse(modules.enabled(alone, "agenda_work"))
+        whole = Config(module_agenda_enabled=False)
+        self.assertFalse(modules.enabled(whole, "agenda_work"), "off with the plan")
+        self.assertTrue(modules.own_switch(whole, "agenda_work"), "its own switch kept")
+        said = {one["key"]: one for one in modules.described(whole, {})["modules"]}
+        self.assertEqual((said["agenda_work"]["enabled"], said["agenda_work"]["on"],
+                          said["agenda_work"]["parent"]), (False, True, "agenda"))
 
     def test_nothing_spends_unseen_under_other(self) -> None:
         # The data heartbeat and knowledge library, removed from the
@@ -221,6 +259,35 @@ class ByTheUserTests(unittest.TestCase):
             self.assertFalse(self.started.by_user("heartbeat:step_notify"))
         finally:
             self.started.STARTING = before
+
+    def test_made_for_a_module_by_its_process_its_thread_or_its_run(self) -> None:
+        from types import SimpleNamespace
+        asked = SimpleNamespace(metadata={"run": "run_1"})
+        self.assertEqual(self.started.module_for(asked), "")
+        self.started.mark("run", "run_1", "agenda_work")
+        self.assertEqual(self.started.module_for(asked), "agenda_work", "by its run")
+        self.assertEqual(self.started.module_for(SimpleNamespace(metadata={})), "")
+        with self.started.on_behalf("agenda_work"):
+            self.assertEqual(self.started.module_for(SimpleNamespace(metadata=None)),
+                             "agenda_work", "by its thread")
+        self.assertEqual(self.started.module_for(SimpleNamespace(metadata=None)), "")
+        self.started.for_this_process("agenda_work")
+        self.assertEqual(self.started.module_for(SimpleNamespace(metadata=None)), "agenda_work",
+                         "by its process")
+
+    def test_a_call_made_for_the_plan_is_counted_under_it(self) -> None:
+        from personalized_agent.models.base import ModelRequest
+        with self.started.on_behalf("agenda_work"):
+            try:
+                self.app.models.invoke(ModelRequest(messages=[{"role": "user", "content": "hi"}],
+                                                    task="work_run"), role="primary")
+            except Exception:
+                self.skipTest("no model to call here")
+        row = self.app.db.query_one("SELECT module FROM model_calls WHERE task = 'work_run'")
+        self.assertEqual(row["module"], "agenda_work")
+        spent = modules.shares(self.app.db, 72)
+        self.assertIn("agenda_work", spent)
+        self.assertNotIn("manual_work", spent, "not Started by you")
 
     def test_the_call_records_it_and_the_share_leaves_it_out(self) -> None:
         from personalized_agent.models.base import ModelRequest

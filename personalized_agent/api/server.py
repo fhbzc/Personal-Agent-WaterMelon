@@ -383,6 +383,12 @@ class ApiServer:
             # has already been used, or has expired"). Bound exclusively
             # there; on macOS and Linux a listening port is never shared.
             allow_reuse_address = not sys.platform.startswith("win")
+            # CONNECTIONS WAITING TO BE TAKEN. The default backlog is 5: a page opening asks for
+            # about ten files at once, and while the process is busy (a projects or connections
+            # round) the sixth is refused - on Windows at once (measured 2026-11-11: 15 of 20
+            # refused at 5, none at 128). The page opened with app.js refused
+            # (ERR_CONNECTION_REFUSED): its frame drawn, nothing in it, never refreshed.
+            request_queue_size = 128
 
             def server_bind(self) -> None:
                 exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)

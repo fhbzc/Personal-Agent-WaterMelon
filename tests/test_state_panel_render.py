@@ -196,7 +196,7 @@ class TheStateHeartbeatPanelRendersTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             done = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu",
                  "--no-first-run", "--window-size=1400,900",
                  f"--user-data-dir={work}/profile",
                  "--virtual-time-budget=9000", "--dump-dom", probe.as_uri()],
@@ -250,7 +250,7 @@ class TheStateHeartbeatPanelRendersTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             done = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu",
                  "--no-first-run", "--window-size=1400,900",
                  f"--user-data-dir={work}/profile",
                  "--virtual-time-budget=9000", "--dump-dom", probe.as_uri()],
@@ -905,7 +905,8 @@ class TheStateHeartbeatPanelRendersTests(unittest.TestCase):
             "try{"
             "drawWhatIsRunning(" + json.dumps(picture) + ");"
             "const host=document.getElementById('ov-tasks');"
-            "first=(document.querySelector('#overview .card')||{}).id||'';"
+            # The report's line above it is shown only when a report waits (2026-11-12).
+            "first=(document.querySelector('#overview .card:not([hidden])')||{}).id||'';"
             "rows=host.querySelectorAll('.sb-tt-row').length;"
             "cards=host.querySelectorAll('[data-sb-card]').length;"
             "host.querySelector('[data-sb-task]').dispatchEvent("

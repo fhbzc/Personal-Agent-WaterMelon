@@ -230,8 +230,16 @@ class ListenerManager:
                        capture_root: Any = None) -> str:
         """Explain a rejection after the existing policy has decided it."""
         try:
+            from ...common.privacy_folders import private_mode
+            if private_mode(self.config):
+                return "private_mode"
             if not self.privacy.category_enabled(category):
                 return "monitoring_or_category_disabled"
+            if str(event.event_type).startswith("screen.") and (event.data or {}).get(
+                    "window_title") and self.config.lines("listener_privacy_paths"):
+                from ...common.privacy_folders import names_private
+                if names_private(event.data.get("window_title"), self.config) is not None:
+                    return "privacy_folder"
             if not self.privacy.application_allowed(event.application):
                 return "application_excluded"
             if not self.privacy.website_allowed(event.data.get("url")):

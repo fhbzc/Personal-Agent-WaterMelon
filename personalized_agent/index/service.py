@@ -126,7 +126,31 @@ class LocalIndex:
         return out
 
     def never(self) -> List[str]:
-        return [str(self.app.paths.data_dir)]
+        # And the user's privacy folders and files (the user, 2026-11-12: "search 无法读取内容").
+        from ..common.privacy_folders import roots
+        return [str(self.app.paths.data_dir),
+                *[str(one) for one in roots(getattr(self.app, "config", None))]]
+
+    def forget_private(self) -> int:
+        """What is kept of the privacy folders, forgotten now - added to them, a file's words
+        are not kept until the next build. How many files were forgotten."""
+        from ..common.privacy_folders import is_private, roots
+        found = roots(getattr(self.app, "config", None))
+        if not found or not self.path.exists():
+            return 0
+        store = IndexStore(self.path)
+        forgotten = 0
+        try:
+            for root in store.roots():
+                key = str(root["path"])
+                for path, held in list(store.known_under(key).items()):
+                    if is_private(path, self.app.config):
+                        store.drop(held[0])
+                        forgotten += 1
+            store.commit()
+        finally:
+            store.close()
+        return forgotten
 
     # -- building -----------------------------------------------------------------------
     def begin(self) -> None:
@@ -333,10 +357,12 @@ class LocalIndex:
         out: List[Dict[str, Any]] = []
         now = time.time()
         records: Dict[str, str] = {}
+        from ..common.privacy_folders import is_private
         for one in found:
             path = one["path"]
             try:
-                if not allowed(path) or not os.path.isfile(path):
+                if is_private(path, getattr(self.app, "config", None)) \
+                        or not allowed(path) or not os.path.isfile(path):
                     continue
             except Exception:
                 continue

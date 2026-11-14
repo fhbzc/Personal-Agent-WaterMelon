@@ -145,7 +145,7 @@ class TheCardTests(unittest.TestCase):
             page = Path(work) / "perm.html"
             page.write_text(PAGE % self._block(), encoding="utf-8")
             done = subprocess.run(
-                [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=5000",
                  "--dump-dom", page.as_uri()],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)

@@ -126,7 +126,17 @@ class LinuxActivityProvider(PlatformActivityProvider):
             if screen is None:
                 screen = (0, 0, image.size[0], image.size[1])
             shown = [dict(one, ours=False) for one in windows]      # in it, as they are
-            return blank_windows(image, screen, shown, hidden)
+            image = blank_windows(image, screen, shown, hidden)
+            # THE MOUSE POINTER, DRAWN WHERE IT WAS (2026-11-13: "你要能截取我的鼠标位置").
+            try:
+                from .screen_picture import draw_pointer
+                said = children.run_short([self._xdotool, "getmouselocation", "--shell"], capture_output=True,
+                                          text=True, encoding="utf-8", errors="replace", timeout=5).stdout
+                found = dict(line.split("=", 1) for line in said.splitlines() if "=" in line)
+                image = draw_pointer(image, screen, (int(found["X"]), int(found["Y"])))
+            except Exception:
+                log.debug("the mouse pointer could not be drawn", exc_info=True)
+            return image
         except Exception:
             log.debug("could not take the screen", exc_info=True)
             return None

@@ -186,6 +186,24 @@ class TwoSpeedsTests(unittest.TestCase):
         self.assertGreater(request.system.index("THE QUICK VOICE"), request.system.index("Workspace:"),
                            "what is different comes last, and holds")
 
+    def test_the_quick_model_is_given_the_picture_of_the_screen_too(self) -> None:
+        """The user, 2026-11-11: it said only "Hi Fang," of an email was visible - the window's
+        own text held its first line, the picture all of it, and the picture went to the full
+        agent alone."""
+        self.quick, self.full = json.dumps({"reply": "Looking.", "full_agent": "run"}), "Read."
+        picture = {"media_type": "image/png", "data": "aGVsbG8="}
+        said = self.two.send("What does this email mean?", front="\n\n[On the screen: Hi Fang,]",
+                             seen=[picture])
+        self._done(said["turn"])
+        content = self.asked[0][1].messages[-1]["content"]
+        self.assertIsInstance(content, list)
+        self.assertIn("Hi Fang,", content[0]["text"])
+        self.assertEqual(content[1]["source"]["data"], "aGVsbG8=")
+        self.quick = json.dumps({"reply": "Hello.", "full_agent": "stop"})
+        self.two.send("hi again")
+        quick = [request for role, request in self.asked if role == "fast_reply"][-1]
+        self.assertIsInstance(quick.messages[-1]["content"], str, "no picture: words, as ever")
+
     def test_the_full_agent_reads_what_was_said_and_is_folded_under_it(self) -> None:
         self.quick, self.full = json.dumps({"reply": "Looking.", "full_agent": "run"}), "The whole answer."
         said = self.two.send("What is on today?")
@@ -277,6 +295,37 @@ class TwoSpeedsTests(unittest.TestCase):
         self.assertEqual(self._done(third["turn"])["answer"], "Answered.")
         self.assertEqual(calls, ["One", "Two\n\nThree"])
 
+    def test_a_message_sent_before_a_question_is_never_its_answer(self) -> None:
+        """The user, 2026-11-09: "1" sent twice, six seconds apart; the first's full answer asked
+        "Do you want that?" nine seconds after the second was sent - and the second was taken as
+        its yes. Handed to the model, the second stands where it was sent."""
+        held, began = threading.Event(), threading.Event()
+        real = self.app.agent.handle_message
+        answers = iter(["Do you want me to add the talk to your calendar?", "Not sure what 1 means."])
+
+        def slow(text, *args, **kwargs):
+            began.set()
+            held.wait(5)
+            self.full = next(answers)
+            return real(text, *args, **kwargs)
+        self.app.agent.handle_message = slow
+        self.quick = json.dumps({"reply": "Looking.", "full_agent": "run"})
+        first = self.two.send("1")
+        self.assertTrue(began.wait(5))
+        second = self.two.send("1", first["conversation_id"])
+        time.sleep(0.05)
+        held.set()
+        self._done(first["turn"])
+        self._done(second["turn"])
+        request = self.asked[-1][1]
+        said = str(request.messages[-1]["content"])
+        self.assertIn("written BEFORE that answer existed", said)
+        self.assertIn("Do you want me to add the talk", said, "told apart, as written after it")
+        history = " ".join(str(one["content"]) for one in request.messages[:-1])
+        self.assertNotIn("Do you want me to add the talk", history, "not before it, as asked first")
+        # A message with nothing written while it waited is told nothing of the kind.
+        self.assertNotIn("written BEFORE", str(self.asked[1][1].messages[-1]["content"]))
+
     def test_the_heartbeat_does_not_learn_from_the_quick_reply(self) -> None:
         self.quick, self.full = json.dumps({"reply": "A guess.", "full_agent": "stop"}), "x"
         said = self.two.send("hi")
@@ -293,11 +342,12 @@ class TwoSpeedsTests(unittest.TestCase):
             with mock.patch.object(models, "efforts_of", return_value=offered):
                 self.assertEqual(models.lowest_effort("any", "any"), least)
 
-    def test_the_small_model_where_there_is_one(self) -> None:
+    def test_the_small_model_is_the_same_one_at_low_effort_unless_chosen(self) -> None:
+        """The user, 2026-11-11: "default是low effort模式，模型和正常保持一致"."""
         models = self.app.agent.models.real
         self.app.config.set("primary_provider", "claude_code")
         self.app.config.set("primary_model", "claude-opus-5-5")
-        self.assertEqual(models.resolve("fast_reply").model_id, "claude-haiku-5-5")
+        self.assertEqual(models.resolve("fast_reply").model_id, models.resolve("primary").model_id)
         self.app.config.set("chat_fast_model", "claude_code/claude-sonnet-5-5")
         self.assertEqual(models.resolve("fast_reply").model_id, "claude-sonnet-5-5")
 

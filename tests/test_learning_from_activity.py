@@ -128,9 +128,9 @@ class _Base(unittest.TestCase):
         learning.places.sessions = lambda *a, **k: []
         return learning
 
-    def update(self):
+    def update(self, by="you"):
         learning = self.learning()
-        update_id = learning.store.save_update({"cutoff": NOW.isoformat(), "by": "you",
+        update_id = learning.store.save_update({"cutoff": NOW.isoformat(), "by": by,
                                                 "state": "running", "plan": {}})
         before = len(self.models.reads)
         learning._go(update_id)
@@ -450,6 +450,57 @@ class SoMuchAnUpdateTests(_Base):
         _update, reads = self.update()
         self.assertEqual(len(reads), 1, "the one left, the next time")
         self.assertEqual(len(self.read_states()), 3)
+
+
+class SmallChangesWaitTests(_Base):
+    """The user, 2026-11-11: a unit read before, with little new in it, waits - its pieces kept
+    pending - until there is enough of it, or it is old enough; never what the user started."""
+
+    def _read_once(self):
+        self.project("P-choir", "Choir concert", kind="leisure")
+        self.state("s1", "Arranging the choir's second song", 3)
+        self.task("T1", "P-choir", ["s1"], 2.9)
+        _update, reads = self.update(by="schedule")
+        self.assertEqual(len(reads), 1, "a first read, at once, whatever its size")
+        return act.unit_id_of("P-choir")
+
+    def test_a_little_new_waits_kept_pending_and_said(self) -> None:
+        unit_id = self._read_once()
+        self.state("s2", "Printing the concert tickets", 0.5)
+        self.task("T2", "P-choir", ["s2"], 0.4)
+        update, reads = self.update(by="schedule")
+        self.assertEqual(reads, [], "too little new: it waits")
+        self.assertEqual(update["plan"]["waited"], 1)
+        self.assertEqual(self.learning().status()["update"]["waited"], 1, "the update says so")
+        self.assertNotIn("s2", self.read_states(), "not marked read: nothing lost")
+        self.assertTrue(self.store.unit(unit_id)["marks"]["waiting_since"])
+        # "Update now" reads it at once.
+        _update, reads = self.update(by="you")
+        self.assertEqual(len(reads), 1)
+        self.assertIn("Printing the concert tickets", reads[0][1])
+        self.assertIn("s2", self.read_states())
+        self.assertNotIn("waiting_since", self.store.unit(unit_id)["marks"])
+
+    def test_read_once_there_is_enough_or_it_has_waited_long_enough(self) -> None:
+        from personalized_agent.learning import reading
+        unit_id = self._read_once()
+        # Each a little, together enough (a state's detail is shown up to 1500 characters).
+        self.state("s2", "Writing the concert programme", 0.5, detail="x" * (reading.WAIT_CHARS // 2))
+        self.state("s2b", "Checking the programme's names", 0.45,
+                   detail="y" * (reading.WAIT_CHARS // 2))
+        self.task("T2", "P-choir", ["s2", "s2b"], 0.4)
+        _update, reads = self.update(by="schedule")
+        self.assertEqual(len(reads), 1, "enough of it, together")
+        self.state("s3", "Ordering choir folders", 0.3)
+        self.task("T3", "P-choir", ["s3"], 0.2)
+        _update, reads = self.update(by="schedule")
+        self.assertEqual(reads, [])
+        unit = self.store.unit(unit_id)
+        unit["marks"]["waiting_since"] = _at(reading.WAIT_DAYS + 0.1)
+        self.store.save_unit(unit)
+        _update, reads = self.update(by="schedule")
+        self.assertEqual(len(reads), 1, "waited long enough")
+        self.assertIn("Ordering choir folders", reads[0][1])
 
 
 class TheSameReasonFoundByMeaningTests(_Base):

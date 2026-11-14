@@ -330,7 +330,7 @@ document.title=JSON.stringify({err,out});});</script></body></html>""" % script[
             path = Path(work) / "download.html"
             path.write_text(page, encoding="utf-8")
             done = subprocess.run(
-                [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=3000",
                  "--dump-dom", path.as_uri()],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
@@ -450,7 +450,7 @@ setTimeout(()=>{out.asked=asked;document.title=JSON.stringify({err,out});},2500)
             path = Path(work) / "steps.html"
             path.write_text(page, encoding="utf-8")
             done = subprocess.run(
-                [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=5000",
                  "--dump-dom", path.as_uri()],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)

@@ -77,9 +77,8 @@ LEAST, SIDE_LEAST = (320, 200), 160
 RIM, DIVIDER = 5, 7
 
 #: Each edge and corner it is sized by, and the pointer shown over it.
-EDGES = {"w": "sb_h_double_arrow", "e": "sb_h_double_arrow", "n": "sb_v_double_arrow",
-         "s": "sb_v_double_arrow", "nw": "top_left_corner", "ne": "top_right_corner",
-         "sw": "bottom_left_corner", "se": "bottom_right_corner"}
+# The pointer over each edge and corner: the chat's, one table (the system's diagonal at corners).
+from .chat_bubble import EDGES  # noqa: E402
 
 #: Words longer than this are not measured line by line to be fitted: they
 #: scroll within their box whatever its height.
@@ -116,6 +115,19 @@ CLICK_SLACK = 4
 #: 底色和per to do 的不一样").
 PROJECT_PALETTE = {"edge": "#2c3850", "bar": "#1e2738", "bg": "#151c2b", "hover": "#2c3850",
                    "thumb": "#3c4a66", "thumb_on": "#56678a"}
+#: THE APPROVALS PANEL (the user, 2026-11-09: "每个审批session可以用类似project instruction的panel。但是
+#: 现在最上面那个project level instruction可以删去，就一个是选项，一个是instruction进行审批"): the rows to
+#: approve, each with its answers, at most this share of the screen tall as it opens; below, the
+#: one chosen - what the agent made and how it is used.
+APPROVAL_SHARE = 0.34
+#: The answers to what the agent made, as the calendar gives them (app.js agendaActions) - nothing is
+#: sent for the user yet: they send it, then say so here.
+APPROVAL_ANSWERS = (("go", "Approve - let it do it"), ("as_it_was", "I sent it as it was"),
+                    ("changed", "I sent it, changed"), ("not_right", "Not right"))
+#: A row's state, said under its title.
+APPROVAL_STATES = {"working": "The agent is still working on it", "not_started": "Not started yet",
+                   "closed": "Done, or no longer on your plate",
+                   "answered": "Answered - the agent carries on"}
 
 #: Its sides' widths at the first zoom, and where it stands: this far from
 #: the screen's right edge and top, and from its bottom (the taskbar's room).
@@ -146,7 +158,8 @@ class HandedNote:
                  on_folder: Optional[Callable[[], Any]] = None,
                  kept_size: Any = None, split: Any = None,
                  on_layout: Optional[Callable[[tuple, Optional[float]], None]] = None,
-                 palette: Optional[Dict[str, str]] = None) -> None:
+                 palette: Optional[Dict[str, str]] = None,
+                 on_approve: Optional[Callable[[int, str], Any]] = None) -> None:
         self.root = root
         self.note = note
         #: Its colours: a whole project's note has a ground of its own (PROJECT_PALETTE).
@@ -177,6 +190,9 @@ class HandedNote:
         self.on_tick = on_tick
         #: ITS WORK'S FOLDER, OPENED FROM ITS BAR when it made several things (the user, 2026-11-08).
         self.on_folder = on_folder
+        #: THE APPROVALS PANEL'S ANSWERS: `on_approve(row, how)` - the desktop keeps it off Tk's thread
+        #: and tells `approved` how it went.
+        self.on_approve = on_approve
         before = {str(one) for one in (note.get("ticked") or [])}
         self.ticked: List[bool] = [str(one)[:300] in before or str(one) in before
                                    for one in list(note.get("check") or [])]
@@ -313,6 +329,11 @@ class HandedNote:
         try:
             window.update_idletasks()
             self._unfolded_size = (window.winfo_width(), window.winfo_height())
+            # THE PANES ON TOP, AS TALL AS THEY ARE: folded to its bar, the window squeezes them to
+            # nothing, and they stayed so once it opened again (the user, 2026-11-10).
+            self._folded_panes = [(part, part.winfo_height())
+                                  for part in getattr(self, "_stack_parts", None) or []
+                                  if part.winfo_exists()]
             right, top = window.winfo_x() + window.winfo_width(), window.winfo_y()
             self.folded = True
             for part in (self._middle, self._foot_frame):
@@ -321,6 +342,11 @@ class HandedNote:
             for one in [getattr(self, "_grip", None)] + list(getattr(self, "_strips", [])):
                 if one is not None:
                     one.place_forget()
+            # FOLDED, ITS BAR IS ITS NAME, – AND ✕ (the user, 2026-11-09: "open folder这些按键也在最小化
+            # 的header上"): what it opens comes back with it.
+            folder = getattr(self, "_folder_button", None)
+            if folder is not None:
+                folder.pack_forget()
             self._draw_fold(folded=True)
             window.update_idletasks()
             bar = self._bar_frame
@@ -351,6 +377,9 @@ class HandedNote:
             for strip, place in zip(getattr(self, "_strips", []), self._strip_places):
                 strip.place(**place)
                 strip.lift()
+            folder = getattr(self, "_folder_button", None)
+            if folder is not None:
+                folder.pack(side="right", padx=(0, self._px(6)), after=self._fold_button)
             self._draw_fold(folded=False)
             self.folded = False
             width, height = self._unfolded_size or (window.winfo_reqwidth(),
@@ -358,6 +387,21 @@ class HandedNote:
             x = max(0, min(right - width, window.winfo_screenwidth() - width))
             y = max(0, min(top, window.winfo_screenheight() - height - BOTTOM // 2))
             window.geometry(f"{width}x{height}+{x}+{y}")
+            self._restore_panes()
+        except tk.TclError:                              # pragma: no cover - closed meanwhile
+            pass
+
+    def _restore_panes(self) -> None:
+        """The panes on top given back the heights they had as it folded."""
+        stack = getattr(self, "_stack", None)
+        panes = getattr(self, "_folded_panes", None) or []
+        if stack is None or not panes:
+            return
+        try:
+            for part, height in panes:
+                if part.winfo_exists() and height > 1:
+                    stack.paneconfigure(part, height=height)
+            self.window.update_idletasks()
         except tk.TclError:                              # pragma: no cover - closed meanwhile
             pass
 
@@ -532,14 +576,20 @@ class HandedNote:
         # 应该是个单独的panel ... 分成上下3块"; "上下的高度也可以用鼠标调整") - its guide, what it made,
         # the item chosen - each scrolled by itself, the lines between them dragged.
         stack = None
-        if self.note.get("project") and self.note.get("items"):
+        tops_parts: List[Any] = []
+        if (self.note.get("project") and self.note.get("items")) or self.note.get("approval"):
             stack = tk.PanedWindow(card, orient="vertical", bd=0, sashwidth=self._px(7),
                                    sashrelief="flat", bg=self.palette["edge"], opaqueresize=True,
                                    showhandle=False)
             stack.pack(side="top", fill="both", expand=True)
-            guide, made = self._project_parts(stack, width - around)
-            stack.add(guide, minsize=self._px(48))
-            stack.add(made, minsize=self._px(48))
+            if self.note.get("approval"):
+                # NO GUIDE ON TOP: the rows to approve, then the one chosen.
+                tops_parts = [self._approval_part(stack, width - around)]
+            else:
+                tops_parts = list(self._project_parts(stack, width - around))
+            self._stack_parts = tops_parts            # their heights kept through a fold (`fold`)
+            for part in tops_parts:
+                stack.add(part, minsize=self._px(48))
             stack.bind("<ButtonRelease-1>", lambda _e: self._keep_stack(), add="+")
         middle = tk.Frame(stack if stack is not None else card, bg=self.palette["bg"])
         if stack is not None:
@@ -559,9 +609,9 @@ class HandedNote:
         tops = 0
         if stack is not None:
             heights = self._stack_heights(room)
-            stack.paneconfigure(guide, height=heights[0])
-            stack.paneconfigure(made, height=heights[1])
-            tops = heights[0] + heights[1] + 2 * int(stack.cget("sashwidth"))
+            for part, height in zip(tops_parts, heights):
+                stack.paneconfigure(part, height=height)
+            tops = sum(heights[:len(tops_parts)]) + len(tops_parts) * int(stack.cget("sashwidth"))
             room = max(self._px(120), room - tops)
 
         def natural(one: tuple) -> int:
@@ -749,6 +799,9 @@ class HandedNote:
         """The list of what it made, its rows drawn again - the one now shown below marked."""
         rows = getattr(self, "_made_rows", None)
         if rows is None or not rows.winfo_exists():
+            return
+        if self.note.get("approval"):
+            self._draw_approval_rows()
             return
         self._scale, self._ctx = ZOOMS[self.zooms["made"]], "made"
         wrap = getattr(self, "_made_wrap", self._px(300))
@@ -995,7 +1048,45 @@ class HandedNote:
         if "n" in edge:
             grown = max(self._least[1], height - dy)
             top, height = top + height - grown, grown
+        if "n" in edge or "w" in edge:
+            # BY ITS TOP OR LEFT, AN OUTLINE WHILE IT IS DRAGGED (the user, 2026-11-09: "调整上边框
+            # 巨卡"): moved as well as sized, every part of it was drawn again each step - 150 to
+            # 260 ms a step, measured, against 5 to 7 by the bottom. Where it will be is shown;
+            # it is put there once, let go (`_resize_end`).
+            self._asked_geometry = f"{width}x{height}+{left}+{top}"
+            self._ghost_at(left, top, width, height)
+            return
         self._sized_once_a_frame(f"{width}x{height}+{left}+{top}")
+
+    #: The outline's line, in pixels.
+    GHOST_LINE = 2
+
+    def _ghost_at(self, left: int, top: int, width: int, height: int) -> None:
+        """Four thin lines where it will be: no part of it drawn again while it is dragged."""
+        lines = getattr(self, "_ghost", None)
+        if not lines:
+            lines = []
+            for _ in range(4):
+                line = tk.Toplevel(self.window)
+                line.overrideredirect(True)
+                line.attributes("-topmost", True)
+                line.configure(bg=self.palette.get("ink", "#333333"))
+                lines.append(line)
+            self._ghost = lines
+        thick = self.GHOST_LINE
+        spots = ((width, thick, left, top), (width, thick, left, top + height - thick),
+                 (thick, height, left, top), (thick, height, left + width - thick, top))
+        for line, (wide, high, x, y) in zip(lines, spots):
+            line.geometry(f"{max(1, wide)}x{max(1, high)}+{x}+{y}")
+
+    def _ghost_gone(self) -> bool:
+        lines, self._ghost = getattr(self, "_ghost", None), None
+        for line in lines or []:
+            try:
+                line.destroy()
+            except tk.TclError:
+                pass
+        return bool(lines)
 
     def _divider(self, middle: Any) -> None:
         """The line between the sides - dragged to share the width anew."""
@@ -1067,6 +1158,8 @@ class HandedNote:
         if self._resizing is None:
             return
         self._resizing = None
+        if self._ghost_gone():
+            self._give_geometry()                        # where its outline was: there, at once
         if getattr(self, "_geometry_due", None) is not None:
             self.window.after_cancel(self._geometry_due)
             self._give_geometry()                        # the last size asked for
@@ -1439,6 +1532,31 @@ class HandedNote:
         self._selectable(body, str(note.get("title") or "")[:200], self._font(3, "bold"),
                          self.palette["ink"], wrap,
                          {"fill": "x", "pady": (self._px(2), self._px(2))})
+        # WHAT THE AGENT NEEDS TO KNOW (the user, 2026-11-10): the question, standing on its own.
+        if note.get("question"):
+            # THE QUESTION, THE ANSWER'S WINDOW RIGHT UNDER IT, THEN WHAT IT RESTS ON (seen on this
+            # screen, 2026-11-10: the Answer button below the fold, under the details).
+            asked, _gap, about = str(note["question"])[:3000].partition("\n\n")
+            self._heading(body, "The agent needs to know")
+            self._selectable(body, asked, self._font(1, "bold"), self.palette["ink"], wrap)
+            if self.on_approve is not None and self.note.get("approval"):
+                self._answer_part(body, wrap)
+            if about.strip():
+                self._selectable(body, about.strip(), self._font(-1), self.palette["muted"], wrap,
+                                 {"fill": "x", "pady": (self._px(10), 0)})
+        # HOW THE AGENT WOULD DO IT ITSELF, once approved (the user, 2026-11-10): first, apart from
+        # the how-to written for a person.
+        if note.get("agent_plan"):
+            self._heading(body, "How the agent would do it itself")
+            self._selectable(body, str(note["agent_plan"])[:3000], self._font(), self.palette["ink"],
+                             wrap)
+            # THE COMMANDS IT WILL RUN, approved - these alone, exactly (agent/work/runner.py
+            # plan_commands): read before the one click.
+            self._heading(body, "Commands it will run, exactly")
+            commands = [str(one) for one in note.get("agent_commands") or []]
+            self._selectable(body, "\n".join(commands)[:3000] if commands else self.words(
+                "None - it runs no command outside its own folder."), self._font(),
+                self.palette["ink"], wrap)
         if note.get("how"):
             self._heading(body, "How to use it")
             self._selectable(body, str(note["how"])[:1200], self._font(), self.palette["ink"], wrap)
@@ -1538,6 +1656,217 @@ class HandedNote:
         on_release(head, self._fold_made)
         return guide, made
 
+    # -- the approvals panel -----------------------------------------------------------------
+    def _approval_part(self, stack: Any, wide: int) -> Any:
+        """THE APPROVALS' PART, ON TOP: a header that stays where it is, the one line on what is
+        asked, and a row for each thing - pressed, shown below; its answers beside it."""
+        self._scale, self._ctx = ZOOMS[self.zooms["made"]], "made"
+        made, inner, wrap = self._scrolled_part(stack, wide, header=True)
+        top_row = self._part_header
+        self._zoomer(top_row, "made")
+        head = tk.Label(top_row, text=self.words("To approve"), bg=self.palette["bg"],
+                        fg=self.palette["ink"], font=self._font(3, "bold"), anchor="w")
+        head.pack(side="left", fill="x", expand=True)
+        self._selectable(inner, self.words(
+            "Approve it, and the agent does what it said it would - only that, its evidence kept. "
+            "Or send it yourself, then mark it here."),
+            self._font(-1), self.palette["muted"], wrap, {"fill": "x", "pady": (0, self._px(4))})
+        rows = tk.Frame(inner, bg=self.palette["bg"])
+        rows.pack(fill="x")
+        self._stack, self._made_area, self._made_head, self._made_rows = stack, made, head, rows
+        self._made_wrap = wrap
+        self._draw_approval_rows()
+        return made
+
+    def _draw_approval_rows(self) -> None:
+        rows = self._made_rows
+        self._scale, self._ctx = ZOOMS[self.zooms["made"]], "made"
+        for child in rows.winfo_children():
+            child.destroy()
+        current = int(self.note.get("approval_at") or 0)
+        listed = list((self.note.get("approval") or {}).get("rows") or [])[:30]
+        # READY ON TOP, THE REST FOLDED (the user, 2026-11-10): what is not ready yet - the agent still
+        # on it, not begun, or gone - under one line, opened when pressed.
+        later = [k for k, one in enumerate(listed)
+                 if str(one.get("state") or "") not in ("ready", "needs_answer")]
+        for k, one in enumerate(listed):
+            if k not in later:
+                self._approval_row(rows, k, one, k == current, self._made_wrap)
+        if later:
+            opened = bool(getattr(self, "_approval_later_open", False)) or current in later
+            fold = tk.Label(rows, text=("▾  " if opened else "▸  ") + self.words("Not ready yet")
+                            + f" ({len(later)})", bg=self.palette["bg"], fg=self.palette["muted"],
+                            font=self._font(-1, "bold"), anchor="w", cursor="hand2")
+            fold.pack(fill="x", pady=(self._px(8), 0))
+            on_release(fold, self._fold_approval_later)
+            self._approval_fold = fold
+            if opened:
+                for k in later:
+                    self._approval_row(rows, k, listed[k], k == current, self._made_wrap)
+        self._scale, self._ctx = ZOOMS[self.zoom], "chrome"
+
+    def _fold_approval_later(self) -> None:
+        """The things not ready yet, shown or folded again."""
+        self._approval_later_open = not bool(getattr(self, "_approval_later_open", False))
+        self._draw_approval_rows()
+
+    def _approval_row(self, top: Any, k: int, one: Dict[str, Any], chosen: bool, wrap: int) -> None:
+        """One thing to approve: its title - pressed, what the agent made is shown below - what state
+        it is in, and the three answers; answered, what was said."""
+        ground = self.palette["accent"] if chosen else self.palette["bar"]
+        ink = self.palette["on_accent"] if chosen else self.palette["ink"]
+        row = tk.Frame(top, bg=ground, cursor="hand2")
+        row.pack(fill="x", pady=(self._px(3), 0))
+        title = str(one.get("title") or "").strip() or self.words("Result")
+        pick = tk.Label(row, text=("▸  " if chosen else "") + title, bg=ground, fg=ink,
+                        font=self._font(0, "bold" if chosen else "normal"), anchor="w",
+                        justify="left", wraplength=wrap - self._px(20), cursor="hand2")
+        pick.pack(side="top", fill="x", padx=(self._px(10), self._px(8)), pady=(self._px(6), 0))
+        #: The row's answers: pressed, they answer - everything else in it chooses it.
+        answers: List[Any] = []
+        answered = str(one.get("answered") or "")
+        said = dict(APPROVAL_ANSWERS).get(answered, "")
+        state = str(one.get("state") or "")
+        under = tk.Frame(row, bg=ground)
+        under.pack(side="top", fill="x", padx=(self._px(10), self._px(4)), pady=(self._px(2), self._px(6)))
+        if answered.startswith("answer:"):
+            tk.Label(under, text="✓  " + self.words(APPROVAL_STATES["answered"]), bg=ground,
+                     fg=self.palette["ticked"] if not chosen else ink, font=self._font(-1, "bold"),
+                     anchor="w").pack(side="left")
+        elif state == "needs_answer" and not answered:
+            # ASKED (the user, 2026-11-10: "make the question clear") - answered below, chosen.
+            tk.Label(under, text=str(one.get("question") or ""), bg=ground, fg=ink, font=self._font(-1),
+                     anchor="w", justify="left", wraplength=wrap - self._px(30)).pack(fill="x")
+            tk.Label(under, text=self.words("Answer it below."), bg=ground,
+                     fg=ink if chosen else self.palette["muted"], font=self._font(-1, "bold"),
+                     anchor="w").pack(fill="x")
+        elif answered:
+            words = ("✓  " + self.words(said)) if said else self.words(APPROVAL_STATES["closed"])
+            tk.Label(under, text=words, bg=ground, fg=self.palette["ticked"] if not chosen else ink,
+                     font=self._font(-1, "bold"), anchor="w").pack(side="left")
+        elif state != "ready":
+            tk.Label(under, text=self.words(APPROVAL_STATES.get(state, APPROVAL_STATES["not_started"])),
+                     bg=ground, fg=self.palette["muted"] if not chosen else ink, font=self._font(-1),
+                     anchor="w").pack(side="left")
+        else:
+            first, *others = APPROVAL_ANSWERS
+            # THE ONE CLICK, ITS OWN LINE (the user, 2026-11-10: "一键approve按钮"): the main button.
+            main_bg = self.palette["bg"] if chosen else self.palette["accent"]
+            main_fg = self.palette["ink"] if chosen else self.palette["on_accent"]
+            go = tk.Label(under, text=self.words(first[1]), bg=main_bg, fg=main_fg,
+                          font=self._font(-1, "bold"), padx=self._px(9), pady=self._px(2),
+                          cursor="hand2")
+            on_release(go, lambda h=first[0]: self._answer(k, h))
+            answers.append(go)
+            go.pack(side="left")
+            more = tk.Frame(row, bg=ground)
+            more.pack(side="top", fill="x", padx=(self._px(4), self._px(4)), pady=(0, self._px(6)))
+            for how, words in others:
+                button = self._flat(more, self.words(words), lambda: None, ground, small=True)
+                if chosen:                       # readable on the chosen row's colour
+                    button.configure(fg=ink)
+                    button.bind("<Leave>", lambda _e, b=button: b.configure(bg=ground, fg=ink))
+                on_release(button, lambda h=how: self._answer(k, h))
+                answers.append(button)
+                button.pack(side="left", padx=(0, self._px(6)))
+        # CHOSEN BY ANY PART OF IT BUT ITS ANSWERS (the user, 2026-11-11: "approval的一行的非button位置
+        # 都能选中"): its ground, its title, its state, its question, the space beside the buttons.
+        def chooses(widget: Any) -> None:
+            if widget in answers:
+                return
+            on_release(widget, lambda: self._choose_approval(k))
+            try:
+                widget.configure(cursor="hand2")
+            except tk.TclError:                  # pragma: no cover - one that takes none
+                pass
+            for child in widget.winfo_children():
+                chooses(child)
+        chooses(row)
+
+    def _answer_part(self, body: Any, wrap: int) -> None:
+        """THE ANSWER'S WINDOW (the user, 2026-11-10: "你得给我一个回答的窗口呀"): right under the
+        question, a box to write in, and Answer - Ctrl+Enter too; answered, said so in its place."""
+        area = tk.Frame(body, bg=self.palette["bg"])
+        area.pack(fill="x", pady=(self._px(8), 0))
+        self._answer_area = area
+        k = int(self.note.get("approval_at") or 0)
+        rows = (self.note.get("approval") or {}).get("rows") or []
+        if 0 <= k < len(rows) and str(rows[k].get("answered") or "").startswith("answer:"):
+            self._answered_here()
+            return
+        box = tk.Text(area, height=2, wrap="word", font=self._font(), relief="flat",
+                      bg=self.palette["bar"], fg=self.palette["ink"],
+                      insertbackground=self.palette["ink"], padx=self._px(6), pady=self._px(4))
+        box.pack(fill="x")
+        self._answer_box = box
+        send = tk.Label(area, text=self.words("Answer"), bg=self.palette["accent"],
+                        fg=self.palette["on_accent"], font=self._font(-1, "bold"),
+                        padx=self._px(12), pady=self._px(3), cursor="hand2")
+        send.pack(anchor="w", pady=(self._px(6), 0))
+        on_release(send, self._send_answer)
+        box.bind("<Control-Return>", lambda _e: (self._send_answer(), "break")[1])
+
+    def _send_answer(self) -> None:
+        """What was written under the question, sent for the row it is of."""
+        box = getattr(self, "_answer_box", None)
+        if box is None:
+            return
+        try:
+            text = box.get("1.0", "end").strip()
+        except tk.TclError:
+            return
+        if text:
+            self._answer(int(self.note.get("approval_at") or 0), "answer:" + text)
+
+    def _answered_here(self) -> None:
+        """The answer's window, once answered: said so in its place."""
+        area = getattr(self, "_answer_area", None)
+        try:
+            if area is None or not area.winfo_exists():
+                return
+            for child in area.winfo_children():
+                child.destroy()
+            tk.Label(area, text="✓  " + self.words(APPROVAL_STATES["answered"]), bg=self.palette["bg"],
+                     fg=self.palette["ticked"], font=self._font(-1, "bold"),
+                     anchor="w").pack(fill="x")
+        except tk.TclError:
+            pass
+        self._answer_box = None
+
+    def _choose_approval(self, k: int) -> None:
+        """A row chosen: what the agent made for it shown below (`on_item(k)` brings its note to
+        `show_item`)."""
+        if self.on_item is None or k == int(self.note.get("approval_at") or 0):
+            return
+        self.note["approval_at"] = k
+        self._draw_approval_rows()
+        self.on_item(k)
+
+    def _answer(self, k: int, how: str) -> None:
+        rows = (self.note.get("approval") or {}).get("rows") or []
+        if self.on_approve is None or not 0 <= k < len(rows) or rows[k].get("answered"):
+            return
+        rows[k]["answered"] = "..."                       # not twice while it is kept
+        try:
+            self.on_approve(k, how)
+        except Exception:                                # pragma: no cover - said on the row
+            log.warning("an approval could not be kept", exc_info=True)
+            rows[k]["answered"] = ""
+
+    def approved(self, k: int, how: str, ok: bool) -> None:
+        """How an answer went: kept - said on its row; not - its answers back."""
+        rows = (self.note.get("approval") or {}).get("rows") or []
+        if not 0 <= k < len(rows):
+            return
+        rows[k]["answered"] = how if ok else ""
+        try:
+            if self.window is not None and self._made_rows.winfo_exists():
+                self._draw_approval_rows()
+        except (tk.TclError, AttributeError):
+            pass
+        if ok and how.startswith("answer:") and k == int(self.note.get("approval_at") or 0):
+            self._answered_here()
+
     def _fold_made(self) -> None:
         """What it made, folded to its header - or opened again, as tall as it was."""
         stack, made, head, rows = (getattr(self, name, None) for name in
@@ -1569,6 +1898,8 @@ class HandedNote:
             return kept
         screen = self.window.winfo_screenheight()
         tall = [max(self._px(48), part[2].winfo_reqheight()) for part in self._top_scrolls[:2]]
+        if self.note.get("approval"):
+            return (min(tall[0], int(screen * APPROVAL_SHARE), max(self._px(48), room // 2)),)
         guide = min(tall[0], int(screen * GUIDE_SHARE), max(self._px(48), room // 3))
         made = min(tall[1], int(screen * MADE_SHARE), max(self._px(48), room // 4))
         return guide, made
@@ -1577,9 +1908,9 @@ class HandedNote:
         """The lines between the parts dragged: their heights kept for this panel - an item chosen
         below, they stay."""
         try:
-            parts = self._top_scrolls[:2]
-            if len(parts) == 2:
-                self._stack_kept = (parts[0][1].winfo_height(), parts[1][1].winfo_height())
+            parts = self._top_scrolls[:1 if self.note.get("approval") else 2]
+            if parts and len(parts) == (1 if self.note.get("approval") else 2):
+                self._stack_kept = tuple(part[1].winfo_height() for part in parts)
         except tk.TclError:
             pass
 
@@ -1664,7 +1995,9 @@ class HandedNote:
         check - ticked as it was left. The project's part as it was."""
         if self.window is None:
             return
-        kept = {key: self.note.get(key) for key in ("project", "items", "scope", "work")}
+        kept = {key: self.note.get(key) for key in ("project", "items", "scope", "work", "approval")}
+        if "approval_at" in self.note:
+            kept["approval_at"] = self.note["approval_at"]     # chosen in `_choose_approval`
         self.note = dict(told, **{key: value for key, value in kept.items() if value})
         before = {str(one) for one in (self.note.get("ticked") or [])}
         self.ticked = [str(one)[:300] in before or str(one) in before

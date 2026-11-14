@@ -123,9 +123,10 @@ function showConversation(conversation) {
     const meta = message.metadata || {};
     if (meta.layer === "slow") {
       // Under the quick reply it follows, as it was when it came.
-      if (message.content || meta.did) {
+      if (message.content || meta.did || (meta.actions || []).length) {
         const fold = chatFold(quick);
-        chatFoldDone(fold, message.content, message.id, meta.kind, meta.did);
+        chatFoldDone(fold, message.content, message.id, meta.kind, meta.did, meta.actions,
+                     meta.asks);
         if (message.content && asked.has(message.id)) {
           restoreFollowUps(fold.querySelector(".msg"), asked.get(message.id));
         }
@@ -136,6 +137,8 @@ function showConversation(conversation) {
     if (reply && asked.has(message.id)) restoreFollowUps(el, asked.get(message.id));
     drawAttached(el, meta.attachments);
     if (meta.layer === "fast") el.classList.add("layer-fast");
+    // A reply that came whole (no quick one): what it did, under it.
+    if (reply && !meta.layer) chatSaid(el, null, meta.actions || [], meta.did || {});
     quick = meta.layer === "fast" ? el : null;
   }
   layoutFollowUps();
@@ -454,10 +457,17 @@ function chatDid(did) {
   return parts;
 }
 
-function chatFoldDone(fold, text, messageId, kind, did) {
+function chatFoldDone(fold, text, messageId, kind, did, actions = [], asks = false) {
   const title = kind === "correction" ? "A correction" : "More detail";
   const summary = fold.querySelector("summary");
-  summary.textContent = [...chatDid(did), ...(text ? [title] : [])].join(" · ");
+  summary.textContent = text ? title : "";
+  // QUESTIONS TO ANSWER (the user, 2026-11-09): said on its line, so that it is opened.
+  if (text && asks) {
+    const asking = document.createElement("span");
+    asking.className = "chat-fold-asks";
+    asking.textContent = "Questions to answer";
+    summary.append(" · ", asking);
+  }
   fold.classList.toggle("is-correction", kind === "correction");
   const body = fold.querySelector(".chat-fold-body");
   if (text) {
@@ -465,19 +475,55 @@ function chatFoldDone(fold, text, messageId, kind, did) {
     said.classList.add("layer-slow");
     body.replaceChildren(said);
   }
-  if (did?.changes?.length) {
-    const undo = document.createElement("button");
-    undo.type = "button";
-    undo.classList.add("secondary", "chat-fold-undo");
-    undo.textContent = "Undo";
-    undo.addEventListener("click", async (event) => {
-      event.preventDefault();
-      undo.disabled = true;
-      await api.post("/api/monitor/undo", { ids: did.changes });
-      undo.textContent = "Undone";
-    });
-    summary.append(undo);
+  // NEVER FOLDED (the user, 2026-11-09): what it did, after the fold.
+  chatSaid(fold, fold, actions, did);
+  if (!text) fold.hidden = true;
+}
+
+/* SHOWN IN THE CONVERSATION, NEVER FOLDED (the user, 2026-11-09: "任何agent做的动作都用灰色小字显示"):
+   what the agent did, a small grey line each - taken back where it can be. */
+function chatSaid(where, after, actions, did) {
+  const lines = [...(actions || [])];
+  // An older answer, kept before its actions were: what it changed, as its fold said it.
+  if (!lines.length) lines.push(...chatDid(did));
+  if (lines.length || did?.changes?.length) {
+    const done = document.createElement("div");
+    done.className = "chat-actions";
+    for (const one of lines) {
+      const line = document.createElement("div");
+      line.className = "chat-action";
+      line.textContent = one;
+      done.append(line);
+    }
+    if (did?.changes?.length) {
+      const undo = document.createElement("button");
+      undo.type = "button";
+      undo.classList.add("secondary", "chat-fold-undo");
+      undo.textContent = "Undo";
+      undo.addEventListener("click", async (event) => {
+        event.preventDefault();
+        undo.disabled = true;
+        await api.post("/api/monitor/undo", { ids: did.changes });
+        undo.textContent = "Undone";
+      });
+      done.append(undo);
+    }
+    after ? after.after(done) : where.append(done);
   }
+}
+
+/* A message's answer drawn: the quick reply, a question it asks, and the full agent's under it. */
+function chatShown(result, progress) {
+  progress.finish();
+  conversationId = result.conversation_id;
+  chatNavigation?.recordConversation(conversationId);
+  const quick = result.answer ? appendMessage("assistant", result.answer, result.message_id) : null;
+  if (result.layer === "fast") quick?.classList.add("layer-fast");
+  if (quick && !result.layer) chatSaid(quick, null, result.actions || [], {});
+  $("#chat-meta").textContent = result.layer ? "" :
+    `${result.classification} · ${(result.tool_calls || []).length} tool call(s) · ` +
+    `${result.duration_seconds}s`;
+  if (result.turn) chatFollow(quick, result.turn);
 }
 
 async function chatFollow(quick, turn) {
@@ -503,11 +549,14 @@ async function chatFollow(quick, turn) {
       fold.open = true;
       summary.textContent = "The full agent could not answer";
       fold.querySelector(".chat-fold-body").textContent = state.error;
-    } else if (state.state === "done" && (state.answer || Object.keys(state.did || {}).length)) {
-      chatFoldDone(fold, state.answer, state.message_id, state.kind, state.did);
+    } else if (state.state === "done" && (state.answer || Object.keys(state.did || {}).length
+               || (state.actions || []).length)) {
+      chatFoldDone(fold, state.answer, state.message_id, state.kind, state.did, state.actions,
+                   state.asks);
     } else {
       fold.remove();                     // nothing to add, or taken up with the next message
     }
+    if (typeof chatWhoAnswers === "function") chatWhoAnswers();   // who answered, as it is now
     return;
   }
 }
@@ -542,15 +591,7 @@ $("#chat-form").addEventListener("submit", async (event) => {
     if (chatNavigation) conversationId = await chatNavigation.prepareConversation();
     const result = await api.post("/api/chat/turn", { message: text, conversation_id: conversationId,
       attachments: sent.map((one) => one.id), mentions: mentioned });
-    progress.finish();
-    conversationId = result.conversation_id;
-    chatNavigation?.recordConversation(conversationId);
-    const quick = result.answer ? appendMessage("assistant", result.answer, result.message_id) : null;
-    if (result.layer === "fast") quick?.classList.add("layer-fast");
-    $("#chat-meta").textContent = result.layer ? "" :
-      `${result.classification} · ${(result.tool_calls || []).length} tool call(s) · ` +
-      `${result.duration_seconds}s`;
-    if (result.turn) chatFollow(quick, result.turn);
+    chatShown(result, progress);
   } catch (err) {
     progress.finish();
     appendMessage("assistant", `Error: ${err.message}`);
@@ -975,8 +1016,10 @@ document.addEventListener("mouseup", (event) => {
 
 
 /* Who answers, at the top: the agent's name, and its model - or that the
-   model needs the user (signed out, say). */
-(async () => {
+   model needs the user (signed out, say). ASKED AGAIN, NOT ONCE (the user, 2026-11-09: it said
+   "offline/offline-1" while the model on their list answered - read when the page opened, before
+   the model was added): every half minute, when the page is shown again, and after each answer. */
+async function chatWhoAnswers() {
   const name = $("#agent-name");
   const state = $("#chat-state");
   if (!name && !state) return;
@@ -992,7 +1035,10 @@ document.addEventListener("mouseup", (event) => {
   } catch (err) {
     /* the conversation still works without it */
   }
-})();
+}
+chatWhoAnswers();
+setInterval(chatWhoAnswers, 30000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) chatWhoAnswers(); });
 
 /* FROM THE CHAT, TWO THINGS MADE OF WHAT WAS SAID (the user, 2026-11-03, from
    PR #8): a SUMMARY DOCUMENT of answers ticked - in this

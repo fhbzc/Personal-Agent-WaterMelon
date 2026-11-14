@@ -299,8 +299,10 @@ class TheRightClickMenuTests(unittest.TestCase):
         agent.tray = type("T", (), {"icon": object()})()
         with mock.patch.object(desktop_module.tk, "Menu", _Menu):
             agent._on_right_click(type("E", (), {"x_root": 1, "y_root": 1})())
-        self.assertEqual(labels, ["Chat", "To do", "Collections", "Waiting notifications", "Overview",
-                                  "Hide avatar", "-", "Quit"])
+        # And private mode, on and off here (the user, 2026-11-12).
+        self.assertEqual(labels, ["Chat", "To do", "Collections", "Waiting notifications", "Report",
+                                  "Overview",
+                                  "-", "Private mode", "Hide avatar", "-", "Quit"])
 
 
 if __name__ == "__main__":

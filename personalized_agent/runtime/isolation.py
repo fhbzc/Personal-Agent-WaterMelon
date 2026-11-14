@@ -725,6 +725,19 @@ def describe() -> str:
     return f"OS-isolated ({status['backend']})"
 
 
+def source_root() -> Optional[Path]:
+    """THE APPLICATION'S SOURCE, WHICH NO RUN CHANGES (the user, 2026-11-12: "只要他不会直接改源代码
+    （只能在自己的directory里改)就行"): read as any other folder, written by none of the agents'
+    code - not even through a folder granted to a run that holds it (the Desktop, say). None in a
+    packaged application, whose bundle no run is granted anyway (common/paths)."""
+    try:
+        from ..common.paths import code_root_for_children
+        found = code_root_for_children()
+    except Exception:                       # pragma: no cover - nothing to keep, then
+        return None
+    return _real(found) if found else None
+
+
 def run_isolated(argv: Sequence[str], *, cwd: Any, writable: Sequence[Any],
                  readable: Optional[Sequence[Any]] = None,
                  hidden: Sequence[Any] = (), network: str = NETWORK_NONE,
@@ -763,6 +776,12 @@ def run_isolated(argv: Sequence[str], *, cwd: Any, writable: Sequence[Any],
     covering it - unless a folder it writes holds the code, where covering
     would lose those writes and the guard alone keeps it. Landlock cannot
     hide it: the guard alone.
+
+    THE SOURCE (`source_root`), for every run: never written, wherever a
+    folder it writes lies. On Windows left out of each write grant (the read
+    grants still reach it); on macOS denied writing last; under bubblewrap
+    bound read-only over the writable binds. Landlock opens whole folders
+    only: the guard alone.
 
     `closed`: folders INSIDE what it writes that it may neither read nor
     write - the project's run logs. On Windows sealed from every container
@@ -804,7 +823,7 @@ def run_isolated(argv: Sequence[str], *, cwd: Any, writable: Sequence[Any],
         full = ["sandbox-exec", "-p",
                 seatbelt_profile(writable_roots, [*hidden_paths, *sealed_paths], network,
                                  readonly_names=readonly_names, code=code_root,
-                                 closed=closed_paths), *argv]
+                                 closed=closed_paths, source=source_root()), *argv]
         return _run_posix(full, cwd, env, timeout)
     if backend == "bubblewrap":
         inner = argv
@@ -814,7 +833,8 @@ def run_isolated(argv: Sequence[str], *, cwd: Any, writable: Sequence[Any],
             inner = landlock_command(argv, None, [443])
         full = bubblewrap_command(inner, cwd, writable_roots, readable_roots,
                                   [*hidden_paths, *sealed_paths], network,
-                                  readonly=find_named(writable_roots, readonly_names),
+                                  readonly=[*find_named(writable_roots, readonly_names),
+                                            *_source_inside(writable_roots)],
                                   code=code_root, closed=closed_paths)
         return _run_posix(full, cwd, env, timeout)
     if backend == "landlock":
@@ -865,11 +885,20 @@ def _sbpl_regex(text: str) -> str:
     return "".join(out)
 
 
+def _source_inside(writable: Sequence[Path]) -> List[Path]:
+    """The source, where a folder a run writes holds it - [] elsewhere (`source_root`)."""
+    source = source_root()
+    if source is None or not source.is_dir():
+        return []
+    return [source] if any(_within(source, root) for root in writable) else []
+
+
 def seatbelt_profile(writable: Sequence[Path], hidden: Sequence[Path],
                      network: str, home: Optional[Path] = None,
                      readonly_names: Sequence[str] = (),
                      code: Optional[Path] = None,
-                     closed: Sequence[Path] = ()) -> str:
+                     closed: Sequence[Path] = (),
+                     source: Optional[Path] = None) -> str:
     """The profile: everything allowed but writes, the secrets and the
     network. Later rules win in a Seatbelt profile, so each opening comes
     after the denial it narrows. `code`: the application's own code, its
@@ -918,6 +947,14 @@ def seatbelt_profile(writable: Sequence[Path], hidden: Sequence[Path],
         # After the writable folders' opening, which holds them.
         lines.append("(deny file-read* file-write* "
                      + " ".join(f"(subpath {_sbpl(p)})" for p in closed) + ")")
+    if source is not None:
+        # The application's source: read as before, never written (`source_root`) - but a
+        # folder of the run's own inside it, which is its own.
+        lines.append(f"(deny file-write* (subpath {_sbpl(source)}))")
+        own = [root for root in writable if _within(root, source)]
+        if own:
+            lines.append("(allow file-write* "
+                         + " ".join(f"(subpath {_sbpl(p)})" for p in own) + ")")
     # Last, so nothing above opens them again: the named folders anywhere
     # beneath the writable ones - those there now and any it would make.
     for root in writable:
@@ -1006,6 +1043,11 @@ def bubblewrap_command(argv: Sequence[str], cwd: Path, writable: Sequence[Path],
     # installed packages.
     for folder in readonly:
         args += ["--ro-bind", str(folder), str(folder)]
+    # A folder of the run's own inside one bound read-only again - the application's source
+    # (`source_root`) - is its own: writable over it.
+    for root in writable:
+        if any(_within(root, folder) and root != folder for folder in readonly):
+            args += ["--bind", str(root), str(root)]
     # The run logs, over the writable folder that holds them: what code
     # writes there lands in the cover and is gone.
     for folder in closed:
@@ -1413,19 +1455,35 @@ class _AppContainer:
         secrets = credential_stores()
         capabilities: List[bytes] = []
         own: Dict[str, bytes] = {}              # writable root -> its capability
+        # THE SOURCE, LEFT OUT OF EVERY WRITE GRANT (`source_root`): a folder granted that holds it
+        # - the Desktop - passes nothing down into it; the read grants still reach it.
+        source = source_root()
+        unwritten = [source] if source is not None else []
         for root in writable:
             if any(_within(root, h) for h in hidden):
                 continue
-            sid = cls.grant("Write", root, [*hidden, *secrets])
+            sid = cls.grant("Write", root, [*hidden, *secrets,
+                                            *[one for one in unwritten if _within(one, root)
+                                              and one != root]])
             if sid:
                 capabilities.append(sid)
                 own[_key(root)] = sid
+        # What the write grant above it would have let it read there, given back as reading
+        # alone: the source is read as before.
+        for one in unwritten:
+            if one.exists() and any(_within(one, root) and one != root for root in writable
+                                    if not any(_within(root, h) for h in hidden)):
+                sid = cls.grant("Read", one, [*hidden, *secrets])
+                if sid:
+                    capabilities.append(sid)
         # The application's code, while it is sealed (CodeSeal): a folder
         # this child writes that holds it passed its grant down into it
         # before the seal - and a grant made since stops at it. Writing is
         # not the seal's to change, so the writing half is given there
         # explicitly; unsealing takes it off again (`_WinApi.unseal`).
         for code in CodeSeal.sealed_roots():
+            if any(_within(code, one) for one in unwritten):
+                continue                        # the source: written by no run at all
             for key, sid in own.items():
                 if _within(code, Path(key)) and _key(code) != key \
                         and not api.has_access(str(code), sid, _WRITE_ONLY, True):
@@ -1569,7 +1627,20 @@ class _WinApi:
         self.GetExitCodeProcess = bind(k32, "GetExitCodeProcess", w.BOOL, w.HANDLE,
                                        ctypes.POINTER(w.DWORD))
         self.CloseHandle = bind(k32, "CloseHandle", w.BOOL, w.HANDLE)
+        self.GetCurrentProcess = bind(k32, "GetCurrentProcess", w.HANDLE)
+        self.OpenProcessToken = bind(adv, "OpenProcessToken", w.BOOL, w.HANDLE, w.DWORD,
+                                     ctypes.POINTER(w.HANDLE))
+        self.GetTokenInformation = bind(adv, "GetTokenInformation", w.BOOL, w.HANDLE,
+                                        ctypes.c_int, P, w.DWORD, ctypes.POINTER(w.DWORD))
+        self.ConvertStringSecurityDescriptor = bind(
+            adv, "ConvertStringSecurityDescriptorToSecurityDescriptorW", w.BOOL,
+            w.LPCWSTR, w.DWORD, PP, P)
+        u32 = ctypes.WinDLL("user32", use_last_error=True)
+        self.CreateDesktop = bind(u32, "CreateDesktopW", w.HANDLE, w.LPCWSTR, w.LPCWSTR,
+                                  P, w.DWORD, w.DWORD, P)
+        self.CloseDesktop = bind(u32, "CloseDesktop", w.BOOL, w.HANDLE)
         self._sids: Dict[str, bytes] = {}
+        self._user_sid_text: Optional[str] = None
         self._containers: Dict[str, bytes] = {}
 
     # -- SIDs -------------------------------------------------------------
@@ -1998,6 +2069,74 @@ class _WinApi:
                 self.LocalFree(new_dacl)
             self.LocalFree(descriptor)
 
+    # -- a desktop nobody sees --------------------------------------------
+    def _sid_text(self, sid: bytes) -> str:
+        ct = self.ctypes
+        text = ct.c_wchar_p()
+        buffer = ct.create_string_buffer(sid, len(sid))
+        if not self.ConvertSidToStringSid(buffer, ct.byref(text)):
+            raise ct.WinError(ct.get_last_error())
+        try:
+            return text.value
+        finally:
+            self.LocalFree(ct.cast(text, ct.c_void_p))
+
+    def user_sid_text(self) -> str:
+        """The SID of the user this application runs as, as text."""
+        if self._user_sid_text:
+            return self._user_sid_text
+        ct, w = self.ctypes, self.w
+        token = w.HANDLE()
+        if not self.OpenProcessToken(self.GetCurrentProcess(), 0x0008,   # TOKEN_QUERY
+                                     ct.byref(token)):
+            raise ct.WinError(ct.get_last_error(), "OpenProcessToken")
+        try:
+            size = w.DWORD()
+            self.GetTokenInformation(token, 1, None, 0, ct.byref(size))   # TokenUser
+            buffer = ct.create_string_buffer(size.value or 256)
+            if not self.GetTokenInformation(token, 1, buffer, len(buffer), ct.byref(size)):
+                raise ct.WinError(ct.get_last_error(), "GetTokenInformation")
+            # TOKEN_USER begins with SID_AND_ATTRIBUTES: the SID's pointer first.
+            pointer = ct.c_void_p.from_buffer(buffer).value
+            self._user_sid_text = self._sid_text(self._copy_sid(pointer))
+        finally:
+            self.CloseHandle(token)
+        return self._user_sid_text
+
+    def hidden_desktop(self, container_sid: bytes) -> Tuple[Any, str]:
+        """A DESKTOP OF THE CHILD'S OWN, NEVER SHOWN (the user, 2026-11-11:
+        a run's tests drew the chat bubble in the middle of the screen).
+
+        Every window the child and all it starts open - Tk's, a browser's -
+        is made on it and works as on the user's (the same monitors, the same
+        size), but is not seen: Windows shows only the desktop the user is
+        on, and this one is never switched to. Nor does the child see a
+        window of the user's. Open to the system, the user and this one
+        container alone - an AppContainer's access needs both the user's
+        entry and its own. (handle, name): `CloseDesktop` it once the child
+        has ended (Windows keeps it while anything still runs on it)."""
+        ct = self.ctypes
+
+        class SecurityAttributes(ct.Structure):
+            _fields_ = [("nLength", self.w.DWORD), ("lpSecurityDescriptor", ct.c_void_p),
+                        ("bInheritHandle", self.w.BOOL)]
+
+        sddl = (f"D:P(A;;GA;;;SY)(A;;GA;;;{self.user_sid_text()})"
+                f"(A;;GA;;;{self._sid_text(container_sid)})")
+        descriptor = ct.c_void_p()
+        if not self.ConvertStringSecurityDescriptor(sddl, 1, ct.byref(descriptor), None):
+            raise ct.WinError(ct.get_last_error(), "the hidden desktop's security")
+        try:
+            attributes = SecurityAttributes(ct.sizeof(SecurityAttributes), descriptor, False)
+            name = f"pa-run-{os.getpid()}-{os.urandom(4).hex()}"
+            handle = self.CreateDesktop(name, None, None, 0, 0x10000000,   # GENERIC_ALL
+                                        ct.byref(attributes))
+            if not handle:
+                raise ct.WinError(ct.get_last_error(), "CreateDesktopW")
+        finally:
+            self.LocalFree(descriptor)
+        return handle, name
+
     # -- a process in the container ---------------------------------------
     def launch(self, argv: List[str], *, cwd: str, env: Optional[Dict[str, str]],
                capabilities: List[bytes], timeout: Optional[float],
@@ -2074,6 +2213,7 @@ class _WinApi:
             raise ct.WinError(ct.get_last_error())
         handles = (w.HANDLE * 3)(*child_ends)
         job = None
+        desktop = None
         process = ProcessInformation()
         try:
             if not self.UpdateProcThreadAttribute(
@@ -2091,6 +2231,17 @@ class _WinApi:
             startup.StartupInfo.hStdOutput = out_write
             startup.StartupInfo.hStdError = err_write
             startup.lpAttributeList = ct.cast(attributes, ct.c_void_p)
+            # On a desktop of its own, so that nothing it opens is on the
+            # user's screen (hidden_desktop) - or, if that cannot be made,
+            # on the user's as before: a run is not refused for it.
+            try:
+                desktop, desktop_name = self.hidden_desktop(container_sid)
+                named = ct.create_unicode_buffer(desktop_name)
+                keep.append(named)
+                startup.StartupInfo.lpDesktop = ct.cast(named, w.LPWSTR)
+            except OSError as exc:
+                log.warning("no desktop of its own for this run (%s): what it opens "
+                            "is on the user's screen", exc)
 
             block = None
             if env is not None:
@@ -2116,6 +2267,8 @@ class _WinApi:
                 _winapi.CloseHandle(handle)
             if job:
                 self.CloseHandle(job)
+            if desktop:
+                self.CloseDesktop(desktop)
             raise
         finally:
             for handle in child_ends:
@@ -2148,6 +2301,8 @@ class _WinApi:
             # Closing the job's only handle ends whatever it still holds.
             self.CloseHandle(job)
             self.CloseHandle(process.hProcess)
+            if desktop:
+                self.CloseDesktop(desktop)
         for reader in readers:
             reader.join(10)
 

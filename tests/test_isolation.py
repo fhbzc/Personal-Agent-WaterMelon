@@ -182,6 +182,61 @@ class WritesAreConfinedByTheSystemTests(_Folders):
         isolation._AppContainer.withdraw("Read", self.root)
         self.assertFalse(api.has_access(str(self.work), sid, isolation._READ_EXECUTE, False))
 
+    @unittest.skipUnless(WINDOWS and STATUS.get("backend") == "appcontainer",
+                         "a desktop of the child's own is Windows")
+    def test_what_a_child_opens_is_on_a_desktop_of_its_own_never_on_the_users(self) -> None:
+        """The user, 2026-11-11: a run's tests drew the chat bubble in the
+        middle of the screen. Its windows work - the same screen size - but
+        are on a desktop nobody sees."""
+        import ctypes
+        try:
+            import tkinter  # noqa: F401
+        except ImportError:
+            self.skipTest("no Tk here")
+        title = f"pa-hidden-{os.urandom(4).hex()}"
+        user32 = ctypes.WinDLL("user32")
+        user32.FindWindowW.restype = ctypes.c_void_p
+        user32.FindWindowW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+        seen = []
+        ended = threading.Event()
+
+        def look() -> None:                      # on the user's desktop, all along
+            while not ended.is_set():
+                if user32.FindWindowW(None, title):
+                    seen.append(True)
+                time.sleep(0.05)
+
+        looking = threading.Thread(target=look, daemon=True)
+        looking.start()
+        try:
+            done = self.run_child(f"""
+                import ctypes, json, time, tkinter
+                u = ctypes.WinDLL('user32')
+                u.GetThreadDesktop.restype = ctypes.c_void_p
+                u.GetUserObjectInformationW.argtypes = [ctypes.c_void_p, ctypes.c_int,
+                    ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p]
+                name = ctypes.create_unicode_buffer(256)
+                u.GetUserObjectInformationW(u.GetThreadDesktop(ctypes.windll.kernel32
+                    .GetCurrentThreadId()), 2, name, ctypes.sizeof(name), None)
+                root = tkinter.Tk()
+                root.title({title!r})
+                root.geometry('300x200+100+100')
+                root.update()
+                out = {{'desktop': name.value, 'width': root.winfo_screenwidth(),
+                       'mapped': bool(root.winfo_ismapped())}}
+                time.sleep(2)
+                root.destroy()
+                print(json.dumps(out))
+                """, timeout=60)
+        finally:
+            ended.set()
+            looking.join(5)
+        out = _last_json(done.stdout)
+        self.assertTrue(out["desktop"].startswith("pa-run-"), out)
+        self.assertTrue(out["mapped"], out)
+        self.assertEqual(out["width"], user32.GetSystemMetrics(0), out)
+        self.assertEqual(seen, [], "the child's window was on the user's desktop")
+
     def test_a_timeout_ends_the_child(self) -> None:
         marker = self.work / "late.txt"
         started = time.monotonic()

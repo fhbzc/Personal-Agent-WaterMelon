@@ -344,6 +344,9 @@ class CalendarNature:
         """Each action not yet reasoned about, oldest first. One the model
         could not answer stays pending and is tried again with the next."""
         done = 0
+        from ..lessons.engine import LessonEngine
+        if not LessonEngine.learning_on(self):
+            return done                        # kept, read once learning is on
         for row in self.pending():
             read = self._why(row)
             if read is None:

@@ -71,13 +71,14 @@ class ModelCalls:
                estimated_cost: Optional[float] = None,
                cached_input_tokens: int = 0,
                cache_written_tokens: int = 0, language: str = "",
-               by_user: bool = False) -> None:
+               by_user: bool = False, module: str = "") -> None:
         try:
             self.db.execute(
                 "INSERT INTO model_calls (id, created_at, provider, model, task, "
                 "input_tokens, output_tokens, total_tokens, latency_ms, ok, "
                 "error, estimated_cost, cached_input_tokens, cache_written_tokens, "
-                "language, by_user) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "language, by_user, module) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (new_id("call"), iso(utcnow()), str(provider or ""),
                  str(model or ""), str(task or "general"),
                  int(input_tokens or 0), int(output_tokens or 0),
@@ -85,7 +86,7 @@ class ModelCalls:
                  round(float(latency_ms or 0), 2), 1 if ok else 0,
                  str(error or ""), estimated_cost,
                  int(cached_input_tokens or 0), int(cache_written_tokens or 0),
-                 str(language or ""), 1 if by_user else 0),
+                 str(language or ""), 1 if by_user else 0, str(module or "")),
             )
         except Exception:            # pragma: no cover - measurement, not work
             log.debug("could not record a model call", exc_info=True)
@@ -243,6 +244,7 @@ class ModelCalls:
         try:
             rows = self.db.query(
                 "SELECT date(created_at, ?) AS day, task, COALESCE(by_user, 0) AS by_user, "
+                "COALESCE(module, '') AS module, "
                 "COUNT(*) AS calls, "
                 f"COALESCE(SUM({INPUT_SQL}), 0) AS input_tokens, "
                 "COALESCE(SUM(output_tokens), 0) AS output_tokens, "
@@ -252,14 +254,15 @@ class ModelCalls:
                 "COALESCE(SUM(COALESCE(cached_input_tokens, 0)), 0) AS cached_tokens, "
                 "COALESCE(SUM(estimated_cost), 0) AS estimated_cost "
                 "FROM model_calls WHERE created_at >= ? "
-                "GROUP BY day, task, COALESCE(by_user, 0) ORDER BY day", (shift, iso(since)))
+                "GROUP BY day, task, COALESCE(by_user, 0), COALESCE(module, '') ORDER BY day",
+                (shift, iso(since)))
         except Exception:            # pragma: no cover
             log.debug("could not read model calls by day", exc_info=True)
             rows = []
         from ..modules import module_name, module_of
         out = [{"day": r["day"], "task": str(r["task"] or "general"),
-                "module": module_of(r["task"], bool(r["by_user"])),
-                "module_name": module_name(module_of(r["task"], bool(r["by_user"]))),
+                "module": module_of(r["task"], bool(r["by_user"]), r["module"]),
+                "module_name": module_name(module_of(r["task"], bool(r["by_user"]), r["module"])),
                 "calls": int(r["calls"]), "input_tokens": int(r["input_tokens"]),
                 "output_tokens": int(r["output_tokens"]),
                 "total_tokens": int(r["total_tokens"]),

@@ -45,6 +45,10 @@ import webbrowser  # noqa: E402
 
 webbrowser.open = webbrowser.open_new = webbrowser.open_new_tab = _not_on_screen
 import personalized_agent.agent.work.runner as _runner  # noqa: E402
+# A WEBSITE'S PRIVATE MODE judged from no window at all: a page of agentssociety.org open on the
+# desktop of whoever runs the tests would otherwise turn private mode on in every test.
+import personalized_agent.common.privacy_folders as _privacy_folders  # noqa: E402
+_privacy_folders.site_titles = lambda: []
 
 _runner.open_in_file_manager = _not_on_screen
 
@@ -101,7 +105,13 @@ class TemporaryAgent:
         # after it: that is what a slow machine costs a user's round, not what a test is about.
         # A real model is never asked behind a test's back: tests of it call `run` themselves.
         self.app.after_todo.allowed = lambda: False
-        embedder = getattr(self.app.state_heartbeat, "embedder", None)
+        # THE REVIEW of what the heartbeat and its triggers change on the calendar (2026-11-12) is
+        # test_outside_review's - which holds that the application sets it: the models these tests
+        # give answer the steps, not a reviewer.
+        self.app.heartbeat.reviewer = None
+        self.app.state_heartbeat.reviewer = None
+        self.app.after_todo.reviewer = None
+        embedder =getattr(self.app.state_heartbeat, "embedder", None)
         if embedder is not None:
             embedder.ANSWER_SECONDS = 600
         # ROOM FOR EVERY RUN: whether one waits its turn is the tests' of

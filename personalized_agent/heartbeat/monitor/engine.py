@@ -243,6 +243,10 @@ class Monitor:
             self.store.refresh(builtins())             # defaults changed, where no one changed them
             self.store.reword("break", OLD_BREAK)
             self.store.seed_quiet(QUIET)
+            # EVERY BUILT-IN ONE PROTECTED, AND FIXED (the user, 2026-11-13: "现在设置的几个monitor都是protected, 不允许改"):
+            # switched on or off, nothing more.
+            self.db.execute("UPDATE monitor_activators SET protected = 1 WHERE COALESCE(builtin, '') != '' "
+                            "AND COALESCE(deleted_at, '') = '' AND protected = 0")
             for old in OLD_SPAM_THENS:
                 self.store.retier("spam_risk", old, act.check(SPAM, builtin=True)[0]["then"])
         except Exception:                              # pragma: no cover - seeded next start
@@ -258,6 +262,8 @@ class Monitor:
         from ...common.modules import enabled as module_on
         if not activator.get("enabled", True):
             return False
+        if activator.get("group") == "system":
+            return True                                  # the application itself: its own switch alone
         if activator.get("group") == "calendar":
             return module_on(self.config, "calendar")
         if activator.get("group") == "recommend" and not module_on(self.config, "recommendation"):
@@ -301,13 +307,28 @@ class Monitor:
         """One look: the windows written, the signals read, each Activator on
         them run."""
         if not self.enabled():
-            self.blocker = ""
+            self.blocker = self._quieted()
+            # THE PLAN AND THE CHECKS RUN ON, the Monitor off (a side agent's note, 2026-11-13): only its
+            # own Activators stop.
+            after = getattr(self, "after_look", None)
+            if after is not None:
+                try:
+                    after()
+                except Exception:
+                    log.debug("what looks on the Monitor's clock failed", exc_info=True)
             return []
         when = now or datetime.now(timezone.utc)
         self.signals.record_if_due(when)
         snapshot = self.signals.snapshot(when)
         self.latest = snapshot
         self.blocker = self._quieted()
+        # And whatever looks on the same clock - the day's plan's reminders (heartbeat/agenda/act.py).
+        after = getattr(self, "after_look", None)
+        if after is not None:
+            try:
+                after()
+            except Exception:
+                log.debug("what looks on the Monitor's clock failed", exc_info=True)
         fired = []
         for one in self.store.list():
             if one["text_driven"] or not self.allowed(one):
@@ -395,12 +416,21 @@ class Monitor:
                     return "said something too lately"
         return ""
 
+    #: NO NOTIFICATIONS (the user, 2026-11-13: "想安静时，monitor有个no notification按钮，点击之后所有notification都不会弹，
+    #: 但是其它功能正常"): the user's own silence, over everything - its setting and its name.
+    NO_NOTIFICATIONS = "monitor_no_notifications"
+    NO_NOTIFICATIONS_NAME = "No notifications"
+
     def _quieted(self) -> str:
-        """The rule of quiet that applies now, if one does."""
+        """The rule of quiet that applies now, if one does - the user's "No notifications" first."""
+        if self.config is not None and self.config.get(self.NO_NOTIFICATIONS, False):
+            return self.NO_NOTIFICATIONS_NAME
         moment = {"signals": self.latest or {}, "events": (self.latest or {}).get("events") or []}
         for rule in self.store.quiet_rules():
             if act.evaluate(rule["when"], moment)[0]:
                 return str(rule["name"])
+        # ONLY ITS OWN SILENCES, SHOWN AT ITS TOP (the user, 2026-11-13: "blocker在最上级") - the plan's deep
+        # blocks no longer hold anything unseen.
         return ""
 
     # -- acting -------------------------------------------------------------------------
@@ -525,7 +555,9 @@ class Monitor:
                                 "context": context},
                     "content": content, "url": url, "picture": picture, "reason": reason,
                     "recommended": recommended, "summary": summary,
-                    "through": context["activator"]["group"] == "risk"}
+                    # THE SILENCES OVER EVERYTHING (the user, 2026-11-13: "While presenting, In a meeting 这两个
+                    # silence对全部monitor都有效"): nothing comes through them, a risk neither.
+                    "through": False}
         if recommended:
             metadata["nth_today"] = self.recommended_today() + 1
             metadata["chain"] = context.get("chain") or {}
@@ -552,11 +584,14 @@ class Monitor:
             question_id = getattr(asked, "id", "") or ""
             metadata["question_id"] = question_id
             template = SUGGESTION
+        blocked = self._quieted()
+        if blocked:
+            metadata["held_by"] = blocked                # in the list until it is over: nothing pops
         sent = self.notifications.notify(title, message, kind="proactive",
                                          dedupe_key=f"monitor:{firing}", template=template,
                                          metadata=metadata,
                                          level=POP if self.delivery_of(context["activator"]) == "pop"
-                                         else COLLAPSE)
+                                         and not blocked else COLLAPSE)
         said = {"said": sent is not None, "title": title, "message": message, "url": url,
                 "picture": picture, "reason": reason,
                 "notification_id": getattr(sent, "id", "") if sent is not None else "",
@@ -564,6 +599,53 @@ class Monitor:
         # Now, not when the caller is done: an answer finds its firing by this.
         self._outcome(firing, said)
         return said
+
+    def relay(self, builtin: str, title: str, message: str, kind: str = "proactive",
+              metadata: Optional[Dict[str, Any]] = None, dedupe_key: str = "", template: Any = None,
+              question: Any = None, wait: bool = False, **more: Any) -> Any:
+        """WHAT THE REST OF THE APPLICATION SAYS, THROUGH THE MONITOR (the user, 2026-11-13: "所有的通知必须在monitor
+        里，收到monitor的统一调配"): by its built-in Activator (`builtin`) - switched off, nothing said;
+        under a silence (presenting, a meeting) into the list, nothing popped; else popped or waiting
+        as the Activator says (`wait`: the caller would rather it waited). Each kept as a firing. The
+        notification made, or None."""
+        if self.notifications is None:
+            return None
+        row = self.db.query_one("SELECT id FROM monitor_activators WHERE builtin = ? AND "
+                                "COALESCE(deleted_at, '') = '' ORDER BY created_at LIMIT 1", (builtin,))
+        activator = self.store.get(str(row["id"])) if row else None
+        if activator is None or not self.allowed(activator):
+            return None                                  # switched off: its Activator's word
+        from ...common.notifications import COLLAPSE, POP
+        when = datetime.now(timezone.utc)
+        firing = new_id("monfire")
+        blocked = self._quieted()
+        context = {"activator": {"id": activator["id"], "name": activator["name"],
+                                 "shown_as": activator.get("display_name") or activator["name"],
+                                 "group": activator["group"], "purpose": activator.get("purpose")},
+                   "why": [str(title)[:200]], "score": 1.0, "relayed": True}
+        self.db.execute(
+            "INSERT INTO monitor_firings (id, activator_id, at, how, score, why, action, acted, outcome, "
+            "context) VALUES (?, ?, ?, 'relay', 1, ?, 'notify', 1, '{}', ?)",
+            (firing, activator["id"], when.isoformat(), str(title)[:600],
+             json.dumps(context, ensure_ascii=False, default=str)))
+        said = dict(metadata or {})
+        said["monitor"] = {"firing": firing, "activator_id": activator["id"], "activator": activator["name"],
+                           "shown_as": context["activator"]["shown_as"], "group": activator["group"],
+                           "why": "", "context": context}
+        said["through"] = False
+        if blocked:
+            said["held_by"] = blocked
+        pops = self.delivery_of(activator) == "pop" and not wait and not blocked
+        sent = self.notifications.notify(title, message, kind=kind,
+                                         dedupe_key=dedupe_key or f"monitor:{firing}",
+                                         metadata=said, template=template, question=question,
+                                         level=POP if pops else COLLAPSE,
+                                         **{key: value for key, value in more.items()
+                                            if key in ("signature", "action_hint")})
+        self._outcome(firing, {"said": sent is not None, "title": title, "message": str(message)[:600],
+                               "held_by": blocked,
+                               "notification_id": getattr(sent, "id", "") if sent is not None else ""})
+        return sent
 
     def delivery_of(self, activator: Dict[str, Any]) -> str:
         """POPPED OR WAITING, BY THE ACTIVATOR'S OWN SETTING - done by code, the model not asked
@@ -738,6 +820,8 @@ class Monitor:
         if signals:
             signals.update(self.signals._front(datetime.now(timezone.utc)))
         return {"enabled": self.enabled(), "signals": signals,
+                "no_notifications": bool(self.config.get(self.NO_NOTIFICATIONS, False))
+                if self.config is not None else False,
                 "habits": self.signals.habits(),
                 "activators": self.store.list(), "firings": self.firings(),
                 "quiet": self.store.quiet_rules(),

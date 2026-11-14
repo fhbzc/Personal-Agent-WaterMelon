@@ -17,20 +17,7 @@ from personalized_agent.heartbeat.checklist.store import DEFAULT_ITEMS, STEPS
 from personalized_agent.common.events.models import ListenerEvent, utcnow
 
 
-# STEP 2 IS PAUSED in the agent (PAUSED_STEPS): kept, not run. These tests
-# are about the steps' machinery - step 2's included, so it can come back -
-# and run with every step; StepTwoIsPausedTests checks the real setting.
 import personalized_agent.heartbeat.core.heartbeat as _heartbeat_module
-
-_PAUSED = _heartbeat_module.PAUSED_STEPS
-
-
-def setUpModule() -> None:
-    _heartbeat_module.PAUSED_STEPS = ()
-
-
-def tearDownModule() -> None:
-    _heartbeat_module.PAUSED_STEPS = _PAUSED
 from personalized_agent.data_manage.library import (OTHER, STATES, USER_NATURE,
                                                     Record)
 from personalized_agent.models.base import (
@@ -157,7 +144,7 @@ class AgentHeartbeatTests(unittest.TestCase):
         self.assertEqual(len(items), len(DEFAULT_ITEMS))
         self.assertIn("current state", items[0].text)
 
-    def test_the_four_steps_cannot_be_changed(self) -> None:
+    def test_the_three_steps_cannot_be_changed(self) -> None:
         """Section 35, as amended: the procedure is fixed.
 
         A heartbeat whose steps can be rewritten by the thing running them can
@@ -391,7 +378,7 @@ class StateCalendarTests(unittest.TestCase):
 
 
 class HeartbeatWritesStatesTests(unittest.TestCase):
-    """Section 35, as amended: the four steps, and what each produces."""
+    """Section 35, as amended: the three steps, and what each produces."""
 
     def setUp(self) -> None:
         self.agent = TemporaryAgent()
@@ -448,16 +435,6 @@ class HeartbeatWritesStatesTests(unittest.TestCase):
         self.assertNotIn("long term", prompt)
         self.assertIn("There is no separate label to set", prompt)
 
-    def test_step_two_writes_what_kind_of_person_the_user_is(self) -> None:
-        self._run({"states": [{"title": "A long session", "detail": "d"}],
-                   "user_nature": [{"title": "Works in long sessions",
-                                    "content": "Returns for hours at a time.",
-                                    "kind": "personal", "states": [1]}]})
-        records = [r for r in self.app.library.records()
-                   if r.folder == USER_NATURE]
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0].metadata["nature_kind"], "personal")
-
     def _pictures(self):
         from pathlib import Path
         from personalized_agent.common.events.models import ListenerEvent
@@ -494,27 +471,6 @@ class HeartbeatWritesStatesTests(unittest.TestCase):
         report = self._run({"not_states": []})
         self.assertNotIn("pictures_dropped", report)
         self.assertTrue(slide_path.exists() and video_path.exists())
-
-    def test_a_nature_resting_on_no_state_or_of_no_kind_is_not_written(self) -> None:
-        self._run({"states": [{"title": "A long session", "detail": "d"}],
-                   "user_nature": [
-                       {"title": "Rests on nothing", "content": "c",
-                        "kind": "work", "states": []},
-                       {"title": "Rests on a state that is not there",
-                        "content": "c", "kind": "work", "states": [7]},
-                       {"title": "Of no kind", "content": "c", "states": [1]},
-                       {"title": "Work nature, which the stages write",
-                        "content": "c", "kind": "work", "states": [1]},
-                       {"title": "Both kinds at once", "content": "c",
-                        "kind": "both", "states": [1]}]})
-        records = [r for r in self.app.library.records()
-                   if r.folder == USER_NATURE]
-        self.assertEqual([r.title for r in records], ["Both kinds at once"])
-        from personalized_agent.heartbeat.experience.store import ExperienceStore
-        # Step 2 writes personal nature only: one said to be both keeps its
-        # personal half; work nature comes from the stages of the work.
-        self.assertEqual(ExperienceStore(self.app.db).nature_kinds(),
-                         {records[0].id: "personal"})
 
     def test_one_run_cannot_rewrite_the_whole_calendar(self) -> None:
         from personalized_agent.heartbeat.core.heartbeat import MAX_STATES_PER_RUN
@@ -947,8 +903,10 @@ class StatesAreWrittenInEnglishTests(unittest.TestCase):
 
     def test_the_step_is_told_to_write_them_in_english(self) -> None:
         request, said = self._sent()
+        # ONE LANGUAGE FOR EVERY STEP (the user, 2026-11-11): each step's exceptions together,
+        # so the steps share one system prompt - the states' first, then the people's tags.
         self.assertEqual([one["rule"] for one in request.language.rules()],
-                         ["display", "internal"])
+                         ["display", "internal", "internal"])
         self.assertIn("the states", request.language.rules()[1]["what"])
         self.assertIn("write them in English", said)
         prompt = self._run()["step_state"]["prompt"]
@@ -1063,13 +1021,13 @@ class TheReviewHasThreeStepsTests(unittest.TestCase):
         from personalized_agent.heartbeat.checklist.store import STEPS
 
         # Step 2 is the people now (heartbeat/connections/people.py); who
-        # the user is is kept, paused (PAUSED_STEPS).
+        # the user is is gone (2026-11-10).
         # The next-steps step is gone with the tasks' next steps (section
         # 37, as amended 2026-10-18).
         self.assertEqual([step.id for step in STEPS],
-                         ["step_state", "step_people", "step_nature", "step_notify"])
+                         ["step_state", "step_people", "step_notify"])
         self.assertEqual(STEPS[0].text, "Analyze the user's current state.")
-        self.assertEqual(STEPS[3].text,
+        self.assertEqual(STEPS[2].text,
                          "Determine which notifications need to be added and "
                          "which need to be disabled.")
 
@@ -1087,7 +1045,7 @@ class TheReviewHasThreeStepsTests(unittest.TestCase):
         try:
             class Reply:
                 text = json.dumps({
-                    "states": [], "user_nature": [],
+                    "states": [],
                     "actions": [{"type": "notify", "title": "Should not",
                                  "message": "be sent"}],
                     "message_to_user": "should not be sent either"})
@@ -1102,7 +1060,7 @@ class TheReviewHasThreeStepsTests(unittest.TestCase):
             report = agent.app.heartbeat.run_once(trigger="manual_debug")
             self.assertNotIn("actions", report)
             self.assertNotIn("message_to_user", report)
-            self.assertEqual(len(report.get("steps") or report["checklist"]), 4)
+            self.assertEqual(len(report.get("steps") or report["checklist"]), 3)
         finally:
             agent.cleanup()
 
@@ -1183,7 +1141,7 @@ class OneCallPerStepTests(unittest.TestCase):
 
     def test_every_step_gets_its_own_call(self) -> None:
         _report, steps = self._steps()
-        self.assertEqual(len(steps), 4)
+        self.assertEqual(len(steps), 3)
         for step in steps.values():
             self.assertTrue(step.get("prompt"), step["id"])
             self.assertTrue(step.get("answer") or step.get("blocked"), step["id"])
@@ -1193,7 +1151,8 @@ class OneCallPerStepTests(unittest.TestCase):
     #: of a list - so a prompt is told apart by its subject, which is what a
     #: reader would have used anyway.
     SUBJECTS = {"step_state": "ANALYSE THE USER'S STATE",
-                "step_nature": "WORK OUT WHAT THE USER IS LIKE"}
+                "step_people": "FIND THE PEOPLE IN THIS WINDOW",
+                "step_notify": "DECIDE WHICH NOTIFICATIONS NEED TO BE ADDED"}
 
     def test_each_prompt_carries_its_own_question(self) -> None:
         _report, steps = self._steps()
@@ -1208,10 +1167,11 @@ class OneCallPerStepTests(unittest.TestCase):
         is being answered.
         """
         _report, steps = self._steps()
-        self.assertNotIn(self.SUBJECTS["step_nature"],
-                         steps["step_state"]["prompt"])
-        self.assertNotIn(self.SUBJECTS["step_state"],
-                         steps["step_nature"]["prompt"])
+        for name in self.SUBJECTS:
+            for other, subject in self.SUBJECTS.items():
+                if other != name:
+                    self.assertNotIn(subject, steps[name]["prompt"],
+                                     f"{other} asked in {name}")
 
     def test_a_later_step_is_told_what_the_earlier_ones_concluded(self) -> None:
         """What the single call could not do at all."""
@@ -1224,7 +1184,7 @@ class OneCallPerStepTests(unittest.TestCase):
         # is being told it remembers a conversation it was not in.
         self.assertNotIn("ALREADY BEEN WORKED OUT",
                          steps["step_state"]["prompt"])
-        for name in ("step_nature",):
+        for name in ("step_notify",):
             self.assertIn("WHAT HAS ALREADY BEEN WORKED OUT FROM THIS "
                           "ACTIVITY", steps[name]["prompt"], name)
             self.assertNotIn("the previous step", steps[name]["prompt"], name)
@@ -1238,7 +1198,7 @@ class OneCallPerStepTests(unittest.TestCase):
         """
         _report, steps = self._steps()
         self.assertIn("WHAT HAS ALREADY BEEN WORKED OUT FROM THIS ACTIVITY",
-                      steps["step_nature"]["prompt"])
+                      steps["step_notify"]["prompt"])
 
     def test_the_state_step_is_told_it_is_about_the_user(self) -> None:
         """It is the user's calendar, and it said otherwise.
@@ -1285,17 +1245,19 @@ class OneCallPerStepTests(unittest.TestCase):
             self.assertNotIn("four fixed steps", prompt, name)
 
     def test_the_raw_activity_goes_only_where_it_is_evidence(self) -> None:
-        """Both questions - what the user is doing and who they are - are
-        read off their activity, so both steps carry it as their floor."""
+        """Every question - what the user is doing, who is around them and
+        what to tell them - is read off their activity, so every step
+        carries it as its floor."""
         _report, steps = self._steps()
-        self.assertIn("WHAT THE USER DID", steps["step_state"]["prompt"])
-        self.assertIn("WHAT THE USER DID", steps["step_nature"]["prompt"])
+        for name in ("step_state", "step_people", "step_notify"):
+            self.assertIn("WHAT THE USER DID", steps[name]["prompt"], name)
 
     def test_each_step_is_asked_for_its_own_shape_only(self) -> None:
         _report, steps = self._steps()
         self.assertIn("state_analysis", steps["step_state"]["prompt"])
-        self.assertNotIn("state_analysis", steps["step_nature"]["prompt"])
-        self.assertIn('"user_nature"', steps["step_nature"]["prompt"])
+        self.assertNotIn("state_analysis", steps["step_notify"]["prompt"])
+        self.assertIn('"notifications"', steps["step_notify"]["prompt"])
+        self.assertNotIn('"notifications"', steps["step_state"]["prompt"])
 
     def test_a_model_that_is_away_stops_the_run_rather_than_failing_four_times(self) -> None:
         """Asking three more times is three more failures and the same answer."""
@@ -1320,7 +1282,7 @@ class OneCallPerStepTests(unittest.TestCase):
 
         self.agent.app.models.invoke = refuse
         report = self.heartbeat.run_once(trigger="manual_debug")
-        self.assertEqual(len(report.get("steps", [])), 4)
+        self.assertEqual(len(report.get("steps", [])), 3)
         self.assertTrue(all("trail" in step for step in report["steps"]))
 
     def test_the_polled_status_does_not_carry_the_prompts(self) -> None:
@@ -1495,7 +1457,7 @@ class TheLastRunSurvivesARefreshTests(unittest.TestCase):
     The run was held in the page. Reloading it threw away the only copy that
     still had the prompts and the gathered text in it - the thing the reader
     had opened the panel to look at - and the button had to be pressed again,
-    which is four model calls to see what was already known.
+    which is three model calls to see what was already known.
     """
 
     def setUp(self) -> None:
@@ -1509,7 +1471,7 @@ class TheLastRunSurvivesARefreshTests(unittest.TestCase):
         self.heartbeat.run_once(trigger="manual_debug")
         state = self.heartbeat.progress()
         self.assertFalse(state["running"])
-        self.assertEqual(len(state["steps"]), 4)
+        self.assertEqual(len(state["steps"]), 3)
 
     def test_whole_with_what_each_step_was_given(self) -> None:
         self.heartbeat.run_once(trigger="manual_debug")
@@ -1625,7 +1587,7 @@ class TheStateStepDecidesWhatItNeedsTests(unittest.TestCase):
         # A step that has enough says so by answering, and that is one call.
         self._model()
         self._step_one()
-        self.assertEqual(len(self.asked), 4)
+        self.assertEqual(len(self.asked), 3)
 
     # -- what it can ask for ----------------------------------------------
     def test_there_is_nothing_to_widen(self) -> None:
@@ -1766,7 +1728,7 @@ class TheStateStepDecidesWhatItNeedsTests(unittest.TestCase):
         self._model()
         self.heartbeat.run_once(trigger="manual_debug")
         report = self.heartbeat.progress()
-        self.assertEqual(len(report["steps"]), 4)
+        self.assertEqual(len(report["steps"]), 3)
         for step in report["steps"]:
             self.assertIn("If you have enough, ANSWER", step["prompt"])
             self.assertIn("open_by_id", step["prompt"])
@@ -2123,7 +2085,7 @@ class TheToolsAreWhatAProviderReadsTests(unittest.TestCase):
             # Every step gathers for itself now, so every step is offered
             # them - and offered the same two, rather than something like
             # them assembled per step.
-            self.assertEqual(len(seen), 4)
+            self.assertEqual(len(seen), 3)
             for tools in seen:
                 self.assertEqual(tools, STATE_TOOLS)
         finally:
@@ -2573,6 +2535,9 @@ class TheDebuggerRunsTheRealHeartbeatTests(unittest.TestCase):
         self.assertEqual(windows[1], 1.0)
 
     def test_and_produce_the_same_shape_of_report(self) -> None:
+        # Every step due by the clock too (each has its own pace: test_heartbeat_step_pace.py).
+        self.heartbeat.config.set("heartbeat_step_minutes", {
+            "step_notify": 0, "step_people": 0}, internal=True)
         by_hand = self.heartbeat.run_once(trigger="manual_debug")
         by_timer = self.heartbeat.run_once(trigger="timer")
         self.assertEqual(sorted(by_hand), sorted(by_timer))
@@ -2615,7 +2580,7 @@ class WhatAStepCouldHaveDoneTests(unittest.TestCase):
 
     def test_every_step_lists_what_it_is_able_to_do(self) -> None:
         steps = self._steps()
-        for name in ("step_state", "step_nature"):
+        for name in ("step_state", "step_people", "step_notify"):
             self.assertTrue(steps[name]["could_do"], name)
 
     def test_the_state_step_can_only_write_states(self) -> None:
@@ -2648,11 +2613,12 @@ class WhatAStepCouldHaveDoneTests(unittest.TestCase):
         """
         steps = self._steps({"states": [], "actions": []})
         self.assertIn("No state was written", steps["step_state"]["nothing"])
-        self.assertIn("written to memory", steps["step_nature"]["nothing"])
+        self.assertIn("No one appeared", steps["step_people"]["nothing"])
+        self.assertIn("No notification was added", steps["step_notify"]["nothing"])
 
     def test_and_only_the_step_that_interrupts_talks_about_interrupting(self) -> None:
         steps = self._steps({"states": [], "actions": []})
-        for name in ("step_state", "step_nature"):
+        for name in ("step_state", "step_people"):
             self.assertNotIn("interrupting", steps[name]["nothing"], name)
 
 class WhatEachStepCostTests(unittest.TestCase):
@@ -3278,208 +3244,17 @@ class TheStateStepIsToldWhatAStateLooksLikeTests(unittest.TestCase):
 
 
 class TheConfidenceScaleHasSevenPointsTests(unittest.TestCase):
-    """It ran 1 to 7 and explained five of them.
+    """It runs 1 to 7, and a record takes any point on it.
 
-    A scale that names 7, 5, 4, 2 and 1 is a scale whose 6 and 3 mean
-    whatever the reader decides they mean - and the two it left out are
-    the two either side of the middle, which is where most honest answers
-    land.
+    (The prompt that explained each point was the nature step's, which is
+    gone; the scale itself is still what a record is clamped to.)
     """
-
-    def _instruction(self):
-        from personalized_agent.heartbeat.core.heartbeat import STEP_PROMPTS
-
-        return STEP_PROMPTS["step_nature"]["instruction"]
-
-    def test_every_point_on_it_is_explained(self) -> None:
-        said = self._instruction()
-        for number in range(1, 8):
-            self.assertIn(f"  {number} - ", said, f"no {number} on the scale")
-
-    def test_and_they_run_from_seven_down_to_one(self) -> None:
-        said = self._instruction()
-        places = [said.index(f"  {number} - ") for number in range(7, 0, -1)]
-        self.assertEqual(places, sorted(places), "the scale is out of order")
 
     def test_and_the_record_takes_any_of_them(self) -> None:
         from personalized_agent.heartbeat.core.heartbeat import _confidence
 
         for number in range(1, 8):
             self.assertEqual(_confidence(number), number)
-
-
-class TheNatureStepGathersForItselfTests(unittest.TestCase):
-    """It was handed a context built from a query written in advance.
-
-    The query came from the names in the activity, which is the right
-    material for "what is happening" and the wrong material for "who is
-    this" - a habit is the same afternoon four times, and the fourth one
-    is not in this window. So it reads the same window the step before it
-    read, plus what that step concluded from it, and goes looking for the
-    rest.
-    """
-
-    def setUp(self) -> None:
-        self.agent = TemporaryAgent()
-        self.heartbeat = self.agent.app.heartbeat
-
-    def tearDown(self) -> None:
-        self.agent.cleanup()
-
-    def _steps(self, states=()):
-        class Reply:
-            text = json.dumps({"states": list(states),
-                               "user_nature": [{"title": "Works late",
-                                                "content": "Often.",
-                                                "kind": "personal",
-                                                "states": [1]}]})
-
-        self.heartbeat.models = type("M", (), {
-            "invoke": lambda s, *a, **k: Reply(),
-            "resolve": lambda s, *a, **k: type(
-                "R", (), {"to_dict": lambda x: {}})(),
-            "check_availability": lambda s, *a, **k: type("A", (), {
-                "available": True, "to_dict": lambda x: {},
-                "state": None})()})()
-        report = self.heartbeat.run_once(trigger="manual_debug")
-        return {step["id"]: step for step in report["steps"]}
-
-    def test_it_starts_from_a_floor_like_the_step_before_it(self) -> None:
-        step = self._steps()["step_nature"]
-        self.assertEqual(step["trail"][0]["did"], "floor")
-
-    def test_and_reads_the_same_window_of_activity(self) -> None:
-        step = self._steps()["step_nature"]
-        self.assertIn("WHAT THE USER DID", step["prompt"])
-
-    def test_and_is_given_the_states_the_step_before_it_wrote(self) -> None:
-        """Not the states already running.
-
-        Those are what was true before this review; these are what it has
-        just decided is true now, which is the thing being generalised.
-        """
-        step = self._steps([
-            {"title": "They are rebuilding the replication package.",
-             "detail": "Working through the scripts.",
-             "about": "user"}])["step_nature"]
-        self.assertIn("STATES ALREADY WRITTEN FROM THIS ACTIVITY",
-                      step["context"])
-        self.assertIn("rebuilding the replication package", step["context"])
-        # Said as what they are, not as who wrote them. This step is a
-        # fresh call: it has no memory of the one before it, and a label
-        # that tells it what it "just concluded" describes a conversation
-        # it was not in.
-        self.assertNotIn("previous step", step["context"])
-
-    def test_its_opening_row_says_what_it_actually_started_with(self) -> None:
-        """The row is written when the floor is built.
-
-        These states are not known then - they are what the step before is
-        about to answer - so it carried the running states instead, which
-        is a different set and contradicted its own context two lines
-        further down the panel.
-        """
-        step = self._steps([
-            {"title": "They are rebuilding the replication package.",
-             "detail": "Working through the scripts.",
-             "about": "user"}])["step_nature"]
-        floor = [row for row in step["trail"] if row["did"] == "floor"][0]
-        self.assertEqual(floor["states"], 1)
-        self.assertEqual(floor["states_started"][0]["title"],
-                         "They are rebuilding the replication package.")
-
-
-    def test_and_is_told_to_write_nothing_rather_than_guess(self) -> None:
-        step = self._steps()["step_nature"]
-        self.assertIn("Write nothing rather than write a habit you have seen",
-                      step["prompt"])
-
-    def test_and_that_an_empty_list_is_a_good_answer(self) -> None:
-        """Most windows say nothing new about who somebody is, and a step
-        that thinks it must write something will write a restatement."""
-        step = self._steps()["step_nature"]
-        self.assertIn("AN EMPTY LIST IS A GOOD ANSWER", step["prompt"])
-        self.assertIn('{"user_nature": []}', step["prompt"])
-        self.assertNotIn("mark it a 1 or a 2", step["prompt"])
-        # Allowed, not expected: how often a window has something worth
-        # recording is not something the step can be told in advance.
-        self.assertNotIn("most windows should", step["prompt"])
-
-    NATURE = {
-        "title": "They work in long uninterrupted sittings, late in the evening.",
-        "content": "Sessions run past midnight and rarely break.",
-        "confidence": 5,
-        "evidence": ["four sessions past midnight this week"],
-        "reasoning": "the same shape four times is a rhythm, not a night",
-        "kind": "personal",
-        "states": [1],
-    }
-
-    def _nature(self, entry):
-        class Reply:
-            # A state for it to rest on: a nature resting on none is not
-            # written.
-            text = json.dumps({"states": [{"title": "A late session",
-                                           "detail": "d"}],
-                               "user_nature": [entry]})
-
-        self.heartbeat.models = type("M", (), {
-            "invoke": lambda s, *a, **k: Reply(),
-            "resolve": lambda s, *a, **k: type(
-                "R", (), {"to_dict": lambda x: {}})(),
-            "check_availability": lambda s, *a, **k: type("A", (), {
-                "available": True, "to_dict": lambda x: {},
-                "state": None})()})()
-        self.heartbeat.run_once(trigger="manual_debug")
-        return [r for r in self.agent.app.library.records()
-                if r.folder == USER_NATURE][0]
-
-    def test_a_trait_says_how_sure_the_agent_is(self) -> None:
-        """A range, not a flag.
-
-        "I watched this hold for a month" and "this looked like a pattern
-        once" are both worth writing down and are not the same claim - and
-        the second written as the first is something the agent will act on
-        and keep acting on.
-        """
-        self.assertIn("Confidence: 5 of 7", self._nature(self.NATURE).body)
-
-    def test_and_what_it_rests_on_and_how_it_got_there(self) -> None:
-        # The same three things a state carries, for the same reason: a
-        # claim about a person they never made, which they cannot argue
-        # with unless they can see its basis.
-        body = self._nature(self.NATURE).body
-        self.assertIn("four sessions past midnight this week", body)
-        self.assertIn("a rhythm, not a night", body)
-
-    def test_an_unsaid_confidence_is_the_middle(self) -> None:
-        entry = {k: v for k, v in self.NATURE.items() if k != "confidence"}
-        self.assertIn("Confidence: 4 of 7", self._nature(entry).body)
-
-    def test_and_one_off_the_scale_is_brought_onto_it(self) -> None:
-        self.assertIn("Confidence: 7 of 7",
-                      self._nature({**self.NATURE, "confidence": 99}).body)
-        self.assertIn("Confidence: 1 of 7",
-                      self._nature({**self.NATURE, "confidence": -4}).body)
-
-    def test_nonsense_in_the_field_does_not_lose_the_trait(self) -> None:
-        record = self._nature({**self.NATURE, "confidence": "quite sure"})
-        self.assertIn("Confidence: 4 of 7", record.body)
-
-    def test_the_prompt_asks_for_all_of_it(self) -> None:
-        prompt = next(step for step in self.heartbeat.run_once(
-            trigger="manual_debug")["steps"] if step["id"] == "step_nature")["prompt"]
-        self.assertIn("EVERY RECORD SAYS HOW SURE YOU ARE", prompt)
-        self.assertIn('"confidence": 4', prompt)
-        self.assertIn("ONE COMPLETE SENTENCE whose subject is the user",
-                      prompt)
-        self.assertIn("a short paragraph", prompt)
-
-    def test_it_still_writes_what_it_finds(self) -> None:
-        # With a state for it to rest on: one resting on none is not written.
-        self._steps(states=[{"title": "A late session", "detail": "d"}])
-        folders = [record.folder for record in self.agent.app.library.records()]
-        self.assertIn(USER_NATURE, folders)
 
 
 class TheReviewReadsWhatEachPageWasAboutTests(unittest.TestCase):
@@ -3649,7 +3424,6 @@ class StepThreeAddsNotificationsTests(unittest.TestCase):
                 "states": [{"title": "Revising the manuscript",
                             "detail": "due Friday", "horizon": "short",
                             "about": "user"}],
-                "user_nature": [],
                 # Every one says why: one without a reason is not added.
                 "notifications": [{"why": "seen in the activity",
                                    **(dict(n, at=n.get("at", soon))
@@ -3681,7 +3455,10 @@ class StepThreeAddsNotificationsTests(unittest.TestCase):
         report = self._run([])
         steps = {step["id"]: step for step in report["steps"]}
         prompt = steps["step_notify"]["prompt"]
-        self.assertIn("revised manuscript is due Friday", prompt)
+        # The activity is at the end of the system prompt, which every step of the round
+        # shares (the user, 2026-11-11); the message says so where it was.
+        self.assertIn("revised manuscript is due Friday", steps["step_notify"]["system"])
+        self.assertIn("given above, in the system prompt", prompt)
         self.assertIn("Revising the manuscript", prompt)
         self.assertIn("NOTIFICATIONS ALREADY SCHEDULED", prompt)
         self.assertNotIn("NOTIFICATIONS ALREADY SCHEDULED",
@@ -3853,23 +3630,18 @@ class OneWindowIsOneEntryTests(unittest.TestCase):
             self.assertIn(kind, text)
 
 
-class StepsTwoAndThreeAreShownExamplesTests(unittest.TestCase):
+class TheNotifyStepIsShownExamplesTests(unittest.TestCase):
     """What is worth writing is easier to show than to define, and so is
-    what is not - a state written as a trait, a duplicate reworded."""
+    what is not - a duplicate reworded."""
 
-    def test_both_carry_examples_of_each_side(self) -> None:
+    def test_it_carries_examples_of_each_side(self) -> None:
         from personalized_agent.heartbeat.core.heartbeat import STEP_PROMPTS
 
-        for name in ("step_nature", "step_notify"):
-            text = STEP_PROMPTS[name]["instruction"]
-            self.assertIn("EXAMPLES. Worth", text, name)
-            self.assertIn("Not worth", text, name)
-        self.assertIn('"type": "notice"',
-                      STEP_PROMPTS["step_notify"]["instruction"])
-        self.assertIn('"type": "reminder"',
-                      STEP_PROMPTS["step_notify"]["instruction"])
-        self.assertIn('"confidence": 3',
-                      STEP_PROMPTS["step_nature"]["instruction"])
+        text = STEP_PROMPTS["step_notify"]["instruction"]
+        self.assertIn("EXAMPLES. Worth", text)
+        self.assertIn("Not worth", text)
+        self.assertIn('"type": "notice"', text)
+        self.assertIn('"type": "reminder"', text)
 
 
 class EveryTimeIsTheUsersTests(unittest.TestCase):
@@ -4102,8 +3874,7 @@ class StepThreeDisablesWhatIsAlreadyDoneTests(unittest.TestCase):
 
 
 class WhatEachStepWritesSaysWhoWroteItTests(unittest.TestCase):
-    """Every state, nature record and notification names the model that
-    wrote it; and a nature record is linked to the states it rests on."""
+    """Every state and notification names the model that wrote it."""
 
     def setUp(self) -> None:
         self.agent = TemporaryAgent()
@@ -4131,9 +3902,7 @@ class WhatEachStepWritesSaysWhoWroteItTests(unittest.TestCase):
                 "available": True, "to_dict": lambda s: {}, "state": None})()})()
         return self.app.heartbeat.run_once(trigger="manual_debug")
 
-    def test_states_and_nature_name_their_model_and_are_linked(self) -> None:
-        from personalized_agent.data_manage.library import USER_NATURE
-
+    def test_states_name_their_model(self) -> None:
         now = utcnow()
         report = self._run({
             "states": [
@@ -4143,68 +3912,50 @@ class WhatEachStepWritesSaysWhoWroteItTests(unittest.TestCase):
                  "ends_at": (now + timedelta(minutes=10)).isoformat()},
                 {"title": "Reading the news", "detail": "A quick look.",
                  "starts_at": now.isoformat(),
-                 "ends_at": (now + timedelta(minutes=5)).isoformat()}],
-            "user_nature": [
-                {"title": "The user checks figures against the paper.",
-                 "content": "They verify before they trust.",
-                 "confidence": 5, "evidence": ["the scripts"],
-                 "reasoning": "seen here", "states": [1, "[state 9]"],
-                 "kind": "personal"}]})
+                 "ends_at": (now + timedelta(minutes=5)).isoformat()}]})
         written = report["states_written"]
         self.assertEqual([card["asked_as"] for card in written], [1, 2])
         state = self.app.states.get(written[0]["id"])
         self.assertEqual(state.metadata["written_by"]["model"], "claude-test-1")
-        records = self.app.library.records(USER_NATURE)
-        mine = [r for r in records if r.title.startswith("The user checks")]
-        self.assertEqual(len(mine), 1)
-        self.assertEqual(mine[0].metadata.get("written_by"),
-                         "claude-test-1 (anthropic)")
-        links = self.app.db.query("SELECT state_id, record_id FROM nature_links")
-        # State 1 is linked; "state 9" does not exist and is not.
-        self.assertEqual([(row["state_id"], row["record_id"]) for row in links],
-                         [(written[0]["id"], mine[0].id)])
         # And each step's row on the panel says so too.
         steps = {step["id"]: step for step in report["steps"]}
         self.assertEqual(steps["step_state"]["written_by"]["model"],
                          "claude-test-1")
 
-    def test_step_2_is_asked_for_the_states_and_sees_them_numbered(self) -> None:
-        from personalized_agent.heartbeat.core.heartbeat import STEP_PROMPTS
-
-        self.assertIn('"states"', STEP_PROMPTS["step_nature"]["returns"])
+    def test_a_later_step_sees_the_states_numbered(self) -> None:
         now = utcnow()
         report = self._run({"states": [
             {"title": "Rebuilding the replication package", "detail": "Scripts.",
              "starts_at": now.isoformat(),
              "ends_at": (now + timedelta(minutes=10)).isoformat()}]})
         steps = {step["id"]: step for step in report["steps"]}
-        self.assertIn("[state 1, not written yet]", steps["step_nature"]["prompt"])
+        self.assertIn("[state 1, not written yet]", steps["step_notify"]["prompt"])
 
 
 
-class StepTwoIsPausedTests(unittest.TestCase):
+class ThereIsNoNatureStepTests(unittest.TestCase):
     """Who the user is is learned from their lessons now: the heartbeat's
-    step 2 is kept and not run - no call for it, nothing written."""
+    step for it is gone (2026-11-10) - no call for it, nothing written."""
 
     def setUp(self) -> None:
         self.agent = TemporaryAgent()
         self.app = self.agent.app
-        _heartbeat_module.PAUSED_STEPS = _PAUSED
 
     def tearDown(self) -> None:
-        _heartbeat_module.PAUSED_STEPS = ()
         self.agent.cleanup()
 
-    def test_the_agent_does_not_run_step_two(self) -> None:
-        self.assertIn("step_nature", _PAUSED)
-        asked = []
+    def test_there_is_no_step_nature(self) -> None:
+        self.assertNotIn("step_nature", _heartbeat_module.STEP_PROMPTS)
+        self.assertEqual(_heartbeat_module.PAUSED_STEPS, ())
+        self.assertEqual([step.id for step in STEPS],
+                         ["step_state", "step_people", "step_notify"])
 
         class Model:
             def invoke(self, request, role=""):
-                asked.append(request.system or "")
                 reply = type("R", (), {})()
                 reply.text = json.dumps({"states": [], "user_nature": [{
-                    "title": "The user likes tea.", "detail": "d", "kind": "personal"}],
+                    "title": "The user likes tea.", "content": "d",
+                    "kind": "personal", "states": [1]}],
                     "notifications": []})
                 reply.tool_calls, reply.usage, reply.model, reply.provider = [], None, "m", "p"
                 reply.raw_content = reply.text
@@ -4215,7 +3966,6 @@ class StepTwoIsPausedTests(unittest.TestCase):
             event_type="window.focus", source="window", application="Editor",
             data={"window_title": "notes.md"}))
         report = self.app.heartbeat.run_once(trigger="manual_debug")
-        self.assertEqual(report.get("paused_steps"), ["step_nature"])
-        self.assertFalse(any("WORK OUT WHAT THE USER IS LIKE" in one for one in asked))
+        self.assertNotIn("step_nature", [step["id"] for step in report.get("steps", [])])
         self.assertNotIn("nature_recorded", report)
         self.assertEqual(list(self.app.library.files(USER_NATURE)), [])

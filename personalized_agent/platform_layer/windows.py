@@ -392,6 +392,7 @@ class WindowsActivityProvider(PlatformActivityProvider):
         show (`blank_windows`). None where it cannot be taken."""
         if not self.available:
             return None
+        pointer = self._pointer()                # where the mouse was as it was pressed
         try:
             from PIL import ImageGrab
             windows = self.screen_windows()
@@ -440,10 +441,22 @@ class WindowsActivityProvider(PlatformActivityProvider):
                 self._leave_out_of_pictures(left_out, False)
             shown = [dict(one, ours=False, left_out=True) if one["hwnd"] in left_out else one
                      for one in windows]
-            return blank_windows(image, screen, shown, hidden)
+            image = blank_windows(image, screen, shown, hidden)
+            return draw_pointer(image, screen, pointer)
         except Exception:
             log.debug("could not take the screen", exc_info=True)
             return None
+
+    def _pointer(self) -> Optional[Tuple[int, int]]:
+        """Where the mouse pointer is, in the screen's own units - None where it cannot be asked."""
+        try:
+            from ctypes import wintypes
+            point = wintypes.POINT()
+            if self._ctypes.WinDLL("user32").GetCursorPos(self._ctypes.byref(point)):
+                return int(point.x), int(point.y)
+        except Exception:
+            log.debug("the mouse pointer could not be found", exc_info=True)
+        return None
 
     def _leave_out_of_pictures(self, hwnds: List[Any], out: bool) -> List[Any]:
         """This application's windows left out of what the screen is taken as (WDA_EXCLUDEFROMCAPTURE,
@@ -769,4 +782,4 @@ LEFT_OUT_SETTLE = 0.12
 
 
 # Shared with the Mac's and Linux's (screen_picture.py).
-from .screen_picture import BLANKED, blank_windows  # noqa: E402,F401
+from .screen_picture import BLANKED, blank_windows, draw_pointer  # noqa: E402,F401

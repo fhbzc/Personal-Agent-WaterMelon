@@ -521,9 +521,11 @@ end;
 
 procedure InitializeWizard;
 begin
+  // A NEW FOLDER MADE FROM THE BROWSE BOX (the user, 2026-11-09: "安装程序里，不支持新建文件夹的操作，这个
+  // 要支持"): an empty name hid its Make New Folder button; the language's own name for one shows it.
   DataPage := CreateInputDirPage(wpSelectDir, CustomMessage('DataTitle'),
     FmtMessage(CustomMessage('DataDescription'), ['{#MyAppName}']),
-    CustomMessage('DataPrompt'), False, '');
+    CustomMessage('DataPrompt'), False, SetupMessage(msgNewFolderName));
   DataPage.Add('');
   PreviousData := GetPreviousData('DataFolder', '');
   DataPage.Values[0] := PreviousData;

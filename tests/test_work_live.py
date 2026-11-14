@@ -396,6 +396,31 @@ class AskingInTheSessionTests(_LiveBase):
 
 class TheApplicationClosedTests(_LiveBase):
 
+    def test_a_runs_child_settles_no_other_run(self) -> None:
+        """2026-11-11: a second run's child, starting, marked interrupted the run going in the first
+        - the plan carried a live run on, three times, and told the user it could not."""
+        import os
+        from unittest import mock
+        from personalized_agent.agent.work.runner import CHILD_ENV, INTERRUPTED, WorkRuns
+        self.app.db.execute(
+            "INSERT INTO work_runs (id, unit_id, unit_name, folder, status, instruction, plan, log, "
+            "final, started_at, ended_at, updated_at) VALUES ('run_going', 'u', 'u', '.', 'running', "
+            "'', '{}', '[]', '{}', 'x', '', 'x')")
+
+        def build():
+            return WorkRuns(self.app.db, self.app.policy, _TwoAgents(),
+                            self.app.state_heartbeat.experience, platform=self.app.platform)
+
+        def status():
+            return self.app.db.query("SELECT status FROM work_runs WHERE id = 'run_going'")[0]["status"]
+        with mock.patch.dict(os.environ, {CHILD_ENV: "1"}):
+            build()
+        self.assertEqual(status(), "running", "a child left it going")
+        with mock.patch.dict(os.environ):
+            os.environ.pop(CHILD_ENV, None)
+            build()
+        self.assertEqual(status(), INTERRUPTED, "the application started again settles it")
+
     def test_a_paused_run_is_interrupted_and_continues_from_its_last_milestone(self) -> None:
         from personalized_agent.agent.work.runner import INTERRUPTED, WorkRuns
         models = _Gated()
@@ -640,7 +665,7 @@ class TheSessionViewTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=20000",
                  "--window-size=1200,800", "--dump-dom", probe.as_uri()],
                 capture_output=True, text=True,
@@ -806,7 +831,7 @@ class ARunWaitingOnItsModelOnThePageTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=20000",
                  "--window-size=1200,800", "--dump-dom", probe.as_uri()],
                 capture_output=True, text=True,

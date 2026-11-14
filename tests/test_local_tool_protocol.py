@@ -174,12 +174,13 @@ class ThroughTheAgentTests(unittest.TestCase):
         return result, prompts
 
     def test_both_clients_schedule_through_the_registry(self):
-        when = (datetime.now(timezone.utc) + timedelta(days=2)).replace(microsecond=0)
-        call = {"tool": "schedule_task", "arguments": {
-            "title": "Stretch", "description": "Time to stretch.",
-            "rationale": "The user asked.", "notify": "notify",
-            "scheduled_at": when.isoformat()}}
-        for provider_id in ("codex", "claude_code"):
+        for days, provider_id in ((2, "codex"), (5, "claude_code")):
+            # Days apart: the same entry twice within a day is refused (agent/core/tools.py).
+            when = (datetime.now(timezone.utc) + timedelta(days=days)).replace(microsecond=0)
+            call = {"tool": "schedule_task", "arguments": {
+                "title": "Stretch", "description": "Time to stretch.",
+                "rationale": "The user asked.", "notify": "notify",
+                "scheduled_at": when.isoformat()}}
             with self.subTest(provider_id):
                 before = len(self.app.scheduler_store.list())
                 result, prompts = self._converse(provider_id, [

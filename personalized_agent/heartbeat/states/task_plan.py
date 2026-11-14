@@ -323,6 +323,12 @@ class Planner:
         why = " ".join(str(args.get("why") or "").split())[:600]
         if not why:
             return {"refused": "say why"}
+        # A REMINDER SET OR A NOTIFICATION CLOSED - the calendar, from the records - REVIEWED FIRST
+        # (the user, 2026-11-12; agent/outside_review.py); not let through, kept for approval.
+        if name in ("set_reminder", "close_notification"):
+            held = self._reviewed(row, name, args, why, evidence)
+            if held is not None:
+                return held
         if name == "add_step":
             answer = self._add(row, args, why, evidence)
         elif name == "finish_step":
@@ -337,7 +343,47 @@ class Planner:
             return {"error": f"no tool {name}"}
         if "refused" not in answer:
             did.append({"did": name, "why": why, "evidence": evidence, **answer})
+            reviewer = getattr(self.hb, "reviewer", None)
+            if reviewer is not None and name in ("set_reminder", "close_notification"):
+                from ...agent.reports import did as kept_did
+                title = str((row.described or {}).get("title") or "")
+                kept_did(reviewer.db, name, (f"Set a reminder in {title}" if name == "set_reminder"
+                                             else f"Closed a notification in {title}"),
+                         why, source="project_round", ref=row.id)
         return answer
+
+    def _reviewed(self, row: Task, name: str, args: Dict[str, Any], why: str,
+                  evidence: Sequence[Dict[str, str]]) -> Optional[Dict[str, Any]]:
+        """None: let through. Else what the model is told: held for the user's approval."""
+        from ...agent import outside_review
+        host = getattr(self.hb, "reviewer", None)
+        if host is None:
+            return None
+        title = str((row.described or {}).get("title") or "")
+        action = dict(args, kind="set_a_calendar_reminder" if name == "set_reminder"
+                      else "close_a_calendar_notification", project=title, why=why)
+        passed, said = outside_review.one_action(
+            host, action, outside=[{key: one.get(key) for key in ("id", "quote")}
+                                   for one in evidence],
+            what="the project round keeps a project's steps: " + (
+                "a reminder put on the user's calendar" if name == "set_reminder"
+                else "a notification closed"), task="project_round", about=row.id)
+        if passed:
+            return None
+        approvals = getattr(host, "approvals", None)
+        step = self._step(row, str(args.get("step") or "")) if name == "set_reminder" else None
+        text = str((step or {}).get("text") or "")
+        if approvals is not None:
+            approvals.hold("project_round", "project_" + name,
+                           f"{title}: " + (f"remind of “{text}” at {args.get('at_local') or ''}"
+                                           if name == "set_reminder"
+                                           else f"close {args.get('id') or ''}"),
+                           {"project": row.id, "scope": self.scope, "args": args, "why": why,
+                            "title": text, "evidence": list(evidence)},
+                           why=" ".join(part for part in (why, "Review: " + said) if part),
+                           due=str(args.get("at_local") or ""))
+        return {"held": "the review on the user's behalf did not let this through - kept for the "
+                        f"user's approval: {said}"[:600]}
 
     def _opened(self, args: Dict[str, Any], read: Dict[str, str]) -> Any:
         reader = getattr(self.hb, "open_records", None)
@@ -460,7 +506,9 @@ class Planner:
                          "zone": args.get("zone")})
         ident = str((made or {}).get("task_id") or "")
         if not ident:
-            return {"refused": str((made or {}).get("error") or "it could not be set")}
+            # Already on the calendar (agent/core/tools.py, `already_on_calendar`): shown, not doubled.
+            return {"refused": str((made or {}).get("error") or "it could not be set"),
+                    **({"already": made["already"]} if (made or {}).get("already") else {})}
         self._take_reminder(step, "a new reminder takes its place")
         at = str(args.get("at_local") or "")
 

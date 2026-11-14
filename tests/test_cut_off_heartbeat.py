@@ -88,7 +88,8 @@ class StepOneRecordsAFailedStretchAndMovesPastItTests(unittest.TestCase):
         return abs((utcnow() - moved).total_seconds()) < 30
 
     def _step_one_prompts(self):
-        return [json.dumps([m.get("content") for m in one.messages], default=str)
+        # The system prompt too: the activity is at its end (the user, 2026-11-11).
+        return [json.dumps([one.system] + [m.get("content") for m in one.messages], default=str)
                 for one in self.beat.models.asked if one.task == "heartbeat:step_state"]
 
     def test_an_answer_not_whole_writes_nothing_is_recorded_and_moved_past(self) -> None:
@@ -196,7 +197,9 @@ class AStepNotAnsweredWholeIsAskedAgainInHalvesTests(unittest.TestCase):
 
     @staticmethod
     def _said(request):
-        return json.dumps([m.get("content") for m in request.messages], default=str)
+        # The system prompt too: the activity is at its end (the user, 2026-11-11).
+        return json.dumps([request.system] + [m.get("content") for m in request.messages],
+                          default=str)
 
     def _step_one(self, second_half):
         def answer(request):

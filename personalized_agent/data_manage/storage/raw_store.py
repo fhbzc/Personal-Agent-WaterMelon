@@ -209,7 +209,10 @@ class RawStore:
         row = self.db.query_one("SELECT COUNT(*) AS c FROM raw_events")
         return int(row["c"]) if row else 0
 
-    def prune_older_than(self, keep_days: int) -> Dict[str, int]:
+    #: So many rows deleted in one writing: the write lock let go between them (2026-11-12).
+    PRUNE_BATCH = 500
+
+    def prune_older_than(self, keep_days: int, going: Any = None) -> Dict[str, int]:
         """Drop raw activity older than the keeping window.
 
         By age alone. What reads raw activity - the agent heartbeat's last
@@ -222,15 +225,25 @@ class RawStore:
             return {"events": 0, "edits": 0}
         cutoff = (utcnow() - timedelta(days=int(keep_days))).isoformat()
         removed = {}
+        # IN BATCHES, THE LOCK LET GO BETWEEN THEM (2026-11-12): one DELETE of them all held every
+        # writer - and quitting - until it was done. `going`: asked between batches; no longer going
+        # (the application closing), what is left waits for the next time.
         for table in ("raw_events", "raw_edits"):
-            with self.db.write() as conn:
-                before = conn.execute(
-                    f"SELECT COUNT(*) AS c FROM {table} WHERE timestamp < ?",
-                    (cutoff,)).fetchone()
-                count = int(before["c"]) if before else 0
-                if count:
-                    conn.execute(f"DELETE FROM {table} WHERE timestamp < ?", (cutoff,))
+            count = 0
+            while going is None or going():
+                with self.db.write() as conn:
+                    ids = [row["id"] for row in conn.execute(
+                        f"SELECT id FROM {table} WHERE timestamp < ? LIMIT ?",
+                        (cutoff, self.PRUNE_BATCH)).fetchall()]
+                    if ids:
+                        marks = ",".join("?" for _ in ids)
+                        conn.execute(f"DELETE FROM {table} WHERE id IN ({marks})", ids)
+                count += len(ids)
+                if len(ids) < self.PRUNE_BATCH:
+                    break
             removed[table.replace("raw_", "")] = count
+        if going is not None and not going():
+            return removed
         with self.db.write() as conn:
             removed.update({k:v for k,v in self.wechat.prune(conn,cutoff).items() if v})
         if any(removed.values()):

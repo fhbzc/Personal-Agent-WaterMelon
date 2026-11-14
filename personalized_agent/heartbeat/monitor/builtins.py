@@ -137,7 +137,9 @@ GONE = {"project_return": "the user had it deleted: wrong each time it fired",
         # The user, 2026-11-07: a break reminder is the user's own to add ("其它user拿到是没有的");
         # none is given. One the user changed is theirs and stays.
         "break": "no break reminder is given by default: the user adds one of their own",
-        "work_break": "no break reminder is given by default: the user adds one of their own"}
+        "work_break": "no break reminder is given by default: the user adds one of their own",
+        # The user, 2026-11-13: "closing up the evening和the day ahead 这两个保留 ... 其它都取消".
+        "evening": "the user kept only the day ahead and closing up for the evening"}
 
 #: WHAT THE TWO BREAK REMINDERS WERE, until 2026-11-07 - no longer given, kept for what was said
 #: of them and for the user to add as their own.
@@ -175,6 +177,11 @@ def _recommend(builtin: str, name: str, purpose: str, when: Dict[str, Any], brie
 
 
 def builtins() -> List[Dict[str, Any]]:
+    # EVERY ONE PROTECTED (the user, 2026-11-13: "现在设置的几个monitor都是protected, 不允许改").
+    return [dict(one, protected=True) for one in _builtins()]
+
+
+def _builtins() -> List[Dict[str, Any]]:
     return [
         _calendar("invitation", "A meeting invitation"),
         _calendar("time_agreed", "A time being agreed"),
@@ -236,6 +243,36 @@ def builtins() -> List[Dict[str, Any]]:
                            "habit": "usual_day_minutes", "times": 0.5}]},
          "then": [{"do": "ask_model", "handler": "evening"}],
          "cooldown_minutes": 60, "most_per_day": 3},
+        # EVERY NOTIFICATION THROUGH THE MONITOR (the user, 2026-11-13: "所有的通知必须在monitor里，收到monitor的统一
+        # 调配"): what the rest of the application says - a reminder at its time, the report at its
+        # times, the application itself - each its own Activator here, the user's to switch off or
+        # set to wait; said through `Monitor.relay`.
+        {"builtin": "calendar_reminder", "protected": True, "name": "A reminder at its time",
+         "group": "calendar",
+         "purpose": "A reminder on your calendar - set by you or by your agent - when its time comes.",
+         "when": {"event": "reminder_due"},
+         "then": [{"do": "notify", "title": "{title}", "message": "{message}"}],
+         "cooldown_minutes": 1, "most_per_day": 50, "delivery": "pop"},
+        # A DEADLINE NEAR, NOT DONE (the user, 2026-11-14: "这个快要到期的提示也要的"): a thing with a hard
+        # deadline the agent has not finished, or waiting for the user's answer, told while there is still
+        # time for them to do it - as long before as the thing needs.
+        {"builtin": "deadline", "protected": True, "name": "Due soon, not done yet", "group": "deadline",
+         "purpose": "A thing with a hard deadline that is not done yet - the agent's work not finished, or "
+                    "waiting for your answer - told while there is still time for you to do it.",
+         "when": {"event": "deadline_near"},
+         "then": [{"do": "notify", "title": "{title}", "message": "{message}"}],
+         "cooldown_minutes": 1, "most_per_day": 50, "delivery": "pop"},
+        {"builtin": "summary", "protected": True, "name": "Your report", "group": "summary",
+         "purpose": "Your report, told at the times set in the Report.",
+         "when": {"event": "report_due"},
+         "then": [{"do": "notify", "title": "{title}", "message": "{message}"}],
+         "cooldown_minutes": 1, "most_per_day": 50, "delivery": "pop"},
+        {"builtin": "system", "protected": True, "name": "The application itself", "group": "system",
+         "purpose": "What you must know of the application: a model to sign in to again or down, "
+                    "the agent stopped, work that could not start, an update.",
+         "when": {"event": "system"},
+         "then": [{"do": "notify", "title": "{title}", "message": "{message}"}],
+         "cooldown_minutes": 1, "most_per_day": 50, "delivery": "pop"},
         {"builtin": "evening_closing", "name": "Closing up for the evening", "group": "rest",
          "purpose": "Many windows closed after a long day: the report of the day, before they go.",
          # Closing up, or gone for the night: written now if it was not - and, if they worked on

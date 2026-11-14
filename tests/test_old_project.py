@@ -318,7 +318,7 @@ class SummariesAreAKindOfTheirOwnTests(unittest.TestCase):
 
     def test_the_evening_report_is_a_summary_and_still_comes_up(self) -> None:
         decider = self.app.monitor_decider
-        evening = next(a for a in self.monitor.store.list() if a["builtin"] == "evening")
+        evening = next(a for a in self.monitor.store.list() if a["builtin"] == "evening_closing")
         with mock.patch.object(decider, "_ask", return_value="A long day on the survey."),                 mock.patch.object(self.monitor, "say", return_value={"said": True}) as said:
             decider.write_evening(self.monitor, {"activator": evening, "signals": {}}, "f1")
         self.assertTrue(said.call_args.kwargs["summary"])

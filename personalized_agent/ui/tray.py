@@ -68,11 +68,12 @@ def icon_image(characters: Any, name: str, size: int = ICON_SIZE) -> Any:
     except Exception:
         package = None
     # One drawn live is drawn for the icon too, at its size: sharp at any.
-    if ((package or {}).get("rig") or {}).get("kind") == "watermelon":
+    from ..agent.character.manager import drawn_live
+    art = drawn_live(package)
+    if art is not None:
         try:
-            from ..agent.character.watermelon import Watermelon
             scale = max(1, min(8, -(-size // 128)))
-            return fitted(Watermelon(scale=scale, package=package.get("path")).icon(), size)
+            return fitted(art.Watermelon(scale=scale, package=package.get("path")).icon(), size)
         except Exception:
             log.debug("could not draw the avatar for its icon", exc_info=True)
     frames = ((package or {}).get("frames") or {})

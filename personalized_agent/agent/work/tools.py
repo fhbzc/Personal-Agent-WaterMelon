@@ -67,15 +67,23 @@ def fetch(url: str, timeout: float = 20.0) -> Dict[str, Any]:
     """A web page, read into memory - never written anywhere."""
     if not re.match(r"(?i)^https?://", url or ""):
         return {"error": "only http and https addresses can be read"}
+    from ...common.privacy_folders import address_is_private
+    if address_is_private(url):
+        return {"error": f"{url} is at one of the user's private web addresses: never read"}
     request = urllib.request.Request(url, headers={"User-Agent": AGENT})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             kind = response.headers.get("Content-Type", "")
+            signals = response.headers
             body = response.read(3_000_000)
     except Exception as exc:
         return {"error": f"could not read {url}: {exc}"[:400]}
     charset = (re.search(r"charset=([\w-]+)", kind) or [None, "utf-8"])[1]
     text = body.decode(charset or "utf-8", errors="replace")
+    # A PAGE IN ITS SITE'S PRIVATE MODE (agent-private-mode): not read - nothing of it returned.
+    from ...common.privacy_folders import page_signals
+    if page_signals(signals, text):
+        return {"error": f"{url} asks agents not to read it (its site's private mode): not read"}
     if "html" in kind.lower() or text.lstrip().startswith("<"):
         title = re.search(r"(?is)<title[^>]*>(.*?)</title>", text)
         # Its links, as addresses that exist: what the agent may open next.
@@ -989,6 +997,7 @@ class WorkTools:
             "open_case": self.open_case, "open_reason": self.open_reason,
             "hand_over": self.give_to_user,
             "search_people": self.search_people, "open_person": self.open_person,
+            "society_find_agent": self.society_find_agent, "society_write": self.society_write,
             "how_the_user_writes": self.how_the_user_writes,
         }
         #: WHAT THE USER GETS (handed.py): `on_hand_over(item)` keeps an item
@@ -1006,6 +1015,10 @@ class WorkTools:
         #: up in - who they are, what they are to the user, how the user writes
         #: to them (the user, 2026-10-31). None where the work is given none.
         self.people: Any = None
+        #: THE AGENTS SOCIETY (society/service.py), to ask another person's agent - and the run
+        #: whose asks they are. None where the work is given none.
+        self.society: Any = None
+        self.run_id = ""
         self._records_index: Any = None
         #: Where the user's own way of writing was looked at (`how_the_user_writes`)
         #: - words handed over as theirs wait for it.
@@ -1068,6 +1081,9 @@ class WorkTools:
                 and (one.name != "open_stage" or self.stages is not None)
                 and (one.name not in ("open_case", "open_reason") or self.learned is not None)
                 and (one.name not in ("search_people", "open_person") or self.people is not None)
+                and (not one.name.startswith("society_") or self.society is not None)
+                # AS THE KEY PERMITS NOW (2026-11-12): no writing tool for a key that may not write.
+                and (one.name != "society_write" or self._society_may("inbox.write"))
                 and (one.name != "how_the_user_writes" or self._voice_known())]
 
     def _specs(self) -> List[ToolSpec]:
@@ -1419,6 +1435,20 @@ class WorkTools:
                               "relationship": {"type": "string",
                                                "description": "what they are to the user, to "
                                                "find only those"}}, [])),
+            ToolSpec("society_find_agent", "THE AGENT OF A PERSON on the Agents Society - to ask it "
+                     "rather than guess from the user's own messages and calendar (to settle a time, "
+                     "above all). By their name, or their contact's id (person). Each with how it is "
+                     "known: tied to the contact by the user (sure), or found by name (their own "
+                     "claim - say so).",
+                     _schema({"name": {"type": "string"}, "person": {"type": "string"}}, [])),
+            ToolSpec("society_write", "WRITE TO A PERSON'S AGENT on the Agents Society (its id from "
+                     "society_find_agent). Work the user left to you: SENT, once a review on their "
+                     "behalf lets it through. Otherwise a DRAFT, kept with this work - nothing goes "
+                     "before the user approves: name it in WHAT I WOULD DO ON MY OWN as a numbered "
+                     "line: Send the Society draft <its id> to <whom>. Either way their agent's "
+                     "answer comes back to this work.",
+                     _schema({"to": {"type": "string"}, "text": {"type": "string"},
+                              "subject": {"type": "string"}}, ["to", "text"])),
             ToolSpec("open_person", "One of the user's contacts whole: who they are, their "
                      "accounts and public profiles, what they have been doing, dated - and how "
                      "the user writes to them, in their own words.",
@@ -1556,6 +1586,44 @@ class WorkTools:
             "at": "; ".join(" at ".join(filter(None, [a.get("role"), a.get("org")]))
                             for a in one["affiliations"][:3] if isinstance(a, dict)),
             "last_news": str(one.get("last_activity_at") or "")[:10]} for one in found]}
+
+    def _society_may(self, what: str) -> bool:
+        may = getattr(self.society, "may", None)
+        try:
+            return bool(may(what)) if callable(may) else True
+        except Exception:
+            return False
+
+    def society_find_agent(self, args: Dict[str, Any]) -> Any:
+        """A person's agent on the Agents Society - sure, or by their own claim."""
+        if self.society is None:
+            return {"error": "no Agents Society here"}
+        return self.society.find_agents(str(args.get("name") or ""), str(args.get("person") or ""))
+
+    def society_write(self, args: Dict[str, Any]) -> Any:
+        """A draft to another agent, kept with this work - sent once the user approves."""
+        if self.society is None:
+            return {"error": "no Agents Society here"}
+        try:
+            draft = self.society.work_ask(str(args.get("to") or ""), str(args.get("text") or ""),
+                                          str(args.get("subject") or ""), self.run_id)
+        except (ValueError, PermissionError) as exc:
+            return {"error": str(exc)}
+        # THE AGENT'S OWN WORK SENDS IT ITSELF (2026-11-12), once a review lets it through.
+        sending = getattr(self.society, "work_send", None)
+        try:
+            sent = sending(draft, self.run_id) if sending is not None else None
+        except Exception as exc:                 # the server, the network: a draft, as before
+            sent = {"held": f"not sent: {exc}"[:300]}
+        if sent and not sent.get("held"):
+            return {"sent": sent["id"], "to": sent["peer_id"],
+                    "said": "SENT - this is your own work. Their agent's answer comes back to this "
+                            "work. Say in what you hand over that you wrote to them, and why."}
+        held = f" ({sent['held']})" if sent and sent.get("held") else ""
+        return {"draft": draft["id"], "to": draft["peer_id"],
+                "said": f"A draft only{held}. Name it in WHAT I WOULD DO ON MY OWN, as a numbered "
+                        f"line: Send the Society draft {draft['id']} to "
+                        f"{draft.get('peer_name') or draft['peer_id']}."}
 
     def open_person(self, args: Dict[str, Any]) -> Any:
         """One contact whole: who they are, their accounts and public profiles,

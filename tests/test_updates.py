@@ -489,7 +489,7 @@ document.title=JSON.stringify({err,out});});</script></body></html>""" % script[
             path = Path(work) / "news.html"
             path.write_text(page, encoding="utf-8")
             done = subprocess.run(
-                [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=5000",
                  "--dump-dom", path.as_uri()],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
@@ -589,7 +589,7 @@ document.title=JSON.stringify({err,out});});</script></body></html>""" % script[
             path = Path(work) / "versions.html"
             path.write_text(page, encoding="utf-8")
             done = subprocess.run(
-                [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=5000",
                  "--dump-dom", path.as_uri()],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)

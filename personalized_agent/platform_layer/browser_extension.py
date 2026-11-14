@@ -81,10 +81,15 @@ STORE_IDS: Tuple[str, ...] = (
 #: only when the extension itself changes (its files, its manifest, its words),
 #: and only then uploaded to the stores again, which take a higher one each
 #: time. The agent's updates leave it as it is.
-EXTENSION_VERSION = "0.0.4"    # 0.0.2: says how it was installed ("here"),
+EXTENSION_VERSION = "0.0.6"    # 0.0.2: says how it was installed ("here"),
                                # and says "here" every six hours (alarms)
                                # 0.0.3: says what can be seen of a page (visible.js);
                                # never in a private window
+                               # 0.0.4: fills a form's boxes (fill.js)
+                               # 0.0.5: follows a site's private mode (agent-private-mode):
+                               # its pages never read, filled, or sent
+                               # 0.0.6: chooses radios and a page's own lists' options (never a
+                               # button); says the files to attach - never uploads them
 #: The files of the extension, as they are in resources/browser_extension.
 FILES = ("background.js", "help.html", "help.js", "opening.html", "opening.js", "visible.js",
          "fill.js")
@@ -111,7 +116,9 @@ WORDS: Dict[str, Dict[str, str]] = {
            "fill_why_never": "a box this never fills",
            "fill_why_yours": "it has your own words in it",
            "fill_why_choice": "no such choice",
-           "fill_copy": "Copy", "fill_copied": "Copied", "fill_close": "Close"},
+           "fill_copy": "Copy", "fill_copied": "Copied", "fill_close": "Close",
+           # Its files, told - never uploaded (2026-11-13).
+           "fill_attach_head": "Attach these yourself:", "fill_copy_path": "Copy where it is"},
     "zh": {"opening": "正在打开…",
            "delegate": "委托工作",
            "learn": "学习",
@@ -126,7 +133,8 @@ WORDS: Dict[str, Dict[str, str]] = {
            "fill_why_never": "这种框一律不填",
            "fill_why_yours": "里面已有你自己写的内容",
            "fill_why_choice": "没有这个选项",
-           "fill_copy": "复制", "fill_copied": "已复制", "fill_close": "关闭"},
+           "fill_copy": "复制", "fill_copied": "已复制", "fill_close": "关闭",
+           "fill_attach_head": "这些附件请自己上传：", "fill_copy_path": "复制文件位置"},
 }
 
 
@@ -590,21 +598,25 @@ def _on_disk(key: str) -> Optional[bool]:
 FILL_ORDER_SECONDS = 600
 
 
-def leave_fill_order(data_dir: Path, url: str, parts: Any) -> str:
-    """The boxes of the page about to be opened, for the extension to fill (fill.js) - its id."""
+def leave_fill_order(data_dir: Path, url: str, parts: Any, attach: Any = None) -> str:
+    """The boxes of the page about to be opened, for the extension to fill (fill.js) - its id. `attach`:
+    the files it wants, said on the page for the user to attach - never uploaded (2026-11-13)."""
     import time
     import uuid
     from urllib.parse import urlsplit
     host = urlsplit(str(url or "")).hostname or ""
     kept = [{"field": str(one.get("field") or "")[:200], "text": str(one.get("text") or "")[:20000]}
-            for one in (parts or []) if isinstance(one, dict)][:40]
+            for one in (parts or []) if isinstance(one, dict)][:500]
+    files = [{"field": str(one.get("field") or "")[:200], "name": str(one.get("name") or "")[:200],
+              "path": str(one.get("path") or "")[:1000]}
+             for one in (attach or []) if isinstance(one, dict) and one.get("path")][:20]
     if not host or not kept:
         return ""
     ident = uuid.uuid4().hex[:16]
     where = folder(data_dir) / "fill"
     where.mkdir(parents=True, exist_ok=True)
     _write_json(where / f"{ident}.json", {"id": ident, "url": str(url), "host": host,
-                                         "parts": kept, "at": time.time()})
+                                         "parts": kept, "attach": files, "at": time.time()})
     return ident
 
 
@@ -631,7 +643,8 @@ def take_fill_order(data_dir: Path, url: str, keep: bool = False) -> Optional[Di
             except OSError:
                 continue
         if mine:
-            found = {"id": order.get("id"), "parts": order.get("parts") or []}
+            found = {"id": order.get("id"), "parts": order.get("parts") or [],
+                     "attach": order.get("attach") or []}
     return found
 
 
@@ -647,12 +660,32 @@ def finish_fill_order(data_dir: Path, ident: str) -> bool:
         return False
 
 
-def keep_visible(data_dir: Path, title: str, text: str) -> None:
+def keep_visible(data_dir: Path, title: str, text: str, url: str = "") -> None:
     """What can be seen of the page in front, as the extension says: the last word only, on this
     computer, for the recommendations' match (heartbeat/monitor/match.py)."""
     import time
+    from ..common import privacy_folders as private
     path = folder(data_dir) / "visible.json"
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        among = json.loads((folder(data_dir) / private.ADDRESSES_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        among = []
+    if private.site_signal(title) or (url and private.address_in(url, list(among or []))):
+        # A PRIVATE PAGE - its site asking (agent-private-mode), or at a private address: nothing
+        # of it kept, and what was kept before let go of; its title told, its window known by it.
+        _write_json(path, {"at": time.time(), "title": "", "text": ""})
+        if title and not private.site_signal(title):
+            pages = folder(data_dir) / private.PAGES_FILE
+            try:
+                told = json.loads(pages.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                told = {}
+            told = {key: at for key, at in (told or {}).items()
+                    if time.time() - float(at) < private.PAGES_FOR_SECONDS}
+            told[str(title)[:300]] = time.time()
+            _write_json(pages, dict(list(told.items())[-500:]))
+        return
     _write_json(path, {"at": time.time(), "title": str(title)[:300], "text": str(text)[:6000]})
 
 

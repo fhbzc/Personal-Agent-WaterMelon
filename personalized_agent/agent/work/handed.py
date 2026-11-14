@@ -159,8 +159,16 @@ result, at the end of the work (again when it changes):
     records). Not an email when they talk in a chat app.
   - what goes into a web page's boxes - a review, an application, a form: kind
     "form" (url: the page, parts: [{field: the box's label, text}] in the
-    page's order) - the page opens in their own browser, each part copied in
-    turn. Never ask them to sign in anywhere: their browser is signed in.
+    page's order) - the page opens in their own browser and its boxes are
+    filled for them; they check and submit it themselves. A FORM ON A WEB PAGE
+    IS HANDED OVER AS A "form" - read the page for its boxes' labels as written
+    - with a document beside it only if one helps. Every box you can answer,
+    however many; a choice (one of several buttons, a list to pick from) is its
+    field with "text" the option as the page words it. What only the user can
+    answer, leave out. Files the page wants attached: "attach": [{field: the
+    box's label, path: the file, made by this work or theirs}] - NEVER UPLOADED:
+    they are told which file goes where and attach it themselves. Never ask them
+    to sign in anywhere: their browser is signed in.
   - words to paste somewhere else: kind "text".
   - a document, a sheet, slides, a page, code: the file - in the format they
     would open or share it in (a document to send: .docx or .pdf; figures
@@ -314,7 +322,15 @@ def checked(args: Dict[str, Any], resolve: Callable[[str], Optional[Path]]) -> D
         if not url.startswith(("https://", "http://")) or not parts:
             return {"error": "a form needs the page it goes into (url, http or https) and "
                              "its parts ([{field, text}])"}
-        item.update(url=url[:2000], parts=parts)
+        attach = []
+        for one in (args.get("attach") or [])[:ATTACH_MOST]:
+            if not isinstance(one, dict):
+                continue
+            found = resolve(str(one.get("path") or ""))
+            if found is None or not found.is_file():
+                return {"error": f"attach: {one.get('path')!r} is not a file this work made or was given"}
+            attach.append({"field": _short(one.get("field"), 200), "path": str(found), "name": found.name})
+        item.update(url=url[:2000], parts=parts, **({"attach": attach} if attach else {}))
     else:
         found = resolve(str(args.get("path") or ""))
         if found is None or not found.exists():
@@ -365,7 +381,10 @@ WORDS_OF = {"email": "body", "event": "details", "text": "text", "answer": "text
             "message": "text", "form": "parts"}
 
 #: How many parts a form may have, and how long each.
-PARTS_MOST, PART_MOST = 30, 20000
+#: As many boxes as a form has (the user, 2026-11-13: "这个设一个非常大的阈值就行").
+PARTS_MOST, PART_MOST = 500, 20000
+#: Files a form wants attached - told, never uploaded (the user, 2026-11-13: "所有附件不上传，但是instruction告诉我传什么").
+ATTACH_MOST = 20
 
 #: What the agent is told of what the user changed (the user, 2026-11-01:
 #: "it may change it again, but from my version").
@@ -511,7 +530,9 @@ def _shown(item: Dict[str, Any]) -> str:
     if kind == "form":
         return (f"FORM - {item.get('title', '')}\nInto: {item.get('url', '')}\n\n"
                 + "\n\n".join(f"[{one.get('field', '')}]\n{one.get('text', '')}"
-                                for one in item.get("parts") or []))
+                                for one in item.get("parts") or [])
+                + "".join(f"\n\nATTACH YOURSELF - [{one.get('field', '')}]: {one.get('path', '')}"
+                          for one in item.get("attach") or []))
     return f"{kind.upper()} - {item.get('title', '')}: {item.get('path', '')}"
 
 

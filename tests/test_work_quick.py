@@ -27,10 +27,11 @@ class _Quick(_TwoAgents):
     writes email.md, then done - or, `too_big`, that it needs the thorough
     way. Anything else is the two agents of a thorough run."""
 
-    def __init__(self, too_big=False, files=("email.md",), **kwargs):
+    def __init__(self, too_big=False, files=("email.md",), report="wrote email.md", **kwargs):
         super().__init__(**kwargs)
         self.too_big = too_big
         self.files = files
+        self.report = report
         self.quick = []
 
     def invoke(self, request, role=""):
@@ -59,7 +60,7 @@ class _Quick(_TwoAgents):
             return self._reply(json.dumps({
                 "done": False, "report": "began the email",
                 "thorough": "it needs a mail merge built and tested"}))
-        return self._reply(json.dumps({"done": True, "report": "wrote email.md",
+        return self._reply(json.dumps({"done": True, "report": self.report,
                                        "commit": {"title": "Write the email", "body": []}}))
 
 
@@ -122,6 +123,30 @@ class TheQuickWayTests(unittest.TestCase):
         folder = self.app.work.folder_of(self.unit)
         self.assertTrue((folder / "email.md").exists())
         self.assertFalse((folder / "README.md").exists())
+
+    def test_the_privacy_check_reads_what_it_would_do_on_its_own(self) -> None:
+        """The user, 2026-11-11: "把最终回答里'WHAT I WOULD DO ON MY OWN'那一段固定放进隐私检查。要求检查时
+        专门看：一键批准后要发出去或执行的内容里，有没有不必要的私人信息"."""
+        self.app.work.final_checks = True
+        report = ("Wrote email.md.\n\nWHAT I WOULD DO ON MY OWN\n"
+                  "1. Send email.md to Ada Quillfeather, adding Wren's phone number for the visit.\n"
+                  "2. I would not book the hall.")
+        models = _Checked(_Quick(report=report))
+        self._start(models, way="quick")
+        run = self._wait()
+        self.assertEqual(run["status"], DONE, run["log"][-6:])
+        told = models.checks["privacy"][0].messages[0]["content"]
+        self.assertIn("WHAT IT SAYS IT WOULD DO ON ITS OWN", told)
+        self.assertIn("adding Wren's phone number for the visit", told)
+        self.assertIn("that the task did not need", told)
+
+    def test_no_plan_of_its_own_nothing_added(self) -> None:
+        self.app.work.final_checks = True
+        models = _Checked(_Quick())
+        self._start(models, way="quick")
+        self._wait()
+        self.assertNotIn("WHAT IT SAYS IT WOULD DO ON ITS OWN",
+                         models.checks["privacy"][0].messages[0]["content"])
 
     def test_a_readme_only_for_more_than_one_file(self) -> None:
         self._start(_Quick(files=("email.md", "list.csv")), way="quick")

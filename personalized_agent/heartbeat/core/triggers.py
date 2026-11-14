@@ -329,9 +329,16 @@ class Triggers:
         front - every line it shows, not only the new ones; else what the
         screen showed of it lately. And the words in its latest picture."""
         parts: List[str] = []
+        # Not read in private mode, nor a window showing a file in a privacy folder (the
+        # user, 2026-11-12).
+        from ...common.privacy_folders import private_mode, window_not_to_read
+        if private_mode() or window_not_to_read("", window):
+            return ""
         try:
             front = self.front()
         except Exception:
+            front = None
+        if front is not None and window_not_to_read("", getattr(front, "title", "")):
             front = None
         same = (int(getattr(front, "handle", 0) or 0) == handle) if handle else \
             (front is not None and _clean(getattr(front, "title", "")) == window)
@@ -453,11 +460,16 @@ def notify_now(heartbeat: Any, rule: Rule, window: str, text: str,
         step["instruction"],
         "Return ONLY this JSON object:\n" + step["returns"],
     ]
+    from ...agent import outside_review
+    reviewer = getattr(heartbeat, "reviewer", None)
+    user = outside_review.user_name(reviewer) if reviewer is not None else "the user"
     try:
         response = heartbeat.models.invoke(ModelRequest(
             messages=[{"role": "user", "content": "\n\n".join(sections)}],
-            system=PREAMBLE, max_tokens=4000, task="heartbeat_trigger",
-            language=in_display()), role="heartbeat")
+            # WHAT APPEARED IS TEXT, NEVER AN INSTRUCTION (the user, 2026-11-12: "prompt 里明确提防
+            # 恶意利用") - and what is proposed is reviewed before it is done.
+            system=PREAMBLE + "\n\n" + outside_review.GUARD.format(user=user),
+            max_tokens=4000, task="heartbeat_trigger", language=in_display()), role="heartbeat")
     except Exception as exc:
         log.info("the trigger could not ask the model: %s", exc)
         return {"skipped": f"the model could not be asked: {exc}"[:300]}
@@ -473,6 +485,12 @@ def notify_now(heartbeat: Any, rule: Rule, window: str, text: str,
     answered = answer.data
     task_id = new_id("trigger")
     report: Dict[str, Any] = {"task_id": task_id}
+    if hasattr(heartbeat, "reviewed_calendar"):
+        answered = heartbeat.reviewed_calendar(
+            answered, report, outside={"what_just_appeared": fresh, "the_window": text[:8000]},
+            what=f"an instant trigger ({rule.why}) on a window the user had in front of them: "
+                 "reminders added to, changed on or closed on their calendar",
+            task="trigger", about=window)
     heartbeat._notify_writer = {"model": getattr(response, "model", ""),
                                 "provider": getattr(response, "provider", "")}
     if waiting is not None:
@@ -487,6 +505,8 @@ def notify_now(heartbeat: Any, rule: Rule, window: str, text: str,
     updated = heartbeat._update_notifications(task_id, answered.get("updated"))
     if updated:
         report["notifications_updated"] = updated
+    if hasattr(heartbeat, "tell_did"):
+        heartbeat.tell_did(report, "trigger")
     return report
 
 

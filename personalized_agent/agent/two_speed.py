@@ -79,6 +79,16 @@ wrongly loses what the user asked for; running needlessly costs little.
 - When the full agent runs, say what you can and tell the user that you are looking into this and \
 that more will follow below."""
 
+#: WHAT WAS WRITTEN WHILE IT WAITED (the user, 2026-11-09: a "1" sent before a question was asked
+#: was taken as its yes - the answer to the message before it, written while this one waited, came
+#: first in what the model was given). Those answers are told apart, as written after it.
+WAITED_NOTE = """
+
+[While this message waited its turn, the message before it was answered - AFTER this one was sent:
+\"\"\"{said}\"\"\"
+This message was written BEFORE that answer existed. It does not reply to anything that answer
+says or asks, and it is never a yes to it. Do not repeat that answer.]"""
+
 FULL_NOTE = """
 
 [A quick reply has already been shown to the user, written with none of your context and no tools:
@@ -86,7 +96,8 @@ FULL_NOTE = """
 What you write now appears folded beneath it, and the user reads it as one voice: do not repeat it, \
 greet, or comment on it. Do what the message asks, with your tools, and say what came of it. Begin \
 with {correction} only if the quick reply stated a fact that is false and would mislead the user, \
-and then put that fact right. Its saying it could not see something, was looking into it, or \
+and then put that fact right. If what you write asks the user something they need to answer, end it \
+with {questions} - its fold then says so, and it is opened. Its saying it could not see something, was looking into it, or \
 wording a thing a little loosely is not a mistake. If you did nothing and have nothing to add, \
 write exactly {nothing} and no more.]"""
 
@@ -100,6 +111,16 @@ def _parsed(text: str) -> Optional[Dict[str, Any]]:
     except ValueError:
         return None
     return said if isinstance(said, dict) else None
+
+
+def _with_pictures(text: str, pictures: Optional[List[Dict[str, str]]]) -> Any:
+    """A message's content: its words, and the pictures that go with it as pictures."""
+    pictures = [one for one in pictures or [] if one.get("data") and one.get("media_type")]
+    if not pictures:
+        return text
+    return [{"type": "text", "text": text},
+            *[{"type": "image", "source": {"type": "base64", "media_type": one["media_type"],
+                                           "data": one["data"]}} for one in pictures]]
 
 
 class TwoSpeed:
@@ -136,7 +157,7 @@ class TwoSpeed:
         if described:
             metadata["attachments"] = described
         user = self.conversations.add_message(conversation_id, "user", text, metadata=metadata)
-        quick = self._quick(text, earlier, described, front)
+        quick = self._quick(text, earlier, described, front, seen)
         run = quick["run"] or bool(described) or bool(mentions) or not quick["reply"]
         ids = [user["id"]]
         said: Optional[Dict[str, Any]] = None
@@ -165,8 +186,13 @@ class TwoSpeed:
             raise ValueError("a file attached is no longer there")
 
     def _quick(self, text: str, earlier: List[Dict[str, Any]],
-               files: List[Dict[str, Any]], front: str = "") -> Dict[str, Any]:
-        """What the small model says; nothing, and the full agent answers."""
+               files: List[Dict[str, Any]], front: str = "",
+               seen: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+        """What the small model says; nothing, and the full agent answers. `seen`: the picture
+        of the screen that goes with the message - given to it as to the full agent (the user,
+        2026-11-11: it said only "Hi Fang," of an email was visible: the window's own text held
+        the first line, the picture all of it). A model that sees none has it taken out by the
+        manager (models/vision.py)."""
         turns = [{"role": one["role"], "content": str(one.get("content") or "")[:RECENT_CHARS]}
                  for one in earlier
                  if one.get("role") in ("user", "assistant") and str(one.get("content") or "").strip()]
@@ -179,7 +205,7 @@ class TwoSpeed:
         said += front
         try:
             answer = self.models.invoke(ModelRequest(
-                messages=[*turns, {"role": "user", "content": said}],
+                messages=[*turns, {"role": "user", "content": _with_pictures(said, seen)}],
                 system=self.agent._system_prompt() + QUICK_RULES, max_tokens=QUICK_TOKENS,
                 task="chat_fast", language=in_display()), role="fast_reply")
         except Exception:
@@ -270,7 +296,9 @@ class TwoSpeed:
                              "did": lambda said: self._did(mark, said)})
             done = {"state": "done", "answer": result.get("answer", ""),
                     "message_id": result.get("message_id", ""), "kind": result.get("kind", "more"),
-                    "nothing": bool(result.get("nothing")), "did": result.get("did") or {}}
+                    "nothing": bool(result.get("nothing")), "did": result.get("did") or {},
+                    "actions": list(result.get("actions") or []),
+                    "asks": bool(result.get("asks"))}
         except Exception as exc:
             log.warning("the full agent could not answer", exc_info=True)
             done = {"state": "done", "answer": "", "message_id": "", "kind": "more",

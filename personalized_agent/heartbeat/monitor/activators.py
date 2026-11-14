@@ -79,7 +79,9 @@ CREATE TABLE IF NOT EXISTS monitor_quiet (
 );
 """
 
-GROUPS = ("recommend", "risk", "calendar", "rest", "other")
+GROUPS = ("recommend", "risk", "calendar", "deadline", "rest", "summary", "system", "other")
+#: A BUILT-IN ONE IS FIXED (the user, 2026-11-13: "现在设置的几个monitor都是protected, 不允许改"): on or off only.
+BUILT_IN_FIXED = "A built-in Activator is fixed: it can only be switched on or off."
 #: How what an Activator sends is delivered: at once, or into the waiting list.
 DELIVERIES = ("pop", "wait")
 DOES = ("notify", "ask_model", "queue")
@@ -595,6 +597,15 @@ class ActivatorStore:
         self._said(ident, by, "add", why, None, clean)
         return ident, warnings
 
+    @staticmethod
+    def _fixed(found: Dict[str, Any]) -> bool:
+        """ONE OF THE APPLICATION'S OWN, AS IT IS NOW (the user, 2026-11-13: "现在设置的几个monitor都是protected, 不
+        允许改"): switched on or off, nothing more. One once built in and since taken out of the
+        application (an old break reminder kept as the user's) is theirs as any other."""
+        from .builtins import builtins as given
+        return bool(found.get("builtin")) and str(found["builtin"]) in {
+            str(one.get("builtin")) for one in given()}
+
     def _model_may(self, found: Optional[Dict[str, Any]], ident: str) -> Dict[str, Any]:
         if found is None:
             raise ValueError(f"there is no Activator {ident!r}")
@@ -629,6 +640,8 @@ class ActivatorStore:
         found = self.get(ident)
         if found is None:
             raise ValueError(f"there is no Activator {ident!r}")
+        if self._fixed(found):
+            raise ValueError(BUILT_IN_FIXED)
         if not isinstance(changes, dict):
             raise ValueError("the changes are an object of fields")
         before = {key: found.get(key) for key in ("name", "purpose", "group", "when", "then",
@@ -657,7 +670,10 @@ class ActivatorStore:
         return self.get(ident)
 
     def delete(self, ident: str, by: str, why: str = "") -> None:
-        found = self._model_may(self.get(ident), ident)
+        # The application's own taking out of one of its built-in ones, whatever its protection.
+        found = self.get(ident) if by == "built in" else self._model_may(self.get(ident), ident)
+        if found is None:
+            raise ValueError(f"there is no Activator {ident!r}")
         self.db.execute("UPDATE monitor_activators SET deleted_at = ?, updated_at = ? WHERE id = ?",
                         (_now(), _now(), found["id"]))
         self._said(found["id"], by, "delete", why, {k: found[k] for k in ("name", "when", "then")},
@@ -678,6 +694,8 @@ class ActivatorStore:
         found = self.get(ident)
         if found is None:
             raise ValueError(f"there is no Activator {ident!r}")
+        if self._fixed(found) and not protected:
+            raise ValueError(BUILT_IN_FIXED)
         self.db.execute("UPDATE monitor_activators SET protected = ?, updated_at = ? WHERE id = ?",
                         (int(bool(protected)), _now(), found["id"]))
         self._said(found["id"], "user", "protect" if protected else "unprotect", "", None, None)
@@ -740,7 +758,8 @@ class ActivatorStore:
     def refresh(self, builtins: List[Dict[str, Any]]) -> int:
         """A BUILT-IN ONE'S DEFAULT CHANGED, the copies kept of it follow - where no one changed
         them (the user, 2026-11-07: one written when its cooldown was 30 minutes kept 30 after the
-        application said 5). One the user or the model changed is theirs and stays as it is."""
+        application said 5). FIXED NOW (the user, 2026-11-13: "都是protected, 不允许改"): every copy follows -
+        what is the user's of it, its switch and their name for it, is kept apart and stays."""
         changed = 0
         for one in builtins:
             fresh, _warnings = check({k: v for k, v in one.items()
@@ -748,7 +767,7 @@ class ActivatorStore:
             for row in self.db.query("SELECT id, data FROM monitor_activators WHERE builtin = ? "
                                      "AND COALESCE(deleted_at, '') = ''", (one["builtin"],)):
                 kept = json.loads(row["data"] or "{}")
-                if kept == fresh or not self._untouched(row["id"]):
+                if kept == fresh:
                     continue
                 self.db.execute("UPDATE monitor_activators SET data = ?, updated_at = ? WHERE id = ?",
                                 (json.dumps(fresh, ensure_ascii=False), _now(), row["id"]))

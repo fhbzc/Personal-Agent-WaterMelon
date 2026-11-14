@@ -170,6 +170,35 @@ def check_not_app_code(resolved: Path, policy: WorkspacePolicy) -> None:
         )
 
 
+#: Said of the application's source, which no agent changes (the user, 2026-11-12).
+SOURCE_MESSAGE = ("that is this application's own source code: the agents may read it but "
+                  "never change it - change a copy in your own folder instead")
+
+
+def _source_root() -> Optional[Path]:
+    """The application's code (common/paths.app_code_root) - a test's stand-in when one is set."""
+    try:
+        from ..common.paths import app_code_root
+        return real_of_existing_ancestor(app_code_root())
+    except Exception:                      # pragma: no cover - nothing to keep, then
+        return None
+
+
+def check_not_source(resolved: Path, policy: WorkspacePolicy, write_root: Path) -> None:
+    """NO AGENT CHANGES THE APPLICATION'S SOURCE (the user, 2026-11-12: "只要他不会直接改源代码
+    （只能在自己的directory里改)就行"): not the chat, not a run - not even through a folder the user
+    granted that holds it. Its own folder, should that lie inside, is its own."""
+    source = _source_root()
+    if source is None or not is_inside(resolved, source) or is_inside(resolved, write_root):
+        return
+    raise SecurityViolation(
+        SOURCE_MESSAGE,
+        requested_path=str(resolved),
+        workspace_root=str(policy.workspace_root),
+        boundary="application_source",
+    )
+
+
 #: Said of the record of what happened (see WorkspacePolicy.closed_paths).
 LOGS_MESSAGE = ("that is the project's run logs - the record of what happened: "
                 "the agents may not read it")
@@ -236,6 +265,29 @@ def check_not_credential_store(resolved: Path, policy: WorkspacePolicy) -> None:
         )
 
 
+def is_private(resolved: Path) -> bool:
+    """In one of the user's privacy folders (common/privacy_folders.py) - never read by any
+    agent: the chat's tools, a run's, a search's."""
+    from ..common.privacy_folders import is_private as private
+    return private(resolved)
+
+
+def _privacy_roots() -> List[Path]:
+    from ..common.privacy_folders import roots
+    return roots()
+
+
+def check_not_private(resolved: Path, policy: WorkspacePolicy) -> None:
+    if is_private(resolved):
+        from ..common.privacy_folders import REFUSED
+        raise SecurityViolation(
+            REFUSED,
+            requested_path=str(resolved),
+            workspace_root=str(policy.workspace_root),
+            boundary="privacy_folder",
+        )
+
+
 def check_not_closed(resolved: Path, policy: WorkspacePolicy) -> None:
     """The run logs are not read by the agents - nor listed. Writing them
     is the application's: its tools are refused by their locked list."""
@@ -267,6 +319,7 @@ def validate_write_path(requested_path: PathLike, policy: WorkspacePolicy) -> Pa
     write_root = real_of_existing_ancestor(policy.write_root)
     resolved = resolve_securely(requested_path, write_root)
     check_not_sealed(resolved, policy, "writing")
+    check_not_source(resolved, policy, write_root)
     # A folder the user granted this work: written as freely as its own -
     # the user chose it, which outranks the read-only layers - but never
     # the application's protected state.
@@ -314,6 +367,7 @@ def validate_read_path(requested_path: PathLike, policy: WorkspacePolicy) -> Pat
     check_not_app_code(resolved, policy)
     check_not_closed(resolved, policy)
     check_not_credential_store(resolved, policy)
+    check_not_private(resolved, policy)
     # EVERYWHERE ELSE, where the policy says so (WorkspacePolicy.read_anywhere): every exclusion
     # has been passed.
     if getattr(policy, "read_anywhere", False):
@@ -534,7 +588,8 @@ def _deny_all(drives: List[Path], holds_a_root: Any, deny_beside: Any, denied: L
     inside = [*(policy.protected_paths or []),
               *(getattr(policy, "sealed_paths", None) or []),
               *([policy.code_root] if getattr(policy, "code_root", None) else []),
-              *(getattr(policy, "closed_paths", None) or [])]
+              *(getattr(policy, "closed_paths", None) or []),
+              *_privacy_roots()]
     for one in inside:
         real = real_of_existing_ancestor(Path(one))
         if holds_a_root(real) and not any(is_inside(root, real) and root == real

@@ -15,6 +15,9 @@ TASKS = {
     "folders": "learning_folders",
     "read": "learning_read",
     "reasons": "learning_reasons",
+    # The reasons behind the user's answers, guessed and tied across contexts (reasons.py
+    # predict / across): Learning from your answers.
+    "answers": "learning_answers",
     "terms": "learning_terms",
     "plan": "learning_plan",
     "split": "learning_split",

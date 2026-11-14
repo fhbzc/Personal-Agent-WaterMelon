@@ -41,7 +41,7 @@ def _render(engine, stub, steps, budget=30000, width=1500):
         probe = Path(work) / "probe.html"
         probe.write_text(page + harness, encoding="utf-8")
         completed = subprocess.run(
-            [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+            [engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
              f"--user-data-dir={work}/profile", f"--virtual-time-budget={budget}",
              f"--window-size={width},900", "--dump-dom", probe.as_uri()],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
@@ -179,13 +179,14 @@ class TheConnectionsPanelTests(unittest.TestCase):
                                                          "done": 2, "total": 4}}}
 
     def test_what_is_typed_survives_the_tab_read_again(self) -> None:
-        """Your profile being edited, the tab read again in the background - a
+        """A person being edited, the tab read again in the background - a
         picture found, the agent's round over: what was typed stays, and Save
-        sends it."""
+        sends it. (A contact: the user's own profile is not edited here since
+        2026-11-12 - it is their Agents Society account's.)"""
         steps = (
             "click(document.querySelector('#tabs button[data-tab=\"connections\"]'));"
             "await wait(500);"
-            "click(document.querySelector('#cx-me-open'));await wait(400);"
+            "click(document.querySelector('[data-cx-person=\"p1\"]'));await wait(400);"
             "click(document.querySelector('#cx-person [data-cx-edit-open]'));await wait();"
             "document.querySelector('#cx-edit').elements.name.value='A New Name';"
             "await loadConnections();await wait(300);"
@@ -200,7 +201,7 @@ class TheConnectionsPanelTests(unittest.TestCase):
         self.assertEqual(out["kept"], "A New Name")
         self.assertEqual(len(out["edits"]), 1, out["edits"])
         self.assertEqual(out["edits"][0]["name"], "A New Name")
-        self.assertEqual(out["edits"][0]["id"], "me1")
+        self.assertEqual(out["edits"][0]["id"], "p1")
 
     def test_people_grouped_searched_opened_edited_and_deleted(self) -> None:
         steps = (
@@ -238,17 +239,15 @@ class TheConnectionsPanelTests(unittest.TestCase):
             "out.meEscaped=!document.querySelector('#cx-person b');"
             "out.meNoDelete=!document.querySelector('#cx-person [data-cx-ask=\"delete\"]');"
             "out.meNoMerge=!document.querySelector('#cx-person [data-cx-ask=\"merge\"]');"
-            # Shown, not a form - until Edit; Cancel shows it again.
+            # Shown, never a form (2026-11-12): your Agents Society account's - no Edit, no
+            # profile added or taken off, no picture looked for, no looking yourself up.
             "out.meShown=!!document.querySelector('#cx-person .cx-facts')"
             "  &&!document.querySelector('#cx-person #cx-edit');"
-            "click(document.querySelector('#cx-person [data-cx-edit-open]'));await wait();"
-            "out.meForm=!!document.querySelector('#cx-person #cx-edit .cx-aff-org[list=\"cx-org-list\"]');"
-            "click(document.querySelector('#cx-person [data-cx-edit-cancel]'));await wait();"
-            "out.meShownAgain=!document.querySelector('#cx-person #cx-edit');"
-            "const addMine=document.querySelector('#cx-person [data-cx-profile-add]');"
-            "addMine.querySelector('input[type=\"url\"]').value='https://robin.example.org';"
-            "addMine.elements.label.value='Homepage';addMine.requestSubmit();await wait(400);"
-            "out.profileAdds=window.__posts.filter(x=>x.body.action==='add_profile').map(x=>x.body);"
+            "out.meNothingToChange=!document.querySelector('#cx-person [data-cx-edit-open]')"
+            "  &&!document.querySelector('#cx-person [data-cx-profile-add]')"
+            "  &&!document.querySelector('#cx-person [data-cx-profile-remove]')"
+            "  &&!document.querySelector('#cx-person [data-cx-avatar-get]')"
+            "  &&!document.querySelector('#cx-person [data-cx-me-run]');"
             "out.inbox=text(document.querySelector('#cx-inbox'));"
             "out.inboxCount=text(document.querySelector('#cx-inbox-count'));"
             "out.noOldCard=!document.querySelector('#cx-lessons');"
@@ -257,8 +256,7 @@ class TheConnectionsPanelTests(unittest.TestCase):
             "click(document.querySelector('[data-cx-inbox=\"in1\"] [data-cx-inbox-accept]'));"
             "await wait(400);"
             "out.answers=window.__posts.filter(x=>x.p==='/api/connections/inbox').map(x=>x.body);"
-            "click(document.querySelector('#cx-person [data-cx-me-run]'));await wait(300);"
-            "out.meRuns=window.__posts.filter(x=>x.p==='/api/connections/run').map(x=>x.body);"
+
             # Open a person.
             "click(document.querySelector('[data-cx-person=\"p1\"]'));await wait(400);"
             "out.meUnselected=!document.querySelector('#cx-me-open').classList.contains('selected');"
@@ -330,18 +328,15 @@ class TheConnectionsPanelTests(unittest.TestCase):
         self.assertTrue(out["meSelected"])
         self.assertTrue(out["meUnselected"], "another opened: you are not marked")
         for said in ("Robin H", "https://github.com/robin-hale-example", "Posted <b>a</b> release note",
-                     "found ", "last looked up", "Look me up now", "waits in the Inbox"):
+                     "found ", "last looked up", "comes from your Agents Society account"):
             self.assertIn(said, out["meView"])
+        self.assertNotIn("Look me up now", out["meView"])
         self.assertTrue(out["meEscaped"])
         self.assertTrue(out["meNoDelete"])
         self.assertTrue(out["meNoMerge"])
         self.assertTrue(out["meShown"])
-        self.assertTrue(out["meForm"])
-        self.assertTrue(out["meShownAgain"])
-        # A profile added with its label; the boxes suggest what is in use.
-        self.assertEqual(out["profileAdds"], [{"action": "add_profile", "id": "me1",
-                                               "url": "https://robin.example.org",
-                                               "label": "Homepage"}])
+        self.assertTrue(out["meNothingToChange"])
+        # The boxes suggest what is in use.
         self.assertEqual(out["labels"], ["GitHub", "LinkedIn"])
         self.assertEqual(out["orgs"], ["Acme", "Globex"])
         self.assertEqual((out["addLabelList"], out["addOrgList"]),
@@ -353,7 +348,6 @@ class TheConnectionsPanelTests(unittest.TestCase):
         self.assertEqual(out["inboxCount"], "1")
         self.assertTrue(out["noOldCard"], "your changes are in the Lessons tab now")
         self.assertEqual(out["answers"], [{"id": "in1", "accept": True, "reason": "right"}])
-        self.assertEqual(out["meRuns"], [{"me": True}])
         self.assertEqual(out["gets"][-1], "/api/connections/person?id=p1")
         self.assertIn("Gave a talk", out["detail"])
         self.assertIn("date unknown", out["detail"])

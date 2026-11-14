@@ -1086,7 +1086,8 @@ class WorkAssignedTests(unittest.TestCase):
                         "the box says it started a work")
         self.assertIn("new BroadcastChannel(OV_WORK_CHANNEL).onmessage", js)
         self.assertIn('if (!document.hidden) ovListsAgain();', js)
-        self.assertNotIn('window.addEventListener("focus"', js, "nothing asked at each focus")
+        self.assertNotIn('window.addEventListener("focus", ovListsAgain', js,
+                         "the lists not asked at each focus")
         # A work going that neither list knows: the lists asked again, once.
         watch = js[js.index("async function watchWorkGoing"):js.index("setTimeout(watchWorkGoing, 1000)")]
         self.assertIn("ovTodos.concat(ovAssigned)", watch)

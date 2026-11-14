@@ -255,7 +255,7 @@ class TuckedIntoTheSideTests(unittest.TestCase):
         slide["at"] = time.monotonic() - tuck.JUMP_IN_SECONDS - 0.01
         desktop._slide_on(desktop._live, time.monotonic())
         self.assertEqual(desktop._tucked, "right", "in, its leaves out")
-        self.assertEqual(desktop._live["tuck"], 1.0)
+        self.assertEqual(desktop._live["tuck"], tuck.TUCK_REST, "and a little of the melon")
         self.assertEqual(desktop.agent_window.x, 1920 - round(128 * tuck.PEEK))
 
     def test_let_go_less_than_half_past_it_sneaks_in_later_as_before(self) -> None:
@@ -323,15 +323,15 @@ class TuckedIntoTheSideTests(unittest.TestCase):
             desktop._sneaked_in(desktop._live)
             self.assertEqual((desktop.agent_window.x, desktop.agent_window.y), (900, 34 - 128))
             self.assertEqual(desktop._reach(desktop._live), 34.0)
+            # Under the pointer, half of it comes down to look; away, back up.
             desktop._live["hover"] = True
             desktop._peek_on(desktop._live)
             self._finish(desktop)
-            self.assertEqual(desktop.agent_window.y, 100 - 128)
-            self.assertEqual(desktop._reach(desktop._live), 100.0)
-            desktop._start_drag(SimpleNamespace(x=5, y=60, x_root=964, y_root=20))
-            desktop._end_drag()
+            self.assertEqual(desktop.agent_window.y, 88 - 128, "its eyes clear of the leaves")
+            desktop._live["hover"] = False
+            desktop._peek_on(desktop._live)
             self._finish(desktop)
-        self.assertEqual(desktop.agent_window.y, 16)
+        self.assertEqual(desktop.agent_window.y, 34 - 128)
 
     def test_the_leaves_lie_along_each_side(self) -> None:
         from personalized_agent.agent.character.watermelon import Watermelon
@@ -384,7 +384,9 @@ class TuckedIntoTheSideTests(unittest.TestCase):
         self.assertTrue(sneak_at(4.0).done)
         self.assertEqual(sneak_at(4.0).tuck, 1.0)
 
-    def test_in_only_a_leaf_and_a_click_brings_it_out(self) -> None:
+    def test_in_a_little_of_it_out_and_a_click_is_the_chat_two_the_overview(self) -> None:
+        """The user, 2026-11-09: "单击半个身子弹出chat, 双击overview, 拖动是把他拉出来"."""
+        from personalized_agent.ui.avatar_tuck import TUCK_REST
         desktop = self._desktop(1500)
         self._beside(desktop)
         with self._sides():
@@ -394,20 +396,22 @@ class TuckedIntoTheSideTests(unittest.TestCase):
             desktop._sneaked_in(desktop._live)
             self.assertEqual((desktop._tucked, desktop._beside), ("right", ""))
             self.assertEqual(desktop.agent_window.x, 1920 - 34)
-            self.assertEqual(desktop._live["tuck"], 1.0)
+            self.assertEqual(desktop._live["tuck"], TUCK_REST)
             self.assertEqual(desktop._live["grip"], 1.0)
-            # The leaf clicked: no chat, no hop, it comes out.
+            jobs, doubled = [], []
+            desktop.root = SimpleNamespace(after=lambda ms, work: jobs.append(work) or "job",
+                                           after_cancel=lambda job: None)
             desktop._click_job = None
-            desktop._on_click(SimpleNamespace(x_root=1900, y_root=360))
-            self.assertIsNone(desktop._click_job)
-            desktop._start_drag(SimpleNamespace(x=5, y=60, x_root=1900, y_root=360))
-            desktop._end_drag()
-            self.assertEqual(desktop._tucked, "")
-            self._finish(desktop)
-        self.assertEqual(desktop.agent_window.x, 1920 - 128 - 16)
-        self.assertEqual(desktop._live["tuck"], 0.0)
-        self.assertEqual(desktop._live["grip"], 0.0, "its leaves back under it")
-        self.assertEqual(desktop._beside, "right", "and in a while it goes in again")
+            desktop._on_double_click = lambda _event=None: doubled.append(1)
+            pressed = SimpleNamespace(x=5, y=60, x_root=1900, y_root=360)
+            desktop._start_drag(pressed)
+            desktop._end_drag(pressed)
+            self.assertEqual(desktop._click_job, "job", "a click: the chat, once it is no double")
+            self.assertEqual(jobs[-1], desktop._single_click)
+            desktop._start_drag(pressed)
+            desktop._end_drag(pressed)
+            self.assertEqual(doubled, [1], "two: the Overview")
+            self.assertEqual(desktop._tucked, "right", "and it stays in the side")
 
     def test_caught_at_it_it_goes_back(self) -> None:
         desktop = self._desktop(1500)
@@ -442,34 +446,50 @@ class TuckedIntoTheSideTests(unittest.TestCase):
         desktop._live["start"] = 0.0
         self.assertIsNone(self._sneak(desktop, 9999))
 
-    def test_only_a_leaf_is_out(self) -> None:
+    def test_a_little_of_the_melon_is_out_between_the_leaves(self) -> None:
+        """The user, 2026-11-09: "西瓜留出来一点"."""
         from PIL import ImageChops
         from personalized_agent.agent.character.watermelon import Watermelon
-        from personalized_agent.ui.avatar_tuck import PEEK
+        from personalized_agent.ui.avatar_tuck import PEEK, TUCK_REST
         rig = Watermelon(scale=2)
         out = int(256 * PEEK)
         box = (0, 0, out, 256)
-        tucked = rig.frame("idle", size=256, tuck=1.0, grip=1.0).crop(box)
-        self.assertIsNone(ImageChops.difference(
-            tucked, rig.leaves_at(1.0, 34).crop(box)).getbbox(alpha_only=False), "nothing of the body")
+        tucked = rig.frame("idle", size=256, tuck=TUCK_REST, grip=1.0).crop(box)
+        leaves = rig.leaves_at(1.0, 34).crop(box)
+        differs = ImageChops.difference(tucked, leaves).getbbox(alpha_only=False)
+        self.assertIsNotNone(differs, "some of the body shows")
+        self.assertGreater(differs[3] - differs[1], 40, "a round of it, to be clicked")
         seen = tucked.getchannel("A").getbbox()
         self.assertGreater(seen[3] - seen[1], 180, "the leaves stand up the side")
         self.assertEqual(seen[2], out, "and reach it")
-        turned = rig.frame("idle", size=256, tuck=1.0, grip=1.0, facing="right")
+        turned = rig.frame("idle", size=256, tuck=TUCK_REST, grip=1.0, facing="right")
         turned = turned.crop((256 - out, 0, 256, 256)).getchannel("A").getbbox()
         self.assertEqual(turned[0], 0, "on the left side, the same")
 
-    def test_the_pointer_on_its_leaf_brings_its_head_out_and_away_back_in(self) -> None:
+    def test_in_a_side_the_pointer_on_it_is_a_hand(self) -> None:
+        """The user, 2026-11-09: "鼠标放到上面的时候用手形鼠标" - it is pressed: the chat, the Overview."""
+        desktop = self._desktop(1920 - 34)
+        cursors = []
+        desktop.canvas = SimpleNamespace(configure=lambda **said: cursors.append(said["cursor"]))
+        desktop._tucked = "right"
+        desktop._hand_when_tucked()
+        desktop._hand_when_tucked()
+        desktop._tucked = ""
+        desktop._hand_when_tucked()
+        self.assertEqual(cursors, ["hand2", ""], "a hand in the side, once; as before out of it")
+
+    def test_the_pointer_on_it_brings_half_of_it_out_and_away_back_in(self) -> None:
+        """The user, 2026-11-09: "鼠标移过去会弹出半个身子"."""
+        from personalized_agent.ui.avatar_tuck import TUCK_REST
         desktop = self._desktop(1920 - 34)
         desktop._tucked = "right"
-        desktop._live.update(tuck=1.0, grip=1.0, hover=True, edge=1920)
+        desktop._live.update(tuck=TUCK_REST, grip=1.0, hover=True, edge=1920)
         with self._sides():
             desktop._peek_on(desktop._live)
             self._finish(desktop)
-            self.assertEqual(desktop.agent_window.x, 1920 - 88, "its face out, on end")
+            self.assertEqual(desktop.agent_window.x, 1920 - 64, "half of it out")
             self.assertEqual(desktop._live["tuck"], 0.0)
             self.assertEqual(desktop._live["grip"], 1.0, "the leaves still holding on")
-            self.assertEqual(desktop._reach(desktop._live), 88.0, "at the side as it moved")
             self.assertEqual(desktop._tucked, "right", "still in the side")
             desktop._peek_on(desktop._live)
             self.assertNotIn("slide", desktop._live, "once")
@@ -477,18 +497,41 @@ class TuckedIntoTheSideTests(unittest.TestCase):
             desktop._peek_on(desktop._live)
             self._finish(desktop)
         self.assertEqual(desktop.agent_window.x, 1920 - 34)
-        self.assertEqual(desktop._live["tuck"], 1.0)
+        self.assertEqual(desktop._live["tuck"], TUCK_REST, "a little of it left out")
 
-    def test_looking_out_a_click_still_brings_it_out(self) -> None:
-        desktop = self._desktop(1920 - 88)
+    def test_out_of_the_top_its_eyes_clear_of_the_leaves(self) -> None:
+        """The user, 2026-11-09: "上边框的问题是叶子的位置和探头的位置有问题" - the leaves in front
+        ("叶子在前面"), its face where they are not."""
+        from personalized_agent.agent.character.watermelon import Watermelon
+        from personalized_agent.ui.avatar_tuck import HALF_OUT
+        rig = Watermelon(scale=2)
+        out = int(round(256 * HALF_OUT["top"]))
+
+        def whites(frame):                       # the whites of its eyes, in what is out
+            seen = frame.crop((0, 256 - out, 256, 256))
+            return sum(1 for r, g, b, a in seen.getdata() if a > 200 and min(r, g, b) > 225)
+        peeking = rig.frame("idle", size=256, tuck=0.0, grip=1.0, reach=out // 2, edge="top",
+                            turn=1.0)
+        bare = rig.frame("idle", size=256, tuck=0.0, grip=0.0, edge="top", turn=1.0)
+        self.assertGreater(whites(bare), 50)
+        self.assertGreaterEqual(whites(peeking), whites(bare) - 3, "no leaf over its eyes")
+
+    def test_no_vine_and_no_buttons_out_of_the_side(self) -> None:
+        """The user, 2026-11-09: "不需要出来藤蔓(那两个logo也不要了)"."""
+        source = (Path(__file__).parent.parent / "personalized_agent" / "ui" / "desktop.py"
+                  ).read_text(encoding="utf-8")
+        self.assertNotIn("ChatVine(", source)
+
+    def test_half_out_a_drag_pulls_it_out(self) -> None:
+        desktop = self._desktop(1920 - 64)
         desktop._tucked = "right"
         desktop._live.update(tuck=0.0, hover=True, peeking=True)
-        with self._sides():
-            desktop._start_drag(SimpleNamespace(x=5, y=60, x_root=1900, y_root=360))
-            desktop._end_drag()
-            self._finish(desktop)
-        self.assertEqual((desktop._tucked, desktop.agent_window.x), ("", 1920 - 128 - 16))
+        desktop._look_now = lambda: None
+        desktop._start_drag(SimpleNamespace(x=5, y=60, x_root=1900, y_root=360))
+        desktop._on_drag(SimpleNamespace(x=0, y=0, x_root=1700, y_root=500))
+        self.assertEqual(desktop._tucked, "")
         self.assertFalse(desktop._live["peeking"])
+        self.assertEqual((desktop.agent_window.x, desktop.agent_window.y), (1700 - 64, 500 - 64))
 
     def test_pulled_it_leans_back_and_let_go_it_stands(self) -> None:
         desktop = self._desktop(500)
@@ -716,7 +759,7 @@ class TheLeavesMoveTests(unittest.TestCase):
         source = (Path(__file__).parent.parent / "personalized_agent" / "ui" / "desktop.py"
                   ).read_text(encoding="utf-8")
         self.assertEqual(source.count("rig.frame(mood"), 1)
-        self.assertNotIn("darwin", source[source.index("def _part_on"):source.index("def _peek_on")])
+        self.assertNotIn("darwin", source[source.index("def _part_on"):source.index("def _placed")])
 
     def test_they_follow_its_head_whatever_brought_it_out(self) -> None:
         from personalized_agent.ui.desktop import DesktopAgent

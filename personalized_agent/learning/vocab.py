@@ -108,6 +108,14 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def with_word_list(prompt: str, vocab: "Vocabulary", dims: Iterable[str]) -> str:
+    """A fixed prompt with the word list after it - THE SYSTEM PROMPT OF A CALL (the user,
+    2026-11-11): in each call's own text it was written to the cache anew every call; here it is
+    part of what stays the same from call to call, read back from the cache. The listing is
+    sorted and carries no time, so the same words give the same text, byte for byte."""
+    return f"{prompt}\n\nTHE WORD LIST:\n{vocab.listing(dims)}"
+
+
 class Vocabulary:
     """The terms, in the database (learn_terms)."""
 

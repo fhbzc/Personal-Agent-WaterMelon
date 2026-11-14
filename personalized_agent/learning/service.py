@@ -62,7 +62,7 @@ from .activity import (CAUGHT_UP, EARLIER_KIND, EARLIER_UNIT, KIND as ACTIVITY, 
 from .ask import Asker
 from .items import Items, folder_parts, unit_id_of
 from .places import Places
-from .reading import UnitReader
+from .reading import UnitReader, waits
 from .reasons import Reasons
 from .store import LearningStore, now
 from .vocab import Vocabulary
@@ -425,9 +425,12 @@ class Learning:
             update["now_reading"] = "reasons"
             self.store.save_update(update)
             first_learning = any(one.get("first") for one in plan["units"])
+            # LEARNING FROM YOUR ANSWERS, ITS OWN SWITCH (common/modules.py; the user, 2026-11-11):
+            # off, no answer is taken in, guessed or tied across contexts - they wait, kept.
+            from ..common import modules as _modules
             report = Reasons(self.db, ask, embedder=getattr(self, "embedder", None)).run(
-                first_learning,
-                                               stopped=lambda: ask.stopped and ask.stopped())
+                first_learning, stopped=lambda: ask.stopped and ask.stopped(),
+                from_answers=_modules.enabled(self.config, "learning"))
             self._check(update_id)
             reader.settle()
             plan["reasoned"] = True
@@ -572,6 +575,12 @@ class Learning:
             if pieces:
                 offered.append((unit["id"], pieces))
         reader.activity_allow = allot(offered)
+        # SMALL CHANGES WAIT (the user, 2026-11-11): a unit read before, with little new in it -
+        # all of it together - waits for more, up to reading.WAIT_DAYS; its pieces stay pending,
+        # nothing lost (reading.waits). Not when the user started the update: "Update now", or
+        # an item added to learn now (`add_item`), reads all there is at once.
+        started_by_you = (self.store.update(update_id) or {}).get("by") == "you"
+        waited: List[Dict[str, Any]] = []
         for unit in units:
             # Turned off by the user, or an item not due: not read.
             if unit.get("state") == "inactive" or (unit.get("kind") == "item"
@@ -581,6 +590,16 @@ class Learning:
             pieces, _marks = reader.pending(unit, cutoff, sessions)
             if not pieces and unit.get("kind") in (ACTIVITY, EARLIER_KIND):
                 continue                        # its turn comes at a later update
+            if not started_by_you and waits(unit, pieces, cutoff):
+                marks = dict(unit.get("marks") or {})
+                if not marks.get("waiting_since"):
+                    # From when it waits: at most WAIT_DAYS from here, whatever its pieces say.
+                    unit["marks"] = dict(marks, waiting_since=cutoff)
+                    self.store.save_unit(unit)
+                waited.append({"id": unit["id"], "title": unit.get("title", ""),
+                               "size": reader.size(pieces),
+                               "since": str(unit["marks"].get("waiting_since") or "")})
+                continue
             has_talk = any(piece.mark[0] in ("sessions", "rules") for piece in pieces)
             latest = max((piece.at for piece in pieces), default="")
             planned.append({"id": unit["id"], "title": unit.get("title", ""),
@@ -590,7 +609,9 @@ class Learning:
         # Conversations and rules first; within each, the latest first.
         planned.sort(key=lambda one: one["latest"], reverse=True)
         planned.sort(key=lambda one: not one["talk"])
-        return {"units": planned, "history": activity.left()}
+        # The update says how many waited, and which (2026-11-11).
+        return {"units": planned, "history": activity.left(), "waited": len(waited),
+                "waiting": waited[:50]}
 
     # -- what the screen showed (activity.py) ---------------------------------------------
     def _activity_source(self) -> Activity:
@@ -1091,6 +1112,8 @@ class Learning:
                 "units_done": sum(1 for one in (update.get("plan") or {}).get("units") or []
                                   if one.get("done_recent")),
                 "skipped": update.get("skipped") or [], "note": update.get("note", ""),
+                # Units with too little new in them to read yet (2026-11-11: small changes wait).
+                "waited": int((update.get("plan") or {}).get("waited") or 0),
                 "started_at": update.get("started_at", ""),
                 "finished_at": update.get("finished_at", "")}
         return out

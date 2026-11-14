@@ -29,7 +29,8 @@ class _Reply:
 
 def _models(payload, prompts):
     def invoke(_self, request, *a, **k):
-        prompts.append(json.dumps([m.get("content") for m in request.messages],
+        # The system prompt too: the activity is at its end (the user, 2026-11-11).
+        prompts.append(json.dumps([request.system] + [m.get("content") for m in request.messages],
                                   ensure_ascii=False, default=str))
         return _Reply(payload)
 

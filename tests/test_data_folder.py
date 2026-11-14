@@ -66,6 +66,11 @@ class WhereTheDataFolderIsTests(unittest.TestCase):
         script = (ROOT / "build" / "windows" / "installer.iss").read_text(encoding="utf-8-sig")
         self.assertIn("CreateInputDirPage(wpSelectDir", script)
         self.assertIn("data_root.txt", script)
+        # A NEW FOLDER MADE FROM THE BROWSE BOX (the user, 2026-11-09): an empty name hid the button.
+        page = script[script.index("CreateInputDirPage(wpSelectDir"):]
+        page = page[:page.index(");")]
+        self.assertIn("SetupMessage(msgNewFolderName)", page)
+        self.assertNotIn("False, '')", page)
         # A folder with an agent's data in it: asked, and No keeps them there.
         self.assertIn("HasAgentData(Dir)", script)
         self.assertIn("mbConfirmation, MB_YESNO) = IDYES", script)
@@ -307,7 +312,7 @@ class SettingsShowItTests(unittest.TestCase):
             probe = Path(work) / "probe.html"
             probe.write_text(page + harness, encoding="utf-8")
             completed = subprocess.run(
-                [self.engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [self.engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=10000",
                  "--dump-dom", probe.as_uri()],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)

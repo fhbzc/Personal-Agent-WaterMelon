@@ -219,12 +219,6 @@ class Scheduler:
         how to settle a permission question, and is called by nothing.
         """
         if self.questions is None:
-            if self.notifications is not None:
-                self.notifications.notify(
-                    "Waiting on you", f"{task.title} - held until you say it "
-                    "may run; on the calendar it can be disabled or deleted",
-                    kind="approval", metadata={"task_id": task.id},
-                    dedupe_key=f"approval.{task.id}")
             self.store.update(task.id, status="awaiting_approval", lease_token=None)
             if self.bus is not None:
                 self.bus.publish("scheduler.task_awaiting_approval", task.to_dict())
@@ -249,12 +243,6 @@ class Scheduler:
                 metadata={"options": [o.to_dict() for o in options_for(
                     KIND_PERMISSION, self._delay_offer(task))]},
             ))
-            if self.notifications is not None:
-                self.notifications.notify(
-                    "Waiting on you", f"{task.title} - shall I run it?",
-                    kind="approval",
-                    metadata={"task_id": task.id, "question_id": question.id},
-                    dedupe_key=f"approval.{task.id}")
         self.store.update(task.id, status="awaiting_approval", lease_token=None)
         if self.bus is not None:
             self.bus.publish("scheduler.task_awaiting_approval", task.to_dict())

@@ -147,7 +147,8 @@ class _Asked:
         self.asked.append((system, text))
         for name, prompt in (("predict", rs.PREDICT_PROMPT), ("across", rs.ACROSS_PROMPT),
                              ("abduce", rs.ABDUCE_PROMPT), ("explain", rs.EXPLAIN_PROMPT)):
-            if system == prompt:
+            # The word list follows some prompts in the system (2026-11-11): told by its start.
+            if system.startswith(prompt):
                 answer = self.said.get(name, {})
                 return answer(text) if callable(answer) else answer
         return {}
@@ -200,6 +201,30 @@ class TheReasonsTests(_Base):
         self.assertNotIn("the user answered", shown[0].split("TOLD THEM:")[1], "the answer stays hidden")
         self.assertIn("They trust what they can check", shown[0])
         self.assertNotIn("They trust what they can check", shown[1])
+
+    def test_the_answers_calls_are_counted_as_learning_from_answers(self) -> None:
+        """The user, 2026-11-11 ("这个肯定要修"): PREDICT and ACROSS were asked as Work learning's -
+        turning Learning from your answers off did not take them out of its spend."""
+        self._work_reason()
+        self._answer_reason()
+        self._answered(said="later")
+        stages = []
+        asked = _Asked()
+        Reasons(self.db, lambda stage, *rest: stages.append((stage, rest[0])) or asked(stage, *rest)).run(False)
+        of = {system: stage for stage, system in stages}
+        self.assertEqual(of.get(rs.PREDICT_PROMPT), "answers")
+        self.assertEqual(of.get(rs.ACROSS_PROMPT), "answers")
+
+    def test_off_no_answer_is_taken_guessed_or_tied_across(self) -> None:
+        """Off (the update passes the switch, learning/service.py): the answers wait, kept."""
+        self._work_reason()
+        self._answer_reason()
+        self._answered(said="later")
+        asked = _Asked()
+        Reasons(self.db, asked).run(False, from_answers=False)
+        systems = {system for system, _text in asked.asked}
+        self.assertNotIn(rs.PREDICT_PROMPT, systems)
+        self.assertNotIn(rs.ACROSS_PROMPT, systems)
 
     def test_an_answer_of_no_group_is_not_guessed(self) -> None:
         self.app.lessons.record("general", "s", "Ticked a step", action="ticked_step")

@@ -373,7 +373,7 @@ plan:ovTodoLatest([{state:'drafting'}])});});</script></body></html>""" % part
             path = Path(work) / "latest.html"
             path.write_text(page, encoding="utf-8")
             done = subprocess.run(
-                [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=3000",
                  "--dump-dom", path.as_uri()],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
@@ -421,7 +421,7 @@ document.title=JSON.stringify(said);});</script></body></html>""" % part
             path = Path(work) / "opening.html"
             path.write_text(page, encoding="utf-8")
             done = subprocess.run(
-                [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=3000",
                  "--dump-dom", path.as_uri()],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
@@ -557,7 +557,7 @@ chance:new Set([...Array(600)].map(()=>fresh(1)[0])).size};})()});});</script></
             path = Path(work) / "fruit.html"
             path.write_text(page, encoding="utf-8")
             done = subprocess.run(
-                [engine, "--headless=new", "--disable-gpu", "--no-first-run",
+                [engine, "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
                  f"--user-data-dir={work}/profile", "--virtual-time-budget=3000",
                  "--dump-dom", path.as_uri()],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)

@@ -100,6 +100,7 @@ a page's words or another person's. A case is the deliverable the time went into
 app, the reply); time spent only reading or watching is a case only when it shows what they
 choose and how - leave out what shows nothing of their judgment."""
 
+#: A continued case, only what changed (the user, 2026-11-11; reading.READ_PROMPT).
 EARLIER_PROMPT = """WHAT AN EARLIER LEARNING FOUND OF HOW THE USER WORKS: WRITE IT AS CASES AND
 JUDGMENTS.
 
@@ -108,10 +109,13 @@ PATTERNS of how they work - each from several pieces of their work (how many is 
 PRINCIPLE. They are the agent's findings, not the user's words. For each pattern write:
 
 CASES - the kind of deliverable it is about (emails to a kind of person, a paper's figures, an
-app's interface): an existing case (listed with its id) is continued, a new one gets a ref
-"new1", "new2"... - title (a few words naming the kind of thing), facets (term ids of the WORD
-LIST: deliverable, audience, presentation, purpose, environment - only what the pattern shows),
-looks_like (what such a deliverable of theirs looks like, by the pattern: 1-3 sentences).
+app's interface): a new one gets a ref "new1", "new2"... and is written in full - title (a few
+words naming the kind of thing), facets (term ids of the WORD LIST: deliverable, audience,
+presentation, purpose, environment - only what the pattern shows), looks_like (what such a
+deliverable of theirs looks like, by the pattern: 1-3 sentences). An existing case (listed with
+its id) is continued, never written again: its id as "ref" and ONLY what this pattern changes of
+it (new "items", a facet newly shown, the "looks_like" if it is different) - what is left out is
+kept as it was; one nothing changes in is not listed, its judgments name it by its id.
 
 JUDGMENTS - what the pattern says THE USER decides in it, one decision each:
   - pattern: its id; case: the case's id or ref; item: which part, if one;
@@ -128,7 +132,8 @@ fitting existing term (its id as "parent"), with a one-line definition; then use
 "<dimension>:<term>".
 
 Return ONLY this JSON object:
-{"cases": [{"ref": "C-... or new1", "title": "", "facets": {}, "looks_like": "", "items": []}],
+{"cases": [{"ref": "new1", "title": "", "facets": {}, "looks_like": "", "items": []},
+           {"ref": "C-...", "items": ["only the new ones"]}],
  "judgments": [{"pattern": "", "case": "", "item": "", "aspect": "", "object": "object:...",
                 "direction": "", "why": "", "at": ""}],
  "new_terms": [{"dim": "", "term": "", "parent": "", "definition": ""}]}"""

@@ -173,7 +173,9 @@ def display_instruction(config: Any) -> str:
     return (f"Write everything the user will read in {name_of(display_language(config))}. "
             f"This applies to the whole of your reply, including headings, "
             f"labels and any list you write. Quoted material, file paths, "
-            f"identifiers and code keep their original wording.")
+            f"identifiers and code keep their original wording. If the user has asked, in "
+            f"their own words, for another language, write in that one instead (the user, "
+            f"2026-11-12: \"用display language 显示，除非用户另有要求\").")
 
 
 #: The languages a record's keywords are written in, for now.

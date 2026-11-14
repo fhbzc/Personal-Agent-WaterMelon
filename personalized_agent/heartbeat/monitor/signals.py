@@ -232,6 +232,13 @@ EVENTS: Dict[str, str] = {
     "leisure": "turned to something to watch or play, after working",
     "text": "new words appeared in a window (for keyword conditions)",
     "closing_up": "many windows closed in a few minutes: tidying up, perhaps to stop for the day",
+    # SAID TO THE MONITOR BY THE REST OF THE APPLICATION (the user, 2026-11-13: "所有的通知必须在monitor里，收到monitor
+    # 的统一调配") - never seen on a look; each its built-in Activator's own (Monitor.relay).
+    "reminder_due": "a reminder on the user's calendar has come to its time",
+    "report_due": "the user's report has come to one of its times (set in the Report)",
+    "deadline_near": "a thing with a hard deadline is not done and its time is near",
+    "system": "something the user must know of the application itself: signed out, a model "
+              "down, the agent stopped, an update",
 }
 
 
