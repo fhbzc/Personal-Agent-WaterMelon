@@ -402,8 +402,10 @@ class APrivateWebPageTests(_Folders):
         self.assertTrue(privacy_folders.is_private_page_title("Harbour diary - Google Chrome"),
                         "its title told by the extension's line")
         root = Path(browser_extension.__file__).resolve().parents[1] / "resources" / "browser_extension"
+        # THE EXTENSION'S SOURCE IS PRIVATE (2026-11-02): not in the public repository, so read only here.
         for name in ("visible.js", "fill.js", "background.js"):
-            self.assertIn("agentPrivateMode", (root / name).read_text("utf-8"), name)
+            if (root / name).is_file():
+                self.assertIn("agentPrivateMode", (root / name).read_text("utf-8"), name)
 
 
 class NoPictureAtAllTests(_Folders):

@@ -257,7 +257,9 @@ class TheBubbleTests(unittest.TestCase):
         bubble = self._bubble(lambda *_a, **_k: {}, front=lambda: dict(front))
         self._settle(0.3)
         said = [one.cget("text") for one in bubble.front_row.winfo_children()]
-        self.assertIn("Tide tables - Chrome (https://example.com/tides)", said[0])
+        # Cut to the bubble's width, which goes by the screen's font: the window's name is there, its
+        # address as far as there is room.
+        self.assertIn("Tide tables - Chrome (https://", said[0])
         self.assertTrue(bubble.front_row.winfo_ismapped())
         bubble._without_front("Tide tables - Chrome")
         self.assertEqual(bubble.front_off, "Tide tables - Chrome")
