@@ -12,6 +12,7 @@ import time
 import unittest
 from unittest import mock
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import support  # noqa: F401
@@ -142,6 +143,30 @@ class MonitorTests(unittest.TestCase):
         self.store.delete(listed["leisure"]["id"], "built in", "taken out of the application")
         from personalized_agent.heartbeat.monitor.builtins import builtins
         self.assertEqual(self.store.seed(builtins()), 0)
+
+    def test_system_alone_is_fixed_always_on_and_protected(self) -> None:
+        # The user, 2026-11-15: "都改成protected (除了system, 是fixed, fixed的on/protected是不能修改的按钮)".
+        listed = {one["builtin"]: one for one in self.store.list()}
+        self.assertEqual({key for key, one in listed.items() if one["fixed"]}, {"system"})
+        system = listed["system"]["id"]
+        with self.assertRaisesRegex(ValueError, "fixed: it is always on"):
+            self.store.switch(system, False)
+        with self.assertRaisesRegex(ValueError, "fixed: it is always protected"):
+            self.store.protect(system, False)
+        # Off or unprotected before it was fixed: on and protected again.
+        self.store.db.execute("UPDATE monitor_activators SET enabled = 0, protected = 0 WHERE id = ?", (system,))
+        self.assertTrue(self.store.get(system)["enabled"] and self.store.get(system)["protected"])
+        from personalized_agent.heartbeat.monitor.builtins import builtins
+        self.store.refresh(builtins())
+        row = self.store.db.query_one("SELECT enabled, protected FROM monitor_activators WHERE id = ?", (system,))
+        self.assertEqual((row["enabled"], row["protected"]), (1, 1))
+        # Any other built-in one: protected, its protection the user's.
+        self.store.protect(listed["leisure"]["id"], False)
+        self.assertFalse(self.store.get(listed["leisure"]["id"])["protected"])
+        page = (Path(act.__file__).resolve().parents[2] / "api" / "web" / "app.js").read_text("utf-8")
+        self.assertNotIn('"Built in · fixed"', page)
+        self.assertIn('${always ? " disabled" : ""}> ${escapeHtml("On")}', page)
+        self.assertIn('${always ? " disabled" : ""}> ${escapeHtml("Protected")}', page)
 
     def test_back_to_a_project_is_gone(self) -> None:
         from personalized_agent.heartbeat.monitor import signals as sg

@@ -88,11 +88,13 @@ class WhatIsDoneTests(unittest.TestCase):
             self.updater.once()
         self.assertEqual(self.installed, ["v9.0.0"])
 
-    def test_off_asks_nobody(self) -> None:
+    def test_off_installs_and_tells_nothing_ordinary(self) -> None:
+        # Off still looks - for a required fix alone (the user, 2026-11-15: "用户哪怕没有自动更新，补丁都是自动安装
+        # 的"; tests/test_required_fix.py): an ordinary newer one is neither told nor installed.
         self.config["updates"] = "off"
-        with mock.patch.object(up, "published_releases") as asked:
+        with mock.patch.object(up, "published_releases", return_value=[_release()]):
             self.updater.once()
-        asked.assert_not_called()
+        self.assertEqual((self.installed, self.told), ([], []))
 
     def test_an_older_one_is_nothing(self) -> None:
         for release in (_release(tag="v0.0.1"),):

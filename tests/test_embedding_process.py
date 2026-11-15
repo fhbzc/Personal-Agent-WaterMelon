@@ -107,5 +107,34 @@ class ARoundHoldsTheModelTests(unittest.TestCase):
         self.assertEqual(events, ["held", "let go"])
 
 
+class ItStepsAsideTests(unittest.TestCase):
+    """2026-11-15: "我刚刚chat突然很卡" - each load took every core for 10-37 s. The child runs below normal
+    priority with half the threads; seen in a process of its own, as the child is."""
+
+    def test_below_normal_and_half_the_threads(self) -> None:
+        import json
+        import subprocess
+        import sys
+        from pathlib import Path
+        worker = Path(__file__).resolve().parents[1] / "personalized_agent" / "heartbeat" / "states"
+        probe = ("import json, os, sys; sys.path.insert(0, sys.argv[1]); import embed_worker as w; w.step_aside()\n"
+                 "said = {'omp': os.environ.get('OMP_NUM_THREADS'), 'want': str(w.threads())}\n"
+                 "if sys.platform.startswith('win'):\n"
+                 "    import ctypes; k = ctypes.windll.kernel32; k.GetCurrentProcess.restype = ctypes.c_void_p\n"
+                 "    k.GetPriorityClass.argtypes = [ctypes.c_void_p]\n"
+                 "    said['below'] = k.GetPriorityClass(k.GetCurrentProcess()) == 0x4000\n"
+                 "else:\n"
+                 "    said['below'] = os.nice(0) >= 10\n"
+                 "print(json.dumps(said))")
+        env = {key: value for key, value in __import__("os").environ.items()
+               if key not in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")}
+        out = subprocess.run([sys.executable, "-c", probe, str(worker)], capture_output=True, text=True,
+                             env=env, timeout=60)
+        said = json.loads(out.stdout.strip().splitlines()[-1])
+        self.assertTrue(said["below"], "below normal priority")
+        self.assertEqual(said["omp"], said["want"], "half the threads")
+        self.assertGreaterEqual(int(said["want"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

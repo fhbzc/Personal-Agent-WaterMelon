@@ -214,6 +214,31 @@ class KeyPermissionsAndContactsTests(unittest.TestCase):
         self.assertIsNotNone(self.mira.status()["forbidden"])
         self.assertEqual(self.mira.sync_contacts(), {"contacts": 0, "paired": 0}, "not asked again")
 
+    def test_a_pairing_the_user_took_off_is_not_made_again(self) -> None:
+        # The user, 2026-11-15: "我人工可以去connections里把它和contact 的link删掉，agent不会自动加回来（除非我又说要加回来)".
+        from society_fake import random_id
+        book = _Book([{"id": "p_bo", "name": "Bo Lind"}])
+        self.mira.app.connections = book
+        account = _join(self.server, self.mira, "Mira Holt")
+        bo = random_id()
+        self.server.contacts[account] = [{"id": bo, "name": "Bo Lind", "note": "", "accounts": [],
+                                          "added_at": 1.0, "updated_at": 2.0}]
+        self.assertEqual(self.mira.sync_contacts()["paired"], 1)
+        self.assertEqual(self.mira.site_contact(bo)["person_id"], "p_bo")
+        # The user takes the link off in Connections.
+        self.mira.db.execute("CREATE TABLE IF NOT EXISTS connection_actions (id TEXT, person_id TEXT, by TEXT, "
+                             "action TEXT, before TEXT, after TEXT, at TEXT)")
+        self.mira.db.execute("INSERT INTO connection_actions (id, person_id, by, action, before, after, at) VALUES "
+                             "('x1', 'p_bo', 'user', 'remove a profile', ?, '{}', 'now')",
+                             (json.dumps({"account": {"platform": "Agents Society", "handle": bo}}),))
+        book.added.clear()
+        self.server.contacts[account][0]["updated_at"] = 3.0
+        self.mira.sync_contacts()
+        self.assertEqual(self.mira.site_contact(bo)["person_id"], "", "not paired again by the name")
+        self.assertNotIn(("p_bo", "Agents Society", bo), book.added, "nor its account put back")
+        self.assertFalse(any(one.get("sure") and one["agent"] == bo and "tied" in one["how_known"]
+                             for one in self.mira.find_agents("Bo Lind")["agents"]))
+
     def test_the_users_contacts_read_and_paired_with_connections(self) -> None:
         from society_fake import random_id
         book = _Book([{"id": "p_bo", "name": "Bo Lind"}, {"id": "p_cass", "name": "Cassia Vey"},
@@ -606,7 +631,7 @@ class SocietyTests(unittest.TestCase):
         self.assertEqual(self.theo.collect()["collected"], 0, "each once")
         self.assertEqual(self.theo.contacts()[0]["peer_id"], mira)
         # The reply, in the same thread.
-        reply = self.theo.write_draft(mira, "5 is fine", "Re: Tomorrow", written_by="user",
+        reply = self.theo.write_draft(mira, "5 is fine", "Re: Tomorrow", written_by="agent",
                                       reply_to=got["id"])
         self.theo.send_draft(reply["id"], reply["hash"])
         self.mira.collect()
@@ -625,7 +650,7 @@ class SocietyTests(unittest.TestCase):
     def test_a_draft_only_key_leaves_it_a_draft_on_the_website(self) -> None:
         mira = _join(self.server, self.mira, "Mira Holt", permissions=DEFAULT_PERMISSIONS)
         theo = _join(self.server, self.theo, "Theo Brandt")
-        draft = self.mira.write_draft(theo, "Tea at 4?", written_by="user")
+        draft = self.mira.write_draft(theo, "Tea at 4?", written_by="agent")
         kept = self.mira.send_draft(draft["id"], draft["hash"])
         self.assertEqual(kept["status"], "site_draft")
         self.assertIn("Send it on the website, or give this key send rights", kept["said"])
@@ -639,19 +664,19 @@ class SocietyTests(unittest.TestCase):
         mira = _join(self.server, self.mira, "Mira Holt",
                      permissions={"inbox": {"read": True, "write": "send", "send_to": "replied"}})
         theo = _join(self.server, self.theo, "Theo Brandt")
-        draft = self.mira.write_draft(theo, "Hello, a stranger here", written_by="user")
+        draft = self.mira.write_draft(theo, "Hello, a stranger here", written_by="agent")
         self.assertEqual(self.mira.send_draft(draft["id"], draft["hash"])["status"], "site_draft",
                          "403 - leave it as a draft: kept as one")
-        answer = self.theo.write_draft(mira, "Hello Mira", written_by="user")
+        answer = self.theo.write_draft(mira, "Hello Mira", written_by="agent")
         self.theo.send_draft(answer["id"], answer["hash"])
-        draft = self.mira.write_draft(theo, "Hello again", written_by="user")
+        draft = self.mira.write_draft(theo, "Hello again", written_by="agent")
         self.assertEqual(self.mira.send_draft(draft["id"], draft["hash"])["status"], "sent")
 
     def test_a_key_that_may_not_write(self) -> None:
         _join(self.server, self.mira, "Mira Holt",
               permissions={"inbox": {"read": True, "write": "none", "send_to": "replied"}})
         theo = _join(self.server, self.theo, "Theo Brandt")
-        draft = self.mira.write_draft(theo, "Hello", written_by="user")
+        draft = self.mira.write_draft(theo, "Hello", written_by="agent")
         with self.assertRaises(ValueError) as said:
             self.mira.send_draft(draft["id"], draft["hash"])
         self.assertIn("may not write", str(said.exception))
@@ -671,7 +696,7 @@ class SocietyTests(unittest.TestCase):
     def test_only_v2_and_the_public_lookups(self) -> None:
         mira = _join(self.server, self.mira, "Mira Holt", listed=True)
         theo = _join(self.server, self.theo, "Theo Brandt")
-        draft = self.theo.write_draft(mira, "Hi", written_by="user")
+        draft = self.theo.write_draft(mira, "Hi", written_by="agent")
         self.theo.send_draft(draft["id"], draft["hash"])
         self.mira.collect()
         self.assertEqual([one["id"] for one in self.theo.suggest("mira")["suggestions"]], [mira])
@@ -724,7 +749,7 @@ class WorkAskTests(unittest.TestCase):
         self.ada.collect()
         theirs = {one["subject"]: one for one in self.ada.messages("inbox")}
         reply = self.ada.write_draft(self.mira.account_id, "On Friday", "Re: Survey",
-                                     written_by="user", reply_to=theirs["Survey"]["id"])
+                                     written_by="agent", reply_to=theirs["Survey"]["id"])
         self.ada.send_draft(reply["id"], reply["hash"])
         self.mira.collect()
         self.assertEqual(self.answers, [("On Friday", "run1")],
@@ -818,7 +843,7 @@ class GroupsTests(unittest.TestCase):
         self.assertEqual(self.mira.group_of(self.ada.account_id), "reply")
         self.assertEqual(self.mira.group_of(self.bo.account_id), "draft")
         self.assertEqual(self.mira.group_of(self.eve.account_id), "read")
-        draft = self.mira.write_draft(self.eve.account_id, "Hi Eve", written_by="user")
+        draft = self.mira.write_draft(self.eve.account_id, "Hi Eve", written_by="agent")
         self.mira.send_draft(draft["id"], draft["hash"])
         self.assertEqual(self.mira.kind_of(self.eve.account_id), "replied",
                          "written to by the user here too")
@@ -970,7 +995,7 @@ class AnsweringTests(unittest.TestCase):
         self._dir.cleanup()
 
     def _ask(self, text):
-        draft = self.ada.write_draft(self.mira.account_id, text, "Friday", written_by="user")
+        draft = self.ada.write_draft(self.mira.account_id, text, "Friday", written_by="agent")
         self.ada.send_draft(draft["id"], draft["hash"])
         self.mira.collect()
         return [one for one in self.mira.conversation(self.ada.account_id)
@@ -1034,8 +1059,11 @@ class AnsweringTests(unittest.TestCase):
         return thread
 
     def _notes(self):
-        return [one["text"] for one in self.mira.conversation(self.ada.account_id)
-                if one["status"] == "note"]
+        """The parts of what the agent told the user - ONE NOTE an answer now (the user, 2026-11-15: "为什么每次都会有
+        两个消息"), its parts a blank line apart."""
+        kept = [one["text"] for one in self.mira.conversation(self.ada.account_id) if one["status"] == "note"]
+        self.assertLessEqual(len(kept), 1, "one note for the user, not one for each part")
+        return [part for one in kept for part in one.split("\n\n") if part.strip()]
 
     # -- 2026-11-12: the calendar and to-dos from what others write - beware, and reviewed ----------
     def test_reviewed_then_done_the_event_the_todo_the_reply_and_the_decision_kept(self) -> None:
@@ -1085,10 +1113,11 @@ class AnsweringTests(unittest.TestCase):
                              "why": "It gives the home address to someone not known."}
         self._ask("Where does Mira live?")
         self.mira.interactive.answer_waiting()
-        self.assertEqual(len(self.model.asked), 2, "made again with the reviewer's changes")
+        # Three revisions at most (the user, 2026-11-15: "最多3次修改"): made four times, reviewed four times.
+        self.assertEqual(len(self.model.asked), 4, "made again with the reviewer's changes")
         self.assertIn("A REVIEWER, on Mira Holt's behalf, sent your proposal back",
                       self.model.asked[-1].messages[0]["content"])
-        self.assertEqual(len(self.model.reviewed), 2)
+        self.assertEqual(len(self.model.reviewed), 4)
         self.assertEqual(self._theirs(), [], "nothing sent")
         self.assertEqual(self.calendar.made, [], "the blocked event not made")
         [draft] = self.mira.messages("drafts")
@@ -1145,7 +1174,7 @@ class AnsweringTests(unittest.TestCase):
         """Ada answers in the thread - to the last she got."""
         self.ada.collect()
         theirs = self.ada.messages("inbox")[-1]
-        draft = self.ada.write_draft(self.mira.account_id, text, "Re: Friday", written_by="user",
+        draft = self.ada.write_draft(self.mira.account_id, text, "Re: Friday", written_by="agent",
                                      reply_to=theirs["id"])
         self.ada.send_draft(draft["id"], draft["hash"])
         self.mira.collect()
@@ -1201,7 +1230,7 @@ class AnsweringTests(unittest.TestCase):
         """2026-11-12: read here - by the agent, or by the user opening it, whichever is first -
         the website is told, by code; ours read by them shows. Kept unread for the user (the
         read-only group), it is read when they open it."""
-        draft = self.mira.write_draft(self.ada.account_id, "Seeds?", "Tomatoes", written_by="user")
+        draft = self.mira.write_draft(self.ada.account_id, "Seeds?", "Tomatoes", written_by="agent")
         sent = self.mira.send_draft(draft["id"], draft["hash"])
         self.ada.collect()                    # Mira is no one Ada knows: kept, read only
         [got] = self.ada.messages("inbox")
@@ -1218,7 +1247,7 @@ class AnsweringTests(unittest.TestCase):
         self.assertEqual(self.mira.collect()["reads"], 0)
         # Read by the agent - the reply group, its answer made: told at once.
         self.ada.put_in_group("reply", peer=self.mira.account_id)
-        again = self.mira.write_draft(self.ada.account_id, "Or beans?", written_by="user",
+        again = self.mira.write_draft(self.ada.account_id, "Or beans?", written_by="agent",
                                       reply_to=draft["id"])
         self.mira.send_draft(again["id"], again["hash"])
         self.ada.collect()
@@ -1228,7 +1257,7 @@ class AnsweringTests(unittest.TestCase):
         self.assertEqual(self.mira.threads()[0]["status"], "seen_user")
 
     def test_a_read_signal_counts_only_from_the_one_it_went_to(self) -> None:
-        draft = self.mira.write_draft(self.ada.account_id, "Seeds?", "Tomatoes", written_by="user")
+        draft = self.mira.write_draft(self.ada.account_id, "Seeds?", "Tomatoes", written_by="agent")
         sent = self.mira.send_draft(draft["id"], draft["hash"])
         eve = self.server.website_account("Eve Stranger")
         self.server.read_signal_as(eve, self.mira.account_id, sent["server_id"])
@@ -1237,16 +1266,40 @@ class AnsweringTests(unittest.TestCase):
         self.assertEqual([one["kind"] for one in self.mira.threads()], ["message"],
                          "a signal is no message")
 
+    def test_only_the_agent_writes_the_user_reviews_and_edits(self) -> None:
+        # The user, 2026-11-15: "society的inbox 怎么可以人发，应该是不允许的。只有agent发"; "draft给人审核之后，人edit好也是
+        # 由agent发送的"; "没有人直接发送的入口".
+        from personalized_agent.society.service import AGENT_ONLY
+        theirs = self.mira.write_draft(self.ada.account_id, "My own words", written_by="user")
+        with self.assertRaisesRegex(ValueError, "only your agent writes"):
+            self.mira.send_draft(theirs["id"], theirs["hash"])
+        with self.assertRaisesRegex(ValueError, "only your agent writes"):
+            self.mira.review_draft(theirs["id"], "", "changed")
+        agents = self.mira.write_draft(self.ada.account_id, "Seeds on Friday?", "Seeds", written_by="agent")
+        edited = self.mira.review_draft(agents["id"], "Seeds", "Seeds on Saturday?")
+        self.assertEqual((edited["written_by"], edited["text"]), ("agent", "Seeds on Saturday?"))
+        with self.assertRaisesRegex(ValueError, "changed since you read it"):
+            self.mira.send_draft(agents["id"], agents["hash"])          # as it was before the edit: not sent
+        self.assertEqual(self.mira.send_draft(agents["id"], edited["hash"])["status"], "sent")
+        routes = (Path(__file__).resolve().parents[1] / "personalized_agent" / "api" / "routes.py").read_text("utf-8")
+        self.assertIn('if not str(request.get("id") or ""):\n            from ..society.service import AGENT_ONLY',
+                      routes, "no new draft by the user's hand")
+        page = (Path(__file__).resolve().parents[1] / "personalized_agent" / "api" / "web" / "app.js").read_text("utf-8")
+        for gone in ('id="society-compose-text"', 'id="society-g-text"', 'id="society-compose-send"', '"Write to them"'):
+            self.assertNotIn(gone, page, "no box for the user to write in")
+        self.assertIn("Approve - your agent sends it", page)
+        self.assertTrue(AGENT_ONLY)
+
     def test_a_new_message_of_the_users_is_a_thread_of_its_own(self) -> None:
-        draft = self.mira.write_draft(self.ada.account_id, "Seeds?", "Tomatoes", written_by="user")
+        draft = self.mira.write_draft(self.ada.account_id, "Seeds?", "Tomatoes", written_by="agent")
         [thread] = self.mira.threads()
-        self.assertEqual((thread["id"], thread["status"]), (draft["id"], "draft_user"))
+        self.assertEqual((thread["id"], thread["status"]), (draft["id"], "draft_agent"))
         sent = self.mira.send_draft(draft["id"], draft["hash"])
         [thread] = self.mira.threads()
         self.assertEqual((thread["id"], thread["status"], thread["subject"]),
                          (sent["thread"], "sent_user", "Tomatoes"))
         reply = self.mira.write_draft(self.ada.account_id, "Or beans?", "Re: Tomatoes",
-                                      written_by="user", reply_to=draft["id"])
+                                      written_by="agent", reply_to=draft["id"])
         self.assertEqual(reply["thread"], sent["thread"], "replying to one's own: its thread")
         self.assertEqual(len(self.mira.threads()), 1)
         with self.assertRaises(ValueError):

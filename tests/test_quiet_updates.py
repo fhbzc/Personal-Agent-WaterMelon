@@ -131,6 +131,43 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
+class TheVersionBeforeIsKeptADayTests(unittest.TestCase):
+    """The user, 2026-11-15: "新版本启动成功、正常运行一段时间（比如一天）之后，自动删掉 previous ... 现在回退保护的时候
+    重新下载旧的download就行"."""
+
+    def setUp(self) -> None:
+        work = tempfile.TemporaryDirectory()
+        self.addCleanup(work.cleanup)
+        self.where = Path(work.name) / ".update"
+        self.previous = self.where / quiet.PREVIOUS
+        (self.previous / "_internal").mkdir(parents=True)
+        patch = mock.patch.object(quiet, "place", return_value=self.where)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_kept_a_day_then_let_go(self) -> None:
+        at = time.time()
+        (self.previous / quiet.ASIDE_AT).write_text(str(at), encoding="utf-8")
+        self.assertFalse(quiet.let_previous_go("windows", now=at + 3600))
+        self.assertTrue(self.previous.exists(), "within the day: kept, to move back")
+        self.assertTrue(quiet.let_previous_go("windows", now=at + quiet.PREVIOUS_KEPT_SECONDS + 1))
+        self.assertFalse(self.previous.exists())
+
+    def test_with_no_time_said_its_folders_own_time(self) -> None:
+        old = time.time() - quiet.PREVIOUS_KEPT_SECONDS - 60
+        os.utime(self.previous, (old, old))
+        self.assertTrue(quiet.let_previous_go("windows"))
+
+    def test_none_set_aside_nothing(self) -> None:
+        shutil.rmtree(self.previous)
+        self.assertFalse(quiet.let_previous_go("windows"))
+
+    def test_an_older_one_made_ready_keeps_no_download(self) -> None:
+        source = (ROOT / "personalized_agent" / "platform_layer" / "updater.py").read_text("utf-8")
+        self.assertNotIn("if is_newer(tag):\n            shutil.rmtree(self.folder / tag", source)
+        self.assertIn("quiet.let_previous_go(kind)", source)
+
+
 @unittest.skipUnless(sys.platform == "win32", "the Windows helper, run for real")
 class TheWindowsHelperRunsTests(unittest.TestCase):
     """The very PowerShell, run: the parts moved, a program started and

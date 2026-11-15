@@ -220,6 +220,10 @@ class TaskExecutor:
         #: THE PLAN'S WORD on a notification marked for it (heartbeat step 3; the user, 2026-11-11):
         #: (task) -> "agent" | "gone" | "notify". Unset: told as ever.
         self.plan_decides: Optional[Callable[[ScheduledTask], str]] = None
+        #: STILL SO, ITS TIME COME (the user, 2026-11-15: "是不是在通知发布之前要对这个再做一个检查，看看是否过时"):
+        #: (task, title, message) -> {"verdict": send | rewrite | drop, "title", "message", "why"}
+        #: (heartbeat/monitor/still_so.py). Unset: told as written.
+        self.still_so: Optional[Callable[[ScheduledTask, str, str], Dict[str, str]]] = None
         #: THROUGH THE MONITOR (the user, 2026-11-13: "所有的通知必须在monitor里"): (builtin, title, message,
         #: **said) -> the notification, or None. Unset: nothing is said.
         self.relay: Optional[Callable[..., Any]] = None
@@ -278,6 +282,20 @@ class TaskExecutor:
                                               "user when it is ready")
             if decided == "gone":
                 return ExecutionOutcome(True, "not told: the plan found it no longer needed")
+        title = task.title
+        checked = ""
+        if self.still_so is not None:
+            try:
+                said = self.still_so(task, title, message) or {}
+            except Exception:
+                log.warning("whether %s is still so could not be had; told as written", task.id, exc_info=True)
+                said = {}
+            if said.get("verdict") == "drop":
+                return ExecutionOutcome(True, f"not told: no longer so - {said.get('why') or ''}".strip())
+            if said.get("verdict") == "rewrite":
+                title = str(said.get("title") or title)
+                message = str(said.get("message") or message)
+                checked = str(said.get("why") or "")
         # WHICH KIND, as the task says. Every scheduled notification
         # arrived as a reminder, asking "shall I remind you again?" about a
         # sentence that wanted only to be read; a notice is now a notice.
@@ -285,11 +303,12 @@ class TaskExecutor:
         if template not in (REMINDER, PASSIVE):
             template = REMINDER
         self._tell(
-            task.title, message,
+            title, message,
             metadata={"task_id": task.id, "source": "scheduler",
                       # WHY THE AGENT ADDED IT, shown with it (the user, 2026-11-04);
                       # one the user added themselves has none.
-                      "reason": _why_told(task), **_made_by(task)},
+                      "reason": _why_told(task), **_made_by(task),
+                      **({"rewritten": checked} if checked else {})},
             template=template, question=self._reply_for(task),
         )
         self._ask_whether_it_was_worth_it(task)

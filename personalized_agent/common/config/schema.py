@@ -298,7 +298,8 @@ SETTINGS_SCHEMA: List[SettingField] = [
                  "been away a while and no work is running - a restart of seconds, "
                  "or at once with Restart now; one that does not start is taken back "
                  "by itself. Where this copy cannot replace itself - run from "
-                 "source, a portable folder - you are only told.",
+                 "source, a portable folder - you are only told. A required fix is "
+                 "had whatever is chosen here, Off too, and you are told of it.",
                  choices=["ask", "install", "off"]),
     SettingField("display_language", "Display language", "choice",
                  _default_display(), "General",

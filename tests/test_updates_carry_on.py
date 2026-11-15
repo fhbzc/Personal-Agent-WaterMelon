@@ -147,8 +147,9 @@ class CarriedOnWhereItStoppedTests(unittest.TestCase):
             updater.make_ready({"tag": tag, "notes": "", "page": ""}, "windows")
         return came.exists()
 
-    def test_the_older_one_gone_back_to_stays_for_the_next_time(self) -> None:
-        self.assertTrue(self._made_ready("v0.0.1"))
+    def test_the_older_one_gone_back_to_goes_too(self) -> None:
+        # Downloaded again when gone back to again (the user, 2026-11-15: "现在回退保护的时候重新下载旧的download就行").
+        self.assertFalse(self._made_ready("v0.0.1"))
 
     def test_a_newer_one_goes_once_it_is_ready(self) -> None:
         self.assertFalse(self._made_ready("v9.9.9"))

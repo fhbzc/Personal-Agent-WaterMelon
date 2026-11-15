@@ -93,6 +93,40 @@ def place(kind: str) -> Optional[Path]:
     return live / ".update" if kind == "windows" else live.parent / HIDDEN_PLACE
 
 
+#: THE VERSION BEFORE, SET ASIDE, KEPT A DAY (the user, 2026-11-15: "新版本启动成功、正常运行一段时间（比如一天）之后，
+#: 自动删掉 previous"): the new one not up, it is moved back within minutes; up and run a day, it goes - a
+#: version gone back to after that is downloaded again.
+PREVIOUS = "previous"
+ASIDE_AT = "set-aside-at.txt"
+PREVIOUS_KEPT_SECONDS = 24 * 3600
+
+
+def let_previous_go(kind: str, now: Optional[float] = None) -> bool:
+    """The version set aside at the last update, let go once it has been kept a day - by when it was set aside
+    (its folder's own time where that was not said). Whether it went."""
+    where = place(kind)
+    if where is None:
+        return False
+    previous = where / PREVIOUS
+    if not previous.is_dir():
+        return False
+    try:
+        said = (previous / ASIDE_AT).read_text(encoding="utf-8").strip()
+        at = float(said)
+    except (OSError, ValueError):
+        try:
+            at = previous.stat().st_mtime
+        except OSError:
+            return False
+    if (now if now is not None else time.time()) - at < PREVIOUS_KEPT_SECONDS:
+        return False
+    shutil.rmtree(previous, ignore_errors=True)
+    gone = not previous.exists()
+    if gone:
+        log.info("the version before this one, set aside a day ago, let go")
+    return gone
+
+
 def can_make_ready(kind: str) -> bool:
     """Whether this copy can be updated quietly: the folder it is in is the
     user's to write (one installed for every user is not)."""
@@ -415,6 +449,12 @@ def run_helper(kind: str, folder: Path, said: Dict[str, Any], port: int,
     aside = Path(said["dir"]).parent / "previous"
     pairs = [[str(live_part), str(new), str(aside / Path(live_part).name)]
              for live_part, new in zip(said["live_parts"], said["parts"])]
+    # WHEN IT WAS SET ASIDE, said beside it: let go a day after (`let_previous_go`).
+    try:
+        aside.mkdir(parents=True, exist_ok=True)
+        (aside / ASIDE_AT).write_text(str(time.time()), encoding="utf-8")
+    except OSError:
+        log.debug("when the old version was set aside could not be said", exc_info=True)
     ready = folder / "helper-ready.txt"
     ready.unlink(missing_ok=True)
     (folder / RESULT).unlink(missing_ok=True)

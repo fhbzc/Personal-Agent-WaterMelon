@@ -489,9 +489,13 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         import time as _time
         wants = getattr(app, "page_wants", None) or {}
         app.page_wants = None
+        # AND THE PLACE IN THE REPORT a notification's "Go to it" asked for (the user, 2026-11-15).
+        report = getattr(app, "report_wanted", None) or {}
+        app.report_wanted = None
+        place = report.get("place") if report and _time.time() - float(report.get("at") or 0) <= 60 else None
         if not wants or _time.time() - float(wants.get("at") or 0) > 60:
-            return {"tab": ""}
-        return {"tab": str(wants.get("tab") or "")}
+            return {"tab": "report" if place else "", **({"report": place} if place else {})}
+        return {"tab": str(wants.get("tab") or ""), **({"report": place} if place else {})}
 
     @route("POST", "/api/report/seen")
     def report_seen(_request: Any) -> Any:
@@ -731,11 +735,13 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
 
     @route("POST", "/api/society/drafts/save")
     def society_draft_save(request: Any) -> Any:
-        """A draft the user wrote or changed - a draft still."""
-        return {"draft": _society(lambda: app.society.write_draft(
-            str(request.require("to")), str(request.get("text") or ""),
-            str(request.get("subject") or ""), written_by="user",
-            reply_to=str(request.get("reply_to") or ""), draft_id=str(request.get("id") or "")))}
+        """THE AGENT'S DRAFT, EDITED BY THE USER - the agent's still, sent by it (the user, 2026-11-15: "draft给人审核
+        之后，人edit好也是由agent发送的"). No new one by the user's hand ("只有agent发")."""
+        if not str(request.get("id") or ""):
+            from ..society.service import AGENT_ONLY
+            raise ApiError(AGENT_ONLY, 403)
+        return {"draft": _society(lambda: app.society.review_draft(
+            str(request.require("id")), str(request.get("subject") or ""), str(request.get("text") or "")))}
 
     @route("POST", "/api/society/drafts/remove")
     def society_draft_remove(request: Any) -> Any:
@@ -786,10 +792,10 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             str(request.require("id")), read=bool(request.get("read"))))
 
     @route("POST", "/api/society/site_group/send")
-    def society_site_group_send(request: Any) -> Any:
-        """THE USER'S OWN MESSAGE in a group - sent at once (no drafts in a group)."""
-        return _society(lambda: app.society.site_groups.send(
-            str(request.require("group")), str(request.require("text")), by="user"))
+    def society_site_group_send(_request: Any) -> Any:
+        """NOTHING WRITTEN BY THE USER IN A GROUP (the user, 2026-11-15: "只有agent发"): the agent writes there."""
+        from ..society.service import AGENT_ONLY
+        raise ApiError(AGENT_ONLY, 403)
 
     @route("POST", "/api/society/site_group/create")
     def society_site_group_create(request: Any) -> Any:
@@ -4475,6 +4481,15 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             raise ApiError("only a web address is opened")
         import webbrowser
         return {"opened": bool(webbrowser.open(url))}
+
+    @route("POST", "/api/notifications/go_to")
+    def notifications_go_to(request: Any) -> Any:
+        """A NOTIFICATION'S "GO TO IT" (the user, 2026-11-15: "应该能直接到他这个task item的位置"): the app's window
+        turned to the report, at the event and the entry of its thing."""
+        said = app.go_to_in_report(str(request.require("id")))
+        if not said.get("place"):
+            raise ApiError("it is in no event of the report", 404)
+        return said
 
     @route("POST", "/api/notifications/panel_hide")
     def notifications_panel_hide(_request: Any) -> Any:

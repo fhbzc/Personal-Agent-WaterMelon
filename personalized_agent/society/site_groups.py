@@ -367,14 +367,16 @@ class SiteGroups:
             self.db.execute("UPDATE society_group_messages SET handled_at = ? WHERE id = ?",
                             (at, row["id"]))
 
-    def answer_waiting(self) -> int:
+    def answer_waiting(self, settled_before: str = "") -> int:
         """Each group's new messages: answered where the user would want it, sent once let through
-        ("reply"); only read ("read")."""
+        ("reply"); only read ("read"). `settled_before`: only a group whose last message came before then."""
         if not self._answering.acquire(blocking=False):
             return 0
         try:
             done = 0
             for group, rows in self.waiting().items():
+                if settled_before and max(str(row.get("received_at") or "") for row in rows) > settled_before:
+                    continue
                 mode = self.mode(group)
                 if mode == "read" or not self.may("send") or self.group(group) is None:
                     self._handled(rows)

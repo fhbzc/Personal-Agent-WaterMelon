@@ -319,7 +319,9 @@ process.stdout.write(JSON.stringify({side: box("#society-g-side").innerHTML,
         self.assertIn("&lt;b&gt;Forty", said["main"], "their words shown as text")
         self.assertIn("Sent by your agent", said["main"])
         self.assertIn('id="society-g-invite"', said["main"], "the owner invites")
-        self.assertIn('id="society-g-send"', said["main"])
+        # No box for the user to write in a group (the user, 2026-11-15: "只有agent发"; "没有人直接发送的入口").
+        self.assertNotIn('id="society-g-send"', said["main"])
+        self.assertIn("Your agent writes here, not you", said["main"])
         self.assertIn('<option value="reply" selected', said["main"])
         self.assertNotIn('value="draft"', said["main"], "no drafts in a group")
         self.assertEqual(str(said["badge"]), "2")

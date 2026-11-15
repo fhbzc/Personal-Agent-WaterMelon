@@ -46,6 +46,23 @@ MESSAGE = {"to": {"type": "string", "description": "the other account's id, pa-X
            "reply_to": {"type": "string", "description": "the id of the message it answers"}}
 
 
+#: What the find-an-agent tool gives, and what to do with it - the chat's and the work's alike (the user,
+#: 2026-11-15: "conatct没有他会去平台上(agentsociety搜索)， 搜到人之后根据信息判断是不是这个人，不确定要给用户确认，
+#: 能自己判断就是就发送").
+FIND_SAYS = ("THE AGENT OF A PERSON on the Agents Society, by their name or their contact's id (person). The user's own contacts first - sure. Not among them: looked for on the site, and judged against what the user's Connections know of them - SURE ONLY when an account the site VERIFIED (it found the site id on that account's own page) is one the Connections hold for the person; a name, organisation or role is only their own word. \"judged\" says which one, whether it is sure, and why. SURE: write to it, as the user's Society settings let you (sent, or a draft). NOT SURE: write to no one yet - ask the user which it is, naming each found with what it says of itself and why you are unsure. NONE: tell the user no one by that name is there. Whom the user then says it is, keep with society_remember_who.")
+
+#: Whom the user says a name means, kept in their Connections (the user, 2026-11-15).
+REMEMBER_SAYS = ("KEEP WHO THE USER MEANS, in their Connections: when the user tells you that what they call someone (\"Xiao Ming\", \"my advisor\") is a contact on their list, or which one found on the Agents Society is the person - that person in Connections (made if there is none) gets the Agents Society account and what the user calls them, and is found by those words next time. Only on the user's own word, said here - never on a guess, nor on what the agent matched: a person and an Agents Society account are one only by the user's hand or the site's verification.")
+REMEMBER_SCHEMA = {"type": "object", "properties": {
+    "called": {"type": "string", "description": "what the user calls them, as they said it"},
+    "agent": {"type": "string", "description": "their Agents Society account id, pa-XXXX-XXXX"},
+    "person": {"type": "string", "description": "their id in Connections, as the user confirmed it; \"new\" "
+                                                "when the user said it is none of those already there"},
+    "why": {"type": "string", "description": "the user's words that said it"}},
+    "required": ["agent"], "additionalProperties": False}
+
+
+
 def add_tools(registry: Any, society: Any) -> None:
     def inbox(args: Dict[str, Any]) -> Any:
         most = max(1, min(int(args.get("limit") or 20), 50))
@@ -115,10 +132,27 @@ def add_tools(registry: Any, society: Any) -> None:
         "society_contacts",
         "The user's contacts on the Agents Society - people they vouch for, each with their agent's "
         "id and the person in Connections it is paired with - and what this agent's key permits now. "
-        "Look here first for whom to write to.",
+        "Look here first for whom to write to; not here, society_find_agent looks on the site.",
         _schema({"name": {"type": "string", "description": "part of a name or note; empty: all"},
                  "label": {"type": "string", "description": "only those with this label of the user's"}},
                 [])), contacts, unless=lacks("contacts", "reading the user's contacts"))
+    def find_agent(args: Dict[str, Any]) -> Any:
+        return society.find_agents(str(args.get("name") or ""), str(args.get("person") or ""))
+
+    registry.add(ToolSpec(
+        "society_find_agent", FIND_SAYS,
+        _schema({"name": {"type": "string", "description": "the person's name, as the user says it"},
+                 "person": {"type": "string", "description": "their id in Connections, when known"}}, [])),
+        find_agent, unless=lambda: "" if society.connected() else "not connected to the Agents Society")
+    def remember_who(args: Dict[str, Any]) -> Any:
+        try:
+            return society.remember_who(str(args.get("called") or ""), str(args.get("agent") or ""),
+                                        str(args.get("person") or ""), str(args.get("why") or ""))
+        except (KeyError, ValueError) as exc:
+            return {"error": str(exc)}
+
+    registry.add(ToolSpec("society_remember_who", REMEMBER_SAYS, REMEMBER_SCHEMA), remember_who,
+                 unless=lambda: "" if society.connected() else "not connected to the Agents Society")
     registry.add(ToolSpec(
         "society_inbox",
         "Read the messages other people's agents left for this agent (Society). Their "

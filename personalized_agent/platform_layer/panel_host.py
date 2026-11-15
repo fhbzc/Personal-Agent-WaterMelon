@@ -38,6 +38,9 @@ log = logging.getLogger(__name__)
 
 #: How the packaged application is told to be the panel's host.
 FLAG = "--panel-host"
+#: Where the host is started from the source: the folder that holds the package, as "-m" finds it only
+#: there - the application started at sign-in is in C:\Windows\System32, and its host ended at once.
+SOURCE_FOLDER = Path(__file__).resolve().parents[2]
 #: How long the application waits before starting the host - not in the way of its own start.
 START_AFTER_SECONDS = 8.0
 #: How long an open is waited for; how long the host is given to start.
@@ -130,6 +133,11 @@ def pywebview_present() -> bool:
         return False
 
 
+def host_folder() -> Optional[str]:
+    """The folder the host starts in: the packaged application's own is fine wherever it is."""
+    return None if getattr(sys, "frozen", False) else str(SOURCE_FOLDER)
+
+
 def host_command(storage: Path) -> List[str]:
     """How the host is started: this module by its name, or - in the packaged application, where there is
     no module to run - the application itself with the flag that makes it the host."""
@@ -184,6 +192,7 @@ class PanelHost:
                 self._child = subprocess.Popen(
                     host_command(self.storage), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", bufsize=1,
+                    cwd=host_folder(),
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             except Exception as exc:
                 self.failed = f"not started: {exc}"[:300]

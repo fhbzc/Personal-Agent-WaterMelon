@@ -11835,7 +11835,7 @@ function renderUpdates(said) {
   const parts = [`This is version ${said.current}.`];
   const download = said.download || null;
   if (said.mode === "off") {
-    parts.push("Updates are not looked for.");
+    parts.push("Updates are not looked for - only a required fix, which is had all the same.");
   } else if (download && !download.stopped) {
     parts.push(...downloadWords(download));
   } else if (said.doing === "checking") {
@@ -28261,15 +28261,21 @@ async function loadSociety() {
     if (societyState.thread && !societyState.asking && !societyHasTyping()) {
       openSocietyThread(societyState.thread, false);
     }
-    if (societyState.view === "groups" && !($("#society-g-text")?.value || "").trim()) loadSocietyGroups();
+    if (societyState.view === "groups") loadSocietyGroups();
     if (societyState.view === "calendar" && !societyCal.making) loadSocietyCalendar();
   }, 15000);
 }
 
 function societyHasTyping() {
-  const box = $("#society-compose-text");
-  return Boolean(box && box.value.trim()) || Boolean(document.querySelector(
-    "#society-main [data-draft-text]:focus"));
+  // A DRAFT BEING READ OR CHANGED (the user, 2026-11-15: "你现在这个draft好像会自动刷新view的位置"): its box in hand, or
+  // its words not what was saved - not drawn again under the user.
+  if (document.querySelector("#society-main [data-draft-text]:focus, #society-main [data-draft-subject]:focus")) return true;
+  return [...document.querySelectorAll("#society-main [data-society-draft]")].some((item) => {
+    const kept = (societyState.messages || []).find((one) => one.id === item.dataset.societyDraft) || {};
+    const text = item.querySelector("[data-draft-text]");
+    const subject = item.querySelector("[data-draft-subject]");
+    return (text && text.value !== String(kept.text || "")) || (subject && subject.value !== String(kept.subject || ""));
+  });
 }
 
 function societyFace(one, size) {
@@ -28605,7 +28611,6 @@ async function startSocietyMessage(peer) {
   societyShown(said);
   renderSocietyThreads();
   renderSocietyThread();
-  $("#society-compose-subject")?.focus();
 }
 
 /* -- one thread, on the right ----------------------------------------------------- */
@@ -28618,15 +28623,19 @@ function societyBubble(one) {
   if (one.status === "draft") {
     const asking = societyState.asking === one.id;
     return `<li class="society-bubble mine draft" data-society-draft="${escapeHtml(one.id)}">
-      <div class="society-bubble-head">${escapeHtml(one.written_by === "agent" ? "Draft by your agent" : "Your draft")}</div>
-      <input data-draft-subject value="${escapeHtml(one.subject)}" placeholder="${escapeHtml("Subject")}">
+      <div class="society-bubble-head">${escapeHtml(one.written_by === "agent" ? "Draft by your agent" : "An old draft of yours - not sent from here")}</div>
+      ${one.written_by !== "agent"
+        ? `${one.subject ? `<div class="society-draft-subject">${escapeHtml(one.subject)}</div>` : ""}
+      <div class="society-draft-text">${escapeHtml(one.text)}</div>
+      <div class="ov-lp-buttons"><button type="button" class="small secondary" data-society-drop="${escapeHtml(one.id)}">${escapeHtml("Remove")}</button></div>`
+        : `<input data-draft-subject value="${escapeHtml(one.subject)}" placeholder="${escapeHtml("Subject")}">
       <textarea data-draft-text rows="3">${escapeHtml(one.text)}</textarea>
       <div class="ov-lp-buttons">${asking ? `<span>${escapeHtml("Send it?")}</span>
         <button type="button" class="small" data-society-send-yes="${escapeHtml(one.id)}" data-hash="${escapeHtml(one.hash)}">${escapeHtml("Yes, send it")}</button>
         <button type="button" class="small secondary" data-society-send-no="1">${escapeHtml("No")}</button>`
-        : `<button type="button" class="small" data-society-send="${escapeHtml(one.id)}">${escapeHtml("Send")}</button>
+        : `<button type="button" class="small" data-society-send="${escapeHtml(one.id)}">${escapeHtml("Approve - your agent sends it")}</button>
         <button type="button" class="small secondary" data-society-save="${escapeHtml(one.id)}">${escapeHtml("Save")}</button>
-        <button type="button" class="small secondary" data-society-drop="${escapeHtml(one.id)}">${escapeHtml("Remove")}</button>`}</div></li>`;
+        <button type="button" class="small secondary" data-society-drop="${escapeHtml(one.id)}">${escapeHtml("Remove")}</button>`}</div>`}</li>`;
   }
   const mine = one.direction === "out";
   // What became of each: sent by whom, kept on the website, read by the agent or not yet.
@@ -28646,6 +28655,12 @@ function societyBubble(one) {
 function renderSocietyThread() {
   const main = $("#society-main");
   if (!main) return;
+  // WHERE THE USER WAS, KEPT: the list's place - at its end it follows the end - and each draft box's.
+  const listBefore = main.querySelector(".society-bubbles");
+  const listAt = listBefore ? { top: listBefore.scrollTop,
+    atEnd: listBefore.scrollHeight - listBefore.scrollTop - listBefore.clientHeight < 24 } : null;
+  const boxesAt = Object.fromEntries([...main.querySelectorAll("[data-society-draft]")].map((item) =>
+    [item.dataset.societyDraft, (item.querySelector("[data-draft-text]") || {}).scrollTop || 0]));
   const contact = societyState.contact || {};
   const peer = societyState.peer;
   const open = societyState.open || {};
@@ -28676,19 +28691,16 @@ function renderSocietyThread() {
       : societyState.newTo ? "New message" : open.subject || "(no subject)")}</h3>${societyStatusLine(open.status)}${
       societyDecisionLine(open.decision, true)}</div>
     <ul class="society-bubbles">${societyState.messages.map(societyBubble).join("")
-      || `<li class="muted">${escapeHtml("Nothing yet. Write the first message below.")}</li>`}</ul>
-    ${open.kind === "event" ? `<div class="society-compose"><p class="muted">${escapeHtml(
-        "Followed on the website. Answer it with a message of your own.")}</p>
-      <div class="ov-lp-buttons"><button type="button" data-society-open="${escapeHtml(peer)}">${escapeHtml("Write to them")}</button></div></div>`
-    : `<div class="society-compose">
-      <input id="society-compose-subject" placeholder="${escapeHtml("Subject")}" value="${escapeHtml(
-        !societyState.newTo && open.subject ? `Re: ${open.subject}` : "")}">
-      <textarea id="society-compose-text" rows="3" placeholder="${escapeHtml(societyState.newTo
-        ? "Write a message" : "Write a reply")}"></textarea>
-      <div class="ov-lp-buttons"><button type="button" id="society-compose-send">${escapeHtml("Send")}</button>
-        <button type="button" class="secondary" id="society-compose-draft">${escapeHtml("Save as draft")}</button></div></div>`}`;
+      || `<li class="muted">${escapeHtml("Nothing yet.")}</li>`}</ul>
+    <div class="society-compose"><p class="muted">${escapeHtml(open.kind === "event"
+      ? "Followed on the website. To answer it, tell your agent in the chat."
+      : "Your agent writes here, not you: tell it in the chat what to say, and to whom.")}</p></div>`;
   const list = main.querySelector(".society-bubbles");
-  if (list) list.scrollTop = list.scrollHeight;
+  if (list) list.scrollTop = listAt && !listAt.atEnd ? listAt.top : list.scrollHeight;
+  main.querySelectorAll("[data-society-draft]").forEach((item) => {
+    const box = item.querySelector("[data-draft-text]");
+    if (box && boxesAt[item.dataset.societyDraft]) box.scrollTop = boxesAt[item.dataset.societyDraft];
+  });
 }
 
 /* -- searching people ---------------------------------------------------------------------- */
@@ -29050,7 +29062,6 @@ function renderSocietyGroup() {
   if (!main || !held) return;
   const group = held.group || {};
   const may = (societyGroups.data || {}).may || {};
-  const typed = $("#society-g-text")?.value || "";
   const bubbles = (held.messages || []).map((one) => `<li class="society-bubble ${one.mine ? "mine" : "theirs"}">
       ${one.mine ? "" : `<div class="society-bubble-head">${escapeHtml(one.name || one.from)}</div>`}
       <div class="society-text">${escapeHtml(one.text)}</div>
@@ -29069,10 +29080,8 @@ function renderSocietyGroup() {
             `<option value="${mode}"${group.mode === mode ? " selected" : ""}>${escapeHtml(words)}</option>`).join("")}</select></label>
         ${inviting}</div></header>
     <ul class="society-bubbles">${bubbles || `<li class="muted">${escapeHtml("Nothing written here yet.")}</li>`}</ul>
-    ${may.send ? `<div class="society-compose">
-        <textarea id="society-g-text" rows="3" placeholder="${escapeHtml("Write to the group - every member reads it")}">${escapeHtml(typed)}</textarea>
-        <div class="ov-lp-buttons"><button type="button" id="society-g-send">${escapeHtml("Send")}</button></div></div>`
-      : `<div class="society-compose"><p class="muted">${escapeHtml(SOCIETY_GROUP_LACKS.send)}</p></div>`}`;
+    <div class="society-compose"><p class="muted">${escapeHtml(may.send ? "Your agent writes here, not you: tell it in the chat what to say, and to whom."
+      : SOCIETY_GROUP_LACKS.send)}</p></div>`;
   const box = main.querySelector(".society-bubbles");
   if (box) box.scrollTop = box.scrollHeight;
 }
@@ -29110,15 +29119,6 @@ document.addEventListener("click", async (event) => {
       { group: at.dataset.societyGJoin || at.dataset.societyGDecline, join }), join ? "Joined" : "Declined")) {
       loadSocietyGroups();
     } else at.disabled = false;
-  } else if (at.id === "society-g-send") {
-    const box = $("#society-g-text");
-    if (!box.value.trim()) return;
-    at.disabled = true;
-    if (await run(() => api.post("/api/society/site_group/send",
-      { group: societyGroups.open, text: box.value }))) {
-      box.value = "";
-      openSocietyGroup(societyGroups.open, false);
-    } else at.disabled = false;
   } else if (at.id === "society-g-invite-go") {
     const box = $("#society-g-invite");
     const said = await run(() => api.post("/api/society/site_group/invite",
@@ -29141,16 +29141,11 @@ document.addEventListener("change", async (event) => {
   } catch (err) { toast(err.message, "error"); }
 });
 
+/* The agent's draft as the user has edited it on the page. */
 function societyDraftOf(id) {
   const item = document.querySelector(`[data-society-draft="${CSS.escape(id)}"]`);
   return { id, subject: item.querySelector("[data-draft-subject]").value,
            text: item.querySelector("[data-draft-text]").value };
-}
-
-/* A reply goes in its thread: answering the last message in it, theirs or one sent from here. */
-function societyReplyTo() {
-  const said = societyState.messages.filter((one) => ["received", "sent", "site_draft"].includes(one.status));
-  return said.length ? said[said.length - 1].id : "";
 }
 
 document.addEventListener("click", async (event) => {
@@ -29229,32 +29224,18 @@ document.addEventListener("click", async (event) => {
     const said = await run(() => api.post("/api/society/link",
       { peer: societyState.peer, person_id: at.dataset.societyLinkTo }));
     if (said) { societyState.linking = false; await loadSocietyThreads(); renderSocietyThread(); }
-  } else if (at.id === "society-compose-draft" || at.id === "society-compose-send") {
-    const text = $("#society-compose-text").value;
-    if (!text.trim()) { $("#society-compose-text").focus(); return; }
-    // SAVED FIRST - as a draft; then, to send, asked: what is sent is
-    // what the user sees now.
-    const said = await run(() => api.post("/api/society/drafts/save", {
-      to: societyState.peer, subject: $("#society-compose-subject").value, text,
-      reply_to: societyReplyTo() }));
-    if (!said) return;
-    societyState.asking = at.id === "society-compose-send" ? said.draft.id : "";
-    // A reply stays in its thread; a new message is a thread of its own.
-    await openSocietyThread(societyState.thread || said.draft.thread || said.draft.id, false);
-    loadSocietyThreads();
   } else if (at.dataset.societySave) {
+    // EDITED BY THE USER, THE AGENT'S STILL (the user, 2026-11-15: "人edit好也是由agent发送的").
     const one = societyDraftOf(at.dataset.societySave);
-    const said = await run(() => api.post("/api/society/drafts/save",
-      { id: one.id, to: societyState.peer, subject: one.subject, text: one.text }));
+    const said = await run(() => api.post("/api/society/drafts/save", one));
     if (said) { toast("Saved"); openSocietyThread(societyState.thread, false); }
   } else if (at.dataset.societyDrop) {
     await run(() => api.post("/api/society/drafts/remove", { id: at.dataset.societyDrop }));
     openSocietyThread(societyState.thread, false);
     loadSocietyThreads();
   } else if (at.dataset.societySend) {
-    const one = societyDraftOf(at.dataset.societySend);
-    const said = await run(() => api.post("/api/society/drafts/save",
-      { id: one.id, to: societyState.peer, subject: one.subject, text: one.text }));
+    // THE USER'S EDITS SAVED FIRST, then asked: what the agent sends is what the user sees now.
+    const said = await run(() => api.post("/api/society/drafts/save", societyDraftOf(at.dataset.societySend)));
     if (!said) return;
     societyState.asking = said.draft.id;
     openSocietyThread(societyState.thread, false);
@@ -29295,7 +29276,7 @@ const REPORT_RECORDS = { notifications_scheduled: "Calendar reminder", notificat
   let_go: "Approval", work_done: "Agenda item", check_set: "Check", check_done: "Check",
   check_failed: "Check", follow_up_set: "Follow-up", follow_up_done: "Follow-up",
   follow_up_failed: "Follow-up", follow_up_seen: "Follow-up", follow_up_unconfirmed: "Follow-up", follow_up_none: "Agenda item",
-  found_done: "Agenda item", events_merged: "Report event" };
+  found_done: "Agenda item", events_merged: "Report event", notification_outdated: "Calendar reminder" };
 const reportState = { data: null, drawn: "", tab: "", open: new Set(), threads: {}, talking: new Set(),
   leaving: new Set(), saving: new Set(), busy: false, poll: null, issue: "", issues: null, chose: false, detail: "",
   // EACH TAB'S ORDER (the user, 2026-11-13: "每个panel支持按照last active time 排序"): "importance" - the agent's
@@ -29397,7 +29378,7 @@ function reportEntry(one, eventId = "") {
         words || how || check || after ? words + how + check + after : `<p class="muted">${escapeHtml("The agent wrote no instructions for this one - open it and read it through.")}</p>`}</div></div></div></li>`;
   }).join("") : "";
   return `<li class="report-entry report-entry-${escapeHtml(one.kind)}${reportState.leaving.has(ref) ? " leaving" : ""}${
-    reportState.saving.has(ref) ? " saving" : ""}">
+    reportState.saving.has(ref) ? " saving" : ""}${reportState.here === key ? " report-entry-here" : ""}" data-entry-key="${escapeHtml(key || "")}">
     <div class="report-entry-head">${one.state === "done" && one.kind !== "done"
         ? `<span class="report-kind report-kind-done">${escapeHtml("Done")}</span>`
         : one.user_acts ? `<span class="report-kind report-kind-mine">${escapeHtml("Waiting for your action")}</span>`
@@ -30056,6 +30037,29 @@ async function turnToTheTabWanted() {
   try { said = await api.get("/api/page/wants"); } catch (_err) { return; }
   const tab = said && said.tab && $(`#tabs button[data-tab="${CSS.escape(said.tab)}"]`);
   if (tab) tab.click();
+  if (said && said.report) goToReportPlace(said.report);
+}
+// Opened by it, too - a window made new may come up without being told it came to the front.
+setTimeout(turnToTheTabWanted, 800);
+
+/* A NOTIFICATION'S "GO TO IT" (the user, 2026-11-15: "应该能直接到他这个task item的位置"): the report at the tab
+   holding its event, the event opened, scrolled to its entry and marked a moment. */
+async function goToReportPlace(place) {
+  if (!place || !place.event) return;
+  if (!reportState.data) { await loadReportIssues(); await loadReport(true); }
+  const tabs = (reportState.data && reportState.data.tabs) || {};
+  const tab = Object.keys(tabs).find((name) => (tabs[name] || []).some((one) => one.id === place.event));
+  if (!tab) { toast("It is not in this report - it will be in the next one, or it is done."); return; }
+  reportState.tab = tab;
+  reportState.detail = place.event;
+  reportState.here = place.key || "";
+  renderReport(true);
+  const entry = place.key && document.querySelector(`.report-drawer [data-entry-key="${CSS.escape(place.key)}"]`);
+  if (entry) entry.scrollIntoView({ block: "center" });
+  setTimeout(() => {
+    reportState.here = "";
+    document.querySelectorAll(".report-entry-here").forEach((one) => one.classList.remove("report-entry-here"));
+  }, 2600);
 }
 window.addEventListener("focus", turnToTheTabWanted);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) turnToTheTabWanted(); });
@@ -30209,6 +30213,7 @@ function monSilences(data, under = "") {
 function monQuiet(rules) {
   if (!rules.length) return "";
   return `<div class="mon-quiet">${rules.map((one) => {
+    // AS GIVEN: one of the application's own while protected - switched, renamed, not edited.
     const fixed = !!one.builtin && !!one.protected;
     const editing = monState.editing === one.id && !fixed;
     return `<div class="mon-act mon-quiet-one${one.enabled === false ? " mon-off" : ""}">
@@ -30216,7 +30221,7 @@ function monQuiet(rules) {
         ${one.display_name && one.display_name !== one.name
           ? `<span class="muted mon-real-name" title="${escapeHtml("The name the agent knows it by")}">${escapeHtml(one.name)}</span>` : ""}
         <span class="muted">${escapeHtml(monCond(one.when))}</span>
-        ${fixed ? `<span class="mon-badge mon-badge-quiet" title="${escapeHtml("Built in: it can only be switched on or off")}">${escapeHtml("Built in · fixed")}</span>`
+        ${one.protected ? `<span class="mon-badge">${escapeHtml("Protected")}</span>`
           : one.builtin ? `<span class="mon-badge mon-badge-quiet">${escapeHtml("Built in")}</span>` : ""}
         <span class="mon-switches">
           <label><input type="checkbox" data-mon-quiet-switch="${escapeHtml(one.id)}"${one.enabled === false ? "" : " checked"}> ${escapeHtml("On")}</label>
@@ -30280,21 +30285,24 @@ function monTree(data) {
       <div class="mon-kind-items">${mine.map((one) => {
       const history = changes.filter((change) => change.activator_id === one.id).slice(0, 6);
       const open = monState.open.has(one.id);
-      // FIXED: one of the application's own while protected (the user, 2026-11-14: its protection theirs to take off).
+      // AS GIVEN: one of the application's own while protected (the user, 2026-11-14: its protection theirs to
+      // take off) - switched, renamed, not edited. FIXED: System alone (the user, 2026-11-15: "除了system, 是fixed,
+      // fixed的on/protected是不能修改的按钮") - always on, always protected.
       const fixed = !!one.builtin && !!one.protected;
+      const always = !!one.fixed;
       return `<details class="mon-act${one.enabled ? "" : " mon-off"}" data-mon-act="${escapeHtml(one.id)}"${open ? " open" : ""}>
         <summary><span class="mon-name">${escapeHtml(one.display_name || one.name)}</span>
           ${one.display_name && one.display_name !== one.name
             ? `<span class="muted mon-real-name" title="${escapeHtml("The name the agent knows it by")}">${
               escapeHtml(one.name)}</span>` : ""}
-          ${fixed ? `<span class="mon-badge mon-badge-quiet" title="${escapeHtml("Built in: it can only be switched on or off")}">${escapeHtml("Built in · fixed")}</span>`
-            : one.builtin ? `<span class="mon-badge mon-badge-quiet" title="${escapeHtml("Built in, its protection off: the agent and you can change it")}">${escapeHtml("Built in")}</span>`
-            : one.protected ? `<span class="mon-badge">${escapeHtml("Protected")}</span>` : ""}
+          ${always ? `<span class="mon-badge" title="${escapeHtml("Fixed: always on and protected - what you must know of the application itself")}">${escapeHtml("Fixed")}</span>`
+            : one.protected ? `<span class="mon-badge">${escapeHtml("Protected")}</span>`
+            : one.builtin ? `<span class="mon-badge mon-badge-quiet" title="${escapeHtml("Built in, its protection off: the agent and you can change it")}">${escapeHtml("Built in")}</span>` : ""}
           <span class="mon-switches">
-            <label><input type="checkbox" data-mon-switch="${escapeHtml(one.id)}"${one.enabled ? " checked" : ""}> ${escapeHtml("On")}</label>
+            <label><input type="checkbox" data-mon-switch="${escapeHtml(one.id)}"${one.enabled ? " checked" : ""}${always ? " disabled" : ""}> ${escapeHtml("On")}</label>
             <label title="${escapeHtml(one.builtin
               ? "Protected: the agent cannot change it, and it stays as the application gives it. Off: the agent may change it; protected again, it is the application's again"
-              : "Protected: the agent can neither change nor delete it")}"><input type="checkbox" data-mon-protect="${escapeHtml(one.id)}"${one.protected ? " checked" : ""}> ${escapeHtml("Protected")}</label>
+              : "Protected: the agent can neither change nor delete it")}"><input type="checkbox" data-mon-protect="${escapeHtml(one.id)}"${one.protected ? " checked" : ""}${always ? " disabled" : ""}> ${escapeHtml("Protected")}</label>
           </span></summary>
         ${monState.renaming === one.id ? monRenameForm(one) : ""}
         ${monState.editing === one.id && !fixed ? monEditForm(one) : `

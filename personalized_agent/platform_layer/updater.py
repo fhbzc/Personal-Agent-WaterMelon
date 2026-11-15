@@ -124,6 +124,12 @@ STEPS = ("downloading", "checking", "installing", "restarting")
 
 MODES = ("ask", "install", "off")
 DEFAULT_MODE = "ask"
+#: A REQUIRED FIX (the user, 2026-11-15: "这个对所有按照0.3.5的用户会自动安装（用户哪怕没有自动更新，补丁都是自动安装
+#: 的)"): a release whose notes carry this line - invisible on its page - is installed whatever the user
+#: chose for updates, Off too, as Install would: made ready in the background, taken up at the next start or
+#: when the user is away and no work runs, and told. Only a release, never a pre-release. Put in
+#: docs/release-notes/<tag>.md, from which the release's notes are made.
+REQUIRED_MARK = "<!-- required fix -->"
 #: Made ready, a version is taken up when the user has been away this long
 #: and no work runs - looked at this often.
 AWAY_SECONDS = 15 * 60
@@ -212,7 +218,9 @@ def _release_of(release: Dict[str, Any]) -> Dict[str, Any]:
     return {"tag": str(release.get("tag_name") or ""),
             "page": str(release.get("html_url") or ""),
             "published": str(release.get("published_at") or ""),
-            "notes": str(release.get("body") or "")[:NOTES_KEPT],
+            # The mark is for the updater: not shown with the notes.
+            "notes": str(release.get("body") or "").replace(REQUIRED_MARK, "").strip()[:NOTES_KEPT],
+            "required": REQUIRED_MARK in str(release.get("body") or ""),
             "prerelease": bool(release.get("prerelease")),
             "draft": bool(release.get("draft")),
             "files": files}
@@ -311,6 +319,7 @@ class Updater:
         self._said_updated()
         self._said_taken_back()
         self._said_under_way()
+        self._let_previous_go()
         self._thread = threading.Thread(target=self._loop, name="updates", daemon=True)
         self._thread.start()
 
@@ -369,10 +378,22 @@ class Updater:
                 self._wake.wait(WAIT_FOR_WORK if self.state.get("waiting_for_work")
                                 else every)
 
+    def _let_previous_go(self) -> None:
+        """The version before, set aside at the last update, let go once this one has run a day with it kept
+        (quiet_update.let_previous_go) - never the agent's trouble."""
+        from . import quiet_update as quiet
+        try:
+            kind = how_installed()
+            if kind:
+                quiet.let_previous_go(kind)
+        except Exception:  # pragma: no cover - left for the next look
+            log.debug("the version set aside could not be let go", exc_info=True)
+
     def _look(self) -> None:
         """One look at a time: one asked for while another runs is that one."""
         if not self._looking.acquire(blocking=False):
             return
+        self._let_previous_go()
         try:
             self.once()
         except DownloadStopped as exc:
@@ -389,10 +410,10 @@ class Updater:
         """One look, and - where it is chosen and possible - one install."""
         # Asked for by the user, this look: what it finds is on the page.
         for_you, self._for_you = self._for_you, False
-        if self.mode() == "off":
-            self._set(doing="", error="")
-            return self.status()
-        self._set(doing="checking", error="")
+        # OFF: nothing looked for - but a required fix (`REQUIRED_MARK`), which is looked for all the same.
+        off = self.mode() == "off"
+        if not off:
+            self._set(doing="checking", error="")
         # PRE-RELEASES (the user, 2026-11-02: "check now 是允许检测pre-release
         # 或者beta 版的，可以选择安装，但是pre-release/beta版不会被自动安装，
         # 也不会在被检测到的时候弹出提醒"): listed on the page, each to be
@@ -401,6 +422,12 @@ class Updater:
         listed = published_releases(pre=True)
         releases = [one for one in listed if not one["prerelease"]]
         newer = [one for one in releases if is_newer(one["tag"])]
+        # A REQUIRED FIX newer than this one: the newest release is installed, whatever is chosen - it has the
+        # fix too.
+        required = next((one for one in newer if one.get("required")), None)
+        if off and required is None:
+            self._set(doing="", error="")
+            return self.status()
         offered = [one for one in listed if is_newer(one["tag"])]
         # What the user may choose: those, and the older ones to go back to.
         choosable = [one for one in listed if is_newer(one["tag"]) or can_go_back_to(one["tag"])]
@@ -424,6 +451,7 @@ class Updater:
                   versions=[{"tag": one["tag"], "published": one["published"],
                              "notes": one["notes"], "page": one["page"],
                              "prerelease": one["prerelease"],
+                             "required": bool(one.get("required")),
                              "older": not is_newer(one["tag"]),
                              "can_install": installable(one)} for one in choosable])
         asked = self.state.get("asked_to_install")
@@ -435,8 +463,10 @@ class Updater:
         elif asked and asked is not True:
             # The one the user chose - a pre-release only ever so.
             chosen = next((one for one in choosable if one["tag"] == asked), None)
-        elif newest and (self.mode() == "install" or asked):
+        elif newest and (self.mode() == "install" or asked or required is not None):
             chosen = newest
+            if required is not None and not asked:
+                self._tell_required(required["tag"], newest["tag"], newest["page"])
         else:
             if newest:
                 self._tell_once(newest["tag"], newest["page"], quietly=for_you)
@@ -479,6 +509,23 @@ class Updater:
             self._set(step="", progress=None, updating_to="")
             raise
         return self.status()
+
+    def _tell_required(self, fix: str, tag: str, page: str) -> None:
+        """A required fix on its way in, told once - whatever the user chose for updates, they know."""
+        if self.state.get("told_required") == tag:
+            return
+        self._set(told_required=tag)
+        if self.notify is None:
+            return
+        try:
+            self.notify(f"{APP_NAME} {tag}: a required fix",
+                        f"{fix} is a fix every copy takes, whatever Settings > General says for updates. "
+                        f"It is made ready now and put in at the next start, or while you are away "
+                        f"and no work runs.",
+                        kind="info", dedupe_key=f"update-required-{tag}", action_hint=page,
+                        metadata={"update": tag, "required": fix}, level="collapse")
+        except Exception:  # pragma: no cover - a notice
+            log.debug("could not tell of the required fix", exc_info=True)
 
     def _tell_once(self, tag: str, page: str, quietly: bool = False) -> None:
         """A newer version told once - in a notice, unless the user is
@@ -707,10 +754,9 @@ class Updater:
             "parts": [str(one) for one in parts], "live_parts": [str(one) for one in live_parts],
             "notes": release.get("notes", ""), "page": release.get("page", ""),
             "back": not is_newer(tag)})
-        # What came down goes - but for an older one, kept to go back to it again with no
-        # download: one at most, the next download lets it go.
-        if is_newer(tag):
-            shutil.rmtree(self.folder / tag, ignore_errors=True)
+        # What came down goes - an older one's too (the user, 2026-11-15: "现在回退保护的时候重新下载旧的download就行"):
+        # gone back to again, it is downloaded again.
+        shutil.rmtree(self.folder / tag, ignore_errors=True)
         self._set(doing="", ready=tag, ready_notes=release.get("notes", ""))
 
     def take_up_now(self) -> None:

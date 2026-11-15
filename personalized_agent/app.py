@@ -679,6 +679,8 @@ class AgentApplication:
         self.agenda.cleaner = self.agenda_cleaner
         # WHAT STEP 3 FOUND, DECIDED BY THE PLAN when its time comes (the user, 2026-11-11).
         self.executor.plan_decides = self._plan_decides_notice
+        # A REMINDER THE HEARTBEAT WROTE, READ AGAIN AT ITS TIME (the user, 2026-11-15): told, told anew, or not.
+        self.executor.still_so = self._still_so_notice
         # EVERY REMINDER THROUGH THE MONITOR (the user, 2026-11-13: "所有的通知必须在monitor里").
         self.executor.relay = self.monitor.relay
         self.notifications.relay = self.monitor.relay
@@ -1446,6 +1448,12 @@ class AgentApplication:
                             "keys": ["text"], "yes": shown("Send", self.config),
                             "path": "/api/notifications/chat", "body": {"id": ident}})
             why = str(meta.get("reason") or "")
+            # WHERE ITS THING IS IN THE REPORT (the user, 2026-11-15: "要有一个option是go to the task"): one
+            # press there, when it is in one.
+            try:
+                place = self.events.place_of(meta)
+            except Exception:
+                place = {}
             parts[category_of(one)].append({
                 "id": ident, "title": str(one.get("title") or ""), "folds": True,
                 "at": str(one.get("created_at") or ""),
@@ -1454,7 +1462,7 @@ class AgentApplication:
                 "note": shown("Trigger: {0}", self.config).replace(
                     "{0}", shown(told_from(meta), self.config)
                     + (f" - {what_set_it_off(meta)}" if what_set_it_off(meta) else "")),
-                "actions": actions})
+                "actions": actions, "goes": bool(place)})
         # ONE ALONE IS OPEN (the user, 2026-11-06): there is nothing to choose between.
         waiting = [row for rows in parts.values() for row in rows]
         if len(waiting) == 1:
@@ -1633,6 +1641,37 @@ class AgentApplication:
                             (HELD + task.id, datetime.now(timezone.utc).isoformat()))
             return "agent"
         return "notify"
+
+    def go_to_in_report(self, notification_id: str) -> Dict[str, Any]:
+        """A NOTIFICATION'S THING, OPENED IN THE REPORT (the user, 2026-11-15): the app's window turned to the
+        report, its event opened at that entry - {"opened", "place"}; nothing where it is in no event."""
+        found = next((one for one in self.notifications.waiting() if str(one["id"]) == notification_id), None)
+        if found is None:
+            row = self.db.query_one("SELECT metadata FROM notifications WHERE id = ?", (notification_id,))
+            try:
+                meta = json.loads(row["metadata"] or "{}") if row else {}
+            except (TypeError, ValueError):
+                meta = {}
+        else:
+            meta = found["metadata"]
+        place = self.events.place_of(meta)
+        if not place:
+            return {"opened": False, "place": {}}
+        import time as _time
+        self.report_wanted = {"place": place, "at": _time.time()}
+        opener = getattr(self, "open_report_window", None)
+        return {"opened": bool(opener()) if callable(opener) else False, "place": place}
+
+    def _still_so_notice(self, task: Any, title: str, message: str) -> Dict[str, str]:
+        """A reminder the heartbeat wrote, its time come: read again beside what was seen since
+        (heartbeat/monitor/still_so.py). One no longer so is not told, and the report says why."""
+        from .heartbeat.monitor import still_so
+        said = still_so.check(self.db, self.models, task, title, message)
+        if said.get("verdict") == still_so.DROP:
+            from .agent.reports import did
+            did(self.db, "notification_outdated", f"Not told, no longer so: {title}", said.get("why", ""),
+                ref=str(task.id), source="scheduler")
+        return said
 
     def _approval_carriers(self) -> None:
         """How what a review held back is carried out once the user approves it - as the step

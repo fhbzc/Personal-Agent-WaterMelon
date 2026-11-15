@@ -80,6 +80,10 @@ CREATE TABLE IF NOT EXISTS monitor_quiet (
 """
 
 GROUPS = ("recommend", "risk", "calendar", "deadline", "rest", "summary", "system", "other")
+#: FIXED: the application's own that nobody switches off or unprotects - what the user must know of the
+#: application itself (the user, 2026-11-15: "除了system, 是fixed, fixed的on/protected是不能修改的按钮"). Every other
+#: one is protected or not, as the user sets it.
+FIXED = ("system",)
 #: A BUILT-IN ONE IS FIXED (the user, 2026-11-13: "现在设置的几个monitor都是protected, 不允许改"): on or off only.
 BUILT_IN_FIXED = ("A built-in Activator is fixed while it is protected: it can only be switched on or "
                   "off. Take its protection off to change it.")
@@ -523,9 +527,10 @@ class ActivatorStore:
             shown = str(row["display_name"] or "")
         except (IndexError, KeyError):
             shown = ""
-        return dict(data, id=row["id"], enabled=bool(row["enabled"]),
+        fixed = (row["builtin"] or "") in FIXED
+        return dict(data, id=row["id"], enabled=bool(row["enabled"]) or fixed,
                     display_name=shown or str(data.get("name") or ""),
-                    protected=bool(row["protected"]), builtin=row["builtin"] or "",
+                    protected=bool(row["protected"]) or fixed, builtin=row["builtin"] or "", fixed=fixed,
                     created_at=row["created_at"], updated_at=row["updated_at"],
                     text_driven=text_driven(data.get("when") or {}))
 
@@ -805,6 +810,8 @@ class ActivatorStore:
         found = self.get(ident)
         if found is None:
             raise ValueError(f"there is no Activator {ident!r}")
+        if found.get("fixed") and not on:
+            raise ValueError(f"“{found['display_name'] or found['name']}” is fixed: it is always on")
         self.db.execute("UPDATE monitor_activators SET enabled = ?, updated_at = ? WHERE id = ?",
                         (int(bool(on)), _now(), found["id"]))
         self._said(found["id"], "user", "on" if on else "off", "", None, None)
@@ -817,6 +824,8 @@ class ActivatorStore:
         found = self.get(ident)
         if found is None:
             raise ValueError(f"there is no Activator {ident!r}")
+        if found.get("fixed") and not protected:
+            raise ValueError(f"“{found['display_name'] or found['name']}” is fixed: it is always protected")
         self.db.execute("UPDATE monitor_activators SET protected = ?, updated_at = ? WHERE id = ?",
                         (int(bool(protected)), _now(), found["id"]))
         self._said(found["id"], "user", "protect" if protected else "unprotect", "", None, None)
@@ -907,6 +916,10 @@ class ActivatorStore:
         what is the user's of it, its switch and their name for it, is kept apart and stays. ONE WHOSE
         PROTECTION THE USER TOOK OFF AND THAT WAS CHANGED SINCE (2026-11-14) is theirs: kept as it is."""
         changed = 0
+        # FIXED ONES ON AND PROTECTED, whatever was set of them before they were fixed.
+        for key in FIXED:
+            self.db.execute("UPDATE monitor_activators SET enabled = 1, protected = 1 WHERE builtin = ? AND "
+                            "(enabled = 0 OR protected = 0) AND COALESCE(deleted_at, '') = ''", (key,))
         for one in builtins:
             fresh, _warnings = check({k: v for k, v in one.items()
                                       if k not in ("builtin", "protected")}, builtin=True)

@@ -100,6 +100,37 @@ class TheGateTests(unittest.TestCase):
         self.assertEqual([one["title"] for one in kept["notifications"]], ["Orchard walk with Ada"])
         self.assertTrue(verdict["ok"])
 
+    def test_a_minor_revision_is_made_and_let_through_without_another_look(self) -> None:
+        # The user, 2026-11-15: "低风险措辞改完就发（和minor revision一样，minor之后不用再过reviewer)".
+        walk_reworded = dict(WALK, title="Orchard walk with Ada, Saturday")
+        models = _Models([{"ok": False, "changes": [{"action": 1, "what": "say which day", "because": "FIT"}],
+                           "block": [], "risk": "low", "minor": True, "why": "Only the wording."}],
+                         revised={"notifications": [walk_reworded]})
+        (kept, verdict, held, blocked), _host_ = self._gate(models, {"notifications": [WALK]})
+        self.assertEqual([request.task for request, _role in models.asked],
+                         ["heartbeat_notify_review", "heartbeat_notify_revise"], "no other review")
+        self.assertTrue(verdict["ok"] and verdict["minor_done"])
+        self.assertEqual([one["title"] for one in kept["notifications"]], ["Orchard walk with Ada, Saturday"])
+
+    def test_minor_only_when_the_code_can_hold_it_so(self) -> None:
+        # Said minor with a block, or high risk: not minor - reviewed again.
+        for said in ({"risk": "low", "block": [1]}, {"risk": "high", "block": []}):
+            models = _Models([dict({"ok": False, "changes": [{"action": 1, "what": "x", "because": "y"}],
+                                    "minor": True}, **said), {"ok": True, "changes": [], "block": []}],
+                             revised={"notifications": [WALK]})
+            (_kept, verdict, _held, _blocked), _host_ = self._gate(models, {"notifications": [WALK]})
+            self.assertEqual([request.task for request, _role in models.asked][-1], "heartbeat_notify_review", said)
+            self.assertFalse(verdict.get("minor_done"))
+
+    def test_three_revisions_at_most(self) -> None:
+        # The user, 2026-11-15: "最多3次修改".
+        never = {"ok": False, "changes": [{"action": 1, "what": "x", "because": "privacy"}], "block": [], "risk": "high"}
+        models = _Models([never] * 4, revised={"notifications": [WALK]})
+        (_kept, verdict, held, _blocked), _host_ = self._gate(models, {"notifications": [WALK]})
+        tasks = [request.task for request, _role in models.asked]
+        self.assertEqual((tasks.count("heartbeat_notify_review"), tasks.count("heartbeat_notify_revise")), (4, 3))
+        self.assertFalse(verdict["ok"])
+
     def test_not_let_through_nothing_done_all_held(self) -> None:
         models = _Models([{"ok": False, "changes": [{"action": 0, "what": "ask the user",
                                                      "because": "unsure"}], "block": []},

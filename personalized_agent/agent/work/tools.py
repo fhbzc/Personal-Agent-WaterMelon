@@ -1457,11 +1457,8 @@ class WorkTools:
                               "relationship": {"type": "string",
                                                "description": "what they are to the user, to "
                                                "find only those"}}, [])),
-            ToolSpec("society_find_agent", "THE AGENT OF A PERSON on the Agents Society - to ask it "
-                     "rather than guess from the user's own messages and calendar (to settle a time, "
-                     "above all). By their name, or their contact's id (person). Each with how it is "
-                     "known: tied to the contact by the user (sure), or found by name (their own "
-                     "claim - say so).",
+            ToolSpec("society_find_agent", "To ask a person's agent rather than guess from the user's "
+                     "own messages and calendar (to settle a time, above all). " + _society_tools.FIND_SAYS,
                      _schema({"name": {"type": "string"}, "person": {"type": "string"}}, [])),
             ToolSpec("society_write", "WRITE TO A PERSON'S AGENT on the Agents Society (its id from "
                      "society_find_agent). Work the user left to you: SENT, once a review on their "

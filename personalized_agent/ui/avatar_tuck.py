@@ -259,7 +259,11 @@ def _windows(x: int, y: int) -> Sides:
     user32 = ctypes.windll.user32
     user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
     user32.MonitorFromPoint.restype = wintypes.HANDLE
-    user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(Info)]
+    # ANY STRUCTURE'S ADDRESS, NOT THIS ONE'S ALONE: `windll.user32` is shared by the whole application, and
+    # POINTER(Info) here made every other caller's GetMonitorInfoW fail once the avatar had been tucked - the
+    # side panel's among them, which then never came onto the screen (the user, 2026-11-15: "我现在logo是在侧
+    # 边，是这个的原因吗").
+    user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
     info = Info()
     info.cbSize = ctypes.sizeof(Info)
     nearest, none = 2, 0

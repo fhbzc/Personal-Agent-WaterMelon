@@ -71,7 +71,8 @@ def listen(window: Any, on_step: Callable[[int], None]) -> bool:
         comctl.RemoveWindowSubclass.argtypes = [wintypes.HWND, proc_type, wide]
         comctl.DefSubclassProc.argtypes = [wintypes.HWND, ctypes.c_uint, wide, long_]
         comctl.DefSubclassProc.restype = result
-        user32.GetGestureInfo.argtypes = [ctypes.c_void_p, ctypes.POINTER(_GestureInfo)]
+        # Any structure's address: windll.user32 is shared by the whole application (ui/avatar_tuck.py, 2026-11-15).
+        user32.GetGestureInfo.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
         user32.GetGestureInfo.restype = wintypes.BOOL
         user32.CloseGestureInfoHandle.argtypes = [ctypes.c_void_p]
         window.update_idletasks()

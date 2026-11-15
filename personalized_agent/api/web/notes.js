@@ -91,6 +91,8 @@ function notesCard(row, kind) {
   const answers = (row.actions || []).filter((one) => !one.writes).map((one, n) => `<button type="button"
       class="small${n ? " secondary" : ""}" data-notes-act="${escapeHtml(row.id)}" data-key="${escapeHtml(one.key)}">${escapeHtml(one.label)}</button>`).join("");
   const reply = (row.actions || []).find((one) => one.writes);
+  // GO TO IT, IN THE REPORT (the user, 2026-11-15: "要有一个option是go to the task"): where its thing is in one.
+  const goes = row.goes ? `<button type="button" class="small secondary" data-notes-go="${escapeHtml(row.id)}">${escapeHtml("Go to it")}</button>` : "";
   return `<li class="notes-card${open ? " open" : ""}${notesState.leaving.has(row.id) ? " leaving" : ""}">
     <button type="button" class="notes-card-head" data-notes-open="${escapeHtml(row.id)}" aria-expanded="${open}">
       <span class="notes-kind">${escapeHtml(kind)}</span>
@@ -103,7 +105,7 @@ function notesCard(row, kind) {
       ${row.url ? `<p><a href="${escapeHtml(row.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml("Open the page")}</a></p>` : ""}
       ${row.why ? `<p class="notes-why">${escapeHtml(row.why)}</p>` : ""}
       ${row.note ? `<p class="notes-why">${escapeHtml(row.note)}</p>` : ""}
-      <div class="notes-answers">${answers}</div>
+      <div class="notes-answers">${answers}${goes}</div>
       ${reply ? `<form class="report-chat notes-reply" data-notes-reply="${escapeHtml(row.id)}">
         <textarea rows="1" placeholder="${escapeHtml((reply.fields || [])[0] || "Reply")}"></textarea>
         <button type="submit" class="small">${escapeHtml(reply.yes || "Send")}</button></form>` : ""}
@@ -225,6 +227,12 @@ if (NOTES_SOLO) {
       const id = at.dataset.notesOpen;
       if (notesState.open.has(id)) notesState.open.delete(id); else notesState.open.add(id);
       renderNotes(true);
+      return;
+    }
+    if (at.dataset.notesGo) {
+      api.post("/api/notifications/go_to", { id: at.dataset.notesGo })
+        .then((said) => { if (!said.opened) toast("Open the report from the agent's window - it could not be opened from here.", "error"); })
+        .catch((err) => toast(err.message, "error"));
       return;
     }
     if (at.dataset.notesAct) {

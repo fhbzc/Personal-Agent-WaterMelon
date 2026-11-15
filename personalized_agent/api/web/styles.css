@@ -5224,6 +5224,9 @@ html.report-solo body, body.report-solo { margin: 0; background: var(--bg); }
 .report-entry { padding: 9px 0; border-top: 1px solid var(--line);
   transition: opacity 0.2s ease, transform 0.2s ease; }
 .report-entry.leaving { opacity: 0; transform: translateX(12px); }
+/* Gone to from a notification's "Go to it": marked a moment. */
+.report-entry.report-entry-here { background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent); transition: background 0.6s ease; }
 .report-entry.saving { opacity: .55; pointer-events: none; transition: opacity .15s; }
 .report-entry-head { display: flex; align-items: baseline; gap: 8px; }
 .report-entry-title { flex: 1 1 auto; font-size: 14px; overflow-wrap: anywhere; }

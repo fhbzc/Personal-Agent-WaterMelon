@@ -400,6 +400,8 @@ class DesktopAgent:
         self.app.bus.subscribe("agent.proactive_message", self._on_proactive)
         # The side panel's × puts it away through the desktop (api/routes.py), off this thread.
         self.app.hide_notes_panel = self.hide_notes_panel
+        # A NOTIFICATION'S "GO TO IT": the app's window, at the report (api/routes.py, off this thread).
+        self.app.open_report_window = self.open_report_window
         self.app.bus.subscribe("agent.speaking", self._on_speaking)
         self.app.bus.subscribe("character.changed", self._on_character_changed)
         self.app.bus.subscribe("work.handed_opened", self._on_handed_opened)
@@ -3101,6 +3103,16 @@ class DesktopAgent:
         """The report opened from its notification: the notification read and closed."""
         self._bubble_answered("", "", item.get("emphasis"), item.get("notification_id", ""))
         self.open_report()
+
+    def open_report_window(self) -> bool:
+        """The app's window turned to the report, for a place in it the page then asks for (`report_wanted`) -
+        the side panel put away, not to stand in front of it."""
+        self.open_url("/#report")
+        try:
+            self.hide_notes_panel()
+        except Exception:                        # pragma: no cover - left where it is
+            log.debug("the side panel could not be put away", exc_info=True)
+        return True
 
     def open_report(self) -> None:
         """THE REPORT, IN ITS OWN TAB OF THE PAGE (the user, 2026-11-12: "summary要和newspaper一样单独有一个

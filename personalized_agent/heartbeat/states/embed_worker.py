@@ -29,7 +29,32 @@ import time
 MAX_TOKENS = 256
 
 
+def threads() -> int:
+    """How many threads torch may use: half the computer's, one at least."""
+    return max(1, (os.cpu_count() or 2) // 2)
+
+
+def step_aside() -> None:
+    """IN THE BACKGROUND, NOT IN THE USER'S WAY (the user, 2026-11-15: "我刚刚chat突然很卡" - each load took every
+    core for 10-37 s, the chat with it): below normal priority, and half the computer's threads at most -
+    said before torch is imported, which reads the thread counts then."""
+    try:
+        if sys.platform.startswith("win"):
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+            kernel32.SetPriorityClass.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+            kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), 0x00004000)   # BELOW_NORMAL_PRIORITY_CLASS
+        else:
+            os.nice(10)
+    except Exception:            # pragma: no cover - left at its priority
+        pass
+    for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+        os.environ.setdefault(name, str(threads()))
+
+
 def serve(model_name: str) -> int:
+    step_aside()
     # The answers are the only thing on stdout: anything a library prints
     # while loading goes to stderr instead.
     answer = sys.stdout
@@ -51,6 +76,7 @@ def serve(model_name: str) -> int:
         import torch
         from transformers import AutoModel, AutoTokenizer
 
+        torch.set_num_threads(threads())
         tokeniser = AutoTokenizer.from_pretrained(model_name)
         model = AutoModel.from_pretrained(model_name)
         model.eval()

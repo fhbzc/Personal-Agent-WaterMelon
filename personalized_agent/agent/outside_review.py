@@ -29,7 +29,8 @@ from ..common.languages import in_display
 log = logging.getLogger(__name__)
 
 #: So many reviews of one proposal at most: the builder changes it between them.
-MOST_REVIEWS = 2
+#: Reviews at most: the first, and after each of THREE revisions at most (the user, 2026-11-15: "最多3次修改").
+MOST_REVIEWS = 4
 
 SYSTEM = """You REVIEW, on behalf of {user}, what {user}'s personal agent proposes to do because of
 something that came FROM OUTSIDE - a message from another person or their agent, an email, a chat,
@@ -59,11 +60,18 @@ You do not rewrite the proposal; you judge it. Be specific: which action, what i
 should become. Block an action that should not be done at all. When unsure on 1-3, do not let it
 through. Let a good proposal be: no changes for their own sake.
 
+A MINOR REVISION ("minor": true) is one where nothing is wrong on checks 1-3 and the changes only reword
+what is there - a clearer phrase, a name for a pronoun, a fact made exact - adding nothing new, taking no
+action away, sending nothing more to anyone. Made as you say, it is done without another look from you:
+call it minor only then. Anything else - something to cut for privacy, a claim to drop, an action to
+change - is not minor.
+
 Answer in JSON only:
 {{"ok": true or false,
   "changes": [{{"action": the action's number, or 0 for all, "what": "what it should become", "because": "which check, and why"}}],
   "block": [the numbers of the actions that must not be done],
   "risk": "none | low | high",
+  "minor": true only for a minor revision as said above, else false,
   "why": "one or two sentences for {user}: what you found"}}"""
 
 #: Said to the builder when the reviewer sends a proposal back.
@@ -161,9 +169,11 @@ def review(app: Any, what: str, actions: List[Dict[str, Any]], outside: Any,
     changes = [{"action": one.get("action"), "what": str(one.get("what") or "")[:500],
                 "because": str(one.get("because") or "")[:500]}
                for one in said.get("changes") or [] if isinstance(one, dict) and one.get("what")]
+    risk = str(said.get("risk") or "")
     verdict = {"ok": bool(said.get("ok")) and not changes, "changes": changes[:12], "block": block,
-               "risk": str(said.get("risk") or ""), "why": str(said.get("why") or "")[:600],
-               "read": True}
+               "risk": risk, "why": str(said.get("why") or "")[:600], "read": True,
+               # MINOR only as the code can hold it: low risk, nothing blocked, only changes asked.
+               "minor": said.get("minor") is True and risk in ("none", "low") and not block and bool(changes)}
     _keep(app, task, about, round_, actions, verdict)
     return verdict
 
@@ -188,11 +198,20 @@ def build_and_review(app: Any, build: Callable[[str], Optional[Dict[str, Any]]],
             return made, {"ok": True, "read": True, "nothing": True, "block": [], "changes": [],
                           "why": ""}
         verdict = review(app, what, actions, outside, known, commands, task, about, round_, role)
-        if verdict["ok"] or not verdict["read"] or not verdict["changes"] or round_ >= most:
+        if verdict["ok"] or not verdict["read"] or not verdict["changes"]:
             break
         asked = ASKED.format(user=user, changes=json.dumps(
             {"changes": verdict["changes"], "would_block": verdict["block"],
              "why": verdict["why"]}, ensure_ascii=False, indent=1))
+        if verdict.get("minor"):
+            # A MINOR REVISION: made as the reviewer said, and let through - no other look.
+            revised = build(asked)
+            if revised is None or not actions_of(revised):
+                break                                   # not made: as the review left it - held
+            return revised, dict(verdict, ok=True, changes=[], minor_done=True,
+                                 why=(verdict.get("why") or "") + " A minor revision, made as the review asked.")
+        if round_ >= most:
+            break
     return made, verdict
 
 

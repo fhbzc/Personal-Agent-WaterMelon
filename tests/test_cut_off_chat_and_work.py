@@ -326,7 +326,7 @@ class SocietyTests(unittest.TestCase):
         self._dir.cleanup()
 
     def _ask(self, text):
-        draft = self.ada.write_draft(self.mira.account_id, text, "Friday", written_by="user")
+        draft = self.ada.write_draft(self.mira.account_id, text, "Friday", written_by="agent")
         self.ada.send_draft(draft["id"], draft["hash"])
         self.mira.collect()
         return [one for one in self.mira.conversation(self.ada.account_id)

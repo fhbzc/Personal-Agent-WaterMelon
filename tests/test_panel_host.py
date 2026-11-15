@@ -9,6 +9,8 @@ against a stand-in server that day. Everything here is made up."""
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -111,6 +113,49 @@ class TheHostTests(unittest.TestCase):
         source = (Path(ph.__file__).resolve().parents[1] / "__main__.py").read_text("utf-8")
         self.assertIn('args_in[0] == "--panel-host"', source)
         self.assertEqual(ph.serve(""), 2, "no store, no host")
+
+    def test_started_where_its_module_is_found_whatever_folder_the_application_is_in(self) -> None:
+        # Started at sign-in the application is in C:\Windows\System32, where "-m" finds no package.
+        elsewhere = self.here / "elsewhere"
+        elsewhere.mkdir()
+        bare = {**os.environ, "PYTHONPATH": ""}
+        found = [sys.executable, "-c", "import personalized_agent.platform_layer.panel_host"]
+        self.assertNotEqual(subprocess.run(found, cwd=elsewhere, capture_output=True, env=bare).returncode, 0)
+        self.assertEqual(subprocess.run(found, cwd=ph.host_folder(), capture_output=True, env=bare).returncode, 0)
+        asked = {}
+
+        def popen(command, **kwargs):
+            asked.update(kwargs)
+            raise OSError("not started here")
+        host = ph.PanelHost(self.here / "store")
+        with mock.patch.object(ph.PanelHost, "usable", lambda self: True),                 mock.patch.object(ph.subprocess, "Popen", popen):
+            self.assertFalse(host.start())
+        self.assertEqual(asked.get("cwd"), ph.host_folder())
+        with mock.patch.object(sys, "frozen", True, create=True):
+            self.assertIsNone(ph.host_folder(), "the packaged application starts itself, wherever it is")
+
+
+class TheSharedWindowsFunctionsTests(unittest.TestCase):
+    """THE AVATAR TUCKED, THE PANEL STILL COMES (the user, 2026-11-15: "我现在logo是在侧边，是这个的原因吗"): the
+    tuck set `windll.user32.GetMonitorInfoW` to take its own structure alone, and every other caller's failed -
+    the side panel's, which then stayed off every screen."""
+
+    def test_no_shared_function_is_made_to_take_one_structure_alone(self) -> None:
+        import re
+        source = Path(ph.__file__).resolve().parents[1]
+        bad = [f"{path.relative_to(source)}:{n}" for path in source.rglob("*.py")
+               for n, line in enumerate(path.read_text("utf-8").splitlines(), 1)
+               if re.search(r"(user32|kernel32|gdi32|shcore)\.\w+\.argtypes\s*=.*POINTER\((?!wintypes\.)", line)]
+        # Windows' own (wintypes.RECT, wintypes.MSG) are one class for every caller; a module's own is not.
+        self.assertEqual(bad, [], "a structure of its own is passed as c_void_p: every module shares windll")
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows' own screens")
+    def test_the_panels_screen_read_after_the_avatar_was_tucked(self) -> None:
+        from personalized_agent.ui import avatar_tuck, chat_bubble  # noqa: F401 - each sets its own types
+        avatar_tuck._windows(100, 100)
+        (left, top, right, bottom), dpi = aw._cursor_work_area()
+        self.assertGreater(right, left)
+        self.assertGreater(dpi, 0)
 
 
 class TheDesktopTests(unittest.TestCase):

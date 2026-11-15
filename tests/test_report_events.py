@@ -217,6 +217,35 @@ class EventsTests(unittest.TestCase):
         handed = json.loads(asked.messages[0]["content"])["events"][0]
         self.assertEqual(handed["conversation"][0]["text"], "Book the small room.")
 
+    def test_its_titles_follow_what_the_agent_made(self) -> None:
+        """2026-11-15: "这个extension的title 还是0.0.3版本，但是content已经是0.0.6了 ... 不是应该让他title也进行更新吗" -
+        what the agent made is given with each entry, and the titles that no longer fit are written again."""
+        made = [dict(APPROVE[0], key="agenda:agenda_abc123", title="Upload the seed app 0.0.3",
+                     deliverables=[{"title": "Seed app 0.0.6 packages"}, {"title": "Store update to 0.0.6"}])]
+
+        def progress(request):
+            events = json.loads(request.messages[0]["content"])["events"]
+            return json.dumps({"events": [{"id": one["id"], "status": "needs_you", "progress": "Ready to upload.",
+                                           "title": "Seed app 0.0.6 release",
+                                           "titles": [{"key": "approve:agenda:agenda_abc123",
+                                                       "title": "Upload the seed app 0.0.6"}]}
+                                          for one in events]})
+        events = self._events({"report_progress": progress})
+        self.db.execute("INSERT INTO agenda_items (id, source, ref_id, title, status, created_at, updated_at) VALUES "
+                        "('agenda_abc123', 'step', 'p1:t1', 'Upload the seed app 0.0.3', 'open', 'x', 'x')")
+        again = events.update_progress(events.tabs(made, [], []))
+        [event] = again["needs_you"]
+        self.assertEqual(event["title"], "Seed app 0.0.6 release")
+        self.assertEqual(event["items"][0]["title"], "Upload the seed app 0.0.6")
+        self.assertEqual(self.db.query_one("SELECT title FROM report_events WHERE id = ?", (event["id"],))["title"],
+                         "Seed app 0.0.6 release")
+        self.assertEqual(self.db.query_one("SELECT title FROM agenda_items WHERE id = 'agenda_abc123'")["title"],
+                         "Upload the seed app 0.0.6", "where it is shown from too: not 0.0.3 again next time")
+        asked = [one for one in self.app.models.asked if one.task == "report_progress"][-1]
+        handed = json.loads(asked.messages[0]["content"])["events"][0]["in_it"][0]
+        self.assertIn("0.0.6", handed["made"], "what the agent made, given with the entry")
+        self.assertIn("TITLES THAT NO LONGER SAY WHAT IT IS", asked.system)
+
     def test_a_reply_under_a_thing_goes_to_its_own_work_said_as_a_chat(self) -> None:
         """2026-11-12: "应该是一个满工具的chat基于work的context进行回答（可以类似为工作run?)"."""
         events = self._events({})

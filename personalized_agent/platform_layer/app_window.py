@@ -317,7 +317,7 @@ def slide_in_titled(titles: set, width: Optional[int] = None) -> bool:
         user32.SetForegroundWindow(handle)
         return True
     except Exception:
-        log.debug("the window could not be slid in", exc_info=True)
+        log.warning("the window could not be slid in", exc_info=True)
     return False
 
 
@@ -341,7 +341,7 @@ def slide_out_titled(titles: set) -> bool:
         user32.ShowWindow(handle, 0)                       # SW_HIDE
         return True
     except Exception:
-        log.debug("the window could not be slid out", exc_info=True)
+        log.warning("the window could not be slid out", exc_info=True)
     return False
 
 
@@ -433,6 +433,12 @@ def place_side_window(size: Tuple[int, int], titles: Optional[set], pid: int = 0
     import ctypes
 
     def place() -> None:
+        try:
+            placing()
+        except Exception:                                     # said: the window would stay off every screen
+            log.warning("the side window could not be put on the screen", exc_info=True)
+
+    def placing() -> None:
         user32 = ctypes.windll.user32
         try:                                                  # in pixels, whatever the scaling
             user32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
