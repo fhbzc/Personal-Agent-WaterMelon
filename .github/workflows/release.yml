@@ -272,10 +272,18 @@ jobs:
       # by no application's updates (platform_layer/updater.py reads no
       # pre-release) until it is made the latest by hand:
       #   gh release edit <tag> --prerelease=false --latest
+      # IMMUTABLE RELEASES (on since 2026-11-15): files are taken only before a
+      # release is published - so it is made a draft, its files uploaded, and
+      # then published (v0.3.6 was published first and refused its files).
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
+          draft: true
           prerelease: true
           make_latest: false
           body_path: body.md
+      - name: Out of draft, as a pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
