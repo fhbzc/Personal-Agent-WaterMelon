@@ -46,9 +46,12 @@ jobs:
 
   build:
     name: Build ${{ matrix.target }}
-    # The signing secrets live in the "release" environment, which runs only
-    # once the owner approves: anyone else who can push cannot reach them.
-    environment: release
+    # The signing secrets live in the "release" environment, which only a v*
+    # tag may enter - and only the owner can make one: anyone else who can
+    # push cannot reach them. A dry run (by hand, on a branch) builds outside
+    # it, signed ad hoc on macOS and not notarized; the tag's run signs and
+    # notarizes.
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || '' }}
     permissions:
       contents: read
       id-token: write       # to sign the attestation
