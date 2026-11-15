@@ -12,7 +12,7 @@ way you would want it done. All on your own computer.
 </p>
 
 <p align="center">
-<b>Download v0.3.3:</b> <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-Setup-windows-x64.exe"><b>Windows</b></a> ·
+<b>Download v0.3.5:</b> <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-Setup-windows-x64.exe"><b>Windows</b></a> ·
 <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-macos.dmg"><b>macOS</b></a> ·
 <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-linux-x86_64.deb"><b>Linux</b></a>
 <sub>(<a href="#install">other formats</a> · <a href="#versions">every version</a>)</sub>
@@ -453,7 +453,7 @@ on it. What you start yourself (chat, a piece of work) is counted apart.
 
 ## Install
 
-The newest version is **[v0.3.3](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.3)**:
+The newest version is **[v0.3.5](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.5)**:
 
 > **On Windows, with 0.2.7 or earlier: install this version yourself, once.** Updating from inside the program quit it and never came back - the installer was never started. Run the installer below over your copy: your data and settings stay. From 0.2.8 on, updates are quiet: made ready in the background, used at the next start.
 
@@ -470,8 +470,9 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.3.5](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.5) | 2026-11-14 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.5) |
 | [v0.3.4](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.4) | 2026-11-14 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.4) |
-| [v0.3.3](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.3) | 2026-11-09 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.3) |
+| [v0.3.3](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.3) | 2026-11-09 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.3/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.3/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.3/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.3) |
 | [v0.3.2](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.2) | 2026-11-06 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.2/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.2/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.2/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.2) |
 | [v0.3.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.1) | 2026-11-06 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.1) |
 | [v0.3.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.0) | 2026-11-04 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.0/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.0/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.0/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.0) |
@@ -736,6 +737,16 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.3.5](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.5) (2026-11-14)
+
+Your Agents Society calendar comes to your agent, the waiting notifications open at once, and every Monitor rule is yours to protect and rename.
+
+- **Agents Society calendar.** Events and invitations from the site's calendar: invitations to your account answered (accept, maybe, decline), events made with guests invited by their account id, changed or cancelled - repeating ones too. One setting of your own decides how your agent handles them: it judges (what it can tell you would want, it does after its review and tells you; the rest it asks you in the report, with Accept and Decline), it asks you about each one, or it only reads. What you go to - accepted, or yours - is on your own calendar with its reminder, and follows when it is moved or cancelled. The chat and delegated work can act on it, as your setting allows. The Society panel has a Calendar tab. Invitations no longer reach the agent as messages to answer. Give the key its Calendar permissions on the site.
+- **The waiting notifications open at once.** The side panel is a small page of its own instead of the whole application, and on Windows it opens in WebView2, started in the background a few seconds after the agent: about 0.1-0.4 s, where it took 2-3 s before - and much longer while the agent was busy. Where WebView2 is not available it opens as before.
+- **Every Monitor rule can be protected and renamed** - the built-in ones too. A rule not protected is the agent's to change; a built-in one protected again is the application's again. The silences (presenting, a meeting) are rules as well: switched, protected, renamed and changed like the others, and shown above everything else they hold back. The application's own kind is called System. The chat and delegated work can switch rules on and off, never a protected one.
+- **The report** keeps one thing on your plate as one event: putting it away, checking it and asking about it no longer make new events.
+- **WeChat**: the name of the chat in front is read even with a panel open beside it, so who wrote what, and to whom, is no longer lost there.
 
 ### [v0.3.4](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.4) (2026-11-14, a pre-release)
 
