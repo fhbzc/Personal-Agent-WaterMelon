@@ -460,7 +460,7 @@ The newest version is **[v0.3.5](https://github.com/fhbzc/Personal-Agent-WaterMe
 | System | Installer (recommended) | Portable (no install) |
 | --- | --- | --- |
 | **Windows** 10/11, x64 | [PersonalAgentWaterMelon-Setup-windows-x64.exe](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-Setup-windows-x64.exe) | [PersonalAgentWaterMelon-portable-windows-x64.zip](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-portable-windows-x64.zip) |
-| **macOS** 11+, Apple Silicon | [PersonalAgentWaterMelon-macos.dmg](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-macos.dmg): open it and drag the app into Applications | [PersonalAgentWaterMelon-macos.pkg](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-macos.pkg): an installer instead, which needs your password and cannot update itself |
+| **macOS** 11+, Apple Silicon | [PersonalAgentWaterMelon-macos.dmg](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-macos.dmg): open it and drag the app into Applications | - (the app in the `.dmg` runs from wherever you put it) |
 | **Linux** x86-64 | [PersonalAgentWaterMelon-linux-x86_64.deb](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-linux-x86_64.deb) | [PersonalAgentWaterMelon-linux-x86_64.AppImage](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-linux-x86_64.AppImage) · [tar.gz](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-portable-linux-x86_64.tar.gz) |
 
 ### Versions
@@ -506,8 +506,8 @@ and shows what is new. Only published releases count: nothing reaches you
 from the code until it is released. You can instead have the newest
 installed by itself (also a box in the Windows installer, unticked), or
 nothing looked for. The Windows installer, the macOS app dragged in from the
-`.dmg` and the Linux AppImage update themselves; the portable folder, the
-`.deb` and the macOS `.pkg` are told there is a new version and where it is.
+`.dmg` and the Linux AppImage update themselves; the portable folder and the
+`.deb` are told there is a new version and where it is.
 
 ### Installer or portable?
 
@@ -570,10 +570,10 @@ certificate), so Windows warns once. The macOS build is signed by Apple:
 - **Windows.** SmartScreen shows *"Windows protected your PC"*. Click
   **More info → Run anyway**. Some antivirus programs are wary of unsigned
   Python applications; you can check the file as below.
-- **macOS.** From v0.2.15 the app, the `.dmg` and the `.pkg` are signed with
+- **macOS.** From v0.2.15 the app and the `.dmg` are signed with
   an Apple Developer ID and notarized by Apple: they open with no warning.
-  (Up to v0.2.11: *"Apple cannot check it"* - right-click the app or the
-  `.pkg` → **Open** → **Open**.) Then **Settings → Privacy →
+  (Up to v0.2.11: *"Apple cannot check it"* - right-click the app
+  → **Open** → **Open**.) Then **Settings → Privacy →
   macOS permissions** lists what macOS needs you to allow, with a button to
   each; allow **Full Disk Access** first, and macOS will not ask about your
   Desktop, Documents and Downloads folders one by one. Up to v0.2.2 macOS
@@ -604,7 +604,7 @@ Get-FileHash .\PersonalAgentWaterMelon-Setup-windows-x64.exe -Algorithm SHA256
 ```
 ```bash
 # macOS
-shasum -a 256 PersonalAgentWaterMelon-macos.pkg
+shasum -a 256 PersonalAgentWaterMelon-macos.dmg
 # Linux
 sha256sum PersonalAgentWaterMelon-linux-x86_64.deb
 # or check every file you downloaded at once
@@ -717,7 +717,7 @@ The result is in `dist/<platform>/`:
 | Platform | What `build.py` makes | Also needs |
 | --- | --- | --- |
 | Windows | `PersonalAgentWaterMelon.exe` in a folder, a portable `.zip`, and `PersonalAgentWaterMelon-Setup.exe` | [Inno Setup 6](https://jrsoftware.org/isinfo.php) for the installer |
-| macOS | `Personal Agent WaterMelon.app`, a `.dmg` and a `.pkg` | Xcode command-line tools |
+| macOS | `Personal Agent WaterMelon.app` and a `.dmg` | Xcode command-line tools |
 | Linux | a folder, a `.tar.gz`, a `.deb` and an AppImage | `dpkg-deb`, `appimagetool` |
 
 Other options: `--fast` (skip the tests and checks), `--no-installer`
