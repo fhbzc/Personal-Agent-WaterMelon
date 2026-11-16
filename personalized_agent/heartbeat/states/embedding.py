@@ -480,7 +480,7 @@ def _installed() -> bool:
     import importlib.util
     try:
         return all(importlib.util.find_spec(name) is not None
-                   for name in ("torch", "transformers"))
+                   for name in ("onnxruntime", "tokenizers", "huggingface_hub", "numpy"))
     except Exception:                # pragma: no cover - a broken install
         return False
 

@@ -433,7 +433,7 @@ class BuildToolingTests(unittest.TestCase):
         from build.common import current_platform, pyinstaller_command
 
         target = current_platform()
-        command = pyinstaller_command(target, name="Test")
+        command = pyinstaller_command(target, name="Test", models=False)
         joined = " ".join(command)
         self.assertIn(f"personalized_agent.platform_layer.{target}", joined)
         for other in ("windows", "macos", "linux"):

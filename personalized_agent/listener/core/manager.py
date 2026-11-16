@@ -13,7 +13,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from types import MethodType
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 from ...common.events.models import ListenerEvent
 from ...common.credentials_guard import hide_credentials
@@ -70,6 +70,21 @@ class ListenerManager:
         self._states: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.RLock()
         self._running = False
+        #: THE FOLDERS THE USER GAVE PIECES OF WORK (2026-11-16) - set by the application: watched by the file
+        #: listener beside its setting's own.
+        self.work_folders: Optional[Callable[[], List[str]]] = None
+
+    def _more_watch_roots(self) -> List[str]:
+        return list(self.work_folders() or []) if callable(self.work_folders) else []
+
+    def work_folders_changed(self) -> None:
+        """A folder given to a piece of work, or taken back: the file listener watches as it now stands."""
+        provider = self._providers.get("filesystem")
+        if provider is not None and self._running:
+            try:
+                provider.settings_changed()
+            except Exception:
+                log.warning("the file listener could not take up the work's folders", exc_info=True)
 
     # -- discovery ----------------------------------------------------------
     def discover(self) -> None:
@@ -84,7 +99,7 @@ class ListenerManager:
 
         for factory in (
             lambda: ApplicationProvider(self.config, self.platform),
-            lambda: FilesystemProvider(self.config, self.platform),
+            lambda: FilesystemProvider(self.config, self.platform, more_roots=self._more_watch_roots),
             lambda: BrowserProvider(self.config, self.platform),
             lambda: AssistantProvider(self.config, self.platform),
             lambda: ScreenProvider(self.config, self.platform, bus=self.bus),

@@ -7,18 +7,17 @@
     python build/make_build_env.py --from PYTHON  # pin to another development Python
 
 PyInstaller packages whatever the Python running it has installed. A
-developer's own Python tends to have more than the application uses - a CUDA
-build of torch, TensorFlow - and all of it ends up in the installer: a CUDA
-torch alone adds about two gigabytes, though the embedding model runs on the
-processor. So releases are built from an environment of their own, holding
-the application's requirements, PyInstaller and a CPU-only torch, and
-nothing else.
+developer's own Python tends to have more than the application uses - torch,
+TensorFlow - and all of it ends up in the installer. So releases are built
+from an environment of their own, holding the application's requirements and
+PyInstaller, and nothing else. (The sentence model runs on ONNX Runtime since
+2026-11-16: an environment made before, with torch in it, is made again with
+--recreate.)
 
 What it holds is the same as what the application is developed against:
 every package is pinned to the version installed in the development Python
 (read with ``pip freeze``, never changed), so the release runs the code that
-was tested. torch is the one exception, and only in its build: the same
-version, as the CPU-only wheel.
+was tested.
 
 It lives outside the repository, so it is never committed, never synced and
 never seen by the tests:
@@ -48,25 +47,18 @@ from typing import Dict, List, Optional
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REQUIREMENTS = REPO_ROOT / "requirements.txt"
 
-# The torch wheel the packaged application carries is the CPU-only one: on
-# Windows and Linux the default wheel is a CUDA build. Its version is the
-# development Python's; this one is used only when that has no torch at all.
-# macOS wheels have no CUDA, so there it comes from the ordinary index.
-FALLBACK_TORCH_VERSION = "2.5.1"
-TORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
-
 # Lines of requirements.txt that are for developing, not for running.
 SKIPPED_REQUIREMENTS = {"pytest", "python-pptx", "pdfplumber"}
 
 # Needed to build the release, though requirements.txt leaves it out.
 EXTRA_PACKAGES = ["pyinstaller"]
 
-# Never pinned from the development Python. torch is pinned separately, to
-# its version without the CUDA tag; the rest are the GPU and the other
-# machine-learning frameworks the application does not use, which the build
+# Never pinned from the development Python: the GPU and the machine-learning
+# frameworks the application does not use - torch and transformers among them
+# since the sentence model runs on ONNX Runtime (2026-11-16) - which the build
 # environment must not have at any version.
 UNPINNED = re.compile(
-    r"^(torch|torchvision|torchaudio|nvidia-.*|tensorflow.*|keras|tf-keras|"
+    r"^(torch|torchvision|torchaudio|transformers|nvidia-.*|tensorflow.*|keras|tf-keras|"
     r"tensorboard.*|jax.*|flax)$"
 )
 
@@ -148,19 +140,9 @@ def runtime_requirements() -> List[str]:
     return kept
 
 
-def torch_version(development: Dict[str, str]) -> str:
-    """The development torch's version without its build tag (+cu121)."""
-    found = development.get("torch")
-    if not found:
-        print(f"note: the development Python has no torch; using {FALLBACK_TORCH_VERSION}")
-        return FALLBACK_TORCH_VERSION
-    return found.split("+", 1)[0]
-
-
-def constraints(development: Dict[str, str], torch: str) -> List[str]:
-    pins = [f"{name}=={version}" for name, version in sorted(development.items())
+def constraints(development: Dict[str, str]) -> List[str]:
+    return [f"{name}=={version}" for name, version in sorted(development.items())
             if not UNPINNED.match(name)]
-    return pins + [f"torch=={torch}"]
 
 
 def note_unpinned(development: Dict[str, str], wanted: List[str]) -> None:
@@ -189,7 +171,6 @@ def main(argv: Optional[list] = None) -> int:
         raise SystemExit("--from is the build environment itself; name the development Python")
     development = frozen_versions(source)
     print(f"pinning to the {len(development)} packages of {source}")
-    torch = torch_version(development)
     requirements = runtime_requirements() + EXTRA_PACKAGES
     note_unpinned(development, [requirement_name(line) for line in requirements])
 
@@ -205,7 +186,7 @@ def main(argv: Optional[list] = None) -> int:
 
     with tempfile.TemporaryDirectory() as scratch:
         constraint_file = Path(scratch) / "constraints.txt"
-        constraint_file.write_text("\n".join(constraints(development, torch)) + "\n",
+        constraint_file.write_text("\n".join(constraints(development)) + "\n",
                                    encoding="utf-8")
         requirement_file = Path(scratch) / "requirements.txt"
         requirement_file.write_text("\n".join(requirements) + "\n", encoding="utf-8")
@@ -213,17 +194,6 @@ def main(argv: Optional[list] = None) -> int:
 
         # pip first, at the development version: the application imports it.
         run([*pip, "pip", "-c", constraint_file])
-
-        # torch alone, from the CPU index and without its dependencies, which
-        # the CPU index does not carry at every version. They come with the
-        # requirements below, from the ordinary index and at the pinned
-        # versions; torch itself is already there and satisfies its pin
-        # (2.5.1+cpu is a 2.5.1).
-        torch_install = [*pip, f"torch=={torch}", "--no-deps"]
-        if sys.platform != "darwin":
-            torch_install += ["--index-url", TORCH_CPU_INDEX]
-        run(torch_install)
-
         run([*pip, "-r", requirement_file, "-c", constraint_file])
     run([python, "-m", "pip", "check", "--disable-pip-version-check"])
 
@@ -239,9 +209,10 @@ def main(argv: Optional[list] = None) -> int:
         print("not in the development Python: " + ", ".join(only_here))
 
     run([python, "-c",
-         "import torch, transformers, PyInstaller; "
-         "print('torch', torch.__version__, '| CUDA', torch.version.cuda, "
-         "'| transformers', transformers.__version__, '| PyInstaller', PyInstaller.__version__)"])
+         "import importlib.util, onnxruntime, tokenizers, PyInstaller; "
+         "print('onnxruntime', onnxruntime.__version__, '| tokenizers', tokenizers.__version__, "
+         "'| PyInstaller', PyInstaller.__version__, '| torch here:', "
+         "importlib.util.find_spec('torch') is not None)"])
     builder = {"win32": "build/windows/build_windows.py",
                "darwin": "build/macos/build_macos.py"}.get(sys.platform,
                                                           "build/linux/build_linux.py")

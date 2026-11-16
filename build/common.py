@@ -373,51 +373,23 @@ NO_DEBUGGER_ENV = "PA_BUILD_NO_DEBUGGER"
 
 
 # Machine-learning frameworks the application never imports. The embedding
-# worker runs on torch through transformers and nothing else, but transformers
-# looks for TensorFlow, Keras and JAX at import time, and PyInstaller follows
-# those lookups into whatever the build machine happens to have installed. On
-# a machine with TensorFlow that is well over a gigabyte of libraries nobody
-# will load, so they are left out by name. Anything that tries them in the
-# packaged application finds them missing, which transformers already treats
-# as "not installed".
+# worker runs on ONNX Runtime (2026-11-16; torch and transformers before), but
+# libraries it carries - huggingface_hub among them - look for torch,
+# TensorFlow, Keras and JAX where they are installed, and PyInstaller follows
+# those lookups into whatever the build machine happens to have. On a
+# developer's machine that is gigabytes of libraries nobody will load, so they
+# are left out by name; anything that tries them in the packaged application
+# finds them missing, which those libraries treat as "not installed".
 UNUSED_HEAVY_PACKAGES = [
     "tensorflow", "tensorflow_intel", "tf_keras", "keras", "tensorboard",
     "jax", "jaxlib", "flax",
+    "torch", "torchvision", "torchaudio", "transformers", "safetensors.torch",
 ]
 
 
 def warn_about_bundle_weight() -> None:
-    """Say so when the torch being bundled is a CUDA build.
-
-    PyInstaller packages the torch it finds, and a CUDA build of torch brings
-    its CUDA libraries along - about two gigabytes - though the embedding
-    model runs on the processor. Read from torch's version file rather than
-    by importing torch, which takes seconds and a good deal of memory.
-    """
-    import importlib.util
-    import runpy
-
-    try:
-        spec = importlib.util.find_spec("torch")
-        if spec is None or not spec.origin:
-            return
-        cuda = runpy.run_path(str(Path(spec.origin).parent / "version.py")).get("cuda")
-    except Exception:
-        return
-    if not cuda:
-        return
-    print(
-        f"\nnote: the Python running this build ({sys.executable}) has a CUDA build of "
-        f"torch (CUDA {cuda}).\n"
-        "  The packaged application will carry the CUDA libraries - about 2 GB more in the\n"
-        "  folder and the installer - though the embedding model runs on the processor.\n"
-        "  To build without them, make the CPU-only build environment once, outside the\n"
-        "  repository, and run the build with the Python it prints:\n"
-        "    python build/make_build_env.py\n"
-        "  (on Windows: %LOCALAPPDATA%\\PersonalizedAgent-build\\venv\\Scripts\\python.exe "
-        "build/windows/build_windows.py)\n",
-        flush=True,
-    )
+    """Nothing to say since the sentence model left torch (2026-11-16): kept for the callers."""
+    return None
 
 
 def exclude_arguments(target: str) -> List[str]:
@@ -443,7 +415,9 @@ def pyinstaller_command(
     extra: Optional[List[str]] = None,
     distpath: Optional[Path] = None,
     clean: bool = True,
+    models: bool = True,
 ) -> List[str]:
+    """``models`` carries the sentence model (prepare_assets fetches it first)."""
     separator = ";" if target == "windows" else ":"
     warn_about_bundle_weight()
     command = [
@@ -459,6 +433,7 @@ def pyinstaller_command(
         *(["--onefile"] if onefile else ["--onedir"]),
         *(["--windowed"] if windowed else ["--console"]),
         *data_arguments(separator),
+        *(model_data_arguments(separator) if models else []),
         *hidden_import_arguments(target),
         *collect_arguments(target),
         *exclude_arguments(target),
@@ -492,12 +467,101 @@ def which(binary: str) -> Optional[str]:
 
 
 def prepare_assets() -> None:
-    """Generate the built-in character package if it is not committed."""
+    """Generate the built-in character package if it is not committed, and
+    fetch the sentence model the installer carries."""
     from build.prepare_assets import ensure_assets
 
     ensure_assets()
     from build.prepare_assets import ensure_app_icons
     ensure_app_icons()
+    prepare_models()
+
+
+# THE SENTENCE MODEL IN THE INSTALLER (the user, 2026-11-16: "把这个打包进安装包"):
+# without it, every copy downloads it from Hugging Face the first time, and
+# one that cannot reach the site compares words instead, quietly. Kept out of
+# the repository (about 90 MB): fetched at build time at the pinned revision,
+# each file checked against the SHA-256 the worker names.
+MODELS_ROOT = BUILD_WORK_ROOT / "carried"
+
+
+def _embed_worker():
+    """The worker module, read by its path: it needs nothing from the package."""
+    import importlib.util
+
+    path = REPO_ROOT / "personalized_agent" / "heartbeat" / "states" / "embed_worker.py"
+    spec = importlib.util.spec_from_file_location("_embed_worker_for_build", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def model_files(root: Path = MODELS_ROOT) -> List[Tuple[Path, str, str]]:
+    """(where the build keeps it, its file in the repository, its SHA-256) for
+    every file the installer carries."""
+    worker = _embed_worker()
+    files = []
+    for model, wanted in worker.BUNDLED_FILES.items():
+        folder = Path(worker.bundled_folder(model, str(root)))
+        for name, digest in wanted.items():
+            files.append((folder / worker.bundled_name(name), name, digest))
+    return files
+
+
+def prepare_models(root: Path = MODELS_ROOT, fetch=None) -> Path:
+    """The carried model's files under ``root``, each downloaded once and
+    checked; a file that does not match is fetched again, and one that still
+    does not stops the build."""
+    worker = _embed_worker()
+    for model, name, digest in ((model, name, digest)
+                                for model, wanted in worker.BUNDLED_FILES.items()
+                                for name, digest in wanted.items()):
+        path = Path(worker.bundled_folder(model, str(root))) / worker.bundled_name(name)
+        if path.is_file() and _sha256(path) == digest:
+            continue
+        print(f"fetching {model} {name} for the installer", flush=True)
+        # Into a folder of the build's own, as the repository lays it out -
+        # not the Hugging Face cache of the machine that builds - then moved
+        # beside the other.
+        fetched = path.parent / ".fetch"
+        if fetch is None:
+            from huggingface_hub import hf_hub_download
+
+            hf_hub_download(model, name, revision=worker.REVISIONS[model], local_dir=str(fetched))
+        else:
+            fetch(model, name, worker.REVISIONS[model], fetched)
+        source = fetched.joinpath(*name.split("/"))
+        if source.is_file():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(source, path)
+        if not path.is_file() or _sha256(path) != digest:
+            raise BuildError(f"{model} {name} does not match its SHA-256 {digest}")
+    return root
+
+
+def model_data_arguments(separator: str, root: Path = MODELS_ROOT) -> List[str]:
+    """--add-data for the carried model: refused when a file is missing, so a
+    build never ships without it unnoticed."""
+    for path, name, _digest in model_files(root):
+        if not path.is_file():
+            raise BuildError(f"the sentence model's {name} is missing from {path.parent} - "
+                             "prepare_assets() fetches it")
+    args: List[str] = []
+    for path, name, _digest in model_files(root):
+        # Laid out under ``root`` as under the application's own folder.
+        destination = "/".join(path.parent.relative_to(root).parts)
+        args += ["--add-data", f"{path}{separator}{destination}"]
+    return args
 
 
 def write_build_manifest(target: str, artifacts: List[Path]) -> Path:

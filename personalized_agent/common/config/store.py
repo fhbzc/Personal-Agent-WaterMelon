@@ -60,6 +60,7 @@ class ConfigStore:
         self._every_assistant_once()
         self._watermelon_once()
         self._workspace_unheard_once()
+        self._own_folders_once()
 
     # -- persistence --------------------------------------------------------
     def _load(self) -> None:
@@ -183,6 +184,42 @@ class ConfigStore:
             if self._user_defaults:
                 self._save_user_defaults()
             self._values[self.WORKSPACE_UNHEARD_MARK] = True
+            self._save()
+
+    #: Set once the watched folders moved from every drive to the user's own (2026-11-16).
+    OWN_FOLDERS_MARK = "listener_own_folders"
+
+    def _own_folders_once(self) -> None:
+        """THE USER'S OWN FOLDERS, NOT EVERY DRIVE - ONCE (the user, 2026-11-16: "需要这个迁移"). Every value is
+        written to the settings file, the defaults included, so a copy installed before holds the old default -
+        every drive - as if it had been chosen, and would go on watching all of C:\\ after an update. Watched
+        folders that are every drive and nothing else, not among the user's own defaults, become the new
+        default; any other list is the user's and is kept. And the whole of AppData joins the folders left
+        unwatched, beside the user's own lines. Put back later in Settings, either stays as they set it."""
+        with self._lock:
+            if self._values.get(self.OWN_FOLDERS_MARK):
+                return
+            key = "listener_watch_paths"
+            drives = {os.path.normcase(line.strip().rstrip("\\/") or line.strip())
+                      for line in schema.every_drive().splitlines() if line.strip()}
+
+            def every_drive(value: Any) -> bool:
+                lines = [line.strip() for line in str(value or "").splitlines() if line.strip()]
+                return bool(lines) and all(
+                    os.path.normcase(line.rstrip("\\/") or line) in drives or
+                    (len(line.rstrip("\\/")) == 2 and line[1] == ":") or line == "/" for line in lines)
+
+            if every_drive(self._values.get(key)) and key not in self._user_defaults:
+                self._values[key] = schema.default_watch_paths()
+                log.info("watched folders: every drive was the old default - now the user's own folders")
+            app_data = str(Path.home() / "AppData")
+            if os.name == "nt":
+                held = "listener_directory_exclusions"
+                lines = [line for line in str(self._values.get(held) or "").splitlines() if line.strip()]
+                if not any(os.path.normcase(line.strip().rstrip("\\/")) == os.path.normcase(app_data)
+                           for line in lines):
+                    self._values[held] = "\n".join(lines + [app_data])
+            self._values[self.OWN_FOLDERS_MARK] = True
             self._save()
 
     #: Set once the old default avatar gave way to Watermelon.

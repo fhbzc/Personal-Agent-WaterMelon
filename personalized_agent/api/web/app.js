@@ -11979,6 +11979,12 @@ function renderUpdateVersions(said) {
   const text = document.createElement("div");
   text.classList.add("update-notes-text");
   notes.append(summary, text);
+  // OPEN AS THE USER LEFT IT (the user, 2026-11-16: "settings update点击what is new 会被自动刷新collapse"): this part is
+  // drawn again every two seconds while a version comes down - the notes of the version shown stay open.
+  notes.addEventListener("toggle", () => {
+    const one = chosen();
+    renderUpdateVersions.notesOpen = notes.open && one ? one.tag : "";
+  });
   const show = () => {
     const one = chosen();
     action.innerHTML = "";
@@ -11986,6 +11992,7 @@ function renderUpdateVersions(said) {
     warning.hidden = !(one && one.older);
     turnsOff.hidden = !(one && one.older && said.mode === "install");
     if (!one) return;
+    notes.open = renderUpdateVersions.notesOpen === one.tag;
     renderUpdateVersions.chosen = one.tag;
     text.textContent = one.notes || "This release says nothing more about itself.";
     if (one.can_install && !said.doing) {
@@ -28624,6 +28631,7 @@ function societyBubble(one) {
     const asking = societyState.asking === one.id;
     return `<li class="society-bubble mine draft" data-society-draft="${escapeHtml(one.id)}">
       <div class="society-bubble-head">${escapeHtml(one.written_by === "agent" ? "Draft by your agent" : "An old draft of yours - not sent from here")}</div>
+      ${one.error ? `<p class="delegate-error">${escapeHtml(one.error)}</p>` : ""}
       ${one.written_by !== "agent"
         ? `${one.subject ? `<div class="society-draft-subject">${escapeHtml(one.subject)}</div>` : ""}
       <div class="society-draft-text">${escapeHtml(one.text)}</div>
@@ -28641,6 +28649,7 @@ function societyBubble(one) {
   // What became of each: sent by whom, kept on the website, read by the agent or not yet.
   const who = mine ? (one.status === "site_draft"
       ? `<span class="society-by">${escapeHtml("Kept as a draft on the website")}</span>`
+      : one.status === "sending" ? `<span class="society-by">${escapeHtml("Being sent")}</span>`
       : `${one.sent_by === "agent" ? `<span class="society-by">${escapeHtml("Sent by your agent")}</span>` : ""}${
         one.seen_at ? ` <span class="society-by">${escapeHtml("Read by them")}</span>` : ""}`)
     : one.status === "received" ? `<span class="society-by">${escapeHtml(one.handled_at
@@ -29243,6 +29252,9 @@ document.addEventListener("click", async (event) => {
     societyState.asking = "";
     renderSocietyThread();
   } else if (at.dataset.societySendYes) {
+    // ONE PRESS, ONE SEND (2026-11-15: a Send pressed twice sent one message twice): no second press while it goes.
+    if (at.disabled) return;
+    at.disabled = true;
     const said = await run(() => api.post("/api/society/send",
       { id: at.dataset.societySendYes, hash: at.dataset.hash }));
     societyState.asking = "";
@@ -29464,6 +29476,7 @@ function reportCard(event) {
     <button type="button" class="report-card-open" data-report-detail="${escapeHtml(event.id)}">
       <span class="report-card-head"><span class="report-title">${escapeHtml(event.title || "(untitled)")}</span>
         <span class="report-meta">${reportDue(event.due)}</span></span>
+      ${event.weight_why ? `<span class="report-card-why report-weight-${escapeHtml(event.weight || "")}">${escapeHtml(event.weight_why)}</span>` : ""}
       <span class="report-card-text">${escapeHtml(reportDescription(event))}</span>
       <span class="report-card-foot">${chips}${said ? `<span class="report-card-said">${escapeHtml("Conversation")} ${said}</span>` : ""}</span>
     </button></li>`;
@@ -29556,6 +29569,18 @@ function reportDoneKeys(events) {
     .filter((one) => one.kind === "done" && String(one.ref || "").startsWith("did:")).map((one) => one.ref);
 }
 
+/* BY WEIGHT (the user, 2026-11-15: "让report在汇报的时候根据事情和轻重进行group"): the events in three parts - important,
+   worth a look, can wait - each in the agent's order; as one list when the agent gave no weights, or when the user
+   asked for the last active first. */
+const REPORT_WEIGHTS = [["important", "Important"], ["worth_a_look", "Worth a look"], ["can_wait", "Can wait"]];
+function reportWeighed(tab, events) {
+  const cards = (list) => `<ol class="report-cards">${list.map(reportCard).join("")}</ol>`;
+  if (reportState.sort[tab] === "active" || !events.some((one) => one.weight)) return cards(events);
+  const parts = REPORT_WEIGHTS.map(([key, name]) => [key, name, events.filter((one) => (one.weight || "worth_a_look") === key)]);
+  return parts.filter(([, , list]) => list.length).map(([key, name, list]) =>
+    `<section class="report-weight report-weight-part-${key}"><h4 class="report-weight-head">${escapeHtml(name)} (${list.length})</h4>${cards(list)}</section>`).join("");
+}
+
 /* A TAB'S EVENTS IN ITS ORDER: as the agent put them, or the last active first. */
 function reportSorted(tab, events) {
   if (reportState.sort[tab] !== "active") return events;
@@ -29603,13 +29628,13 @@ function reportPanel(tab, data) {
     const section = (list, name, key, shownNow, note = "") => list.length ? `<div class="report-group report-tab-group">
         <button type="button" class="report-more report-group-head" data-report-open="${escapeHtml(key)}" aria-expanded="${shownNow}">${
           escapeHtml(name)} (${list.length})${note ? ` <span class="report-group-note">${escapeHtml(note)}</span>` : ""}<span class="report-chevron" aria-hidden="true">${shownNow ? "▾" : "▸"}</span></button>
-        ${shownNow ? `<ol class="report-cards">${list.map(reportCard).join("")}</ol>` : ""}</div>` : "";
+        ${shownNow ? reportWeighed(tab, list) : ""}</div>` : "";
     return `${reportSortControl(tab)}${section(readyEvents, "Ready for you", "yours:ready", !reportState.open.has("yours:ready"))}
       ${section(preparingEvents, "Your agent is preparing", "yours:preparing", reportState.open.has("yours:preparing"),
         reportPrepEarliest(preparingEvents.flatMap((event) => (event.items || []).filter(reportPreparing))))}`;
   }
   return `${reportSortControl(tab)}${bulk}${okAll}
-    <ol class="report-cards">${events.map(reportCard).join("")}</ol>
+    ${reportWeighed(tab, events)}
     ${letGo.length ? `<details class="report-let-go"><summary>${escapeHtml("Done already - not asked")} (${letGo.length})</summary><ul>${
       letGo.map((one) => `<li>${escapeHtml(one.title || "")}: <span class="muted">${escapeHtml(one.why || "")}</span></li>`).join("")}</ul></details>` : ""}`;
 }

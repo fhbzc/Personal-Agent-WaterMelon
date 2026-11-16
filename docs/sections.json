@@ -13954,13 +13954,20 @@
    },
    {
     "type": "p",
+    "text": "**No torch in the build.** Since 2026-11-16 the sentence model runs on ONNX Runtime: the same all-MiniLM-L6-v2, from its own ONNX file at the revision its stored vectors came from - measured to give the same vectors, with about a quarter of the memory and a tenth of the load time. The build environment therefore leaves torch, transformers and the other machine-learning frameworks out at any version, and the build carries none of them. The installer carries the model's own two files instead (about 90 MB, fetched at build time at that revision and checked against their SHA-256), so a copy never has to reach Hugging Face for them; the worker reads them first and downloads only when they are missing, as when run from source.",
+    "amended": true
+   },
+   {
+    "type": "p",
     "text": "The application's icons are made from the Watermelon avatar."
    },
    {
     "type": "p",
     "text": "However, the build architecture must recognize that certain platform artifacts can only be correctly produced on their respective operating systems."
    }
-  ]
+  ],
+  "amendment_note": "2026-11-16: the sentence model on ONNX Runtime, so the build environment and the build carry no torch or transformers; the installer carries the model's files.",
+  "amended": true
  },
  {
   "number": "103",
@@ -14096,8 +14103,15 @@
    {
     "type": "p",
     "text": "The single source of the version is personalized_agent/version.py. Released downloads carry no Debugger, so in a release the version is shown in the executable and installer metadata, the application UI and the logs."
+   },
+   {
+    "type": "p",
+    "text": "**A fix of a version has four numbers** (since 2026-11-16: 0.3.7.1 fixes 0.3.7). Wherever versions are compared it is newer than the version it fixes and older than the next one. Windows' own version carries all four. The macOS bundle's version carries the first three, as Apple asks for three: there a fix shows as the version it fixes, while the application UI, the logs and the updater keep all four.",
+    "amended": true
    }
-  ]
+  ],
+  "amendment_note": "2026-11-16: a fix of a version has four numbers; the macOS bundle shows the first three.",
+  "amended": true
  },
  {
   "number": "106",

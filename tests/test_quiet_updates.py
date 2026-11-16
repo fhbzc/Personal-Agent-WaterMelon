@@ -9,6 +9,7 @@ made ready again.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -108,21 +109,33 @@ class WhatIsKeptOfItTests(unittest.TestCase):
             self.assertFalse(part.exists(), "what was made ready goes")
             self.assertIsNone(quiet.take_result(folder), "told once")
 
-    def test_parts_that_would_not_move_are_tried_again_three_times(self) -> None:
+    def test_parts_that_would_not_move_are_tried_again_later_never_given_up(self) -> None:
+        """2026-11-16: a user's update could not move "_internal" aside - a file held open is not a version that
+        will not start: tried again after an hour, then longer, a day at most; never skipped for it."""
         with tempfile.TemporaryDirectory() as work:
             folder, part = Path(work) / "updates", Path(work) / "ready" / "_internal"
             part.mkdir(parents=True)
             self._staged(folder, "v99.0.0", part)
-            for attempt in range(1, quiet.MOST_TRIES + 1):
+            waits = []
+            for attempt in range(1, 8):
                 quiet._write(folder / quiet.RESULT, {"ok": False, "tag": "v99.0.0",
                                                      "why": "could not move it aside"})
+                before = time.time()
                 quiet.heed_result(folder)
                 quiet.heed_result(folder)          # heeded once, however often read
-                if attempt < quiet.MOST_TRIES:
-                    self.assertEqual(quiet.staged(folder)["tag"], "v99.0.0",
-                                     "kept, to be tried again")
-            self.assertIn("v99.0.0", quiet.skipped(folder))
-            self.assertIsNone(quiet.staged(folder))
+                self.assertEqual(quiet.staged(folder)["tag"], "v99.0.0", "kept, to be tried again")
+                waits.append(round(quiet.not_yet(folder, now=before)))
+            self.assertNotIn("v99.0.0", quiet.skipped(folder))
+            self.assertEqual(waits[:4], [3600, 7200, 14400, 28800])
+            self.assertEqual(waits[-1], quiet.LONGEST_WAIT_SECONDS, "a day at most")
+            self.assertEqual(quiet.not_yet(folder, now=time.time() + quiet.LONGEST_WAIT_SECONDS + 1), 0)
+
+    def test_it_waits_its_turn_unless_the_user_restarts(self) -> None:
+        source = (ROOT / "personalized_agent" / "platform_layer" / "updater.py").read_text("utf-8")
+        away = source[source.index("    def _take_up_when_away("):]
+        self.assertLess(away.index("if not_yet(self.folder) > 0:"), away.index("self.take_up_now()"))
+        now = source[source.index("    def restart_now("):source.index("    def _take_up_when_away(")]
+        self.assertNotIn("not_yet", now, "the user's Restart now does not wait")
 
 
 def _free_port() -> int:
@@ -192,13 +205,14 @@ class TheWindowsHelperRunsTests(unittest.TestCase):
         self.pid = gone.pid
         self.started = []
 
-    def _run(self, program: str, port: int, seconds: int) -> dict:
+    def _run(self, program: str, port: int, seconds: int, **patched) -> dict:
         script = self.work / "program.py"
         script.write_text(program, encoding="utf-8")
         pairs = [[str(self.live / "_internal"), str(self.ready / "_internal"),
                   str(self.live / ".update" / "previous" / "_internal")]]
         helper = self.work / "take-up.ps1"
-        with mock.patch.object(quiet, "HEALTHY_WITHIN", seconds):
+        with mock.patch.object(quiet, "HEALTHY_WITHIN", seconds), \
+                mock.patch.multiple(quiet, **patched) if patched else contextlib.nullcontext():
             text = quiet.windows_helper(self.pid, pairs, [sys.executable, str(script)], port,
                                         self.result, self.ready_file, "v9.0.0", self.live)
         helper.write_text(text.replace(quiet.UNINSTALL_KEY, "HKCU:\\NoSuchKeyForThisTest"),
@@ -237,6 +251,76 @@ while time.time() < end and not os.path.exists({str(self.result)!r}):
         self.assertEqual((self.live / ".update" / "previous" / "_internal" / "version.txt")
                          .read_text(encoding="utf-8"), "old", "the old kept beside")
         self.assertTrue(self.ready_file.exists(), "it said it was there")
+
+    def test_what_runs_from_its_folder_is_ended_and_the_version_kept(self) -> None:
+        """2026-11-16: something of its own left running from the folder (the browser extension's host, say) - a
+        program whose very file is in "_internal" here - is ended, and the parts move."""
+        held = self.live / "_internal" / "holder.exe"
+        shutil.copyfile(Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "PING.EXE", held)
+        holder = subprocess.Popen([str(held), "-n", "400", "127.0.0.1"], stdout=subprocess.DEVNULL)
+        self.addCleanup(lambda: holder.poll() is None and holder.kill())
+        port = _free_port()
+        said = self._run(f"""
+import os, socket, time
+s = socket.socket(); s.bind(("127.0.0.1", {port})); s.listen(1)
+end = time.time() + 280
+while time.time() < end and not os.path.exists({str(self.result)!r}):
+    time.sleep(0.2)
+""", port, 90, LEFT_WAIT_SECONDS=2)
+        steps = self.steps.read_text(encoding="utf-8-sig")
+        self.assertTrue(said["ok"], f"{said}\n{steps}")
+        self.assertIn("still running from its folder: holder", steps)
+        self.assertIsNotNone(holder.poll(), "ended")
+        self.assertEqual((self.live / "_internal" / "version.txt").read_text(encoding="utf-8"), "new")
+
+    def test_the_agent_still_closing_is_ended_and_the_version_kept(self) -> None:
+        """2026-11-16: the old copy still closing after the wait - said to have gone, its folder would not move.
+        Now what is left of it is ended."""
+        closing = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
+        self.addCleanup(lambda: closing.poll() is None and closing.kill())
+        self.pid = closing.pid
+        port = _free_port()
+        said = self._run(f"""
+import os, socket, time
+s = socket.socket(); s.bind(("127.0.0.1", {port})); s.listen(1)
+end = time.time() + 280
+while time.time() < end and not os.path.exists({str(self.result)!r}):
+    time.sleep(0.2)
+""", port, 90, AGENT_GONE_WITHIN=2, LEFT_WAIT_SECONDS=1)
+        steps = self.steps.read_text(encoding="utf-8-sig")
+        self.assertTrue(said["ok"], f"{said}\n{steps}")
+        self.assertIn("the agent is still closing - ended", steps)
+        time.sleep(0.5)
+        self.assertIsNotNone(closing.poll(), "ended")
+
+    def test_a_second_helper_leaves_it_to_the_one_at_work(self) -> None:
+        """2026-11-16: taken up twice while the old copy was slow to close, a second helper undid the first's work."""
+        Path(str(self.result) + ".helper").write_text(str(os.getpid()), encoding="utf-8")
+        pairs = [[str(self.live / "_internal"), str(self.ready / "_internal"),
+                  str(self.live / ".update" / "previous" / "_internal")]]
+        helper = self.work / "take-up.ps1"
+        helper.write_text(quiet.windows_helper(self.pid, pairs, [sys.executable, "-c", "pass"], 0, self.result,
+                                               self.ready_file, "v9.0.0", self.live)
+                          .replace(quiet.UNINSTALL_KEY, "HKCU:\\NoSuchKeyForThisTest"), encoding="utf-8-sig")
+        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+                        str(helper)], timeout=120, capture_output=True)
+        steps = Path(str(self.result) + ".log").read_text(encoding="utf-8-sig")
+        self.assertIn("another helper is at work", steps)
+        self.assertFalse(self.result.exists(), "it said nothing of its own")
+        self.assertEqual((self.live / "_internal" / "version.txt").read_text(encoding="utf-8"), "old", "untouched")
+
+    def test_held_from_outside_it_says_so_and_goes_on_as_before(self) -> None:
+        """A program outside the folder with a file in it open: not the helper's to end - said, and the old
+        version goes on."""
+        holder = subprocess.Popen([sys.executable, "-c", "import sys, time; f = open(sys.argv[1]); time.sleep(300)",
+                                   str(self.live / "_internal" / "version.txt")])
+        self.addCleanup(lambda: holder.poll() is None and holder.kill())
+        time.sleep(1.0)
+        said = self._run("import sys; sys.exit(0)\n", _free_port(), 15, LEFT_WAIT_SECONDS=1, MOVE_TRIES=4)
+        holder.kill()
+        self.assertFalse(said["ok"])
+        self.assertIn("aside (a program outside it has a file in it open", said["why"])
+        self.assertEqual((self.live / "_internal" / "version.txt").read_text(encoding="utf-8"), "old")
 
     def test_not_up_it_is_taken_back(self) -> None:
         said = self._run("import sys; sys.exit(3)\n", _free_port(), 15)

@@ -764,6 +764,11 @@ class Updater:
         agent quits for it - started again on the new version, which the
         helper watches (quiet_update.run_helper)."""
         from . import quiet_update as quiet
+        # ONCE (2026-11-16): the agent quitting for a version is still here while it closes, and was asked again -
+        # a second helper, which undid what the first had done.
+        if getattr(self, "_taking_up", False):
+            log.info("a version is being taken up already: not again")
+            return
         said = self._ready()
         if said is None:
             raise RuntimeError("no update is ready")
@@ -779,6 +784,7 @@ class Updater:
             (self.folder / MARKER).unlink(missing_ok=True)
             self._set(step="", updating_to="", doing="")
             raise
+        self._taking_up = True
         log.info("taking up %s: quitting so it starts in this one's place", tag)
         if self.quit is not None:
             self.quit()
@@ -798,6 +804,11 @@ class Updater:
         at the next start. (A version is made ready only by itself, chosen
         so, or when the user asked for it.)"""
         if self.mode() == "off" or self.quit is None or self.working():
+            return
+        # A version that would not move in waits its turn to be tried again (quiet_update.heed_result); the user's
+        # own "Restart now" does not wait.
+        from .quiet_update import not_yet
+        if not_yet(self.folder) > 0:
             return
         try:
             away = self.away()

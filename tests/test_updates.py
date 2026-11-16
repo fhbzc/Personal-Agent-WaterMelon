@@ -277,6 +277,16 @@ class PreReleasesTests(unittest.TestCase):
         self.assertIn("a pre-release", script)
         self.assertIn("A newer pre-release can be chosen below.", script)
 
+    def test_what_is_new_stays_open_while_the_part_is_drawn_again(self) -> None:
+        """2026-11-16: "settings update点击what is new 会被自动刷新collapse" - drawn again every two seconds while a
+        version comes down, the notes the user opened stay open, for the version they are of."""
+        script = (ROOT / "personalized_agent" / "api" / "web" / "app.js").read_text(encoding="utf-8")
+        part = script[script.index("function renderUpdateVersions("):]
+        part = part[:part.index("\n}\n")]
+        self.assertIn('notes.addEventListener("toggle"', part)
+        self.assertIn("renderUpdateVersions.notesOpen = notes.open && one ? one.tag : \"\"", part)
+        self.assertIn("notes.open = renderUpdateVersions.notesOpen === one.tag;", part)
+
 
 class GoingBackTests(unittest.TestCase):
     """Older versions from v0.3.0 on, to go back to: chosen only by the user. (Here from 0.2.0,

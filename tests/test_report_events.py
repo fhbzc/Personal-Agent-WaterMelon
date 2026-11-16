@@ -71,6 +71,43 @@ class EventsTests(unittest.TestCase):
         self.app = app
         return Events(app)
 
+    def test_each_tab_weighed_in_three_parts_by_the_same_call(self) -> None:
+        """2026-11-15: "让report在汇报的时候根据事情和轻重进行group" - important, worth a look, can wait; each with a line
+        why; weighed in the call that orders them, kept with that order."""
+        events = [{"id": key, "title": title, "due": "", "items": []}
+                  for key, title in (("ev_a", "Garden plan"), ("ev_b", "Reply to Ada about Monday"),
+                                     ("ev_c", "Survey notes filed"))]
+        answer = json.dumps({"order": ["ev_b", "ev_a", "ev_c"], "weights": {
+            "ev_b": {"weight": "important", "why": "due today, Ada is waiting"},
+            "ev_a": {"weight": "Worth a look", "why": "next week"},
+            "ev_c": {"weight": "urgent!!", "why": "made up"},
+            "ev_x": {"weight": "important", "why": "not one of them"}}})
+        ev = self._events({"report_order": answer})
+        out = ev.ordered("needs_you", [dict(one) for one in events])
+        self.assertEqual([one["id"] for one in out], ["ev_b", "ev_a", "ev_c"])
+        self.assertEqual([(one["weight"], one["weight_why"]) for one in out],
+                         [("important", "due today, Ada is waiting"), ("worth_a_look", "next week"), ("", "")])
+        asked = [one for one in self.app.models.asked if one.task == "report_order"]
+        self.assertEqual(len(asked), 1, "one call orders and weighs")
+        again = ev.ordered("needs_you", [dict(one) for one in events])
+        self.assertEqual(len([one for one in self.app.models.asked if one.task == "report_order"]), 1,
+                         "kept for the same events")
+        self.assertEqual(again[0]["weight"], "important", "the weights kept with the order")
+        # Without weights (an older answer, or none given): no parts, nothing made up.
+        plain = self._events({"report_order": json.dumps({"order": ["ev_c", "ev_b", "ev_a"]})})
+        self.assertEqual({one["weight"] for one in plain.ordered("done", [dict(one) for one in events])}, {""})
+
+    def test_the_page_shows_the_three_parts_and_each_why(self) -> None:
+        source = (ROOT / "personalized_agent" / "api" / "web" / "app.js").read_text("utf-8")
+        start = source.index("function reportWeighed(")
+        body = source[start:source.index("\n}\n", start)]
+        for words in ('"Important"', '"Worth a look"', '"Can wait"', 'reportState.sort[tab] === "active"'):
+            self.assertIn(words, source[start - 400:start + len(body)])
+        self.assertIn("event.weight_why", source[source.index("function reportCard("):])
+        table = json.loads((ROOT / "personalized_agent" / "api" / "web" / "lang" / "zh.json").read_text("utf-8"))
+        for words in ("Important", "Worth a look", "Can wait"):
+            self.assertIn(words, table)
+
     def test_the_same_project_put_together_as_one_event(self) -> None:
         """2026-11-13: "这个人的project有好多个，整理的时候应该merge"; "按项目，合作"."""
         from personalized_agent.agent.reports import Report, _ready, did_since

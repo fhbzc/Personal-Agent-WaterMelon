@@ -89,20 +89,8 @@ def default_agent_root() -> str:
     return str(default_root())
 
 
-def default_watch_paths() -> str:
-    """Everywhere, by default (section 19, as amended).
-
-    The agent is meant to notice what the user does, and it cannot notice what
-    it is not looking at. A narrow default means the feature reports itself as
-    running while recording almost nothing, which is worse than being off -
-    the user believes their work is being seen when it is not.
-
-    So the default is every directory on the machine, and the user removes
-    what they would rather it did not see. That way round is the honest one:
-    what is watched is visible in one list, and narrowing it is a decision the
-    user makes rather than one made quietly for them. The exclusions above
-    carry the churn that would otherwise drown it.
-    """
+def every_drive() -> str:
+    """Every drive on the machine, one per line - the default until 2026-11-16 (see `default_watch_paths`)."""
     import string
     from pathlib import Path
 
@@ -118,6 +106,68 @@ def default_watch_paths() -> str:
     else:
         roots.append("/")
     return "\n".join(roots) or str(Path.home())
+
+
+#: Windows' own names for the three folders watched by default (SHGetKnownFolderPath) - where they really
+#: are, a Desktop moved into OneDrive included.
+_KNOWN_FOLDERS = {"Desktop": "{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}",
+                  "Documents": "{FDD39AD0-238F-46AF-ADB4-6C85480369C7}",
+                  "Downloads": "{374DE290-123F-4565-9164-39C4925E467B}"}
+
+
+def _known_folder(name: str) -> str:
+    """Where Windows keeps one of the user's folders - "" when it cannot say."""
+    if os.name != "nt":
+        return ""
+    try:
+        import ctypes
+        import uuid
+        from ctypes import wintypes
+
+        class _GUID(ctypes.Structure):
+            _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD), ("Data3", wintypes.WORD),
+                        ("Data4", ctypes.c_ubyte * 8)]
+
+        raw = uuid.UUID(_KNOWN_FOLDERS[name]).bytes_le
+        guid = _GUID.from_buffer_copy(raw)
+        found = ctypes.c_wchar_p()
+        shell = ctypes.windll.shell32
+        shell.SHGetKnownFolderPath.argtypes = [ctypes.POINTER(_GUID), wintypes.DWORD, wintypes.HANDLE,
+                                               ctypes.POINTER(ctypes.c_wchar_p)]
+        if shell.SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(found)) != 0:
+            return ""
+        try:
+            return str(found.value or "")
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(found)
+    except Exception:
+        return ""
+
+
+def default_watch_paths() -> str:
+    """THE USER'S OWN FOLDERS, by default: Desktop, Documents and Downloads (the user, 2026-11-16: "默认看桌面、文档、
+    下载，再自动加上你给工作任务指定过的项目文件夹 ... 另外再加上 排除 AppData、临时文件、Windows、Program Files 这些系统目录").
+
+    Until then it was every drive - so as to miss nothing the user did - and a copy watching all of C:\\ was busy
+    with the machine's own writing all day: slow while it ran, minutes to close, and an update that could not
+    move its folder because the old copy was still closing. Where a piece of work was given a folder of the
+    user's, that folder is watched too, as long as the work has it (listener/providers/filesystem.py). The user
+    adds any other folder here.
+    """
+    from pathlib import Path
+
+    home = Path.home()
+    roots: List[str] = []
+    for name in ("Desktop", "Documents", "Downloads"):
+        for where in (_known_folder(name), str(home / name)):
+            try:
+                if where and Path(where).is_dir():
+                    if os.path.normcase(where) not in {os.path.normcase(one) for one in roots}:
+                        roots.append(where)
+                    break
+            except OSError:
+                continue
+    return "\n".join(roots) or str(home)
 
 
 #: Directory names that are noise wherever they appear, which prefix based
@@ -214,10 +264,9 @@ def default_directory_exclusions() -> str:
         # window and screen listeners all the same.
         default_root() / "workspace",
         default_root() / "internal",              # the agent's own churn
-        home / "AppData" / "Local" / "Temp",
-        home / "AppData" / "Local" / "Microsoft",
-        home / "AppData" / "Roaming" / "Microsoft",
-        home / "AppData" / "Local" / "Packages",
+        # THE WHOLE OF AppData (the user, 2026-11-16): every program's own settings, caches and logs - its
+        # Temp, Microsoft and Packages folders were here before, the rest was not.
+        home / "AppData",
         home / "Library" / "Caches",
         home / ".cache",
         home / ".local" / "share" / "Trash",
@@ -1005,11 +1054,11 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
     SettingField("listener_watch_paths", "Watched directories", "multiline",
                  default_watch_paths(), "Listener",
                  "Directories the filesystem monitor watches, including everything "
-                 "inside them. Defaults to every drive on this machine: the agent "
-                 "cannot notice what it is not looking at, and a narrow default would "
-                 "leave it reporting itself as running while seeing almost nothing. "
-                 "Remove what you would rather it did not see, and add directories "
-                 "with the picker - locations are browsed to, not typed.",
+                 "inside them. Defaults to your Desktop, Documents and Downloads; a "
+                 "folder you give a piece of work is watched too, while the work has it. "
+                 "Add any other folder you work in with the picker - locations are "
+                 "browsed to, not typed. Watching a whole drive sees more, and keeps the "
+                 "computer busier.",
                  chooser="directory"),
     SettingField("listener_application_allowlist", "Application allowlist", "multiline", "",
                  "Listener",

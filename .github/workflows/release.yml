@@ -80,17 +80,8 @@ jobs:
       - name: The Tk the application carries
         run: python -c "import sys, tkinter; print('Python', sys.version.split()[0], 'Tk', tkinter.Tcl().call('info', 'patchlevel'))"
 
-      # torch's Linux wheels on PyPI bring CUDA with them - three gigabytes in
-      # every Linux download, over GitHub's limit for a release file - though
-      # the sentence model runs on the processor. The CPU-only wheel goes in
-      # first; requirements.txt then finds torch already there. (Windows and
-      # macOS wheels on PyPI are CPU-only already.)
-      - name: Install the CPU-only torch (Linux)
-        if: matrix.target == 'linux'
-        run: |
-          python -m pip install --upgrade pip
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-
+      # No torch any more (2026-11-16): the sentence model runs on ONNX Runtime,
+      # whose wheels are CPU-only on every system.
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

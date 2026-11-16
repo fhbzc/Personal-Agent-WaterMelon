@@ -5,11 +5,11 @@ when Inno Setup is available, ``dist/windows/PersonalAgentWaterMelon-Setup.exe``
 Menu entry, an icon, user-level configuration and a clean uninstall.
 
 Build releases from the build environment, not from a developer's own Python:
-PyInstaller packages whatever the Python running it has installed, and a CUDA
+PyInstaller packages whatever the Python running it has installed, and a
 torch or TensorFlow there adds gigabytes to the installer. Make it once (it
 lives outside the repository, in %LOCALAPPDATA%\\PersonalizedAgent-build\\venv,
-with the application's requirements, PyInstaller and a CPU-only torch), then
-build with its Python::
+with the application's requirements and PyInstaller), then build with its
+Python::
 
     python build/make_build_env.py
     %LOCALAPPDATA%\\PersonalizedAgent-build\\venv\\Scripts\\python.exe build/windows/build_windows.py
@@ -53,8 +53,8 @@ HERE = Path(__file__).resolve().parent
 
 VERSION_RESOURCE = """VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=({major}, {minor}, {patch}, 0),
-    prodvers=({major}, {minor}, {patch}, 0),
+    filevers=({major}, {minor}, {patch}, {fix}),
+    prodvers=({major}, {minor}, {patch}, {fix}),
     mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)
   ),
   kids=[
@@ -76,9 +76,10 @@ VERSION_RESOURCE = """VSVersionInfo(
 
 
 def write_version_resource() -> Path:
-    major, minor, patch = (list(int(p) for p in __version__.split(".")) + [0, 0, 0])[:3]
+    # Four numbers, as Windows keeps them: a fix of a version (0.3.7.1) is the fourth.
+    major, minor, patch, fix = (list(int(p) for p in __version__.split(".")) + [0, 0, 0, 0])[:4]
     content = VERSION_RESOURCE.format(
-        major=major, minor=minor, patch=patch, version=__version__,
+        major=major, minor=minor, patch=patch, fix=fix, version=__version__,
         app_name=APP_NAME, publisher=PUBLISHER, exe=EXE_NAME,
     )
     path = work_dir(TARGET) / "version_info.txt"

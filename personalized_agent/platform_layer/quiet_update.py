@@ -21,7 +21,10 @@ moved aside (`previous`), the new ones moved in, the program started - and
 WATCHED. Unless it is up within two minutes (its page answering, or alive,
 where it has no page), it is ended, the old parts moved back, the old
 version started, and the version is never made ready again
-(`SKIPPED`). A release that will not start costs the user seconds.
+(`SKIPPED`). A release that will not start costs the user seconds. A part
+that would not move - what runs from the program's folder is ended first, as
+its own; a program outside it may still hold a file there - is said, with
+what held it, and tried again later: an hour, then longer, never skipped.
 
 A copy that cannot do this - the program's folder not the user's to write
 (installed for every user), no release file for it - is updated the old
@@ -61,8 +64,18 @@ HEALTHY_WITHIN = 120
 ALIVE_IS_UP = 30
 #: The helper says it is there within this long, or nothing is quit.
 READY_WITHIN = 15.0
-#: A version whose parts would not move is tried this many times in all.
-MOST_TRIES = 3
+#: A version whose parts would not move is tried again after a wait - an hour, then twice as long each time, a day
+#: at most - never given up for it (2026-11-16: a file held open is not a version that will not start).
+FIRST_WAIT_SECONDS = 3600
+LONGEST_WAIT_SECONDS = 86400
+#: How long the helper waits for the agent itself to quit, before it ends it.
+AGENT_GONE_WITHIN = 120
+#: How long the helper waits for what runs from the program's folder to end by itself, before it ends it.
+LEFT_WAIT_SECONDS = 20
+#: And how long for what it ended to be gone.
+ENDED_WAIT_SECONDS = 10
+#: Each part's move tried so many times, half a second apart.
+MOVE_TRIES = 60
 #: Beside the program on a Mac or Linux, hidden.
 HIDDEN_PLACE = ".PersonalAgentWaterMelon-update"
 #: The Windows installer's own entry, kept saying the version now there.
@@ -233,6 +246,19 @@ def _write(path: Path, value: Any) -> None:
     os.replace(temporary, path)
 
 
+def wait_after(tries: int) -> float:
+    """How long after its `tries`-th failure to move a version is tried again: an hour, doubling, a day at most."""
+    return float(min(LONGEST_WAIT_SECONDS, FIRST_WAIT_SECONDS * 2 ** max(0, int(tries) - 1)))
+
+
+def not_yet(folder: Path, now: Optional[float] = None) -> float:
+    """Seconds until the version made ready may be taken up again by itself - 0 when it may now."""
+    said = _read(folder / STAGED)
+    if not isinstance(said, dict):
+        return 0.0
+    return max(0.0, float(said.get("not_before") or 0) - (time.time() if now is None else now))
+
+
 def skipped(folder: Path) -> List[str]:
     return list(_read(folder / SKIPPED) or [])
 
@@ -277,15 +303,13 @@ def heed_result(folder: Path) -> Optional[Dict[str, Any]]:
             skip(folder, str(said["tag"]))
             forget_staged(folder)
         else:
-            # A part that would not move (a file held open a moment too
-            # long) - put back as it was: tried again, three times in all.
+            # A part that would not move (a file held open) - put back as it was, and tried again after a wait,
+            # longer each time; never given up for it (2026-11-16): the version itself was never at fault.
             ready = _read(folder / STAGED)
             if isinstance(ready, dict) and ready.get("tag") == said["tag"]:
                 ready["tries"] = int(ready.get("tries") or 0) + 1
+                ready["not_before"] = time.time() + wait_after(ready["tries"])
                 _write(folder / STAGED, ready)
-                if ready["tries"] >= MOST_TRIES:
-                    skip(folder, str(said["tag"]))
-                    forget_staged(folder)
         said["heeded"] = True
         _write(folder / RESULT, said)
     return said if isinstance(said, dict) else None
@@ -324,25 +348,51 @@ def windows_helper(pid: int, pairs: List[List[str]], start: List[str], port: int
         "function Note($what) { Add-Content -LiteralPath $steps -Encoding UTF8 "
         "-Value ((Get-Date -Format 'HH:mm:ss.fff') + ' ' + $what) }",
         "Note 'started'",
+        # ONE AT A TIME (2026-11-16: a version taken up twice while the old one was slow to close - two helpers, the
+        # second undoing what the first had done): one already at work is left to it.
+        f"$lock = {_ps(str(result) + '.helper')}",
+        "$other = $null; if (Test-Path -LiteralPath $lock) { $other = Get-Content -LiteralPath $lock "
+        "-ErrorAction SilentlyContinue | Select-Object -First 1 }",
+        "if ($other -and ($other -as [int]) -and ($other -as [int]) -ne $PID -and "
+        "(Get-Process -Id ($other -as [int]) -ErrorAction SilentlyContinue)) { "
+        "Note ('another helper is at work (' + $other + ') - left to it'); exit }",
+        "Set-Content -LiteralPath $lock -Value $PID",
         "function Say($ok, $why) { @{ok = $ok; tag = " + _ps(tag) + "; why = $why; "
         "at = (Get-Date -Format o)} | ConvertTo-Json | "
         "Set-Content -LiteralPath $result -Encoding UTF8 }",
-        f"Wait-Process -Id {int(pid)} -Timeout 120 -ErrorAction SilentlyContinue",
-        "Note 'the agent has gone'",
-        # And whatever it started from its folder (a worker of its own) - a
-        # file still open would keep its part from moving. Twenty seconds
-        # at most, by the clock.
+        f"Wait-Process -Id {int(pid)} -Timeout {int(AGENT_GONE_WITHIN)} -ErrorAction SilentlyContinue",
+        # GONE, OR ENDED (2026-11-16: the old copy was still closing after two minutes - said to have gone - and its
+        # folder would not move): it quits for this, so what is left of it is ended.
+        f"if (Get-Process -Id {int(pid)} -ErrorAction SilentlyContinue) {{ "
+        f"Note 'the agent is still closing - ended'; & taskkill.exe /T /F /PID {int(pid)} 2>&1 | Out-Null; "
+        "Start-Sleep -Seconds 2 } else { Note 'the agent has gone' }",
+        # And whatever runs from its folder (a worker of its own; the browser
+        # extension's host, which the browser started and keeps while pages are
+        # read) - a file still open would keep its part from moving. Waited for
+        # a while; then ended: each is this program's own (2026-11-16: a
+        # user's update would not move "_internal" aside).
         f"$home_of = {_ps(str(program))}",
-        "$until = (Get-Date).AddSeconds(20)",
-        "while ((Get-Date) -lt $until) { $left = Get-Process -ErrorAction SilentlyContinue | "
+        "function Left { Get-Process -ErrorAction SilentlyContinue | "
         "Where-Object { $_.Path -and $_.Path.StartsWith($home_of, "
-        "[System.StringComparison]::OrdinalIgnoreCase) }; "
-        "if (-not $left) { break }; Start-Sleep -Milliseconds 500 }",
+        "[System.StringComparison]::OrdinalIgnoreCase) } }",
+        "function Named($list) { (@($list) | ForEach-Object { $_.ProcessName + ' (' + $_.Id + ')' }) -join ', ' }",
+        f"$until = (Get-Date).AddSeconds({int(LEFT_WAIT_SECONDS)})",
+        "while ((Get-Date) -lt $until) { $left = Left; if (-not $left) { break }; Start-Sleep -Milliseconds 500 }",
+        "if ($left) {",
+        "  Note ('still running from its folder: ' + (Named $left) + ' - ended')",
+        "  foreach ($one in @($left)) { & taskkill.exe /T /F /PID $one.Id 2>&1 | Out-Null }",
+        f"  $until = (Get-Date).AddSeconds({int(ENDED_WAIT_SECONDS)})",
+        "  while ((Get-Date) -lt $until) { $left = Left; if (-not $left) { break }; Start-Sleep -Milliseconds 500 }",
+        "}",
         "Note ('its folder free' + $(if ($left) { ' - not: ' + @($left).Count + ' left' } "
         "else { '' }))",
-        "function Move-Retry($from, $to) { for ($i = 0; $i -lt 60; $i++) { "
+        f"function Move-Retry($from, $to) {{ for ($i = 0; $i -lt {int(MOVE_TRIES)}; $i++) {{ "
         "try { Move-Item -LiteralPath $from -Destination $to -ErrorAction Stop; return $true } "
         "catch { Start-Sleep -Milliseconds 500 } }; return $false }",
+        # WHY IT WOULD NOT MOVE, SAID: what still runs from the folder, else something outside it.
+        "function Held { $still = Left; if ($still) { 'still running from its folder: ' + (Named $still) } "
+        "else { 'a program outside it has a file in it open - a File Explorer window or a terminal there, "
+        "or a virus scan' } }",
         # Added one by one: an array of one array is flattened by PowerShell.
         "$pairs = New-Object System.Collections.ArrayList",
         *["[void]$pairs.Add(@(" + ", ".join(_ps(one) for one in pair) + "))"
@@ -353,9 +403,9 @@ def windows_helper(pid: int, pairs: List[List[str]], start: List[str], port: int
         "$done = New-Object System.Collections.ArrayList",
         "$failed = $null",
         "foreach ($p in $pairs) {",
-        "  if (-not (Move-Retry $p[0] $p[2])) { $failed = \"could not move $($p[0]) aside\"; break }",
+        "  if (-not (Move-Retry $p[0] $p[2])) { $failed = \"could not move $($p[0]) aside ($(Held))\"; break }",
         "  [void]$done.Add(@($p[2], $p[0]))",
-        "  if (-not (Move-Retry $p[1] $p[0])) { $failed = \"could not move the new $($p[0]) in\"; break }",
+        "  if (-not (Move-Retry $p[1] $p[0])) { $failed = \"could not move the new $($p[0]) in ($(Held))\"; break }",
         "  [void]$done.Add(@($p[0], $p[1]))",
         "}",
         "function Undo { for ($i = $done.Count - 1; $i -ge 0; $i--) { "

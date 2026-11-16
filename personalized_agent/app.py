@@ -527,6 +527,10 @@ class AgentApplication:
         self.work.app_config = self.config
         self.work.in_subprocess = bool(self.config.get("work_in_subprocess", True))
         self.work.governor = Governor(self.work)
+        # THE WORK'S FOLDERS WATCHED (the user, 2026-11-16): each folder of the user's a piece of work was given, by
+        # the file listener beside its setting's own - as it stands each time one is given or taken back.
+        self.listener.work_folders = self.work.project_folders
+        self.work.on_folders_changed = self.listener.work_folders_changed
         # ONE POOL FOR EVERYTHING SIDE BY SIDE (common/pool.py): the state
         # heartbeat's, made with its room; the runs of work and an issue of
         # the Newspaper counted in it by asking them.

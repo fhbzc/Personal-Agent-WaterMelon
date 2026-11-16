@@ -67,6 +67,12 @@ def bundle_path() -> Path:
     return dist_dir(TARGET) / f"{BUNDLE_NAME}.app"
 
 
+def bundle_version(version: str = __version__) -> str:
+    """The version as the bundle says it: its first three numbers (the user, 2026-11-16, choosing "更稳的"
+    for 0.3.7.1 - Apple asks for three, and only the tag's run is notarized, too late to find out)."""
+    return ".".join((version.split(".") + ["0", "0", "0"])[:3])
+
+
 def build_bundle() -> Path:
     """Package into a staging directory, then publish the finished bundle."""
     staging = staging_dir(TARGET)
@@ -101,8 +107,11 @@ def patch_info_plist(app: Path) -> None:
             "CFBundleName": APP_NAME,
             "CFBundleDisplayName": APP_NAME,
             "CFBundleIdentifier": APP_ID,
-            "CFBundleShortVersionString": __version__,
-            "CFBundleVersion": __version__,
+            # Three numbers, as Apple asks: a fix of a version (0.3.7.1) is
+            # shown as the version it fixes. The updater reads the
+            # application's own version, never these.
+            "CFBundleShortVersionString": bundle_version(),
+            "CFBundleVersion": bundle_version(),
             "LSMinimumSystemVersion": "11.0",
             "LSApplicationCategoryType": "public.app-category.productivity",
             "NSHighResolutionCapable": True,

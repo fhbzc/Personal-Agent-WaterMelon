@@ -3105,6 +3105,9 @@ class WorkRuns:
         self.sandbox_enabled = sandbox_enabled
         #: Where what the agents do is recorded, as the agent's.
         self.raw_store = raw_store
+        #: Told when a folder is given to a piece of work or taken back (the file listener watches the work's
+        #: folders) - set by the application.
+        self.on_folders_changed: Optional[Callable[[], None]] = None
         self._running: Dict[str, "Run"] = {}
         #: EACH RUN IN A PROCESS OF ITS OWN (child.py) - set by the application,
         #: the Experience debugger's ways too; off, they go in this process
@@ -3215,6 +3218,51 @@ class WorkRuns:
             "SELECT path FROM work_folders WHERE unit_id = ? ORDER BY added_at",
             (unit_id,))]
 
+    def project_folders(self) -> List[str]:
+        """EVERY FOLDER OF THE USER'S A PIECE OF WORK WAS GIVEN - to work in, or to read (the user, 2026-11-16: "再自动
+        加上你给工作任务指定过的项目文件夹"): watched by the file listener as long as the work has it. Folders only -
+        a file given alone is not its folder.
+
+        NEVER A WHOLE DRIVE OR THE HOME FOLDER (2026-11-16): a folder given to read may be a whole drive, which is
+        what made a copy slow all day - it is never watched whole. A work that is done keeps its folders watched
+        (the user: "任务做完的东西监听了是不是也不会有event ... 要不就继续留着"): a folder nobody touches says nothing,
+        and the user going on in it is their work."""
+        found: List[Tuple[str, str]] = [(row["unit_id"], row["path"]) for row in self.db.query(
+            "SELECT unit_id, path FROM work_folders ORDER BY added_at")]
+        for row in self.db.query("SELECT key, value FROM kv WHERE key LIKE 'work.read_also.%'"):
+            try:
+                found += [(row["key"][len("work.read_also."):], str(one))
+                          for one in json.loads(row["value"]) or []]
+            except (TypeError, ValueError):
+                continue
+        try:
+            home = Path.home().resolve()
+        except OSError:
+            home = None
+        out: List[str] = []
+        for unit_id, one in found:
+            one = str(one or "").strip()
+            if not one or one in out:
+                continue
+            try:
+                path = Path(one).expanduser()
+                if not path.is_dir():
+                    continue
+                whole = path.resolve()
+                if whole.parent == whole or (home is not None and whole == home):
+                    continue
+            except OSError:
+                continue
+            out.append(one)
+        return out
+
+    def _folders_changed(self) -> None:
+        if callable(self.on_folders_changed):
+            try:
+                self.on_folders_changed()
+            except Exception:
+                log.warning("the file listener was not told of the work's folders", exc_info=True)
+
     def read_also(self, unit_id: str) -> List[str]:
         """THE FOLDERS A WORK WAS TOLD TO READ (the user, 2026-11-08) - a project's own, say, on
         another drive: its sandboxed code is let read them, folder by folder, every run of it."""
@@ -3234,6 +3282,7 @@ class WorkRuns:
                 kept.append(one)
         self.db.execute("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET "
                         "value = excluded.value", (f"work.read_also.{unit_id}", json.dumps(kept)))
+        self._folders_changed()
         return kept
 
     def writable_folder(self, path: str) -> Dict[str, Any]:
@@ -3269,11 +3318,13 @@ class WorkRuns:
         folder = said["folder"]
         self.db.execute("INSERT OR IGNORE INTO work_folders (unit_id, path, "
                         "added_at) VALUES (?, ?, ?)", (unit_id, str(folder), _now()))
+        self._folders_changed()
         return {"folder": str(folder), "warning": self.GRANT_WARNING}
 
     def revoke(self, unit_id: str, path: str) -> bool:
         self.db.execute("DELETE FROM work_folders WHERE unit_id = ? AND path = ?",
                         (unit_id, str(path)))
+        self._folders_changed()
         return True
 
     @staticmethod

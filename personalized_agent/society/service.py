@@ -132,6 +132,18 @@ def verified_and_known(claimed: List[Dict[str, Any]], known: List[Dict[str, Any]
 #: Said when something needs the agent paired first.
 NOT_CONNECTED = ("Your agent is not connected to your Agents Society account yet: give it your "
                  "account id (pa-...) in Society, then give it the key on the website.")
+#: Said when a draft is already on its way - a second Send, or two at once.
+BEING_SENT = "This message is already being sent, or has been: it is not sent again."
+#: Said of a draft left "sending" when the application stopped mid-send: it may have gone.
+MAY_HAVE_GONE = ("Your application stopped while this was being sent: it may have reached them. Look in the "
+                 "conversation on the website before sending it again.")
+#: How long a send may take before a draft left "sending" is taken to be one the application stopped in.
+SENDING_STUCK_SECONDS = 300
+#: Said when the agent would send the very words it sent the same agent a moment ago.
+SAID_ALREADY = ("you sent these very words to that agent a few minutes ago - they are not sent twice. If "
+                "something more is to be said, say it differently.")
+#: How far back the agent's same words to the same agent count as just sent.
+SAME_WORDS_SECONDS = 600
 #: Said when the server kept a message as a draft on the website instead of sending it.
 SITE_DRAFT = ("Not sent: the Agents Society kept it as a draft on the website, because this "
               "agent's key may not send it. Send it on the website, or give this key send rights.")
@@ -517,9 +529,21 @@ class SocietyService:
         """What came before this - as kept, in UTC - has had its minute: no more of it on the way."""
         return datetime.fromtimestamp(time.time() - SETTLE_SECONDS, timezone.utc).isoformat(timespec="seconds")
 
+    def unstick_sending(self) -> int:
+        """A draft left "sending" past any send's time - the application stopped while it went: a draft again,
+        said so, for the user to look on the website before sending it again. How many."""
+        before = datetime.fromtimestamp(time.time() - SENDING_STUCK_SECONDS, timezone.utc).isoformat(
+            timespec="seconds")
+        return self.db.execute("UPDATE society_messages SET status = 'draft', error = ? WHERE status = 'sending' "
+                               "AND updated_at < ?", (MAY_HAVE_GONE, before)).rowcount
+
     def _loop(self) -> None:
         asked_me = time.time()
         contacts_at = 0.0
+        try:
+            self.unstick_sending()
+        except Exception:
+            log.info("the drafts left being sent could not be looked at", exc_info=True)
         # WHAT THE KEY PERMITS, READ AT THE START (the site's /api: "Check GET /v2/me at the start and
         # use only what is given").
         if self.connected():
@@ -2109,6 +2133,15 @@ class SocietyService:
         if sum(1 for one in mine if one["peer_id"] == peer) >= to_one:
             raise PermissionError(f"you have sent {to_one} to that agent this hour - that is "
                                   "as many as you may")
+        # THE SAME WORDS NOT TWICE (2026-11-15): a send asked for again - a tool called twice, two answers at
+        # once - goes once.
+        lately = datetime.fromtimestamp(time.time() - SAME_WORDS_SECONDS, timezone.utc).isoformat(
+            timespec="seconds")
+        words = _folded(text)
+        if words and any(_folded(one["text"]) == words for one in self.db.query(
+                "SELECT text FROM society_messages WHERE peer_id = ? AND direction = 'out' AND written_by = 'agent' "
+                "AND status IN ('sending', 'sent', 'site_draft') AND updated_at >= ?", (peer, lately))):
+            raise PermissionError(SAID_ALREADY)
         draft = self.write_draft(to, text, subject, written_by="agent", reply_to=reply_to)
         return self._deliver(draft, "agent")
 
@@ -2133,9 +2166,10 @@ class SocietyService:
         """THE USER'S SEND - the Society panel's Send (api/routes.py). Sent
         only as the user saw it: a draft changed since, by anyone, is not
         sent."""
-        draft = self.db.query_one("SELECT * FROM society_messages WHERE id = ? "
-                                  "AND status = 'draft'", (draft_id,))
-        if draft is None:
+        draft = self.db.query_one("SELECT * FROM society_messages WHERE id = ?", (draft_id,))
+        if draft is not None and draft["status"] in ("sending", "sent", "site_draft"):
+            raise ValueError(BEING_SENT)
+        if draft is None or draft["status"] != "draft":
             raise ValueError("no such draft")
         if content_hash(draft) != str(seen_hash or ""):
             raise ValueError("the draft changed since you read it: read it again, then send")
@@ -2156,16 +2190,27 @@ class SocietyService:
             raise ValueError(NOT_CONNECTED)
         peer, thread = draft["peer_id"], str(draft.get("thread") or "")
         client = self.client
+        # SENT ONCE (2026-11-15: one message arrived twice - one draft sent twice, a Send pressed twice): the
+        # draft is taken for sending before it goes; a second Send finds it taken and sends nothing. What
+        # did not go is a draft again.
+        if not self.db.execute("UPDATE society_messages SET status = 'sending', updated_at = ? "
+                               "WHERE id = ? AND status = 'draft'", (_now(), draft_id)).rowcount:
+            raise ValueError(BEING_SENT)
         try:
-            said = client.inbox_send(peer, draft["text"], draft["subject"], thread)
-        except SocietyError as exc:
-            if exc.status != 403:
-                raise
-            if ((self.permissions().get("inbox") or {}).get("write") or "") == "none" or \
-                    "draft" not in str(exc).lower():
-                raise ValueError(f"{NO_WRITE} ({exc})") from None
-            # "leave it as a draft": not to this person yet - kept on the website as one.
-            said = client.inbox_send(peer, draft["text"], draft["subject"], thread, draft=True)
+            try:
+                said = client.inbox_send(peer, draft["text"], draft["subject"], thread)
+            except SocietyError as exc:
+                if exc.status != 403:
+                    raise
+                if ((self.permissions().get("inbox") or {}).get("write") or "") == "none" or \
+                        "draft" not in str(exc).lower():
+                    raise ValueError(f"{NO_WRITE} ({exc})") from None
+                # "leave it as a draft": not to this person yet - kept on the website as one.
+                said = client.inbox_send(peer, draft["text"], draft["subject"], thread, draft=True)
+        except BaseException:
+            self.db.execute("UPDATE society_messages SET status = 'draft' WHERE id = ? AND status = 'sending'",
+                            (draft_id,))
+            raise
         server_id = str(said.get("id") or "")
         status = "site_draft" if said.get("status") == "draft" else "sent"
         at = _now()

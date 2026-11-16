@@ -282,6 +282,15 @@ class Interactive:
         joined = "\n\n".join(text.strip() for text in notes if text and text.strip())
         if joined:
             self.society.note(peer, joined, thread)
+        # HANDLED BY THE AGENT, TOLD IN THE REPORT TOO (the user, 2026-11-15: "能自己处理好，但是会反馈的 ... 也会记录在report里吧"):
+        # what it tells the user of a conversation it answered itself - not only in the Society inbox. A draft that
+        # waits for them is in the report already, among what needs their look.
+        told = str(made.get("for_user") or "").strip()
+        if told and not drafted:
+            from ..agent.reports import did
+            name = (self.society.contact(peer) or {}).get("name") or peer
+            did(self.app.db, "society_told", self._shown("From {0}: for you to know").replace("{0}", str(name)),
+                told[:1000], source="society", ref=thread)
         decision = str(made.get("next") or "")
         why = str(made.get("next_why") or "").strip()
         if drafted or any(one.startswith("Waiting for your approval") for one in notes):

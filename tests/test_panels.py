@@ -1899,20 +1899,23 @@ class WatchScopeTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.agent.cleanup()
 
-    def test_the_default_scope_is_everything_not_the_agent_workspace(self) -> None:
-        """Section 19, as amended: the agent cannot notice what it is not watching.
-
-        A narrow default leaves the feature reporting itself as running while
-        recording almost nothing, which is worse than being off.
-        """
+    def test_the_default_scope_is_the_users_own_folders_not_every_drive(self) -> None:
+        """2026-11-16 ("默认看桌面、文档、下载"): every drive kept a copy busy all day, minutes to close, its update
+        unable to move its folder. The user's Desktop, Documents and Downloads - where they are - and never the
+        agent's workspace."""
         from personalized_agent.common.config.schema import default_watch_paths
         from personalized_agent.common.paths import default_root
 
         roots = [Path(line) for line in default_watch_paths().splitlines() if line.strip()]
         self.assertTrue(roots)
         for root in roots:
-            self.assertEqual(root, Path(root.anchor),
-                             "the default is whole drives, not one folder")
+            self.assertNotEqual(root, Path(root.anchor), "not a whole drive")
+            self.assertTrue(root.is_dir())
+        names = {root.name for root in roots}
+        for folder in ("Desktop", "Documents", "Downloads"):
+            if (Path.home() / folder).is_dir():
+                self.assertTrue(any(folder.lower() in str(root).lower() for root in roots), folder)
+        self.assertLessEqual(len(roots), 3, names)
         workspace = default_root()
         self.assertNotIn(workspace, roots,
                          "watching only the workspace records the agent, not the user")
@@ -1928,6 +1931,9 @@ class WatchScopeTests(unittest.TestCase):
                          else ("/system", "library/caches", "/tmp")
                          if sys.platform == "darwin" else ("/proc", "/tmp")):
             self.assertIn(expected, joined, f"{expected} would drown everything else")
+        if sys.platform == "win32":
+            self.assertIn(str(Path.home() / "AppData").lower(), excluded,
+                          "the whole of AppData (2026-11-16), not three folders of it")
 
     def test_noise_is_excluded_out_of_the_box(self) -> None:
         from personalized_agent.common.config import schema

@@ -7858,6 +7858,7 @@ The application must behave consistently in both environments.
 
 # 102. Build System
 <!-- number: 102 | label: 102. | id: s102 | page: 137 -->
+<!-- note: 2026-11-16: the sentence model on ONNX Runtime, so the build environment and the build carry no torch or transformers; the installer carries the model's files. -->
 
 The repository must provide automated build scripts for all supported operating systems.
 
@@ -7896,6 +7897,8 @@ It also takes --validate-only (run the build-time validation and stop), --skip-t
 A build from source carries the Debugger and its tabs by default. python build.py --no-debugger leaves them out entirely, because a build for a user should not carry the agent's internals; the released downloads are built that way (section 116).
 
 A developer packaging a build locally can do so from a dedicated environment made by build/make_build_env.py. It lives outside the repository, holds only the application's requirements and PyInstaller, pins every package to the version installed in the development Python, and uses a CPU-only torch, so the build carries neither the developer's extra packages nor a CUDA torch.
+
+**No torch in the build.** Since 2026-11-16 the sentence model runs on ONNX Runtime: the same all-MiniLM-L6-v2, from its own ONNX file at the revision its stored vectors came from - measured to give the same vectors, with about a quarter of the memory and a tenth of the load time. The build environment therefore leaves torch, transformers and the other machine-learning frameworks out at any version, and the build carries none of them. The installer carries the model's own two files instead (about 90 MB, fetched at build time at that revision and checked against their SHA-256), so a copy never has to reach Hugging Face for them; the worker reads them first and downloads only when they are missing, as when run from source.
 
 The application's icons are made from the Watermelon avatar.
 
@@ -7958,6 +7961,7 @@ PyInstaller builds are not byte-for-byte reproducible, so a released file cannot
 
 # 105. Application Versioning
 <!-- number: 105 | label: 105. | id: s105 | page: 139 -->
+<!-- note: 2026-11-16: a fix of a version has four numbers; the macOS bundle shows the first three. -->
 
 The Personalized Agent should use a consistent application version.
 
@@ -7975,6 +7979,8 @@ The same release version should be represented consistently in:
 - The Debugger, in builds that carry it
 
 The single source of the version is personalized_agent/version.py. Released downloads carry no Debugger, so in a release the version is shown in the executable and installer metadata, the application UI and the logs.
+
+**A fix of a version has four numbers** (since 2026-11-16: 0.3.7.1 fixes 0.3.7). Wherever versions are compared it is newer than the version it fixes and older than the next one. Windows' own version carries all four. The macOS bundle's version carries the first three, as Apple asks for three: there a fix shows as the version it fixes, while the application UI, the logs and the updater keep all four.
 
 # 106. Platform-Specific Components
 <!-- number: 106 | label: 106. | id: s106 | page: 139 -->

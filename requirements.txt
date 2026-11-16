@@ -27,8 +27,9 @@ openpyxl>=3.1           # the cells of a workbook the user opens or hands over
 # heartbeat compares words, says so on its page, and carries on. The model
 # itself is ninety megabytes, downloaded once, and runs on the processor.
 numpy>=1.24              # scoring pairs of state vectors, in the agent's own process
-torch>=2.0               # the tensor library the sentence model runs on, in its own process
-transformers>=4.40       # loading and running all-MiniLM-L6-v2 locally
+onnxruntime>=1.17        # running all-MiniLM-L6-v2 locally, in its own process (was torch + transformers)
+tokenizers>=0.15         # the model's own tokeniser
+huggingface_hub>=0.20    # the model's files, downloaded once into the Hugging Face cache
 pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'  # per-pixel macOS avatar transparency
 pyobjc-framework-WebKit>=10.0; sys_platform == 'darwin'  # the Delegate work box in a panel of its own (ui/mac_panel.py)
 

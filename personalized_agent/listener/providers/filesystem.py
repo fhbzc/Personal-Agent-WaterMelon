@@ -16,7 +16,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from ...common.events.models import ListenerEvent
 from ..core.provider import ListenerProvider, PluginManifest
@@ -217,9 +217,20 @@ class FilesystemProvider(ListenerProvider):
     provider_id = "filesystem"
     category = "filesystem"
 
-    def __init__(self, config: Any, platform: Any = None) -> None:
+    #: At most this long, when the listener stops, to judge what it was still holding: the rest is counted and let
+    #: go (2026-11-16: a copy watching all of C:\ took four and six minutes to close, and its update could not
+    #: move its folder while it did).
+    STOP_FLUSH_SECONDS = 2.0
+
+    def __init__(self, config: Any, platform: Any = None,
+                 more_roots: Optional[Callable[[], List[str]]] = None) -> None:
         super().__init__()
         self.config = config
+        #: THE FOLDERS THE USER GAVE PIECES OF WORK (the user, 2026-11-16: "再自动加上你给工作任务指定过的项目文件夹"),
+        #: watched beside the setting's own - asked each time the roots are read.
+        self.more_roots = more_roots
+        #: What a stop let go of unjudged, for the panel.
+        self._let_go_at_stop = 0
         #: Asked what was in front when a file changed. Being at the keyboard
         #: says *somebody* was working; it does not say that this particular
         #: write was theirs, because a background program writes while they
@@ -266,6 +277,25 @@ class FilesystemProvider(ListenerProvider):
                 paths.append(path)
             else:
                 self._roots[str(path)] = "missing"
+        # And each folder a piece of work was given - unless a watched folder holds it already. A file given
+        # alone is not a reason to watch the folder it sits in.
+        try:
+            extra = list(self.more_roots() or []) if callable(self.more_roots) else []
+        except Exception:
+            log.debug("the work's folders could not be read", exc_info=True)
+            extra = []
+        for raw in extra:
+            try:
+                path = Path(str(raw)).expanduser()
+                if not path.is_dir():
+                    continue
+                inside = any(path == one or one in path.parents for one in paths)
+            except OSError:
+                continue
+            if not inside:
+                # Those it holds go: one root watches them all.
+                paths = [one for one in paths if path not in one.parents]
+                paths.append(path)
         return paths
 
     def settings_changed(self) -> None:
@@ -291,6 +321,31 @@ class FilesystemProvider(ListenerProvider):
             log.debug("could not stop the watcher cleanly", exc_info=True)
         self.start()
 
+    #: How often the work's folders are looked at again: one given or taken back where this process was not told
+    #: (a run in a process of its own) is noticed within this long.
+    LOOK_AGAIN_SECONDS = 300.0
+
+    def _start_looking_again(self) -> None:
+        if not callable(self.more_roots):
+            return
+        self._looking = getattr(self, "_looking", 0) + 1
+        threading.Thread(target=self._look_again, args=(self._looking,),
+                         name="listener-filesystem-folders", daemon=True).start()
+
+    def _look_again(self, generation: int) -> None:
+        while not self._stop.wait(self.LOOK_AGAIN_SECONDS) and generation == getattr(self, "_looking", 0):
+            try:
+                wanted = {str(path) for path in self.watch_paths()}
+                watching = {root for root, state in self._roots.items() if state != "missing"}
+            except Exception:
+                log.debug("the watched folders could not be looked at again", exc_info=True)
+                continue
+            if wanted != watching:
+                # Not on this thread: a restart stops what it starts from.
+                threading.Thread(target=self.settings_changed, name="listener-filesystem-restart",
+                                 daemon=True).start()
+                return
+
     def _start_watching_the_desktop(self) -> None:
         if self._desktop_thread and self._desktop_thread.is_alive():
             return
@@ -300,10 +355,13 @@ class FilesystemProvider(ListenerProvider):
         self._desktop_thread.start()
 
     def start(self) -> None:
+        # What it watches now, alone: a root it no longer has is not one it is still said to watch.
+        self._roots = {}
         roots = self.watch_paths()
         if not roots:
             raise RuntimeError("no existing directory is configured for filesystem monitoring")
         self._stop.clear()
+        self._start_looking_again()
         if _WATCHDOG:
             self._observer = Observer()
             handler = _Handler(self)
@@ -420,7 +478,7 @@ class FilesystemProvider(ListenerProvider):
         if self._desktop_thread:
             self._desktop_thread.join(timeout=STOPPING_GRACE_SECONDS)
             self._desktop_thread = None
-        self.flush_held_events()
+        self.flush_held_events(budget=self.STOP_FLUSH_SECONDS)
         if self._observer is not None:
             try:
                 self._observer.stop()
@@ -450,8 +508,14 @@ class FilesystemProvider(ListenerProvider):
             if os.path.dirname(data["source_path"]) == os.path.dirname(data["destination_path"]) \
                     and source_name != dest_name:
                 event_type = "filesystem.renamed"
+            # LEFT OUT AT THE DOOR (2026-11-16): what the settings leave unwatched - AppData, the system's
+            # folders, the agent's own - is dropped here, not looked up, held and judged to be dropped later.
+            if self._settings_refuse(data["source_path"]) and self._settings_refuse(data["destination_path"]):
+                return
         else:
             data["path"] = str(getattr(raw_event, "src_path", ""))
+            if self._settings_refuse(data["path"]):
+                return
             if event_type == "filesystem.modified":
                 event_type, happened_at = self._read_or_written(data["path"], data)
                 if event_type is None:
@@ -854,14 +918,16 @@ class FilesystemProvider(ListenerProvider):
 
     def _flush_after_the_window(self) -> None:
         self._stop.wait(self.BURST_WINDOW_SECONDS)
-        self.flush_held_events()
+        # Woken by a stop, as short as the stop's own.
+        self.flush_held_events(budget=self.STOP_FLUSH_SECONDS if self._stop.is_set() else None)
 
-    def flush_held_events(self) -> None:
+    def flush_held_events(self, budget: Optional[float] = None) -> None:
         """Judge what is being held now, rather than when the window ends.
 
         Called when the window ends, and when the provider stops: events
         still waiting at shutdown would otherwise be the last second of the
-        user's day, dropped every time the listener is closed.
+        user's day, dropped every time the listener is closed. `budget`: at
+        most so many seconds - what is left then is counted and let go.
         """
         with self._holding_lock:
             batch, self._holding = self._holding, []
@@ -869,6 +935,7 @@ class FilesystemProvider(ListenerProvider):
             self._flusher = None
         if not batch:
             return
+        deadline = None if budget is None else time.monotonic() + float(budget)
         # Grouped by when the files were touched, not by when we were told.
         # Writes are reported as they happen and the two are the same; reads
         # are reported in one lump an hour later, and judging that lump as a
@@ -876,12 +943,17 @@ class FilesystemProvider(ListenerProvider):
         # flushing, not a person doing anything.
         batch.sort(key=lambda row: row[2])
         together: List[tuple] = []
-        for row in batch:
+        for at, row in enumerate(batch):
+            if deadline is not None and time.monotonic() > deadline:
+                left = len(batch) - at + len(together)
+                self._let_go_at_stop += left
+                log.info("stopping: %d file events let go unjudged, %.1f s spent", left, budget)
+                return
             if together and row[2] - together[-1][2] > self.TOGETHER_WITHIN_SECONDS:
-                self._judge(together)
+                self._judge(together, deadline)
                 together = []
             together.append(row)
-        self._judge(together)
+        self._judge(together, deadline)
 
     #: How close two events have to be to count as having happened together.
     #:
@@ -891,8 +963,8 @@ class FilesystemProvider(ListenerProvider):
     #: three files that looks exactly like somebody opening three files.
     TOGETHER_WITHIN_SECONDS = 1.0
 
-    def _judge(self, together: List[tuple]) -> None:
-        """One group of events that happened at the same time, kept or not."""
+    def _judge(self, together: List[tuple], deadline: Optional[float] = None) -> None:
+        """One group of events that happened at the same time, kept or not - those past `deadline` let go."""
         if not together:
             return
         if len(together) > self.BURST_IS_A_PROGRAM:
@@ -903,7 +975,10 @@ class FilesystemProvider(ListenerProvider):
             self._sweeps += 1
             log.debug("ignored a sweep of %d file events", len(together))
             return
-        for event_type, data, happened_at in together:
+        for at, (event_type, data, happened_at) in enumerate(together):
+            if deadline is not None and time.monotonic() > deadline:
+                self._let_go_at_stop += len(together) - at
+                return
             self._send(event_type, data, happened_at)
 
     def _send(self, event_type: str, data: Dict[str, Any],
@@ -960,6 +1035,7 @@ class FilesystemProvider(ListenerProvider):
             "opened": self._opened,
             "swept_past": self._swept,
             "sweeps": self._sweeps,
+            "let_go_at_stop": self._let_go_at_stop,
             "from_the_desktop": self._from_the_desktop,
             "watching": alive,
             "last_error": self.last_error or (

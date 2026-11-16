@@ -1036,6 +1036,22 @@ class AnsweringTests(unittest.TestCase):
         self.assertEqual(notes[-1], "Not answered by your agent: they only said thanks")
         self.assertEqual(self.mira.waiting(), {}, "each handled once")
 
+    def test_what_it_tells_of_an_answer_it_sent_is_in_the_report_too(self) -> None:
+        """2026-11-15: handled by the agent, and something for the user to know - in the report, not only the
+        Society inbox; a draft waiting for them is not told twice."""
+        from personalized_agent.agent.reports import did_since
+        self.model.for_user = "Ada asks whether Friday's meeting can move to the morning; I said Mira is free."
+        self._ask("Is Friday good?")
+        self.mira.interactive.answer_waiting()
+        [told] = [one for one in did_since(self.mira.db, "") if one["kind"] == "society_told"]
+        self.assertEqual((told["why"], told["source"]), (self.model.for_user, "society"))
+        self.assertIn("for you to know", told["title"])
+        self.assertTrue(told["ref"], "kept with its thread")
+        self.mira.put_in_group("draft", peer=self.ada.account_id)
+        self._ask("And Saturday?")
+        self.mira.interactive.answer_waiting()
+        self.assertEqual(len([one for one in did_since(self.mira.db, "") if one["kind"] == "society_told"]), 1)
+
     def test_draft_group_a_draft_for_the_user_nothing_sent(self) -> None:
         self.mira.put_in_group("draft", peer=self.ada.account_id)
         message = self._ask("Is Friday good?")

@@ -599,7 +599,11 @@ class NoLimitADayTests(unittest.TestCase):
         self.monitor.notifications = SimpleNamespace(_in_quiet_hours=lambda: False)
 
     def _fired(self, activator) -> None:
-        when = datetime.now(timezone.utc) - timedelta(hours=1)
+        # TODAY WHATEVER THE HOUR (2026-11-16: run at 00:34, "an hour ago" was yesterday and not counted): an hour
+        # ago, or halfway since local midnight when that is nearer.
+        now = datetime.now().astimezone()
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        when = max(now - timedelta(hours=1), midnight + (now - midnight) / 2).astimezone(timezone.utc)
         self.monitor.db.execute(
             "INSERT INTO monitor_activators (id, data, created_at, updated_at) VALUES (?, ?, ?, ?)",
             (activator["id"], json.dumps(activator), when.isoformat(), when.isoformat()))
