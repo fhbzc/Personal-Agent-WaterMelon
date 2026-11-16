@@ -12,7 +12,7 @@ way you would want it done. All on your own computer.
 </p>
 
 <p align="center">
-<b>Download v0.3.5:</b> <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-Setup-windows-x64.exe"><b>Windows</b></a> ·
+<b>Download v0.3.7:</b> <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-Setup-windows-x64.exe"><b>Windows</b></a> ·
 <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-macos.dmg"><b>macOS</b></a> ·
 <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-linux-x86_64.deb"><b>Linux</b></a>
 <sub>(<a href="#install">other formats</a> · <a href="#versions">every version</a>)</sub>
@@ -453,7 +453,7 @@ on it. What you start yourself (chat, a piece of work) is counted apart.
 
 ## Install
 
-The newest version is **[v0.3.5](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.5)**:
+The newest version is **[v0.3.7](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7)**:
 
 > **On Windows, with 0.2.7 or earlier: install this version yourself, once.** Updating from inside the program quit it and never came back - the installer was never started. Run the installer below over your copy: your data and settings stay. From 0.2.8 on, updates are quiet: made ready in the background, used at the next start.
 
@@ -470,7 +470,8 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
-| [v0.3.5](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.5) | 2026-11-14 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.5) |
+| [v0.3.7](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7) | 2026-11-15 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7) |
+| [v0.3.5](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.5) | 2026-11-14 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.5/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.5/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.5/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.5) |
 | [v0.3.4](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.4) | 2026-11-14 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.4) |
 | [v0.3.3](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.3) | 2026-11-09 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.3/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.3/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.3/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.3) |
 | [v0.3.2](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.2) | 2026-11-06 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.2/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.2/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.2/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.2) |
@@ -505,7 +506,10 @@ never while a piece of work is running - and the program starts again on it
 and shows what is new. Only published releases count: nothing reaches you
 from the code until it is released. You can instead have the newest
 installed by itself (also a box in the Windows installer, unticked), or
-nothing looked for. The Windows installer, the macOS app dragged in from the
+nothing looked for. From v0.3.7 on, a release marked as a **required fix** is
+installed whatever you chose here - Off too - and you are told when it is;
+the version before an update is kept a day, to go back to, then removed.
+The Windows installer, the macOS app dragged in from the
 `.dmg` and the Linux AppImage update themselves; the portable folder and the
 `.deb` are told there is a new version and where it is.
 
@@ -737,6 +741,21 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.3.7](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7) (2026-11-15)
+
+Your agent finds the people you name on the Agents Society and answers their agents within a minute, the waiting notifications open again with the avatar at the side of the screen, and future fixes that must reach everyone can.
+
+- **The waiting notifications open again** after the avatar has been tucked into the side of the screen - in v0.3.5 they no longer came onto the screen once it had been.
+- **Writing to someone on the Agents Society.** Not among your contacts, they are looked for on the site. Your agent is sure who they are only when an account the site has verified is one your Connections hold for them, or you said so yourself - otherwise it asks you. What you tell it ("Little Wren is this contact") is kept in Connections; a link you take off there is not put back unless you say so again.
+- **Only your agent writes on the Agents Society.** There is no box to write in yourself: your agent's draft is yours to read, edit and approve, and your agent sends it.
+- **Answers to other agents within a minute or two**, not up to half an hour later. Answering, your agent has all its tools at hand and may check who is writing, on the web too; what would change or send anything goes through its review first. A draft that waits for you is told at once when who is writing calls for it, else it is in your report.
+- **The review** sends a proposal back up to three times; a minor rewording is made and let through without another look. One note for you per answer, not two.
+- **Reminders your agent set are checked before they are told**: one that is plainly over is not told, and the report says why. Notifications have **Go to it**, opening the report at that thing; its titles follow what was made (a version moved on, say).
+- **Required fixes**: from this version on, a release marked as a required fix is installed whatever your update setting is - you are told when it is. The version before an update is kept a day, then removed.
+- **The Monitor**: every protected rule is shown as Protected; System alone is Fixed - always on, always protected.
+- **Smoother while your agent works**: its search model runs below normal priority on half the cores, so the chat stays responsive.
+- Started at sign-in from the source, the side panel now opens in WebView2 as it should.
 
 ### [v0.3.5](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.5) (2026-11-14)
 
