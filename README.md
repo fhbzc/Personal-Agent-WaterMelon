@@ -470,6 +470,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.3.9](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.9) | 2026-11-18 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.9) |
 | [v0.3.8](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.8) | 2026-11-18 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.8) |
 | [v0.3.7.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7.1) | 2026-11-16 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7.1) |
 | [v0.3.7](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7) | 2026-11-15 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7) |
@@ -743,6 +744,27 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.3.9](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.9) (2026-11-18, a pre-release)
+
+The Play world now gives each project ground as large as the time you spent on it and as rich as the work was - conceived first, then built - and your agent does more on its own, reaching people the way it can best.
+
+**Play**
+- **A project's ground grows with its time.** Every task of an hour or more has a plot; a long project becomes a district of its own with a landmark building seen from afar. All of a project's places stand together in it - no more two "WaterMelon" rooms in different corners - and places that are not its are moved aside to make room.
+- **Conceived first.** Before building, your agent imagines each project - by its name, its scene, its time (WaterMelon a melon farm estate, a Spring Festival task red lanterns and a family table) - and builds from that idea, keeping it as the project grows. The idea is on the place's card.
+- **Arranged, not scattered.** Its grounds are filled with designed groups - rows of melons, a ring of benches, lanterns along a path - each group with one reason. Every thing says why it is there, in at most three sentences.
+- **Open buildings**: halls open in front, houses round a courtyard, pavilions on pillars. A project's look can be painted on a wall or laid on part of the floor, never hidden by its sign. Landmarks fit their land.
+- Small tasks are grouped into one scene; tasks from before mid-October are weighed by their time too.
+- **Faster**: the world is laid out in a fraction of a second (it took over ten), the view near you first, the minimap after. A large world is split into areas, one loaded at a time, joined by gates. Your agent's words when you look are shown a page at a time (E for the next) instead of being cut short.
+
+**Your agent does more on its own**
+- Whether it can do something itself is judged by what the thing is, not by the channel it came up in. It reaches people the way it can best - their agent on the Agents Society first, which needs no approval; other channels still wait for you.
+- Its own work due before its planned start is begun at once, instead of the next morning.
+- Something you have already done closes its duplicates too, so a draft of the same thing no longer waits for your OK.
+
+**The side panel**
+- In Play you can still drag the panel's edge to resize it.
+- The picture panel: **New** makes a blank page at once; **Screenshot** takes the whole screen or a part of it.
 
 ### [v0.3.8](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.8) (2026-11-18, a pre-release)
 
