@@ -427,8 +427,9 @@ const PLAY_LANDMARKS = {
                  ["plumTree", 3, -2], ["firecrackers", -2, 0], ["fuSign", 1, 0], ["firework", -1, -6], ["redEnvelope", 2, 0]],
   giant_heart: [["heartArch", -1, -4], ["giantHeart", -6, -3], ["rose", -3, 1], ["rose", 3, 1], ["bench", -1, 1],
                 ["balloons", 4, -1], ["lovePotion", 2, 1], ["loveLetter", -2, 1]],
-  skyline: [["towerTall", -7, -6], ["towerGlass", -3, -5], ["towerBrick", 0, -4], ["towerGlass", 3, -5], ["towerTall", 6, -6],
-            ["bench", -2, 1], ["streetLamp", -5, 0], ["streetLamp", 5, 0]],
+  skyline: [["towerTall", -7, -8], ["towerGlass", -3, -7], ["towerBrick", 0, -6], ["towerGlass", 3, -7], ["towerTall", 6, -8],
+            ["uTree", -5, -1], ["uTree", 5, -1], ["uTreeSmall", -1, -1], ["planter", 2, -1], ["bench", -2, 1],
+            ["streetLamp", -5, 1], ["streetLamp", 5, 1]],
   giant_pet: [["giantCat", -4, -2], ["giantDog", 1, -2], ["bench", -1, 2], ["redFlower", -3, 2], ["whiteFlower", 3, 2]],
   rocket: [["ship2", -1, -2], ["barrier", -3, 1], ["barrier", 2, 1], ["streetLamp", -3, -1], ["streetLamp", 3, -1]],
   ancient_ruins: [["pillar", -4, -3], ["brokenPillar", -2, -3], ["pillar", 2, -3], ["brokenPillar", 4, -3], ["statue", 0, -2],
@@ -503,32 +504,62 @@ const PLAY_LAND_MOST = 9;                  // how far the land may reach from wh
 
 /* The way from one tile to another, round what stands in the way: cheapest by its tiles' costs (A*). */
 function playRoute(blocked, from, to, wobble, salt, paths) {
+  // FAST (2026-11-18: one route took 15.8 s of a 17 s layout): what is in the way and what each step costs read once
+  // into arrays over the route's box; each tile expanded once; a goal walled in ends the search when the box is done.
   const pad = 14;
   const minX = Math.min(from[0], to[0]) - pad, minY = Math.min(from[1], to[1]) - pad;
   const W = Math.abs(from[0] - to[0]) + 2 * pad + 1, H = Math.abs(from[1] - to[1]) + 2 * pad + 1;
   const index = (x, y) => (x - minX) + (y - minY) * W;
-  const g = new Float32Array(W * H).fill(Infinity), came = new Int32Array(W * H).fill(-1);
-  const heap = [];
-  const push = (f, i) => { heap.push([f, i]); let n = heap.length - 1; while (n > 0) { const p = (n - 1) >> 1; if (heap[p][0] <= heap[n][0]) break; [heap[p], heap[n]] = [heap[n], heap[p]]; n = p; } };
-  const pop = () => { const top = heap[0]; const last = heap.pop(); if (heap.length) { heap[0] = last; let n = 0; for (;;) { const l = 2 * n + 1, r = l + 1; let m = n; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === n) break; [heap[m], heap[n]] = [heap[n], heap[m]]; n = m; } } return top; };
-  const start = index(from[0], from[1]), goal = index(to[0], to[1]);
+  const N = W * H;
+  const cost = new Float32Array(N), wall = new Uint8Array(N);
+  for (let y = 0; y < H; y += 1) {
+    for (let x = 0; x < W; x += 1) {
+      const key = `${minX + x},${minY + y}`, i = x + y * W;
+      wall[i] = blocked.has(key) ? 1 : 0;
+      cost[i] = paths && paths.has(key) ? 0.35 : 1 + wobble * playNoise(minX + x, minY + y, salt, 5);
+    }
+  }
+  const goal = index(to[0], to[1]), start = index(from[0], from[1]);
+  if (goal >= 0 && goal < N) wall[goal] = 0;
+  const g = new Float32Array(N).fill(Infinity), came = new Int32Array(N).fill(-1), done = new Uint8Array(N);
+  const heapF = [], heapI = [];
+  const push = (f, i) => {
+    let n = heapF.length; heapF.push(f); heapI.push(i);
+    while (n > 0) { const q = (n - 1) >> 1; if (heapF[q] <= heapF[n]) break; [heapF[q], heapF[n]] = [heapF[n], heapF[q]]; [heapI[q], heapI[n]] = [heapI[n], heapI[q]]; n = q; }
+  };
+  const pop = () => {
+    const top = heapI[0], lastF = heapF.pop(), lastI = heapI.pop();
+    if (heapF.length) {
+      heapF[0] = lastF; heapI[0] = lastI;
+      let n = 0;
+      for (;;) {
+        const l = 2 * n + 1, r = l + 1; let m = n;
+        if (l < heapF.length && heapF[l] < heapF[m]) m = l;
+        if (r < heapF.length && heapF[r] < heapF[m]) m = r;
+        if (m === n) break;
+        [heapF[m], heapF[n]] = [heapF[n], heapF[m]]; [heapI[m], heapI[n]] = [heapI[n], heapI[m]]; n = m;
+      }
+    }
+    return top;
+  };
   g[start] = 0;
   push(0, start);
-  while (heap.length) {
-    const [, i] = pop();
+  while (heapF.length) {
+    const i = pop();
+    if (done[i]) continue;
+    done[i] = 1;
     if (i === goal) break;
-    const x = minX + (i % W), y = minY + Math.floor(i / W);
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const nx = x + dx, ny = y + dy;
-      if (nx < minX || ny < minY || nx >= minX + W || ny >= minY + H) continue;
-      const key = `${nx},${ny}`;
-      if (blocked.has(key) && !(nx === to[0] && ny === to[1])) continue;
-      const step = paths.has(key) ? 0.35 : 1 + wobble * playNoise(nx, ny, salt, 5);
-      const j = index(nx, ny);
-      if (g[i] + step < g[j]) {
-        g[j] = g[i] + step;
+    const x = i % W, y = (i - x) / W;
+    for (let k = 0; k < 4; k += 1) {
+      const nx = x + (k === 0 ? 1 : k === 1 ? -1 : 0), ny = y + (k === 2 ? 1 : k === 3 ? -1 : 0);
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      const j = nx + ny * W;
+      if (wall[j] || done[j]) continue;
+      const gj = g[i] + cost[j];
+      if (gj < g[j]) {
+        g[j] = gj;
         came[j] = i;
-        push(g[j] + 0.35 * (Math.abs(nx - to[0]) + Math.abs(ny - to[1])), j);
+        push(gj + 0.35 * (Math.abs(minX + nx - to[0]) + Math.abs(minY + ny - to[1])), j);
       }
     }
   }
@@ -538,7 +569,31 @@ function playRoute(blocked, from, to, wobble, salt, paths) {
   return out.reverse();
 }
 
-function playLay(world) {
+/* A LANDMARK WHERE IT BELONGS (agent/playregions.py LANDMARK_LANDS): a skyline in a city, not on a lakeshore - one that
+   does not fit its land stands as a fountain. */
+const PLAY_LANDMARK_LANDS = { skyline: ["city", "scifi", "space", "skycity"], rocket: ["space", "scifi", "city"],
+                              mausoleum: ["graveyard", "halloween", "ruins"], christmas_tree: ["christmas", "snow"],
+                              lantern_gate: ["newyear"], giant_heart: ["valentine"], fair: ["funfair", "toytown", "city"] };
+function playLandmarkOf(region) {
+  const lands = PLAY_LANDMARK_LANDS[region.landmark];
+  return !lands || lands.includes(region.biome) ? region.landmark : "fountain";
+}
+
+/* ONE AREA AT A TIME (the user, 2026-11-18: "一个区域必须传送到下一个区域这样每次都只用加载一个区域的地图"): an area's regions,
+   their places and their things - the rest of the world is not laid at all; its gates go to the others. */
+function playAreaOf(region) { return (region && region.area) || "a1"; }
+function playAreas(world) { return [...new Set((world.regions || []).map(playAreaOf))]; }
+function playAreaWorld(world, area) {
+  if (!world.regions || playAreas(world).length < 2) return world;
+  const regions = world.regions.filter((one) => playAreaOf(one) === area);
+  const ids = new Set(regions.map((one) => one.id));
+  const zones = world.zones.filter((one) => ids.has(one.region || "r1"));
+  const zoneIds = new Set(zones.map((one) => one.id));
+  return { ...world, regions, zones, items: world.items.filter((one) => zoneIds.has(one.zone)) };
+}
+
+function playLay(world, area) {
+  world = playAreaWorld(world, area || (typeof play !== "undefined" && play.area) || "a1");
   const regions = playRegions(world);
   const byId = Object.fromEntries(regions.map((one, n) => [one.id, n]));
   const regionOf = (zone) => regions[byId[zone.region]] || regions[0];
@@ -556,12 +611,13 @@ function playLay(world) {
       rect = [zone.x, zone.y, zone.x + zone.w + 2, yb + 3];
       out = [playDoor(zone)[0], yb + 3];
     }
-    for (let y = rect[1]; y < rect[3]; y += 1) for (let x = rect[0]; x < rect[2]; x += 1) blocked.add(`${x},${y}`);
+    // A project's plot is open ground: the roads run across it.
+    if (!zone.plot) for (let y = rect[1]; y < rect[3]; y += 1) for (let x = rect[0]; x < rect[2]; x += 1) blocked.add(`${x},${y}`);
     return { zone, region, garden: Boolean(PLAY_OUTDOOR[zone.kind]), door: playDoor(zone)[0], rect, out };
   });
   const landmarks = regions.filter((region) => !region.starter && PLAY_LANDMARKS[region.landmark]).map((region) => {
     const cx = region.ox + Math.floor(PLAY_CELL[0] / 2) - 1, cy = region.oy + Math.floor(PLAY_CELL[1] / 2) - 1;
-    return { region, cx, cy, square: [cx - 6, cy - 4, cx + 7, region.oy + PLAY_CELL[1] - 1],
+    return { region, cx, cy, landmark: playLandmarkOf(region), square: [cx - 6, cy - 4, cx + 7, region.oy + PLAY_CELL[1] - 1],
              paving: region.land.street === "asphalt" ? "pavement" : "paving" };
   });
   // Each region's heart: its landmark's square (just below it), or its first place's door.
@@ -973,7 +1029,9 @@ function playLayBlock(index, cx, cy) {
     }
   }
   // The rooms' footprints first known (the islands' water stays off them).
-  const rooms = index.zones.filter((one) => intersects(one.rect, x0, y0, x1, y1));
+  // A project's plot first: its places are laid over it.
+  const rooms = index.zones.filter((one) => intersects(one.rect, x0, y0, x1, y1))
+    .sort((p, q) => (q.zone.plot ? 1 : 0) - (p.zone.plot ? 1 : 0));
   for (const one of rooms) {
     const [rx0, ry0, rx1, ry1] = one.garden ? one.rect : [one.zone.x, one.zone.y, one.zone.x + one.zone.w + 2, one.zone.y + one.zone.h + 6];
     for (let y = Math.max(ry0, y0); y < Math.min(ry1, y1); y += 1) for (let x = Math.max(rx0, x0); x < Math.min(rx1, x1); x += 1) kept[at(x, y)] = 1;
@@ -1020,6 +1078,10 @@ function playLayBlock(index, cx, cy) {
           const ring = zone.kind === "park" && !edge && (y === fy || y === fy + fh - 1 || x === fx || x === fx + fw - 1);
           const wet = pool && x >= fx + 2 && x < fx + fw - 2 && y >= fy + 2 && y < fy + fh - 2;
           const made = !edge && nature.get(`${x},${y}`);
+          if (zone.plot) {                                     // a project's ground: its roads kept across it
+            const i0 = at(x, y);
+            if (i0 >= 0 && kept[i0] === 2) continue;
+          }
           if (made) put(x, y, made[0], made[1], 1);
           else put(x, y, wet ? (playHash(x, y, 5) < 0.5 ? "water" : "water2") : edge ? edgeOf : ring ? "dirt" : ground2, wet, 1);
           const i = at(x, y);
@@ -1030,17 +1092,42 @@ function playLayBlock(index, cx, cy) {
     }
     const zx0 = zone.x, zy0 = zone.y, zx1 = zone.x + zone.w + 1, yb = zone.y + 3 + zone.h;
     const door = one.door;
+    // HOW OPEN IT IS (agent/playworld.py FORMS; the user, 2026-11-18: "需要有一些半开放的设计"): a pavilion's walls only
+    // pillars, every few tiles, and its back eaves; a hall open in front; round a court, its middle an open yard.
+    const form = zone.form || "closed";
+    const pavilion = form === "pavilion", openFront = form !== "closed";
+    const pillarAt = (x, y) => (x === zx0 || x === zx1 || (x - zx0) % 4 === 0) && (y === zy0 + 3 || y === yb || (y - zy0) % 4 === 0);
+    const court = form === "u_court" ? [zx0 + Math.max(3, Math.floor(zone.w / 4)), zy0 + 3 + Math.max(2, Math.floor(zone.h / 3)),
+                                        zx1 - Math.max(3, Math.floor(zone.w / 4)), yb + 2] : null;
+    const yard = (x, y) => court && x > court[0] && x < court[2] && y >= court[1] && y <= court[3];
     for (let x = zx0; x <= zx1; x += 1) {
       const end = x === zx0 ? "L" : x === zx1 ? "R" : "";
       put(x, zy0, (end === "L" ? "wallTL" : end === "R" ? "wallTR" : "wallT") + arch, true, 1);
-      put(x, zy0 + 1, (end ? "wallSide" : "faceHi") + arch, true, 1);
-      put(x, zy0 + 2, (end ? "wallSide" : "faceLo") + arch, true, 1);
-      for (let y = zy0 + 3; y < yb; y += 1) {
-        put(x, y, end ? "wallSide" + arch : floor, Boolean(end), 1);
-        const i = at(x, y);
-        if (i >= 0 && !end) inside[i] = 1;
+      if (pavilion) {                                          // its eaves at the back; under them, its floor
+        put(x, zy0 + 1, (end || (x - zx0) % 4 === 0 ? "wallSide" : "faceLo") + arch, true, 1);
+        put(x, zy0 + 2, floor, false, 1);
+        const i2 = at(x, zy0 + 2);
+        if (i2 >= 0) inside[i2] = 1;
+      } else {
+        put(x, zy0 + 1, (end ? "wallSide" : "faceHi") + arch, true, 1);
+        put(x, zy0 + 2, (end ? "wallSide" : "faceLo") + arch, true, 1);
       }
-      if (x >= door && x < door + PLAY_DOOR_W) {                // the door, two wide
+      for (let y = zy0 + 3; y < yb; y += 1) {
+        if (yard(x, y)) { put(x, y, playHash(x, y, 37) < 0.15 ? "flowers" : "grass", false, 1); continue; }
+        const wall = end && (!pavilion || pillarAt(x, y));
+        put(x, y, wall ? "wallSide" + arch : floor, Boolean(wall), 1);
+        const i = at(x, y);
+        if (i >= 0 && !wall) inside[i] = 1;
+      }
+      if (openFront) {                                         // open in front: its floor out to the step, pillars along it
+        for (let y = yb; y <= yb + 2; y += 1) {
+          const pillar = y === yb && (end || (pavilion || form === "open_front") && (x - zx0) % 4 === 0);
+          if (yard(x, y)) put(x, y, "grass", false, 1);
+          else put(x, y, pillar ? "wallSide" + arch : floor, pillar, 1);
+          const i = at(x, y);
+          if (i >= 0 && !pillar) inside[i] = 1;
+        }
+      } else if (x >= door && x < door + PLAY_DOOR_W) {                // the door, two wide
         for (let y = yb; y <= yb + 2; y += 1) { put(x, y, floor, false, 1); const i = at(x, y); if (i >= 0) inside[i] = 1; }
       } else {
         const capped = x === door - 1 ? "doorL" : x === door + PLAY_DOOR_W ? "doorR" : "";
@@ -1058,7 +1145,7 @@ function playLayBlock(index, cx, cy) {
         if (i >= 0 && solid[i] && !inside[i]) { const k = i * 7; light[k + 3] = tint[0]; light[k + 4] = tint[1]; light[k + 5] = tint[2]; light[k + 6] = tint[3]; }
       }
     }
-    const insideWalls = playInnerWalls(zone);
+    const insideWalls = form === "pavilion" ? new Set() : playInnerWalls(zone);
     for (const key of insideWalls) {
       const [wx, wy] = key.split(",").map(Number);
       const i = at(wx, wy);
@@ -1089,7 +1176,7 @@ function playLayBlock(index, cx, cy) {
     const [sx0, sy0, sx1, sy1] = mark.square;
     if (!intersects([sx0 - 3, sy0 - 3, sx1 + 3, sy1 + 3], x0, y0, x1, y1)) continue;
     for (let y = sy0; y < sy1; y += 1) for (let x = sx0; x < sx1; x += 1) { put(x, y, mark.paving, false, 3); const i = at(x, y); if (i >= 0) none[i] = 0; }
-    for (const [name, dx, dy] of PLAY_LANDMARKS[mark.region.landmark]) place(name, mark.cx + dx, mark.cy + dy, mark.region);
+    for (const [name, dx, dy] of PLAY_LANDMARKS[mark.landmark]) place(name, mark.cx + dx, mark.cy + dy, mark.region);
   }
   // 7. WHAT GROWS, decided tile by tile from where it is: a tile may hold something if it is free and a step from every
   //    room, door's way and solid thing; by a road, the theme's, else the land's; a solid one only where no neighbour

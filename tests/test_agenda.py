@@ -103,6 +103,22 @@ class GatheredTests(_Base):
         self.app.todos.delete(todo["id"])
         self.assertEqual(gathered.collect(self.db)["closed"], 1, "gone from the list: closed")
 
+    def test_done_at_its_source_its_twin_closes_too(self) -> None:
+        """2026-11-18: "<a friend> 的 feedback 晚了一天，等你点 OK - 这个你应该可以看到我已经做过了？" - the user's own step found
+        done, the agent's draft of the same thing waiting for an OK stayed open and was told late."""
+        todo = self.app.todos.add("Send Wren the notes on the seed list")
+        gathered.collect(self.db)
+        stamp = datetime.now(timezone.utc).isoformat()
+        self.db.execute("INSERT INTO agenda_items (id, source, ref_id, title, detail, status, triage, created_at, updated_at) "
+                        "VALUES ('agenda_draft1', 'work', 'draft_x', 'Send Wren the notes on the seed list', "
+                        "'[delegated work; the agent finished it: for the user to look at]', 'open', '{}', ?, ?)", (stamp, stamp))
+        self.db.execute("UPDATE todo_items SET done_at = ? WHERE id = ?", (stamp, todo["id"]))
+        gathered.collect(self.db)
+        left = {one["id"] for one in gathered.open_items(self.db)}
+        self.assertNotIn("agenda_draft1", left, "done at its source: its twin closed too")
+        said = json.loads(self.db.query_one("SELECT triage FROM agenda_items WHERE id = 'agenda_draft1'")["triage"])
+        self.assertTrue(said["_closed"].startswith("done with "))
+
     def test_the_place_kept_from_the_heartbeat_and_the_chat(self) -> None:
         """The user, 2026-11-09: "heartbeat 里如果有地点可以留下"."""
         when = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d %H:%M")

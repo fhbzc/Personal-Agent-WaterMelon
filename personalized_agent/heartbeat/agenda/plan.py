@@ -79,6 +79,10 @@ HOW TO PLAN
     "later", by day ({"YYYY-MM-DD": [ids]}): its own work only, never a thing of the user's.
     "delegable" is done and the user told at once to look at it; "approve" waits for the user's
     approval, which they give when they choose - plan no time of theirs for it.
+    THE AGENT'S OWN WORK KEEPS NO HOURS (2026-11-18: a thing due at 23:59, planned at 21:21 for the next
+    day, was put at 08:00 and missed): what the agent does that is due before the day you plan begins
+    is begun now - the code starts it - so give it its place first and do not put it "at_risk" or ask
+    the user to choose for it.
   - THE USER'S THINGS ARE NOT PLANNED AT A TIME. Put the user's own things ("human") in
     "might_do", in the order they are worth doing now - by their deadline, who waits on them, what
     matters to them (by what was learned) - each with one short "why" for the user ("due Friday",

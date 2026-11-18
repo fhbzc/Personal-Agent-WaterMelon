@@ -71,6 +71,12 @@ function playPortals() {
   const far = Math.max(...xs) - Math.min(...xs) > PLAY_PORTAL_FAR || Math.max(...ys) - Math.min(...ys) > PLAY_PORTAL_FAR;
   const apart = map.regions.some((one) => one.apart);
   map.portals = spots.length >= 2 && (far || apart) ? spots : [];
+  // AN AREA'S GATE (the user: "一个区域必须传送到下一个区域"): by its first land's heart, to every other area.
+  const areas = playAreas(play.world);
+  if (areas.length > 1 && map.hearts.length) {
+    const at = playActSpotNear(map.hearts[0][0] - 3, map.hearts[0][1] + 1);
+    if (at) map.portals.push({ x: at[0], y: at[1], name: playWords("Gate to other areas"), gate: true, look: "arch" });
+  }
   return map.portals;
 }
 function playPortalDraw(one, size, now) {
@@ -343,6 +349,27 @@ window.addEventListener("keydown", (event) => {
 }, true);
 
 /* -- GOING: through a portal, or riding ------------------------------------------------------------------------------ */
+function playAreaName(area) {
+  const first = (play.world.regions || []).find((one) => playAreaOf(one) === area);
+  return first ? playWords(first.name || "") || area : area;
+}
+function playTravelArea(area) {
+  // Another area laid, this one let go of: its map, its blocks, its minimap; the walker at its gate.
+  play.area = area;
+  play.map = playLay(play.world, area);
+  play.chunks.clear();
+  play.miniBase = null;
+  play.coasters = null;
+  play.critters = [];
+  const gate = playPortals().find((one) => one.gate);
+  const at = gate ? [gate.x, gate.y + 1] : (playActSpotNear(play.map.hearts[0][0], play.map.hearts[0][1] + 2) || play.map.hearts[0]);
+  play.flash = performance.now();
+  play.me.x = at[0] + 0.5; play.me.y = at[1] + 0.6;
+  play.region = null;
+  playWhere();
+  playSoundChime();
+  playDraw();
+}
 function playTeleport(x, y) {
   play.flash = performance.now();
   play.me.x = x + 0.5; play.me.y = y + 1.6;
@@ -450,8 +477,13 @@ function playAct() {
   if (play.fish) return playFishPress();
   // A portal stood in: where it goes.
   const portal = playPortals().find((one) => Math.hypot(one.x + 0.5 - tx, one.y + 0.7 - ty) < 1.1);
+  if (portal && portal.gate) {
+    playMenuOpen(playWords("Gate to other areas"), playAreas(play.world).filter((one) => one !== play.area).map((area) => ({
+      label: playAreaName(area), go: () => playTravelArea(area) })));
+    return true;
+  }
   if (portal) {
-    playMenuOpen(playWords("Portal"), playPortals().filter((one) => one !== portal).map((one) => ({
+    playMenuOpen(playWords("Portal"), playPortals().filter((one) => one !== portal && !one.gate).map((one) => ({
       label: one.name, go: () => playTeleport(one.x, one.y) })));
     return true;
   }

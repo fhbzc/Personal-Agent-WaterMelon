@@ -176,6 +176,7 @@ TASK_MODULE = {
     "play_world_look": "play_world",
     "play_world_pick": "play_world",
     "play_world_themes": "play_world",
+    "play_world_conceive": "play_world",
     "recommendation_prepare": "recommendation",
     "recommendation_judge": "recommendation",
     "monitor_evening": "monitor",

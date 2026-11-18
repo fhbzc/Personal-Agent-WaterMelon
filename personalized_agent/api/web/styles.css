@@ -5217,6 +5217,10 @@ body.side-stacked #side-visual { flex: 0 0 auto; max-height: 48vh; overflow-y: a
 .side-replying-title { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
 /* DRAGGED BY ITS LEFT EDGE (2026-11-16: "那个side bar 要允许我鼠标拖动size"). */
 .side-grip { position: fixed; left: 0; top: 0; bottom: 0; width: 8px; cursor: ew-resize; z-index: 20; }
+/* Over the Play view too (the user, 2026-11-18: "在play mode的时候也要可以拉动sidebar 边框(resize)"): it lies at the same
+   height and came later, over the grip. */
+body.side-playing .side-grip { z-index: 30; }
+.side-play-card-said b { font-weight: 600; opacity: 0.75; }
 /* Collapse: a tab in the middle of the left edge, over the edge that is dragged. */
 /* The same size whatever the page's zoom, as the tab left at the screen's edge when the panel is put away (the user,
    2026-11-17: "这个button在collapse和expand状态下的size大小要一致"): 16 x 64 ("高度不变，宽度小一点"), its arrow

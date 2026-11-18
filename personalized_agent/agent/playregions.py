@@ -101,6 +101,18 @@ def room_order(region: Dict[str, Any]) -> List[Tuple[int, int]]:
     return order[:ROOMS_MOST]
 
 
+#: A LANDMARK WHERE IT BELONGS (the user, 2026-11-18: a skyline on a lakeshore "明显很突兀，和场景什么的都不协调"): those
+#: that fit only some lands, and what stands instead elsewhere.
+LANDMARK_LANDS = {"skyline": ("city", "scifi", "space", "skycity"), "rocket": ("space", "scifi", "city"),
+                  "mausoleum": ("graveyard", "halloween", "ruins"), "christmas_tree": ("christmas", "snow"),
+                  "lantern_gate": ("newyear",), "giant_heart": ("valentine",), "fair": ("funfair", "toytown", "city")}
+
+
+def fitting_landmark(landmark: str, biome: str) -> str:
+    lands = LANDMARK_LANDS.get(landmark)
+    return landmark if not lands or biome in lands else "fountain"
+
+
 def chosen(said: Any) -> Optional[Dict[str, str]]:
     """A style as the model gave it, checked: each setting one of its own, or the region is not opened."""
     if not isinstance(said, dict):
@@ -111,6 +123,7 @@ def chosen(said: Any) -> Optional[Dict[str, str]]:
         if value not in allowed:
             return None
         out[key] = value
+    out["landmark"] = fitting_landmark(out["landmark"], out["biome"])
     weather = str(said.get("weather") or "").strip().lower()
     out["weather"] = weather if weather in WEATHERS else "changing"     # a sky of its own, else one that changes
     lights = str(said.get("lights") or "").strip().lower()
@@ -136,15 +149,39 @@ SETTINGS_DEFAULT = {"biome": "seaside", "layout": "islands", "palette": "day", "
                     "landmark": "none"}
 
 
+#: AN AREA HOLDS THIS MANY REGIONS (the user, 2026-11-18: "世界如果继续变大 可以有多个区域 一个区域必须传送到下一个区域"): the
+#: next begins an area of its own, apart, reached by its gate portal - only one area is laid out at a time.
+AREA_REGIONS = 9
+
+
+def area_of(region: Dict[str, Any]) -> str:
+    return str(region.get("area") or "a1")
+
+
 def open_region(world: Dict[str, Any], style: Dict[str, str], name: str, why: str, at: str,
                 days: Optional[Tuple[str, str]], cell_w: int, cell_h: int) -> Dict[str, Any]:
-    """A new region beside the others, joined to the one the user is in now."""
+    """A new region beside the others, joined to the one the user is in now - or, its area full, the first of a new
+    area, apart from every other region and joined to none (reached by the areas' gates)."""
     regions = world["regions"]
     taken = {tuple(one["cell"]) for one in regions}
-    cell = next(one for one in region_cells(len(taken) + 1 + 48) if one not in taken)
+    area = area_of(regions[-1])
+    joined: Optional[str] = regions[-1]["id"]
+    if sum(1 for one in regions if area_of(one) == area) >= AREA_REGIONS:
+        area = f"a{1 + max(int(area_of(one)[1:] or 1) for one in regions)}"
+        joined = None
+        cell = next(one for one in region_cells(len(taken) * 9 + 60)
+                    if one not in taken and not any((one[0] + dx, one[1] + dy) in taken
+                                                     for dx in (-1, 0, 1) for dy in (-1, 0, 1)))
+    else:
+        mine = {tuple(one["cell"]) for one in regions if area_of(one) == area}
+        cells = [one for one in region_cells(len(taken) * 9 + 60) if one not in taken]
+        # Beside its own area's regions, not another area's.
+        cell = next((one for one in cells if any((one[0] + dx, one[1] + dy) in mine for dx in (-1, 0, 1) for dy in (-1, 0, 1))
+                     and not any((one[0] + dx, one[1] + dy) in taken - mine for dx in (-1, 0, 1) for dy in (-1, 0, 1))),
+                    cells[0])
     ox, oy = origin(cell, cell_w, cell_h)
     region = {"id": f"r{len(regions) + 1}", "starter": False, "name": name[:60], "why": why[:500], "made": at,
-              "cell": list(cell), "ox": ox, "oy": oy, "from": regions[-1]["id"], **style}
+              "cell": list(cell), "ox": ox, "oy": oy, "from": joined, "area": area, **style}
     if days:
         region["days"] = [days[0][:10], days[1][:10]]
     regions.append(region)
@@ -170,7 +207,7 @@ def open_apart(world: Dict[str, Any], kind: str, name: str, why: str, at: str, c
     settings.update(APART.get(kind, APART["island"]))
     region = {"id": f"r{len(regions) + 1}", "starter": False, "name": name[:60], "why": why[:500], "made": at,
               "cell": list(cell), "ox": ox, "oy": oy, "from": None, "apart": kind if kind in APART else "island",
-              **settings}
+              "area": area_of(regions[-1]), **settings}
     regions.append(region)
     return region
 

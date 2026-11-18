@@ -22,7 +22,7 @@ STYLES = ("cottage", "classic", "modern", "rustic", "zen", "industrial", "mansio
 SCALES = {"small": (1, 1), "large": (2, 1), "tall": (1, 2), "estate": (2, 2)}
 #: Open places, without walls - each drawn its own way.
 OUTDOOR = ("garden", "park", "pool", "courtyard", "terrace", "lake", "waterfall", "plaza", "grove", "meadow", "mountain",
-           "volcano", "peak", "sea_tunnel", "roller_coaster", "cemetery", "funfair")
+           "volcano", "peak", "sea_tunnel", "roller_coaster", "cemetery", "funfair", "estate")
 #: Of those, nature's (the user, 2026-11-17: "你也要加自然景观，喷泉，小岛，瀑布之类的").
 NATURAL = ("lake", "waterfall", "plaza", "grove", "meadow", "mountain", "volcano", "peak")
 #: Open places with water or track no one stands on (a sea tunnel's sea, a roller coaster's track) - laid as the natural
@@ -207,7 +207,8 @@ def lived(world: Dict[str, Any], zone: Dict[str, Any]) -> Optional[Tuple[str, st
 def on_the_road(zone: Dict[str, Any]) -> bool:
     """A place the road of their life passes: a place of its own - not a task's grounds, not a natural place, not the
     ground between neighbours."""
-    return not zone.get("grounds_of") and zone.get("kind") not in NATURAL and not zone.get("between")
+    return not zone.get("grounds_of") and zone.get("kind") not in NATURAL and not zone.get("between") \
+        and not zone.get("plot") and not zone.get("part_of")
 
 
 def life_road(world: Dict[str, Any], zones: Optional[List[Dict[str, Any]]] = None) -> Dict[str, List[str]]:
@@ -290,13 +291,15 @@ def _seeded(seed: str, x: int, y: int) -> float:
 
 def find_spot(world: Dict[str, Any], region: Dict[str, Any], kind: str, w: int, h: int,
               anchor: Tuple[float, float], seed: str,
-              others: Optional[List[Tuple[int, int, int, int]]] = None) -> Optional[Tuple[int, int]]:
+              others: Optional[List[Tuple[int, int, int, int]]] = None,
+              within: Optional[Tuple[int, int, int, int]] = None) -> Optional[Tuple[int, int]]:
     """WHERE A PLACE OF THIS SIZE MAY STAND: within its region, GAP tiles from every other place and every landmark's
     square, as near `anchor` as it fits - a little off at random (the same each time for the same place), so places
     gather in loose clusters, not rows. None when nowhere."""
     import math
-    b = bounds(region)
-    taken = list(others) if others is not None else [zone_rect(one) for one in world.get("zones") or []]
+    b = within or bounds(region)                       # a project's plot: its parts inside it only
+    taken = list(others) if others is not None else [zone_rect(one) for one in world.get("zones") or []
+                                                      if not (within and one.get("plot"))]
     for one in world.get("regions") or []:
         sq = square(one)
         if sq:

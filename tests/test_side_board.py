@@ -325,8 +325,15 @@ class AScreenshotButtonTests(unittest.TestCase):
     def test_the_bar_has_it_and_it_runs_the_shortcuts_cut_out(self) -> None:
         import inspect
         source = (WEB / "side-board.js").read_text(encoding="utf-8")
-        self.assertIn('button("snip", "Screenshot: cut out part of the screen")', source)
+        self.assertIn("""button("snip", "Screenshot: the whole screen, or a part of it", ' aria-haspopup="true"')""", source)
         self.assertIn('api.post("/api/side/board_snip"', source)
+        # 2026-11-18: "screen shot有两个选项，一个是截取整个屏幕，一个是截取一个部分的".
+        self.assertIn('data-board-snip="whole"', source)
+        self.assertIn('data-board-snip="part"', source)
+        self.assertIn('if (cut.dataset.boardSnip === "whole") sideBoardScreen();', source)
+        # 2026-11-18: "你的new就是单独创建一个新的" - a blank page at once, no menu; the screen is the screenshot's.
+        self.assertIn('button("new", "New page")', source)
+        self.assertNotIn('data-board-new="screen"', source)
         from personalized_agent.ui.desktop import DesktopAgent
         self.assertIn("self.app.snip_into_board = lambda: DesktopAgent._snip_by_shortcut(self)",
                       inspect.getsource(DesktopAgent))

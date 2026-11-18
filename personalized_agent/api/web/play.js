@@ -95,12 +95,12 @@ const PLAY_FLOORS = { home: "wood", study: "stone", library: "wood", screening: 
                       station: "tiles", garden: "grass", park: "grass", pool: "paving", courtyard: "cobble", terrace: "bridge",
                       lake: "grass", waterfall: "rock", plaza: "paving", grove: "grass2", meadow: "grass", mountain: "grass2",
                       volcano: "rock", peak: "grass2", aquarium: "tiles", classroom: "wood", lab: "tiles", office: "tiles",
-                      apartment: "wood", lecture_hall: "wood", sea_tunnel: "water", roller_coaster: "grass",
+                      apartment: "wood", lecture_hall: "wood", estate: "grass", sea_tunnel: "water", roller_coaster: "grass",
                       cemetery: "grass2", greenhouse: "grass", funfair: "paving" };
 /* OPEN PLACES, no walls (agent/playplaces.py OUTDOOR): their edge, and a pool's water in its middle. */
 const PLAY_OUTDOOR = { garden: "flowers", park: "grass2", pool: "paving", courtyard: "paving", terrace: "paving",
                        lake: "grass2", waterfall: "rock2", plaza: "cobble", grove: "grass", meadow: "grass2", mountain: "grass2",
-                       volcano: "rock2", peak: "grass2", sea_tunnel: "water", roller_coaster: "grass2", cemetery: "dirt2",
+                       volcano: "rock2", peak: "grass2", sea_tunnel: "water", roller_coaster: "grass2", cemetery: "dirt2", estate: "grass2",
                        funfair: "cobble" };
 /* A building's style: its walls' material and its floor (agent/playplaces.py STYLES); unset, its region's. */
 const PLAY_STYLES = { cottage: ["timber", "wood"], classic: ["sandstone", "wood"], modern: ["stone", "tiles"],
@@ -132,7 +132,7 @@ function playKeepWhere() {
   if (!play.world) return;
   try {
     localStorage.setItem(PLAY_WHERE_KEY, JSON.stringify({ born: play.world.born, x: +play.me.x.toFixed(2),
-                                                          y: +play.me.y.toFixed(2), facing: play.me.facing }));
+                                                          y: +play.me.y.toFixed(2), facing: play.me.facing, area: play.area }));
   } catch (_err) { /* this time only */ }
 }
 
@@ -258,13 +258,36 @@ function playJumpHeight() {
 /* E or Enter: the watermelon says what the thing near is to it - why it made it - in a bubble over its head, a word at a
    time; a picture's frame opens the picture large. Nothing near: what this room, or this land, is to it. */
 const PLAY_SAY_MOST = 160;
+function playPages(text, most) {
+  const pages = [];
+  let rest = String(text || "").trim();
+  while (rest.length > most) {
+    let cut = Math.max(rest.lastIndexOf(". ", most), rest.lastIndexOf("。", most), rest.lastIndexOf("！", most), rest.lastIndexOf("? ", most));
+    if (cut < most * 0.4) cut = rest.lastIndexOf(" ", most);
+    if (cut < most * 0.4) cut = most - 1;
+    pages.push(rest.slice(0, cut + 1).trim());
+    rest = rest.slice(cut + 1).trim();
+  }
+  if (rest) pages.push(rest);
+  return pages;
+}
+function playSayPage(pages, page) {
+  const more = page < pages.length - 1;
+  const words = more ? `${pages[page]}  ▸ E` : pages[page];
+  play.said = { text: words, pages, page, at: performance.now(), until: performance.now() + playSayFor(words) + (more ? 4000 : 0),
+                x: play.me.x, y: play.me.y };
+}
 /* How long something said stays (the user, 2026-11-17: "E之后打开的look持续的时间太长了"): short, at most five seconds;
    gone at once if E is pressed again or the walker steps away. */
 // Three seconds longer than it was (the user, 2026-11-17: "look agent 说的话（游戏里) 稍微多留3秒").
 function playSayFor(text) { return Math.min(8000, 4200 + text.length * 35); }
 function playLook() {
   if (typeof playAct === "function" && playAct()) { playDraw(); return; }   // done (play-act.js): sat, lit, cast, gone
-  if (play.said && performance.now() < play.said.until) { play.said = null; playDraw(); return; }   // pressed again: gone
+  if (play.said && performance.now() < play.said.until) {
+    const said = play.said;
+    if (said.pages && said.page < said.pages.length - 1) { playSayPage(said.pages, said.page + 1); playRun(); return; }   // the next page
+    play.said = null; playDraw(); return;                                                     // pressed again: gone
+  }
   const near = play.near;
   if (near && near.picture_url && typeof sideLarger === "function") sideLarger(near.picture_url);
   if (near && !near.at && /book|shelf|desk|map|scroll/.test(near.kind)) playSfx("book-flip", 0.45);
@@ -272,8 +295,10 @@ function playLook() {
   const sign = near && near.at ? (near.zone || near.region) : null;
   const text = sign ? (sign.why || near.name || "") : near ? (near.why || near.name || "") : (place && (place.why || place.name)) || "";
   if (!text) return;
-  const words = text.length > PLAY_SAY_MOST ? `${text.slice(0, PLAY_SAY_MOST - 1)}…` : text;
-  play.said = { text: words, at: performance.now(), until: performance.now() + playSayFor(words), x: play.me.x, y: play.me.y };
+  // PAGED, NEVER CUT (the user, 2026-11-18: "agent look还有省略内容，不要省略 ... 省略继续展开"): what is longer than a
+  // bubble is said a page at a time; E turns to the next, after the last it is gone.
+  const pages = playPages(text, PLAY_SAY_MOST);
+  playSayPage(pages, 0);
   playSoundNear();
   playRun();
 }
@@ -415,12 +440,19 @@ async function playLoadWorld() {
   if (play.world && JSON.stringify(play.world) === fresh) return;
   const first = !play.world;
   play.world = said.world;
-  play.map = playLay(play.world);
+  if (first) {                                 // the area the walker was left in, if the world has several
+    try {
+      const kept = JSON.parse(localStorage.getItem(PLAY_WHERE_KEY) || "null");
+      if (kept && kept.born === play.world.born && kept.area) play.area = kept.area;
+    } catch (_err) { /* the first area */ }
+  }
+  if (!playAreas(play.world).includes(play.area)) play.area = playAreaOf((play.world.regions || [])[0]);
+  play.map = playLay(play.world, play.area);
   play.miniBase = null;                        // the minimap drawn again for this world
   play.zoneKinds = null;
   play.chunks.clear();
   if (first) {
-    const home = play.world.zones[0];
+    const home = play.map.zones.length ? play.map.zones[0].zone : play.world.zones[0];
     const at = playDoor(home);
     play.me.x = at[0] + 0.5;
     play.me.y = at[1] - 1.5;                 // just inside its door
@@ -754,7 +786,7 @@ function playSigns() {
                  under: post.start ? playPeriod(playLived(to)) : `${n} / ${life.order.length} · ${playPeriod(playLived(to))}` });
   }
   for (const mark of index.landmarks || []) {
-    signs.push({ at: [mark.cx + 0.5, mark.square[3] - 0.2], name: playWords(PLAY_LANDMARK_NAMES[mark.region.landmark] || mark.region.landmark),
+    signs.push({ at: [mark.cx + 0.5, mark.square[3] - 0.2], name: playWords(PLAY_LANDMARK_NAMES[mark.landmark] || mark.landmark),
                  under: mark.region.name || "", region: mark.region });
   }
   index.signs = signs;
@@ -1193,7 +1225,11 @@ function playMiniBase() {
     if (todo.length) setTimeout(step, 40);
   };
   play.miniBase = mine;
-  setTimeout(step, 0);
+  // AFTER THE VIEW (the user, 2026-11-18: "world先加载用户旁边的 ... 小地图是一次性画好的"): the walker's own blocks drawn
+  // first; the map begun when the page is idle, made once and kept (playMiniKept).
+  const begin = () => setTimeout(step, 0);
+  if (typeof requestIdleCallback === "function") setTimeout(() => requestIdleCallback(begin, { timeout: 3000 }), 1200);
+  else setTimeout(begin, 1500);
 }
 function playMiniDraw() {
   if (!play.mini || play.mini.hidden || !play.map) return;
@@ -1271,9 +1307,17 @@ function playBushesDraw(size, c0, c1, r0, r1, over) {
 function playFloorArt(context, zone, x0, y0) {
   if (!zone.floor_text && !zone.floor_picture_url && !zone.mural) return;
   const [fx, fy, fw, fh] = playFloorOf(zone);
-  if (fx + fw < x0 || fx > x0 + PLAY_CHUNK || fy + fh < y0 || fy > y0 + PLAY_CHUNK) return;
-  const left = (fx + 1 - x0) * 16, top = (fy + 1 - y0) * 16, w = (fw - 2) * 16, h = (fh - 2) * 16;
-  if (w < 32 || h < 32) return;
+  if (fx + fw < x0 - 2 || fx > x0 + PLAY_CHUNK || fy - 4 > y0 + PLAY_CHUNK || fy + fh < y0) return;
+  let left, top, w, h;
+  if (zone.art_on === "wall" && !PLAY_OUTDOOR[zone.kind] && (zone.form || "closed") !== "pavilion") {
+    // ON ITS WALL (the user: "比如刷墙"): painted along the face of its back wall, two tiles high.
+    left = (zone.x + 1.5 - x0) * 16; top = (zone.y + 1 - y0) * 16; w = (zone.w - 1) * 16; h = 32;
+  } else {
+    // ON ITS FLOOR, A THIRD OF IT AT MOST, in its upper part - its sign stands at its foot.
+    const aw = Math.max(2, Math.round((fw - 2) * 0.6)), ah = Math.max(2, Math.min(fh - 4, Math.round(((fw - 2) * (fh - 2)) / 3 / aw)));
+    left = (fx + 1 + ((fw - 2) - aw) / 2 - x0) * 16; top = (fy + 1 - y0) * 16; w = aw * 16; h = ah * 16;
+  }
+  if (w < 32 || h < 24) return;
   context.save();
   context.beginPath();
   context.rect(left, top, w, h);
@@ -1515,6 +1559,7 @@ function playSignCard(sign) {
                  zone.between_names && zone.between_names.length ? `${playWords("Between")}: ${zone.between_names.join(" · ")}` : "",
                  zone.goes_on_names && zone.goes_on_names.length ? `${playWords("Goes on from")}: ${zone.goes_on_names.join(" → ")}` : "",
                  zone.town_names && zone.town_names.length ? `${playWords("Town of")}: ${zone.town_names.join(" · ")}` : "",
+                 zone.concept && zone.concept.idea ? `${playWords("The idea")}: ${zone.concept.idea}` : "",
                  zone.rooms && zone.rooms.length ? `${playWords("Rooms")}: ${zone.rooms.map((one) => one.name).join(" · ")}` : "",
                  zone.group_titles && zone.group_titles.length ? `${playWords("Small tasks")}: ${zone.group_titles.map((one) => playShort(one, 28)).join(" · ")}` : "",
                  `${sign.kind} · ${things} ${playWords(things === 1 ? "thing" : "things")}`];
@@ -1536,7 +1581,8 @@ function playCard() {
     <div class="side-play-card-words">
       <strong class="chat-message">${escapeHtml(item.name || item.kind)}</strong>
       <span class="side-play-card-when">${escapeHtml(playPeriod(item.days) || "")}</span>
-      ${item.why ? `<p class="chat-message">${escapeHtml(item.why)}</p>` : ""}
+      ${item.group ? `<span class="side-play-card-when">${escapeHtml(`${playWords("One of")} ${play.world.items.filter((one) => one.group === item.group).length}`)}</span>` : ""}
+      ${item.why ? `<p class="chat-message side-play-card-said"><b>${escapeHtml(playWords("Your agent"))}:</b> ${escapeHtml(item.why)}</p>` : ""}
       ${item.from ? `<p class="side-play-card-from chat-message">${escapeHtml(item.from)}</p>` : ""}
       <p class="side-play-card-from chat-message">${escapeHtml(`${playWords("Built")} ${made}`)}</p>
     </div>`;
@@ -1640,6 +1686,7 @@ function playFacadesDraw(size) {
   const { ctx, canvas } = play;
   const night = typeof playSkyDaylight === "function" && play.region ? (playSkyDaylight(play.region) || {}).light < 0.55 : false;
   for (const zone of play.world.zones) {
+    if (zone.landmark) { playLandmarkDraw(zone, size, night); continue; }
     const style = zone.style;
     if (!PLAY_FACADES[style] && style !== "school" && style !== "laboratory") continue;
     const left = zone.x * size - play.camera.x, top = zone.y * size - play.camera.y, w = (zone.w + 2) * size;
@@ -1684,6 +1731,60 @@ function playFacadesDraw(size) {
     }
     ctx.restore();
   }
+}
+
+/* A DISTRICT'S LANDMARK (the user, 2026-11-18: "我如何形成大的地标性建筑"): behind its main place a great building in the
+   project's own colour - a broad hall, a tower rising from it, a dome and a spire; its name on a banner, its emblem (the
+   picture drawn for it) over the door; lit windows by night. Seen from far off. */
+function playLandmarkDraw(zone, size, night) {
+  const { ctx, canvas } = play;
+  const left = zone.x * size - play.camera.x, base = zone.y * size - play.camera.y, w = (zone.w + 2) * size;
+  if (left > canvas.width || left + w < 0 || base - 14 * size > canvas.height || base + 2 * size < 0) return;
+  const colour = zone.floor_color || "#2f7d3a";
+  ctx.save();
+  // The hall: as wide as the place, three floors.
+  const hallH = size * 3.2, hallTop = base - hallH;
+  ctx.fillStyle = "#e9dcc2"; ctx.fillRect(left + size * 0.5, hallTop, w - size, hallH);
+  ctx.fillStyle = colour; ctx.fillRect(left + size * 0.3, hallTop - size * 0.4, w - size * 0.6, size * 0.45);
+  for (let k = 0; k < Math.floor((w - size) / (size * 1.1)); k += 1) {             // its columns, its windows
+    const x = left + size * 0.9 + k * size * 1.1;
+    ctx.fillStyle = "#cbbd9f"; ctx.fillRect(x, hallTop + size * 0.2, size * 0.18, hallH - size * 0.2);
+    ctx.fillStyle = night && playHash(zone.x + k, zone.y, 73) < 0.6 ? "#ffe08a" : "#7aa6c9";
+    ctx.fillRect(x + size * 0.32, hallTop + size * 0.5, size * 0.45, size * 0.7);
+    ctx.fillRect(x + size * 0.32, hallTop + size * 1.7, size * 0.45, size * 0.7);
+  }
+  // The tower in its middle, a dome and a spire on it.
+  const tw = Math.min(w * 0.3, size * 6), tx = left + (w - tw) / 2, towerH = size * 6.5, towerTop = hallTop - towerH;
+  ctx.fillStyle = "#efe4cc"; ctx.fillRect(tx, towerTop, tw, towerH);
+  ctx.fillStyle = "#d8c9a8"; ctx.fillRect(tx + tw * 0.78, towerTop, tw * 0.22, towerH);
+  for (let f = 0; f < 5; f += 1) {
+    ctx.fillStyle = night && playHash(zone.x, zone.y + f, 79) < 0.7 ? "#ffe08a" : "#7aa6c9";
+    ctx.fillRect(tx + tw * 0.3, towerTop + size * (0.5 + f * 1.2), tw * 0.4, size * 0.6);
+  }
+  ctx.fillStyle = colour;
+  ctx.beginPath(); ctx.ellipse(tx + tw / 2, towerTop, tw * 0.62, tw * 0.5, 0, Math.PI, 0); ctx.fill();
+  ctx.fillStyle = "#f2c94c"; ctx.fillRect(tx + tw / 2 - 1.5, towerTop - tw * 0.5 - size * 1.4, 3, size * 1.4);
+  ctx.beginPath(); ctx.arc(tx + tw / 2, towerTop - tw * 0.5 - size * 1.45, size * 0.18, 0, Math.PI * 2); ctx.fill();
+  // Its emblem, the picture drawn for it, over the tower's face; its name on a banner across the hall.
+  if (zone.mural && zone.mural.rows && zone.mural.rows.length) {
+    const rows = zone.mural.rows, cols = Math.max(...rows.map((r) => r.length));
+    const cell = Math.max(1, Math.floor(Math.min(tw * 0.8 / cols, size * 2.2 / rows.length)));
+    const ex = tx + (tw - cols * cell) / 2, ey = towerTop + size * 0.2;
+    rows.forEach((row, ry) => [...row].forEach((ch, rx) => {
+      const c = ch === "." ? null : zone.mural.palette[Number(ch)];
+      if (c) { ctx.fillStyle = c; ctx.fillRect(ex + rx * cell, ey + ry * cell, cell, cell); }
+    }));
+  }
+  const name = zone.floor_text || zone.task_title || zone.name || "";
+  if (name) {
+    const fontPx = Math.max(10, Math.round(size * 0.5));
+    ctx.font = `bold ${fontPx}px "Microsoft YaHei", "PingFang SC", system-ui, sans-serif`;
+    const nw = Math.min(w - size, ctx.measureText(name).width + size);
+    ctx.fillStyle = colour; ctx.fillRect(left + (w - nw) / 2, hallTop - size * 1.1, nw, size * 0.7);
+    ctx.fillStyle = "#fff"; ctx.textBaseline = "middle";
+    ctx.fillText(name, left + (w - nw) / 2 + size * 0.5, hallTop - size * 0.75, nw - size);
+  }
+  ctx.restore();
 }
 
 function playCoastersDraw(size) {

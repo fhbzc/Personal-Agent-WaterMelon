@@ -100,8 +100,8 @@ function sideBoardEl() {
         ? ' aria-haspopup="true"' : ""}>${sideBoardIcon(icon)}</button>`;
   board.innerHTML = `<div class="side-board-bar"><div class="side-board-tools">
       ${button("pages", "Keep recent images shown", ' aria-pressed="true"')}
-      ${button("new", "New", ' aria-haspopup="true"')}
-      ${button("snip", "Screenshot: cut out part of the screen")}
+      ${button("new", "New page")}
+      ${button("snip", "Screenshot: the whole screen, or a part of it", ' aria-haspopup="true"')}
       ${button("clear", "Clear this picture's drawing")}
       <span class="side-board-line" aria-hidden="true"></span>
       ${tool("shape", "Shapes", "box")}
@@ -700,6 +700,13 @@ function sideBoardPressed(event) {
     else sideBoardPictures(sideBoardEl().querySelector('[data-board="new"]'));
     return;
   }
+  const cut = pick("[data-board-snip]");
+  if (cut) {
+    sideBoardMenuAway();
+    if (cut.dataset.boardSnip === "whole") sideBoardScreen();
+    else sideBoardSnip();
+    return;
+  }
   const shape = pick("[data-board-shape]");
   if (shape) { sideBoard.shape = shape.dataset.boardShape; sideBoardMenuAway(); sideBoardToolNow("shape"); return; }
   const colour = pick("[data-board-colour]");
@@ -724,9 +731,11 @@ function sideBoardPressed(event) {
   if (!button) { if (!pick(".side-board-menu")) sideBoardMenuAway(); return; }
   const what = button.dataset.board;
   if (what === "new") {
-    sideBoardMenu(button, sideBoardMenuItem('data-board-new="blank"', "whiteboard", "Whiteboard")
-      + sideBoardMenuItem('data-board-new="screen"', "screen", "The screen as it is now")
-      + sideBoardMenuItem('data-board-new="pictures"', "pictures", "A picture from this conversation"));
+    // NEW IS A NEW PAGE, NOTHING ELSE (the user, 2026-11-18: "你的new就是单独创建一个新的，然后screenshot有两种"): a blank page
+    // at once; the screen is the screenshot's (the whole of it, or a part).
+    sideBoardMenuAway();
+    sideBoardOpen();
+    sideBoardBase({ kind: "blank" });
     return;
   }
   if (what === "colour") {
@@ -740,7 +749,12 @@ function sideBoardPressed(event) {
   sideBoardMenuAway();
   if (what === "pages") sideBoardStripShown(button.getAttribute("aria-pressed") !== "true");
   else if (what === "clear") sideBoardClear();
-  else if (what === "snip") sideBoardSnip();
+  else if (what === "snip") {
+    // TWO WAYS (the user, 2026-11-18: "screen shot有两个选项，一个是截取整个屏幕，一个是截取一个部分的").
+    sideBoardMenu(button, sideBoardMenuItem('data-board-snip="whole"', "screen", "The whole screen")
+      + sideBoardMenuItem('data-board-snip="part"', "snip", "Part of the screen"));
+    return;
+  }
   else if (what === "rotate") sideBoardRotate();
   else if (what === "close") sideBoardClose();
 }

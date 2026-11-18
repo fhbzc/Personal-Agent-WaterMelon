@@ -45,6 +45,24 @@ TASK = "play_world_grow"
 TASK_LOOK = "play_world_look"
 #: Things compared by their pictures before one is chosen (agent/playcatalogue.py).
 TASK_PICK = "play_world_pick"
+#: Each project conceived first, in a call of its own; built after.
+TASK_CONCEIVE = "play_world_conceive"
+CONCEIVE_SYSTEM = """You keep a small world that pictures the user's life. Before anything is built for their projects, \
+CONCEIVE each one as an artist would: what its name, its work and its feeling call up - a metaphor carried all the way \
+through, so its ground is unmistakably it. Three ways to find it (the user's examples), often woven together: BY ITS \
+NAME - a project called Watermelon is fruit, a melon patch, a farm; BY ITS SCENE - a project of videos on the water is \
+the water itself, boats and piers; BY ITS TIME - making dumplings at the Spring Festival is the Spring Festival, red \
+lanterns and a family table. WaterMelon is not a room with its name on the floor: it is a melon farm estate - the \
+farmhouse its studio, the melon fields where its versions ripen, a seed vault for its releases, a stall by the road \
+where its users come, a water tower for its servers.
+
+For each project ("projects": its task, title, what it was, how large its ground is, the concept it has already) say \
+its concept. One that has a concept keeps it - grow the same idea further - unless its life has truly changed. Small \
+tasks ("small_tasks") grouped into one scene are conceived as one, under the first of them.
+Answer with only JSON: {{"concepts": [{{"task": "<task id>", "associations": ["<a word or two>", ...up to 8], \
+"idea": "<the whole scene, at most 3 sentences>", "parts": ["<a part and what of the project it is, one short \
+sentence>", ...up to 10], "fill": ["<a kind of thing that fills its open ground>", ...up to 8]}}]}}. The kinds for \
+"fill": {kinds}."""
 #: The themes chosen first, their things given after (agent/playcatalogue.py theme_tree).
 TASK_THEMES = "play_world_themes"
 THEMES_MOST = 4
@@ -86,7 +104,31 @@ ZONE_KINDS: Dict[str, Dict[str, Any]] = {
     "lecture_hall": {"floor": "wood"},
     "sea_tunnel": {"floor": "water", "outdoor": True}, "roller_coaster": {"floor": "grass", "outdoor": True},
     "funfair": {"floor": "paving", "outdoor": True}, "cemetery": {"floor": "grass", "outdoor": True},
+    # A PROJECT'S GROUND (agent/playworld.py PlayWorld._plots): as large as its time, its places and its scenes in it.
+    "estate": {"floor": "grass", "outdoor": True},
 }
+#: A PROJECT'S PLOT AS LARGE AS ITS TIME: its tiles PLOT_TILES * hours ** PLOT_POWER (an hour about 140, ten about 790,
+#: fifty about 2,600, 160 about 6,300); wider than a third of a region it is a DISTRICT - a region of its own.
+PLOT_TILES, PLOT_POWER, PLOT_LEAST, DISTRICT_PART = 140, 0.75, 12, 0.6
+#: How thickly a plot's open ground is filled with its scenes: a thing for each this many free tiles, at most
+#: PLOT_FILL_MOST at a time.
+PLOT_FILL_TILES, PLOT_FILL_MOST = 7, 120
+#: Arrangements (many of one thing, one design) applied in a growth, and the most of one.
+MOST_ARRANGED, ARRANGED_MOST = 8, 60
+PATTERNS = ("rows", "grid", "line", "ring", "border", "cluster")
+#: How many tiles above a district's main place are kept for its landmark (api/web/play.js playLandmarkDraw rises
+#: about that far).
+LANDMARK_ROOM = 12
+
+
+def plot_size(minutes: float) -> Tuple[int, int]:
+    """The plot of a project that took `minutes`: wider than tall, as the land is."""
+    import math
+    area = PLOT_TILES * max(1.0, minutes / 60) ** PLOT_POWER
+    w = max(PLOT_LEAST, int(round(math.sqrt(area * 1.3))))
+    return w, max(PLOT_LEAST, int(round(area / w)))
+
+
 #: How many choices are compared by their pictures in one growth.
 MOST_COMPARED = 6
 #: The kinds of thing: its size in tiles, and whether it hangs on a wall. "frame" holds one of the user's pictures.
@@ -178,16 +220,44 @@ region's settings, a place's style, the things and their colours. Their world sh
 a room, an open place, or both - a house with its yard, garden, pool or park ("grounds": one of the open kinds, \
 "grounds_name": its name), whichever fits the task; you judge it. Its main place named as the task is - its title, lightly polished, short, but a project's or a product's own name \
 kept exactly as it is (e.g. "StarCatalog") - the zone given "task": "<task id>".
+- SHORT WORDS: every "why" and every description you write - a place's, a thing's, a region's - is at most 3 \
+sentences (the user: "每个理由和描述都用不超过3句话").
 - A SIGN HOLDS LITTLE: every name you give - a place's, its grounds', the ground between neighbours - is written \
 on its sign. At most 24 characters (two or three words; in Chinese at most 10 characters): a task's long title made a \
 short name, never cut off half way. What it is about goes in "why", which is read on its card.
-- A TASK'S PLACE KNOWN AT A GLANCE: make its floor its project's - "decorate": [{{"zone": "<id or new zone's name>", \
-"floor_text": "<its name, up to 12 letters, spelled large on the floor>", "floor_color": "#rrggbb", \
-"floor_picture": "<a picture id from the task's pictures - its logo, say - laid on the floor>", "mural": {{"palette": \
-["#rrggbb", ...up to 8], "rows": ["<up to 24 characters, each a digit 0-7 for a palette colour or . for none>", ...up \
-to 16 rows]}} (a picture you draw yourself, laid on the floor), "name": "<a new name, only to put back a task's own \
-name it lacks>"}}] - any of them, for a new place or one already there. Every room of a project should be unmistakably \
-that project's. A task's grounds hold its things as its rooms do.
+- A PROJECT'S GROUND IS AS LARGE AS ITS TIME (the user: "区域的size大小是和花时间正相关的 ... 用多个控件填满"; "地区内的 \
+复杂程度代表了project的复杂度"): an important task has its "plot" (its size given, by its hours) - a whole estate of \
+its own. Fill it with many places, small ones too: a row of houses, a villa with its lawns, a court, a pavilion, a \
+field, a pond - each a zone with "part_of": "<task id>", stood inside its plot; the more complex the project, the \
+more parts and the richer each. One project is ONE ground: never another place for it outside its plot - add a part.
+- ARRANGED, NEVER SCATTERED (the user: "模型不要随即摆，但是一个物品可以是多个，比如摆多张床，本质对应的是一个理由（多张床可以 \
+有对应的设计感）"): a plot's open ground ("open_ground": how many of its tiles are still free) and a room's floor are \
+filled by arrangements you design - many of one thing as ONE design with ONE reason: melons in rows across a field, \
+beds in a dormitory's rows, lanterns along a path, benches round a fountain. "arrange": [{{"task": "<task id - its \
+plot>" or "zone": "<zone id - inside it>", "kind": "<a kind or a catalogue thing>", "count": 2 to 60, "pattern": one \
+of rows, grid, line, ring, border, cluster, "where": north, south, east, west, middle, or "around:<zone id>", "name": \
+"...", "why": "<at most 3 sentences, for all of them>"}}]. A plot is filled over the growths, a few arrangements at a \
+time; the more complex the project ("complexity"), the more of them and the finer.
+- BUILD FROM THE CONCEPTS ("concepts": each project's idea, conceived before this - its associations, the whole \
+scene, its parts, what fills its ground): its zones, their forms and styles, its parts and its things all come from \
+that idea, carried all the way through.
+- A PLACE'S OWN LOOK - its project's - IN WHATEVER FORM FITS (the user: "不一定每个都要有地面上的图案，而且图案也不一定是字 ... \
+比如刷墙"): not every place needs one, and a name spelled out is the plainest of them. Choose what suits the idea: \
+its picture or logo, or one you draw (a melon for WaterMelon) painted on its wall ("on": "wall"), laid on its floor \
+("on": "floor" - never more than a third of it), a banner, a statue, a rug, its colour on its walls. "decorate": \
+[{{"zone": "<id or new zone's name>", "on": "wall" or "floor", "floor_text": "<only when the name is the look, up to \
+12 letters>", "floor_color": "#rrggbb", "floor_picture": "<a picture id from the task's pictures - its logo, say>", \
+"mural": {{"palette": ["#rrggbb", ...up to 8], "rows": ["<up to 24 characters, each a digit 0-7 for a palette colour \
+or . for none>", ...up to 16 rows]}} (a picture you draw yourself), "name": "<a new name, only to put back a task's \
+own name it lacks>"}}] - for a new place or one already there. A task's grounds hold its things as its rooms do.
+- FULL OF LIFE, IN SCENES (a place marked "sparse" has too few things for its size - fill it first): things come \
+in small scenes, not one by one - a desk with its chair, a lamp, a stack of books and a plant; a stall with its \
+crates, its awning and a bench; a field with its rows, a scarecrow, a barrow. The more complex the project, the more \
+its rooms and its grounds hold.
+- EVERY THING SAYS WHY, IN YOUR OWN VOICE TO THEM (the user: "每个item都要加上agent为什么做这个design"): its "why" is \
+at most 3 short sentences, first person, to the user - why this thing, why here, what of their days it stands for \
+("You spent two weeks on the verification mails, so a returned letter lies on the desk."). Short: it is read in a \
+bubble as they walk.
 - CUSTOMIZED THINGS, the project's own (the user: "有customized东西"): a "statue_of", a "banner" or a "poster" holding \
 one of its pictures ("picture": its id - a logo, a screenshot); or a thing you draw yourself - "pixel_art" (16x16), \
 "pixel_art_large" (32x32), "wall_art" (32x16, on a wall) with "pixels": {{"palette": ["#rrggbb", ...up to 10], \
@@ -223,6 +293,10 @@ alone in the dark) - its own land, no road to it, reached only by a portal. Seld
 - LEISURE IS A PLACE TOO (an important task with "leisure": true): what they do for joy - a game, a show, a hobby - gets \
 its own place as work does: an arcade, a cinema, a garden, a court, whatever the joy is.
 - A SIGN'S LOOK: any new or redesigned place may say "sign": one of {signs} - else it suits the place's style.
+- OPEN, NOT BOXED IN (the user: "我其实不是很喜欢一个围墙围住的房子，需要有一些半开放的设计"): a building's "form": one of \
+{forms} - "open_front" a hall open in front on a row of pillars, "u_court" wings and a back round an open courtyard, \
+"pavilion" a roof on pillars with no walls (for a small thing, a pause, a meeting place, a walk between places). \
+Think of the open and half-open first; walled round ("closed") only what needs to be shut - a bedroom, a vault.
 - THREE WAYS TO THINK OF A NEW PLACE: of your own, from what they lived; COMBINED - the ground between neighbours, \
 above; or ON THE WAY IT GOES ("lines": a place A, then B after it, the road going on from B): the change from A to B \
 carried one step further - what B becomes if it goes on as it came (a cottage, then a manor, then a palace; a garden, \
@@ -428,8 +502,10 @@ class PlayWorld:
             regions.migrate(world, CELL_W, CELL_H)
             world["placed"] = 2
             home = self._add_zone(world, "home", "Home", "Where you start and end each day.", now)
-            for kind in ("bed", "window", "lamp"):
-                self._add_item(world, home, {"kind": kind, "name": "", "why": "", "from": ""}, now)
+            for kind, why in (("bed", "Every day ends here, so home begins with a bed."),
+                              ("window", "A window to see the world we are about to grow."),
+                              ("lamp", "A lamp, for the evenings you work late.")):
+                self._add_item(world, home, {"kind": kind, "name": "", "why": why, "from": ""}, now)
             self.save(world)
             return world
 
@@ -501,7 +577,8 @@ class PlayWorld:
         if kind == "plaza":                           # its fountain in its middle
             world["items"].append({"id": f"i{len(world['items']) + 1}", "zone": zone["id"], "kind": "fountain",
                                    "x": zone["x"] + w // 2 - 1, "y": zone["y"] + 1 + h // 2 - 1, "name": name[:60],
-                                   "why": "", "from": "", "made": at, "picture": ""})
+                                   "why": f"A square needs its fountain - {name[:40]} gathers round it.", "from": "",
+                                   "made": at, "picture": ""})
         if kind == "grove":                           # its trees, scattered through it, a step apart
             fx, fy = zone["x"], zone["y"] + 1
             taken = set()
@@ -512,7 +589,7 @@ class PlayWorld:
                 taken.add((tx, ty))
                 world["items"].append({"id": f"i{len(world['items']) + 1}", "zone": zone["id"],
                                        "kind": ("tree", "pine", "tree", "bush")[n % 4], "x": tx, "y": ty, "name": "",
-                                       "why": "", "from": "", "made": at, "picture": ""})
+                                       "why": f"One of the trees of {name[:40]}.", "from": "", "made": at, "picture": ""})
         return zone
 
     @staticmethod
@@ -642,6 +719,8 @@ class PlayWorld:
             except Exception:
                 log.debug("the user's pictures could not be offered to the world", exc_info=True)
         here = {"zones": [{"id": one["id"], "kind": one["kind"], "name": one["name"], "made": one["made"][:10],
+                           **({"concept": one["concept"]} if one.get("concept") else {}),
+                           **({"sparse": True} if self._sparse(world, one) else {}),
                            "style": one.get("style", ""), "scale": "x".join(map(str, places.span_of(one))),
                            "music": (one.get("music") or {}).get("track") or ("its own tune" if one.get("music") else ""),
                            "size": f"{one['w']} x {one['h']}", **({"full": True} if self._full(world, one) else {})}
@@ -676,6 +755,7 @@ class PlayWorld:
         self._small_titles = {str(one["id"]): one["title"] for one in small}
         self._small_minutes = {str(one["id"]): float(one.get("weight") or 0) for one in small}
         self._important = {one["id"] for one in important if one["id"] not in placed}
+        self._concepts = self._conceive(world, important, small, lived, since, until)
         self._important_info = {one["id"]: one for one in important}
         liked = ""
         if callable(self.tastes):
@@ -699,10 +779,15 @@ class PlayWorld:
                                         **({"leisure": True} if one.get("leisure") else {}),
                                         "its_place": placed.get(one["id"], ""), "materials": one["materials"],
                                         "things_to_add": one.get("things", 3),
+                                        "plot": "{} x {}".format(*plot_size(float(one.get("weight") or 0))),
+                                        "complexity": "high" if one.get("complexity", 0) >= 12 else "medium"
+                                        if one.get("complexity", 0) >= 5 else "low",
+                                        **({"open_ground": self._open_ground(world, one["id"])} if self._open_ground(world, one["id"]) else {}),
                                         "pictures": [p["id"] for p in one.get("pictures") or []]}
                                        for one in important]} if important else {}),
                "who_they_are_now": about[:4000],
                "THINGS_BY_THEME": catalogue.by_theme(chosen),
+               **({"concepts": self._concepts} if self._concepts else {}),
                "PICTURES": [{"id": one["id"], "when": one.get("when", ""), "what": one.get("what", "")[:300]}
                             for one in offered]}
         system = SYSTEM.format(zones=MOST_NEW_ZONES, items=MOST_NEW_ITEMS, zone_kinds=", ".join(ZONE_KINDS),
@@ -717,10 +802,10 @@ class PlayWorld:
                                outdoor_kinds=", ".join(places.OUTDOOR), styles=", ".join(places.STYLES),
                                scales=", ".join(places.SCALES), enlarged=MOST_ENLARGED, redesigned=MOST_REDESIGNED,
                                item_kinds=", ".join(k for k in ITEM_KINDS if not ITEM_KINDS[k].get("thing")),
-                               signs=", ".join(SIGN_STYLES))
+                               signs=", ".join(SIGN_STYLES), forms=", ".join(FORMS))
         try:
             response = self.models.invoke(ModelRequest(
-                system=system, task=TASK, max_tokens=8000, builtin_web=False,
+                system=system, task=TASK, max_tokens=12000, builtin_web=False,
                 messages=[{"role": "user", "content": json.dumps(ask, ensure_ascii=False)}],
                 language=in_display('"name", "why" and "from"')), role="primary")
             text, _cut = read_text(response)
@@ -731,6 +816,38 @@ class PlayWorld:
             return {"error": str(exc)[:200]}
         self._pick(said)
         return self.apply(said, offered, at, (since, until))
+
+    def _conceive(self, world: Dict[str, Any], important: List[Dict[str, Any]], small: List[Dict[str, Any]],
+                  lived: str, since: str, until: str) -> List[Dict[str, Any]]:
+        """EACH PROJECT CONCEIVED FIRST, IN A CALL OF ITS OWN (the user: "构思一个call, call好了之后再加item"): its
+        associations - by its name, its scene, its time - the whole scene, its parts and what fills its ground; a
+        concept it has kept unless its life changed. [] when there is nothing to conceive or the call fails."""
+        from ..common.languages import in_display
+        from ..models.answers import read_text
+        if not important and not small:
+            return []
+        kept = {str(z.get("task")): z.get("concept") for z in world["zones"] if z.get("task") and z.get("concept")}
+        projects = [{"task": one["id"], "title": one["title"], "what": one.get("summary", "")[:240],
+                     "ground": "{} x {}".format(*plot_size(float(one.get("weight") or 0))),
+                     **({"leisure": True} if one.get("leisure") else {}),
+                     **({"concept": kept[one["id"]]} if one["id"] in kept else {})} for one in important]
+        try:
+            response = self.models.invoke(ModelRequest(
+                system=CONCEIVE_SYSTEM.format(kinds=", ".join(k for k in ITEM_KINDS if not ITEM_KINDS[k].get("thing"))),
+                task=TASK_CONCEIVE, max_tokens=3000, builtin_web=False,
+                messages=[{"role": "user", "content": json.dumps(
+                    {"these_days": f"{since[:10]} to {until[:10]}", "what_they_lived_these_days": lived[:4000],
+                     "projects": projects,
+                     **({"small_tasks": [{"task": one["id"], "title": one["title"]} for one in small]} if small else {})},
+                    ensure_ascii=False)}],
+                language=in_display('"idea" and "parts"')), role="primary")
+            text, _cut = read_text(response)
+            match = re.search(r"\{.*\}", text or "", re.DOTALL)
+            said = (json.loads(match.group(0)) if match else {}).get("concepts") or []
+        except Exception:
+            log.info("the world's projects could not be conceived", exc_info=True)
+            return []
+        return [one for one in said if isinstance(one, dict) and str(one.get("idea") or "").strip()][:12]
 
     def _themes(self, since: str, until: str, lived: str, world: Dict[str, Any]) -> List[str]:
         """THE THEMES FIRST (the user: "先给topic和topic的description, 然后模型选topic再给这个topic的description"): the
@@ -855,7 +972,9 @@ class PlayWorld:
                 way = tuple(str(z) for z in (one.get("goes_on") or []) if isinstance(z, str))
                 going = getattr(self, "_goes_on", {}).get(way)
                 grouped = [str(t) for t in (one.get("tasks") or []) if str(t) in getattr(self, "_small_ids", set())]
-                if not (switched or for_task or neighbours or going or grouped):
+                part_of = str(one.get("part_of") or "")
+                plot = next((z for z in world["zones"] if z.get("plot") and z.get("task") == part_of), None)
+                if not (switched or for_task or neighbours or going or grouped or plot):
                     continue
                 kind = str(one.get("kind") or "")
                 name = " ".join(str(one.get("name") or "").split())[:60]
@@ -876,8 +995,13 @@ class PlayWorld:
                                                       CELL_W, CELL_H)
                     apart_made = True
                     towards = None
-                zone = self._add_zone(world, kind, name, str(one.get("why") or ""), at,
-                                      region=apart_region, near=str(one.get("near") or ""), towards=towards)
+                if plot is not None and not for_task:
+                    zone = self._add_in_plot(world, plot, kind, name, str(one.get("why") or ""), at)
+                    if zone is not None:
+                        zone["part_of"] = part_of
+                else:
+                    zone = self._add_zone(world, kind, name, str(one.get("why") or ""), at,
+                                          region=apart_region, near=str(one.get("near") or ""), towards=towards)
                 if zone is None:
                     continue
                 if neighbours:                                # between its neighbours, of them
@@ -886,6 +1010,8 @@ class PlayWorld:
                     self._between.pop(between, None)
                 if one.get("sign") in SIGN_STYLES:
                     zone["sign"] = str(one["sign"])
+                if one.get("form") in FORMS and not ZONE_KINDS.get(kind, {}).get("outdoor"):
+                    zone["form"] = str(one["form"])
                 if grouped:                                   # small tasks, one whole scene
                     zone["tasks"] = grouped
                     zone["group_titles"] = [self._small_titles.get(t, t) for t in grouped]
@@ -951,6 +1077,15 @@ class PlayWorld:
             for one in [x for x in (said.get("redesign") or []) if isinstance(x, dict)][:MOST_REDESIGNED]:
                 if str(one.get("zone") or "") in by_id:
                     self._redesign(world, by_id[str(one["zone"])], one, at)
+            for one in [x for x in (getattr(self, "_concepts", None) or said.get("concepts") or []) if isinstance(x, dict)][:12]:
+                task = str(one.get("task") or "")
+                zone = next((z for z in world["zones"] if z.get("task") == task and not z.get("grounds_of")), None)
+                if zone is not None and str(one.get("idea") or "").strip():
+                    zone["concept"] = {"idea": str(one["idea"])[:300],
+                                       "associations": [str(a)[:40] for a in (one.get("associations") or [])][:8],
+                                       "parts": [str(p)[:120] for p in (one.get("parts") or [])][:10],
+                                       "fill": [str(k) for k in (one.get("fill") or []) if str(k) in ITEM_KINDS][:8],
+                                       "at": at[:10]}
             for one in [x for x in (said.get("merge") or []) if isinstance(x, dict)][:MOST_MERGED]:
                 self._merge(world, one, at)
             by_id = {one["id"]: one for one in world["zones"]}
@@ -986,6 +1121,9 @@ class PlayWorld:
                 items_added += 1
             self._decorate(world, said.get("decorate"), offered, by_name, at)
             self._fill_task_places(world, at, days)
+            self._plots(world, at)
+            for one in [x for x in (said.get("arrange") or []) if isinstance(x, dict)][:MOST_ARRANGED]:
+                items_added += self._arrange(world, one, at)
             world["grown_at"] = at
             if days:
                 world["caught_up"] = days[1]
@@ -1024,11 +1162,17 @@ class PlayWorld:
         zone["door"] = zone["x"] + 1 + zone["w"] // 2
         return True
 
-    def _move(self, world: Dict[str, Any], zone: Dict[str, Any], towards: Tuple[float, float]) -> bool:
-        """A place moved, as it is, to the room nearest `towards`; its things with it. Whether it could be."""
+    def _move(self, world: Dict[str, Any], zone: Dict[str, Any], towards: Tuple[float, float],
+              within: Optional[Tuple[int, int, int, int]] = None,
+              keep_off: Optional[Tuple[int, int, int, int]] = None) -> bool:
+        """A place moved, as it is, to the room nearest `towards` (inside `within`, off `keep_off`); its things with it.
+        Whether it could be."""
         region = next((one for one in world["regions"] if one["id"] == zone.get("region")), world["regions"][0])
-        others = [places.zone_rect(one) for one in world["zones"] if one["id"] != zone["id"]]
-        spot = places.find_spot(world, region, zone["kind"], zone["w"], zone["h"], towards, zone["id"], others)
+        others = [places.zone_rect(one) for one in world["zones"] if one["id"] != zone["id"]
+                  and not (within and one.get("plot"))]
+        if keep_off:
+            others.append(keep_off)
+        spot = places.find_spot(world, region, zone["kind"], zone["w"], zone["h"], towards, zone["id"], others, within)
         if spot is None:
             return False
         dx, dy = spot[0] - zone["x"], spot[1] - zone["y"]
@@ -1106,6 +1250,267 @@ class PlayWorld:
             one["in_town"] = square["id"]
         return square
 
+    # -- a project's plot -----------------------------------------------------------------------------------------------
+    def _project_zones(self, world: Dict[str, Any], task: str) -> List[Dict[str, Any]]:
+        """A project's places: its task's own, their grounds, its parts, and any place carrying its look (the same name
+        on the floor, the same task title) - "WaterMelon" twice is one project."""
+        mine = [z for z in world["zones"] if not z.get("plot") and (z.get("task") == task or z.get("part_of") == task)]
+        names = {str(z.get("floor_text") or "").lower() for z in mine if z.get("floor_text")} | \
+            {str(z.get("task_title") or "").lower() for z in mine if z.get("task_title")}
+        names.discard("")
+        ids = {z["id"] for z in mine}
+        for z in world["zones"]:
+            if z["id"] in ids or z.get("plot"):
+                continue
+            if z.get("grounds_of") in ids or str(z.get("floor_text") or "").lower() in names or \
+                    (z.get("task_title") and str(z["task_title"]).lower() in names):
+                mine.append(z)
+                ids.add(z["id"])
+        return mine
+
+    def _plots(self, world: Dict[str, Any], at: str) -> None:
+        """EACH IMPORTANT TASK'S GROUND: a plot as large as its hours (plot_size) round its places - in its region, the
+        places beside it that are not its moved away to make room; wider than DISTRICT_PART of a region, a region of
+        its own, a district - its places gathered into it, their things with them; its open ground filled."""
+        info = getattr(self, "_important_info", {}) or {}
+        for task, one in info.items():
+            minutes = float(one.get("weight") or 0)
+            if minutes < TASK_MINUTES or one.get("small"):
+                continue
+            mine = self._project_zones(world, task)
+            main = next((z for z in mine if z.get("task") == task and not z.get("grounds_of") and not z.get("part_of")), None)
+            if main is None:
+                continue
+            plot = next((z for z in world["zones"] if z.get("plot") and z.get("task") == task), None)
+            w, h = plot_size(minutes)
+            if plot is not None and plot["w"] >= w and plot["h"] >= h:
+                room = (main["x"] - 1, main["y"] - LANDMARK_ROOM, main["x"] + main["w"] + 3, main["y"])                     if main.get("landmark") else None
+                self._fill_plot(world, plot, main, at, keep_off=room)
+                continue
+            region = next((r for r in world["regions"] if r["id"] == main.get("region")), world["regions"][-1])
+            b = places.bounds(region)
+            if w > (b[2] - b[0]) * DISTRICT_PART or h > (b[3] - b[1]) * DISTRICT_PART:
+                region = self._district(world, task, main, at)
+                main["landmark"] = True                 # a district's main place: its landmark, seen from afar
+                b = places.bounds(region)
+                w, h = min(w, b[2] - b[0] - 6), min(h, b[3] - b[1] - 6)
+            if plot is not None and plot.get("region") == region["id"]:
+                rect = self._plot_rect(world, region, plot, w, h, mine)
+            else:
+                rect = self._plot_rect(world, region, main if main.get("region") == region["id"] else None, w, h, mine)
+            if rect is None:
+                continue
+            if plot is None:
+                plot = {"id": f"z{len(world['zones']) + 1}", "kind": "estate", "name": str(main["name"])[:60],
+                        "why": f"All of {main['name']}, as large as the time you gave it.", "made": at, "plot": True,
+                        "task": task, "task_title": main.get("task_title", ""), "span": [1, 1], "style": "",
+                        "grown": [], "door": 0}
+                if main.get("days"):
+                    plot["days"] = list(main["days"])
+                world["zones"].insert(0, plot)           # laid first: its places drawn over it
+            else:
+                plot["grown"].append({"at": at, "what": f"{plot.get('w')} x {plot.get('h')} -> {rect[2]} x {rect[3]}",
+                                      "why": "more time given to it"})
+            plot.update({"region": region["id"], "x": rect[0], "y": rect[1] - 1, "w": rect[2], "h": rect[3]})
+            inside = (rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3])
+            # ITS PLACES GATHERED INTO IT, THE LARGEST FIRST (2026-11-18: the main one put in its middle cut the plot
+            # into strips too narrow for the next - a 34 x 14 studio found no room): the main one at its top, room
+            # kept above it for its landmark; the rest drawn to its corners and edges, its middle left open for the
+            # scenes that fill it.
+            room = None
+            left, top, right, bottom = inside
+            slots = [(left, bottom), (right, bottom), (left, (top + bottom) / 2), (right, (top + bottom) / 2),
+                     ((left + right) / 2, bottom), (left, top), (right, top)]
+            n = 0
+            for z in sorted(mine, key=lambda one: (one is not main, -(one["w"] * one["h"]))):
+                zr = places.zone_rect(z)
+                there = z.get("region") == region["id"] and zr[0] >= inside[0] and zr[1] >= inside[1] and \
+                    zr[2] <= inside[2] and zr[3] <= inside[3]
+                if not there:
+                    was = z.get("region")
+                    z["region"] = region["id"]
+                    if z is main:
+                        towards = ((left + right) / 2,
+                                   top + (LANDMARK_ROOM if main.get("landmark") else 0) + (zr[3] - zr[1]) / 2)
+                    else:
+                        towards = slots[n % len(slots)]
+                        n += 1
+                    if not self._move(world, z, towards, within=inside, keep_off=room):
+                        z["region"] = was
+                if z is main and main.get("landmark"):        # nothing stands where its landmark rises
+                    room = (main["x"] - 1, main["y"] - LANDMARK_ROOM, main["x"] + main["w"] + 3, main["y"])
+            self._fill_plot(world, plot, main, at, keep_off=room)
+
+    def _district(self, world: Dict[str, Any], task: str, main: Dict[str, Any], at: str) -> Dict[str, Any]:
+        """A project grown larger than a region can hold it: a region of its own beside the others, its land the same
+        as where it began, named for it."""
+        region = next((r for r in world["regions"] if r.get("district_of") == task), None)
+        if region is not None:
+            return region
+        home = next((r for r in world["regions"] if r["id"] == main.get("region")), world["regions"][-1])
+        style = {key: home.get(key) for key in regions.SETTINGS if home.get(key)}
+        style["landmark"] = ""                          # its project is its landmark: no square kept in its middle
+        region = regions.open_region(world, style, str(main.get("task_title") or main["name"])[:60],
+                                     f"{main['name']} grew too large for where it stood.", at, None, CELL_W, CELL_H)
+        region["district_of"] = task
+        return region
+
+    def _plot_rect(self, world: Dict[str, Any], region: Dict[str, Any], around: Optional[Dict[str, Any]], w: int, h: int,
+                   mine: List[Dict[str, Any]]) -> Optional[Tuple[int, int, int, int]]:
+        """Where a plot of w x h goes: round `around` (its main place) if given, else the region's heart; within the
+        region; the places in the way that are not its own moved off it (the user: "把原来在旁边的没那么相关的其它区域
+        移走"). (x, top, w, h), or None when it cannot be."""
+        b = places.bounds(region)
+        cx, cy = places.centre(places.zone_rect(around)) if around else places.heart(world, region)
+        x = int(min(max(b[0], cx - w / 2), b[2] - w))
+        y = int(min(max(b[1], cy - h / 2), b[3] - h))
+        if x < b[0] or y < b[1]:
+            return None
+        rect = (x, y, x + w, y + h)
+        ids = {z["id"] for z in mine}
+        for z in list(world["zones"]):
+            if z["id"] in ids or z.get("plot") and z.get("task") in {m.get("task") for m in mine}:
+                continue
+            if z.get("region") != region["id"]:
+                continue
+            zr = places.zone_rect(z)
+            if zr[0] < rect[2] + places.GAP and zr[2] > rect[0] - places.GAP and zr[1] < rect[3] + places.GAP and zr[3] > rect[1] - places.GAP:
+                if z.get("plot"):                         # another project's ground: this one stops short of it
+                    return None
+                zx, zy = places.centre(zr)
+                away = (zx + (zx - (x + w / 2)) * 1.5, zy + (zy - (y + h / 2)) * 1.5)
+                if self._move(world, z, away, keep_off=rect):
+                    z.setdefault("grown", []).append({"at": "", "what": "moved aside", "why": "to make room for a project beside it"})
+        return x, y, w, h
+
+    def _add_in_plot(self, world: Dict[str, Any], plot: Dict[str, Any], kind: str, name: str, why: str,
+                     at: str) -> Optional[Dict[str, Any]]:
+        """A part of a project, stood inside its plot."""
+        region = next((r for r in world["regions"] if r["id"] == plot.get("region")), world["regions"][-1])
+        inside = (plot["x"], plot["y"] + 1, plot["x"] + plot["w"], plot["y"] + 1 + plot["h"])
+        outdoor = bool(ZONE_KINDS.get(kind, {}).get("outdoor"))
+        w, h = places.FIRST_OUTDOOR if outdoor else places.FIRST_INDOOR
+        ident = f"z{len(world['zones']) + 1}"
+        others = [places.zone_rect(one) for one in world["zones"] if not one.get("plot")]
+        spot = places.find_spot(world, region, kind, w, h, places.centre(inside), ident, others, inside)
+        if spot is None:
+            return None
+        zone = {"id": ident, "kind": kind, "name": name[:60], "why": why[:400], "made": at, "region": region["id"],
+                "span": [1, 1], "style": FIRST_STYLE.get(kind, ""), "x": spot[0], "y": spot[1], "w": w, "h": h,
+                "grown": [], "door": spot[0] + 1 + w // 2}
+        world["zones"].append(zone)
+        return zone
+
+    def _fill_plot(self, world: Dict[str, Any], plot: Dict[str, Any], main: Dict[str, Any], at: str,
+                   keep_off: Optional[Tuple[int, int, int, int]] = None) -> int:
+        """A plot's open ground is the model's to arrange (_arrange) - nothing scattered by the code (the user: "模型不要随即
+        摆"); only where its landmark rises is kept, for what is arranged later."""
+        plot["keep_off"] = list(keep_off) if keep_off else []
+        return 0
+
+    def _blocked_in(self, world: Dict[str, Any], plot: Optional[Dict[str, Any]] = None) -> set:
+        """Every tile taken: each place (a step round it) but the plot itself, each thing (a step round it), and the
+        room kept for a landmark."""
+        blocked = set()
+        for z in world["zones"]:
+            if plot is not None and z is plot:
+                continue
+            zr = places.zone_rect(z)
+            blocked |= {(x, y) for x in range(zr[0] - 1, zr[2] + 1) for y in range(zr[1] - 1, zr[3] + 1)}
+        for one in world["items"]:
+            sw, sh = ITEM_KINDS.get(one["kind"], {"size": (1, 1)})["size"]
+            blocked |= {(one["x"] + dx, one["y"] + dy) for dx in range(-1, sw + 1) for dy in range(-1, sh + 1)}
+        room = (plot or {}).get("keep_off") or []
+        if room:
+            blocked |= {(x, y) for x in range(room[0], room[2]) for y in range(room[1], room[3])}
+        return blocked
+
+    def _open_ground(self, world: Dict[str, Any], task: str) -> int:
+        plot = next((z for z in world["zones"] if z.get("plot") and z.get("task") == task), None)
+        if plot is None:
+            return 0
+        blocked = self._blocked_in(world, plot)
+        left, top = plot["x"], plot["y"] + 1
+        return sum(1 for y in range(top + 1, top + plot["h"] - 1) for x in range(left + 1, left + plot["w"] - 1)
+                   if (x, y) not in blocked)
+
+    def _arrange(self, world: Dict[str, Any], said: Dict[str, Any], at: str) -> int:
+        """MANY OF ONE THING, ONE DESIGN (the user: "一个物品可以是多个，比如摆多张床，本质对应的是一个理由"): "count" of
+        "kind" laid by "pattern" - in rows, a grid, a line, a ring, along the border, a cluster - in the part of the
+        plot or the room "where" says, each on free ground, all of one group with one reason. How many were laid."""
+        import math
+        kind = str(said.get("kind") or "")
+        if kind not in ITEM_KINDS or ITEM_KINDS[kind].get("wall"):
+            return 0
+        by_id = {z["id"]: z for z in world["zones"]}
+        zone = by_id.get(str(said.get("zone") or "")) or next(
+            (z for z in world["zones"] if z.get("plot") and z.get("task") == str(said.get("task") or "")), None)
+        if zone is None:
+            return 0
+        if zone.get("plot"):
+            left, top, w, h = zone["x"] + 1, zone["y"] + 2, zone["w"] - 2, zone["h"] - 2
+        else:
+            left, top, w, h = self.floor_of(zone)
+        where = str(said.get("where") or "middle")
+        if where.startswith("around:") and where[7:] in by_id:
+            r = places.zone_rect(by_id[where[7:]])
+            area = (max(left, r[0] - 4), max(top, r[1] - 4), min(left + w, r[2] + 4), min(top + h, r[3] + 4))
+        else:
+            third_w, third_h = max(3, w // 3), max(3, h // 3)
+            area = {"north": (left, top, left + w, top + third_h), "south": (left, top + h - third_h, left + w, top + h),
+                    "west": (left, top, left + third_w, top + h), "east": (left + w - third_w, top, left + w, top + h)}.get(
+                where, (left + w // 4, top + h // 4, left + w - w // 4, top + h - h // 4))
+        x0, y0, x1, y1 = area
+        sw, sh = ITEM_KINDS[kind]["size"]
+        count = max(1, min(ARRANGED_MOST, int(said.get("count") or 1)))
+        pattern = str(said.get("pattern") or "rows")
+        pattern = pattern if pattern in PATTERNS else "rows"
+        step_x, step_y = sw + 1, sh + (1 if pattern in ("grid", "cluster") else 2)
+        spots: List[Tuple[int, int]] = []
+        if pattern in ("rows", "grid"):
+            spots = [(x, y) for y in range(y0, y1 - sh + 1, step_y) for x in range(x0, x1 - sw + 1, step_x)]
+        elif pattern == "line":
+            mid = (y0 + y1) // 2
+            spots = [(x, mid) for x in range(x0, x1 - sw + 1, step_x)]
+        elif pattern in ("ring", "border"):
+            cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+            rx, ry = max(2, (x1 - x0) / 2 - 1), max(2, (y1 - y0) / 2 - 1)
+            if pattern == "border":
+                spots = [(x, y0) for x in range(x0, x1 - sw + 1, step_x)] + [(x1 - sw, y) for y in range(y0, y1 - sh + 1, step_y)] + \
+                        [(x, y1 - sh) for x in range(x1 - sw, x0 - 1, -step_x)] + [(x0, y) for y in range(y1 - sh, y0 - 1, -step_y)]
+            else:
+                around = max(4, int(2 * math.pi * min(rx, ry) / max(sw, sh) / 1.5))
+                spots = [(int(round(cx + rx * math.cos(2 * math.pi * k / around))), int(round(cy + ry * math.sin(2 * math.pi * k / around))))
+                         for k in range(around)]
+        else:                                          # a cluster: from its middle outwards
+            cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+            spots = sorted(((x, y) for y in range(y0, y1 - sh + 1, step_y) for x in range(x0, x1 - sw + 1, step_x)),
+                           key=lambda p: (p[0] - cx) ** 2 + (p[1] - cy) ** 2)
+        blocked = self._blocked_in(world, zone if zone.get("plot") else None)
+        if not zone.get("plot"):                       # in a room: its walls, its door's way, its things
+            blocked = {(x, y) for one in world["items"] if one["zone"] == zone["id"]
+                       for (x, y) in self._tiles_of(one)} | places.inner_walls(zone)
+        group = f"g{sum(1 for one in world['items'] if one.get('group')) + len(world['items'])}"
+        name = " ".join(str(said.get("name") or "").split())[:60]
+        why = str(said.get("why") or "")[:500]
+        laid = 0
+        for x, y in spots:
+            if laid >= count:
+                break
+            tiles = {(x + dx, y + dy) for dx in range(sw) for dy in range(sh)}
+            if tiles & blocked or x < left or y < top or x + sw > left + w or y + sh > top + h:
+                continue
+            world["items"].append({"id": f"i{len(world['items']) + 1}", "zone": zone["id"], "kind": kind, "x": x, "y": y,
+                                   "name": name, "why": why, "from": "", "made": at, "picture": "", "group": group})
+            blocked |= {(x + dx, y + dy) for dx in range(-1, sw + 1) for dy in range(-1, sh + 1)} if pattern != "rows" else tiles
+            laid += 1
+        return laid
+
+    @staticmethod
+    def _tiles_of(one: Dict[str, Any]) -> set:
+        sw, sh = ITEM_KINDS.get(one["kind"], {"size": (1, 1)})["size"]
+        return {(one["x"] + dx, one["y"] + dy) for dx in range(sw) for dy in range(sh)}
+
     def _relayout(self, world: Dict[str, Any], zone: Dict[str, Any]) -> None:
         """EVERY THING IN A PLACE LAID OUT AGAIN in its new shape - in the order they were made; none ever dropped (one
         that finds no spot keeps where it was)."""
@@ -1139,6 +1544,8 @@ class PlayWorld:
 
     def _redesign(self, world: Dict[str, Any], zone: Dict[str, Any], said: Dict[str, Any], at: str) -> bool:
         """REBUILT IN A NEW STYLE AND SIZE - a small room become a mansion - every thing in it kept, laid out again."""
+        if said.get("form") in FORMS and not ZONE_KINDS.get(zone["kind"], {}).get("outdoor"):
+            zone["form"] = str(said["form"])                # opened up, or closed, as it is rebuilt
         style = str(said.get("style") or "").strip().lower()
         scale = str(said.get("scale") or "").strip().lower()
         outdoor = bool(ZONE_KINDS.get(zone["kind"], {}).get("outdoor"))
@@ -1179,7 +1586,8 @@ class PlayWorld:
                     continue
                 choices = self.MATERIAL_THINGS.get(kind_of, ("cabinet",))
                 kind = choices[n % len(choices)]
-                item = self._add_item(world, zone, {"kind": kind, "name": title[:40], "why": "", "from": material}, at)
+                why = f"You worked with {title[:50]} in these days, so it is kept here, where the work is."
+                item = self._add_item(world, zone, {"kind": kind, "name": title[:40], "why": why, "from": material}, at)
                 if item is None:
                     break
                 if days:
@@ -1188,7 +1596,8 @@ class PlayWorld:
             for pid, picture in pictures.items():
                 if want <= 0 or pid in used:
                     continue
-                item = self._add_item(world, zone, {"kind": "frame", "name": picture.get("what", "")[:40], "why": "",
+                item = self._add_item(world, zone, {"kind": "frame", "name": picture.get("what", "")[:40],
+                                                    "why": f"A picture from that work, framed: {picture.get('what', '')[:60]}",
                                                     "from": f"picture: {picture.get('what', '')}"}, at)
                 if item is None:
                     break
@@ -1216,6 +1625,8 @@ class PlayWorld:
             info = (getattr(self, "_important_info", {}) or {}).get(task)
             if info and not zone.get("task") and not any(z.get("task") == task for z in world["zones"]):
                 zone["task"], zone["task_title"] = task, str(info.get("title") or "")[:80]
+            if one.get("on") in ("wall", "floor"):
+                zone["art_on"] = str(one["on"])
             text = " ".join(str(one.get("floor_text") or "").split())[:12]
             if text:
                 zone["floor_text"] = text
@@ -1265,6 +1676,15 @@ class PlayWorld:
 
     #: Projects whose places stand within this many tiles of each other are neighbours; two or three to a neighbourhood.
     NEIGHBOURS_WITHIN, NEIGHBOURS_MOST = 30, 3
+
+    #: A place with fewer things than one for each SPARSE_TILES tiles of its floor is "sparse": filled first.
+    SPARSE_TILES = 14
+
+    def _sparse(self, world: Dict[str, Any], zone: Dict[str, Any]) -> bool:
+        if zone.get("kind") in places.NATURAL:
+            return False
+        things = sum(1 for one in world["items"] if one["zone"] == zone["id"])
+        return things * self.SPARSE_TILES < zone.get("w", 0) * zone.get("h", 0)
 
     #: How far beyond B the place going on from A to B is drawn towards.
     GOES_ON_STEP, LINES_MOST = 16, 3
@@ -1617,6 +2037,10 @@ MATERIALS_MOST, TASK_PICTURES_MOST = 12, 3
 #: A task takes this many minutes of their activity in the days drawn to be given a place; no count fixed. One of less
 #: but at least SMALL_MINUTES is a small task: grouped with others like it into one whole scene.
 TASK_MINUTES, SMALL_MINUTES = 60, 20
+#: HOW OPEN A BUILDING IS (the user, 2026-11-18: "需要有一些半开放的设计"): walled round; open in front (a hall, its whole
+#: front a row of pillars); round a court (its wings and back, the front open on a courtyard); a pavilion (a roof on
+#: pillars, no walls) - api/web/play-regions.js lays each.
+FORMS = ("closed", "open_front", "u_court", "pavilion")
 #: How a place's sign may look (api/web/play.js PLAY_SIGN_STYLES).
 SIGN_STYLES = ("wood", "stone", "metal", "scroll", "neon", "gold", "red", "pink")
 
@@ -1720,6 +2144,7 @@ def important_tasks(db: Any, since: str, until: str) -> List[Dict[str, Any]]:
                     **({"leisure": True} if str(said.get("kind") or "") == "leisure" else {}),
                     **({"small": True} if _score_minutes(said, db, members) < TASK_MINUTES else {}),
                     "lived": lived,                       # when the task was alive: its place is dated by it
+                    "complexity": len(members) // 3 + len(materials),   # its richness follows it
                     "materials": materials, "pictures": pictures, "weight": weight, "scale": task_scale(weight),
                     "things": task_things(weight, len(materials) + len(pictures))})
     return out

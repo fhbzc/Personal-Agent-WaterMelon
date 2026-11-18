@@ -890,6 +890,127 @@ class SmallTasksOneSceneTests(unittest.TestCase):
         self.assertEqual(pw._states_minutes(db, ["a", "b", "c"]), 50 + 30 + 20, "its own minutes, held to its span")
 
 
+class AProjectsGroundTests(unittest.TestCase):
+    """2026-11-18: "区域的size大小是和花时间正相关的 ... 用多个控件填满"; "地区大小代表了project花的时长 ... 地区内的复杂程度代表了
+    project的复杂度"; "后面新加的区域要放在之前的watermelon旁边 ... 把原来在旁边的没那么相关的其它区域移走"; "先conceive, 再
+    implementation"; "构思一个call"; "需要有一些半开放的设计"; "世界如果继续变大 可以有多个区域"."""
+
+    def _keeper(self, folder, said, tasks=()):
+        return pw.PlayWorld(Path(folder), Models(said), SimpleNamespace(get=lambda key, default=None: default),
+                            tasks=lambda since, until: list(tasks))
+
+    def test_its_plot_grows_with_its_hours_and_a_long_one_is_a_district(self) -> None:
+        sizes = [pw.plot_size(hours * 60) for hours in (1, 10, 50, 160)]
+        areas = [w * h for w, h in sizes]
+        self.assertEqual(areas, sorted(areas), "more time, more ground")
+        self.assertGreater(areas[-1], 4 * areas[1])
+
+    def test_one_project_gathered_into_its_district_their_things_with_them(self) -> None:
+        from personalized_agent.agent import playplaces as pp
+        task = {"id": "t1", "title": "Melon App", "summary": "", "materials": [], "weight": 160 * 60, "things": 3}
+        with tempfile.TemporaryDirectory() as folder:
+            keeper = self._keeper(folder, {}, [task])
+            world = keeper.world()
+            a = keeper._add_zone(world, "studio", "Melon Studio", "w", "2026-11-17")
+            a.update(task="t1", task_title="Melon App", floor_text="Melon")
+            b = keeper._add_zone(world, "study", "Melon Lab", "w", "2026-11-17")
+            b["floor_text"] = "melon"                       # the same look: the same project
+            keeper._add_item(world, b, {"kind": "plant", "why": "w"}, "2026-11-17")
+            other = keeper._add_zone(world, "cafe", "Corner Cafe", "w", "2026-11-17")
+            keeper._important_info = {"t1": task}
+            keeper._plots(world, "2026-11-18")
+            plot = next(z for z in world["zones"] if z.get("plot"))
+            district = next(r for r in world["regions"] if r.get("district_of") == "t1")
+            self.assertEqual(plot["region"], district["id"], "too large for a region: its own")
+            inside = (plot["x"], plot["y"] + 1, plot["x"] + plot["w"], plot["y"] + 1 + plot["h"])
+            for z in (a, b):
+                r = pp.zone_rect(z)
+                self.assertEqual(z["region"], district["id"])
+                self.assertTrue(inside[0] <= r[0] and inside[1] <= r[1] and r[2] <= inside[2] and r[3] <= inside[3], z["name"])
+            thing = next(i for i in world["items"] if i["zone"] == b["id"])
+            self.assertTrue(inside[0] <= thing["x"] < inside[2] and inside[1] <= thing["y"] < inside[3], "its things with it")
+            self.assertNotEqual(other.get("region"), district["id"], "not its: left where it was")
+            # 2026-11-18: "模型不要随即摆" - nothing scattered by the code; its ground is the model's to arrange.
+            self.assertFalse([i for i in world["items"] if i["zone"] == plot["id"]])
+            self.assertGreater(keeper._open_ground(world, "t1"), 1000)
+            laid = keeper._arrange(world, {"task": "t1", "kind": "crops", "count": 24, "pattern": "rows", "where": "south",
+                                           "name": "Melon rows", "why": "Your versions ripen here, row on row."}, "2026-11-18")
+            rows = [i for i in world["items"] if i["zone"] == plot["id"]]
+            self.assertEqual(laid, 24)
+            self.assertEqual(len({i["group"] for i in rows}), 1, "one design")
+            self.assertEqual({i["why"] for i in rows}, {"Your versions ripen here, row on row."}, "one reason for all")
+            self.assertEqual(len({(i["x"], i["y"]) for i in rows}), 24, "none on another")
+            self.assertTrue(all(inside[1] + (inside[3] - inside[1]) // 2 <= i["y"] < inside[3] for i in rows), "in its south")
+            ring = keeper._arrange(world, {"zone": b["id"], "kind": "plant", "count": 6, "pattern": "ring", "where": "middle",
+                                           "why": "w"}, "2026-11-18")
+            self.assertGreater(ring, 0, "a room's floor arranged too")
+
+    def test_a_plot_beside_its_place_moves_what_is_not_its_aside(self) -> None:
+        from personalized_agent.agent import playplaces as pp
+        task = {"id": "t2", "title": "Hive Census", "summary": "", "materials": [], "weight": 8 * 60, "things": 3}
+        with tempfile.TemporaryDirectory() as folder:
+            keeper = self._keeper(folder, {}, [task])
+            world = keeper.world()
+            main = keeper._add_zone(world, "study", "Hive Census", "w", "2026-11-17")
+            main.update(task="t2", task_title="Hive Census")
+            neighbour = keeper._add_zone(world, "cafe", "Corner Cafe", "w", "2026-11-17", near=main["id"])
+            keeper._important_info = {"t2": task}
+            keeper._plots(world, "2026-11-18")
+            plot = next(z for z in world["zones"] if z.get("plot"))
+            pr, nr = pp.zone_rect(plot), pp.zone_rect(neighbour)
+            self.assertFalse(nr[0] < pr[2] and nr[2] > pr[0] and nr[1] < pr[3] and nr[3] > pr[1], "moved off its ground")
+
+    def test_conceived_first_in_a_call_of_its_own_then_built_kept_on_its_place(self) -> None:
+        task = {"id": "t3", "title": "WaterMelon", "summary": "an app", "materials": [], "weight": 120, "things": 3}
+        said = {"concepts": [{"task": "t3", "associations": ["fruit", "farm"], "idea": "A melon farm estate.",
+                              "parts": ["the farmhouse: its studio"], "fill": ["plant"]}],
+                "content_switch": {"switched": False}, "zones": [{"kind": "studio", "name": "WaterMelon", "why": "w",
+                                                                  "task": "t3", "form": "u_court"}]}
+        with tempfile.TemporaryDirectory() as folder:
+            keeper = self._keeper(folder, said, [task])
+            keeper.world()
+            keeper.grow("2026-11-18T10:00:00+00:00")
+            tasks = [r.task for r in keeper.models.asked]
+            self.assertLess(tasks.index(pw.TASK_CONCEIVE), tasks.index(pw.TASK), "conceived before it is built")
+            build = json.loads(next(r for r in keeper.models.asked if r.task == pw.TASK).messages[0]["content"])
+            self.assertEqual(build["concepts"][0]["idea"], "A melon farm estate.", "the build given the concept")
+            world = keeper.load()
+            zone = next(z for z in world["zones"] if z.get("task") == "t3" and not z.get("plot"))
+            self.assertEqual(zone["concept"]["idea"], "A melon farm estate.")
+            self.assertEqual(zone["form"], "u_court", "half open")
+        from personalized_agent.common import modules
+        self.assertEqual(modules.module_of(pw.TASK_CONCEIVE), "play_world")
+
+    def test_an_area_full_the_next_region_begins_another_apart(self) -> None:
+        from personalized_agent.agent import playregions as pr
+        with tempfile.TemporaryDirectory() as folder:
+            keeper = self._keeper(folder, {})
+            world = keeper.world()
+            style = pr.chosen({"biome": "meadow", "layout": "village", "palette": "day", "architecture": "stone",
+                               "theme": "quiet", "landmark": "fountain"})
+            for n in range(pr.AREA_REGIONS):
+                pr.open_region(world, style, f"Land {n}", "w", "2026-11-18", None, pw.CELL_W, pw.CELL_H)
+            areas = [pr.area_of(r) for r in world["regions"]]
+            self.assertEqual(areas.count("a1"), pr.AREA_REGIONS)
+            newest = world["regions"][-1]
+            self.assertEqual((newest["area"], newest["from"]), ("a2", None), "its own area, joined to none")
+            first = {tuple(r["cell"]) for r in world["regions"] if pr.area_of(r) == "a1"}
+            self.assertFalse(any(max(abs(newest["cell"][0] - c[0]), abs(newest["cell"][1] - c[1])) <= 1 for c in first))
+        page = (WEB / "play-regions.js").read_text(encoding="utf-8")
+        self.assertIn("function playAreaWorld", page)
+        self.assertIn("gate: true", (WEB / "play-act.js").read_text(encoding="utf-8"))
+
+    def test_a_skyline_on_a_lakeshore_stands_as_a_fountain_and_the_look_is_paged(self) -> None:
+        from personalized_agent.agent import playregions as pr
+        said = {"biome": "lakeside", "layout": "village", "palette": "day", "architecture": "stone", "theme": "quiet",
+                "landmark": "skyline"}
+        self.assertEqual(pr.chosen(said)["landmark"], "fountain")
+        self.assertEqual(pr.chosen(dict(said, biome="city"))["landmark"], "skyline")
+        page = (WEB / "play.js").read_text(encoding="utf-8")
+        self.assertIn("function playPages", page)
+        self.assertNotIn("`${text.slice(0, PLAY_SAY_MOST - 1)}…`", page, "never cut")
+
+
 class ThingsByThemeTests(unittest.TestCase):
     """2026-11-17: "告诉模型现在已有哪些主题。模型可以根据主题找每个image(每个有description), 然后根据description可以打开多个图片
     比较"; the themes asked for that day each there."""

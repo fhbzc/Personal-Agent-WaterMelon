@@ -182,6 +182,36 @@ class TheAgentsPartTests(_Base):
         self.assertEqual(self.app.todos.open(), [], "the to-do done, as on the list")
 
 
+class NotLateByItsOwnPlanTests(_Base):
+    """2026-11-18: a thing due at 23:59, planned at 21:21 for the next day, started at 08:00 - late. The agent's own
+    work keeps no hours: due before its planned start, it is begun now. And the user: "判断主要通过事情来决定，不是
+    communication channel" - "找他有最大权限的communication channel"."""
+
+    def test_due_tonight_planned_tomorrow_begun_now_and_not_one_due_later(self) -> None:
+        rows = self._sorted({"Explain the seed mix to Ada": "delegable", "Tidy the garden notes": "delegable"})
+        tonight, later = rows["Explain the seed mix to Ada"]["id"], rows["Tidy the garden notes"]["id"]
+        today, tomorrow = date.today(), date.today() + timedelta(days=1)
+        for ident, deadline in ((tonight, f"{today.isoformat()} 23:59"), (later, f"{tomorrow.isoformat()} 18:00")):
+            said = json.loads(self.db.query_one("SELECT triage FROM agenda_items WHERE id = ?", (ident,))["triage"])
+            self.db.execute("UPDATE agenda_items SET triage = ? WHERE id = ?", (json.dumps(dict(said, deadline=deadline)), ident))
+        self.db.execute("INSERT INTO agenda_plans (id, day, made_at, why, plan) VALUES (?, ?, ?, ?, ?)",
+                        ("plan_tomorrow", tomorrow.isoformat(), datetime.now().isoformat(), "the days ahead", json.dumps(
+                            {"agent_does": [{"item": tonight, "what": "Explain it", "start": "08:00", "end": "08:10"},
+                                            {"item": later, "what": "Tidy them", "start": "08:10", "end": "08:20"}]})))
+        self._plan({"blocks": [], "agent_does": []})
+        handed = []
+        executor = Executor(Agenda(self.db, lambda: None, self.app.config),
+                            lambda words, title, folders: handed.append(words) or {"assigned": f"draft_{len(handed)}"})
+        evening = datetime.combine(today, datetime.min.time()) + timedelta(hours=21, minutes=21)
+        self.assertEqual(executor.start_due(evening), [tonight], "begun now, not at 08:00 after its deadline")
+        self.assertIn("WHATEVER CHANNEL THE THING NAMES", handed[0], "the channel it can act on best")
+
+    def test_the_sorting_judges_the_matter_not_the_channel(self) -> None:
+        from personalized_agent.heartbeat.agenda import triage
+        self.assertIn("JUDGED BY THE MATTER, NEVER BY THE CHANNEL", triage.SYSTEM)
+        self.assertIn("NAMING NO CHANNEL", triage.SYSTEM)
+
+
 class ClearedAwayTests(_Base):
 
     def test_what_was_sorted_gone_cleared_and_undone(self) -> None:

@@ -172,6 +172,30 @@ def from_work(assigned: Optional[Callable[[], List[Dict[str, Any]]]]) -> Iterabl
                "since": one.get("at") or ""}
 
 
+def close_twins(db: Any, row: Dict[str, Any], when: str, stamp: str) -> int:
+    """DONE IS DONE FOR ITS TWINS TOO (the user, 2026-11-18: "<a friend> 的 feedback 晚了一天，等你点 OK - 这个你应该可以看到我
+    已经做过了？"): a thing found done at its source closes every open thing that is the same - written word for word
+    alike, or sorted as the same ("same_as") - as the user's own "done" always did (act.twins): the agent's draft of
+    feedback the user gave themselves no longer waits for an OK. How many were closed."""
+    words = " ".join(str(row.get("title") or "").lower().split())
+    try:
+        mine = str((json.loads(row.get("triage") or "{}") or {}).get("same_as") or "")
+    except (TypeError, ValueError):
+        mine = ""
+    closed = 0
+    for other in db.query("SELECT id, title, triage FROM agenda_items WHERE status = 'open' AND id != ?", (row["id"],)):
+        said = _json(other["triage"], {})
+        said = said if isinstance(said, dict) else {}
+        same = (words and " ".join(str(other["title"] or "").lower().split()) == words) or             str(said.get("same_as") or "") == row["id"] or mine == other["id"]
+        if not same:
+            continue
+        said["_closed"] = f"done with {row['id']}"
+        db.execute("UPDATE agenda_items SET status = 'closed', closed_at = ?, updated_at = ?, triage = ? WHERE id = ?",
+                   (when, stamp, json.dumps(said, ensure_ascii=False), other["id"]))
+        closed += 1
+    return closed
+
+
 def ended(db: Any, source: str, ref: str) -> Any:
     """WHEN AND HOW A THING LEFT ITS SOURCE, as the source kept it - not when the agenda next
     looked (a side agent's note, 2026-11-09: a to-do ticked at 9:30 and found at 10:40 was kept
@@ -262,6 +286,8 @@ def collect(db: Any, assigned: Optional[Callable[[], List[Dict[str, Any]]]] = No
                            "triage = ? WHERE id = ?",
                            (when or stamp, stamp, json.dumps(said, ensure_ascii=False), row["id"]))
                 counts["closed"] += 1
+                if how == "done":
+                    counts["closed"] += close_twins(db, row, when or stamp, stamp)
     row = db.query_one("SELECT COUNT(*) AS n FROM agenda_items WHERE status = 'open'")
     counts["open"] = int(row["n"]) if row else 0
     return counts

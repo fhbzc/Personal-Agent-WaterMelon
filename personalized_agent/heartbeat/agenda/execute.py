@@ -83,9 +83,9 @@ NOT_BEGUN = ("collecting", "writing", "ready", "drafting", "starting")
 #: makes in its own work folder; everything else waits for the user, written out.
 APPROVE_FIRST = """
 TO SETTLE A TIME, OR ANYTHING ELSE, WITH ANOTHER PERSON, ASK THEIR AGENT on the Agents Society
-first (society_find_agent, then society_write): their agent knows their time - read the user's
-calendar only for when the user is free, not their messages to guess the other person's. Not on
-the Society, or no agent of theirs found: as before.
+first (society_find_agent, then society_write), WHATEVER CHANNEL THE THING NAMES: their agent knows
+their time - read the user's calendar only for when the user is free, not their messages to guess the
+other person's. Not on the Society, or no agent of theirs found: as before.
 
 THIS NEEDS THE USER'S APPROVAL BEFORE ANY ACTION OUTSIDE YOUR OWN WORK FOLDER. You may read
 anything you need, and make and change files in your own work folder. Do NOTHING else: send,
@@ -107,10 +107,13 @@ ON_ITS_OWN = """
 THIS IS YOURS TO DO, ALL OF IT, ON YOUR OWN - the user has left it to you. Do it to the end with your
 tools, and say in what you hand over what you did and WHY, each step.
 
-TO SETTLE A TIME, OR ANYTHING ELSE, WITH ANOTHER PERSON, write to their agent on the Agents Society
-(society_find_agent, then society_write) - THAT GOES WITHOUT THE USER'S APPROVAL, once a review on
-their behalf lets it through. Read the user's calendar only for when the user is free, not their
-messages to guess the other person's.
+TO REACH ANOTHER PERSON - to settle a time, to tell or explain or ask them anything - USE THE CHANNEL
+YOU CAN ACT ON BEST, WHATEVER CHANNEL THE THING NAMES (the user, 2026-11-18: "对communication channel不要限制，
+你可以用你方便做的communication channel ... 找他有最大权限的communication channel"): their agent on the Agents
+Society first (society_find_agent, then society_write) - THAT GOES WITHOUT THE USER'S APPROVAL, once a
+review on their behalf lets it through. "Reply on WeChat", "email them" in the thing say only where it
+came up: what matters is what they are told. Read the user's calendar only for when the user is free,
+not their messages to guess the other person's.
 
 EVERY OTHER CHANNEL TO PEOPLE - email, WeChat, chats, posts, a form submitted to someone, a call -
 NEEDS THE USER'S APPROVAL, AND YOU HAVE NO TOOL TO SEND ON IT: the user sends it. Prepare each such
@@ -382,6 +385,30 @@ class Executor:
             if due > now and not (needed is not None and needed <= now + timedelta(minutes=EARLY_MIN)):
                 continue
             waiting.append((needed or due, due, ident, entry, thing))
+        # NOT LATE BY ITS OWN PLAN (2026-11-18: a to-do due at 23:59, planned at 21:21 for the next day, started at
+        # 08:00 - the agent's own work keeps no hours): a thing the agent does whose deadline comes before its
+        # planned start - in today's plan, or the next day's - is begun now, while there is still time.
+        queued = {one[2] for one in waiting}
+        ahead = self.agenda.latest(now.date() + timedelta(days=1)) or {}
+        for source, day in ((plan, now.date()), (ahead.get("plan") or {}, now.date() + timedelta(days=1))):
+            for entry in source.get("agent_does") or []:
+                if not isinstance(entry, dict):
+                    continue
+                ident = str(entry.get("item") or "")
+                thing = things.get(ident)
+                if ident in queued or thing is None or thing.get("from") == "work" or self.started_for(ident):
+                    continue
+                if waits_for_answer(thing):
+                    continue
+                deadline = _deadline((thing.get("triage") or {}).get("deadline"))
+                try:
+                    hours, minutes = str(entry.get("start") or "").split(":")[:2]
+                    planned = datetime(day.year, day.month, day.day, int(hours), int(minutes))
+                except (ValueError, TypeError):
+                    continue
+                if deadline is not None and now < deadline < planned:
+                    waiting.append((deadline, now, ident, entry, thing))
+                    queued.add(ident)
         started: List[str] = []
         for _needed, _due, ident, entry, thing in sorted(waiting, key=lambda one: (one[0], one[1])):
             if going + len(started) >= MOST_RUNNING:

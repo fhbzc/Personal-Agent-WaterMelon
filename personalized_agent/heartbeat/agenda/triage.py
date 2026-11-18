@@ -70,9 +70,9 @@ For each thing say:
     ALREADY DECIDED TO WRITE TO - to invite them, to ask to present or to be asked, to ping, to
     follow up ("Write to <someone> about presenting in their group", "Ping <someone> about a talk in
     their speaker series") - is this: the decision is made; what is left the agent writes, from
-    what is known of the user and the person (the user, 2026-11-09: "这种应该是agent完全自己做"). For now the agent does it and the
-    user approves it before anything goes out; in time it may be handed over for good. Most of what
-    the agent can do is this (the user: "绝大多数都是不需要approve的").
+    what is known of the user and the person (the user, 2026-11-09: "这种应该是agent完全自己做"). The agent does it and
+    the user is told at once; in time it may be handed over for good. Most of what the agent can do
+    is this (the user: "绝大多数都是不需要approve的").
   "approve": no, or most likely not - something must come from the user: what is not known (which
     day suits them, what they think of it, a fact only they have), their own judgment or
     preference, a decision only they can make (accepting or turning down an offer, a hire, a
@@ -83,11 +83,19 @@ For each thing say:
     being somewhere. The agent helps where it can: collecting, a first draft of a part, the files.
   "gone": what was found plainly shows it done already, or no longer wanted.
   Work delegated to the agent and finished is "approve" or "delegable" by its kind, "focus" "review".
+  JUDGED BY THE MATTER, NEVER BY THE CHANNEL (the user, 2026-11-18: "判断主要通过事情来决定，不是communication
+  channel ... 原则是agent如果能自己做好就不要打扰用户"): whether the agent can do it alone rests on WHAT is to be done
+  or said and what it decides - not on WHERE it would go (an email, WeChat, a chat, a call). "Explain to
+  someone why something happened, as promised" is the same thing whichever channel it was promised in.
+  The agent reaches people by the channel it can use best when it does it (their agent on the Agents
+  Society first); the channel the user would use is never a reason for "approve" or "human". If the
+  agent can do it well itself, it is "delegable" - the user is not disturbed with it.
 - "kind_id": the kind of work it is, CHOSEN FROM "kinds" by its id ("K3") - each kind listed with
   the "who" it has, and whether the user set it ("set_by": "user": then give that "who" too). Only
   when it is of none of them: "kind_id": "new", and "new_kind" - a few words general enough to come
-  again ("reply to a scheduling email", "review a pull request", "book a trip"), not this thing's
-  own details. Two things here of one new kind: the same "new_kind", word for word.
+  again, NAMED BY THE MATTER, NOT THE CHANNEL ("settle a meeting time", "keep a promise to explain
+  something", "review a pull request", "book a trip" - not "send an email", "reply on WeChat"), not
+  this thing's own details. Two things here of one new kind: the same "new_kind", word for word.
 - "deadline": when it must be done by, "YYYY-MM-DD HH:MM" on the user's clock, or "" for none.
   A REMINDER'S TIME IS NOT A DEADLINE: it is when the user wanted to be reminded - the deadline is
   what was promised or asked ("by the end of the week"), else none.
@@ -118,7 +126,7 @@ For each thing say:
   WeChat with ...? And is it Tuesday at 22:00 or 23:00 your time?"). One or two sentences, in their
   language; "" otherwise.
 - "agent_part": what the agent would do - all of it for "delegable" and "approve", its help for
-  "human" - one sentence.
+  "human" - one sentence, saying what and to whom, NAMING NO CHANNEL: the agent chooses it as it does it.
 - "why": one sentence for the user, saying why you sorted it so.
 Something that only may interest them, and asks nothing of them, is "human", "focus" "shallow",
 with no deadline.
