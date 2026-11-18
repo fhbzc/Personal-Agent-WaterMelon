@@ -5061,11 +5061,267 @@ label.delegate-see-tries input { width: auto; margin: 3px 3px 3px 4px; flex: non
    switched in place; a block's details and its reply opened in place, smoothly; an answered one
    folds away. The page's own ink, panels and rules, light and dark. -- */
 /* -- THE WAITING NOTIFICATIONS, down the whole side of the screen (2026-11-13): as the report's drawer. -- */
-html.notes-solo body > :not(#notes-page):not(#toast),
-body.notes-solo > :not(#notes-page):not(#toast) { display: none !important; }
+html.notes-solo body > :not(#notes-page):not(#toast):not(#side-compose):not(#side-chat-log):not(#side-visual):not(.side-viz-tip):not(.side-grip):not(.side-collapse-tab):not(.side-larger):not(.side-ask):not(.side-rail):not(#side-board):not(#side-play):not(.page-menu),
+body.notes-solo > :not(#notes-page):not(#toast):not(#side-compose):not(#side-chat-log):not(#side-visual):not(.side-viz-tip):not(.side-grip):not(.side-collapse-tab):not(.side-larger):not(.side-ask):not(.side-rail):not(#side-board):not(#side-play):not(.page-menu) { display: none !important; }
 html.notes-solo, html.notes-solo body { margin: 0; height: 100%; background: var(--bg); }
 #notes-page[hidden] { display: none; }
 #notes-page { display: flex; flex-direction: column; height: 100vh; }
+/* THE SIDE PANEL'S CHAT (2026-11-16): the list and what is said scroll as one; the box stays at the bottom. */
+/* As tall as the window at any zoom (notes.js sideZoomTo; the user, 2026-11-16: "底下白的是怎么回事" - zoomed out, 100vh
+   was zoomed too, and the window's own white showed under it). */
+body.notes-solo { display: flex; flex-direction: column; height: calc(100vh / var(--side-zoom, 1)); overflow: hidden; }
+body.notes-solo #notes-page { flex: 1 1 auto; min-height: 0; height: auto; }
+.side-chat-log { display: grid; gap: 8px; padding: 8px 4px 4px; }
+/* Room for its tabs on the left edge (the user, 2026-11-16: "那3个button和text留一点距离"). */
+body.notes-solo .side-chat-log { padding-left: 40px; }
+.side-chat-log:empty { display: none; }
+.side-msg { max-width: 88%; padding: 8px 12px; border-radius: 14px; line-height: 1.45; white-space: pre-wrap;
+  overflow-wrap: anywhere; font-size: 14px; }
+.side-msg.you { justify-self: end; background: color-mix(in srgb, var(--accent) 16%, var(--panel)); color: var(--ink); }
+.side-msg.agent { justify-self: start; background: var(--panel); border: 1px solid var(--line); color: var(--ink); }
+.side-msg.quick { opacity: 0.92; }
+.side-msg.working { color: var(--muted); font-style: italic; }
+.side-msg.failed { border-color: var(--err); }
+.side-compose { flex: 0 0 auto; display: flex; gap: 8px; align-items: flex-end; padding: 10px 12px 12px;
+  border-top: 1px solid var(--line); background: var(--panel); }
+.side-compose textarea { flex: 1 1 auto; resize: none; max-height: 160px; border-radius: 16px; padding: 8px 12px;
+  font: inherit; line-height: 1.4; box-sizing: border-box; }
+/* THE PICTURE BESIDE THE ANSWER (side-visual.js, 2026-11-16): a column of its own when the panel is wide for it,
+   else above the box. Its four colours checked against the panel's own surfaces (white / #232325): all pass;
+   in light the third and fourth are under 3:1 on white, so every chart has its table a press away and says
+   each value under the pointer. */
+.side-visual { --viz-1: #2a78d6; --viz-2: #eb6834; --viz-3: #1baf7a; --viz-4: #eda100; background: var(--panel); }
+.side-board { --viz-1: #2a78d6; --viz-2: #eb6834; --viz-3: #1baf7a; --viz-4: #eda100; }
+@media (prefers-color-scheme: dark) {
+  .side-visual { --viz-1: #3987e5; --viz-2: #d95926; --viz-3: #199e70; --viz-4: #c98500; }
+  .side-board { --viz-1: #3987e5; --viz-2: #d95926; --viz-3: #199e70; --viz-4: #c98500; }
+}
+.side-visual[hidden] { display: none !important; }
+body.notes-solo.side-wide { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto; }
+/* The second layer on the LEFT of the chat (2026-11-16: "放在原先sidebar的左边") - the window widened leftwards. */
+body.side-wide #notes-page { grid-column: 2; grid-row: 1; }
+body.side-wide #side-compose { grid-column: 2; grid-row: 2; }
+body.side-wide #side-visual { grid-column: 1; grid-row: 1 / span 2; border-right: 1px solid var(--line); overflow-y: auto;
+  padding-left: 18px; }
+body.side-stacked #side-visual { flex: 0 0 auto; max-height: 48vh; overflow-y: auto; border-top: 1px solid var(--line); }
+.side-visual-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px 0 16px; }
+.side-visual-body[hidden] { display: none; }
+/* ITS TABS, ON THE PANEL'S LEFT EDGE NEAR THE TOP - as the collapse tab, seen when it is put away to its tab too. */
+/* Larger, set apart from the words, each a tab of its own that comes out a little to the hand (the user, 2026-11-16:
+   "这3个按钮再有设计感一点，size可以大一点，和text距离远一点"). */
+.side-rail { position: fixed; left: 0; top: 88px; z-index: 22; display: flex; flex-direction: column; gap: 10px; }
+.side-rail button { width: 30px; height: 40px; padding: 0 0 0 2px; border: 1px solid var(--line); border-left: 0;
+  border-radius: 0 12px 12px 0; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--ink) 5%, var(--panel)); color: var(--muted);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22); transition: transform 120ms ease, color 120ms ease, background 120ms ease; }
+.side-rail button:hover, .side-rail button:focus-visible { color: var(--ink); transform: translateX(3px);
+  background: color-mix(in srgb, var(--ink) 10%, var(--panel)); }
+.side-rail button[aria-pressed="true"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel)); box-shadow: inset 3px 0 0 var(--accent), 0 2px 6px rgba(0, 0, 0, 0.22); }
+.side-rail svg { width: 16px; height: 16px; }
+@media (prefers-reduced-motion: reduce) { .side-rail button { transition: none; } .side-rail button:hover { transform: none; } }
+.side-drawer-images { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.side-drawer-images img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; cursor: zoom-in;
+  border: 1px solid var(--line); }
+.side-drawer-told { display: grid; gap: 8px; }
+.side-told { border: 1px solid var(--line); border-left: 3px solid var(--note-ink, #6aa5ff); border-radius: 8px;
+  padding: 6px 10px; font-size: 13px; }
+.side-told.ink-summaries { --note-ink: #5fd1b3; }
+.side-told.ink-recommendations { --note-ink: #f2d14b; }
+.side-told .side-told-head { font-size: 11.5px; color: var(--muted); }
+.side-drawer-empty { color: var(--muted); font-size: 13px; }
+.side-visual-body { padding: 4px 16px 16px; }
+.side-viz-card { margin: 0; display: grid; gap: 10px; }
+.side-viz-title { font-size: 15px; font-weight: 650; color: var(--ink); }
+.side-viz-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; color: var(--muted); }
+.side-viz-key { display: inline-flex; align-items: center; gap: 6px; }
+.side-viz-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.side-viz-swatch.s1, .side-viz-bar.s1, .side-viz-dot.s1 { background: var(--viz-1); fill: var(--viz-1); }
+.side-viz-swatch.s2, .side-viz-bar.s2, .side-viz-dot.s2 { background: var(--viz-2); fill: var(--viz-2); }
+.side-viz-swatch.s3, .side-viz-bar.s3, .side-viz-dot.s3 { background: var(--viz-3); fill: var(--viz-3); }
+.side-viz-swatch.s4, .side-viz-bar.s4, .side-viz-dot.s4 { background: var(--viz-4); fill: var(--viz-4); }
+.side-viz-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.side-viz-line.s1 { stroke: var(--viz-1); } .side-viz-line.s2 { stroke: var(--viz-2); }
+.side-viz-line.s3 { stroke: var(--viz-3); } .side-viz-line.s4 { stroke: var(--viz-4); }
+.side-viz-dot { stroke: var(--panel); stroke-width: 2; }
+.side-viz-plot svg { display: block; max-width: 100%; height: auto; overflow: visible; }
+.side-viz-grid line { stroke: var(--line); stroke-width: 1; }
+.side-viz-grid line.zero { stroke: var(--muted); }
+.side-viz-axis { font-size: 11px; fill: var(--muted); }
+.side-viz-label { font-size: 11.5px; fill: var(--ink); font-weight: 600; }
+.side-viz-cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.side-viz-hit { fill: transparent; }
+.side-viz-tip { position: fixed; z-index: 10001; pointer-events: none; background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 12.5px; line-height: 1.4;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); }
+.side-viz-tip[hidden] { display: none; }
+.side-viz-tip div:first-child { font-weight: 650; }
+.side-viz-toggle { justify-self: start; }
+.side-viz-table { width: 100%; border-collapse: collapse; font-size: 13px; color: var(--ink); }
+.side-viz-table th, .side-viz-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.side-viz-table th { color: var(--muted); font-weight: 600; }
+.side-viz-timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.side-viz-timeline li { display: grid; grid-template-columns: 76px 1fr; gap: 2px 10px; padding-left: 10px;
+  border-left: 2px solid var(--line); }
+.side-viz-when { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.side-viz-what { color: var(--ink); font-size: 14px; }
+.side-viz-note { grid-column: 2; color: var(--muted); font-size: 12.5px; }
+.side-viz-stat { display: grid; gap: 4px; padding: 8px 0; }
+.side-viz-value { font-size: 40px; font-weight: 700; color: var(--ink); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.side-viz-stat .side-viz-note { grid-column: auto; }
+.side-msg-view { justify-self: start; margin-top: -4px; }
+/* THE SIDE PANEL, ONE CHAT (2026-11-16): what waits is the agent's message among the rest; its head, and the
+   button that puts the panel away off the screen. */
+.side-head { align-items: center; }
+.side-collapse { border: 0; background: transparent; color: var(--muted); font-size: 22px; line-height: 1;
+  padding: 4px 8px; border-radius: 8px; cursor: pointer; }
+.side-collapse:hover, .side-collapse:focus-visible { background: var(--line); color: var(--ink); }
+.side-msg.side-note { white-space: normal; display: grid; gap: 6px; max-width: 94%; }
+.side-note .notes-text { white-space: pre-wrap; }
+.side-note-head { display: flex; gap: 8px; font-size: 12px; color: var(--muted); align-items: center; }
+/* Its kind never broken; the date under it when there is no room beside it. */
+.side-note-head { flex-wrap: wrap; row-gap: 2px; }
+.side-note-head .notes-kind, .side-note-head .notes-when { white-space: nowrap; }
+/* EACH KIND ITS COLOUR, the line beside the avatar's (ui/desktop.py WAITING_INK; the user, 2026-11-16: "不同类型的
+   notification还是用不同的颜色"): a bar down its side and a dot by its kind - the words stay in the words' ink. */
+.side-note { --note-ink: #6aa5ff; border-left: 3px solid var(--note-ink); }
+.side-note.ink-summaries { --note-ink: #5fd1b3; }
+.side-note.ink-recommendations { --note-ink: #f2d14b; }
+.side-note-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--note-ink); display: inline-block; }
+.side-note-why { margin: 0; color: var(--ink); }
+.side-note-title { font-weight: 650; }
+.side-note .notes-answers { display: flex; flex-wrap: wrap; gap: 6px; }
+.side-note .notes-why { margin: 0; font-size: 12.5px; color: var(--muted); }
+.side-note.answered { opacity: 1; }
+.side-note-done { font-size: 12px; color: var(--muted); }
+.side-head-buttons { display: flex; gap: 2px; align-items: center; }
+.side-pin svg { display: block; }
+.side-pin[aria-pressed="true"], #side-play-open[aria-pressed="true"] { color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent); }   /* Play on: as Pin on (the user, 2026-11-17) */
+.side-compose { flex-wrap: wrap; }
+.side-quick { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 6px; }
+.side-quick[hidden] { display: none; }
+#side-quick button.side-quick-one { border-radius: 14px; padding: 3px 10px; font-size: 12.5px; line-height: 1.35;
+  min-height: 0; }
+/* Its kind in words in the words' ink - the colour is the dot's and the bar's. */
+.side-note .side-note-head .notes-kind { color: var(--muted); background: none; padding: 0; }
+/* Its bar over the agent's message's own edge (.side-msg.agent), and the box beside Send, not over it. */
+.side-msg.side-note { border-left: 3px solid var(--note-ink); }
+.side-compose textarea { flex: 1 1 0; min-width: 0; width: auto; overflow-y: hidden; }
+.side-note { cursor: pointer; }
+.side-note.answered { cursor: default; }
+.side-note.targeted { box-shadow: 0 0 0 2px color-mix(in srgb, var(--note-ink) 55%, transparent); }
+.side-replying { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.side-replying[hidden] { display: none; }
+.side-replying-title { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+/* DRAGGED BY ITS LEFT EDGE (2026-11-16: "那个side bar 要允许我鼠标拖动size"). */
+.side-grip { position: fixed; left: 0; top: 0; bottom: 0; width: 8px; cursor: ew-resize; z-index: 20; }
+/* Collapse: a tab in the middle of the left edge, over the edge that is dragged. */
+/* The same size whatever the page's zoom, as the tab left at the screen's edge when the panel is put away (the user,
+   2026-11-17: "这个button在collapse和expand状态下的size大小要一致"): 16 x 64 ("高度不变，宽度小一点"), its arrow
+   15 px, at 96 dpi. */
+.side-collapse-tab { position: fixed; left: 0; top: 50%; transform: translateY(-50%); z-index: 21;
+  width: calc(16px / var(--side-zoom, 1)); height: calc(64px / var(--side-zoom, 1)); padding: 0;
+  border: 1px solid var(--line); border-left: 0;
+  border-radius: 0 calc(10px / var(--side-zoom, 1)) calc(10px / var(--side-zoom, 1)) 0;
+  background: var(--panel); color: var(--muted); font-size: calc(15px / var(--side-zoom, 1)); line-height: 1;
+  cursor: pointer; }
+.side-collapse-tab:hover, .side-collapse-tab:focus-visible { color: var(--ink); background: var(--line); }
+/* Seen on any background (the user, 2026-11-16: "button在暗色背景的时候不明显，你可以边框有点颜色"): its edge and
+   arrow in the accent colour, with a faint glow of it - put away to it, it is all there is of the panel. */
+.side-collapse-tab { border-color: color-mix(in srgb, var(--accent) 75%, transparent); color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent), 0 2px 10px color-mix(in srgb, var(--accent) 30%, transparent); }
+/* Something told and not yet seen: a dot on the tab, seen when the panel is put away to it. */
+.side-collapse-tab.has-unread::after { content: ""; position: absolute; top: calc(6px / var(--side-zoom, 1));
+  right: calc(3px / var(--side-zoom, 1)); width: calc(7px / var(--side-zoom, 1)); height: calc(7px / var(--side-zoom, 1));
+  border-radius: 50%; background: var(--accent); }
+/* A SHORTER HEAD (the user, 2026-11-16: "最上面的your agent 这个可以不要那么高"): its name and how many wait on one line. */
+#notes-page .notes-head.side-head { padding: 6px 10px 6px 14px; align-items: center; }
+#notes-page .side-head > div:first-child { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+#notes-page .side-head .notes-heading { font-size: 15px; margin: 0; }
+#notes-page .side-head #side-count { font-size: 12px; }
+/* THE BOX MADE TALLER BY ITS TOP ("下面那个input的位置是可调高度的（比如text特别长可以高点)"), and growing with a long
+   message further than before. */
+.side-input-grip { flex: 1 0 100%; height: 12px; margin: -8px 0 -2px; cursor: ns-resize; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center; touch-action: none; }
+/* Seen, so it is known to be there: a short bar in the middle of the box's top. */
+.side-input-grip::before { content: ""; width: 36px; height: 4px; border-radius: 2px; background: var(--line); }
+.side-input-grip:hover::before, .side-input-grip.dragging::before { background: var(--muted); }
+.side-input-grip:hover, .side-input-grip.dragging { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.side-compose textarea { max-height: 60vh; }
+/* Private mode, under the head while it is on: the avatar's red, said in words too. */
+.side-private { flex: 0 0 auto; padding: 6px 14px; font-size: 12.5px; line-height: 1.4; color: var(--ink);
+  background: color-mix(in srgb, var(--err) 14%, var(--panel)); border-bottom: 1px solid color-mix(in srgb, var(--err) 45%, transparent); }
+.side-private[hidden] { display: none; }
+.side-private strong { color: var(--err); margin-right: 6px; }
+/* THE SIDE PANEL'S CHAT, AS THE BUBBLE HAD IT (2026-11-16: "之前的feature, 包括当前屏幕，context什么的都要实现"). */
+/* When each was said, under it - not on what is still being worked on, nor on the agent's notes (their head has it). */
+.side-msg[data-time]:not(.side-note):not(.working)::after { content: attr(data-time); display: block; margin-top: 4px;
+  font-size: 11px; color: var(--muted); text-align: right; }
+.side-tools { flex: 1 0 100%; display: flex; align-items: center; gap: 8px; }
+.side-tool { flex: 0 0 auto; align-self: flex-end; margin-bottom: 4px; border: 1px solid var(--line); background: transparent; color: var(--ink); width: 28px; height: 28px;
+  border-radius: 14px; font-size: 18px; line-height: 1; padding: 0; cursor: pointer; }
+.side-tool:hover { background: var(--line); }
+.side-mode { display: inline-flex; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-left: auto; }
+.side-mode button { border: 0; background: transparent; color: var(--muted); padding: 3px 12px; font-size: 12.5px; cursor: pointer; }
+.side-mode button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.side-files { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 6px; }
+.side-files[hidden] { display: none; }
+.side-file { position: relative; display: flex; align-items: center; gap: 6px; padding: 3px 24px 3px 4px; border: 1px solid var(--line);
+  border-radius: 8px; font-size: 12px; max-width: 100%; }
+.side-file img { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; }
+.side-file .side-file-off { position: absolute; right: 2px; top: 2px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.side-dropping .side-chat-log { outline: 2px dashed var(--accent); outline-offset: -6px; }
+.side-msg-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.side-msg-files img { max-width: 160px; max-height: 120px; border-radius: 8px; cursor: zoom-in; }
+/* The window in front, given with what is said - under the head, one line. */
+/* Never squeezed by what is under it (the user, 2026-11-16: "这里字没有显示完整"). */
+.side-front { flex: 0 0 auto; line-height: 1.6; padding: 4px 14px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-front[hidden] { display: none; }
+/* The picture of the screen that went with a message, under it. */
+.side-shot { justify-self: end; max-width: 88%; font-size: 11.5px; color: var(--muted); text-align: right; }
+/* SMALLER IN THE CHAT (the user, 2026-11-17: "那个图片在chat 里面显得小一点"): a glance at what went - pressed, it is
+   shown large (sideLarger). */
+.side-shot img { max-width: min(100%, 220px) !important; max-height: 96px !important; cursor: zoom-in; }
+.side-shot img { display: block; margin: 4px 0 0 auto; max-width: 100%; max-height: 140px; border-radius: 8px;
+  border: 1px solid var(--line); cursor: zoom-in; }
+.side-larger { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.78); display: flex;
+  align-items: center; justify-content: center; cursor: zoom-out; }
+.side-larger[hidden] { display: none; }
+.side-larger img { max-width: 94vw; max-height: 94vh; border-radius: 6px; }
+/* The full agent's answer under a quick one: folded under its line, as in the bubble. */
+.side-fold-head { display: block; border: 0; background: transparent; padding: 0 0 4px; color: var(--accent);
+  font: inherit; font-weight: 650; cursor: pointer; text-align: left; }
+.side-fold-body[hidden] { display: none; }
+.side-did { justify-self: start; font-size: 11.5px; color: var(--muted); margin-top: -4px; }
+/* The learned rules a decision followed, small under it (sideRulesHtml). */
+.side-rules { margin-top: 6px; padding-top: 4px; border-top: 1px dashed var(--line); font-size: 11.5px; color: var(--muted);
+  white-space: normal; }
+.side-rules ul { margin: 2px 0 0; padding-left: 16px; }
+/* Follow-ups ("Ask about"), under the answer they ask about. */
+.side-ask { position: fixed; z-index: 30; }
+.side-fu-form { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+.side-fu-form input { flex: 1; min-width: 0; }
+.side-followup { justify-self: start; max-width: 88%; border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 8px; padding: 6px 10px; font-size: 13px; background: var(--panel); white-space: pre-wrap; }
+.side-followup .side-fu-head { display: flex; gap: 6px; align-items: baseline; font-size: 12px; color: var(--muted); }
+.side-followup .side-fu-head button { margin-left: auto; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+mark.side-fu-anchor { background: color-mix(in srgb, var(--accent) 25%, transparent); color: inherit; }
+.side-grip:hover, .side-grip.dragging { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+/* MARKED BY THE USER (side-visual.js sideMarking): rings drawn over the picture while "Mark" is on. */
+.side-viz-card { position: relative; }
+.side-viz-tools { display: flex; gap: 6px; justify-content: flex-end; position: relative; z-index: 2; }
+.side-viz-toggle { position: relative; z-index: 2; }
+.side-viz-card .side-viz-tools button[aria-pressed="true"] { background: var(--accent); color: #fff;
+  border-color: var(--accent); }
+.side-viz-layer { position: absolute; inset: 0; pointer-events: none; }
+.side-viz-card.marking .side-viz-layer { pointer-events: auto; cursor: crosshair; }
+/* In the ink of the words, not a colour of the data: a mark of the user's is never read as a series. */
+.side-viz-ring { position: absolute; border: 2px solid var(--ink); border-radius: 50%; pointer-events: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--panel) 70%, transparent); }
+.side-viz-anchor { fill: transparent; pointer-events: none; }
 .notes-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
   padding: 16px 18px 10px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .notes-heading { margin: 0 0 2px; font-size: 17px; font-weight: 700; color: var(--ink); }
@@ -5419,3 +5675,368 @@ button.report-deliverable-title:focus-visible { outline: 2px solid var(--accent)
 .mon-held .mon-gate::before { content: "⏸"; border-color: var(--warn); color: var(--warn); }
 .mon-held > .mon-level { opacity: .6; }
 .report-notify { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; cursor: pointer; }
+
+/* The page's own right-click menu, in the agent's own windows (context-menu.js). */
+.page-menu { position: fixed; z-index: 2147483000; min-width: 160px; padding: 4px; display: grid; gap: 2px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3); }
+.page-menu button { text-align: left; border: 0; background: transparent; color: var(--ink); padding: 6px 10px;
+  border-radius: 6px; font: inherit; font-size: 13px; cursor: pointer; }
+.page-menu button:hover:not(:disabled) { background: var(--line); }
+.page-menu button:disabled { color: var(--muted); cursor: default; }
+/* ONE CHAT, PLAIN (the user, 2026-11-17: "agent说的话主要显示在左侧，用户是右侧。然后recommendation什么的也作为正常的
+   chat, 不需要边框之类（可以调不同的字体颜色)"): the agent's words on the left with no box round them, the user's in
+   their bubble on the right; what the agent tells - a notification, a summary, a recommendation - said as the rest,
+   its kind and its title in the kind's own ink (each checked over 4.5:1 on the panel's surface, light and dark). */
+.side-msg.agent, .side-msg.side-note { background: transparent; border: 0; border-radius: 0; box-shadow: none;
+  padding: 2px 2px; max-width: 82%; }
+/* (the user, 2026-11-17: "agent的回复能支持的display空间太靠右了，稍微往左一点这样能区分两个不同的会话" - 94 % reached
+   under the user's bubbles.) */
+.side-msg.agent.failed { color: var(--err); }
+.side-msg.agent[data-time]:not(.side-note):not(.working)::after { text-align: left; }
+.side-note { --note-ink: #1f63c9; }
+.side-note.ink-summaries { --note-ink: #0d7f63; }
+.side-note.ink-recommendations { --note-ink: #8f5f00; }
+@media (prefers-color-scheme: dark) {
+  .side-note { --note-ink: #6aa5ff; }
+  .side-note.ink-summaries { --note-ink: #5fd1b3; }
+  .side-note.ink-recommendations { --note-ink: #f2d14b; }
+}
+.side-note .side-note-head .notes-kind { color: var(--note-ink); font-weight: 600; }
+.side-note-title { color: var(--note-ink); }
+.side-note.targeted { box-shadow: none; border-radius: 8px;
+  background: color-mix(in srgb, var(--note-ink) 9%, transparent); }
+/* WHO SAID IT, AT A GLANCE (the user, 2026-11-17: "不能明确区分哪些是agent哪些是我说的"): the user's words in a filled
+   bubble on the right (white on it, over 4.5:1 in both themes); the agent's on the left, each run under its face and
+   name (notes.js sideMarkSpeakers). */
+:root { --side-you-bg: #3d6be5; }
+@media (prefers-color-scheme: dark) { :root { --side-you-bg: #3a5ec4; } }
+.side-msg.you { background: var(--side-you-bg); color: #fff; border-radius: 16px 16px 4px 16px; max-width: 80%; }
+.side-msg.you a { color: #fff; }
+.side-msg.you[data-time]:not(.side-note):not(.working)::after { color: rgba(255, 255, 255, 0.78); }
+.side-msg.agent[data-starts="1"] { margin-top: 6px; }
+.side-msg.agent[data-starts="1"]::before { content: attr(data-name); display: flex; align-items: center; min-height: 20px;
+  padding-left: 26px; margin-bottom: 4px; font-size: 12.5px; font-weight: 650; color: var(--muted);
+  font-style: normal; background: var(--side-agent-face, none) no-repeat left center / 20px 20px; }
+/* A told thing's link, the address itself. */
+.side-note-url { margin: 0; overflow-wrap: anywhere; font-size: 13px; }
+/* Its marks under it, its parts under them - one shown at a time (notes.js sideExtras). */
+.side-extras { margin-top: 4px; white-space: normal; }
+.side-extra-bar { display: flex; flex-wrap: wrap; gap: 4px; }
+/* (the user, 2026-11-17: "这个两行的label太像了"): each part named, with its arrow - the message's own, on the left;
+   the reactions are the user's, on the right in a box of their own. */
+.side-extra { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 6px 0 3px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; font: inherit;
+  font-size: 11.5px; }
+.side-extra-label { white-space: nowrap; }
+.side-extra-opens { opacity: 0.8; transition: transform 0.15s; }
+.side-extra[aria-expanded="true"] .side-extra-opens { transform: rotate(90deg); }
+.side-extra:hover, .side-extra:focus-visible { background: var(--line); color: var(--ink); }
+.side-extra[aria-expanded="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.side-extra-body { margin-top: 4px; padding: 6px 8px; border-radius: 8px; font-size: 12.5px; color: var(--muted);
+  background: color-mix(in srgb, var(--line) 45%, transparent); }
+.side-extra-body[hidden] { display: none; }
+.side-extra-title { font-weight: 650; color: var(--ink); margin-bottom: 2px; }
+.side-extra-body ul { margin: 0; padding-left: 16px; }
+.side-extra-body p { margin: 0 0 4px; }
+/* The conversation summarised: a quiet line across the chat, as Claude's CLI shows it (notes.js sideCompacted). */
+.side-compacted { justify-self: stretch; display: grid; gap: 4px; margin: 6px 0; }
+.side-compacted-head { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: transparent;
+  padding: 0; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
+.side-compacted-head::before, .side-compacted-head::after { content: ""; flex: 1 1 auto; height: 1px;
+  background: var(--line); }
+.side-compacted-head:hover, .side-compacted-head:focus-visible { color: var(--ink); }
+.side-compacted-body { font-size: 12.5px; color: var(--muted); white-space: pre-wrap; padding: 6px 8px; border-radius: 8px;
+  background: color-mix(in srgb, var(--line) 45%, transparent); }
+.side-compacted-body[hidden] { display: none; }
+/* LIKE A MESSENGER'S CHAT (the user, 2026-11-17: a WeChat chat - "类似这种"): each message beside a face - the agent's on
+   the left, in a bubble of its own, the user's on the right in theirs - so the two are told apart at a glance. */
+:root { --side-agent-bubble: #eef0f3; --side-you-face: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%235b6b86'/%3E%3Ccircle cx='16' cy='12.5' r='5.5' fill='%23e8edf5'/%3E%3Cpath d='M6 28c1.6-5.2 5.4-8 10-8s8.4 2.8 10 8' fill='%23e8edf5'/%3E%3C/svg%3E"); }
+@media (prefers-color-scheme: dark) { :root { --side-agent-bubble: #2c2c2f; } }
+.side-msg { position: relative; }
+/* (the user, 2026-11-17: "你的display还是把logo放在content上面好，我刚刚给你的wechat的例子只是告诉你右边缩进要缩多少"): the
+   agent's face and name above each run of its words, as before; its words in a bubble of their own, stopping well
+   short of the right - where the user's are. */
+.side-msg.agent, .side-msg.side-note { background: var(--side-agent-bubble); border-radius: 12px; padding: 8px 12px;
+  max-width: 78%; }
+.side-msg.agent[data-starts="1"] { margin-top: 30px; }
+.side-msg.agent[data-starts="1"]::before { position: absolute; left: 0; top: -26px; margin: 0; white-space: nowrap; }
+.side-msg.you { border-radius: 12px; max-width: 78%; }
+.side-msg.side-found { box-shadow: 0 0 0 2px var(--accent); transition: box-shadow 0.3s; }
+/* Searched (notes.js sideSearchOpen). */
+.side-search { flex: 0 0 auto; display: grid; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.side-search[hidden] { display: none; }
+.side-search input { width: 100%; box-sizing: border-box; border-radius: 8px; padding: 6px 10px; font: inherit; }
+.side-search-hits { display: grid; gap: 2px; max-height: 40vh; overflow-y: auto; }
+.side-search-hit { display: grid; gap: 2px; text-align: left; border: 0; background: transparent; color: var(--ink);
+  padding: 6px 8px; border-radius: 6px; font: inherit; cursor: pointer; }
+.side-search-hit:hover, .side-search-hit:focus-visible { background: var(--line); }
+.side-search-who { font-size: 11.5px; color: var(--muted); }
+.side-search-words { font-size: 13px; overflow-wrap: anywhere; }
+.side-search-words mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; border-radius: 2px; }
+.side-search-none { margin: 4px 8px; font-size: 12.5px; color: var(--muted); }
+/* Quick reactions under the agent's words (notes.js sideReactHtml). */
+.side-react-row { position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end;
+  gap: 4px; margin-top: 6px; white-space: normal; }
+/* The face and Bad content, one rounded box with a line between them. */
+.side-react-tools { display: inline-flex; align-items: stretch; border: 1px solid var(--line); border-radius: 12px;
+  overflow: hidden; }
+.side-react-tools .side-react-add { border-radius: 0; width: 28px; }
+.side-react-tools .side-bad { border: 0; border-left: 1px solid var(--line); border-radius: 0; width: 28px;
+  padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+/* ON THE TIME'S LINE (the user, 2026-11-17: "bad content那个和时间放在同一行好了"): the reactions on their own line, on
+   the right, and the time drawn up into it, on the left - as tall as the box, never over it (nor in the way of a
+   press). A note is a grid (its gap counted); a reply, a block. */
+.side-msg > .side-react-row:last-child { margin-top: 6px; }
+.side-msg:has(> .side-react-row:last-child)::after { margin-top: -24px !important; line-height: 24px; pointer-events: none; }
+.side-msg.side-note > .side-react-row:last-child { margin-top: 0; }
+.side-msg.side-note:has(> .side-react-row:last-child)::after { margin-top: -30px !important; }
+.side-react-chip { border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); background:
+  color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 10px; padding: 0 6px; font-size: 13px; line-height: 20px;
+  cursor: pointer; }
+.side-react-add { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 22px; padding: 0;
+  border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; opacity: 0.7; }
+.side-react-add:hover, .side-react-add:focus-visible { background: var(--line); color: var(--ink); opacity: 1; }
+.side-react-pick { position: absolute; right: 0; top: 100%; z-index: 25; display: flex; gap: 2px; padding: 4px;
+  border-radius: 10px; background: var(--panel); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); border: 1px solid var(--line); }
+.side-react-pick button { border: 0; background: transparent; font-size: 18px; line-height: 1; padding: 4px; border-radius: 6px;
+  cursor: pointer; }
+.side-react-pick button:hover, .side-react-pick button:focus-visible { background: var(--line); }
+/* Bad content, its own press beside the emoji (notes.js sideBad). */
+.side-bad { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 10px;
+  padding: 0 8px; font: inherit; font-size: 11.5px; line-height: 20px; cursor: pointer; }
+.side-bad:hover, .side-bad:focus-visible { color: var(--ink); border-color: var(--muted); }
+.side-bad[aria-pressed="true"] { color: var(--err); border-color: color-mix(in srgb, var(--err) 60%, var(--line));
+  background: color-mix(in srgb, var(--err) 12%, transparent); }
+/* A learning question's options, and an answer in words (notes.js sideLearningHtml). */
+.side-learn-options { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; white-space: normal; }
+.side-learn-option { border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line)); background:
+  color-mix(in srgb, var(--accent) 10%, transparent); color: var(--ink); border-radius: 14px; padding: 4px 12px;
+  font: inherit; font-size: 13px; cursor: pointer; text-align: left; }
+.side-learn-option:hover:not(:disabled), .side-learn-option:focus-visible { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.side-learn-words { border: 1px dashed var(--line); background: transparent; color: var(--muted); border-radius: 14px;
+  padding: 4px 12px; font: inherit; font-size: 12.5px; cursor: pointer; }
+.side-learn-words:hover, .side-learn-words:focus-visible { color: var(--ink); border-color: var(--muted); }
+.side-learn-done { margin: 8px 0 0; font-size: 12.5px; color: var(--muted); }
+/* WHEN, UNDER IT, AS EVERY OTHER MESSAGE'S (the user, 2026-11-17: "recommended content上的时间和其他时间的位置显示不一样"):
+   not in its head beside its kind. */
+.side-note .side-note-head .notes-when { display: none; }
+.side-msg.side-note[data-time]::after { content: attr(data-time); display: block; margin-top: 4px; font-size: 11px;
+  color: var(--muted); text-align: left; }
+/* A heads-up - what the user may have missed (heartbeat/monitor/heads_up.py): its own ink, over 4.5:1 both ways. */
+.side-note.ink-headsup, .side-told.ink-headsup { --note-ink: #b4440e; }
+@media (prefers-color-scheme: dark) { .side-note.ink-headsup, .side-told.ink-headsup { --note-ink: #ff9a5c; } }
+/* ASKED ABOUT, BESIDE WHAT WAS ASKED (notes.js sideLayoutAsked): a card in the room right of the reply, a line from
+   the words asked about; folded to its question, opened over the reply to its answer. */
+.side-chat-log { position: relative; }
+.side-fu-lines { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none;
+  overflow: visible; z-index: 3; }
+.side-fu-lines path { fill: none; stroke: color-mix(in srgb, var(--accent) 60%, transparent); stroke-width: 1.4; }
+.side-fu-lines path.open { stroke: var(--accent); stroke-width: 1.8; }
+.side-chat-log > .side-followup { position: absolute; z-index: 4; max-width: none; margin: 0; box-sizing: border-box;
+  white-space: normal;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); border-left: 3px solid var(--accent);
+  border-radius: 8px; background: var(--panel); padding: 0; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  transition: top 0.12s ease, width 0.12s ease, left 0.12s ease; }
+.side-followup .side-fu-head { display: flex; gap: 6px; align-items: center; width: 100%; border: 0; background: transparent;
+  color: var(--ink); font: inherit; font-size: 12px; padding: 4px 6px; cursor: pointer; text-align: left; }
+.side-fu-mark { flex: 0 0 auto; color: var(--accent); font-weight: 700; }
+.side-fu-question { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-followup.open .side-fu-question { white-space: normal; }
+.side-chat-log > .side-followup.open { z-index: 6; }
+.side-fu-open { position: relative; padding: 2px 8px 8px; }
+.side-fu-open[hidden] { display: none; }
+.side-fu-about { font-size: 11.5px; color: var(--muted); margin-bottom: 4px; }
+.side-followup .side-fu-body { white-space: pre-wrap; font-size: 13px; max-height: 40vh; overflow-y: auto; }
+.side-fu-delete { position: absolute; top: -26px; right: 4px; border: 0; background: transparent; color: var(--muted);
+  cursor: pointer; font-size: 14px; }
+mark.side-fu-anchor { background: color-mix(in srgb, var(--accent) 18%, transparent); color: inherit; border-radius: 2px; }
+mark.side-fu-anchor.lit { background: color-mix(in srgb, var(--accent) 38%, transparent); }
+/* SEND IN LINE WITH THE BOX AND "+" (the user, 2026-11-17: "这个send 按钮没有对齐呀"): as tall as "+", as far from the
+   bottom, rounded as it is. */
+#side-send { flex: 0 0 auto; align-self: flex-end; margin-bottom: 4px; height: 28px; min-height: 0; padding: 0 12px;
+  border-radius: 14px; line-height: 1; }
+/* Each model's small model, beside it (Settings > Models). */
+/* ITS OWN LINE, ALIGNED (the user, 2026-11-17: "这里没有对齐"): the label, the model and its effort side by side. */
+.chain-small { flex: 1 0 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.chain-small-label { font-size: 12.5px; white-space: nowrap; min-width: 88px; }
+/* THE PICTURE OF THE SCREEN, IN THE BUBBLE IT WENT WITH, as its files are (notes.js sideShot). */
+.side-msg .side-shot { justify-self: auto; max-width: none; margin-top: 6px; text-align: left; font-size: 11px;
+  white-space: normal; }
+.side-msg.you .side-shot { color: rgba(255, 255, 255, 0.82); }
+.side-msg .side-shot img { margin: 4px 0 0 0 !important; display: block; border-radius: 6px; }
+/* THE PICTURE'S OWN BOX: zoomed and moved by itself (notes.js sideViewZoom). */
+.side-larger { overflow: hidden; cursor: default; }
+.side-larger img { cursor: grab; touch-action: none; user-select: none; will-change: transform; }
+.side-larger img:active { cursor: grabbing; }
+.side-larger-bar { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex;
+  align-items: center; gap: 4px; padding: 4px 8px; border-radius: 18px; background: rgba(20, 20, 22, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.16); }
+.side-larger-bar button { border: 0; background: transparent; color: #fff; font-size: 16px; line-height: 1;
+  width: 28px; height: 28px; border-radius: 14px; cursor: pointer; padding: 0; }
+.side-larger-bar button:hover, .side-larger-bar button:focus-visible { background: rgba(255, 255, 255, 0.16); }
+.side-larger-scale { color: #fff; font-size: 12px; min-width: 42px; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* THE SMALL SCREEN (side-board.js; the user, 2026-11-17: "在sidebar的上方 ... 覆盖在chat上，不需要chat缩放"): under the
+   panel's head, over the top of the chat, as wide as the panel; its picture fitted inside, drawn on by a layer over
+   it; its height dragged by the grip under it. */
+.side-board { position: fixed; left: 0; right: 0; z-index: 21; display: flex; flex-direction: column;
+  background: var(--panel); border-bottom: 1px solid var(--line); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28); }
+.side-board[hidden] { display: none; }
+.side-board-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; padding: 5px 8px 5px 44px;
+  overflow-x: auto; scrollbar-width: none; }
+.side-board-line { flex: 0 0 auto; width: 1px; height: 16px; margin: 0 4px; background: var(--line); }
+.side-board-gap { flex: 1 1 8px; }
+.side-board-bar button { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 28px;
+  height: 28px; border: 0; background: transparent; color: var(--muted); border-radius: 7px; font: inherit; padding: 0;
+  cursor: pointer; }
+.side-board-bar button:hover, .side-board-bar button:focus-visible { background: var(--line); color: var(--ink); }
+.side-board-bar button:disabled { opacity: 0.5; cursor: progress; }
+.side-board-tool[aria-pressed="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.side-board-colour i { display: block; width: 12px; height: 12px; border-radius: 50%; box-shadow: 0 0 0 1px var(--line); }
+.side-board-close { font-size: 18px !important; }
+.side-board-pick { flex: 0 0 auto; display: flex; gap: 6px; overflow-x: auto; padding: 0 10px 8px 44px; }
+.side-board-pick[hidden] { display: none; }
+.side-board-thumb { flex: 0 0 auto; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: transparent;
+  cursor: pointer; overflow: hidden; }
+.side-board-thumb img { display: block; height: 56px; width: auto; }
+.side-board-thumb:hover, .side-board-thumb:focus-visible { border-color: var(--accent); }
+.side-board-none { margin: 0; font-size: 12px; color: var(--muted); }
+.side-board-stage { flex: 1 1 auto; min-height: 0; position: relative; display: flex; align-items: center;
+  justify-content: center; overflow: auto; padding: 4px 10px; background: color-mix(in srgb, var(--line) 35%, transparent); }
+.side-board-frame { position: relative; display: inline-block; max-width: 100%; max-height: 100%; line-height: 0; }
+.side-board.is-view .side-board-stage { align-items: flex-start; }
+.side-board.is-view .side-board-frame { display: block; width: 100%; max-height: none; line-height: normal;
+  background: var(--panel); border-radius: 8px; }
+.side-board-base img { display: block; max-width: 100%; max-height: calc(var(--side-board-room, 100%)); object-fit: contain;
+  user-select: none; }
+.side-board-ink { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; touch-action: none; }
+.side-board.has-base.drawing .side-board-ink { pointer-events: auto; cursor: crosshair; }
+.side-board:not(.has-base) .side-board-frame { display: none; }
+/* The agent's drawing in it: its own Mark and Clear not needed - the bar's tools draw on it. */
+.side-board .side-viz-tools, .side-board .side-viz-layer { display: none; }
+.side-board-words { position: absolute; z-index: 2; min-width: 120px; transform: translateY(-2px); font: 600 15px system-ui,
+  -apple-system, "Segoe UI", sans-serif; background: rgba(0, 0, 0, 0.55); border: 1px dashed currentColor; border-radius: 4px;
+  padding: 2px 4px; line-height: 1.3; }
+.side-board-note { flex: 0 0 auto; margin: 0; padding: 3px 12px 0 44px; font-size: 11px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-board-grip { flex: 0 0 auto; height: 10px; cursor: ns-resize; display: flex; justify-content: center; align-items: center; }
+.side-board-grip::before { content: ""; width: 36px; height: 4px; border-radius: 2px; background: var(--line); }
+.side-board-grip:hover::before { background: var(--muted); }
+/* The whiteboard (side-board.js): white whatever the theme, its size set to 16 by 10 as the stage allows. */
+.side-board-white { background: #ffffff; border-radius: 4px; }
+/* A picture dragged over the small screen: where it goes, said (side-board.js sideBoardDrop). */
+.side-board.dropping .side-board-stage { outline: 2px dashed var(--accent); outline-offset: -6px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* THE PAGES BESIDE IT, AS A DECK'S SLIDES (side-board.js sideBoardStripDraw): a column of small pictures on its left -
+   clear of the panel's own button on its edge - the one shown marked, each with its × on hover; folded away by the
+   bar's first button. The stage beside it takes the rest. */
+.side-board-body { flex: 1 1 auto; min-height: 0; display: flex; }
+.side-board-body > .side-board-stage { flex: 1 1 auto; min-width: 0; }
+.side-board-strip { flex: 0 0 76px; margin-left: 40px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+  padding: 4px 6px 6px 0; border-right: 1px solid var(--line); scrollbar-width: thin; }
+/* Not pinned: an edge to point at; the strip out over the picture while the pointer is on either. */
+.side-board-body { position: relative; }
+.side-board-edge { display: none; }
+.side-board.strip-hover .side-board-edge { display: block; position: absolute; left: 40px; top: 0; bottom: 0; width: 12px;
+  z-index: 2; cursor: pointer; }
+.side-board.strip-hover .side-board-edge::before { content: ""; position: absolute; left: 4px; top: 50%; width: 4px;
+  height: 40px; margin-top: -20px; border-radius: 2px; background: var(--line); }
+.side-board.strip-hover .side-board-edge:hover::before { background: var(--accent); }
+.side-board.strip-hover .side-board-strip { position: absolute; left: 40px; top: 0; bottom: 0; width: 76px; z-index: 3;
+  margin-left: 0; padding-left: 6px; background: var(--panel); box-shadow: 4px 0 14px rgba(0, 0, 0, 0.3);
+  transform: translateX(-12px); opacity: 0; pointer-events: none; transition: transform 0.15s, opacity 0.15s; }
+.side-board.strip-hover.strip-peek .side-board-strip { transform: none; opacity: 1; pointer-events: auto; }
+.side-board.strip-hover .side-board-stage { padding-left: 56px; }
+@media (prefers-reduced-motion: reduce) { .side-board.strip-hover .side-board-strip { transition: none; } }
+.side-board-page { position: relative; flex: 0 0 auto; }
+.side-board-page-pick { display: block; width: 100%; padding: 0; border: 2px solid transparent; border-radius: 6px;
+  background: #ffffff; cursor: pointer; overflow: hidden; line-height: 0; }
+.side-board-page-pick img { display: block; width: 100%; height: auto; max-height: 76px; object-fit: cover; }
+.side-board-page-pick[aria-current="true"] { border-color: var(--accent); }
+.side-board-page-pick:hover, .side-board-page-pick:focus-visible { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.side-board-page-name { display: block; padding: 20px 4px 8px; line-height: 1.25; font-size: 10.5px; color: #333;
+  background: #eef1f6; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical; text-align: center; white-space: normal; }
+.side-board-page-agent { position: absolute; left: 4px; top: 4px; font-size: 9.5px; line-height: 1; padding: 2px 4px;
+  border-radius: 4px; background: var(--accent); color: #fff; }
+.side-board-page-off { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; padding: 0; border: 0;
+  border-radius: 9px; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 12px; line-height: 18px; cursor: pointer;
+  opacity: 0; }
+.side-board-page:hover .side-board-page-off, .side-board-page-off:focus-visible { opacity: 1; }
+/* Its × always in reach, however many buttons the bar holds: the tools scroll, the × stays at the right end. */
+.side-board-tools { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 2px; overflow-x: auto;
+  scrollbar-width: none; }
+.side-board-bar { overflow: hidden !important; }
+/* A page's name, under its small picture (the agent names them - side-board.js sideBoardNamed). */
+.side-board-page-label { display: block; margin-top: 2px; font-size: 10.5px; line-height: 1.25; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* THE BAR AS PAINT'S (side-board.js): a button with a menu marked by a small corner; the menus under their buttons. */
+.side-board-bar button[aria-haspopup] { position: relative; }
+.side-board-bar button[aria-haspopup]::after { content: ""; position: absolute; right: 3px; bottom: 3px; border: 3px solid transparent;
+  border-right-color: currentColor; border-bottom-color: currentColor; opacity: 0.7; }
+.side-board-colour i { width: var(--size, 12px); height: var(--size, 12px); }
+.side-board-menu { position: absolute; z-index: 6; min-width: 150px; padding: 4px; border-radius: 8px; background: var(--panel);
+  border: 1px solid var(--line); box-shadow: 0 8px 22px rgba(0, 0, 0, 0.32); display: grid; gap: 2px; }
+.side-board-item { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: transparent; color: var(--ink);
+  font: inherit; font-size: 12.5px; text-align: left; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.side-board-item:hover, .side-board-item:focus-visible { background: var(--line); }
+.side-board-item.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.side-board-swatches { display: grid; grid-template-columns: repeat(4, 22px); gap: 6px; padding: 6px 6px 8px; }
+.side-board-swatch { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); padding: 0; cursor: pointer; }
+.side-board-swatch.on { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent); }
+.side-board-size { display: inline-block; width: 26px; border-radius: 4px; background: currentColor; }
+.side-board.erasing.has-base .side-board-ink { cursor: cell; }
+/* THE PLAY VIEW (play.js): the world over the chat and its box, under the panel's head - the world's pixels whole. */
+.side-play { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: #1b1d22; overflow: hidden; }
+.side-play[hidden] { display: none; }
+.side-play-canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; outline: none; }
+.side-play-hint { position: absolute; left: 8px; bottom: 8px; max-width: calc(100% - 16px); margin: 0; padding: 3px 10px;
+  border-radius: 10px; font-size: 11px; color: #e8e2d6; background: rgba(0, 0, 0, 0.45); pointer-events: none; }
+.side-play-off { position: absolute; left: 12px; right: 12px; bottom: 54px; margin: 0; padding: 6px 12px; text-align: center;
+  border-radius: 10px; font-size: 12px; color: #fff3d6; background: rgba(59, 36, 20, 0.85); }
+.side-play-growing { margin: 0; padding: 4px 10px;
+  border-radius: 10px; font-size: 12px; line-height: 1.35; color: #fff3d6; background: rgba(59, 36, 20, 0.85); }
+.side-play-growing[hidden] { display: none; }
+/* A thing's card: its picture, then its words - each part on its own line, set to the left. */
+.side-play-card { position: absolute; left: 12px; right: 12px; bottom: 36px; display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px 12px; border-radius: 6px; background: #f3d7a4; color: #3b2414; border: 3px solid #8a4f24;
+  box-shadow: 0 0 0 2px #3b2414, 0 6px 16px rgba(0, 0, 0, 0.4); text-align: left; }
+.side-play-card[hidden] { display: none; }
+.side-play-card img { flex: 0 0 auto; width: 96px; height: 72px; object-fit: cover; border: 2px solid #5a3a1e; cursor: zoom-in;
+  image-rendering: auto; }
+.side-play-card-words { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.side-play-card-words strong { font-size: 14px; line-height: 1.3; }
+.side-play-card-when { font-size: 11px; color: #6b4a2a; }
+.side-play-card-words p { margin: 0; font-size: 12.5px; line-height: 1.45; }
+.side-play-card-from { color: #6b4a2a; font-size: 11.5px !important; }
+/* In the Play view, no small screen's button (the user, 2026-11-17: "在play mode的时候，是没有那个image panel的button的"). */
+body.side-playing .side-rail [data-drawer="picture"] { display: none; }
+/* Top left: what it is drawn from and its sky, the map under it (the user, 2026-11-17). */
+.side-play-corner { position: absolute; left: 8px; top: 8px; display: flex; flex-direction: column; align-items: flex-start;
+  gap: 6px; max-width: calc(100% - 230px); }
+.side-play-mini.large { width: min(336px, calc(100% - 16px)); height: auto; aspect-ratio: 336 / 256; }
+.side-play-mini { width: 168px; height: 128px; border: 2px solid #8a4f24;
+  border-radius: 6px; image-rendering: pixelated; cursor: pointer; box-shadow: 0 3px 0 #5c3317; }
+.side-play-zoom { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; }
+.side-play-zoom button { width: 28px; height: 28px; border-radius: 6px; border: 2px solid #8a4f24; background: #f3d7a4;
+  color: #3b2414; font: 700 16px/1 system-ui, sans-serif; cursor: pointer; padding: 0; }
+.side-play-zoom button:hover, .side-play-zoom button:focus-visible { background: #ffe7bd; }
+/* The sound's settings, under the corner's buttons: the same wood. */
+.side-play-sound { position: absolute; top: 42px; right: 8px; width: 190px; padding: 10px 12px; display: grid; gap: 8px;
+  background: #f3d7a4; border: 2px solid #8a4f24; border-radius: 8px; box-shadow: 0 3px 0 #5c3317;
+  color: #3b2414; font: 12.5px/1.3 system-ui, sans-serif; z-index: 2; }
+.side-play-sound label { display: grid; grid-template-columns: 52px 1fr; align-items: center; gap: 8px; }
+.side-play-sound input[type=range] { width: 100%; accent-color: #8a4f24; }
+.side-play-sound .side-play-quiet { grid-template-columns: auto 1fr; }
+
+/* The play view's menu of where to go (play-act.js): a portal's, a stop's. */
+.side-play-menu { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); min-width: 220px; max-width: 80%;
+  max-height: 70%; overflow: auto; background: rgba(32, 24, 18, 0.94); color: #f6e7c8; border: 2px solid #c98f4e;
+  border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; z-index: 5; }
+.side-play-menu strong { font-size: 1.05em; }
+.side-play-menu button { text-align: left; background: #4a3424; color: inherit; border: 1px solid #7a5838; border-radius: 6px;
+  padding: 6px 8px; cursor: pointer; display: flex; gap: 8px; align-items: center; font: inherit; }
+.side-play-menu button:hover, .side-play-menu button:focus-visible { background: #6a4a30; outline: none; }
+.side-play-menu button span { display: inline-block; min-width: 1.4em; text-align: center; background: #c98f4e; color: #2a170b;
+  border-radius: 4px; font-weight: bold; }
+.side-play-menu small { opacity: 0.7; }

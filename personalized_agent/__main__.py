@@ -683,6 +683,10 @@ def main(argv: list[str] | None = None) -> int:
     if args_in and args_in[0] == "--index-worker":
         from .index.worker import serve as build_index
         return build_index(args_in[1])
+    # A PART OF THE SCREEN CUT OUT FOR THE SMALL SCREEN, in a process of its own (ui/snip.py).
+    if args_in and args_in[0] == "--snip":
+        from .ui.snip import snip
+        return snip(args_in[1] if len(args_in) > 1 else "")
     # THE SIDE PANEL IN WEBVIEW2, in a process of its own (platform_layer/panel_host.py).
     if args_in and args_in[0] == "--panel-host":
         from .platform_layer.panel_host import serve as host_the_panel

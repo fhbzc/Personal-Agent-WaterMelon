@@ -63,13 +63,6 @@ MODULES: List[Dict[str, str]] = [
              "Connections is on, what your contacts have been doing.",
      "off": "No issue is made and nothing read is kept, so no one is looked up on the web "
             "either. \"Make an issue now\" still works."},
-    {"key": "recommendation", "setting": "module_recommendation_enabled",
-     "name": "Recommendations",
-     "what": "Things worth telling you, made ready ahead from what the Newspaper left over and "
-             "from the web, and told at a moment that suits, each with why. What you answer "
-             "teaches it what to recommend. It runs on the Monitor.",
-     "off": "Nothing is recommended by itself and no model is asked for it. The Newspaper and "
-            "the Monitor's other work go on."},
     {"key": "monitor", "setting": "module_monitor_enabled", "name": "Monitor",
      "what": "The real-time signals - what you are doing, since when, how busy, your habits "
              "- and the Activators run on them: spam and scam warnings, recommendations at "
@@ -77,6 +70,41 @@ MODULES: List[Dict[str, str]] = [
              "judges what they queue and reprograms them.",
      "off": "Nothing is watched for and nothing is recommended or warned of by itself; "
             "the meeting invitations and agreed times are still acted on (Calendar)."},
+    # THE MONITOR'S SYSTEMS, EACH ITS OWN TOKENS AND ITS OWN SWITCH, UNDER IT (the user, 2026-11-17: "monitor每个系统分开
+    # 算（放在monitor层下), 可以选择性关闭" - "这个recommendation也放在moniitor下吧（是必须通过monitor才trigger的吧)").
+    {"key": "recommendation", "parent": "monitor", "setting": "module_recommendation_enabled",
+     "name": "Recommendations",
+     "what": "Things worth telling you, made ready ahead from what the Newspaper left over and "
+             "from the web, and told at a moment that suits, each with why. What you answer "
+             "teaches it what to recommend.",
+     "off": "Nothing is recommended by itself and no model is asked for it. The Newspaper and "
+            "the Monitor's other work go on."},
+    {"key": "heads_up", "parent": "monitor", "setting": "module_heads_up_enabled", "name": "Heads up",
+     "what": "A look over your shoulder when a coding assistant's turn is done, a message is being "
+             "written or a document was edited - and a word when you likely missed something.",
+     "off": "Nothing is looked at for what you may have missed; no model is asked for it."},
+    {"key": "co_play", "parent": "monitor", "setting": "module_co_play_enabled", "name": "Co-play",
+     "what": "Company while you watch or read: now and then a recommendation, a word about it or a "
+             "reminder - only when it is sure you would want it.",
+     "off": "Nothing is said while you watch or read; no model is asked for it."},
+    {"key": "information_queue", "parent": "monitor", "setting": "module_information_queue_enabled",
+     "name": "When to tell you",
+     "what": "Each thing ready to be told weighed by the main model - now, at a better moment, or not at all - "
+             "and told in your way of talking; what is held worked into the chat while you are talking.",
+     "off": "Everything is told the moment it is ready, as it was made; no model is asked when."},
+    {"key": "learning_questions", "parent": "monitor", "setting": "module_learning_questions_enabled",
+     "name": "Learning questions",
+     "what": "Now and then, a question when what the agent learned is truly undecided and it matters - "
+             "with options to press, or an answer in words.",
+     "off": "Nothing is asked about the lessons; they are learned as before."},
+    # THE PLAY WORLD (the user, 2026-11-17: "切换到一个play view之后，你的agent会根据他对你的理解和看法，生成不同的场景") -
+    # agent/playworld.py, api/web/play.js.
+    {"key": "play_world", "setting": "module_play_world_enabled", "name": "Play world",
+     "what": "Growing the world in the side panel's Play view from your days: drawn first from what you already "
+             "did, a fortnight at a time, then once a day - rooms and things, each with why the agent made it, your "
+             "pictures framed on its walls; the rooms made finer while your days go on as before, new places when "
+             "they change, and lands of their own once the agent knows you. Its tokens are counted here.",
+     "off": "The world stays as it is - you can still walk in it - but it does not grow; no model is asked for it."},
     {"key": "experience", "setting": "module_experience_enabled", "name": "Work learning",
      "what": "Your work - your Work projects and the places you list in Work's Learning "
              "panel, with your coding agents' conversations - read into cases and the "
@@ -139,6 +167,15 @@ TASK_MODULE = {
     "monitor_recommend": "recommendation",
     # Back to a project left a while (heartbeat/monitor/decide.py).
     "monitor_old_project": "monitor",
+    # The side watch, each trigger its own task - its tokens counted apart (heartbeat/monitor/heads_up.py).
+    "heads_up_assistant": "heads_up",
+    "heads_up_message": "heads_up",
+    "heads_up_document": "heads_up",
+    "co_play": "co_play",
+    "play_world_grow": "play_world",
+    "play_world_look": "play_world",
+    "play_world_pick": "play_world",
+    "play_world_themes": "play_world",
     "recommendation_prepare": "recommendation",
     "recommendation_judge": "recommendation",
     "monitor_evening": "monitor",
@@ -192,6 +229,15 @@ TASK_MODULE = {
     "chat_fast": "manual_chat",
     "chat_followup": "manual_chat",
     "chat_history_summary": "manual_chat",
+    # The agent judging when to tell what it holds (agent/information_queue.py).
+    # When what is ready is told - the Monitor's (the user, 2026-11-17: "主模型消息队列判断的token 消耗也是算在monitor里的吧").
+    "information_queue_judge": "information_queue",
+    # How the user talks, read from what they write in chat (agent/talk_style.py).
+    "talk_style": "manual_chat",
+    # The chat summarised and learned from while quiet (agent/chat_digest.py).
+    "chat_digest": "manual_chat",
+    "chat_picture_summary": "manual_chat",
+    "learning_question": "learning_questions",
     # A summary document of answers the user ticked (agent/chat_summary.py).
     "chat_summary_document": "manual_chat",
     "scheduled_task": "manual_scheduled",

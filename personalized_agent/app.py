@@ -11,6 +11,7 @@ import json
 import logging
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -586,11 +587,90 @@ class AgentApplication:
         from .agent.two_speed import TwoSpeed
         self.two_speed = TwoSpeed(self.agent, self.conversations, self.agent.models, self.config,
                                   self.chat_files, self.db)
+        # THE SIDE PANEL TOLD, NOT ASKING (api/side_events.py; the user, 2026-11-16): a notification made or
+        # read, a chat turn moving - pushed the moment it happens; the waiting list looked at besides only
+        # while a panel listens.
+        from .api.side_events import SideEvents
+        self.side_events = SideEvents()
+        self.bus.subscribe("notification.*", lambda _topic, _said: self.side_events.tell("notes"))
+        # WHAT THE AGENT TELLS, IN THE SIDE PANEL'S CONVERSATION (the user, 2026-11-16: "所有agent的话，所有我的话都在
+        # 一个session里"): a notification is the agent speaking there - the model reads it with the rest.
+        self.bus.subscribe("notification.created", lambda _topic, said: self._side_said_notification(said))
+        self.side_events.watch("notes", lambda: tuple(str(one["id"]) for one in self.notifications.for_the_side()))
+        self.two_speed.on_change = lambda turn: self.side_events.tell("turn", id=turn)
+        # THE INFORMATION QUEUE (agent/information_queue.py; the user, 2026-11-16): what the agent is to tell is held
+        # and judged - when, and how - by the agent: at once by the main model when the user is not chatting, in
+        # its reply when they are; each judged again by its time.
+        from .agent.information_queue import InformationQueue
+        self.side_last_said = 0.0
+        # HOW THE USER TALKS (agent/talk_style.py; the user, 2026-11-16: "用交流的语气说 ... 总结human和你交流的语气进行学习").
+        from .agent.talk_style import TalkStyle
+        self.talk_style = TalkStyle(self.db, self.agent.models, self.config)
+        self.two_speed.style_note = self.talk_style.note
+        self.information = InformationQueue(self.notifications, self.agent.models, self.config,
+                                            chatting=self._side_chatting, context=self._front_line,
+                                            said=self._side_said_lately, style=self.talk_style.style,
+                                            lessons=self._notification_rules, screen=self._screen_now)
+        self.notifications.gate = self.information.gate
+        self.two_speed.held_note = self.information.for_the_chat
+        self.two_speed.on_told = self.information.told
+        self.two_speed.links_of_told = self.information.links_told
+        self.two_speed.on_tell = self.information.tell_apart
+        # THE PICTURES THAT WENT WITH MESSAGES, KEPT AND DESCRIBED (agent/chat_pictures.py): a later turn given what
+        # was in each, and a way to see it again.
+        from .agent.chat_pictures import ChatPictures, add_tools as _chat_picture_tools
+        self.chat_pictures = ChatPictures(Path(self.paths.data_dir) / "chat_pictures", self.conversations,
+                                          self.agent.models)
+        self.two_speed.on_picture = self.chat_pictures.keep
         self.chat_files.forget_unsent(self.conversations.attachments())
         # LESSONS FROM THE CHAT (heartbeat/lessons/tools.py): what the user says
         # to remember, kept like every other lesson.
         from .heartbeat.lessons.tools import add_tools as _lesson_tools
         _lesson_tools(self.agent.tools, self.lessons, self.lesson_retriever)
+        # THE AGENT'S MEMORY AS FILES, AND THE CHAT DIGESTED WHILE QUIET (the user, 2026-11-16: "agent现在主要的learning来自
+        # chat"): agent/memory_files.py, agent/chat_digest.py - and every conversation given what was said before.
+        from .agent.chat_digest import ChatDigest
+        from .agent.memory_files import MemoryFiles, add_tools as _memory_file_tools
+        self.memory_files = MemoryFiles(Path(self.paths.data_dir) / "memory")
+        _memory_file_tools(self.agent.tools, self.memory_files)
+        self.agent.more_context = self._more_context
+        self.chat_digest = ChatDigest(self.conversations, self.agent, self.agent.models, self.lessons,
+                                      self.memory_files, self.side_conversation, self._side_chatting)
+        self.chat_digest.on_summarised = self._side_compacted
+        # LEARNING QUESTIONS (the user, 2026-11-17: "agent在遇到相关的learning 不确定的时候，也可以主动ask"): the lessons
+        # it is unsure of asked about now and then, with options - heartbeat/lessons/questions.py.
+        from .heartbeat.lessons.questions import LearningQuestions
+        self.learning_questions = LearningQuestions(
+            self.lessons, self.agent.models, self.notifications, self.db, self.config,
+            tell=lambda title, message, **kw: self.monitor.relay("learning_question", title, message, **kw))
+        # HEADS UP (the user, 2026-11-17: "类似claude的side agent monitor, 观察你在screen上干什么，然后给你notification那种
+        # （比如你漏掉的东西)"): heartbeat/monitor/heads_up.py.
+        from .heartbeat.monitor.heads_up import HeadsUp
+        self.heads_up = HeadsUp(self.db, self.agent.models, self.notifications, self.config,
+                                context=self._heads_up_context,
+                                tell=lambda title, message, **kw: self.monitor.relay("heads_up", title, message, **kw))
+        # CO-PLAY (the user, 2026-11-17: "我在看其它所有内容，模型可以根据我的喜好决定要不要和我说话"):
+        # heartbeat/monitor/co_play.py.
+        from .heartbeat.monitor.co_play import CoPlay
+        self.co_play = CoPlay(self.db, self.agent.models, self.notifications, self.config,
+                              context=self._heads_up_context,
+                              style=lambda: (self.talk_style.style() if getattr(self, "talk_style", None) else ""),
+                              tell=lambda title, message, **kw: self.monitor.relay("co_play", title, message, **kw))
+        # THE PLAY WORLD (the user, 2026-11-17): agent/playworld.py - grown from what the user lived, their chat
+        # pictures framed in it.
+        from .agent.playworld import (PlayWorld, chat_pictures_offered, earliest_lived, important_tasks, lived_between,
+                                      look_up, tastes_of)
+        self.play_world = PlayWorld(
+            Path(self.paths.data_dir) / "playworld", self.agent.models, self.config, context=self._heads_up_context,
+            pictures=lambda: chat_pictures_offered(self.conversations, self.side_conversation(),
+                                                   Path(self.paths.data_dir) / "chat_pictures"),
+            history=lambda since, until: lived_between(self.db, since, until),
+            earliest=lambda: earliest_lived(self.db),
+            look=lambda asked, until: look_up(self.db, Path(self.paths.data_dir) / "memory", asked, until),
+            tastes=lambda: tastes_of(Path(self.paths.data_dir) / "memory", self.db),
+            tasks=lambda since, until: important_tasks(self.db, since, until))
+        self.chat_digest.tidy = self.chat_pictures.tidy
+        _chat_picture_tools(self.agent.tools, self.chat_pictures, self.memory_files)
         # A NEWSPAPER SPECIAL ISSUE FROM CHAT (the user, 2026-11-03, from PR
         # #8): the brief agreed in the chat handed to the newspaper.
         self._add_special_issue_tool()
@@ -886,6 +966,8 @@ class AgentApplication:
         key = (payload or {}).get("key")
         if key is None:
             return
+        if key == "listener_private_mode" and getattr(self, "side_events", None) is not None:
+            self.side_events.tell("notes")        # the side panel says so at its top, or no longer
         if key == "approval_summary_times" and getattr(self, "approvals", None) is not None:
             self.approvals.times_changed()        # a time passed today is not told as missed
         if key == "listener_privacy_paths":
@@ -1106,11 +1188,215 @@ class AgentApplication:
     #: "Got it" says little: a weak sign.
     WEAK_ANSWERS = {"got_it": 0.5, "acknowledged": 0.5}
 
+    # -- the side panel's one conversation ---------------------------------------------------------------
+    def side_conversation(self) -> str:
+        """THE SIDE PANEL'S CONVERSATION, ONE FOR ALL OF IT (the user, 2026-11-16: "所有agent的话，所有我的话都在一个
+        session里，并且按照claude cli的方式空了就recap/summarize"): every message there, every notification the agent
+        sends and every answer to one - the older part summarised as it grows (agent_core._past). Made the first
+        time, kept by its id."""
+        lock = self.__dict__.setdefault("_side_conversation_lock", threading.Lock())
+        with lock:
+            kept = str(self.config.get("side_conversation_id", "") or "")
+            ident = self.conversations.ensure(kept or None)
+            if ident != kept:
+                self.config.set("side_conversation_id", ident, internal=True)
+                try:
+                    self.conversations.set_title(ident, "Side panel")
+                except Exception:
+                    log.debug("the side panel's conversation could not be named", exc_info=True)
+            return ident
+
+    def _notification_rules(self, moment: str) -> str:
+        """The learned rules like a piece of information, for the information queue's judgement."""
+        retriever = getattr(self, "lesson_retriever", None)
+        if retriever is None:
+            return ""
+        return retriever.text(("notifications",), moment, rules=6, examples=2, site="information queue")
+
+    #: SAID WITH WHAT WAS DECIDED BY LEARNED RULES (the user, 2026-11-16: "model 可以在chat里列出某个decision用到了哪些规则
+    #: （选最重要的，不超过3条），方便我evaluate").
+    RULES_USED_NOTE = """
+
+[WHEN WHAT YOU SAY OR DO FOLLOWS LEARNED RULES - lessons you found (lesson_find, search_lessons), rules you were \
+given, or your memory - end your reply with a short block, so that the user can judge them: a line "Rules used:" \
+(in Chinese "用到的规则：" when you answer in Chinese), then at most three of them, the most important first, one a \
+line starting with "- ", each in a few words. Leave the block out when no learned rule decided anything.]"""
+
+    #: How many of the side panel's last turns another conversation is given, besides its summary.
+    ELSEWHERE_TURNS, ELSEWHERE_CHARS = 8, 600
+
+    #: How much of each the side watch is given of what the user means to do.
+    HEADS_UP_TODOS, HEADS_UP_TURNS = 15, 8
+
+    def _screen_now(self, how: str) -> Dict[str, Any]:
+        """THE USER'S SCREEN NOW, for the information queue's judge (agent/information_queue.py): "text" - the window
+        in front, its words (read off pictures too); "picture" - a picture of the screen and its words. Never in private
+        mode or with a private folder open."""
+        from .common.privacy_folders import why_no_picture
+        held = why_no_picture(self.config)
+        if held:
+            return {"error": f"not now: {held}"}
+        from .agent.front_screen import MOST_TEXT, front_now
+        said = front_now(self.db, self.config) or {}
+        out: Dict[str, Any] = {key: said.get(key) for key in ("application", "title", "address", "file") if said.get(key)}
+        if said.get("text"):
+            out["text"] = str(said["text"])[:MOST_TEXT]
+        pictures = getattr(self, "front_pictures", None)
+        if how == "picture" and pictures is not None:
+            shot = pictures.for_a_message(title=str(said.get("title") or ""))
+            if shot.get("words"):
+                out["words_in_the_picture"] = str(shot["words"])[:MOST_TEXT]
+            blocks = pictures.blocks(shot) if shot else []
+            if blocks:
+                out["_pictures"] = blocks
+            elif getattr(pictures, "why", ""):
+                out["no_picture"] = str(pictures.why)
+        return out
+
+    def _heads_up_context(self) -> str:
+        """WHAT THE USER MEANS TO DO, for the side watch (heartbeat/monitor/heads_up.py): their open to-dos, the
+        calendar of the next day, the side panel's conversation (its summary and last turns), the memory's index
+        and the lessons on what they want to be told."""
+        from datetime import timedelta
+        parts: List[str] = []
+        try:
+            todos = [f"- {one.get('text')}" + (f": {str(one.get('detail') or '')[:160]}" if one.get("detail") else "")
+                     for one in self.todos.open()[:self.HEADS_UP_TODOS]]
+            if todos:
+                parts.append("OPEN TO-DOS:\n" + "\n".join(todos))
+        except Exception:
+            log.debug("the to-dos could not be read for the side watch", exc_info=True)
+        try:
+            from .common.events.models import utcnow
+            now = utcnow()
+            ahead = [task for task in self.scheduler.store.list(status="pending", start=now)
+                     if task.scheduled_at and task.scheduled_at <= now + timedelta(hours=24)][:15]
+            if ahead:
+                parts.append("THE NEXT DAY'S CALENDAR:\n" + "\n".join(
+                    f"- {task.scheduled_at.isoformat()} {task.title}" for task in ahead))
+        except Exception:
+            log.debug("the calendar could not be read for the side watch", exc_info=True)
+        try:
+            side = self.side_conversation()
+            kept = self.conversations.summary(side)
+            last = [one for one in self.conversations.messages(side, limit=None)
+                    if one.get("role") in ("user", "assistant") and str(one.get("content") or "").strip()]
+            lines = [f"{'User' if one['role'] == 'user' else 'Agent'}: {str(one['content'])[:400]}"
+                     for one in last[-self.HEADS_UP_TURNS:]]
+            if kept or lines:
+                parts.append("THEIR CONVERSATION WITH THE AGENT:\n"
+                             + (f"Summary: {kept['summary'][:2000]}\n" if kept and kept.get("summary") else "")
+                             + "\n".join(lines))
+        except Exception:
+            log.debug("the conversation could not be read for the side watch", exc_info=True)
+        memory = getattr(self, "memory_files", None)
+        if memory is not None and memory.index():
+            parts.append("THE AGENT'S MEMORY (index):\n" + memory.index()[:3000])
+        try:
+            lessons = self.lessons.text("notifications")
+            if lessons:
+                parts.append("WHAT THEY WANT TO BE TOLD (learned):\n" + lessons[:3000])
+        except Exception:
+            log.debug("the lessons could not be read for the side watch", exc_info=True)
+        return "\n\n".join(parts)
+
+    def _more_context(self, conversation_id: Optional[str], asked: str = "") -> str:
+        """What every answer is given besides its own conversation: the agent's memory's index - and, in a
+        conversation other than the side panel's, what was said before there (its summary, its last turns): "所有chat都
+        放在一起（类似于自动resume, 每次打开新的chat都有之前的context)"."""
+        memory = getattr(self, "memory_files", None)
+        said = (memory.note() if memory is not None else "") + self.RULES_USED_NOTE
+        # THE FILES BEARING ON IT READ BY THE MODEL ITSELF, from the index, as Claude reads its own (the user, 2026-11-17:
+        # "记忆检索现在和claude的检索方式一样") - no search by likeness.
+        side = str(self.config.get("side_conversation_id", "") or "")
+        if not side or not conversation_id or conversation_id == side:
+            return said
+        kept = self.conversations.summary(side)
+        last = [one for one in self.conversations.messages(side, limit=None)
+                if one.get("role") in ("user", "assistant") and str(one.get("content") or "").strip()]
+        lines = [f"{'User' if one['role'] == 'user' else 'You'}: {str(one['content'])[:self.ELSEWHERE_CHARS]}"
+                 for one in last[-self.ELSEWHERE_TURNS:]]
+        if not (kept or lines):
+            return said
+        before = ("\n\n[WHAT WAS SAID BEFORE, IN YOUR MAIN CONVERSATION WITH THE USER - context, carried on here:\n"
+                  + (f"Summary: {kept['summary']}\n" if kept and kept.get("summary") else "")
+                  + ("The last turns:\n" + "\n".join(lines) if lines else "") + "\n]")
+        return said + before
+
+    def _side_chatting(self) -> bool:
+        """Whether the user is talking in the side panel now: something said there lately, or its answer coming."""
+        from .agent.information_queue import CHATTING_SECONDS
+        if time.monotonic() - float(getattr(self, "side_last_said", 0.0) or 0.0) < CHATTING_SECONDS:
+            return True
+        ident = str(self.config.get("side_conversation_id", "") or "")
+        return bool(ident) and self.two_speed.working(ident)
+
+    def _front_line(self) -> str:
+        """What is in front of the user, in a line - none in private mode."""
+        if self.config.get("listener_private_mode", False):
+            return ""
+        from .agent.front_screen import front_now, shown_line
+        return shown_line(front_now(self.db, self.config))
+
+    def _side_said_lately(self) -> List[Dict[str, Any]]:
+        ident = str(self.config.get("side_conversation_id", "") or "")
+        return self.conversations.messages(ident, limit=None)[-12:] if ident else []
+
+    def _side_said(self, role: str, words: str, metadata: Dict[str, Any]) -> None:
+        """One more line of the side panel's conversation - never in the way of what made it."""
+        try:
+            self.conversations.add_message(self.side_conversation(), role, words, metadata=metadata)
+        except Exception:
+            log.info("the side panel's conversation could not be written to", exc_info=True)
+
+    def _side_compacted(self, conversation_id: str, through: Dict[str, Any], count: int, summary: str) -> None:
+        """SUMMARISED, SAID IN THE CHAT AS CLAUDE'S CLI SAYS IT (the user, 2026-11-17: "做好总结之后要在chat里说明总结已经做
+        好了（总结这个用claude cli 一样的显示，不作为一个notification提醒用户，只是能看到)"): a line where the summary
+        ends, its summary a press away - kept in the conversation as a mark the model never reads (role "system")."""
+        try:
+            self.conversations.add_message(conversation_id, "system", "", metadata={
+                "origin": "compacted", "at": str(through.get("created_at") or ""), "count": int(count),
+                "summary": str(summary or "")[:20000]})
+        except Exception:
+            log.info("the chat's summary mark could not be kept", exc_info=True)
+            return
+        side = getattr(self, "side_events", None)
+        if side is not None:
+            side.tell("compacted")
+
+    def _side_said_notification(self, said: Dict[str, Any]) -> None:
+        """A notification, as the agent said it in the side panel: why first, then what (notes.js notesCard)."""
+        from .common.notifications import category_of
+        meta = said.get("metadata") or {}
+        why = str(meta.get("reason") or "").strip()
+        title, message = str(said.get("title") or "").strip(), str(said.get("message") or "").strip()
+        if not (title or message):
+            return
+        spoken = str(meta.get("said") or "").strip()     # as the agent said it, in the chat's way
+        # As the agent told it, in its own words with every link (information_queue.with_links) - else why, then what it
+        # is as it was made, and its link.
+        url = str(meta.get("url") or "")
+        words = "\n".join(one for one in (f"(Sent to the user as a notification: {category_of(said)})",
+                                           spoken or why, "" if spoken else title,
+                                           "" if spoken or message == title else message,
+                                           "" if spoken and url in spoken else url) if one)
+        self._side_said("assistant", words, {"origin": "notification", "notification_id": str(said.get("id") or ""),
+                                             "category": category_of(said), "url": str(meta.get("url") or ""),
+                                             "title": title, "why": why, "words": message, "said": spoken,
+                                             "rules": list(meta.get("rules_used") or [])})
+
     def learn_answer(self, notification: Optional[Dict[str, Any]], answer: str, meaning: str = "",
                      said: str = "", question: Optional[Dict[str, Any]] = None) -> Optional[str]:
         """One answer, an example for the lessons: what was said or asked, why
         it was made, what the user answered, in their words."""
         shown = notification or {}
+        if shown.get("id"):
+            # AND IN THE SIDE PANEL'S CONVERSATION: the user's answer to what the agent told them.
+            told = str(shown.get("title") or shown.get("message") or "")[:200]
+            words = f'(Answered the notification "{told}": {meaning or self.ANSWERS.get(answer, answer)})'
+            self._side_said("user", words + (f"\n{said}" if said else ""),
+                            {"origin": "notification_answer", "notification_id": str(shown.get("id")),
+                             "answer": answer})
         title = str(shown.get("title") or (question or {}).get("question") or "")
         message = str(shown.get("message") or (question or {}).get("task_detail") or "")
         if not (title or message) or (shown.get("kind") not in (None, "proactive")
@@ -1182,6 +1468,9 @@ class AgentApplication:
         meta = shown.get("metadata") or {}
         if meta.get("question_id"):
             self.questions.expire(str(meta["question_id"]))   # this is its answer
+        if meta.get("learning_question"):
+            # A learning question answered in their words (the chat bar): its lessons' evidence.
+            self.learning_questions.answer_in_words(notification_id, said)
         self.learn_answer(shown, "chat_reply", "the user answered it in their own words",
                           said=said)
         return True
@@ -1422,14 +1711,15 @@ class AgentApplication:
                 out.append({"name": say(name), "rows": rows})
         return out
 
-    def _waiting_sections(self) -> List[Dict[str, Any]]:
+    def _waiting_sections(self, side: bool = False) -> List[Dict[str, Any]]:
         """THE WAITING LIST (the user, 2026-11-06: "用列表，显示各种标题，我可以expand"): each by its
-        title, and opened, its words, why it was told and its answers."""
+        title, and opened, its words, why it was told and its answers. `side`: the side panel's - every one told
+        and not answered, those that popped up too (notifications.for_the_side), as the agent speaks there."""
         from .agent.feedback.templates import BAD_LABEL, GOT_IT
         from .common.interface_words import shown
         from .common.notifications import CATEGORIES, category_of, told_from, what_set_it_off
         parts: Dict[str, List[Dict[str, Any]]] = {name: [] for name in CATEGORIES}
-        for one in self.notifications.waiting():
+        for one in (self.notifications.for_the_side() if side else self.notifications.waiting()):
             ident, meta = str(one["id"]), one["metadata"]
             asked = str(meta.get("question_id") or "")
             question = self.questions.get(asked) if asked else None
@@ -1459,10 +1749,19 @@ class AgentApplication:
             except Exception:
                 place = {}
             parts[category_of(one)].append({
+                "said": str(meta.get("said") or ""),       # the agent's own words for it, as in a chat
+                "rules": list(meta.get("rules_used") or [])[:3],   # the learned rules it followed
                 "id": ident, "title": str(one.get("title") or ""), "folds": True,
-                "at": str(one.get("created_at") or ""),
+                "at": str(meta.get("released_at") or one.get("created_at") or ""),   # told when it was released
                 "detail": str(one.get("message") or ""), "url": str(meta.get("url") or ""),
                 "why": shown("Why: {0}", self.config).replace("{0}", why) if why else "",
+                "reactions": list(meta.get("reactions") or []),     # the user's quick reactions to it
+                "bad": bool(meta.get("bad_content")),               # and whether they said it was bad content
+                # A learning question's options, to be pressed - and the one pressed (heartbeat/lessons/questions.py).
+                "learning": ({"options": [str(one.get("label") or "") for one in
+                                          (meta["learning_question"].get("options") or [])],
+                              "answered": str(meta["learning_question"].get("answered") or "")}
+                             if meta.get("learning_question") else None),
                 "note": shown("Trigger: {0}", self.config).replace(
                     "{0}", shown(told_from(meta), self.config)
                     + (f" - {what_set_it_off(meta)}" if what_set_it_off(meta) else "")),
@@ -1471,7 +1770,12 @@ class AgentApplication:
         waiting = [row for rows in parts.values() for row in rows]
         if len(waiting) == 1:
             waiting[0]["folds"] = False
-        return [{"name": shown(name, self.config), "rows": rows}
+        # ITS KIND BY THE LINE BESIDE THE AVATAR'S NAMES (notifications, summaries, recommendations): the side
+        # panel draws each in that kind's colour, as the line does (the user, 2026-11-16: "不同类型的notification还是
+        # 用不同的颜色").
+        from .common.notifications import LINE_KINDS
+        kind_of = {category: line for line, categories, _words in LINE_KINDS for category in categories}
+        return [{"name": shown(name, self.config), "kind": kind_of.get(name, "notifications"), "rows": rows}
                 for name, rows in parts.items() if rows]
 
     def quick_sections(self, which: str) -> List[Dict[str, Any]]:
@@ -2786,6 +3090,12 @@ WHAT I WOULD DO ON MY OWN where that applies. Their words:
             # the developer's checkout and is updated with git.
             if getattr(sys, "frozen", False):
                 self.updater.start()
+            self.information.start()             # what is held, judged again by its time
+            self.chat_digest.start()             # the chat summarised and learned from while quiet
+            self.learning_questions.start()      # the lessons it is unsure of asked about now and then
+            self.heads_up.start()                # what the user may have missed, said
+            self.co_play.start()                 # company while they watch or read
+            self.play_world.start()              # the play world, grown once a day
             self._started = True
             # LEFT HALF DONE, CARRIED ON (the user, 2026-11-09): work handed over to start once its
             # plan was drafted, left half drafted when the agent closed - drafted again now. Here,
@@ -2991,10 +3301,35 @@ WHAT I WOULD DO ON MY OWN where that applies. Their words:
         return {tag for tag, _key, _was, _why in self.MOVED_DEFAULTS[:many]}
 
     def stop(self) -> None:
+        # Started or not: a list's grouping waiting its few seconds does not begin after this.
+        groups = getattr(self, "list_groups", None)
+        if groups is not None:
+            groups.stop()
         with self._lock:
             if not self._started:
                 return
             log.info("stopping the personalized agent")
+            side = getattr(self, "side_events", None)
+            if side is not None:
+                side.stop()                      # the side panels' connections let go at once
+            information = getattr(self, "information", None)
+            if information is not None:
+                information.stop()
+            digest = getattr(self, "chat_digest", None)
+            if digest is not None:
+                digest.stop()
+            asking = getattr(self, "learning_questions", None)
+            if asking is not None:
+                asking.stop()
+            watching = getattr(self, "heads_up", None)
+            if watching is not None:
+                watching.stop()
+            company = getattr(self, "co_play", None)
+            if company is not None:
+                company.stop()
+            world = getattr(self, "play_world", None)
+            if world is not None:
+                world.stop()
             self.chat_files.stop()
             self.approvals.stop()
             try:

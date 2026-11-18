@@ -136,6 +136,7 @@ class FrontPictures:
         (the user, 2026-11-08), whose picture goes as it was taken."""
         self._reading = bool(words)
         self._shot = {}
+        self._ever_taken = True
         self.used = False
         self._preview, self.why = None, ""
         self._grabbed = threading.Event()
@@ -232,8 +233,10 @@ class FrontPictures:
         return self._preview
 
     def again_for_a_message(self) -> None:
-        """For a message after the first, the screen taken again now."""
-        if self.used:
+        """For a message after the first, the screen taken again now - AND FOR THE FIRST, WHEN NOTHING WAS TAKEN FOR IT (the
+        user, 2026-11-17: "chat还是没有发图好像" - the side panel presses nothing first, as the bubble's keys did: the first
+        message after each start went with no picture at all)."""
+        if self.used or not getattr(self, "_ever_taken", False):
             self.take(words=getattr(self, "_reading", True))
 
     def _words_of(self, image: Any) -> str:

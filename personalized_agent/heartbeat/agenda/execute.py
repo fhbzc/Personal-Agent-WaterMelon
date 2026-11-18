@@ -73,8 +73,10 @@ RISK_WORKING = "Due {0} - the agent is still working on it."
 GAVE_UP_SAID = "It tried {0} times and could not finish ({1})."
 #: How a run ends without the work done - handed over again.
 UNFINISHED = ("failed", "not finished", "stopped by the reviewer")
-#: How a draft sits before its run begins.
-NOT_BEGUN = ("collecting", "writing", "ready", "drafting")
+#: How a draft sits before its run begins - "starting" too (2026-11-16: one being started when the application
+#: closed was left "starting" for good: never seen as not begun, never handed over again, the user never told -
+#: four days, "has not moved since" said at every start).
+NOT_BEGUN = ("collecting", "writing", "ready", "drafting", "starting")
 
 #: ONLY IN ITS OWN FOLDER, FOR NOW (the user, 2026-11-10: "现在agent只能在自己的work directory里，其它任何
 #: 动作当前都是需要approve的" - after a plan's "deploy the commits" ran by itself): what it makes, it
@@ -516,6 +518,7 @@ class Executor:
         times = int(self._kv(RETRIED + ident) or 0)
         if times < MOST_RETRIES:
             self._set(RETRIED + ident, str(times + 1))
+            self._let_go_of(self._kv(WORK_KEY + ident))
             self._set(WORK_KEY + ident, "")
             log.info("the plan's work for %s %s: handed over again (%d)", ident, why, times + 1)
             return "again"
@@ -529,6 +532,21 @@ class Executor:
         notify(f"The agent could not do it: {title}", said + _what_it_was(thing),
                {"agenda": {"approve": [ident], "until": "", "gave_up": True}})
         return "gave_up"
+
+    def _let_go_of(self, draft_id: str) -> None:
+        """THE WORK HANDED OVER AGAIN, THE ONE BEFORE IT CANCELLED - if it never began (2026-11-16: one left
+        "starting" stayed among the work assigned as "did not start", there to be started by hand beside the
+        new one). One that ran is the record of its run, and stays."""
+        if not draft_id:
+            return
+        try:
+            self.db.execute("UPDATE work_drafts SET status = 'cancelled', error = ?, updated_at = ? "
+                            "WHERE id = ? AND status IN (%s) AND (run_id IS NULL OR run_id = '')"
+                            % ",".join("?" for _ in NOT_BEGUN),
+                            ("the plan handed it over again", datetime.now(timezone.utc).isoformat(),
+                             draft_id, *NOT_BEGUN))
+        except Exception:                          # pragma: no cover - left as it was
+            log.debug("the work handed over again could not be let go of", exc_info=True)
 
     def late_said(self, ident: str, config: Any = None) -> str:
         """What was said of a thing late or given up on - for the report to show with it, in the

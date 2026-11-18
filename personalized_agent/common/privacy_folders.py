@@ -104,6 +104,10 @@ SHORTEST_PAGE_TITLE = 4
 ADDRESSES_FILE, PAGES_FILE = "private_addresses.json", "private_pages.json"
 
 
+#: The longest window title read whole.
+TITLE_LONGEST = 1024
+
+
 def use(config: Any, data_dir: Any = None) -> None:
     """The application's settings, for those who ask without them (the file tools); its data
     folder, where the private web addresses are told to the extension's line (`share`)."""
@@ -521,22 +525,22 @@ def _windows_titles() -> List[str]:
         titles: List[str] = []
         callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         user32.IsWindowVisible.argtypes = [wintypes.HWND]
-        user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
-        user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        user32.InternalGetWindowText.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
         user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
         own = os.getpid()
+        buffer = ctypes.create_unicode_buffer(TITLE_LONGEST)
 
         def each(hwnd, _param):
+            # NOTHING SENT TO ANY WINDOW (2026-11-16: the avatar froze, black, deaf to the mouse - two listeners stood
+            # here, GetWindowTextLengthW having SENT a message to this application's own window, whose thread was
+            # waiting): whose it is asked first, this application's passed over, the title read as the system keeps
+            # it (InternalGetWindowText), never by asking the window.
             try:
                 if user32.IsWindowVisible(hwnd):
                     pid = wintypes.DWORD()
                     user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-                    length = user32.GetWindowTextLengthW(hwnd)
-                    if length and pid.value != own:
-                        buffer = ctypes.create_unicode_buffer(length + 1)
-                        user32.GetWindowTextW(hwnd, buffer, length + 1)
-                        if buffer.value:
-                            titles.append(buffer.value)
+                    if pid.value != own and user32.InternalGetWindowText(hwnd, buffer, TITLE_LONGEST)                             and buffer.value:
+                        titles.append(buffer.value)
             except Exception:
                 pass
             return True

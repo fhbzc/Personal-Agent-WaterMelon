@@ -1,0 +1,50 @@
+The pictures here are Kenney's (www.kenney.nl), CC0 1.0 - public domain:
+http://creativecommons.org/publicdomain/zero/1.0/
+
+rpg.png        - Roguelike pack (roguelikeSheet_transparent.png), with help by Lynn Evers
+indoor.png     - Roguelike Indoor pack (roguelikeIndoor_transparent.png)
+
+Taken from opengameart.org (uploaded by Kenney) on 2026-11-17, as they were. Tiles 16 x 16 px, 1 px between them.
+city.png       - Roguelike Modern City pack (roguelikeCity_transparent.png - its magenta made transparent here)
+cave.png       - Roguelike Cave & Dungeons pack (roguelikeDungeon_transparent.png)
+
+Taken from opengameart.org (uploaded by Kenney) on 2026-11-17 as well, the same licence (CC0); 16 x 16 px, 1 px between.
+watermelon.png - not Kenney's: the avatar drawn as a walker by scripts/play_watermelon.py.
+
+music/calm-*.ogg - "JRPG Music Pack #4 (Calm)" by Juhani Junkala, CC0 (opengameart.org), 2026-11-17: A Place I Call Home,
+                   Childhood Friends, Peaceful Days, Sand Castles, Summer Memories, Innocence - as they were, renamed.
+sfx/*.ogg        - "50 RPG sound effects" by Kenney (www.kenney.nl), CC0 (opengameart.org), 2026-11-17: doorOpen_1,
+                   doorClose_1, bookFlip1, cloth1 - as they were, renamed.
+music/quaint-town.mp3 - "Quaint Town" (loopable), CC0 (opengameart.org/content/quaint-town), 2026-11-17.
+music/jrpg-piano.mp3  - "JRPG Piano", CC0 (opengameart.org/content/jrpg-piano), 2026-11-17.
+music/calm-piano.mp3  - "Calm Piano 1 (Vaporware)", CC0 (opengameart.org/content/calm-piano-1-vaporware), 2026-11-17.
+town.png    - Kenney "Tiny Town" 1.1 (Tilemap/tilemap.png), CC0, from opengameart.org/content/tiny-town, 2026-11-17.
+urban.png   - Kenney "RPG Urban Pack" 1.0 (Tilemap/tilemap.png), CC0, from opengameart.org/content/rpg-urban-pack, 2026-11-17.
+dungeon.png - Kenney "Tiny Dungeon" 1.0 (Tilemap/tilemap.png), CC0, from opengameart.org/content/tiny-dungeon, 2026-11-17.
+creatures.png - "Tiny Creatures" 1.0 by Clint Bellanger (Tilemap/tilemap.png), CC0, opengameart.org/content/tiny-creatures, 2026-11-17.
+farm.png      - Kenney "Tiny Farm" 1.0 (Tilemap/tilemap.png), CC0, opengameart.org/content/tiny-farm, 2026-11-17.
+ships.png     - Kenney "Pixel Shmup" 1.0 (Tilemap/ships.png), CC0, opengameart.org/content/pixel-shmup, 2026-11-17 - each
+                32 px ship laid again here as 2 x 2 tiles of 16 px, 1 px between.
+
+grave.png     - pieces of "haunted graveyard tileset" (CC0, opengameart.org/content/haunted-graveyard-tileset; its tiles'
+                dark ground cleared) and of "1-Bit Graveyard Pixel Art Asset Pack" by Fava Beans (CC0,
+                opengameart.org/content/1-bit-graveyard-pixel-art-asset-pack; white made stone, outlined), 2026-11-17.
+festive.png   - pieces of "Holiday Expansion Set" (Sprite_Sheet.png, CC0, opengameart.org/content/holiday-expansion-set),
+                "Chinese Icons" (CC0, opengameart.org/node/179995), and the pumpkins of the 1-Bit Graveyard pack
+                (coloured), 2026-11-17.
+drawn.png     - made for the app (scripts/play_drawn_sprites.py; shapes lit and outlined, none taken from any game):
+                New Year lanterns, firecrackers, a fu sign, red envelopes, a couplet door, fireworks, a lion dance head, a
+                plum tree; a fair's ticket booth, ice cream, hot dog and candy stands, balloons, bunting, queue rails, a
+                carousel, a ferris wheel, a drop tower, a swing ship, a circus tent, a coaster station, track and car;
+                fish tanks (with the CC0 fish of sea.png), a jellyfish, coral, an anemone, seaweed, bubbles, tunnel glass;
+                a heart arch; a star.
+sea.png       - fish of "Fish (DB32)" (pixel fishes, CC0, opengameart.org/content/fish-db32), 2026-11-17.
+love.png      - "Valentine & Anti Valentine sprite Sheet" (CC0, opengameart.org/content/valentine-anti-valentine-sprite-
+                sheet) and "Jack o lantern pumpkin" (CC0, opengameart.org/content/jack-o-lantern-pumpkin, made 16 px from
+                its four-times picture), 2026-11-17.
+yard.png      - pieces of "Forest / Graveyard tileset" (tileset_47.png, CC0, opengameart.org/content/forest-graveyard-
+                tileset), each cut by its own outline, its black ground cleared, 2026-11-17.
+catalogue.json - the things above by theme, each with its words (scripts/play_catalogue.py); no picture of its own.
+
+Every picture and sound here is CC0 (public domain) or made for this application (watermelon.png, and the tunes and
+sounds api/web/play-sound.js makes as it plays).

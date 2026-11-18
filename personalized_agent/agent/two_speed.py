@@ -24,6 +24,7 @@ import json
 import logging
 import re
 import threading
+import time
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from ..common.events.models import new_id
@@ -89,6 +90,36 @@ WAITED_NOTE = """
 This message was written BEFORE that answer existed. It does not reply to anything that answer
 says or asks, and it is never a yes to it. Do not repeat that answer.]"""
 
+#: A PICTURE BESIDE THE ANSWER, WHEN IT HELPS (the user, 2026-11-16: "model觉得有必要画图的才画"): said to the
+#: full agent only, of a message from the side panel - the one place a picture is drawn (notes.js). In the
+#: answer itself, not a call of its own.
+VISUAL_NOTE = """
+
+[This chat is shown in a side panel with a PICTURE PANEL - a small screen at its top. To show the user a \
+picture, use it: the block below opens the picture panel and draws your picture there (never draw a chart in \
+words, as text art, or as a link to an image). The user can draw on what is in the picture panel - a mark, a \
+box, words - and what they marked comes back to you with their message, "[On the picture ..., I marked: ...]"; a \
+picture they drew on is sent with their message. Only when a picture \
+would make the answer clearer than words - numbers to compare, a change over time, a day's schedule, a \
+few things side by side - end your answer with exactly one block, after your words:
+```view
+{"kind": "bar", "title": "...", "x": ["...", "..."], "series": [{"name": "...", "values": [1, 2]}], "unit": "..."}
+```
+"kind" is one of: "bar" (amounts compared), "line" (a change over time) - both with "x", "series" (at most \
+four, each as many values as "x" has labels) and optionally "unit"; "table" with "columns" and "rows" (at \
+most 20); "timeline" with "items": [{"when": "...", "what": "...", "note": "..."}] in order; "stat" with \
+"value", "label" and optionally "note" (one number that is the answer). Only numbers and facts you found \
+with your tools or the user gave - never made up. No block when words are enough; never more than one.
+Give each picture you draw a short "name". You may name the user's pictures too: "names": {"<small screen picture \
+id>": "<name>"} in any block, or {"kind": "name", "page": "<id>", "name": "<name>"} alone. NEVER CHANGE A PICTURE IN \
+PLACE, the user's or yours: to show something ON a picture already in the panel - the user's whiteboard or screenshot \
+("small screen picture p..." in their message) or one of yours - use {"kind": "marks", "page": "<its id or name>", \
+"name": "<a name for your copy>", "marks": [...]} with any of {"shape": "box" or "ellipse", "at": [x0, y0, x1, y1]}, \
+{"shape": "arrow" or "line", "from": [x, y], "to": [x, y]}, {"shape": "text", "at": [x, y], "text": "..."}, {"shape": "pen", "points": \
+[[x, y], ...]} - each place a fraction of the picture's width and height, 0 to 1 from its top left. A copy of the \
+picture is made with your marks on it, in your own colour, put first and shown; the picture itself stays as it was. \
+To redraw a picture of yours, draw it again under a new name: a new picture, the earlier one kept.]"""
+
 FULL_NOTE = """
 
 [A quick reply has already been shown to the user, written with none of your context and no tools:
@@ -134,6 +165,41 @@ class TwoSpeed:
         self._turns: Dict[str, Dict[str, Any]] = {}
         self._waiting: Dict[str, List[Dict[str, Any]]] = {}
         self._working: set = set()
+        #: TOLD THE MOMENT A TURN MOVES (the side panel, pushed - api/side_events.py): `on_change(turn)`, its
+        #: words as they come at most each TOLD_EVERY seconds.
+        self.on_change: Optional[Callable[[str], None]] = None
+        self._told_at: Dict[str, float] = {}
+        #: THE INFORMATION QUEUE (agent/information_queue.py): `held_note()`, what is held, for the full agent
+        #: answering the side panel; `on_told(ids)`, those its reply named as told.
+        self.held_note: Optional[Callable[[], str]] = None
+        #: HOW THE USER TALKS (agent/talk_style.py): said to both answering in the side panel.
+        self.style_note: Optional[Callable[[], str]] = None
+        self.on_told: Optional[Callable[[List[str]], None]] = None
+        #: The links of those a reply named as told (information_queue `links_told`) - every one kept in the reply.
+        self.links_of_told: Optional[Callable[[List[str]], List[str]]] = None
+        #: One told apart from the reply, a message of its own (information_queue `tell_apart(id, words)`).
+        self.on_tell: Optional[Callable[[str, str], Any]] = None
+        #: The picture of the screen that went with a message kept and described (chat_pictures `keep(id, seen, text)`).
+        self.on_picture: Optional[Callable[[str, List[Dict[str, str]], str], Any]] = None
+
+    def working(self, conversation_id: str) -> bool:
+        """Whether the full agent is answering in that conversation now."""
+        with self._lock:
+            return conversation_id in self._working
+
+    TOLD_EVERY = 0.1
+
+    def _changed(self, turn: str, words: bool = False) -> None:
+        if self.on_change is None:
+            return
+        now = time.monotonic()
+        if words and now - self._told_at.get(turn, 0.0) < self.TOLD_EVERY:
+            return
+        self._told_at[turn] = now
+        try:
+            self.on_change(turn)
+        except Exception:                          # the panel asks again
+            log.debug("the turn's change could not be told", exc_info=True)
 
     @property
     def on(self) -> bool:
@@ -143,11 +209,15 @@ class TwoSpeed:
     def send(self, text: str, conversation_id: Optional[str] = None,
              attachments: Optional[Sequence[str]] = None, mentions: Optional[Sequence[str]] = None,
              on_done: Optional[Callable[[Dict[str, Any]], None]] = None,
-             front: str = "", seen: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+             front: str = "", seen: Optional[List[Dict[str, str]]] = None,
+             visual: bool = False, quick: bool = True) -> Dict[str, Any]:
         """The quick reply, at once: "answer", "message_id", "conversation_id"
         and "turn", the full agent's - "" when it was stopped. Raises
         ValueError for a file no longer there. `front`: what is in front of
-        the user (agent/front_screen.py), for both to read."""
+        the user (agent/front_screen.py), for both to read. `visual`: from the
+        side panel, which draws a picture the full agent may add (VISUAL_NOTE). `quick` False (the side
+        panel's Slow, the user, 2026-11-16: "chat要支持quick和slow mode"): no quick reply - the full agent
+        answers, and only it."""
         attachments = [str(one) for one in attachments or []]
         mentions = [str(one) for one in mentions or []]
         described = self._described(attachments)
@@ -157,8 +227,25 @@ class TwoSpeed:
         if described:
             metadata["attachments"] = described
         user = self.conversations.add_message(conversation_id, "user", text, metadata=metadata)
-        quick = self._quick(text, earlier, described, front, seen)
-        run = quick["run"] or bool(described) or bool(mentions) or not quick["reply"]
+        if seen and callable(self.on_picture):
+            try:
+                self.on_picture(user["id"], seen, text)
+            except Exception:
+                log.debug("the picture that went with the message could not be kept", exc_info=True)
+        if visual and callable(self.style_note):
+            try:
+                front = front + (self.style_note() or "")
+            except Exception:
+                log.debug("how the user talks could not be read", exc_info=True)
+        quick = self._quick(text, earlier, described, front, seen) if quick else {"reply": "", "run": True}
+        # WHAT IS HELD TO BE TOLD, for the full agent only (never the small model): it answers whenever there is.
+        held = ""
+        if visual and callable(self.held_note):
+            try:
+                held = self.held_note() or ""
+            except Exception:
+                log.debug("what is held could not be read", exc_info=True)
+        run = quick["run"] or bool(described) or bool(mentions) or not quick["reply"] or bool(held)
         ids = [user["id"]]
         said: Optional[Dict[str, Any]] = None
         if quick["reply"]:
@@ -173,7 +260,7 @@ class TwoSpeed:
             self._begin(conversation_id, {
                 "turn": turn, "text": text, "ids": ids, "reply": quick["reply"],
                 "attachments": attachments, "mentions": mentions, "on_done": on_done,
-                "front": front, "seen": seen})
+                "front": front + (VISUAL_NOTE if visual else "") + held, "seen": seen})
         return {"conversation_id": conversation_id, "answer": quick["reply"], "layer": "fast",
                 "message_id": said["id"] if said else "", "turn": turn}
 
@@ -193,7 +280,8 @@ class TwoSpeed:
         2026-11-11: it said only "Hi Fang," of an email was visible: the window's own text held
         the first line, the picture all of it). A model that sees none has it taken out by the
         manager (models/vision.py)."""
-        turns = [{"role": one["role"], "content": str(one.get("content") or "")[:RECENT_CHARS]}
+        from .chat_pictures import told
+        turns = [{"role": one["role"], "content": told(one)[:RECENT_CHARS]}
                  for one in earlier
                  if one.get("role") in ("user", "assistant") and str(one.get("content") or "").strip()]
         while turns and turns[0]["role"] != "user":
@@ -281,10 +369,25 @@ class TwoSpeed:
         last = jobs[-1]["turn"]
         mark = self._mark()
 
+        from .information_queue import before_the_marks, interrupting, told_apart
+        early: set = set()
+
         def told(text: str) -> None:
+            # WHAT INTERRUPTS, TOLD AT ONCE - before the reply, as soon as it is written (information_queue).
+            if callable(self.on_tell):
+                for ident, words in interrupting(text):
+                    if ident not in early:
+                        early.add(ident)
+                        try:
+                            self.on_tell(ident, words)
+                        except Exception:
+                            log.warning("what interrupted could not be told", exc_info=True)
+            # The reply alone while it is written: never a mark, nor what is told apart.
+            text = before_the_marks(text)
             with self._lock:
                 if last in self._turns:
                     self._turns[last]["text"] = text
+            self._changed(last, words=True)
         try:
             result = self.agent.handle_message(
                 "\n\n".join(one["text"] for one in jobs), conversation_id,
@@ -294,6 +397,36 @@ class TwoSpeed:
                 after_quick={"ids": [i for one in jobs for i in one["ids"]],
                              "reply": "\n".join(one["reply"] for one in jobs if one["reply"]),
                              "did": lambda said: self._did(mark, said)})
+            answer, apart, named = told_apart(str(result.get("answer", "") or ""))
+            if named and callable(self.links_of_told):
+                # EVERY LINK OF WHAT IT TOLD, KEPT (the user, 2026-11-17: "一定保留里面的所有url/超链接信息") - told in
+                # the reply's own words, a link it left out added at its end, as when it is told alone (with_links).
+                try:
+                    missing = [one for one in self.links_of_told(named) if one not in answer]
+                except Exception:
+                    missing = []
+                    log.debug("the links of what was told could not be read", exc_info=True)
+                if missing:
+                    answer = answer.rstrip() + "\n\n" + "\n".join(missing)
+            if answer != str(result.get("answer", "") or ""):
+                # Kept without the mark too: what the model reads again, and the user sees again, is the reply.
+                try:
+                    self.conversations.set_content(str(result.get("message_id") or ""), answer)
+                except Exception:
+                    log.debug("the reply could not be kept without its mark", exc_info=True)
+                result = dict(result, answer=answer)
+            # EACH TOLD APART, A MESSAGE OF ITS OWN after the reply (the user, 2026-11-17: "一个话就是回答一个的").
+            for ident, words in apart:
+                if callable(self.on_tell) and ident not in early:
+                    try:
+                        self.on_tell(ident, words)
+                    except Exception:
+                        log.warning("what the reply told apart could not be told", exc_info=True)
+            if named and callable(self.on_told):
+                try:
+                    self.on_told(named)
+                except Exception:
+                    log.warning("what the reply told could not be marked told", exc_info=True)
             done = {"state": "done", "answer": result.get("answer", ""),
                     "message_id": result.get("message_id", ""), "kind": result.get("kind", "more"),
                     "nothing": bool(result.get("nothing")), "did": result.get("did") or {},
@@ -307,6 +440,8 @@ class TwoSpeed:
             said = done if one["turn"] == last else {"state": "merged"}
             with self._lock:
                 self._turns[one["turn"]] = said
+            self._told_at.pop(one["turn"], None)
+            self._changed(one["turn"])
             if callable(one["on_done"]):
                 try:
                     one["on_done"](said)

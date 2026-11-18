@@ -41,9 +41,29 @@ _ROLE_OVERRIDE_KEYS = {
     "fast_reply": "chat_fast_model",
 }
 
-#: The quick reply in Chat (agent/two_speed.py) - THE SMALL MODEL - left unset: THE SAME MODEL
-#: the chat runs on, at the least effort it takes (the user, 2026-11-11: "default是low effort模式，
-#: 模型和正常保持一致"); it was Claude Haiku. Another is the user's choice (chat_fast_model).
+#: The quick reply in Chat (agent/two_speed.py), and the side watch and co-play (heartbeat/monitor) - THE SMALL
+#: MODEL - left unset: EACH MODEL ON THE LIST AS ITS PROVIDER'S WEAKER ONE (SMALL_MODELS), at the least effort it
+#: takes (the user, 2026-11-17: "小模型的default改成对应版本的弱模型的low effort 模式（比如haiku)"; 2026-11-11 it
+#: was the chat's own model); a provider with none known, its own model. Another is the user's choice
+#: (chat_fast_model).
+SMALL_MODELS = {"anthropic": "claude-haiku-5-5", "claude_code": "claude-haiku-5-5"}
+
+
+def small_model_of(provider_id: str, model_id: str) -> str:
+    """A model's weaker one, of its own provider and generation: Claude - Haiku; a GPT subscription (Codex; the user,
+    2026-11-17: "如果用gpt subscription, 对应的小模型也要设置") - per learn.chatgpt.com/docs/models that day, GPT-6.1's
+    Terra ("a fast, efficient model"), GPT-5.6's Luna, and GPT-6's Luna ("our most efficient model ... high-volume
+    tasks") for the rest and for Codex's own default; any other, itself."""
+    if provider_id in SMALL_MODELS:
+        return SMALL_MODELS[provider_id]
+    if provider_id == "codex":
+        model = str(model_id or "").lower()
+        if model.startswith("gpt-6.1"):
+            return "gpt-6.1-terra"
+        if model.startswith("gpt-5.6"):
+            return "gpt-5.6-luna"
+        return "gpt-6-luna"
+    return model_id
 
 #: What a usage limit says, for a provider that files it as a rate limit
 #: (Claude Code's session limit): it does not pass in seconds, so the next
@@ -252,6 +272,45 @@ class ModelManager:
             log.warning("could not carry the desktop client over", exc_info=True)
 
     def chain(self, role: str = "primary") -> List[ResolvedModel]:
+        """The models, in order (`_chain`) - for the small model's calls, each as its provider's weaker one first, and
+        then the list as it is: a weaker one the account may not use hands the call on to the model it stood for."""
+        found = self._chain(role)
+        if role != "fast_reply":
+            return found
+        chosen = self.small_chosen()
+        out: List[ResolvedModel] = []
+        for one in [ResolvedModel(role, one.provider_id, chosen.get((one.provider_id, one.model_id))
+                                  or small_model_of(one.provider_id, one.model_id), False)
+                    for one in found] + list(found):
+            if all(one.label != kept.label for kept in out):
+                out.append(one)
+        return out
+
+    def _small_effort_on(self, one: ResolvedModel) -> str:
+        raw = self.config.get("model_chain") or []
+        for entry in raw if isinstance(raw, list) else []:
+            if isinstance(entry, dict) and entry.get("provider") == one.provider_id and entry.get("model") == one.model_id:
+                return str(entry.get("small_effort") or "")
+        return ""
+
+    def small_chosen(self) -> Dict[Tuple[str, str], str]:
+        """The small model the user chose for each model on the list - by its provider and model."""
+        raw = self.config.get("model_chain") or []
+        return {(str(one.get("provider") or ""), str(one.get("model") or "")): str(one.get("small"))
+                for one in (raw if isinstance(raw, list) else []) if isinstance(one, dict) and one.get("small")}
+
+    def small_effort_for(self, provider_id: str, model_id: str) -> str:
+        """The effort the user chose for a small model, as it stands on the list - "" when none (the least, then)."""
+        raw = self.config.get("model_chain") or []
+        for one in raw if isinstance(raw, list) else []:
+            if not isinstance(one, dict) or str(one.get("provider") or "") != provider_id:
+                continue
+            small = str(one.get("small") or "") or small_model_of(provider_id, str(one.get("model") or ""))
+            if small == model_id and one.get("small_effort"):
+                return str(one["small_effort"])
+        return ""
+
+    def _chain(self, role: str = "primary") -> List[ResolvedModel]:
         """THE MODELS, IN ORDER (Settings > General > Models): each call goes
         to the first that works (`invoke`). From before the list: the primary
         model, then the fallback when it was turned on."""
@@ -297,6 +356,15 @@ class ModelManager:
                     raise ValueError(f"{provider_id}/{model_id} does not take the "
                                      f"reasoning effort {effort!r}")
                 entry["effort"] = effort
+            # ITS SMALL MODEL, AS THE USER CHOSE IT (the user, 2026-11-17: "setting里显示小模型并且允许用户设置，一开始是
+            # default"): one of the same provider's - none chosen, its weaker one (`small_model_of`).
+            small = str((one or {}).get("small") or "").strip()
+            if small and small != "default":
+                entry["small"] = small
+            # And how hard it thinks (the user, 2026-11-17: "small model的effort也是可以选的"): none chosen, the least.
+            small_effort = str((one or {}).get("small_effort") or "").strip()
+            if small_effort and small_effort != "default":
+                entry["small_effort"] = small_effort
             kept.append(entry)
         self.config.set("model_chain", kept)
         # EMPTIED BY THE USER, and so empty: not the models from before the
@@ -730,7 +798,8 @@ class ModelManager:
         # where there is no small model it runs on the large one, and it must
         # still be quick.
         if resolved.role == "fast_reply":
-            effort = self.lowest_effort(resolved.provider_id, resolved.model_id) or effort
+            effort = (self.small_effort_for(resolved.provider_id, resolved.model_id)
+                      or self.lowest_effort(resolved.provider_id, resolved.model_id) or effort)
         if effort and effort != "default" and request.reasoning_effort is None:
             request = replace(request, reasoning_effort=effort)
         request = self._as_configured(request)
@@ -904,6 +973,13 @@ class ModelManager:
                                                      self.config),
                           "effort": self.effort_on_list(one),
                           "efforts": self.efforts_of(one.provider_id, one.model_id),
+                          # Its small model: the one chosen, else the default (its weaker one).
+                          "small": self.small_chosen().get((one.provider_id, one.model_id), ""),
+                          "small_default": small_model_of(one.provider_id, one.model_id),
+                          "small_effort": self._small_effort_on(one),
+                          "small_efforts": self.efforts_of(
+                              one.provider_id, self.small_chosen().get((one.provider_id, one.model_id))
+                              or small_model_of(one.provider_id, one.model_id)),
                           "display_name": getattr(provider, "display_name", one.provider_id),
                           "kind": getattr(provider, "kind", "api"), "auth_status": auth,
                           "availability": availability.to_dict() if availability else None})

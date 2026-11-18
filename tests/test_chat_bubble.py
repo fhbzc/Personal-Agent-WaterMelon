@@ -63,6 +63,11 @@ class TheNotificationBubbleOnTheScreenTests(unittest.TestCase):
     def setUp(self) -> None:
         import collections
         from personalized_agent.ui import desktop
+        # WHERE THERE IS NO SIDE PANEL - the bubble, as before (on Windows and a Mac the side panel is the chat now).
+        from personalized_agent.ui.desktop import DesktopAgent as _Desk
+        _here = mock.patch.object(_Desk, "_side_panel_here", return_value=False)
+        _here.start()
+        self.addCleanup(_here.stop)
         self.root = tk.Tk()
         self.root.withdraw()
         root = self.root
@@ -217,6 +222,11 @@ class TheNotificationBubbleOnTheScreenTests(unittest.TestCase):
 class TheBubbleTests(unittest.TestCase):
 
     def setUp(self) -> None:
+        # WHERE THERE IS NO SIDE PANEL - the bubble, as before (on Windows and a Mac the side panel is the chat now).
+        from personalized_agent.ui.desktop import DesktopAgent as _Desk
+        _here = mock.patch.object(_Desk, "_side_panel_here", return_value=False)
+        _here.start()
+        self.addCleanup(_here.stop)
         self.root = tk.Tk()
         self.root.withdraw()
         self.posted = queue.Queue()

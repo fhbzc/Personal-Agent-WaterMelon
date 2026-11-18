@@ -13,8 +13,55 @@
 <body class="notes-solo">
 <!-- THE WAITING NOTIFICATIONS, the whole side of the screen (the user, 2026-11-13) - alone (2026-11-14). -->
 <section id="notes-page"></section>
+<!-- THE CHAT IN THE SIDE PANEL (the user, 2026-11-16): what is said here, under the waiting ones - kept apart
+     from what is drawn again, so a word being written is never lost. -->
+<div id="side-chat-log" class="side-chat-log" aria-live="polite"></div>
+<!-- THE PICTURE BESIDE THE ANSWER (side-visual.js): opened only when an answer has one. -->
+<!-- THE SECOND LAYER, LEFT OF THE CHAT (notes.js sideDrawer; the user, 2026-11-16: "允许我再展开一层sidebar（放在原先sidebar
+     的左边)。里面有各种功能，包括刚刚的image"): the picture beside an answer, the pictures of the conversation, what
+     the agent told lately - one at a time, by the tabs on the panel's left edge. -->
+<aside id="side-visual" class="side-visual" hidden>
+  <div class="side-visual-head"><strong id="side-drawer-title"></strong>
+    <button type="button" class="report-drawer-close" id="side-visual-close" aria-label="Close">×</button></div>
+  <div id="side-visual-body" class="side-visual-body" data-drawer="picture"></div>
+  <div id="side-drawer-images" class="side-visual-body side-drawer-images" data-drawer="images" hidden></div>
+  <div id="side-drawer-told" class="side-visual-body side-drawer-told" data-drawer="told" hidden></div>
+</aside>
+<form id="side-compose" class="side-compose" autocomplete="off">
+  <!-- ITS HEIGHT DRAGGED BY ITS TOP (notes.js sideInputGrip): taller for a long message. -->
+  <div id="side-input-grip" class="side-input-grip" aria-hidden="true" title="Drag up or down to make the box taller or shorter"></div>
+  <!-- QUICK REPLIES to the one that waits (notes.js sideQuickDraw): its answers, a press away. -->
+  <div id="side-quick" class="side-quick" hidden></div>
+  <div id="side-replying" class="side-replying" hidden><span>Replying to:</span>
+    <span class="side-replying-title chat-message"></span>
+    <button type="button" id="side-replying-off" class="side-collapse" aria-label="Cancel">×</button></div>
+  <!-- FILES AND PICTURES WITH THE NEXT MESSAGE (notes.js sideFiles): "+", pasted, or dropped on the panel. -->
+  <div id="side-files" class="side-files" hidden></div>
+  <!-- "+" ON THE BOX'S OWN LINE (the user, 2026-11-16: "这个+ 放在chat同一行"). -->
+  <button type="button" id="side-attach" class="side-tool" title="Add a file or picture" aria-label="Add a file or picture">+</button>
+  <input type="file" id="side-file" multiple hidden>
+  <textarea id="side-input" rows="1" placeholder="Message your agent"></textarea>
+  <button type="submit" class="small" id="side-send">Send</button>
+</form>
+<!-- A PICTURE SEEN LARGER (notes.js sideLarger): a click or Esc closes it. -->
+<div id="side-larger" class="side-larger" hidden>
+  <img alt="" draggable="false">
+  <div class="side-larger-bar"><button type="button" data-view="out" aria-label="Zoom out">−</button>
+    <span class="side-larger-scale">100%</span>
+    <button type="button" data-view="in" aria-label="Zoom in">+</button>
+    <button type="button" data-view="fit" aria-label="Fit">⤢</button>
+    <button type="button" data-view="close" aria-label="Close">×</button></div>
+</div>
 <div id="toast"></div>
 <script src="/i18n.js"></script>
+<script src="/side-visual.js"></script>
+<script src="/side-board.js"></script>
+<script src="/play-sound.js"></script>
+<script src="/play-regions.js"></script>
+<script src="/play-sky.js"></script>
+<script src="/play.js"></script>
+<script src="/play-act.js"></script>
 <script src="/notes.js"></script>
+<script src="/context-menu.js"></script>
 </body>
 </html>

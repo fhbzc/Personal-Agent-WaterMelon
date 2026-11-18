@@ -343,3 +343,19 @@ class BackOnTopTests(unittest.TestCase):
             self.assertFalse(back_on_top(root))
         finally:
             root.destroy()
+
+
+class NotOnTheScreenByDefaultTests(unittest.TestCase):
+    """2026-11-17: "已经不需要logo在屏幕上了" - hidden at the start unless the user showed it from the tray; Play's
+    hiding never kept as their choice."""
+
+    def test_hidden_at_the_start_the_users_own_choice_kept_plays_not(self) -> None:
+        import inspect
+        from personalized_agent.ui.desktop import DesktopAgent
+        run = inspect.getsource(DesktopAgent.run)
+        self.assertIn('if not self.config.get("avatar_on_screen", False):', run)
+        toggle = inspect.getsource(DesktopAgent.toggle_character)
+        self.assertIn('self.config.set("avatar_on_screen", not self.character_hidden, internal=True)', toggle)
+        play = inspect.getsource(DesktopAgent.avatar_in_play)
+        self.assertNotIn("self.toggle_character()", play, "the Play view's hiding is not the user's choice")
+

@@ -185,7 +185,7 @@ class ListGroups:
         """An item added, gone or reworded since the last grouping: a new
         one, in a few seconds."""
         seen = {str(one.get("id")): _words(one) for one in items}
-        if not self._allowed():
+        if not self._allowed() or self._stopped:
             return
         with self._lock:
             # Compared HERE, under the lock a grouping keeps its result under: before it, a
@@ -202,9 +202,23 @@ class ListGroups:
             self._timers[which] = timer
             timer.start()
 
+    #: Stopped with the application: no grouping begun after (2026-11-16: one waiting its few seconds ran on
+    #: after the application - and its database - were gone, and said so in a traceback).
+    _stopped = False
+
+    def stop(self) -> None:
+        """The groupings waiting to begin, not begun; none after."""
+        with self._lock:
+            self._stopped = True
+            for timer in self._timers.values():
+                timer.cancel()
+            self._timers.clear()
+
     def _group_now(self, which: str) -> None:
         with self._lock:
             self._timers.pop(which, None)
+            if self._stopped:
+                return
             self._running[which] = True
         try:
             self.group(which)
@@ -218,7 +232,8 @@ class ListGroups:
         # grouping的时候edit了，grouping好之后要再做一次grouping"): the list as it is
         # now looked at again - an item added or edited meanwhile, or a change
         # of the user's that this grouping did not write over, is grouped again.
-        self.notice(which, self._items[which]())
+        if not self._stopped:
+            self.notice(which, self._items[which]())
 
     def group(self, which: str) -> Dict[str, Any]:
         """One grouping of a list - by the model, the user's changes first."""

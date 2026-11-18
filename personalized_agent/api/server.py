@@ -34,7 +34,7 @@ from ..common.paths import resource_path
 from ..version import __version__
 from .access import (EXTERNAL, SIGN_IN_PATH, TICKET_PARAM, ApiAccess, key_file_for,
                      scrub_sign_in)
-from .errors import ApiError, Raw
+from .errors import ApiError, Raw, Stream
 from .routes import build_routes
 
 log = logging.getLogger(__name__)
@@ -208,6 +208,28 @@ class ApiServer:
                     self.close_connection = True
                     raise ClientGone() from None
 
+            def _stream(self, result: Stream) -> None:
+                """AN ANSWER THAT GOES ON (api/side_events.py): no length, each piece written and sent as it
+                comes; the connection closed after - whoever was listening is gone, or it ended."""
+                self.close_connection = True
+                pieces = iter(result.pieces)
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", result.content_type)
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    for piece in pieces:
+                        self.wfile.write(piece)
+                        self.wfile.flush()
+                except CLIENT_GONE:
+                    raise ClientGone() from None
+                finally:
+                    close = getattr(pieces, "close", None)
+                    if close is not None:
+                        close()                  # its own end run: no longer listening
+
             def _json(self, status: int, data: Any) -> None:
                 body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
                 if status == 200 and self.command == "GET":
@@ -325,6 +347,9 @@ class ApiServer:
                     result = handler(request)
                     if isinstance(result, Raw):
                         self._send(200, result.body, result.content_type)
+                        return
+                    if isinstance(result, Stream):
+                        self._stream(result)
                         return
                     self._json(200, result if result is not None else {"ok": True})
                 except ApiError as exc:

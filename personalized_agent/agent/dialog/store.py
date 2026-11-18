@@ -56,6 +56,57 @@ class ConversationStore:
         return {"id": message_id, "conversation_id": conversation_id, "created_at": created,
                 "role": role, "content": content, "metadata": metadata or {}}
 
+    def set_content(self, message_id: str, content: str) -> None:
+        """A message's words, as they are to stay (agent/two_speed.py: a reply with its mark taken out)."""
+        if message_id:
+            self.db.execute("UPDATE messages SET content = ? WHERE id = ?", (content, message_id))
+
+    def stretch(self, conversation_id: str, before: Optional[str] = None, after: Optional[str] = None,
+                since: Optional[str] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Messages said before `before`, after `after` (or from `since` on), in order - the last `limit` of them
+        (all with None): the side panel's history, read a stretch at a time."""
+        where, args = ["conversation_id = ?"], [conversation_id]
+        if before:
+            where.append("created_at < ?")
+            args.append(before)
+        if after:
+            where.append("created_at > ?")
+            args.append(after)
+        if since:
+            where.append("created_at >= ?")
+            args.append(since)
+        rows = self.db.query(
+            f"SELECT * FROM messages WHERE {' AND '.join(where)} ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (*args, -1 if limit is None else int(limit)))
+        rows.reverse()
+        for row in rows:
+            row["metadata"] = json_load(row.get("metadata"))
+        return rows
+
+    def search(self, conversation_id: str, words: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """The messages said in which `words` are, exactly (letters of any case) - the newest first."""
+        words = str(words or "").strip()
+        if not words:
+            return []
+        rows = self.db.query(
+            "SELECT * FROM messages WHERE conversation_id = ? AND role IN ('user', 'assistant') "
+            "AND instr(lower(content), lower(?)) > 0 ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (conversation_id, words, int(limit)))
+        for row in rows:
+            row["metadata"] = json_load(row.get("metadata"))
+        return rows
+
+    def set_metadata(self, message_id: str, more: Dict[str, Any]) -> None:
+        """More kept with a message - `more` merged over what it has (agent/chat_pictures.py: its picture)."""
+        if not message_id:
+            return
+        row = self.db.query_one("SELECT metadata FROM messages WHERE id = ?", (message_id,))
+        if row is None:
+            return
+        kept = json_load(row.get("metadata")) or {}
+        kept.update(more or {})
+        self.db.execute("UPDATE messages SET metadata = ? WHERE id = ?", (json_dump(kept), message_id))
+
     def messages(self, conversation_id: str,
                  limit: Optional[int] = 50) -> List[Dict[str, Any]]:
         """The first `limit` messages in order - all of them with None.

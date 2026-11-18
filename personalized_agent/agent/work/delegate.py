@@ -1107,7 +1107,7 @@ class Drafts:
         if said.lower().startswith("none"):
             said = ""
         # ITS SUBJECT BY NAME, ALWAYS (measured 2026-11-08 on the user's own: by meaning alone, two of
-        # four rules naming OpenArxiv were left out for rules about another project's releases):
+        # four rules naming one project were left out for rules about another project's releases):
         # every rule kept that names what the work is about, first.
         strong, _rest = topic_words(list(query.get("keywords") or []))
         named = [row for row in self._rows("SELECT id, statement, state, confidence FROM lesson_rules "

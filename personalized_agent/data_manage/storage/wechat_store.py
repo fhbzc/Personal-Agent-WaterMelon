@@ -559,11 +559,36 @@ class WechatStore:
                 'messages':output,'captures':captures,
                 'pagination':{'has_more':more,'next_before':output[0]['message_id'] if more and output else None}}
 
-    def prune(self, conn, cutoff):
-        conn.execute('DELETE FROM listener_wechat_observations WHERE last_seen_at<?',(cutoff,))
-        conn.execute('DELETE FROM listener_wechat_segments WHERE last_seen_at<?',(cutoff,))
-        messages = conn.execute('DELETE FROM listener_wechat_messages WHERE last_seen_at<?',(cutoff,)).rowcount
-        captures = conn.execute('DELETE FROM listener_wechat_captures WHERE last_seen_at<?',(cutoff,)).rowcount
-        conn.execute('DELETE FROM listener_wechat_views WHERE last_seen_at<?',(cutoff,))
-        conn.execute('DELETE FROM listener_wechat_conversations WHERE last_seen_at<? AND NOT EXISTS(SELECT 1 FROM listener_wechat_messages m WHERE m.conversation_id=listener_wechat_conversations.id)',(cutoff,))
-        return {'wechat_messages':messages,'wechat_captures':captures}
+    #: What the old WeChat rows are cleared from, in this order: what points at a row before the row.
+    PRUNED = ("listener_wechat_observations", "listener_wechat_segments", "listener_wechat_messages",
+              "listener_wechat_captures", "listener_wechat_views")
+    #: Rows deleted in one write.
+    PRUNE_BATCH = 200
+
+    def prune(self, db, cutoff, going=None, batch=None):
+        """WeChat's rows last seen before `cutoff`, gone - IN BATCHES, THE LOCK LET GO BETWEEN THEM (the user,
+        2026-11-16: the chat bubble froze, typing and sending; this was one write of 6.9 s, every other writer -
+        the bubble's draft among them - waiting behind it). `going`: asked between batches; no longer going,
+        what is left waits for the next time."""
+        batch = int(batch or self.PRUNE_BATCH)
+        removed = {}
+        for table in self.PRUNED + ("listener_wechat_conversations",):
+            # A conversation goes only when none of its messages is left.
+            unheld = ("" if table != "listener_wechat_conversations" else
+                      " AND NOT EXISTS(SELECT 1 FROM listener_wechat_messages m"
+                      " WHERE m.conversation_id=listener_wechat_conversations.id)")
+            count = 0
+            while going is None or going():
+                with db.write() as conn:
+                    ids = [row[0] for row in conn.execute(
+                        f"SELECT id FROM {table} WHERE last_seen_at<?{unheld} LIMIT ?",
+                        (cutoff, batch)).fetchall()]
+                    if ids:
+                        marks = ",".join("?" for _ in ids)
+                        conn.execute(f"DELETE FROM {table} WHERE id IN ({marks})", ids)
+                count += len(ids)
+                if len(ids) < batch:
+                    break
+            removed[table] = count
+        return {'wechat_messages': removed.get("listener_wechat_messages", 0),
+                'wechat_captures': removed.get("listener_wechat_captures", 0)}

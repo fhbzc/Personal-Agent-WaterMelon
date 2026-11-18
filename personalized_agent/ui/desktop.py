@@ -157,7 +157,10 @@ BUBBLE_LOOK = {
 #: EACH KIND IN ITS OWN COLOUR, on the line of what waits and on its bubble's dot (the user,
 #: 2026-11-07: "推荐用黄色，总结用绿色"): a notification blue, a summary green, a recommendation
 #: yellow - a clear yellow, not the amber of a notification said loud.
-WAITING_INK = {"notifications": "#6aa5ff", "summaries": "#5fd1b3", "recommendations": "#f2d14b"}
+#: How large the picture that went with a side panel message is kept, its longer side in pixels.
+SIDE_PICTURE_SIDE = 1280
+WAITING_INK = {"notifications": "#6aa5ff", "summaries": "#5fd1b3", "recommendations": "#f2d14b",
+               "headsup": "#ff9a5c"}                     # as the side panel's (styles.css)
 SUMMARY_DOT = WAITING_INK["summaries"]
 
 #: WHAT THE MODEL RECOMMENDS LOOKS ITS OWN (the user, 2026-11-04): no notification.
@@ -305,6 +308,16 @@ def zoom_popups(desk: Any, step: int) -> None:
             log.debug("a window could not be zoomed", exc_info=True)
 
 
+def window_writes(desk: Any) -> Any:
+    """The window's writes, handed over (later_writes.py) - made the first time they are asked for."""
+    later = getattr(desk, "_later", None)
+    if later is None:
+        from .later_writes import LaterWrites
+        later = LaterWrites(lambda key, value: DesktopAgent._write_kv(desk, key, value))
+        desk._later = later
+    return later
+
+
 class DesktopAgent:
     def __init__(self, application: Any) -> None:
         self.app = application
@@ -318,6 +331,11 @@ class DesktopAgent:
             updater.quit = lambda: self.on_main_thread(self.quit)
         self.config = application.config
         self.queue: "queue.Queue[Any]" = queue.Queue()
+        # THE WINDOW NEVER WAITS FOR THE DATABASE, AND WHEN IT STANDS STILL IT IS SAID (the user, 2026-11-16:
+        # the chat bubble slow to type in and to send): later_writes.py, stall_watch.py.
+        from .stall_watch import StallWatch
+        window_writes(self)
+        self._stalls = StallWatch()
         self.state = "idle"
         #: Whether the avatar is hidden (Hide avatar): kept here, where the
         #: window's own thread changes it, for the tray's menu to read.
@@ -359,6 +377,10 @@ class DesktopAgent:
         # then cannot be typed into (section 7.1). So the root stays a normal,
         # hidden window, and the character is a child of it.
         self.root = tk.Tk()
+        # What Python lets go of cleaned up by Tk's thread in its own time - never from within a window
+        # procedure, where a Tkinter call aborts Python (2026-11-17, ui/tk_finalizers.py).
+        from . import tk_finalizers
+        tk_finalizers.install(self.root)
         self.root.title(self.app.avatar_name())
         self.root.withdraw()
         if sys.platform == "darwin":
@@ -400,8 +422,21 @@ class DesktopAgent:
         self.app.bus.subscribe("agent.proactive_message", self._on_proactive)
         # The side panel's × puts it away through the desktop (api/routes.py), off this thread.
         self.app.hide_notes_panel = self.hide_notes_panel
+        # Its picture's column opened or put away: the panel wider or back (api/routes.py, off this thread).
+        self.app.widen_notes_panel = self.widen_notes_panel
+        self.app.size_notes_panel = self.size_notes_panel
+        self.app.pin_notes_panel = self.pin_notes_panel
+        self.app.grab_notes_panel = lambda wide=False: DesktopAgent.grab_notes_panel(self, wide)
+        self.app.toggle_notes_panel = lambda: DesktopAgent.toggle_notes_panel(self)
+        # WHAT IS IN FRONT OF THE USER, WITH A MESSAGE FROM THE SIDE PANEL as with one from the bubble before it
+        # (api/routes.py chat_turn): the window behind the panel - the panel is never in the picture.
+        self.app.front_for_chat = lambda told=None: DesktopAgent._front_for_chat(self, told)
         # A NOTIFICATION'S "GO TO IT": the app's window, at the report (api/routes.py, off this thread).
         self.app.open_report_window = self.open_report_window
+        # THE AVATAR IN THE WORLD, NOT ON THE SCREEN, while the Play view is open (api/web/play.js).
+        # The small screen's own screenshot button: the shortcut's cut-out (api/web/side-board.js sideBoardSnip).
+        self.app.snip_into_board = lambda: DesktopAgent._snip_by_shortcut(self)
+        self.app.avatar_in_play = lambda on: self.queue.put(("call", lambda: DesktopAgent.avatar_in_play(self, on)))
         self.app.bus.subscribe("agent.speaking", self._on_speaking)
         self.app.bus.subscribe("character.changed", self._on_character_changed)
         self.app.bus.subscribe("work.handed_opened", self._on_handed_opened)
@@ -608,6 +643,10 @@ class DesktopAgent:
         name = str(self.config.get("character", "watermelon"))
         package = self.app.characters.get(name) or self.app.characters.get("watermelon")
         self._rig = None
+        # Another character, or the same one drawn afresh: none of the kept frames is its own.
+        self._frame_cache = None
+        if isinstance(getattr(self, "_live", None), dict):
+            self._live["shown_key"] = None
         if not package or not PIL_AVAILABLE:
             return
         self._wear_on_taskbar(str(package.get("name") or name))
@@ -699,6 +738,10 @@ class DesktopAgent:
             return
         if (px, py) != live["pointer"]:
             live["pointer"], live["moved"] = (px, py), now
+            if sys.platform == "win32":
+                # Where it went, for the picture sent with a message (windows.pointer_elsewhere).
+                from ..platform_layer import windows as windows_layer
+                windows_layer.POINTER_TRAIL.append((int(px), int(py)))
         # From between its eyes, toward the pointer: all the way at 150 px.
         from ..agent.character import watermelon
         art = getattr(self, "_rig_art", None) or watermelon      # the flat one: its own middle
@@ -793,7 +836,9 @@ class DesktopAgent:
             live["smiling"] = False
         live["smile"], live["smiled_at"] = smile, now
         since = t - live["poked"]
-        squash, hop = 1 + 0.015 * math.sin(2 * math.pi * t / 3.2), 0.0
+        # The breath on one of its poses: a still avatar's frames come round again (avatar_frames.py).
+        from . import avatar_frames
+        squash, hop = avatar_frames.breathing(t), 0.0
         if since < 0.7:                            # clicked: a hop and a squash
             squash = 1 - 0.18 * math.exp(-since * 7) * math.cos(since * 22)
             hop = 7 * math.sin(math.pi * since / 0.35) if since < 0.35 else 0.0
@@ -844,22 +889,39 @@ class DesktopAgent:
                 if (getattr(self, "_tucked", "") or (live.get("slide") or {}).get("leap")) in (
                         "left", "right", "top"):
                     more["turn"] = live["grip"] * (1 - float(live.get("tuck") or 0.0))
-            rig = self._rig.quick() if live.get("slide") else self._rig
-            frame = rig.frame(mood, tuple(look), blink, t, squash, hop, size=self.size,
-                              facing=shown, smile=smile, **more)
-            if narrow < 1.0:
-                from PIL import Image
-                width = max(1, int(self.size * narrow))
-                thin = frame.resize((width, self.size), Image.BILINEAR)
-                frame = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
-                frame.paste(thin, ((self.size - width) // 2, 0), thin)
-            # Whole pixels only: an edge half see-through takes on the colour
-            # the window keys out, which shows as a pink fringe. Not in the
-            # Mac's native view, whose edges are drawn as they are.
-            if self._native_avatar is None:
-                alpha = frame.getchannel("A").point(lambda a: 255 if a >= 110 else 0)
-                frame.putalpha(alpha)
-            self._present_frame(frame)
+            quick = bool(live.get("slide"))
+            rig = self._rig.quick() if quick else self._rig
+            # DRAWN ONCE, SHOWN AFTER (avatar_frames.py): what it is drawn from rounded past what shows,
+            # a frame that comes round again taken from the kept ones, one the same as the one on the
+            # screen not shown again.
+            look, blink, squash, hop, smile = avatar_frames.rounded(tuple(look), blink, squash, hop, smile)
+            cache = getattr(self, "_frame_cache", None)
+            if cache is None:
+                cache = self._frame_cache = avatar_frames.FrameCache()
+            key = None if quick or narrow < 1.0 else cache.key(
+                mood, look, blink, squash, hop, self.size, shown, smile, more,
+                self._native_avatar is not None)
+            shown_now = None if key is None else (key, self._private_mode())
+            if shown_now is None or live.get("shown_key") != shown_now:   # else on the screen already
+                frame = cache.get(key)
+                if frame is None:
+                    frame = rig.frame(mood, look, blink, t, squash, hop, size=self.size,
+                                      facing=shown, smile=smile, **more)
+                    if narrow < 1.0:
+                        from PIL import Image
+                        width = max(1, int(self.size * narrow))
+                        thin = frame.resize((width, self.size), Image.BILINEAR)
+                        frame = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
+                        frame.paste(thin, ((self.size - width) // 2, 0), thin)
+                    # Whole pixels only: an edge half see-through takes on the colour
+                    # the window keys out, which shows as a pink fringe. Not in the
+                    # Mac's native view, whose edges are drawn as they are.
+                    if self._native_avatar is None:
+                        alpha = frame.getchannel("A").point(lambda a: 255 if a >= 110 else 0)
+                        frame.putalpha(alpha)
+                    cache.put(key, frame)
+                self._present_frame(frame)
+                live["shown_key"] = shown_now
         except Exception:                          # pragma: no cover - drawn next time
             log.debug("could not draw the avatar", exc_info=True)
         # Turning, thirty frames a second, so the turn is seen as a turn; and
@@ -1503,7 +1565,9 @@ class DesktopAgent:
         try:
             self.app.shortcuts = Shortcuts(self.app.config,
                                            {"delegate_work": self._delegate_by_shortcut,
-                                            "open_chat": self._chat_by_shortcut},
+                                            "open_chat": self._chat_by_shortcut,
+                                            "side_panel": self._side_panel_by_shortcut,
+                                            "board_snip": self._snip_by_shortcut},
                                            on_main=self._on_the_main_thread)
             self.app.shortcuts.start()
         except Exception:
@@ -1527,7 +1591,117 @@ class DesktopAgent:
         what was written and not sent kept, the next one a new conversation."""
         self.queue.put(("call", self._chat_open_or_closed))
 
+    def _snip_by_shortcut(self) -> None:
+        """A PART OF THE SCREEN INTO THE SMALL SCREEN (the user, 2026-11-17: "能不能我点一个快捷键，我能把某个矩形框的内容拖到
+        image里面"): the screen frozen and a part of it cut out (ui/snip.py, a process of its own), then the side panel
+        opened with it in its small screen. Off Tk's thread - the cut-out waits for the user."""
+        self._off_this_thread(lambda: DesktopAgent._snip_into_the_board(self), "board-snip")
+
+    #: How long a cut-out is waited for.
+    SNIP_SECONDS = 300
+    #: Cut-outs kept for the panel to take, at most.
+    SNIPS_KEPT = 5
+
+    def _snip_into_the_board(self) -> None:
+        import subprocess
+        from pathlib import Path
+        from ..common.privacy_folders import why_no_picture
+        from ..common.events.models import new_id
+        from . import snip
+        side = getattr(self.app, "side_events", None)
+        held = why_no_picture(self.config)
+        if held:                                   # NOTHING OF THE SCREEN while private (privacy_folders.py)
+            if side is not None:
+                side.tell("board", error=f"No picture of the screen now: {held}")
+            return
+        if getattr(self, "_snipping", False):
+            return
+        self._snipping = True
+        out = Path(self.app.paths.data_dir) / "snips" / f"{new_id('snip')}.png"
+        data = b""
+        try:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            child = subprocess.Popen(snip.command(out), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            try:                                   # the keys pressed: this process may hand the front to it
+                import ctypes
+                ctypes.windll.user32.AllowSetForegroundWindow(child.pid)
+            except Exception:
+                pass
+            child.wait(timeout=self.SNIP_SECONDS)
+            if out.exists():
+                data = out.read_bytes()
+        except Exception:
+            log.info("the screen could not be cut", exc_info=True)
+        finally:
+            self._snipping = False
+            try:
+                out.unlink()
+            except OSError:
+                pass
+        if not data:
+            return                                 # Esc: nothing
+        inbox = getattr(self.app, "board_inbox", None)
+        if inbox is None:
+            inbox = self.app.board_inbox = {}
+        ident = new_id("cut")
+        inbox[ident] = data
+        while len(inbox) > self.SNIPS_KEPT:
+            inbox.pop(next(iter(inbox)))
+        # The panel in front - opened if it was not - and told to take it into its small screen.
+        if not self._notes_open_now():
+            self.queue.put(("call", self.open_notifications))
+        if side is not None:
+            side.tell("board", cut=ident)
+
+    def _side_panel_by_shortcut(self) -> None:
+        """THE SIDE PANEL AT A KEY (the user, 2026-11-16): open, it is put away; put away or never opened,
+        it comes in - at once, on the window's thread."""
+        self.queue.put(("call", self._side_panel_in_or_out))
+
+    def _side_panel_in_or_out(self) -> None:
+        # PINNED, ITS KEYS GO TO ITS CHAT (the user, 2026-11-17: "当我sidebar pin的时候，打开sidebar的快捷键的功能变成焦点
+        # 切换到sidebar的chat上（而不是展开/收起sidebar)" - "包括chat的快捷键也是"): shown, the keys to its box; put
+        # away, back with the keys in its box. Not pinned: in, or away, as before.
+        pinned = bool(getattr(self, "config", None) is not None and self.config.get("side_panel_pinned", False))
+        if self._notes_open_now():
+            if pinned and sys.platform == "win32":
+                self._off_this_thread(lambda: DesktopAgent._keys_to_the_side_chat(self), "side-panel-keys")
+                return
+            self._off_this_thread(self.hide_notes_panel, "side-panel-away")
+        else:
+            self.open_notifications()
+            if pinned and getattr(self, "root", None) is not None:
+                # Once it is in: the keys to its box.
+                self.root.after(self.KEYS_AFTER_OPEN_MS, lambda: self._off_this_thread(
+                    lambda: DesktopAgent._keys_to_the_side_chat(self), "side-panel-keys"))
+
+    #: How long after it is opened by its keys the keys are put in its box.
+    KEYS_AFTER_OPEN_MS = 350
+
+    def _keys_to_the_side_chat(self) -> None:
+        """The side panel in front, where the user types: its window the active one and its page given the keys (by
+        its host, where the window is - panel_host.focus_panel), and the page told to put them in its box."""
+        from ..platform_layer import app_window
+        host = getattr(self, "panel_host", None)
+        focused = False
+        try:
+            focused = bool(host is not None and host.focus(self._notes_titles()))
+        except Exception:
+            log.debug("the side panel's host could not give it the keys", exc_info=True)
+        if not focused:
+            app_window.bring_back_titled(self._notes_titles())
+        DesktopAgent._tell_the_panel(self, peeking=False, by_user=True, focus=True)
+
+    def _side_panel_here(self) -> bool:
+        """Whether the side panel - the chat now - opens here: Windows, or a Mac with its own panels."""
+        if os.environ.get("PA_NO_DIALOGS"):
+            return False
+        return sys.platform == "win32" or self._notes_on_a_mac()
+
     def _chat_open_or_closed(self) -> None:
+        if DesktopAgent._side_panel_here(self):          # the chat is the side panel: in, or away
+            self._side_panel_in_or_out()
+            return
         bubble = getattr(self, "_chat_bubble", None)
         if bubble is not None and bubble.is_open:
             bubble.close()
@@ -1696,7 +1870,19 @@ class DesktopAgent:
                 log.exception("could not hand the selected text to the learning")
         threading.Thread(target=hand_over, name="learn-selection", daemon=True).start()
 
-    def toggle_character(self) -> None:
+    def avatar_in_play(self, on: bool) -> None:
+        """THE AVATAR WALKS IN THE WORLD INSTEAD (the user, 2026-11-17: "logo就不在显示在屏幕上，但是会显示在游戏视图里（主角的
+        avatar, 有行走动画什么的)"): the Play view open, the character off the screen - back when it shuts, unless the user
+        hid it themselves meanwhile (then it stays as they left it). On Tk's thread."""
+        if on and not self.character_hidden:
+            self.toggle_character(remember=False)
+            self._hidden_for_play = True
+        elif not on and getattr(self, "_hidden_for_play", False):
+            self._hidden_for_play = False
+            if self.character_hidden:
+                self.toggle_character(remember=False)
+
+    def toggle_character(self, remember: bool = True) -> None:
         """Show or hide the character on screen; the agent keeps running,
         and its icon beside the clock stays.
 
@@ -1721,6 +1907,11 @@ class DesktopAgent:
                 self.character_hidden = True
         except Exception:        # pragma: no cover - the window has gone
             log.debug("could not show or hide the character", exc_info=True)
+        if remember:                               # the user's own choice, kept for the next start
+            try:
+                self.config.set("avatar_on_screen", not self.character_hidden, internal=True)
+            except Exception:
+                log.debug("whether the avatar is on the screen could not be kept", exc_info=True)
         tray = getattr(self, "tray", None)
         if tray is not None:
             tray.refresh_menu()
@@ -1894,6 +2085,12 @@ class DesktopAgent:
             # Before anything of this covers it - and, the chat's, its words not read (the user,
             # 2026-11-08: "chat的这个可以跳过。不需要识别"): the picture goes as it was taken.
             pictures.take(words=False)
+        # THE SIDE PANEL IS THE CHAT (the user, 2026-11-16: "你现在的chat框取消，之后sidebar就是一个聊天框（当然可以有
+        # 那个image panel), 所以不需要单独的chat"): where it can be opened - Windows, a Mac - it opens instead of the
+        # bubble; the bubble only where there is none.
+        if DesktopAgent._side_panel_here(self):
+            self.open_notifications()
+            return
         from ..agent.front_screen import front_now
         from .chat_bubble import ChatBubble
         bubble = getattr(self, "_chat_bubble", None)
@@ -1948,13 +2145,21 @@ class DesktopAgent:
 
     def _chat_draft(self) -> str:
         """What was written in the bubble and not sent, through a restart too - in the
-        database, not among the settings."""
+        database, not among the settings; one handed over and not yet written, from there."""
+        waiting = window_writes(self).waiting("chat.draft", None)
+        if waiting is not None:
+            return str(waiting)
         row = self.app.db.query_one("SELECT value FROM kv WHERE key = 'chat.draft'")
         return str(row["value"]) if row and row["value"] else ""
 
     def _keep_chat_draft(self, text: str) -> None:
-        self.app.db.execute("INSERT INTO kv (key, value) VALUES ('chat.draft', ?) ON CONFLICT(key) "
-                            "DO UPDATE SET value = excluded.value", (text,))
+        """Handed over, never written here: the bubble goes on while it waits its turn (later_writes.py)."""
+        window_writes(self).put("chat.draft", text)
+
+    def _write_kv(self, key: str, value: Any) -> None:
+        """One of the window's writes, on the thread they are written on."""
+        self.app.db.execute("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) "
+                            "DO UPDATE SET value = excluded.value", (key, value))
 
     def _said_in_the_bubble(self, text: str, conversation: Optional[str], files: Any = None,
                             mentions: Any = None, on_text: Any = None) -> Any:
@@ -1963,17 +2168,19 @@ class DesktopAgent:
                                              mentions=mentions or None, on_text=on_text,
                                              front=note, seen=seen)
 
-    def _front_for_chat(self) -> tuple:
+    def _front_for_chat(self, told: Optional[Dict[str, Any]] = None) -> tuple:
         """What goes with a message: what the bubble says, and the picture of the
         screen with the words read in it - unless taken off there, or the user
-        has moved on from what the picture shows. (note, pictures)."""
+        has moved on from what the picture shows. (note, pictures). `told` (the side panel's, which is
+        in another process): filled with what the bubble was shown - "picture", the picture as PNG bytes,
+        "how" it went ("sent", "words", "not") and "why", or "withheld" and why none was taken."""
         from ..agent.front_screen import MOST_TEXT, front_now, note_of
         try:
             said = front_now(self.app.db, self.app.config)
         except Exception:                # a message goes, whatever this could not read
             log.info("what is in front of the user could not be read", exc_info=True)
             return "", []
-        bubble = getattr(self, "_chat_bubble", None)
+        bubble = getattr(self, "_chat_bubble", None) if told is None else None
         off = getattr(bubble, "front_off", "")
         if off and said.get("title") == off:
             return "", []
@@ -1998,6 +2205,8 @@ class DesktopAgent:
         if shot.get("pointer"):
             said = dict(said, pointer=shot["pointer"])    # where the mouse was (2026-11-13)
         seen = pictures.blocks(shot)
+        if told is not None:
+            DesktopAgent._tell_the_side_panel(self, told, pictures, shot, seen)
         if showing:
             sees = getattr(self, "_chat_model_sees", lambda: True)()
             if preview is None and seen and shot.get("path"):
@@ -2018,6 +2227,37 @@ class DesktopAgent:
                 if withheld(held) and callable(getattr(bubble, "picture_withheld", None)):
                     self.queue.put(("call", lambda: bubble.picture_withheld(held)))
         return note_of(said), seen
+
+    def _tell_the_side_panel(self, told: Dict[str, Any], pictures: Any, shot: Dict[str, Any], seen: Any) -> None:
+        """THE PICTURE THAT WENT WITH A MESSAGE FROM THE SIDE PANEL, as the bubble showed it (the user, 2026-11-16:
+        "你现在那些之前的feature, 包括当前屏幕，context什么的都要实现"): the picture small, as PNG bytes - kept in
+        memory only, never in a file - and whether it went, and why not."""
+        if not seen:
+            from ..common.privacy_folders import withheld
+            held = str(getattr(pictures, "why", "") or "")
+            if withheld(held):
+                told["withheld"] = held
+            return
+        sees = DesktopAgent._chat_model_sees(self)
+        how = "sent" if sees else "words"
+        why = str(getattr(pictures, "why", "") or "")
+        if how == "words" and not shot.get("words"):
+            how, why = "not", "this model sees no pictures"
+        told["how"], told["why"] = how, why
+        try:
+            import io
+
+            from PIL import Image
+            path = shot.get("path")
+            if path:
+                with Image.open(str(path)) as found:
+                    view = found.convert("RGB")
+                view.thumbnail((SIDE_PICTURE_SIDE, SIDE_PICTURE_SIDE))
+                kept = io.BytesIO()
+                view.save(kept, "PNG", optimize=True)
+                told["picture"] = kept.getvalue()
+        except Exception:
+            log.debug("the picture sent could not be kept for the side panel", exc_info=True)
 
     def _chat_model_sees(self) -> bool:
         """Whether the chat's first model is given pictures, or their words only."""
@@ -2156,10 +2396,7 @@ class DesktopAgent:
         the latest - or that the agent is still starting."""
         if self._hover is None:
             return
-        if not getattr(self, "_hover_reading", False):
-            self._hover_reading = True
-            threading.Thread(target=self._read_hover, name="hover-reader",
-                             daemon=True).start()
+        self._kept_worker("hover-reader", self._read_hover)       # one thread kept for it, told
         self._show_hover(getattr(self, "_hover_said", None))
         self._hover_job = self.root.after(1000, self._refresh_hover)
 
@@ -2536,6 +2773,9 @@ class DesktopAgent:
 
         def kept_ticks(one: Dict[str, Any]) -> list:
             try:
+                waiting = window_writes(self).waiting(tick_key(one), None)
+                if waiting is not None:          # handed over, not yet written
+                    return json.loads(waiting)
                 row = self.app.db.query_one("SELECT value FROM kv WHERE key = ?", (tick_key(one),))
                 return json.loads(row["value"]) if row and row["value"] else []
             except Exception:                    # none ticked, then
@@ -2550,9 +2790,8 @@ class DesktopAgent:
                                                                        "n": "project"}))
 
         def ticked(words: list, shown: Optional[Dict[str, Any]] = None) -> None:
-            self.app.db.execute("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) "
-                                "DO UPDATE SET value = excluded.value",
-                                (tick_key(shown or note), json.dumps(list(words), ensure_ascii=False)))
+            # Handed over: the window never waits for the database (later_writes.py).
+            window_writes(self).put(tick_key(shown or note), json.dumps(list(words), ensure_ascii=False))
 
         def approval_item(k: int, opening: bool = False) -> None:
             """A row of the approvals panel: what the agent made for it, shown below the rows."""
@@ -2683,6 +2922,8 @@ class DesktopAgent:
         comes by itself when it is over. One on the screen when it begins, as
         slides go up, goes back to the head of the line, unanswered."""
         self._look_for_work_waiting()
+        if getattr(self, "_side_tab_on", False):
+            DesktopAgent._side_tab_unread(self)      # its dot kept true
         if not self._blocker():
             self._bubbles_opened = False
             self._show_next_bubble()
@@ -2701,18 +2942,28 @@ class DesktopAgent:
 
     def _look_for_work_waiting(self) -> None:
         """Off Tk's thread: a run is asked, in its own process, and one look at a time."""
-        if getattr(self, "_looking_for_work", False):
-            return
-        self._looking_for_work = True
+        self._kept_worker("work-waiting", self.app.tell_work_waiting)
 
-        def look() -> None:
-            try:
-                self.app.tell_work_waiting()
-            except Exception:                # the next look catches up
-                log.debug("could not ask what work waits for", exc_info=True)
-            finally:
-                self._looking_for_work = False
-        threading.Thread(target=look, name="work-waiting", daemon=True).start()
+    def _kept_worker(self, name: str, work: Any) -> None:
+        """`work` done on ONE thread kept for it, told by an Event - Tk's thread never waits on it (2026-11-16: the
+        avatar froze, black, deaf to the mouse - Tk's thread stood in Thread.start() waiting for a new thread to say
+        it had begun, as it started one every few seconds; that one never did). Started the first time; asked while
+        it works, it works once more after; asked many times meanwhile, once."""
+        workers = self.__dict__.setdefault("_kept_workers", {})
+        asked = workers.get(name)
+        if asked is None:
+            asked = workers[name] = threading.Event()
+
+            def working() -> None:
+                while True:
+                    asked.wait()
+                    asked.clear()
+                    try:
+                        work()
+                    except Exception:                # the next time catches up
+                        log.debug("%s could not be done", name, exc_info=True)
+            threading.Thread(target=working, name=name, daemon=True).start()
+        asked.set()
 
     def _open_waiting(self) -> None:
         """Pressed: what was kept, the list - the bubbles held while it is open, and coming again
@@ -2727,11 +2978,12 @@ class DesktopAgent:
     #: Its window's title, as the page sets it (app.js, NOTES_SOLO) - in English and as shown.
     NOTES_TITLE = "Waiting notifications - Personal Agent WaterMelon"
 
-    def open_notifications(self) -> None:
+    def open_notifications(self, quietly: bool = False) -> None:
         """THE WAITING NOTIFICATIONS DOWN THE WHOLE SIDE OF THE SCREEN (the user, 2026-11-13: "你现在这个
         notifications/recommendation的channel太不现代了，能不能直接占满整个侧边框的那种（类似reports每个事项点击之后
         弹出来的内容)"): a page in a window of its own, docked to the right edge as tall as the screen -
-        brought back when it is open already. The line beside the avatar goes as each is answered."""
+        brought back when it is open already. The line beside the avatar goes as each is answered. quietly: a
+        notification's - shown, where the user is typing left in front (as its bubble was)."""
         from ..platform_layer import app_window
         titles = self._notes_titles()
         on_a_mac = self._notes_on_a_mac()
@@ -2748,22 +3000,70 @@ class DesktopAgent:
         if on_a_mac:
             # ON A MAC THE SAME (the user, 2026-11-13: "Mac上的面板为什么不改呢"): a panel of the agent's own,
             # Apple's WebKit, down the right side - made on the main thread, at once (no browser).
-            self.queue.put(("call", self._open_notes_on_a_mac))
+            self.queue.put(("call", lambda: DesktopAgent._open_notes_on_a_mac(self, quietly)))
             return
 
+        # OPENED BY A NOTIFICATION, OVER THE WINDOWS ONLY (2026-11-16: pinned and put away, a notification took the
+        # strip again and moved the user's windows as they typed) - and put away again untouched (`_put_away_untouched`).
+        if quietly and DesktopAgent._film_in_front(self):
+            # NOT OVER A FILM (the user, 2026-11-16: "全屏的时候我把他collapse, 他自动又会出现"): a notification while
+            # something fills the screen waits - told in the panel once it is over.
+            if not getattr(self, "_notes_after_film", False):
+                self._notes_after_film = True
+                self.root.after(self.FILM_LOOK_MS, lambda: DesktopAgent._open_after_film(self))
+            return
+        self._side_tab_on = self._tab_for_cover = False      # opened: no longer its tab alone
+        if getattr(self, "queue", None) is not None:
+            self.queue.put(("call", lambda: DesktopAgent._hide_side_tab(self)))   # its tab away
+        if quietly is False and not DesktopAgent._film_in_front(self):
+            self._over_film = False            # opened again with no film: as usual
+        # OVER A FILM WHEN THE USER OPENS IT (the user, 2026-11-16: "全屏时候，点ctrl+c 打开sidebar没用"): above it,
+        # over the windows - its strip is no use while a film fills the screen.
+        film = not quietly and DesktopAgent._film_in_front(self)
+        if quietly:
+            self._quiet_opened_at = time.monotonic()
+            self.root.after(self.UNTOUCHED_MS, lambda at=self._quiet_opened_at: DesktopAgent._put_away_untouched(self, at))
+        else:
+            self._quiet_opened_at = None
+
         def go() -> None:
+            # THE OTHER WINDOWS MAKE ROOM (dock.py): its strip of the screen taken as it slides in - when the user
+            # opened it.
+            pinned = DesktopAgent._side_dock(self)
+            # PINNED, OVER A FILM TOO: its strip taken and the film made room for (dock.py `over_film`); not pinned,
+            # over the film - its strip, if one was left, given back first.
+            over = film and pinned is None
+            dock = None if quietly or over else pinned
+            if over:
+                held = getattr(self, "_dock", None)
+                if held is not None and held.docked:
+                    held.undock()
+            if film and dock is not None:
+                dock.over_film = True
             # PUT AWAY, NOT CLOSED: slid back in at once - a browser started only the first time.
-            if app_window.slide_in_titled(titles, width=app_window.NOTES_SIZE[0]):
+            wide = DesktopAgent._notes_width(self)               # as the user left it
+            size = (wide, app_window.NOTES_SIZE[1])
+            try:
+                opened = app_window.slide_in_titled(titles, width=wide, dock=dock, activate=not quietly)
+            finally:
+                if dock is not None:
+                    dock.over_film = False
+            if opened:
+                if over:
+                    app_window.on_top_titled(titles, True)
+                    self.queue.put(("call", lambda: DesktopAgent._over_the_film(self)))
+                # Opened by the user: the keys in its box, as by its keys (2026-11-17: "第一次按钮expand, 焦点会在search上").
+                DesktopAgent._tell_the_panel(self, peeking=False, by_user=not quietly, focus=not quietly)
                 return
             url = self.app.sign_in_url(self.NOTES_PATH)
             # IN WEBVIEW2, STARTED BEFORE IT WAS WANTED (panel_host.py; the user, 2026-11-14: "接进") - else, as
             # before, the browser's app mode. The first time too: put down the side before it is shown, then
             # slid in.
             if app_window.open_hosted_side_window(getattr(self, "panel_host", None), url,
-                                                  app_window.NOTES_SIZE, self.NOTES_TITLE, titles):
+                                                  size, self.NOTES_TITLE, titles, dock=dock):
                 return
             if not app_window.open_side_window(url, self.app.paths.data_dir / app_window.NOTES_PROFILE,
-                                               app_window.NOTES_SIZE, titles=titles):
+                                               size, titles=titles):
                 webbrowser.open(url)
         self._off_this_thread(go, "open-notifications")
 
@@ -2772,18 +3072,128 @@ class DesktopAgent:
     #: How often the open side panel is looked for; how long one being started is waited for.
     NOTES_WATCH_MS, NOTES_COMING_SECONDS = 700, 15.0
 
+    def _side_dock(self) -> Any:
+        """THE SIDE PANEL MAKES ROOM ONLY WHEN THE USER PINNED IT (the user, 2026-11-16: "所有notification弹出现在都是
+        不缩放，只有user主动选择固定在右边，才是缩放的view(相当于右边固定被sidebar占据)"; dock.py) - on Windows; else
+        None, and the panel opens over the other windows."""
+        config = getattr(self, "config", None)
+        if sys.platform != "win32" or config is None or not config.get("side_panel_pinned", False):
+            return None
+        dock = getattr(self, "_dock", None)
+        if dock is None:
+            from ..platform_layer.dock import Dock
+            dock = self._dock = Dock(self.app.paths.data_dir / "side_panel_dock.json")
+        return dock
+
+    def _give_the_room_back(self) -> None:
+        """Its strip of the screen given back and the windows moved for it put back - whatever the setting
+        is now (one switched off while the panel was open)."""
+        dock = getattr(self, "_dock", None)
+        if dock is not None and dock.docked:
+            dock.undock()
+        on_a_mac = getattr(self, "_mac_dock", None)
+        if on_a_mac is not None and on_a_mac.docked:
+            on_a_mac.undock()
+
     def _notes_on_a_mac(self) -> bool:
         if sys.platform != "darwin":
             return False
         from . import mac_panel
         return mac_panel.available()
 
-    def _open_notes_on_a_mac(self) -> None:
+    #: How often a notification held back by a film looks again whether the film is over.
+    FILM_LOOK_MS = 5000
+
+    def _film_in_front(self) -> bool:
+        """Whether a window fills its screen in front - a film, a game, a slide show (Windows) - this application's own
+        windows passed over: the side panel or the avatar pressed on is not the end of the film."""
+        if sys.platform != "win32":
+            return False
+        from ..platform_layer.dock import full_screen_now
+        from ..platform_layer import windows
+        return full_screen_now(skip={os.getpid(), *windows.OTHER_OWN_PROCESSES})
+
+    def _over_the_film(self) -> None:
+        """OPENED BY THE USER OVER A FILM (the user, 2026-11-16: "全屏的时候ctrl C, 显示出来了sidebar, 我又点了一下全屏的视频，
+        sidebar好像被最小化了 ... 再ctrl + C, sidebar 的位置就没有靠着最右边"): its strip given back - the film is
+        over all of it - so that it is not hidden for the film, nor put by the room the strip had left; above the
+        film till the user puts it away. The film over and the panel still shown: pinned, its strip taken again;
+        else among the windows again."""
+        self._over_film = True
+        if not getattr(self, "_film_watching", False):
+            self._film_watching = True
+            self.root.after(self.FILM_LOOK_MS, lambda: DesktopAgent._film_over_yet(self))
+
+    def _film_over_yet(self) -> None:
+        if getattr(self, "_over_film", False) and DesktopAgent._film_in_front(self):
+            self.root.after(self.FILM_LOOK_MS, lambda: DesktopAgent._film_over_yet(self))
+            return
+        self._film_watching = False
+        if not getattr(self, "_over_film", False):
+            return
+        self._over_film = False
+        if not self._notes_open_now():
+            return
+        from ..platform_layer import app_window
+        titles, width = self._notes_titles(), DesktopAgent._notes_width(self)
+        dock = DesktopAgent._side_dock(self)
+
+        def back() -> None:
+            if dock is None or not app_window.dock_titled(titles, width, dock):
+                app_window.on_top_titled(titles, False)
+        threading.Thread(target=back, name="side-panel-after-film", daemon=True).start()
+
+    def _open_after_film(self) -> None:
+        if DesktopAgent._film_in_front(self):
+            self.root.after(self.FILM_LOOK_MS, lambda: DesktopAgent._open_after_film(self))
+            return
+        self._notes_after_film = False
+        if self.app.notifications.for_the_side():
+            self.open_notifications(quietly=True)
+
+    #: How long a side panel a notification opened stays, never touched, before it is put away again.
+    UNTOUCHED_MS = 45000
+
+    def _put_away_untouched(self, opened_at: float) -> None:
+        """A side panel a notification opened, untouched since (pressed on, typed in - api/routes.py side_touched),
+        put away again - not when the user opened it since; pinned or not."""
+        if getattr(self, "_quiet_opened_at", None) != opened_at:
+            return
+        if float(getattr(self.app, "side_touched_at", 0.0) or 0.0) >= opened_at:
+            return
+        # PINNED TOO: it was put away before the notification opened it, and nothing took its strip for it (it stayed
+        # over the windows for good - 2026-11-17).
+        self._quiet_opened_at = None
+        self.hide_notes_panel()
+
+    def _open_notes_on_a_mac(self, quietly: bool = False) -> None:
         from . import mac_panel
         from ..platform_layer import app_window
         url = self.app.sign_in_url(self.NOTES_PATH)
-        if not mac_panel.side_panel(url, app_window.NOTES_SIZE[0], self.NOTES_TITLE):
+        if not mac_panel.side_panel(url, DesktopAgent._notes_width(self), self.NOTES_TITLE, activate=not quietly):
             webbrowser.open(url)
+            return
+        DesktopAgent._make_room_on_a_mac(self)
+
+    def _make_room_on_a_mac(self) -> None:
+        """THE OTHER WINDOWS MOVE OVER ON A MAC TOO (the user, 2026-11-16; platform_layer/dock_mac.py): those the
+        shown panel covers, by the Accessibility API - asked for once, by the system, when it is not allowed. On
+        the main thread (where the panel is read); the moving off it."""
+        config = getattr(self, "config", None)
+        if config is None or not config.get("side_panel_pinned", False):
+            return
+        try:
+            from . import mac_panel
+            from ..platform_layer.dock_mac import MacDock
+            placed = mac_panel.side_panel_strip(self.NOTES_TITLE)
+            if placed is None:
+                return
+            dock = getattr(self, "_mac_dock", None)
+            if dock is None:
+                dock = self._mac_dock = MacDock()
+            dock.dock(*placed)
+        except Exception:                        # the panel open over the others, then
+            log.info("the other windows could not be moved for the side panel", exc_info=True)
 
     def _notes_titles(self) -> set:
         from ..common.interface_words import shown
@@ -2806,13 +3216,192 @@ class DesktopAgent:
         """While the side panel is shown, nothing beside the avatar; put away or closed - by its ×, by
         the window's own, or empty - what still waits is drawn again."""
         shown = self._notes_open_now()
+        dock = getattr(self, "_dock", None)
+        if not shown and dock is not None and getattr(dock, "stepped_aside", False):
+            # Out of the way of a film (dock.py), not put away: its strip kept, shown again when it is over.
+            self.root.after(self.NOTES_WATCH_MS, self._watch_notes)
+            return
         if shown:
             self._notes_seen = True
+            self._notes_gone_looks = 0
+            DesktopAgent._keep_docked(self)
+            DesktopAgent._tab_when_covered(self)
         elif self._notes_seen or time.monotonic() - getattr(self, "_notes_since", 0) > self.NOTES_COMING_SECONDS:
+            # GONE ONLY WHEN NOT SEEN A FEW LOOKS IN A ROW (the user, 2026-11-17: "他是pined, 但是莫名其妙又不是置顶的了" -
+            # its strip was given back, unlogged, while it stayed shown: one look that missed it was taken for its
+            # end, and the watch stopped - nothing took the strip again).
+            gone = self._notes_gone_looks = int(getattr(self, "_notes_gone_looks", 0) or 0) + 1
+            if gone < self.NOTES_GONE_LOOKS:
+                self.root.after(self.NOTES_WATCH_MS, self._watch_notes)
+                return
+            self._notes_gone_looks = 0
             self._notes_watching = False
             self._waiting_list_open(False)
+            # GONE HOWEVER IT WENT - its window's own ×, say: the room it took given back.
+            dock = getattr(self, "_dock", None)
+            if dock is not None and dock.docked:
+                log.info("the side panel is gone; its strip of the screen given back")
+                threading.Thread(target=dock.undock, name="side-panel-room", daemon=True).start()
+            on_a_mac = getattr(self, "_mac_dock", None)
+            if on_a_mac is not None and on_a_mac.docked:
+                on_a_mac.undock()                        # moves back off this thread itself
             return
         self.root.after(self.NOTES_WATCH_MS, self._watch_notes)
+
+    def _tab_when_covered(self) -> None:
+        """NOT PINNED, ITS TAB WHILE ANOTHER WINDOW IS OVER IT (the user, 2026-11-17: "取消pin之后，expand按钮缩放后也消失了，
+        这个按钮不应该消失"): not pinned, the panel is a window among the others - a browser pressed on comes over it, and
+        it was gone with no tab to bring it back. While one is over it, its tab at the screen's edge; pressed, the panel
+        brought to the front (open_notifications); in front again, the tab away. Pinned, it stands above them all."""
+        if sys.platform != "win32":
+            return
+        from ..platform_layer import app_window
+        pinned = bool(getattr(self, "config", None) is not None and self.config.get("side_panel_pinned", False))
+        covered = not pinned and app_window.covered_titled(self._notes_titles())
+        if covered and not getattr(self, "_side_tab_on", False):
+            self._side_tab_on = self._tab_for_cover = True
+            DesktopAgent._show_side_tab(self)
+        elif not covered and getattr(self, "_tab_for_cover", False):
+            self._side_tab_on = self._tab_for_cover = False
+            DesktopAgent._hide_side_tab(self)
+
+    #: How many looks in a row the side panel must be missing to be taken as gone.
+    NOTES_GONE_LOOKS = 3
+    #: How long after one try the strip of a pinned panel shown without one is taken again, at the most often.
+    REDOCK_SECONDS = 10.0
+
+    def _keep_docked(self) -> None:
+        """PINNED AND SHOWN, IN ITS STRIP: the panel the user opened, pinned, shown without its strip (given back by
+        something that did not put it away) - the strip taken again, above the others as pinned. Not one a
+        notification opened (over the windows only), nor over a film, nor one stepped aside for a film."""
+        # A NOTIFICATION'S PANEL TOUCHED IS THE USER'S (the user, 2026-11-17: "在Pin的情况下，居然进入了pin的位置" - opened by a
+        # notification over the windows, it stayed so for good once pressed on, and the windows came over its strip):
+        # pressed on or typed in since, it is pinned as the user's own is - in its strip.
+        quiet = getattr(self, "_quiet_opened_at", None)
+        app = getattr(self, "app", None)
+        if quiet and float(getattr(app, "side_touched_at", 0.0) or 0.0) >= quiet:
+            self._quiet_opened_at = None
+        if sys.platform != "win32" or getattr(self, "_quiet_opened_at", None) or getattr(self, "_over_film", False):
+            return
+        dock = DesktopAgent._side_dock(self)
+        if dock is None or dock.docked or getattr(dock, "stepped_aside", False):
+            return
+        now = time.monotonic()
+        if now - float(getattr(self, "_redocked_at", 0.0) or 0.0) < self.REDOCK_SECONDS:
+            return
+        self._redocked_at = now
+        if DesktopAgent._film_in_front(self):
+            return
+        from ..platform_layer import app_window
+        titles, width = self._notes_titles(), DesktopAgent._notes_width(self)
+        log.info("the side panel is pinned and shown without its strip of the screen; taken again")
+        self._off_this_thread(lambda: app_window.dock_titled(titles, width, dock), "side-panel-redock")
+
+    #: THE SIDE PANEL'S WIDTH, AS THE USER LEFT IT (the user, 2026-11-16: "那个side bar 要允许我鼠标拖动size"), in the
+    #: screen's own units - never narrower or wider than these. With its picture beside the chat ("有图的时候才展开")
+    #: it is as wide again.
+    NOTES_NARROWEST, NOTES_WIDEST = 320, 900
+
+    def _notes_width(self) -> int:
+        from ..platform_layer import app_window
+        config = getattr(self, "config", None)
+        try:
+            kept = int(config.get("side_panel_width", 0) or 0) if config is not None else 0
+        except (TypeError, ValueError, AttributeError):
+            kept = 0
+        return max(DesktopAgent.NOTES_NARROWEST, min(DesktopAgent.NOTES_WIDEST, kept or app_window.NOTES_SIZE[0]))
+
+    def pin_notes_panel(self, pinned: Optional[bool]) -> bool:
+        """THE SIDE PANEL PINNED TO THE RIGHT, OR NOT (its pin): pinned, the strip down the right is its own and
+        the other windows stand beside it - at once while it is shown, and each time it opens after; not, it
+        opens over them. `pinned` None: only asked. Whether it is pinned."""
+        config = self.config
+        if pinned is None:
+            return bool(config.get("side_panel_pinned", False))
+        config.set("side_panel_pinned", bool(pinned), internal=True)
+        if self._notes_on_a_mac():
+            if pinned:
+                self.queue.put(("call", lambda: DesktopAgent._make_room_on_a_mac(self)))
+            else:
+                DesktopAgent._give_the_room_back(self)
+            return bool(pinned)
+        if sys.platform != "win32":
+            return bool(pinned)
+        from ..platform_layer import app_window
+
+        def change() -> None:
+            if pinned:
+                dock = DesktopAgent._side_dock(self)
+                if dock is not None:
+                    app_window.dock_titled(self._notes_titles(), DesktopAgent._notes_width(self), dock)
+            else:
+                DesktopAgent._give_the_room_back(self)
+        self._off_this_thread(change, "side-panel-pin")
+        return bool(pinned)
+
+    def grab_notes_panel(self, wide: bool = False) -> bool:
+        """THE SIDE PANEL'S LEFT EDGE PRESSED, ON WINDOWS: followed from here, where the pointer really is, till it
+        is let go (app_window.drag_left_edge_titled) - then its width kept, and the other windows moved for it when
+        it is pinned (`size_notes_panel`). False where the page follows it itself (a Mac)."""
+        if sys.platform != "win32" or os.environ.get("PA_NO_DIALOGS") or self._notes_on_a_mac():
+            return False
+        from ..platform_layer import app_window
+        times = 2 if wide else 1                  # its picture's column beside the chat: twice as wide
+
+        def let_go(width: int) -> None:
+            DesktopAgent.size_notes_panel(self, round(width / times), True, wide)
+        return app_window.drag_left_edge_titled(self._notes_titles(), self.NOTES_NARROWEST * times,
+                                                self.NOTES_WIDEST * times, let_go)
+
+    def size_notes_panel(self, width: int, final: bool, wide: bool = False) -> bool:
+        """THE SIDE PANEL MADE AS WIDE AS IT IS DRAGGED (its left edge): `width` the chat's - twice it with its
+        picture beside it (`wide`); while dragged, only itself - the other windows moved once, when it is let
+        go - and that width kept for the next time. False where it cannot be."""
+        from ..platform_layer import app_window
+        chat = max(self.NOTES_NARROWEST, min(self.NOTES_WIDEST, int(width)))
+        if final:
+            self.config.set("side_panel_width", chat, internal=True)
+        width = chat * 2 if wide else chat
+        if self._notes_on_a_mac():
+            from . import mac_panel
+            if not mac_panel.has_side_panel(self.NOTES_TITLE):
+                return False
+
+            def sized() -> None:
+                if mac_panel.resize_side_panel(self.NOTES_TITLE, width) and final:
+                    self._make_room_on_a_mac()
+            self.queue.put(("call", sized))
+            return True
+        if sys.platform != "win32":
+            return False
+        dock = getattr(self, "_dock", None)
+        done = app_window.resize_titled(self._notes_titles(), width, dock=dock if final else None)
+        # SAID WHEN IT IS LET GO (2026-11-16: "我现在都没法拖动size了") - what was asked and what came of it.
+        if final or not done:
+            log.info("the side panel dragged to %s (%s): %s%s", width, "let go" if final else "while dragged",
+                     "done" if done else "NOT done", ", pinned" if dock is not None and dock.docked else "")
+        return done
+
+    def widen_notes_panel(self, wide: bool) -> bool:
+        """The side panel made wide for its picture's column, or as narrow as the chat again - the room it
+        takes on the screen with it. False where it cannot be here: the page shows the picture above the
+        chat instead."""
+        from ..platform_layer import app_window
+        width = self._notes_width() * 2 if wide else self._notes_width()
+        if self._notes_on_a_mac():
+            from . import mac_panel
+            if not mac_panel.has_side_panel(self.NOTES_TITLE):
+                return False
+            # On the main thread, as every window of a Mac's is changed (`hide_notes_panel`) - and the windows
+            # it now covers moved over too.
+            def wider() -> None:
+                if mac_panel.resize_side_panel(self.NOTES_TITLE, width):
+                    self._make_room_on_a_mac()
+            self.queue.put(("call", wider))
+            return True
+        if sys.platform != "win32":
+            return False
+        return app_window.resize_titled(self._notes_titles(), width, dock=getattr(self, "_dock", None))
 
     def hide_notes_panel(self) -> bool:
         """THE SIDE PANEL PUT AWAY - slid out and kept, hidden, to be slid back in (its × and Escape,
@@ -2823,8 +3412,200 @@ class DesktopAgent:
             if not mac_panel.has_side_panel(self.NOTES_TITLE):
                 return False
             self.queue.put(("call", lambda: mac_panel.hide_side_panel(self.NOTES_TITLE)))   # main thread
+            on_a_mac = getattr(self, "_mac_dock", None)
+            if on_a_mac is not None:
+                on_a_mac.undock()                        # the windows moved for it, back
             return True
-        return app_window.slide_out_titled(self._notes_titles())
+        # PUT AWAY, ITS TAB ALONE LEFT AT THE SCREEN'S EDGE (the user, 2026-11-16: "collapse的时候这个凸起还是在边框外（这样我
+        # 可以点击展开)" - "还是一整个bar, 不能就留一个按钮吗"): the panel hidden at once, kept as large as it is (never
+        # laid out anew - it comes back at once); a small window of the avatar's own, the tab, in the middle of the right
+        # edge, above every window - over a film too ("全屏的时候，哪怕是collapse状态，那个expand button还是要能显示").
+        dock = getattr(self, "_dock", None)
+        hidden = app_window.slide_out_titled(self._notes_titles(), dock=dock)
+        if not hidden:
+            DesktopAgent._give_the_room_back(self)
+        DesktopAgent._tell_the_panel(self, peeking=hidden)
+        self._side_tab_on, self._peek_hidden = bool(hidden), False
+        if hidden:
+            self.queue.put(("call", lambda: DesktopAgent._show_side_tab(self)))
+        return hidden
+
+    #: The tab's size, at 96 dpi; its colours (the panel's dark, the accent of its edge and arrow).
+    SIDE_TAB_SIZE = (16, 64)          # (the user, 2026-11-17: "高度不变，宽度小一点" - 24 wide was)
+    SIDE_TAB_LOOK = {"bg": "#232325", "edge": "#4b91ff", "dot": "#4b91ff", "key": "#010203"}
+
+    def _show_side_tab(self) -> None:
+        """The tab, shown at the middle of the right edge of the screen the panel was on - on Tk's thread."""
+        if not getattr(self, "_side_tab_on", False):
+            return
+        look = self.SIDE_TAB_LOOK
+        tab = getattr(self, "_side_tab", None)
+        # THE SAME SIZE AS THE PANEL'S OWN TAB (the user, 2026-11-17: "这个button在collapse和expand状态下的size大小要一
+        # 致"): 24 x 64 at 96 dpi, by the dpi of the screen it goes on - the panel's page is drawn by that screen's dpi
+        # too (and its tab kept at that size whatever the page's zoom); Tk's own dpi is the first screen's only.
+        scale = DesktopAgent._side_tab_scale(self)
+        if tab is not None and getattr(self, "_side_tab_scale_built", None) != scale:
+            try:
+                tab.destroy()
+            except tk.TclError:
+                pass
+            tab = self._side_tab = None
+        if tab is None:
+            tab = self._side_tab = tk.Toplevel(self.root)
+            tab.withdraw()
+            tab.overrideredirect(True)                 # no frame, no taskbar button
+            tab.attributes("-topmost", True)
+            tab.configure(bg=look["key"])
+            try:
+                tab.attributes("-transparentcolor", look["key"])   # its rounded edge, nothing round it
+            except tk.TclError:
+                pass
+            self._side_tab_scale_built = scale
+            wide, tall = (round(one * scale) for one in self.SIDE_TAB_SIZE)
+            canvas = tk.Canvas(tab, width=wide, height=tall, bg=look["key"], highlightthickness=0, bd=0,
+                               cursor="hand2")
+            canvas.pack()
+            r, e = round(10 * scale), max(1, round(1.5 * scale))
+            # Rounded on the left, flat against the screen's edge on the right.
+            points = [r, e, wide + r, e, wide + r, tall - e, r, tall - e, e, tall - e, e, tall - r, e, r, e, e]
+            canvas.create_polygon(points, smooth=True, fill=look["bg"], outline=look["edge"], width=e)
+            canvas.create_text(wide // 2 + round(1 * scale), tall // 2, text="«", fill=look["edge"],
+                               font=("Segoe UI", -max(12, round(15 * scale)), "bold"))   # pixels, as the page's
+            self._side_tab_dot = canvas.create_oval(wide - round(9 * scale), round(7 * scale), wide - round(3 * scale),
+                                                    round(13 * scale), fill=look["dot"], outline="", state="hidden")
+            self._side_tab_canvas = canvas
+            canvas.bind("<ButtonRelease-1>", lambda _event: self.open_notifications())
+            self._side_tab_size = (wide, tall)
+        wide, tall = self._side_tab_size
+        right, top, bottom = DesktopAgent._side_tab_edge(self)
+        tab.geometry(f"{wide}x{tall}+{right - wide}+{(top + bottom) // 2 - tall // 2}")
+        tab.deiconify()
+        tab.attributes("-topmost", True)
+        tab.lift()
+        DesktopAgent._side_tab_unread(self)
+
+    def _side_tab_scale(self) -> float:
+        """The dpi of the screen the pointer is on, over 96 - the screen the tab goes on - times Windows' text size
+        (Settings > Accessibility > Text size): the panel's page, WebView2, is drawn that much larger too (2026-11-17:
+        at 179 % its tab was 43 x 115 pixels, this one 24 x 64 - "collapse和expand还是不一样大小")."""
+        return DesktopAgent._screen_scale(self) * DesktopAgent._text_scale()
+
+    @staticmethod
+    def _text_scale() -> float:
+        """Windows' text size, 1.0 to 2.25 (HKCU Accessibility TextScaleFactor, in per cent); 1.0 where not set."""
+        if sys.platform != "win32":
+            return 1.0
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Accessibility") as key:
+                said, _kind = winreg.QueryValueEx(key, "TextScaleFactor")
+            return max(1.0, min(2.25, float(said) / 100.0))
+        except (OSError, ValueError, TypeError):
+            return 1.0
+
+    def _screen_scale(self) -> float:
+        """The dpi of the screen the pointer is on, over 96."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            point = wintypes.POINT()
+            user32.GetCursorPos(ctypes.byref(point))
+            user32.MonitorFromPoint.restype = ctypes.c_void_p
+            monitor = user32.MonitorFromPoint(point, 2)
+            dpi_x, dpi_y = ctypes.c_uint(), ctypes.c_uint()
+            if ctypes.windll.shcore.GetDpiForMonitor(ctypes.c_void_p(monitor), 0, ctypes.byref(dpi_x),
+                                                      ctypes.byref(dpi_y)) == 0 and dpi_x.value:
+                return max(1.0, dpi_x.value / 96.0)
+        except Exception:
+            log.debug("the screen's dpi could not be read", exc_info=True)
+        try:
+            return max(1.0, float(self.root.winfo_fpixels("1i")) / 96.0)
+        except Exception:
+            return 1.0
+
+    def _side_tab_edge(self) -> tuple:
+        """The right edge of the screen the panel was on - its top and bottom (the pointer's screen, else the first)."""
+        # Read in this thread's own units - Tk's - never changing how this thread is told the screen's size.
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class _Info(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
+                            ("dwFlags", wintypes.DWORD)]
+            user32 = ctypes.windll.user32
+            point = wintypes.POINT()
+            user32.GetCursorPos(ctypes.byref(point))
+            user32.MonitorFromPoint.restype = ctypes.c_void_p
+            info = _Info()
+            info.cbSize = ctypes.sizeof(_Info)
+            if user32.GetMonitorInfoW(ctypes.c_void_p(user32.MonitorFromPoint(point, 2)), ctypes.byref(info)):
+                return info.rcMonitor.right, info.rcWork.top, info.rcWork.bottom
+        except Exception:
+            log.debug("the screen the tab goes on could not be read", exc_info=True)
+        return self.root.winfo_screenwidth(), 0, self.root.winfo_screenheight()
+
+    def _side_tab_unread(self) -> None:
+        """Its dot: something told and not yet seen in the panel."""
+        canvas, dot = getattr(self, "_side_tab_canvas", None), getattr(self, "_side_tab_dot", None)
+        if canvas is None or dot is None:
+            return
+        try:
+            unread = bool(self.app.notifications.for_the_side(1))
+        except Exception:
+            unread = False
+        try:
+            canvas.itemconfigure(dot, state="normal" if unread else "hidden")
+        except tk.TclError:
+            pass
+
+    def _hide_side_tab(self) -> None:
+        tab = getattr(self, "_side_tab", None)
+        if tab is not None:
+            try:
+                tab.withdraw()
+            except tk.TclError:
+                pass
+
+    #: How often the tab looks whether a film fills the screen.
+    PEEK_LOOK_MS = 2000
+
+    def _watch_peek(self) -> None:
+        """WHILE PUT AWAY TO ITS TAB: hidden while a film, a game or a slide show fills the screen, shown again after
+        (the user, 2026-11-16: full screen, the taskbar was not covered while the panel stood above)."""
+        if not getattr(self, "_side_tab_on", False) or getattr(self, "_peek_watching", False):
+            return
+        self._peek_watching = True
+
+        def look() -> None:
+            if not getattr(self, "_side_tab_on", False):
+                self._peek_watching = False
+                return
+            from ..platform_layer import app_window
+            film = DesktopAgent._film_in_front(self)
+            if film != getattr(self, "_peek_hidden", False):
+                app_window.show_titled(self._notes_titles(), not film)
+                self._peek_hidden = film
+            self.root.after(self.PEEK_LOOK_MS, look)
+        look()
+
+    def toggle_notes_panel(self) -> bool:
+        """ITS TAB PRESSED: put away, or back - whether it is put away now."""
+        if not self._notes_open_now():
+            self.open_notifications()
+            return False
+        return self.hide_notes_panel()
+
+    def _tell_the_panel(self, peeking: bool, by_user: bool = False, focus: bool = False) -> None:
+        """The page told whether it is put away to its tab - its arrow pointing the way it will go - and whether the
+        user opened it themselves: what it shows is seen then (notes.js sideLooked); `focus`: the keys to its box."""
+        side = getattr(self.app, "side_events", None)
+        if side is not None:
+            try:
+                side.tell("panel", peeking=bool(peeking), by_user=bool(by_user), focus=bool(focus))
+            except Exception:
+                log.debug("the side panel could not be told", exc_info=True)
 
     def _waiting_list_open(self, opened: bool) -> None:
         """THE WAITING LIST OPEN, NO BUBBLE BESIDE IT (the user, 2026-11-11: "我打开waiting
@@ -2857,8 +3638,12 @@ class DesktopAgent:
             self._answering.setdefault(str(ident), "list")
         answering = self._answering
         unread = self._still_unread
+        # PUT AWAY, IT STAYS AWAY (the user, 2026-11-16: "全屏的时候我把他collapse ... sidebar又会出现"): where the side
+        # panel is where they are told, those that came while it was open are in it - told again, the panel opened
+        # again at once, every time it was put away. Kept there, for when the user opens it.
+        side = DesktopAgent._side_panel_here(self)
         kept = [one for one in self._bubble_queue
-                if not one.get("notification_id") or (one["notification_id"] not in answering
+                if not one.get("notification_id") or (not side and one["notification_id"] not in answering
                                                       and unread(one["notification_id"]))]
         self._bubble_queue.clear()
         self._bubble_queue.extend(kept)
@@ -2909,6 +3694,11 @@ class DesktopAgent:
         if panel is not None and panel.is_open and kept != getattr(self, "_waiting_kept", kept):
             panel._read_it(quiet=True)
         self._waiting_kept = kept
+        # NO LINE BESIDE THE AVATAR WHERE THE SIDE PANEL IS (the user, 2026-11-17: "logo旁边的1 recommendation这种提示直接
+        # 取消"): what waits is told in the panel - a dot on its tab while it is put away.
+        if DesktopAgent._side_panel_here(self):
+            self._hide_waiting()
+            return
         # NOT BESIDE THE SIDE PANEL, HOWEVER IT CAME TO BE OPEN (the user, 2026-11-13: the panel open, "1
         # recommendation" still beside the avatar - it was open from before the agent started again): seen
         # open, held - and watched, drawn again once it is put away.
@@ -3106,8 +3896,12 @@ class DesktopAgent:
 
     def open_report_window(self) -> bool:
         """The app's window turned to the report, for a place in it the page then asks for (`report_wanted`) -
-        the side panel put away, not to stand in front of it."""
+        the side panel put away, not to stand in front of it; PINNED, LEFT WHERE IT IS (the user, 2026-11-17: "点了你的
+        report, 打开窗口之后，pin的sidebar直接collapse了") - its strip is its own, the report's window beside it."""
         self.open_url("/#report")
+        config = getattr(self, "config", None)
+        if config is not None and config.get("side_panel_pinned", False):
+            return True
         try:
             self.hide_notes_panel()
         except Exception:                        # pragma: no cover - left where it is
@@ -3193,6 +3987,15 @@ class DesktopAgent:
             return
         item = None if self._bubble is not None else self._next_bubble()
         if item is None:
+            return
+        # THE AGENT SPEAKS IN THE SIDE PANEL (the user, 2026-11-16: "这种Notification和chat以后都是在sidebar里
+        # (notification相当于是agent主动说话)"): where it opens, a notification is its message there - the panel
+        # shown over the other windows, never taking the keys from where the user types; the bubbles waiting
+        # with it are in it too.
+        if item.get("notification_id") and DesktopAgent._side_panel_here(self):
+            self._bubble_queue = collections.deque(
+                one for one in self._bubble_queue if not one.get("notification_id"))
+            self.open_notifications(quietly=True)
             return
         self._showing = item
         look = RECOMMENDED_LOOK if item.get("recommended") else BUBBLE_LOOK[bool(item["emphasis"])]
@@ -3721,7 +4524,44 @@ class DesktopAgent:
 
     def run(self) -> None:
         self._start_panel_host()
+        try:
+            self._stalls.start(self.root)       # the window's thread standing still: said (stall_watch.py)
+        except Exception:        # pragma: no cover - watched or not, the window runs
+            log.debug("the window's thread could not be watched", exc_info=True)
+        # A strip of the screen the side panel took and the application ended without giving back: given
+        # back now (dock.py) - the setting off or not.
+        if sys.platform == "win32":
+            from ..platform_layer.dock import Dock
+            self._dock = Dock(self.app.paths.data_dir / "side_panel_dock.json")
+            threading.Thread(target=self._dock.give_back_left_over, name="side-panel-room-back",
+                             daemon=True).start()
+            # The picture of the screen taken beside the pinned panel's strip, not under it (windows.py).
+            from ..platform_layer import windows as windows_layer
+            windows_layer.SIDE_STRIP.append(
+                lambda dock=self._dock: dock.strip if dock.docked and not dock.stepped_aside else None)
+            self.root.after(self.SIDE_TAB_AT_START_MS, lambda: DesktopAgent._side_tab_at_start(self))
+        # NOT ON THE SCREEN BY DEFAULT (the user, 2026-11-17: "已经不需要logo在屏幕上了"): the side panel's tab, its
+        # shortcuts and the tray reach everything; the watermelon walks in the Play view. Shown again from the tray's
+        # menu - and kept so.
+        if not self.config.get("avatar_on_screen", False):
+            self.root.after(0, lambda: DesktopAgent.toggle_character(self, remember=False) if not self.character_hidden else None)
         self.root.mainloop()
+
+    #: How long after the start the side panel's tab is put at the screen's edge.
+    SIDE_TAB_AT_START_MS = 1500
+
+    def _side_tab_at_start(self) -> None:
+        """ITS TAB FROM THE START (the user, 2026-11-17: "agent启动之后就要有凸起的按钮让我可以expand, 而不是我第一次展开
+        之后才有"): at the screen's edge, pressed to open the panel - unless it is open already."""
+        if sys.platform != "win32" or os.environ.get("PA_NO_DIALOGS"):
+            return
+        try:
+            if self._notes_open_now():
+                return
+            self._side_tab_on = True
+            DesktopAgent._show_side_tab(self)
+        except Exception:
+            log.debug("the side panel's tab could not be shown at the start", exc_info=True)
 
     def _start_panel_host(self) -> None:
         """THE SIDE PANEL'S OWN PROCESS, WEBVIEW2 STARTED BEFORE IT IS WANTED (panel_host.py; the user,
@@ -3742,7 +4582,7 @@ class DesktopAgent:
         from ..platform_layer import app_window
         if app_window._windows_page(self._notes_titles(), hidden=True) is not None:
             return
-        self.panel_host.open(self.app.sign_in_url(self.NOTES_PATH), self.NOTES_TITLE, app_window.NOTES_SIZE[0],
+        self.panel_host.open(self.app.sign_in_url(self.NOTES_PATH), self.NOTES_TITLE, DesktopAgent._notes_width(self),
                              app_window.NOTES_SIZE[1], app_window.OFF_SCREEN[0], app_window.OFF_SCREEN[1],
                              hidden=True)
 
@@ -3829,6 +4669,17 @@ class DesktopAgent:
             close_titled(self._notes_titles())          # the side panel too - put away or not
         except Exception:        # pragma: no cover - the agent stops whatever
             log.debug("the page's window could not be closed", exc_info=True)
+        # The side panel's strip of the screen given back, the windows moved for it put back.
+        try:
+            self._give_the_room_back()
+        except Exception:        # pragma: no cover - the agent stops whatever
+            log.debug("the side panel's room could not be given back", exc_info=True)
+        # What the window handed over to be written (a draft, a tick) written before the database closes.
+        stalls = getattr(self, "_stalls", None)
+        if stalls is not None:
+            stalls.stop()
+        if not window_writes(self).flush(5.0):
+            log.warning("what the window handed over was not all written before it closed")
         try:
             self.app.stop()
         finally:

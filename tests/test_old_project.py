@@ -341,7 +341,7 @@ class SummariesAreAKindOfTheirOwnTests(unittest.TestCase):
         from personalized_agent.common.notifications import LINE_KINDS
         from personalized_agent.ui import desktop
         colours = [desktop.WAITING_INK[kind] for kind, _groups, _said in LINE_KINDS]
-        self.assertEqual(len(set(colours)), 3)
+        self.assertEqual(len(set(colours)), len(LINE_KINDS), "each its own")
         self.assertEqual(desktop.SUMMARY_DOT, desktop.WAITING_INK["summaries"])
 
 

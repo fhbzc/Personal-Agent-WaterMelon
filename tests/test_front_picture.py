@@ -58,6 +58,13 @@ class PicturesTests(unittest.TestCase):
         self.pictures.take()
         return self.pictures.latest()
 
+    def test_the_first_message_after_a_start_has_its_picture(self) -> None:
+        """2026-11-17: "chat还是没有发图好像" - the side panel presses nothing first, as the bubble's keys did."""
+        self.config["front_picture_whole_screen"] = False
+        shot = self.pictures.for_a_message(title="Tides")
+        self.assertTrue(shot.get("path"), "taken for the first message, nothing pressed before it")
+        self.assertEqual(len(self.taken), 1)
+
     def test_a_picture_with_its_words(self) -> None:
         shot = self._press()
         self.assertTrue(Path(shot["path"]).is_file())

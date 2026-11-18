@@ -36,6 +36,17 @@ SHORTCUTS: List[Dict[str, str]] = [
      "default": "Ctrl+Alt+C", "name": "Open or close the chat bubble",
      "what": "Opens the chat bubble beside the avatar, from any program; pressed again, "
              "closes it, keeping what you have written but not sent."},
+    # THE SIDE PANEL AT A KEY (the user, 2026-11-16: "用户可以点击之后随时召唤sidebar").
+    {"key": "side_panel", "setting": "shortcut_side_panel",
+     "default": "Ctrl+Alt+Space", "name": "Open or close the side panel",
+     "what": "Opens the side panel on the right - what waits for you, and a chat with your "
+             "agent - from any program; pressed again, puts it away."},
+    # A PART OF THE SCREEN INTO THE SMALL SCREEN (the user, 2026-11-17: "能不能我点一个快捷键，我能把某个矩形框的内容拖到image
+    # 里面") - ui/snip.py.
+    {"key": "board_snip", "setting": "shortcut_board_snip",
+     "default": "Ctrl+Alt+S", "name": "Cut a part of the screen into the small screen",
+     "what": "Freezes the screen; drag over a part of it and it goes into the side panel's small screen, to "
+             "draw on and send. Esc cancels."},
 ]
 BY_KEY = {one["key"]: one for one in SHORTCUTS}
 

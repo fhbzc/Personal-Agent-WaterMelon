@@ -288,5 +288,104 @@ class ASignInPageFirstTests(unittest.TestCase):
         self.assertEqual(said["em"], "")
 
 
+class FullScreenBesideThePanelTests(unittest.TestCase):
+    """0.0.7 (the user, 2026-11-16: "没有办法让sidebar 在全屏的时候还是能缩小吗" - "你可以在浏览器里做")."""
+
+    def test_the_agent_says_whether_the_panel_is_pinned_and_shown(self) -> None:
+        import tempfile
+        from personalized_agent.platform_layer import native_host
+        with tempfile.TemporaryDirectory() as folder:
+            ask = lambda: native_host.answer({"type": "side-docked"}, Path(folder), lambda *a: None)
+            self.assertEqual(ask(), {"ok": True, "docked": False})
+            (Path(folder) / "side_panel_dock.json").write_text("{}", encoding="utf-8")
+            self.assertEqual(ask(), {"ok": True, "docked": True})
+
+    def test_its_scripts_read_and_send_nothing_of_the_page(self) -> None:
+        from personalized_agent.platform_layer import browser_extension as extension
+        whole = (extension.source() / "fullscreen.js").read_text(encoding="utf-8")
+        side = (extension.source() / "side.js").read_text(encoding="utf-8")
+        for code in (whole, side):
+            for never in ("innerText", "textContent", "document.title", "location.href", "fetch(", "XMLHttpRequest",
+                          "cookie", "localStorage"):
+                self.assertNotIn(never, code)
+        self.assertIn('{ type: "side-docked" }', side)
+        self.assertIn("agentFullscreen: kind", whole, "only on or off, to this window")
+
+
+@unittest.skipUnless(HAS_SOURCE, SOURCES)
+class APageFittedBesideThePanelTests(unittest.TestCase):
+    """The user, 2026-11-17: a page cut on its right beside the pinned panel (a site's own least width) -
+    "扩展自动缩到放得下"."""
+
+    @unittest.skipUnless(_chrome(), "no browser here to lay a page out in")
+    def test_pinned_a_page_wider_than_its_window_asks_to_be_fitted_by_how_much(self) -> None:
+        side = (WEB / "side.js").read_text("utf-8")
+        page = """<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0}
+#wide{min-width:1500px;height:40px;background:#ccd}</style></head><body><div id="wide"></div>
+<script>
+  const told = [];
+  globalThis.browser = {runtime: {sendMessage: (m) => {
+    told.push(m.over ? [m.type, Math.round(m.over * 100) / 100] : [m.type]);
+    if (m.type === "side-fit") document.getElementById('wide').style.minWidth = '0';   // as if zoomed to fit
+    return Promise.resolve(m.type === "side-docked" ? {docked: true} : {done: true});
+  }}};
+</script>
+<script>%s</script>
+<script>setTimeout(() => { document.title = JSON.stringify({told, side: document.documentElement.dataset.agentSide}); }, 4000);
+</script></body></html>""" % side
+        with tempfile.TemporaryDirectory() as work:
+            path = Path(work) / "wide.html"
+            path.write_text(page, encoding="utf-8")
+            done = subprocess.run([_chrome(), "--headless=new", "--disable-extensions", "--disable-gpu", "--no-first-run",
+                                   f"--user-data-dir={work}/profile", "--virtual-time-budget=6000",
+                                   "--window-size=1000,700", "--dump-dom", path.as_uri()],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        said = json.loads(re.search(r"<title>(.*?)</title>", done.stdout, re.S).group(1)
+                          .replace("&quot;", '"').replace("&amp;", "&"))
+        self.assertEqual(said["side"], "docked")
+        fits = [one for one in said["told"] if one[0] == "side-fit"]
+        self.assertEqual(len(fits), 1, "asked once; fitted, nothing more")
+        self.assertAlmostEqual(fits[0][1], 1.5, delta=0.05, msg="by how much it is wider than its window")
+
+    @unittest.skipUnless(shutil.which("node"), "no node here to run the extension's background in")
+    def test_the_tab_zoomed_down_in_steps_put_back_after_and_the_users_own_zoom_left_alone(self) -> None:
+        background = (WEB / "background.js").read_text("utf-8")
+        start, end = background.index("const FIT_LEAST"), background.index("function sayVisible")
+        script = """
+const zooms = {7: 1.0};
+const set = [];
+const store = {};
+globalThis.chrome = {runtime: {lastError: null}, tabs: {
+  getZoom: (tab, done) => done(zooms[tab]),
+  setZoom: (tab, zoom, done) => { zooms[tab] = zoom; set.push(zoom); done(); },
+  onRemoved: {addListener: () => {}}}};
+const ext = {tabs: globalThis.chrome.tabs, storage: {session: {
+  get: async (key) => ({[key]: store[key]}), set: async (one) => Object.assign(store, one),
+  remove: async (key) => { delete store[key]; }}}};
+%s
+(async () => {
+  const out = {};
+  await fitTab(7, 1.5); out.first = zooms[7];
+  await fitTab(7, 1.02); out.again = zooms[7];
+  await fitTab(7, 3); out.tooWide = zooms[7];
+  fitMemory.clear();                                   // a Chromium background stopped and started again
+  await unfitTab(7); out.back = zooms[7];
+  await fitTab(7, 1.25); zooms[7] = 1.1;               // the user zoomed since
+  await unfitTab(7); out.theirs = zooms[7];
+  await fitTab(7, 1.25); out.afterTheirs = zooms[7];
+  console.log(JSON.stringify(out));
+})();
+""" % background[start:end]
+        done = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        said = json.loads(done.stdout)
+        self.assertEqual(said["first"], 0.65, "1 / 1.5, down to a step of 5 %")
+        self.assertEqual(said["again"], 0.6, "still a little wider: a step more")
+        self.assertEqual(said["tooWide"], 0.6, "a page meant to be wider than any window: left")
+        self.assertEqual(said["back"], 1.0, "not pinned: as it was, remembered for the session")
+        self.assertEqual(said["theirs"], 1.1, "the user's own zoom since is never undone")
+        self.assertEqual(said["afterTheirs"], 0.85, "fitted again from it: 1.1 / 1.25")
+
+
 if __name__ == "__main__":
     unittest.main()

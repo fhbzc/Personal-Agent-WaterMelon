@@ -409,6 +409,19 @@ CREATE INDEX IF NOT EXISTS idx_wechat_capture_event ON listener_wechat_captures(
 CREATE INDEX IF NOT EXISTS idx_wechat_observation_event ON listener_wechat_observations(source_event_id);
 CREATE INDEX IF NOT EXISTS idx_wechat_observation_capture ON listener_wechat_observations(capture_id);
 CREATE INDEX IF NOT EXISTS idx_wechat_alias_capture ON listener_wechat_message_aliases(capture_id);
+-- AND THE REST OF THEM (2026-11-16): the old WeChat rows cleared in one write of 6.9 s, every row of a
+-- conversation, a segment or a message read the tables pointing at it - the chat bubble waiting behind.
+CREATE INDEX IF NOT EXISTS idx_wechat_conversation_alias_of ON listener_wechat_conversation_aliases(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_wechat_view_conversation ON listener_wechat_views(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_wechat_segment_conversation ON listener_wechat_segments(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_wechat_observation_conversation ON listener_wechat_observations(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_wechat_observation_segment ON listener_wechat_observations(segment_id);
+CREATE INDEX IF NOT EXISTS idx_wechat_revision_message ON listener_wechat_message_revisions(message_id);
+CREATE INDEX IF NOT EXISTS idx_wechat_revision_observation ON listener_wechat_message_revisions(observation_id);
+CREATE INDEX IF NOT EXISTS idx_wechat_alias_canonical ON listener_wechat_message_aliases(canonical_id);
+CREATE INDEX IF NOT EXISTS idx_wechat_link_message ON listener_wechat_link_archive(message_id);
+CREATE INDEX IF NOT EXISTS idx_wechat_link_retained ON listener_wechat_link_archive(retained_message_id);
+CREATE INDEX IF NOT EXISTS idx_wechat_link_capture ON listener_wechat_link_archive(capture_id);
 """
 
 

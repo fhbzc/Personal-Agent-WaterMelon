@@ -10459,6 +10459,19 @@ function renderModelChain(models) {
       ${(one.efforts || []).length ? `<select class="chain-effort" data-chain-effort="${i}"
         aria-label="Reasoning effort" title="Reasoning effort">${
         effortOptions(one.efforts, one.effort || "")}</select>` : ""}
+      <div class="chain-small" title="The small model: the chat's quick reply, Heads up and co-play">
+        <span class="chain-small-label muted">${escapeHtml("Small model")}</span>
+        <select class="chain-model" data-chain-small="${i}" aria-label="Small model">
+          <option value=""${one.small ? "" : " selected"}>default - ${escapeHtml(one.small_default || one.model)}</option>
+          ${[...new Set([...(p.models || []).map((m) => m.id), one.small].filter((id) => id && id !== "default"))]
+            .map((id) => `<option value="${escapeHtml(id)}"${id === one.small ? " selected" : ""}>${escapeHtml(id)}</option>`)
+            .join("")}</select>
+        ${(one.small_efforts || []).length ? `<select class="chain-effort" data-chain-small-effort="${i}"
+          aria-label="The small model's reasoning effort" title="The small model's reasoning effort">
+          <option value=""${one.small_effort ? "" : " selected"}>default - the least</option>
+          ${one.small_efforts.map((level) => `<option value="${escapeHtml(level)}"${
+            level === one.small_effort ? " selected" : ""}>${escapeHtml(level)}</option>`).join("")}</select>` : ""}
+      </div>
       ${badge}
       <button type="button" class="small secondary chain-sees${one.sees_images ? " on" : ""}"
         data-chain-sees="${i}" data-provider="${escapeHtml(one.provider)}"
@@ -10510,7 +10523,9 @@ function renderModelChain(models) {
 /* The list as it stands, as {provider, model, effort}. */
 function chainNow() {
   return ((modelsNow || {}).chain || []).map((one) => ({ provider: one.provider, model: one.model,
-                                                          ...(one.effort ? { effort: one.effort } : {}) }));
+                                                          ...(one.effort ? { effort: one.effort } : {}),
+                                                          ...(one.small ? { small: one.small } : {}),
+                                                          ...(one.small_effort ? { small_effort: one.small_effort } : {}) }));
 }
 
 /* The levels of thinking a provider's model takes, as its catalog says. */
@@ -10603,6 +10618,26 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("change", async (event) => {
+  // ITS SMALL MODEL CHOSEN (the user, 2026-11-17: "setting里显示小模型并且允许用户设置，一开始是default").
+  const smallAt = event.target.closest?.("[data-chain-small]");
+  if (smallAt) {
+    const chain = chainNow();
+    const one = chain[Number(smallAt.dataset.chainSmall)];
+    if (smallAt.value) one.small = smallAt.value;
+    else delete one.small;
+    delete one.small_effort;                    // another model: its own levels
+    await saveModelChain(chain, "Its small model is changed");
+    return;
+  }
+  const smallEffortAt = event.target.closest?.("[data-chain-small-effort]");
+  if (smallEffortAt) {
+    const chain = chainNow();
+    const one = chain[Number(smallEffortAt.dataset.chainSmallEffort)];
+    if (smallEffortAt.value) one.small_effort = smallEffortAt.value;
+    else delete one.small_effort;
+    await saveModelChain(chain, "Its small model's reasoning effort is changed");
+    return;
+  }
   const effortAt = event.target.closest?.("[data-chain-effort]");
   if (effortAt) {
     const chain = chainNow();
@@ -28199,6 +28234,14 @@ setInterval(pollNotifications, 20000);
     else openDelegateDraft(id);
     return;
   }
+  // An event of the report, linked from a notification (agent/reports.py _linked): the report, at that event.
+  if (wanted.startsWith("report=")) {
+    const event = decodeURIComponent(wanted.slice("report=".length));
+    history.replaceState(null, "", location.pathname + "#report");
+    $('#tabs button[data-tab="report"]')?.click();
+    setTimeout(() => goToReportPlace({ event }), 0);     // after the report's own state is made, below
+    return;
+  }
   const tab = wanted && $(`#tabs button[data-tab="${CSS.escape(wanted)}"]`);
   if (params.get("tab") === "chat" || params.has("conversation") || params.has("project")) {
     $('#tabs button[data-tab="chat"]')?.click();
@@ -30104,8 +30147,10 @@ const monState = { open: new Set(), drawn: { tree: "", firings: "" }, data: null
 /* WHAT IT TELLS, BY KIND (the user, 2026-11-13: "recommendation, event notifications, summary, risks, closing up the
    evening和the day ahead ... 其它都取消"; "系统类的可以保留"). */
 const MON_GROUPS = [["recommend", "Recommendations"], ["calendar", "Event notifications"],
-  ["deadline", "Deadlines"], ["summary", "Summary"], ["risk", "Risks"], ["rest", "Your day"], ["system", "System"],
-  ["other", "Other"]];
+  ["deadline", "Deadlines"], ["summary", "Summary"], ["risk", "Risks"], ["rest", "Your day"],
+  // The Monitor's own systems (2026-11-17): what you may have missed, company while you watch, learning questions.
+  ["heads_up", "Heads up"], ["co_play", "Co-play"], ["learning_questions", "Learning questions"],
+  ["system", "System"], ["other", "Other"]];
 const MON_GROUP_SAID = {
   recommend: "Pages and news worth your time, at the moments it is worth telling you.",
   calendar: "Meeting invitations and times agreed on the screen, and each reminder at its time.",
@@ -30113,7 +30158,10 @@ const MON_GROUP_SAID = {
   summary: "Your report, told at the times set in the Report - here only on or off.",
   risk: "Scams and phishing on what you read.",
   rest: "The day ahead, the first time you sit down; and your day, as you close up for the evening.",
-  system: "What you must know of the application: a model to sign in to again, the agent stopped, an update."};
+  system: "What you must know of the application: a model to sign in to again, the agent stopped, an update.",
+  heads_up: "A word when you likely missed something: a coding assistant's turn, a message being written, a document edited.",
+  co_play: "Company while you watch or read: a recommendation, a word about it, a reminder - only when it is sure.",
+  learning_questions: "A question when a lesson is truly undecided and it matters, with options to press."};
 
 async function loadMonitor() {
   try {

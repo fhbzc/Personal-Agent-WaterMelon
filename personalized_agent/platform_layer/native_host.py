@@ -93,6 +93,10 @@ def answer(message: Dict[str, Any], data_dir: Path,
         # IT FILLED BOXES OF IT: the order let go of. Until then it stays, for the form after a sign-in.
         from .browser_extension import finish_fill_order
         return {"ok": finish_fill_order(data_dir, str(message.get("id") or ""))}
+    if kind == "side-docked":
+        # WHETHER THE SIDE PANEL IS PINNED AND SHOWN - its strip of the screen held (dock.py keeps a note of it while
+        # it is, and takes it away when it is given back): a page's full screen goes beside it (fullscreen.js).
+        return {"ok": True, "docked": (Path(data_dir) / "side_panel_dock.json").exists()}
     if kind == "visible":
         from .browser_extension import keep_visible
         keep_visible(data_dir, str(message.get("title") or ""), str(message.get("text") or ""),

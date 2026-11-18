@@ -273,6 +273,24 @@ def _builtins() -> List[Dict[str, Any]]:
          "when": {"event": "system"},
          "then": [{"do": "notify", "title": "{title}", "message": "{message}"}],
          "cooldown_minutes": 1, "most_per_day": 50, "delivery": "pop"},
+        # WHAT THE MONITOR'S OWN SYSTEMS SAY (heads-up, co-play, learning questions; 2026-11-17): through it, as
+        # everything is - its switch, the silences of a meeting or a presentation, each kept as a firing.
+        {"builtin": "heads_up", "name": "Heads up", "group": "heads_up",
+         "purpose": "A word when you likely missed something - a coding assistant's turn, a message being "
+                    "written, a document edited.",
+         "when": {"event": "heads_up"},
+         "then": [{"do": "notify", "title": "{title}", "message": "{message}"}],
+         "cooldown_minutes": 1, "most_per_day": 500, "delivery": "pop"},
+        {"builtin": "co_play", "name": "Co-play", "group": "co_play",
+         "purpose": "Company while you watch or read: a recommendation, a word about it, a reminder.",
+         "when": {"event": "co_play"},
+         "then": [{"do": "notify", "title": "{title}", "message": "{message}"}],
+         "cooldown_minutes": 1, "most_per_day": 500, "delivery": "pop"},
+        {"builtin": "learning_question", "name": "Learning questions", "group": "learning_questions",
+         "purpose": "A question when a lesson is truly undecided and it matters, with options to press.",
+         "when": {"event": "learning_question"},
+         "then": [{"do": "notify", "title": "{title}", "message": "{message}"}],
+         "cooldown_minutes": 1, "most_per_day": 500, "delivery": "pop"},
         {"builtin": "evening_closing", "name": "Closing up for the evening", "group": "rest",
          "purpose": "Many windows closed after a long day: the report of the day, before they go.",
          # Closing up, or gone for the night: written now if it was not - and, if they worked on

@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personalized-agent"
-version = "0.3.7.1"
+version = "0.3.8"
 description = "Cross-platform desktop AI agent with activity awareness, a knowledge graph and a scheduler"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -62,6 +62,9 @@ include = ["personalized_agent*"]
 "personalized_agent" = [
     "api/web/*",
     "api/web/lang/*",
+    "api/web/play/*",
+    "api/web/play/music/*",
+    "api/web/play/sfx/*",
     "resources/characters/*/manifest.json",
     "resources/characters/*/*/*.png",
     "resources/browser_extension/*",

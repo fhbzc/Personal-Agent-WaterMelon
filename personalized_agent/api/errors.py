@@ -16,3 +16,12 @@ class Raw:
     def __init__(self, body: bytes, content_type: str) -> None:
         self.body = body
         self.content_type = content_type
+
+
+class Stream:
+    """What a route returns when the answer goes on: each piece written as it comes, until the page goes or
+    the pieces end (Server-Sent Events: api/side_events.py)."""
+
+    def __init__(self, pieces, content_type: str = "text/event-stream; charset=utf-8") -> None:
+        self.pieces = pieces
+        self.content_type = content_type

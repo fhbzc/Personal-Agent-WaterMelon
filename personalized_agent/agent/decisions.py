@@ -44,6 +44,8 @@ DONE_AS = {
     "assign_work": ("Handed over as work", ("title", "instruction")),
     "make_special_issue": ("Made a special issue", ("title", "requirements")),
     "lesson_add": ("Remembered", ("rule", "user_said", "about")),
+    "memory_write": ("Remembered", ("description", "name")),
+    "memory_forget": ("Forgotten", ("name",)),
     "monitor_add": ("Monitor rule added", ("name", "about", "why")),
     "monitor_edit": ("Monitor rule changed", ("name", "id", "why")),
     "monitor_delete": ("Monitor rule deleted", ("name", "id", "why")),

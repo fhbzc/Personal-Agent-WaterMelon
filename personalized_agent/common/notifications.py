@@ -38,14 +38,24 @@ NOT_A_TRIGGER_AT_ALL = "None: sent by the application"
 #: WHAT KIND EACH IS, as the waiting list groups them and its line counts them (the user,
 #: 2026-11-07: "return back to old project 和晚间summary改成 summary类型（不同于notification和
 #: recommendation)"; "N waiting的时候，要写清楚category"). In this order; each counted in these words.
-CATEGORIES = ("Recommended content", "Summaries", "Reminders", "Other")
+CATEGORIES = ("Heads up", "Recommended content", "Summaries", "Reminders", "Other")
 #: THE LINE BESIDE THE AVATAR, a row a kind in this order (the user, 2026-11-07: "应该是分行 X
 #: notification / X summary / X recommendation ... 按照这个顺序，每行不同的颜色"): its name, the
 #: groups of the list it counts, its words.
 LINE_KINDS = (("notifications", ("Reminders", "Other"), ("{0} notification", "{0} notifications")),
               ("summaries", ("Summaries",), ("{0} summary", "{0} summaries")),
+              # What the user may have missed, said by the side watch (heartbeat/monitor/heads_up.py).
+              ("headsup", ("Heads up",), ("{0} heads-up", "{0} heads-ups")),
               ("recommendations", ("Recommended content",),
                ("{0} recommendation", "{0} recommendations")))
+
+
+def _metadata_of(row: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        found = row.get("metadata")
+        return found if isinstance(found, dict) else json.loads(found or "{}")
+    except (TypeError, ValueError):
+        return {}
 
 
 def category_of(row: Dict[str, Any]) -> str:
@@ -56,6 +66,8 @@ def category_of(row: Dict[str, Any]) -> str:
             metadata = json.loads(metadata or "{}")
         except ValueError:
             metadata = {}
+    if metadata.get("heads_up"):
+        return "Heads up"
     if metadata.get("summary"):
         return "Summaries"
     if metadata.get("recommended"):
@@ -170,6 +182,10 @@ PROACTIVE = "proactive"
 POP, COLLAPSE = "pop", "collapse"
 ALWAYS_POP = ("error", "warning", "approval")
 _LEVEL_OF_ROW = "CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.level') END"
+#: HELD BY THE INFORMATION QUEUE (agent/information_queue.py): written, not yet told - in no list, counted nowhere.
+_NOT_HELD = "COALESCE(CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.held') END, 0) = 0"
+#: How far back the side panel lists what was told and not answered, beside the avatar or kept.
+SIDE_HOURS = 48
 
 
 def _templates():
@@ -331,9 +347,80 @@ class NotificationService:
         # meant the same words appearing twice, once answerable and once not,
         # which reads as two reminders and is one. The bubble beside the
         # character is where the agent speaks.
+        # THE INFORMATION QUEUE FIRST (agent/information_queue.py; the user, 2026-11-16: the agent judges when to tell
+        # it, and how): held, it is written and told nothing of - told when it is released.
+        gate = getattr(self, "gate", None)
+        if callable(gate):
+            try:
+                held = bool(gate(notification))
+            except Exception:
+                log.warning("the information queue could not judge a notification; it is told", exc_info=True)
+                held = False
+            if held:
+                self.set_metadata(notification.id, notification.metadata)
+                if self.bus is not None:
+                    self.bus.publish("notification.held", notification.to_dict())
+                return notification
         if self.bus is not None:
             self.bus.publish("notification.created", {**notification.to_dict(), "quiet": quiet})
         return notification
+
+    def set_metadata(self, notification_id: str, metadata: Dict[str, Any]) -> None:
+        self.db.execute("UPDATE notifications SET metadata = ? WHERE id = ?",
+                        (json_dump(metadata), str(notification_id)))
+
+    def held(self) -> List[Dict[str, Any]]:
+        """What the information queue holds, the oldest first."""
+        rows = self.db.query(f"SELECT * FROM notifications WHERE read = 0 AND NOT ({_NOT_HELD}) "
+                             "ORDER BY created_at")
+        for row in rows:
+            row["read"] = False
+            row["metadata"] = _metadata_of(row)
+        return rows
+
+    def release(self, notification_id: str, how: str, said: str = "",
+                rules: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+        """A held one told now - `how` it came to be (kept in its metadata) - as it would have been when made.
+        `said`: the words the agent tells it in, as in a chat (agent/information_queue.py)."""
+        row = self.get(notification_id)
+        if row is None:
+            return None
+        meta = dict(row.get("metadata") or {})
+        meta.pop("held", None)
+        meta["released"] = how
+        # SHOWN WHERE IT WAS TOLD, not where it was made and held (the side panel's chat, by when).
+        meta["released_at"] = datetime.now(timezone.utc).isoformat()
+        if said:
+            meta["said"] = said
+        if rules:
+            meta["rules_used"] = list(rules)[:3]          # shown with it, for the user to judge (notes.js)
+        self.set_metadata(notification_id, meta)
+        row["metadata"] = meta
+        if self.bus is not None:
+            self.bus.publish("notification.created", {**row, "quiet": self._in_quiet_hours()})
+        return row
+
+    def settle_held(self, notification_id: str, how: str, why: str = "") -> None:
+        """A held one never told by itself - told in the chat, or dropped (`how`, and `why`): read, held no more."""
+        row = self.get(notification_id)
+        if row is None:
+            return
+        meta = dict(row.get("metadata") or {})
+        meta.pop("held", None)
+        meta[how] = why or True
+        self.set_metadata(notification_id, meta)
+        self.mark_read(notification_id)
+
+    def for_the_side(self, limit: int = 200) -> List[Dict[str, Any]]:
+        """WHAT THE SIDE PANEL LISTS: every one told and not answered - those that popped up as much as those kept
+        in the list beside the avatar - of the last SIDE_HOURS, none held; the newest first."""
+        since = (datetime.now(timezone.utc) - timedelta(hours=SIDE_HOURS)).isoformat()
+        rows = self.db.query(f"SELECT * FROM notifications WHERE read = 0 AND {_NOT_HELD} AND created_at >= ? "
+                             "ORDER BY created_at DESC LIMIT ?", (since, int(limit)))
+        for row in rows:
+            row["read"] = False
+            row["metadata"] = _metadata_of(row)
+        return rows
 
     # -- the reply that comes with it ---------------------------------------
     @staticmethod
@@ -422,7 +509,7 @@ class NotificationService:
 
     def waiting(self, limit: int = 200) -> List[Dict[str, Any]]:
         """What is kept in the waiting list and not yet dealt with, the newest first."""
-        rows = self.db.query(f"SELECT * FROM notifications WHERE read = 0 AND {_LEVEL_OF_ROW} = ? "
+        rows = self.db.query(f"SELECT * FROM notifications WHERE read = 0 AND {_LEVEL_OF_ROW} = ? AND {_NOT_HELD} "
                              "ORDER BY created_at DESC LIMIT ?", (COLLAPSE, int(limit)))
         for row in rows:
             row["read"] = False
@@ -442,7 +529,7 @@ class NotificationService:
 
     def waiting_count(self) -> int:
         row = self.db.query_one("SELECT COUNT(*) AS n FROM notifications WHERE read = 0 AND "
-                                f"{_LEVEL_OF_ROW} = ?", (COLLAPSE,))
+                                f"{_LEVEL_OF_ROW} = ? AND {_NOT_HELD}", (COLLAPSE,))
         return int(row["n"]) if row is not None else 0
 
     def get(self, notification_id: str) -> Optional[Dict[str, Any]]:

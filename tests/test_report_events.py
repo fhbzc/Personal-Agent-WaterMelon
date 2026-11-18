@@ -547,6 +547,33 @@ class TheIssuesTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             report.issue("issue_none")
 
+    def test_each_event_told_is_a_link_to_its_place_in_the_report(self) -> None:
+        """2026-11-17: "这个需要加link, 跳到panel里的细节"."""
+        from personalized_agent.agent.reports import Report
+        from personalized_agent.api.routes import build_routes
+        said = []
+        opened = []
+        app = SimpleNamespace(db=self.db, models=None, config=None, api_base_url="http://127.0.0.1:8756",
+                              monitor=SimpleNamespace(relay=lambda builtin, *a, **k: said.append(a) or {"id": "n1"}),
+                              approvals=SimpleNamespace(items=lambda: list(APPROVE), times=lambda: ["08:00"],
+                                                        next_time=lambda: None, let_go=lambda: []),
+                              agent=None, todos=None, agenda=None, report_wanted=None,
+                              open_report_window=lambda: opened.append(1) or True)
+        app.events = Events(app)
+        Report(app).tell()
+        [(_title, message)] = [one[:2] for one in said]
+        [event] = Report(app).latest_issue()["tabs"]["needs_you"]
+        link = f"http://127.0.0.1:8756/#report={event['id']}"
+        self.assertIn(f"]({link})", message, "its title, linked")
+        routes = build_routes(app)
+        answer = routes[("POST", "/api/notifications/open_link")](SimpleNamespace(
+            require=lambda key: link, get=lambda key, default=None: default))
+        self.assertEqual(answer["opened"], True)
+        self.assertEqual(opened, [1], "the app's window, not the browser")
+        self.assertEqual(app.report_wanted["place"], {"event": event["id"]})
+        self.assertEqual(routes[("GET", "/api/page/wants")](SimpleNamespace(get=lambda *_a: None))["report"],
+                         {"event": event["id"]}, "the page asks, and is turned to it")
+
     def test_ok_on_a_thing_done_by_the_agent_and_it_is_not_shown_again(self) -> None:
         """2026-11-13: "done by agents, 需要快速按钮有ok, ok了之后就不再出现done by agents里"; and each event's last
         active time, for "每个panel支持按照last active time 排序"."""

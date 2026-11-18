@@ -34,7 +34,9 @@ for line in sys.stdin:
         break
     with open(kept, "a", encoding="utf-8") as out:
         out.write(line)
-    if "fail" in asked.get("url", ""):
+    if asked.get("op") == "focus":
+        print(json.dumps({"focused": len(asked.get("titles") or [])}), flush=True)
+    elif "fail" in asked.get("url", ""):
         print(json.dumps({"error": "RuntimeError: no WebView2 here"}), flush=True)
     else:
         print(json.dumps({"opened": True}), flush=True)
@@ -77,6 +79,33 @@ class TheHostTests(unittest.TestCase):
         host.stop()
         self.assertFalse(host.running())
         self.assertEqual(child.wait(timeout=5), 0, "told to quit, it ended by itself")
+
+    def test_its_page_given_the_keys_by_the_host(self) -> None:
+        """2026-11-17: "那个快捷键之后，焦点应该放到chat栏（这样我可以直接输入)" - done where the window is."""
+        host = self._host()
+        self.assertTrue(host.start())
+        with mock.patch("ctypes.windll", create=True) as windll:
+            self.assertTrue(host.focus({"Waiting notifications"}))
+        windll.user32.AllowSetForegroundWindow.assert_called_once_with(host._child.pid)
+        [asked] = [json.loads(line) for line in self.kept.read_text("utf-8").splitlines()]
+        self.assertEqual(asked, {"op": "focus", "titles": ["Waiting notifications"]})
+        self.assertEqual(ph.focus_panel({"Nothing open"}), 0, "no WebView2 window here: none")
+
+    def test_slow_the_first_time_started_again_once(self) -> None:
+        """2026-11-17: "现在怎么没有sidebar了" - once it did not say it was ready in time; and what it wrote was lost."""
+        slow_once = ("import json, sys, time, pathlib\n"
+                     "mark = pathlib.Path(sys.argv[1] + '.once')\n"
+                     "if not mark.exists():\n"
+                     "    mark.write_text('x'); sys.stderr.write('slow to start\\n'); sys.stderr.flush(); time.sleep(30)\n"
+                     "print(json.dumps({'ready': True}), flush=True)\n"
+                     "for line in sys.stdin:\n"
+                     "    if json.loads(line).get('op') == 'quit': break\n")
+        host = self._host(slow_once)
+        with mock.patch.object(ph, "START_SECONDS", 2.0):
+            self.assertTrue(host.start(), "started again, ready")
+        host.stop()
+        said = (self.here / "logs" / "panel_host.log").read_text("utf-8")
+        self.assertIn("slow to start", said, "what it wrote kept by the other logs")
 
     def test_one_that_never_says_it_is_ready_is_let_go_and_not_asked_again(self) -> None:
         host = self._host(SILENT)
@@ -184,6 +213,10 @@ class TheDesktopTests(unittest.TestCase):
                                _off_this_thread=lambda what, name="": what(), _notes_on_a_mac=lambda: False,
                                panel_host=object())
         desk._notes_titles = lambda: DesktopAgent._notes_titles(desk)
+        # Never the real screen's state: a film the user is watching is not this test's.
+        no_film = mock.patch.object(DesktopAgent, "_film_in_front", return_value=False)
+        no_film.start()
+        self.addCleanup(no_film.stop)
         with mock.patch.object(aw, "slide_in_titled", return_value=False), \
                 mock.patch.object(aw, "open_hosted_side_window", return_value=True) as hosted, \
                 mock.patch.object(aw, "open_side_window") as browser:
@@ -211,6 +244,24 @@ class TheDesktopTests(unittest.TestCase):
         with mock.patch.object(aw, "_windows_page", return_value=1234):
             DesktopAgent._prepare_notes(desk)
         host.open.assert_not_called()
+
+
+class TheShellToldWhenItIsActivatedTests(unittest.TestCase):
+    """2026-11-17: "sidebar有焦点的时候，你的任务栏会变暗" - only while pinned, a bar of the screen that never said it
+    was activated."""
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows' own")
+    def test_activated_it_says_so_as_a_bar_must(self) -> None:
+        import ctypes
+        from unittest import mock
+
+        from personalized_agent.platform_layer import panel_host
+        with mock.patch.object(ctypes.windll.shell32, "SHAppBarMessage") as said:
+            panel_host.appbar_activated(4242)
+        message, data = said.call_args[0]
+        self.assertEqual(message, panel_host.ABM_ACTIVATE)
+        import inspect
+        self.assertIn("tell_the_shell_when_active(shown)", inspect.getsource(panel_host.serve))
 
 
 if __name__ == "__main__":

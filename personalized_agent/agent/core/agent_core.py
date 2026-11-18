@@ -226,9 +226,12 @@ class AgentCore:
         if db is not None:
             from .memory_tools import add_tools as _memory_tools
             _memory_tools(self.tools, db, lambda: getattr(self, "lesson_retriever", None))
+        #: MORE OF WHAT IT IS GIVEN (app.py `_more_context`): its memory's index, and - in a conversation other than
+        #: the side panel's - what was said before there (the user, 2026-11-16: "所有chat都放在一起").
+        self.more_context: Optional[Callable[[Optional[str]], str]] = None
 
     # -- prompt -------------------------------------------------------------
-    def _system_prompt(self, summary: str = "", topic: str = "") -> str:
+    def _system_prompt(self, summary: str = "", topic: str = "", more: str = "") -> str:
         prompt = SYSTEM_PROMPT.format(
             agent_name=avatar_name(self.config, getattr(self, "characters", None)),
             # The user's clock by name, not UTC: a time to schedule is given
@@ -245,6 +248,8 @@ class AgentCore:
             prompt += TOPIC_CONTEXT.format(context=topic.strip())
         if summary:
             prompt += EARLIER_IN_CONVERSATION.format(summary=summary.strip())
+        if more:
+            prompt += more
         return prompt
 
     # -- main entry points --------------------------------------------------
@@ -481,9 +486,10 @@ class AgentCore:
         Given the summary written last time, only what was said since is
         read again: it is extended, never rebuilt from the start.
         """
+        from ..chat_pictures import told
         transcript = "\n\n".join(
             f"{'User' if one['role'] == 'user' else 'Agent'}: "
-            f"{_clip(str(one['content']))}" for one in older)
+            f"{_clip(told(one))}" for one in older)
         content = (f"The summary so far:\n{prior}\n\nWhat was said after it:\n{transcript}"
                    if prior else transcript)
         request = ModelRequest(
@@ -634,7 +640,16 @@ class AgentCore:
                           if cid and self.conversations is not None else None)
                 topic = (self.conversations.topic_context(cid)
                          if cid and self.conversations is not None else "")
-                result = self._reason(instruction, task_id, trace_id, started,
+                more = ""
+                if callable(self.more_context):
+                    try:
+                        try:
+                            more = self.more_context(cid, str(said or instruction)[:2000]) or ""
+                        except TypeError:                # one that takes the conversation alone
+                            more = self.more_context(cid) or ""
+                    except Exception:
+                        log.debug("more of what the agent is given could not be read", exc_info=True)
+                result = self._reason(instruction, task_id, trace_id, started, more=more,
                                       pictures=context.get("pictures"), said=said,
                                       on_text=context.get("on_text"),
                                       withheld=WITHHELD_FROM.get(origin, ()),
@@ -658,7 +673,7 @@ class AgentCore:
                 history: Optional[List[Dict[str, Any]]] = None, summary: str = "",
                 debug: Any = None,
                 folder: Optional[ConversationFolder] = None,
-                topic: str = "", pictures: Optional[List[Dict[str, str]]] = None,
+                topic: str = "", pictures: Optional[List[Dict[str, str]]] = None, more: str = "",
                 said: Optional[str] = None,
                 on_text: Optional[Callable[[str], None]] = None,
                 gate: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -732,7 +747,7 @@ class AgentCore:
                 # The client's own reading tools, denied where the chat may
                 # not read.
                 native_read=unreadable_for(self.runtime.policy),
-                system=self._system_prompt(summary, topic),
+                system=self._system_prompt(summary, topic, more),
                 # The app's tools, and its web tools - which a client with
                 # search of its own is given only to read pages with.
                 tools=[spec for spec in [*self.tools.specs, *CHAT_WEB_TOOLS]
@@ -973,7 +988,9 @@ def _clip(text: str) -> str:
 def _verbatim(turns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Stored messages as the model's message list: the role and the words -
     and the pictures attached, the latest of them (agent/chat_files.py)."""
-    return [{"role": one["role"], "content": _said(_clip(str(one["content"])), one.get("pictures"))}
+    # With the summary of the picture of the screen that went with each, and how to see it again (chat_pictures).
+    from ..chat_pictures import told
+    return [{"role": one["role"], "content": _said(_clip(told(one)), one.get("pictures"))}
             for one in turns]
 
 

@@ -159,15 +159,34 @@ def _body(scale: int) -> Any:
     return _brush_texture(image, scale)
 
 
-def _brush_texture(image: Any, scale: int, strength: float = 1.0) -> Any:
-    """Fixed paper grain at logical resolution, so it survives downsampling."""
+_GRAINS: Dict[int, Any] = {}
+#: Round what a face draws, in the 128 units of the character: textured and scaled with it, so that the
+#: resampling at its edges reads the same pixels as when the whole layer was.
+FACE_MARGIN = 8
+
+
+def _grain(scale: int) -> Any:
+    """The paper grain at `scale` - the same every time (its seed is fixed), so made once."""
+    grain = _GRAINS.get(scale)
+    if grain is None:
+        import numpy as np
+        rng = np.random.default_rng(28)
+        grain = rng.normal(0, 3.8, (128, 128, 1))
+        grain = _GRAINS[scale] = np.repeat(np.repeat(grain, scale, axis=0), scale, axis=1)
+    return grain
+
+
+def _brush_texture(image: Any, scale: int, strength: float = 1.0, box: Any = None) -> Any:
+    """Fixed paper grain at logical resolution, so it survives downsampling. `box` (left, top, right,
+    bottom): only there - the rest of a face's layer is see-through and is not looked at."""
     import numpy as np
     from PIL import Image
-    rng = np.random.default_rng(28)
-    grain = rng.normal(0, 3.8, (128, 128, 1))
-    grain = np.repeat(np.repeat(grain, scale, axis=0), scale, axis=1)
+    grain = _grain(scale)
     pixels = np.array(image)
-    pixels[..., :3] = np.clip(pixels[..., :3].astype(float) + grain * strength, 0, 255).astype(np.uint8)
+    left, top, right, bottom = box or (0, 0, pixels.shape[1], pixels.shape[0])
+    region = pixels[top:bottom, left:right, :3]
+    pixels[top:bottom, left:right, :3] = np.clip(region.astype(float) + grain[top:bottom, left:right] * strength,
+                                                 0, 255).astype(np.uint8)
     return Image.fromarray(pixels, "RGBA")
 
 
@@ -372,14 +391,31 @@ def draw_face(image: Any, scale: int, look: Tuple[float, float] = (0.0, 0.0),
         for cx, cy in CHEEKS:
             oval(cx + 1, cy + 3, 4.2, 3.0, fill=PINK + (255,))
     # Texture only the face layer, so the body grain is not applied twice.
-    face = _brush_texture(image, scale, strength=.65)
+    # ONLY WHERE THE FACE IS (2026-11-16: textured and scaled whole, a 256-pixel layer mostly see-through,
+    # it was 22 of the 29 ms of a frame - and the avatar a fifth of a core): what is drawn and a margin
+    # round it, past the reach of the resampling, so every pixel comes out as it did.
+    width, height = image.size
+    drawn = image.getchannel("A").getbbox()
+    if drawn is None:
+        return
+    margin = FACE_MARGIN * scale
+    box = (max(0, drawn[0] - margin), max(0, drawn[1] - margin),
+           min(width, drawn[2] + margin), min(height, drawn[3] + margin))
+    face = _brush_texture(image, scale, strength=.65, box=box)
     factor = RIG["face_scale"]
     ox, oy = (one * scale for one in RIG["face_origin"])
-    face = face.transform(face.size, Image.Transform.AFFINE,
-                          (1 / factor, 0, ox * (1 - 1 / factor),
-                           0, 1 / factor, oy * (1 - 1 / factor)),
+    # Where the box lands once scaled (out = factor * (in - o) + o), widened by the margin again.
+    left = max(0, int(math.floor(factor * (box[0] - ox) + ox)) - margin)
+    top = max(0, int(math.floor(factor * (box[1] - oy) + oy)) - margin)
+    right = min(width, int(math.ceil(factor * (box[2] - ox) + ox)) + margin)
+    bottom = min(height, int(math.ceil(factor * (box[3] - oy) + oy)) + margin)
+    if right <= left or bottom <= top:
+        return
+    face = face.transform((right - left, bottom - top), Image.Transform.AFFINE,
+                          (1 / factor, 0, ox * (1 - 1 / factor) + left / factor,
+                           0, 1 / factor, oy * (1 - 1 / factor) + top / factor),
                           resample=Image.Resampling.BICUBIC)
-    target.alpha_composite(face)
+    target.alpha_composite(face, dest=(left, top))
 
 
 

@@ -24,7 +24,7 @@ Made on the main thread only - Tk's, on a Mac (desktop.py puts it there).
 from __future__ import annotations
 
 import logging
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -203,9 +203,10 @@ def _slide_to(window: Any, frame: Any) -> None:
         time.sleep(SIDE_SLIDE_SECONDS / SIDE_SLIDE_STEPS)
 
 
-def side_panel(url: str, width: float, title: str) -> bool:
+def side_panel(url: str, width: float, title: str, activate: bool = True) -> bool:
     """`url` in a panel down the right side, slid in - the one put away by `hide_side_panel` slid back
-    in, one shown already to the front. False where one cannot be made. On the main thread."""
+    in, one shown already to the front. `activate` False (a notification's): shown, the program the user
+    is in left in front. False where one cannot be made. On the main thread."""
     try:
         import AppKit
         found = _side.get(title)
@@ -217,10 +218,14 @@ def side_panel(url: str, width: float, title: str) -> bool:
             if found is None:
                 return False
             _side[title] = found
+            # SEEN THROUGH IN THE AGENT'S PICTURE ONLY (the user, 2026-11-16: "chat现在截图的时候，忽视/穿透 sidebar" -
+            # "只是自己截图看不到，其它是可以的"): that picture is made of the other programs' windows alone
+            # (macos.py user_screen_image), this one of this process's; the user's own screenshots have it.
         window = found[0]
         if window.isVisible() and not window.isMiniaturized() and window.alphaValue() > 0:
-            AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-            window.makeKeyAndOrderFront_(None)
+            if activate:
+                AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+                window.makeKeyAndOrderFront_(None)
             return True
         if window.isMiniaturized():
             window.deminiaturize_(None)
@@ -228,8 +233,11 @@ def side_panel(url: str, width: float, title: str) -> bool:
         # Unseen while it is put off the edge - the system would pull a window ordered in off the
         # screen back onto it - then slid in.
         window.setAlphaValue_(0.0)
-        AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-        window.makeKeyAndOrderFront_(None)
+        if activate:
+            AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            window.makeKeyAndOrderFront_(None)
+        else:
+            window.orderFrontRegardless()                  # seen, the user's program still in front
         window.setFrame_display_(off, False)
         window.setAlphaValue_(1.0)
         _slide_to(window, in_place)
@@ -248,12 +256,50 @@ def hide_side_panel(title: str) -> bool:
     try:
         window = found[0]
         if window.isVisible():
-            off, _in_place = _side_frames(window, window.frame().size.width)
-            _slide_to(window, off)
+            # PUT AWAY AT ONCE (2026-11-16, as on Windows - the user: closing quick): sliding out held the
+            # main thread, the avatar with it, for 0.18 s.
             window.orderOut_(None)
         return True
     except Exception:
         log.warning("the side panel could not be slid out", exc_info=True)
+        return False
+
+
+def side_panel_strip(title: str) -> Optional[Tuple[Tuple[int, int, int, int], Tuple[int, int, int, int]]]:
+    """(the panel's strip, the rest of its screen's visible part) as the Accessibility API counts - left, top,
+    right, bottom from the top left of the main screen - for the other windows to be moved beside it
+    (platform_layer/dock_mac.py). None when it is not shown. On the main thread."""
+    import AppKit
+    found = _side.get(title)
+    if found is None or not found[0].isVisible():
+        return None
+    window = found[0]
+    screen = window.screen() or AppKit.NSScreen.mainScreen()
+    height = AppKit.NSScreen.screens()[0].frame().size.height       # the main screen: where y counts from
+    seen, frame = screen.visibleFrame(), window.frame()
+
+    def flipped(x: float, y: float, w: float, h: float) -> Tuple[int, int, int, int]:
+        return (int(x), int(height - (y + h)), int(x + w), int(height - y))
+    strip = flipped(frame.origin.x, seen.origin.y, frame.size.width, seen.size.height)
+    rest = flipped(seen.origin.x, seen.origin.y, frame.origin.x - seen.origin.x, seen.size.height)
+    return strip, rest
+
+
+def resize_side_panel(title: str, width: float) -> bool:
+    """The side panel titled `title`, shown, made `width` wide - its right edge where it is (its picture's
+    column opened or put away, 2026-11-16). On the main thread."""
+    found = _side.get(title)
+    if found is None:
+        return False
+    try:
+        window = found[0]
+        if not window.isVisible():
+            return False
+        _off, in_place = _side_frames(window, width)
+        window.setFrame_display_(in_place, True)
+        return True
+    except Exception:
+        log.warning("the side panel could not be made wider or narrower", exc_info=True)
         return False
 
 

@@ -188,6 +188,22 @@ class SeenThroughTests(_Base):
         executor.see_through(self._notify, now=self._at("08:00"))
         self.assertEqual(len(self.sent), 1, "told once")
 
+    def test_one_left_starting_when_the_application_closed_is_handed_over_again(self) -> None:
+        """2026-11-16: a draft being started when the application closed stayed "starting" four days - never
+        seen as not begun, never handed over again, the user never told."""
+        ids = self._sorted({"Answer the seed club": "delegable", "Book the hall": "delegable"})
+        left, going = ids["Answer the seed club"], ids["Book the hall"]
+        self._handed(left, self._draft("left", "starting", 120))
+        self._handed(going, self._draft("going", "starting", 1))
+        executor = self._executor()
+        said = executor.see_through(self._notify, now=self._at("08:00"))
+        self.assertEqual(said["again"], [left], "one starting a minute ago is still starting")
+        self.assertEqual(executor.started_for(left), "")
+        status = lambda ident: self.db.query_one("SELECT status FROM work_drafts WHERE id = ?",  # noqa: E731
+                                                 (ident,))["status"]
+        self.assertEqual(status("d_left"), "cancelled", "not left among the work assigned to start by hand")
+        self.assertEqual(status("d_going"), "starting")
+
     def test_the_agents_help_with_the_users_own_is_seen_through_too(self) -> None:
         """2026-11-11: the agent's part of the user's call (watch for a message, have the material
         ready) was interrupted, said "could not carry on", and never handed over again."""

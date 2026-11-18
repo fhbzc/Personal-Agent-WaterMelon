@@ -6,8 +6,9 @@ import logging
 import os
 import subprocess
 import time
+from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..common import children
 from .base import (
@@ -350,7 +351,8 @@ class WindowsActivityProvider(PlatformActivityProvider):
                         extra = user32.GetWindowLongW(hwnd, -20)
                         out.append({"hwnd": hwnd, "box": (rect.left, rect.top, rect.right, rect.bottom),
                                     "application": names[pid.value], "title": title.value,
-                                    "class": kind.value, "ours": pid.value == os.getpid(),
+                                    "class": kind.value, "pid": pid.value,
+                                    "ours": pid.value == os.getpid() or pid.value in OTHER_OWN_PROCESSES,
                                     "opaque": not extra & (0x80000 | 0x20)})  # LAYERED, TRANSPARENT
             except Exception:
                 log.debug("a window on the screen could not be read", exc_info=True)
@@ -405,11 +407,26 @@ class WindowsActivityProvider(PlatformActivityProvider):
             screen = self._monitor_of(meant["hwnd"] if meant else None)
             if screen is None:
                 return None
+            screen = without_the_strip(tuple(screen))
             # THROUGH ITS OWN WINDOWS (the user, 2026-11-08: "有一团灰色是我的chat窗口，能不能越过chat窗口
             # 截屏"): each left out of the picture a moment, what is behind it taken - nothing
             # changes on the screen. One the system would not leave out is painted over still.
             mine = [one for one in windows if one["ours"]]
+            # The pointer where it was off the agent's own windows and the pinned panel's strip - on them it is
+            # nothing of the user's (the panel typed in, the avatar pressed).
+            strips = [one for one in (said() for said in list(SIDE_STRIP)) if one]
+            pointer = pointer_elsewhere(pointer, [tuple(one["box"]) for one in mine] + strips)
             left_out = self._leave_out_of_pictures([one["hwnd"] for one in mine], True)
+            # THE SIDE PANEL TOO, BY ITS OWN PROCESS (the user, 2026-11-16: "只是自己截图看不到，其它是可以的"):
+            # out of this picture only - the user's own screenshots and a shared screen have it.
+            asked = []
+            for pid, leave_out in list(OTHER_OWN_PROCESSES.items()):
+                try:
+                    if leave_out(True):
+                        asked.append(leave_out)
+                        left_out += [one["hwnd"] for one in mine if one.get("pid") == pid]
+                except Exception:
+                    log.debug("the side panel could not be left out of the picture", exc_info=True)
             try:
                 if left_out:
                     time.sleep(LEFT_OUT_SETTLE)  # the next frame drawn without them
@@ -439,6 +456,11 @@ class WindowsActivityProvider(PlatformActivityProvider):
                     image = ImageGrab.grab(bbox=screen, all_screens=True)
             finally:
                 self._leave_out_of_pictures(left_out, False)
+                for leave_out in asked:              # back in every other picture
+                    try:
+                        leave_out(False)
+                    except Exception:
+                        log.debug("the side panel could not be put back in pictures", exc_info=True)
             shown = [dict(one, ours=False, left_out=True) if one["hwnd"] in left_out else one
                      for one in windows]
             image = blank_windows(image, screen, shown, hidden)
@@ -779,6 +801,47 @@ class WindowsPlatform(Platform):
 
 #: How long the screen is left to be drawn again without this application's windows, in seconds.
 LEFT_OUT_SETTLE = 0.12
+#: THE APPLICATION'S OTHER PROCESSES - the side panel's host (panel_host.py): by process id, the way to have its
+#: windows left out of the agent's picture a moment (`leave_out(out) -> done`), which only that process may do.
+#: Their windows are the application's own: never taken for the user's.
+OTHER_OWN_PROCESSES: Dict[int, Callable[[bool], bool]] = {}
+#: THE SIDE PANEL'S STRIP OF THE SCREEN WHILE IT IS PINNED (dock.py; set by the desktop): (left, top, right, bottom),
+#: or None - the picture of the screen is of what is left of it.
+SIDE_STRIP: List[Callable[[], Optional[Tuple[int, int, int, int]]]] = []
+#: WHERE THE POINTER HAS LATELY BEEN (desktop.py, as the avatar follows it): each place it moved to, the newest last.
+POINTER_TRAIL: "deque[Tuple[int, int]]" = deque(maxlen=600)
+
+
+def pointer_elsewhere(now: Optional[Tuple[int, int]],
+                      boxes: List[Tuple[int, int, int, int]]) -> Optional[Tuple[int, int]]:
+    """WHERE THE USER'S POINTER WAS, NOT ON THE AGENT'S OWN WINDOWS (the user, 2026-11-17: "你之前的鼠标位置现在chat里没有
+    了" - a message sent from the side panel had the pointer on the panel, left out of the picture, so none was
+    said): where it is now if that is off them; else the last place it was off them (POINTER_TRAIL); else None."""
+    def off(point: Tuple[int, int]) -> bool:
+        return not any(box[0] <= point[0] < box[2] and box[1] <= point[1] < box[3] for box in boxes)
+    if now is not None and off(now):
+        return now
+    for point in reversed(list(POINTER_TRAIL)):
+        if off(point):
+            return point
+    return None
+
+
+def without_the_strip(screen: Tuple[int, int, int, int]) -> Tuple[int, int, int, int]:
+    """THE PICTURE OF THE SCREEN, THE PINNED SIDE PANEL'S STRIP LEFT OFF (the user, 2026-11-17: "pin的时候，左边就是整个
+    屏幕，如果是unpin的，那就是完整屏幕截屏"): the screen to the strip's left when the strip is down its right edge -
+    what is under the panel there is not the user's (the desktop behind it); else the whole screen."""
+    for said in list(SIDE_STRIP):
+        try:
+            strip = said()
+        except Exception:
+            strip = None
+        if not strip:
+            continue
+        left, top, right, bottom = strip
+        if screen[0] < left < screen[2] and right >= screen[2] - 2 and top < screen[3] and bottom > screen[1]:
+            return (screen[0], screen[1], left, screen[3])
+    return screen
 
 
 # Shared with the Mac's and Linux's (screen_picture.py).

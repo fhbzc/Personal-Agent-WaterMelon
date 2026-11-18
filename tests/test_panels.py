@@ -2251,6 +2251,7 @@ class AgentStateTests(unittest.TestCase):
             _refresh_hover = DesktopAgent._refresh_hover
             _read_hover = DesktopAgent._read_hover
             _show_hover = DesktopAgent._show_hover
+            _kept_worker = DesktopAgent._kept_worker
 
             def __init__(self, config):
                 self.config = config

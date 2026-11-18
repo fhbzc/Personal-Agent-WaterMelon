@@ -100,7 +100,11 @@ it says.
 - Follow the LESSONS about the user's notifications, and learn from what they
   did in moments like this: not what they called bad, not at a moment they
   put off.
-- Write the title and message in the user's display language, short.
+- Write the title and message in the user's display language, short. The message
+  NEVER a block of text (the user, 2026-11-17: "不要给用户一大段文字"): a sentence
+  saying what it is, then at most 3-4 short points each on its own line starting
+  "- " (what it found, a number or two that matter, why it bears on their work);
+  about 80 words at the most.
 
 Answer with JSON alone:
 {"send": true, "title": "...", "message": "...", "url": "https://...",

@@ -156,7 +156,10 @@ def _made_by(task: ScheduledTask) -> Dict[str, str]:
     trigger = str(task.metadata.get("trigger") or "")
     if not trigger and written_in.startswith("trigger"):
         trigger = "A calendar trigger"
-    return {"made_by": str(task.created_by or ""), **({"trigger": trigger} if trigger else {})}
+    # WHERE THE AGENT MADE IT (agent/information_queue.py: one asked for in a chat is the user's own, never dropped).
+    made_in = str(task.metadata.get("created_by") or "")
+    return {"made_by": str(task.created_by or ""), **({"trigger": trigger} if trigger else {}),
+            **({"made_in": made_in} if made_in else {})}
 
 
 @dataclass

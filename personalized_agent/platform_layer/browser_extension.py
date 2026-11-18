@@ -81,7 +81,8 @@ STORE_IDS: Tuple[str, ...] = (
 #: only when the extension itself changes (its files, its manifest, its words),
 #: and only then uploaded to the stores again, which take a higher one each
 #: time. The agent's updates leave it as it is.
-EXTENSION_VERSION = "0.0.6"    # 0.0.2: says how it was installed ("here"),
+EXTENSION_VERSION = "0.0.7"    # 0.0.2: says how it was installed ("here"),
+#: 0.0.7: FULL SCREEN BESIDE THE PINNED SIDE PANEL (fullscreen.js, side.js; the user, 2026-11-16).
                                # and says "here" every six hours (alarms)
                                # 0.0.3: says what can be seen of a page (visible.js);
                                # never in a private window
@@ -91,7 +92,7 @@ EXTENSION_VERSION = "0.0.6"    # 0.0.2: says how it was installed ("here"),
                                # 0.0.6: chooses radios and a page's own lists' options (never a
                                # button); says the files to attach - never uploads them
 #: The files of the extension, as they are in resources/browser_extension.
-FILES = ("background.js", "help.html", "help.js", "opening.html", "opening.js", "visible.js",
+FILES = ("background.js", "help.html", "help.js", "opening.html", "opening.js", "visible.js", "side.js", "fullscreen.js",
          "fill.js")
 FLAVORS = ("chromium", "firefox")
 ICON_SIZES = (16, 32, 48, 128)
@@ -173,8 +174,12 @@ def manifest(flavor: str, version: str = EXTENSION_VERSION) -> Dict[str, Any]:
         # 2026-11-01's none): it goes to the user's own agent on this computer, nowhere else.
         # 0.0.4: AND ITS BOXES FILLED when the agent opened it for a form it handed over (fill.js,
         # the user, 2026-11-08) - never pressing anything.
-        "content_scripts": [{"matches": ["http://*/*", "https://*/*"], "js": ["visible.js", "fill.js"],
-                             "run_at": "document_idle"}],
+        "content_scripts": [{"matches": ["http://*/*", "https://*/*"], "js": ["visible.js", "fill.js", "side.js"],
+                             "run_at": "document_idle"},
+                            # 0.0.7: A PAGE'S FULL SCREEN BESIDE THE PINNED SIDE PANEL (the user, 2026-11-16: "你可以在
+                            # 浏览器里做") - in the page's own world, so that its calls are the ones answered.
+                            {"matches": ["http://*/*", "https://*/*"], "js": ["fullscreen.js"],
+                             "run_at": "document_start", "world": "MAIN"}],
         "icons": {str(size): f"icons/{size}.png" for size in ICON_SIZES},
         # NEVER IN A PRIVATE WINDOW (the user, 2026-11-05): what is opened there is meant to leave
         # nothing behind, and with this the browser does not even ask.
@@ -186,7 +191,8 @@ def manifest(flavor: str, version: str = EXTENSION_VERSION) -> Dict[str, Any]:
         # what is right-clicked goes to the user's own agent, on this
         # computer (native messaging), and nowhere else.
         said["browser_specific_settings"] = {"gecko": {
-            "id": FIREFOX_ID, "strict_min_version": "115.0",
+            # 128: a content script in the page's own world (fullscreen.js) - Firefox's from 128 (ESR) on.
+            "id": FIREFOX_ID, "strict_min_version": "128.0",
             "data_collection_permissions": {"required": ["none"]}}}
     else:
         said["background"] = {"service_worker": "background.js"}

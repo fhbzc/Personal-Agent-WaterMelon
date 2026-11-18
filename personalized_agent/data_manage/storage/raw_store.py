@@ -244,8 +244,7 @@ class RawStore:
             removed[table.replace("raw_", "")] = count
         if going is not None and not going():
             return removed
-        with self.db.write() as conn:
-            removed.update({k:v for k,v in self.wechat.prune(conn,cutoff).items() if v})
+        removed.update({k: v for k, v in self.wechat.prune(self.db, cutoff, going).items() if v})
         if any(removed.values()):
             log.info("pruned raw activity older than %d days: %s", keep_days, removed)
         return removed

@@ -62,6 +62,8 @@ SIGNED_KEY = "reports.signed"
 FULL_KEY = "reports.full_at"
 #: What was in the report the last time it was told - what is new since is told first.
 TOLD_KEYS = "reports.told_keys"
+#: An event's place in the report, after the app's address and "#": "report=<its id>" (Report._linked).
+REPORT_PLACE = "report="
 
 #: The order the model gave, kept for the same entries (a model call saved).
 GROUPED_KEY = "reports.grouped"
@@ -606,8 +608,8 @@ class Report:
             "{2}", str(counts["yours"]))
         fresh = [event for tab in ("needs_you", "yours", "done") for event in tabs.get(tab) or []
                  if any(one.get("key") in new for one in event.get("items") or [])]
-        lines = ([f"- {self._say('New')}: {one['title']}" for one in fresh[:6]]
-                 + [f"- {one['title']}" for one in (tabs.get("needs_you") or [])[:6] if one not in fresh])[:8]
+        lines = ([f"- {self._say('New')}: {self._linked(one)}" for one in fresh[:6]]
+                 + [f"- {self._linked(one)}" for one in (tabs.get("needs_you") or [])[:6] if one not in fresh])[:8]
         self.mark_reported()
         # THROUGH THE MONITOR'S "YOUR REPORT" (the user, 2026-11-13: "summary 按照report设置的时间 ... monitor那里只有
         # 开关"): its switch, its silences.
@@ -619,6 +621,18 @@ class Report:
             kind="approval" if counts["needs_you"] else "info",
             metadata={"report": True, "issue": made["id"], "approvals": bool(counts["needs_you"])},
             dedupe_key=f"report-{_now()[:16]}")
+
+    def _linked(self, event: Dict[str, Any]) -> str:
+        """AN EVENT OF THE REPORT, A LINK TO IT (the user, 2026-11-17: "这个需要加link, 跳到panel里的细节"): its title
+        as [title](address of its place) - pressed in the side panel, the report opened at that event
+        (api/routes.py open_link); without the app's address, its title alone."""
+        title = str(event.get("title") or "")
+        base = getattr(self.app, "api_base_url", "")
+        ident = str(event.get("id") or "")
+        if not (isinstance(base, str) and base.startswith("http") and ident):
+            return title
+        from urllib.parse import quote
+        return f"[{title.replace('[', '(').replace(']', ')')}]({base}/#{REPORT_PLACE}{quote(ident, safe='')})"
 
     # -- KEPT UP TO DATE (the user, 2026-11-13: "report上的定时变成通知时间") ------------------------------
     def _signature(self) -> str:

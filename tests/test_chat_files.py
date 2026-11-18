@@ -342,12 +342,14 @@ class TwoSpeedsTests(unittest.TestCase):
             with mock.patch.object(models, "efforts_of", return_value=offered):
                 self.assertEqual(models.lowest_effort("any", "any"), least)
 
-    def test_the_small_model_is_the_same_one_at_low_effort_unless_chosen(self) -> None:
-        """The user, 2026-11-11: "default是low effort模式，模型和正常保持一致"."""
+    def test_the_small_model_is_the_weaker_one_at_low_effort_unless_chosen(self) -> None:
+        """The user, 2026-11-17: "小模型的default改成对应版本的弱模型的low effort 模式（比如haiku)" (2026-11-11 it was
+        "模型和正常保持一致")."""
         models = self.app.agent.models.real
         self.app.config.set("primary_provider", "claude_code")
         self.app.config.set("primary_model", "claude-opus-5-5")
-        self.assertEqual(models.resolve("fast_reply").model_id, models.resolve("primary").model_id)
+        self.assertEqual(models.resolve("fast_reply").model_id, "claude-haiku-5-5")
+        self.assertEqual(models.resolve("primary").model_id, "claude-opus-5-5")
         self.app.config.set("chat_fast_model", "claude_code/claude-sonnet-5-5")
         self.assertEqual(models.resolve("fast_reply").model_id, "claude-sonnet-5-5")
 

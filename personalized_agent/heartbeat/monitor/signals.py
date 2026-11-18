@@ -239,6 +239,10 @@ EVENTS: Dict[str, str] = {
     "deadline_near": "a thing with a hard deadline is not done and its time is near",
     "system": "something the user must know of the application itself: signed out, a model "
               "down, the agent stopped, an update",
+    # The Monitor's own systems (2026-11-17), each said through its built-in Activator.
+    "heads_up": "the side watch found something the user likely missed (heads_up.py)",
+    "co_play": "co-play has something worth saying while the user watches or reads (co_play.py)",
+    "learning_question": "a lesson is truly undecided and matters: a question for the user (lessons/questions.py)",
 }
 
 

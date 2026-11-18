@@ -146,6 +146,9 @@ class TemporaryAgent:
                 "HOW_IT_JUDGES = 'secret'\n", encoding="utf-8")
             self.app.work.code_root = self.code_root
         self.app.config.set("listener_enabled", False)
+        # NOTHING HELD BY THE INFORMATION QUEUE (agent/information_queue.py): told at once, no model asked - its own
+        # tests turn it on.
+        self.app.config.set("information_queue", False, internal=True)
         self.app.config.set("notifications_enabled", True)
         # Five states, which is what the grouping tests were written at:
         # a state the tests write records no window, so it counts one of
@@ -166,6 +169,13 @@ class TemporaryAgent:
         return self.app.root
 
     def cleanup(self) -> None:
+        # What would go on after the folder is gone - a list's grouping waiting its seconds, the side
+        # panel's lines - stopped first: else it ran on into a database no longer there, in another test.
+        for name in ("list_groups", "side_events"):
+            try:
+                getattr(self.app, name).stop()
+            except Exception:
+                pass
         try:
             self.app.db.close()
         except Exception:

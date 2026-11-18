@@ -1233,9 +1233,13 @@ class TheDraftTests(unittest.TestCase):
         desk = SimpleNamespace(app=agent.app)
         self.assertEqual(DesktopAgent._chat_draft(desk), "")
         DesktopAgent._keep_chat_draft(desk, "Half a thought")
+        # Written on a thread of its own (ui/later_writes.py): once it is, a restart reads it.
+        self.assertTrue(desk._later.flush(5.0))
         self.assertEqual(DesktopAgent._chat_draft(SimpleNamespace(app=agent.app)), "Half a thought")
         DesktopAgent._keep_chat_draft(desk, "")
         self.assertEqual(DesktopAgent._chat_draft(desk), "")
+        self.assertTrue(desk._later.flush(5.0))
+        self.assertEqual(DesktopAgent._chat_draft(SimpleNamespace(app=agent.app)), "")
 
 
 class ByTheSameCodeTests(unittest.TestCase):

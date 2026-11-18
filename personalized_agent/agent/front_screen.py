@@ -45,6 +45,13 @@ def _rows(db: Any, kind: str, limit: int) -> List[Dict[str, Any]]:
     return rows
 
 
+def _ours(data: Dict[str, Any]) -> bool:
+    """A window of this application's in a process of its own - the side panel's, in WebView2 (the user,
+    2026-11-16: "chat现在截图的时候，忽视/穿透 sidebar") - known by the name every one of its titles ends in."""
+    from ..version import APP_NAME
+    return str(data.get("window_title") or "").rstrip().endswith(APP_NAME)
+
+
 def front_now(db: Any, config: Any) -> Dict[str, str]:
     """The last window that was not this application's: "application",
     "title", and where they can be told "address", "file" and "text"."""
@@ -56,7 +63,7 @@ def front_now(db: Any, config: Any) -> Dict[str, str]:
     if why_no_picture(config):
         return {}
     window = next((one for one in _rows(db, "application.focused", 40)
-                   if one["data"].get("pid") != os.getpid()), None)
+                   if one["data"].get("pid") != os.getpid() and not _ours(one["data"])), None)
     if window is None:
         return {}
     title = str(window["data"].get("window_title") or "")

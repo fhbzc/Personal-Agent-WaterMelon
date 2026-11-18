@@ -178,6 +178,8 @@ class QuickBoxTests(unittest.TestCase):
             sheet = Path(there) / "sowing.txt"
             sheet.write_text("March", encoding="utf-8")
             self.box._dropped([str(folder), str(sheet), str(sheet)])
+            for later in self.posted:            # handed on to Tk's queue, as the desktop runs it
+                later()
             self.root.update()
             self.assertEqual(self.box.folders, [str(folder)], "a folder as a folder")
             self.assertEqual(self.box.files, [str(sheet)], "a file as a file, once")

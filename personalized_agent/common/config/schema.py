@@ -511,8 +511,9 @@ SETTINGS_SCHEMA: List[SettingField] = [
                  "Answer at once with a small model, and let the full agent add to it below. "
                  "Off: every message waits for the full agent."),
     SettingField("chat_fast_model", "Quick reply model", "string", "", "Models",
-                 "The small model that answers at once in Chat. Empty means: the model the chat "
-                 "runs on, at its lowest thinking effort. Format: provider/model."),
+                 "The small model that answers at once in Chat, and watches over your shoulder "
+                 "(Heads up, co-play). Empty means: the weaker model of the one the chat runs on "
+                 "(Claude: Haiku), at its lowest thinking effort. Format: provider/model."),
     SettingField("heartbeat_model_override", "Heartbeat model override", "string", "", "Models",
                  "Model used for the periodic background heartbeat instead of the "
                  "primary model. A cheaper model here reduces the cost of work you "
@@ -840,6 +841,16 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
                  hidden=True),
     SettingField("module_monitor_enabled", "Monitor", "bool", True, "Modules",
                  "The real-time signals and the Activators run on them.", hidden=True),
+    SettingField("module_heads_up_enabled", "Heads up", "bool", True, "Modules",
+                 "A word when you likely missed something (the Monitor's).", hidden=True),
+    SettingField("module_play_world_enabled", "Play world", "bool", True, "Modules",
+                 "The Play view's world, drawn from what you lived: caught up from what was kept, then grown once a day.", hidden=True),
+    SettingField("module_co_play_enabled", "Co-play", "bool", True, "Modules",
+                 "Company while you watch or read (the Monitor's).", hidden=True),
+    SettingField("module_information_queue_enabled", "When to tell you", "bool", True, "Modules",
+                 "Each thing ready to be told weighed - now, later or not at all (the Monitor's).", hidden=True),
+    SettingField("module_learning_questions_enabled", "Learning questions", "bool", True, "Modules",
+                 "A question when a lesson is truly undecided and matters (the Monitor's).", hidden=True),
     SettingField("module_agenda_enabled", "The day's plan", "bool", True, "Modules",
                  "Everything on your plate sorted and planned into your day, with its reminders.",
                  hidden=True),
@@ -1009,6 +1020,12 @@ SettingField("state_heartbeat_max_states", "How many states it groups",
     SettingField("shortcut_open_chat", "Chat bubble shortcut", "string", "Ctrl+Alt+C",
                  "Shortcuts", "The keys that open the chat bubble beside the avatar and "
                  "minimise it again, from any program. Empty for none.", hidden=True),
+    SettingField("shortcut_side_panel", "Side panel shortcut", "string", "Ctrl+Alt+Space",
+                 "Shortcuts", "The keys that open the side panel on the right and put it away "
+                 "again, from any program. Empty for none.", hidden=True),
+    SettingField("shortcut_board_snip", "Cut-out shortcut", "string", "Ctrl+Alt+S",
+                 "Shortcuts", "The keys that freeze the screen to cut a part of it into the side panel's "
+                 "small screen. Empty for none.", hidden=True),
     SettingField("delegate_selection_button", "Button beside selected text", "bool", True,
                  "Shortcuts", "A small Delegate work button beside text you select, for a "
                  "few seconds (Windows).", hidden=True),

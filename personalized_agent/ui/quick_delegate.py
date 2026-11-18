@@ -400,9 +400,10 @@ class QuickDelegate:
         self._draw_chosen()
 
     def _dropped(self, paths: List[str]) -> None:
-        """Dropped on it: taken when Tk is next free."""
+        """Dropped on it: taken when Tk is next free. Told from within the system's message, so handed on
+        (post) - a Tkinter call here, `after` too, would abort Python (ui/tk_finalizers.py says why)."""
         if self.window is not None:
-            self.window.after(0, lambda: self._take(list(paths)))
+            self.post(lambda: self._take(list(paths)))
 
     def _add_folder(self) -> None:
         from tkinter import filedialog

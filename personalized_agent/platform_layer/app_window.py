@@ -28,7 +28,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -208,10 +208,13 @@ def bring_back_titled(titles: set) -> bool:
     return False
 
 
-#: SLID IN FROM THE SIDE, SLID OUT TO IT (the user, 2026-11-13: "现在打开好像太慢了，有没有更natural的方式从侧边
-#: 弹出"): a window put away is kept, hidden, and slid back in - no browser started again. So long, in
-#: so many steps.
-SLIDE_SECONDS, SLIDE_STEPS = 0.16, 10
+#: SLID IN FROM THE SIDE (the user, 2026-11-13: "现在打开好像太慢了，有没有更natural的方式从侧边
+#: 弹出"): a window put away is kept, hidden, and slid back in - no browser started again. So long, BY
+#: THE CLOCK (2026-11-16: ten steps of a sleep each took 250 ms, not 160 - a sleep here is never less than
+#: the system's 15.6 ms tick; the user: "弹出，关闭，显示都要快"), a step about this often.
+SLIDE_SECONDS, SLIDE_STEP_SECONDS = 0.12, 0.008
+#: PUT AWAY AT ONCE, not slid out (the user, 2026-11-16: closing must be quick - sliding out was 235 ms).
+SLIDE_OUT = False
 
 
 def _work_area(handle: int) -> Tuple[int, int, int, int]:
@@ -232,14 +235,36 @@ def _work_area(handle: int) -> Tuple[int, int, int, int]:
     return work.left, work.top, work.right, work.bottom
 
 
-def _slide(handle: int, start: int, end: int, top: int, width: int, height: int) -> None:
+def eased(elapsed: float, seconds: float = SLIDE_SECONDS) -> float:
+    """How far along a slide is, 0 to 1, `elapsed` seconds into it: quick, then easing into place."""
+    if seconds <= 0 or elapsed >= seconds:
+        return 1.0
+    return 1 - (1 - max(0.0, elapsed) / seconds) ** 3
+
+
+def _slide(handle: int, start: int, end: int, top: int, width: int, height: int,
+           seconds: float = SLIDE_SECONDS) -> None:
+    """From `start` to `end` in `seconds` by the clock, the last step in place."""
     import ctypes
     user32 = ctypes.windll.user32
     flags = 0x0004 | 0x0010                                # SWP_NOZORDER | SWP_NOACTIVATE
-    for step in range(1, SLIDE_STEPS + 1):
-        done = 1 - (1 - step / SLIDE_STEPS) ** 3           # quick, then easing into place
-        user32.SetWindowPos(handle, 0, int(start + (end - start) * done), top, width, height, flags)
-        time.sleep(SLIDE_SECONDS / SLIDE_STEPS)
+    winmm = getattr(ctypes.windll, "winmm", None)
+    fine = False
+    try:
+        fine = winmm is not None and winmm.timeBeginPeriod(1) == 0   # a sleep of 1 ms is 1 ms, for now
+    except Exception:                                      # pragma: no cover - the coarse clock, then
+        fine = False
+    try:
+        began = time.perf_counter()
+        while True:
+            done = eased(time.perf_counter() - began, seconds)
+            user32.SetWindowPos(handle, 0, int(round(start + (end - start) * done)), top, width, height, flags)
+            if done >= 1.0:
+                return
+            time.sleep(SLIDE_STEP_SECONDS)
+    finally:
+        if fine:
+            winmm.timeEndPeriod(1)
 
 
 def _per_monitor() -> None:
@@ -272,6 +297,170 @@ def _close_others(titles: set, keep: int) -> None:
         user32.PostMessageW(handle, 0x0010, 0, 0)                       # WM_CLOSE
 
 
+#: HOW MUCH OF THE SIDE PANEL STAYS ON THE SCREEN PUT AWAY (the user, 2026-11-16: "collapse的时候这个凸起还是在边框外（这样我
+#: 可以点击展开)" - "不是一个bar, 你就露出一个button expand就行"): ITS TAB ALONE, as wide and as tall as it, in the middle of
+#: the screen's right edge - in the screen's own units at 96 dpi.
+PEEK, PEEK_TALL = 24, 64          # the tab's own size (styles.css .side-collapse-tab): the tab alone, a little more of it
+
+
+def _unpeek(handle: int) -> None:
+    """All of it seen again - the tab's region taken off."""
+    import ctypes
+    try:
+        ctypes.windll.user32.SetWindowRgn(ctypes.c_void_p(handle), None, True)
+    except Exception:
+        log.debug("the side panel's region could not be taken off", exc_info=True)
+
+
+def _monitor_box(handle: int) -> Tuple[int, int, int, int]:
+    """The whole of the screen a window is on - its edges, taskbar and all."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _Info(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
+                    ("dwFlags", wintypes.DWORD)]
+    user32 = ctypes.windll.user32
+    user32.MonitorFromWindow.restype = ctypes.c_void_p
+    info = _Info()
+    info.cbSize = ctypes.sizeof(_Info)
+    user32.GetMonitorInfoW(ctypes.c_void_p(user32.MonitorFromWindow(handle, 2)), ctypes.byref(info))
+    box = info.rcMonitor
+    return box.left, box.top, box.right, box.bottom
+
+
+def _peeking(handle: int) -> bool:
+    """Whether a window shown is put away to its tab at the right edge of its screen (`peek_titled`)."""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    if not user32.IsWindowVisible(handle) or user32.IsIconic(handle):
+        return False
+    rect = wintypes.RECT()
+    user32.GetWindowRect(handle, ctypes.byref(rect))
+    try:
+        dpi = int(user32.GetDpiForWindow(handle)) or 96
+    except Exception:                                      # pragma: no cover - an older Windows
+        dpi = 96
+    return rect.left >= _monitor_box(handle)[2] - round(PEEK * dpi / 96) - 2
+
+
+def peek_titled(titles: set, dock: Any = None) -> bool:
+    """THE SIDE PANEL PUT AWAY TO ITS TAB (the user, 2026-11-16): slid out to the right edge of its screen but for its
+    left PEEK, which holds the tab that brings it back - above every other window, so it is always there to press.
+    `dock`: its strip given back first, the windows moved for it put back. False when none is shown here."""
+    if _no_windows_here() or sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        _per_monitor()
+        user32 = ctypes.windll.user32
+        handle = _windows_page(set(titles))
+        if handle is None:
+            return False
+        rect = wintypes.RECT()
+        user32.GetWindowRect(handle, ctypes.byref(rect))
+        try:
+            dpi = int(user32.GetDpiForWindow(handle)) or 96
+        except Exception:                                  # pragma: no cover - an older Windows
+            dpi = 96
+        box = _monitor_box(handle)
+        right = box[2]
+        width, height = rect.right - rect.left, rect.bottom - rect.top
+        wide, tall = round(PEEK * dpi / 96), round(PEEK_TALL * dpi / 96)
+        # ITS TAB ALONE SEEN AT ONCE, then moved to the edge in one step - the window kept as large as it was (a window
+        # region shows the tab's piece of it), never laid out anew; and only then the strip given back and the other
+        # windows moved back (the user, 2026-11-16: "collapse和expand的弹出变卡了" - slid whole while every window under
+        # it was being fitted again, it went in jerks).
+        gdi32 = ctypes.windll.gdi32
+        gdi32.CreateRectRgn.restype = ctypes.c_void_p
+        region = gdi32.CreateRectRgn(0, height // 2 - tall // 2, wide, height // 2 + tall // 2)
+        user32.SetWindowRgn(ctypes.c_void_p(handle), ctypes.c_void_p(region), True)
+        user32.SetWindowPos(ctypes.c_void_p(handle), ctypes.c_void_p(-1), right - wide, rect.top, width, height,
+                            0x0010)                        # above the others: its tab always there to press
+        if dock is not None and getattr(dock, "docked", False):
+            dock.undock()                                  # the others back as they were - after
+            # ABOVE THEM AGAIN (the user, 2026-11-16: "sidebar消失了，那个bar和button都没有了"): giving the strip back
+            # put it among the others, under the window it had made room for.
+            user32.SetWindowPos(ctypes.c_void_p(handle), ctypes.c_void_p(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+        return True
+    except Exception:
+        log.warning("the window could not be put away to its tab", exc_info=True)
+    return False
+
+
+def show_titled(titles: set, on: bool) -> bool:
+    """One of the agent's own windows shown again (not made the one typed into) or hidden - its place kept."""
+    if _no_windows_here() or sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        handle = _windows_page(set(titles), hidden=True)
+        if handle is None:
+            return False
+        ctypes.windll.user32.ShowWindowAsync(ctypes.c_void_p(handle), 4 if on else 0)
+        return True
+    except Exception:
+        return False
+
+
+def covered_titled(titles: set) -> bool:
+    """Whether one of the agent's own windows, titled one of `titles`, is shown but has the window in front over it -
+    another program's, its rectangle crossing this one's (the side panel not pinned, a browser pressed on)."""
+    if _no_windows_here() or sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        import os
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        handle = _windows_page(set(titles))
+        if handle is None or not user32.IsWindowVisible(handle):
+            return False
+        front = user32.GetForegroundWindow()
+        if not front or int(front) == int(handle):
+            return False
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(front, ctypes.byref(pid))
+        from . import windows as _windows
+        if pid.value in {os.getpid(), *_windows.OTHER_OWN_PROCESSES}:
+            return False                                  # the avatar, its tab, a window of the agent's: not over it
+        mine, theirs = wintypes.RECT(), wintypes.RECT()
+        user32.GetWindowRect(handle, ctypes.byref(mine))
+        user32.GetWindowRect(front, ctypes.byref(theirs))
+        return theirs.left < mine.right and theirs.right > mine.left and theirs.top < mine.bottom and theirs.bottom > mine.top
+    except Exception:
+        log.debug("whether the window is covered could not be told", exc_info=True)
+        return False
+
+
+def on_top_titled(titles: set, on: bool) -> bool:
+    """One of the agent's own windows above every other, or among them again."""
+    if _no_windows_here() or sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        handle = _windows_page(set(titles))
+        if handle is None:
+            return False
+        ctypes.windll.user32.SetWindowPos(ctypes.c_void_p(handle), ctypes.c_void_p(-1 if on else -2), 0, 0, 0, 0,
+                                          0x0001 | 0x0002 | 0x0010)
+        return True
+    except Exception:
+        return False
+
+
+def peeking_titled(titles: set) -> bool:
+    if _no_windows_here() or sys.platform != "win32":
+        return False
+    try:
+        handle = _windows_page(set(titles))
+        return handle is not None and _peeking(handle)
+    except Exception:
+        return False
+
+
 def _off_every_screen(handle: int) -> bool:
     """Whether a window stands on no screen at all (one made off them, never brought in)."""
     import ctypes
@@ -279,12 +468,13 @@ def _off_every_screen(handle: int) -> bool:
     return not ctypes.windll.user32.MonitorFromWindow(handle, 0)        # MONITOR_DEFAULTTONULL
 
 
-def slide_in_titled(titles: set, width: Optional[int] = None) -> bool:
+def slide_in_titled(titles: set, width: Optional[int] = None, dock: Any = None, activate: bool = True) -> bool:
     """One of the agent's own windows, titled one of `titles`, slid in from the right edge of its
     screen, as tall as it is - from where `slide_out_titled` put it away, or from off every screen
     where it was made and never brought in (2026-11-13: "1 recommendation 点击open好像打不开了"); one shown
-    already, to the front. `width`: as wide as this at the screen's scaling. False when none is open,
-    for the caller to open one."""
+    already, to the front. `width`: as wide as this at the screen's scaling. `dock` (dock.py): the strip
+    it goes into taken from the screen first, the other windows moved over for it. False when none is
+    open, for the caller to open one."""
     if _no_windows_here() or sys.platform != "win32":
         return False
     try:
@@ -297,8 +487,10 @@ def slide_in_titled(titles: set, width: Optional[int] = None) -> bool:
             return False
         _close_others(set(titles), handle)       # ONE PANEL: another left from before, closed
         off = _off_every_screen(handle)
-        if user32.IsWindowVisible(handle) and not user32.IsIconic(handle) and not off:
-            user32.SetForegroundWindow(handle)
+        peeking = _peeking(handle)               # put away to its tab: slid in from where it is
+        if user32.IsWindowVisible(handle) and not user32.IsIconic(handle) and not off and not peeking:
+            if activate:
+                user32.SetForegroundWindow(handle)
             return True
         if user32.IsIconic(handle):
             user32.ShowWindow(handle, 9)                   # SW_RESTORE
@@ -311,19 +503,179 @@ def slide_in_titled(titles: set, width: Optional[int] = None) -> bool:
             left, top, right, bottom = _work_area(handle)
             wide = rect.right - rect.left
         width, height = max(wide, 200), bottom - top
-        user32.SetWindowPos(handle, 0, right, top, width, height, 0x0004 | 0x0010)
+        if dock is not None:
+            # SEEN FIRST, AT THE EDGE, the strip taken after (the user, 2026-11-16: "collapse和expand的弹出变卡了"): taking
+            # it fits every maximised window again and moves the others - waited for, the panel came after all that.
+            box = _monitor_box(handle)
+            user32.SetWindowPos(handle, 0, box[2] - width, top, width, height, 0x0004 | 0x0010 | 0x0100)
+            if peeking:
+                _unpeek(handle)
+            user32.ShowWindowAsync(handle, 4)              # SW_SHOWNOACTIVATE
+        strip = dock.dock(handle, width) if dock is not None else None
+        held = getattr(dock, "strip", None) if dock is not None else None
+        if not strip and held and getattr(dock, "docked", False):
+            # ITS STRIP HELD, IT GOES THERE (the user, 2026-11-16: "为什么刚刚ctrl + c变成这样了" - the strip not
+            # given back to it a moment, it was put by the work area its own strip had narrowed, left of it).
+            strip = held
+        elif not strip and held and abs(held[0] - right) <= 2:
+            right = held[2]                            # over the windows, at the screen's edge, not its strip's
+        if strip:
+            # INTO THE STRIP TAKEN FOR IT, IN ONE STEP, as the others move over (the user, 2026-11-16: "这个缩放
+            # 要快"): slid while every other window was being fitted again, the slide took 260 ms, not 120.
+            # Not waited for (SWP_ASYNCWINDOWPOS, ShowWindowAsync): the panel's own process lays itself out at
+            # its new size - 170 ms waited for, measured - while this goes on.
+            left, top, right, bottom = strip
+            user32.SetWindowPos(handle, 0, left, top, right - left, bottom - top, 0x0004 | 0x0010 | 0x4000)
+            user32.ShowWindowAsync(handle, 4)              # SW_SHOWNOACTIVATE
+            if activate:                                   # a notification's: where the user types stays
+                user32.SetForegroundWindow(handle)
+            return True
+        start = rect.left if peeking else right
+        # Among the others again, over them as it opens - above every one only while it is put away to its tab.
+        user32.SetWindowPos(ctypes.c_void_p(handle), ctypes.c_void_p(-2), start, top, width, height, 0x0010)
+        if peeking:
+            _unpeek(handle)                                # all of it, from where its tab was
         user32.ShowWindow(handle, 4)                       # SW_SHOWNOACTIVATE
-        _slide(handle, right, right - width, top, width, height)
-        user32.SetForegroundWindow(handle)
+        _slide(handle, start, right - width, top, width, height)
+        if activate:
+            user32.SetForegroundWindow(handle)
         return True
     except Exception:
         log.warning("the window could not be slid in", exc_info=True)
     return False
 
 
-def slide_out_titled(titles: set) -> bool:
+def resize_titled(titles: set, width: int, dock: Any = None) -> bool:
+    """THE SIDE PANEL WIDER, OR BACK (2026-11-16: its picture's column opens beside the chat only when there
+    is a picture): the agent's window titled one of `titles`, shown, made `width` wide at the screen's
+    scaling, its right edge where it is - into a strip taken again at that width when `dock` holds one, the
+    windows it now covers moved over. False when none is shown."""
+    if _no_windows_here() or sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        _per_monitor()
+        user32 = ctypes.windll.user32
+        handle = _windows_page(set(titles))
+        if handle is None:
+            return False
+        rect = wintypes.RECT()
+        user32.GetWindowRect(handle, ctypes.byref(rect))
+        try:
+            dpi = int(user32.GetDpiForWindow(handle)) or 96
+        except Exception:                                  # pragma: no cover - an older Windows
+            dpi = 96
+        # ITS FRAME COUNTED IN (the user, 2026-11-16: "点击sidebar左边框想拖动的时候，他会先跳到右边"): `width` is its
+        # page's; a window with a frame round the page - the browser's, where the panel opened there - that much
+        # wider, not narrowed by it as the drag begins.
+        inside = wintypes.RECT()
+        frame = 0
+        if user32.GetClientRect(handle, ctypes.byref(inside)):
+            frame = max(0, (rect.right - rect.left) - (inside.right - inside.left))
+        wide = max(200, round(width * dpi / 96) + frame)
+        strip = dock.dock(handle, wide) if dock is not None and getattr(dock, "docked", False) else None
+        if strip:
+            left, top, right, bottom = strip
+        else:
+            right, top, bottom = rect.right, rect.top, rect.bottom
+            left = right - wide
+        user32.SetWindowPos(handle, 0, left, top, right - left, bottom - top, 0x0004 | 0x0010 | 0x0100)   # NOCOPYBITS
+        return True
+    except Exception:
+        log.warning("the side panel could not be made wider or narrower", exc_info=True)
+    return False
+
+
+#: How often the pointer is looked at while the side panel's edge is dragged; how long a drag may last at most.
+EDGE_STEP_SECONDS, EDGE_LONGEST_SECONDS = 0.012, 120.0
+
+
+def drag_left_edge_titled(titles: set, narrowest: int, widest: int, let_go: Any) -> bool:
+    """THE SIDE PANEL'S LEFT EDGE FOLLOWING THE POINTER while the button that pressed it is held (the user,
+    2026-11-16: "还是没法移动sidebar"): the agent's window titled one of `titles` made as wide as from where the
+    pointer is to its right edge, `narrowest` to `widest` at the screen's scaling - read here, from where the pointer
+    really is: the page's own idea of where it is goes stale once another process moves its window, and the width it
+    worked out went back to where it began. Let go, `let_go(width)` with the width in the page's pixels. Not waited
+    for. False when none is shown."""
+    if _no_windows_here() or sys.platform != "win32":
+        return False
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    handle = _windows_page(set(titles))
+    if handle is None:
+        return False
+
+    def follow() -> None:
+        _per_monitor()
+        rect = wintypes.RECT()
+        user32.GetWindowRect(handle, ctypes.byref(rect))
+        try:
+            dpi = int(user32.GetDpiForWindow(handle)) or 96
+        except Exception:                                  # pragma: no cover - an older Windows
+            dpi = 96
+        right, top, bottom, last = rect.right, rect.top, rect.bottom, rect.left
+        least, most = round(narrowest * dpi / 96), round(widest * dpi / 96)
+        # The button pressed, as the hand presses it: the right one where the buttons are swapped.
+        button = 0x02 if user32.GetSystemMetrics(23) else 0x01
+        point = wintypes.POINT()
+        # Where on the edge it was pressed, kept: the edge stays under the pointer as it was - not put under it.
+        held = point.x - last if user32.GetCursorPos(ctypes.byref(point)) else 0
+        end = time.monotonic() + EDGE_LONGEST_SECONDS
+        try:
+            while time.monotonic() < end and user32.GetAsyncKeyState(button) & 0x8000:
+                if user32.GetCursorPos(ctypes.byref(point)):
+                    left = min(right - least, max(right - most, point.x - held))
+                    if left != last:
+                        # ITS OLD PICTURE NOT CARRIED ALONG (the user, 2026-11-16: dragged by its left edge, "他先往左移动
+                        # 再回归位置"): Windows moved what was drawn with the window's left edge, then the page drew itself
+                        # again where it belongs - SWP_NOCOPYBITS, and it is only drawn where it belongs.
+                        user32.SetWindowPos(handle, 0, left, top, right - left, bottom - top,
+                                            0x0004 | 0x0010 | 0x0100)
+                        last = left
+                time.sleep(EDGE_STEP_SECONDS)
+        finally:
+            try:
+                let_go(round((right - last) * 96 / dpi))
+            except Exception:
+                log.warning("the side panel's width could not be kept", exc_info=True)
+    threading.Thread(target=follow, name="side-panel-edge", daemon=True).start()
+    return True
+
+
+def dock_titled(titles: set, width: int, dock: Any) -> bool:
+    """THE SIDE PANEL PINNED WHILE IT IS SHOWN (2026-11-16): the agent's window titled one of `titles` put into a
+    strip `width` wide (at the screen's scaling) taken for it now, the other windows moved over. False when none is
+    shown, or no strip could be taken."""
+    if _no_windows_here() or sys.platform != "win32" or dock is None:
+        return False
+    try:
+        import ctypes
+        _per_monitor()
+        user32 = ctypes.windll.user32
+        handle = _windows_page(set(titles))
+        if handle is None:
+            return False
+        try:
+            dpi = int(user32.GetDpiForWindow(handle)) or 96
+        except Exception:                                  # pragma: no cover - an older Windows
+            dpi = 96
+        strip = dock.dock(handle, max(200, round(width * dpi / 96)))
+        if not strip:
+            return False
+        left, top, right, bottom = strip
+        user32.SetWindowPos(handle, 0, left, top, right - left, bottom - top, 0x0004 | 0x0010 | 0x4000)
+        return True
+    except Exception:
+        log.warning("the side panel could not be pinned", exc_info=True)
+    return False
+
+
+def slide_out_titled(titles: set, dock: Any = None) -> bool:
     """One of the agent's own windows, titled one of `titles`, slid out to the right edge and put
-    away - kept, hidden, for `slide_in_titled`. False when none is shown here."""
+    away - kept, hidden, for `slide_in_titled`; `dock`: its strip of the screen given back after, the
+    windows moved for it put back. False when none is shown here."""
     if _no_windows_here() or sys.platform != "win32":
         return False
     try:
@@ -333,12 +685,15 @@ def slide_out_titled(titles: set) -> bool:
         handle = _windows_page(set(titles))
         if handle is None:
             return False
-        rect = wintypes.RECT()
-        user32.GetWindowRect(handle, ctypes.byref(rect))
-        _left, _top, right, _bottom = _work_area(handle)
-        width, height = rect.right - rect.left, rect.bottom - rect.top
-        _slide(handle, rect.left, max(right, rect.left), rect.top, width, height)
-        user32.ShowWindow(handle, 0)                       # SW_HIDE
+        if SLIDE_OUT:
+            rect = wintypes.RECT()
+            user32.GetWindowRect(handle, ctypes.byref(rect))
+            _left, _top, right, _bottom = _work_area(handle)
+            width, height = rect.right - rect.left, rect.bottom - rect.top
+            _slide(handle, rect.left, max(right, rect.left), rect.top, width, height)
+        user32.ShowWindow(handle, 0)                       # SW_HIDE - at once
+        if dock is not None:
+            dock.undock()                                  # then the others back as they were
         return True
     except Exception:
         log.warning("the window could not be slid out", exc_info=True)
@@ -427,9 +782,10 @@ def open_side_window(url: str, profile: Path, size: Tuple[int, int], titles: Opt
     return True
 
 
-def place_side_window(size: Tuple[int, int], titles: Optional[set], pid: int = 0) -> None:
+def place_side_window(size: Tuple[int, int], titles: Optional[set], pid: int = 0, dock: Any = None) -> None:
     """The side window, once it is there off every screen - the process's own (`pid`), or one by its title
-    - put at the right edge as tall as the work area and slid in. In its own thread."""
+    - put at the right edge as tall as the work area and slid in; `dock`: into the strip taken for it, the
+    other windows moved over (dock.py). In its own thread."""
     import ctypes
 
     def place() -> None:
@@ -459,8 +815,13 @@ def place_side_window(size: Tuple[int, int], titles: Optional[set], pid: int = 0
             for handle in found:
                 if not user32.IsWindowVisible(handle):
                     continue
-                user32.SetWindowPos(handle, 0, right, top, width, height, 0x0004 | 0x0010)
-                _slide(handle, right, right - width, top, width, height)
+                strip = dock.dock(handle, width) if dock is not None else None
+                if strip:                                     # in one step, as the others move over
+                    _left, top, right, bottom = strip
+                    user32.SetWindowPos(handle, 0, _left, top, right - _left, bottom - top, 0x0004 | 0x0010)
+                else:
+                    user32.SetWindowPos(handle, 0, right, top, width, height, 0x0004 | 0x0010)
+                    _slide(handle, right, right - width, top, width, height)
                 user32.SetForegroundWindow(handle)
                 return
             time.sleep(0.005)
@@ -468,9 +829,10 @@ def place_side_window(size: Tuple[int, int], titles: Optional[set], pid: int = 0
 
 
 def open_hosted_side_window(host: object, url: str, size: Tuple[int, int], title: str,
-                            titles: Optional[set] = None) -> bool:
+                            titles: Optional[set] = None, dock: Any = None) -> bool:
     """THE SIDE PANEL IN WEBVIEW2 (panel_host.py): opened by the host off every screen, then slid in as the
-    browser's was. False when the host cannot - for the browser's way."""
+    browser's was (`dock`: into its strip of the screen). False when the host cannot - for the browser's
+    way."""
     if sys.platform != "win32" or _no_windows_here() or host is None:
         return False
     try:
@@ -479,7 +841,7 @@ def open_hosted_side_window(host: object, url: str, size: Tuple[int, int], title
     except Exception:
         log.info("the side panel's host could not open it", exc_info=True)
         return False
-    place_side_window(size, titles or {title})
+    place_side_window(size, titles or {title}, dock=dock)
     return True
 
 
@@ -506,13 +868,13 @@ def close_titled(titles: set) -> int:
 
 
 def shown_titled(titles: set) -> bool:
-    """Whether one of the agent's own windows titled one of `titles` is shown (not put away)."""
+    """Whether one of the agent's own windows titled one of `titles` is shown (not put away - to its tab neither)."""
     if _no_windows_here() or sys.platform != "win32":
         return False
     try:
         import ctypes
         handle = _windows_page(set(titles))
-        return handle is not None and not ctypes.windll.user32.IsIconic(handle)
+        return handle is not None and not ctypes.windll.user32.IsIconic(handle) and not _peeking(handle)
     except Exception:
         return False
 

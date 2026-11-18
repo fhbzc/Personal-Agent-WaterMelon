@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import queue
+import sys
 import threading
 import time
 import tkinter as tk
@@ -248,9 +249,9 @@ class WhatSetItOffTests(_Base):
 
     def test_it_goes_from_the_calendar_to_what_is_said(self) -> None:
         task = self._scheduled("A meeting invitation")
-        self.assertEqual(ex._made_by(task), {"made_by": "heartbeat",
+        self.assertEqual(ex._made_by(task), {"made_by": "heartbeat", "made_in": "heartbeat",
                                              "trigger": "A meeting invitation"})
-        self.assertEqual(ex._made_by(self._scheduled()), {"made_by": "heartbeat"})
+        self.assertEqual(ex._made_by(self._scheduled()), {"made_by": "heartbeat", "made_in": "heartbeat"})
 
     def test_one_from_before_says_a_trigger_made_it(self) -> None:
         task = SimpleNamespace(metadata={"heartbeat_task": "trigger_1"}, created_by="heartbeat")
@@ -824,30 +825,29 @@ class TheSidePanelTests(unittest.TestCase):
         from test_chat_debugger_ui import ESCAPE
         from test_overview_todo_scroll import _function
         source = (ROOT / "personalized_agent" / "api" / "web" / "notes.js").read_text(encoding="utf-8")
-        start = source.index("const notesState = ")
-        script = ("const window=globalThis;" + ESCAPE + """
-const page = { innerHTML: "", querySelector: () => null };
-const $ = (sel) => sel === "#notes-page" ? page : null;
-const localStamp = (x) => x;
-const document = { activeElement: null };
-const NOTES_SOLO = true;
-""" + source[start:source.index("\n", start)] + _function(source, "notesAt") + _function(source, "linkify")
-                  + _function(source, "notesCard") + _function(source, "renderNotes")
-                  # Folded, as each is when more than one waits (one alone is open).
-                  + "notesState.sections = " + json.dumps(said["sections"]).replace(
-                      '"folds": false', '"folds": true') + ";"
-                  + "renderNotes(true); const closed = page.innerHTML;"
-                  + "notesState.open.add(" + json.dumps(row["id"]) + "); renderNotes(true);"
-                  + "process.stdout.write(JSON.stringify({closed, open: page.innerHTML}));")
+        # 2026-11-16: "你现在整个sidebar都变成chat, agent发notification的时候也是相当于在给用户chat" - each waiting one
+        # is the agent's message in the chat, whole: its words, its answers, a reply, its link.
+        script = ("const window=globalThis;" + ESCAPE + "const localStamp = (x) => x;"
+                  + _function(source, "notesAt") + _function(source, "linkify") + _function(source, "notesCard") + _function(source, "sideOpenThePage")
+                  + _function(source, "sideQuickHtml") + _function(source, "sideContentHtml")
+                  + _function(source, "sideExtras") + _function(source, "sideRulesList")
+                  + "const SIDE_EXTRA_MARKS = {}; const SIDE_EXTRA_OPENS = \"\";"
+                  + "const part = " + json.dumps(said["sections"][0]) + ";"
+                  + "process.stdout.write(JSON.stringify([notesCard(part.rows[0], part.name),"
+                  + " sideQuickHtml(part.rows[0])]));")
         ran = subprocess.run(["node", "-e", script], capture_output=True, text=True,
                              encoding="utf-8", timeout=60)
         self.assertEqual(ran.returncode, 0, ran.stderr)
-        drawn = json.loads(ran.stdout)
-        self.assertIn("High water at noon", drawn["closed"])
-        self.assertNotIn("data-notes-act", drawn["closed"], "its answers once it is opened")
-        self.assertIn(f'data-notes-act="{row["id"]}"', drawn["open"])
-        self.assertIn("data-notes-reply", drawn["open"], "a reply in words")
-        self.assertIn('href="https://example.org/tides"', drawn["open"], "its link, to open")
+        drawn, quick = json.loads(ran.stdout)
+        self.assertIn("High water at noon", drawn)
+        self.assertIn('href="https://example.org/tides"', drawn, "its link, to open")
+        # 2026-11-17: "content里要带上url ... 不需要重写，就加一段过渡然后把内容照搬就行" - its words as they were made.
+        self.assertIn("The tide tables say 12:04.", drawn)
+        self.assertIn("chat-message", drawn, "the agent's words, never looked up to be translated")
+        # 2026-11-16: "这些按钮本质上作为快速回复（在input旁边有按钮，点击可以快速回复)" - its answers by the box.
+        self.assertNotIn("data-notes-act", drawn)
+        self.assertIn(f'data-notes-act="{row["id"]}"', quick)
+        self.assertIn(f'data-notes-replyto="{row["id"]}"', quick, "a reply in words, in the chat's own box")
 
     def test_the_desktop_opens_it_once_down_the_side(self) -> None:
         from pathlib import Path
@@ -860,6 +860,10 @@ const NOTES_SOLO = true;
                                _off_this_thread=lambda what, name="": what(),
                                _notes_on_a_mac=lambda: False)
         desk._notes_titles = lambda: DesktopAgent._notes_titles(desk)
+        # Never the real screen's state: a film the user is watching is not this test's.
+        no_film = mock.patch.object(DesktopAgent, "_film_in_front", return_value=False)
+        no_film.start()
+        self.addCleanup(no_film.stop)
         with mock.patch.object(aw, "slide_in_titled", return_value=False), \
                 mock.patch.object(aw, "open_side_window", return_value=True) as opened:
             DesktopAgent.open_notifications(desk)
@@ -881,19 +885,29 @@ const NOTES_SOLO = true;
         desk = SimpleNamespace(app=SimpleNamespace(config=None), NOTES_TITLE=DesktopAgent.NOTES_TITLE,
                                NOTES_WATCH_MS=DesktopAgent.NOTES_WATCH_MS,
                                NOTES_COMING_SECONDS=DesktopAgent.NOTES_COMING_SECONDS,
+                               NOTES_GONE_LOOKS=DesktopAgent.NOTES_GONE_LOOKS,
                                _notes_since=0.0, _notes_seen=False, _notes_watching=True,
                                root=SimpleNamespace(after=lambda ms, fn: again.append(fn)),
                                _waiting_list_open=held.append, _notes_on_a_mac=lambda: False)
         desk._notes_titles = lambda: DesktopAgent._notes_titles(desk)
         desk._watch_notes = lambda: DesktopAgent._watch_notes(desk)
-        desk._notes_open_now = lambda: DesktopAgent._notes_open_now(desk)
-        with mock.patch.object(aw, "shown_titled", return_value=True):
-            DesktopAgent._watch_notes(desk)
+        # Whether it is shown, said here: on every system (2026-11-16: read from Windows' windows, the test
+        # held on Windows only - on a Mac the panel was never "shown").
+        shown = [True]
+        desk._notes_open_now = lambda: shown[0]
+        DesktopAgent._watch_notes(desk)
         self.assertEqual((held, len(again)), ([], 1), "shown: held, looked at again")
-        with mock.patch.object(aw, "shown_titled", return_value=False):
+        shown[0] = False
+        DesktopAgent._watch_notes(desk)
+        self.assertEqual(held, [], "missed once: not taken as gone yet (2026-11-17)")
+        self.assertTrue(desk._notes_watching)
+        for _ in range(DesktopAgent.NOTES_GONE_LOOKS - 1):
             DesktopAgent._watch_notes(desk)
         self.assertEqual(held, [False], "put away: drawn again")
         self.assertFalse(desk._notes_watching)
+        if sys.platform == "win32":                      # read from the windows there are
+            with mock.patch.object(aw, "shown_titled", return_value=True):
+                self.assertTrue(DesktopAgent._notes_open_now(desk))
 
     def test_the_line_is_not_drawn_beside_a_panel_open_from_before(self) -> None:
         """2026-11-13: the panel open, "1 recommendation" still beside the avatar - it was open from before
@@ -953,28 +967,33 @@ const NOTES_SOLO = true;
         from support import ROOT
         from test_overview_todo_scroll import _function
         source = (ROOT / "personalized_agent" / "api" / "web" / "notes.js").read_text(encoding="utf-8")
-        script = ("const posted = []; let closed = 0; let rows = [];"
-                  "const window = {close: () => { closed += 1; }};"
-                  "const api = {get: async () => ({sections: [{name: 'x', rows}]}),"
-                  "  post: async (path) => { posted.push(path); return {hidden: true}; }};"
-                  "const notesState = {sections: [], open: new Set(), leaving: new Set()};"
-                  "function renderNotes() {}"
-                  + "".join("async " + _function(source, name) for name in ("loadNotes", "closeNotes"))
-                  + "(async () => {"
-                  "  await loadNotes(); await loadNotes(); const opened = posted.length;"   # opened empty
-                  "  rows = [{id: 'n2'}]; await loadNotes(); const emptyUnanswered = posted.length;"
-                  "  rows = [];"                     # answered elsewhere - beside the avatar, the report
-                  "  await loadNotes(); await new Promise((r) => setTimeout(r, 10));"
-                  "  process.stdout.write(JSON.stringify({opened, emptyUnanswered, posted, closed}));"
-                  "})();")
-        ran = subprocess.run(["node", "-e", script], capture_output=True, text=True,
-                             encoding="utf-8", timeout=60)
-        self.assertEqual(ran.returncode, 0, ran.stderr)
-        said = json.loads(ran.stdout)
+        def run(talked: bool) -> dict:
+            script = ("const posted = []; let closed = 0; let rows = [];"
+                      "const window = {close: () => { closed += 1; }};"
+                      "const api = {get: async () => ({sections: [{name: 'x', rows}]}),"
+                      "  post: async (path) => { posted.push(path); return {hidden: true}; }};"
+                      "const notesState = {sections: [], open: new Set(), leaving: new Set()};"
+                      f"const sideChat = {{used: {'true' if talked else 'false'}}};"
+                      "function renderNotes() {} function sidePrivate() {}"
+                      + "".join("async " + _function(source, name) for name in ("loadNotes", "closeNotes"))
+                      + "(async () => {"
+                      "  await loadNotes(); await loadNotes(); const opened = posted.length;"   # opened empty
+                      "  rows = [{id: 'n2'}]; await loadNotes(); const emptyUnanswered = posted.length;"
+                      "  rows = [];"                     # answered elsewhere - beside the avatar, the report
+                      "  await loadNotes(); await new Promise((r) => setTimeout(r, 10));"
+                      "  process.stdout.write(JSON.stringify({opened, emptyUnanswered, posted, closed}));"
+                      "})();")
+            ran = subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                                 encoding="utf-8", timeout=60)
+            self.assertEqual(ran.returncode, 0, ran.stderr)
+            return json.loads(ran.stdout)
+        said = run(talked=False)
         self.assertEqual((said["opened"], said["emptyUnanswered"]), (0, 0), "opened empty, or with some: it stays")
-        # 2026-11-13: "这个好像消息结束了没有自动关闭窗口" - its last one gone, however it went.
-        self.assertEqual(said["posted"], ["/api/notifications/panel_hide"], "the last gone: put away")
-        self.assertEqual(said["closed"], 0, "put away by the desktop, not closed")
+        # 2026-11-16: the side panel is the chat - what is told is read once seen, and it is never put away by its
+        # list emptying (the desktop puts away one a notification opened, untouched).
+        self.assertEqual(said["posted"], [], "the last gone: it stays")
+        self.assertEqual(said["closed"], 0)
+        self.assertEqual(run(talked=True)["posted"], [], "a chat in it: it stays")
 
 
 if __name__ == "__main__":

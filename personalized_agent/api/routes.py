@@ -10,19 +10,28 @@ import base64
 import binascii
 import json
 import logging
+import time
 from typing import Any, Callable, Dict, List, Tuple
 
 from ..build_flags import debugger_available
 from ..common.reason import BY_USER
-from ..common.events.models import ScheduledTask, parse_iso, utcnow
+from ..common.events.models import ScheduledTask, new_id, parse_iso, utcnow
 from ..common.paths import is_frozen
 from ..models.base import AuthMethod
 from ..protocol.authentication.service import AuthenticationError
 from ..version import APP_NAME, __version__
-from .errors import ApiError, Raw
+from .errors import ApiError, Raw, Stream
 from ..heartbeat.experience.store import description_of
 
 log = logging.getLogger(__name__)
+
+#: How many pictures sent from the side panel are kept to be shown again; how many of its messages it is given.
+SIDE_PICTURES_KEPT, SIDE_MESSAGES_SHOWN = 20, 80
+#: A picture fetched for the small screen, no larger than this.
+SIDE_PICTURE_MOST = 15 * 1024 * 1024
+#: The side panel's history: the most read at once; how many before a message found are shown with it; how many
+#: found are listed; how many letters round a word found are shown with it.
+SIDE_MOST_AT_ONCE, SIDE_AROUND, SIDE_SEARCH_MOST, SIDE_SEARCH_ROUND = 2000, 10, 60, 30
 
 
 def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
@@ -2000,9 +2009,32 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         if not message and not attachments:
             raise ApiError("a message needs words or a file")
         try:
+            side = request.get("panel") == "side"
+            # THE SIDE PANEL IS THE CHAT (the user, 2026-11-16: "你现在的chat框取消，之后sidebar就是一个聊天框"): what is
+            # in front of the user goes with its messages, as it went with the bubble's - the window behind it.
+            front, seen = "", None
+            told: Dict[str, Any] = {}
+            look = getattr(app, "front_for_chat", None)
+            if side and callable(look):
+                try:
+                    front, seen = look(told)
+                except Exception:
+                    log.info("what is in front of the user could not be read", exc_info=True)
+            if side:
+                # THE SIDE PANEL'S OWN CONVERSATION, ONE (the user, 2026-11-16: "所有agent的话，所有我的话都在一个session里"),
+                # Quick or Slow as the panel says ("chat要支持quick和slow mode") - Quick only where quick replies are on.
+                quick = app.two_speed.on and str(request.get("mode") or "quick") != "slow"
+                conversation = request.get("conversation_id") or app.side_conversation()
+                app.side_last_said = time.monotonic()        # the user is talking (the information queue)
+                talk = getattr(app, "talk_style", None)
+                if talk is not None:
+                    talk.maybe_read()                        # how they talk, read again when it is due
+                said = app.two_speed.send(message, conversation, attachments, mentions, front=front,
+                                          seen=seen, visual=True, quick=quick)
+                return {**said, "picture": _side_picture(told)}
             if app.two_speed.on:
                 return app.two_speed.send(message, request.get("conversation_id"), attachments,
-                                          mentions)
+                                          mentions, front=front, seen=seen)
             said = app.agent.handle_message(message, request.get("conversation_id"),
                                             attachments=attachments or None,
                                             mentions=mentions or None)
@@ -2048,9 +2080,19 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
 
     @route("POST", "/api/chat/followup")
     def chat_followup(request: Any) -> Any:
-        """A follow-up about one reply, asked on its own (agent_core)."""
+        """A follow-up about one reply, asked on its own (agent_core) - or about a notification the agent told in the
+        side panel (`note`): its message there."""
+        ident = str(request.get("message_id") or "")
+        note = str(request.get("note") or "")
+        if note and (not ident or app.conversations.message(ident) is None):
+            told = next((one for one in reversed(app.conversations.stretch(app.side_conversation()))
+                         if one.get("role") == "assistant"
+                         and (one.get("metadata") or {}).get("notification_id") == note), None)
+            ident = told["id"] if told else ident
+        if not ident:
+            raise ApiError("missing parameter: message_id")
         try:
-            return app.agent.follow_up(str(request.require("message_id")),
+            return app.agent.follow_up(ident,
                                        str(request.get("about") or ""),
                                        str(request.get("question") or ""))
         except ValueError as exc:
@@ -4469,7 +4511,350 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
     def notifications_waiting_list(_request: Any) -> Any:
         """THE WAITING NOTIFICATIONS, AS THE SIDE PANEL SHOWS THEM (the user, 2026-11-13: "直接占满整个侧边框
         的那种"): by kind, each with its words, why it was told and its answers."""
-        return {"sections": app.quick_sections("waiting")}
+        # IN PRIVATE MODE, SAID AT ITS TOP (the user, 2026-11-16: "如果现在是private mode, 这个sidebar上面会显示 you are on
+        # private mode之类的").
+        return {"sections": app._waiting_sections(side=True),
+                "private": bool(app.config.get("listener_private_mode", False))}
+
+    # THE PICTURE OF THE SCREEN THAT WENT WITH A SIDE PANEL MESSAGE, as the bubble showed it under the message
+    # (the user, 2026-11-16: "之前的feature, 包括当前屏幕，context什么的都要实现") - in memory only, the last few.
+    side_pictures: Dict[str, bytes] = {}
+
+    def _side_picture(told: Dict[str, Any]) -> Dict[str, Any]:
+        if told.get("withheld"):
+            return {"withheld": str(told["withheld"])}
+        if not told.get("how"):
+            return {}
+        out: Dict[str, Any] = {"how": told["how"], "why": str(told.get("why") or "")}
+        if told.get("picture"):
+            ident = new_id("pic")
+            side_pictures[ident] = told["picture"]
+            while len(side_pictures) > SIDE_PICTURES_KEPT:
+                side_pictures.pop(next(iter(side_pictures)))
+            out["url"] = f"/api/side/picture?id={ident}"
+        return out
+
+    @route("POST", "/api/notifications/seen")
+    def notifications_seen(request: Any) -> Any:
+        """SHOWN IN THE SIDE PANEL, AS THE AGENT SAYING IT (the user, 2026-11-16: "现在notification 不用快速回复了"): told,
+        read - no answer to learn from, none asked for."""
+        ids = [str(one) for one in request.get("ids") or []][:200]
+        for ident in ids:
+            app.notifications.mark_read(ident)
+        return {"seen": ids}
+
+    @route("GET", "/api/side/told")
+    def side_told(_request: Any) -> Any:
+        """WHAT THE AGENT TOLD LATELY, READ OR NOT (the side panel's drawer, the user, 2026-11-16: "再展开一层sidebar ...
+        里面有各种功能"): the last SIDE_HOURS, none held - each as it was said, with where to open it."""
+        from ..common.notifications import SIDE_HOURS, category_of
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        since = (_dt.now(_tz.utc) - _td(hours=SIDE_HOURS)).isoformat()
+        out = []
+        for one in app.notifications.recent(200):
+            meta = one.get("metadata")
+            if isinstance(meta, str):
+                try:
+                    meta = json.loads(meta or "{}")
+                except ValueError:
+                    meta = {}
+            meta = meta or {}
+            if meta.get("held") or str(one.get("created_at") or "") < since:
+                continue
+            out.append({"id": one["id"], "at": one.get("created_at"), "title": one.get("title") or "",
+                        "said": meta.get("said") or "", "words": one.get("message") or "",
+                        "url": meta.get("url") or "", "kind": category_of(one), "read": bool(one.get("read")),
+                        "rules": list(meta.get("rules_used") or [])[:3]})
+        return {"told": out}
+
+    @route("POST", "/api/notifications/panel_toggle")
+    def notifications_panel_toggle(_request: Any) -> Any:
+        """ITS TAB PRESSED (the user, 2026-11-16): put away to it at the screen's edge, or back."""
+        toggle = getattr(app, "toggle_notes_panel", None)
+        if not callable(toggle):
+            return {"peeking": False, "done": False}
+        try:
+            return {"peeking": bool(toggle()), "done": True}
+        except Exception:
+            log.info("the side panel could not be put away or brought back", exc_info=True)
+            return {"peeking": False, "done": False}
+
+    @route("POST", "/api/side/touched")
+    def side_touched(_request: Any) -> Any:
+        """The side panel used - pressed on, typed in: a panel a notification opened is left where it is."""
+        app.side_touched_at = time.monotonic()
+        return {"ok": True}
+
+    @route("GET", "/api/side/picture")
+    def side_picture(request: Any) -> Any:
+        found = side_pictures.get(str(request.require("id")))
+        if found is None:
+            raise ApiError("that picture is no longer kept", 404)
+        return Raw(found, "image/png")
+
+    @route("GET", "/api/side/screen_now")
+    def side_screen_now(_request: Any) -> Any:
+        """THE SCREEN NOW, FOR THE SMALL SCREEN TO DRAW ON (the user, 2026-11-17: "image界面可以允许模型画图，也允许我做
+        screenshot ... 我可以edit, 然后模型会看到这个"): taken as a message's picture is - the side panel left out,
+        nothing while private mode or a private folder is open. The next message takes the screen afresh, and goes with
+        both (notes.js sideBoardForMessage)."""
+        from ..common.privacy_folders import why_no_picture
+        held = why_no_picture(app.config)
+        if held:
+            raise ApiError(f"no picture now: {held}", 409)
+        pictures = getattr(app, "front_pictures", None)
+        if pictures is None:
+            raise ApiError("the screen cannot be taken here", 404)
+        pictures.take(words=False)
+        shot = pictures.latest(wait=8)
+        pictures.used = True
+        from pathlib import Path
+        path = Path(str(shot.get("path") or "")) if shot else None
+        if not path or not path.is_file():
+            raise ApiError(str(getattr(pictures, "why", "") or "the screen could not be taken"), 409)
+        return Raw(path.read_bytes(), "image/jpeg")
+
+    @route("GET", "/api/play/world")
+    def play_world(_request: Any) -> Any:
+        """THE PLAY VIEW'S WORLD (agent/playworld.py): its rooms and things, each thing's picture by its address. Made
+        the first time it is asked for - and grown at once then, from what the user lived."""
+        world_keeper = getattr(app, "play_world", None)
+        if world_keeper is None:
+            raise ApiError("the play world is not here", 404)
+        new = world_keeper.load() is None
+        world = world_keeper.world()
+        if new and world_keeper.on():
+            world_keeper.grow_soon()
+        for one in world.get("items", []):
+            one["picture_url"] = f"/api/play/picture?id={one['id']}" if one.get("picture") else ""
+        for one in world.get("zones", []):
+            one["floor_picture_url"] = f"/api/play/picture?id=floor-{one['id']}" if one.get("floor_picture") else ""
+        return {"world": world, "growing": world_keeper._growing.locked(), "grows": world_keeper.on()}
+
+    @route("GET", "/api/play/picture")
+    def play_picture(request: Any) -> Any:
+        world_keeper = getattr(app, "play_world", None)
+        found = world_keeper.picture(str(request.require("id"))) if world_keeper is not None else None
+        if found is None:
+            raise ApiError("no picture for that thing", 404)
+        return Raw(found, "image/jpeg")
+
+    @route("POST", "/api/side/board_snip")
+    def side_board_snip(request: Any) -> Any:
+        """The small screen's screenshot button: a part of the screen cut out into it, as Ctrl+Alt+S does."""
+        snip = getattr(app, "snip_into_board", None)
+        if not callable(snip):
+            return {"error": "Cutting out the screen needs the desktop app."}
+        snip()
+        return {"started": True}
+
+    @route("POST", "/api/play/showing")
+    def play_showing(request: Any) -> Any:
+        """The Play view open or shut: the avatar off the screen while it walks in the world (ui/desktop.py)."""
+        said = getattr(app, "avatar_in_play", None)
+        if callable(said):
+            said(bool(request.get("on")))
+        return {"told": callable(said)}
+
+    @route("POST", "/api/play/grow")
+    def play_grow(_request: Any) -> Any:
+        """Grown now (off this thread) - the user asked."""
+        world_keeper = getattr(app, "play_world", None)
+        if world_keeper is None or not world_keeper.on():
+            raise ApiError("the play world is switched off", 409)
+        return {"started": world_keeper.grow_soon()}
+
+    @route("GET", "/api/side/board_inbox")
+    def side_board_inbox(_request: Any) -> Any:
+        """THE PARTS OF THE SCREEN CUT OUT FOR THE SMALL SCREEN, waiting to be taken (ui/desktop.py _snip_into_the_board)."""
+        return {"cuts": list((getattr(app, "board_inbox", None) or {}).keys())}
+
+    @route("GET", "/api/side/board_cut")
+    def side_board_cut(request: Any) -> Any:
+        """One part cut out, as a PNG - taken once."""
+        inbox = getattr(app, "board_inbox", None) or {}
+        found = inbox.pop(str(request.require("id")), None)
+        if found is None:
+            raise ApiError("that part of the screen is no longer kept", 404)
+        return Raw(found, "image/png")
+
+    @route("POST", "/api/side/fetch_picture")
+    def side_fetch_picture(request: Any) -> Any:
+        """A PICTURE DRAGGED OFF A PAGE THAT WILL NOT LET THE PANEL TAKE IT (the user, 2026-11-17: "一张图片，我直接拖，而不是
+        下载什么的"): fetched here, as the user's browser would, for the small screen - a web address only, a picture
+        only, no larger than SIDE_PICTURE_MOST; kept nowhere."""
+        url = str(request.require("url")).strip()
+        if not url.lower().startswith(("http://", "https://")):
+            raise ApiError("only a picture on the web is fetched")
+        import urllib.request
+        asked = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "image/*"})
+        try:
+            with urllib.request.urlopen(asked, timeout=20) as answer:
+                kind = str(answer.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                body = answer.read(SIDE_PICTURE_MOST + 1)
+        except Exception as exc:
+            raise ApiError(f"the picture could not be fetched: {exc}"[:200], 502)
+        if not kind.startswith("image/") or len(body) > SIDE_PICTURE_MOST:
+            raise ApiError("that is not a picture, or it is too large", 415)
+        return Raw(body, kind)
+
+    @route("GET", "/api/side/front")
+    def side_front(_request: Any) -> Any:
+        """WHAT IS IN FRONT OF THE USER, AS THE BUBBLE SAID IT UNDER ITS HEAD ("On your screen, given as context:"):
+        the window behind the side panel - none in private mode."""
+        if app.config.get("listener_private_mode", False):
+            return {"line": ""}
+        from ..agent.front_screen import front_now, shown_line
+        try:
+            return {"line": shown_line(front_now(app.db, app.config))}
+        except Exception:
+            return {"line": ""}
+
+    @route("GET", "/api/side/conversation")
+    def side_conversation(request: Any) -> Any:
+        """THE SIDE PANEL'S ONE CONVERSATION (app.side_conversation), A STRETCH AT A TIME (the user, 2026-11-17: "模型默认
+        显示的是到上上个summary point 为止的history, 如果用户继续上翻会继续load之前的（不用一次性load所有)。每次多load一个
+        summary point之类（或者按照条数)"): from the summary point before last; `before` (the oldest shown), the
+        stretch back to the summary point before it - SIDE_MESSAGES_SHOWN of them where there is none; `around` (a
+        message found), from a few before it up to `before`. "earlier": whether more was said before what comes."""
+        ident = app.side_conversation()
+        before = str(request.get("before") or "") or None
+        around = str(request.get("around") or "")
+        marks = [one for one in app.conversations.stretch(ident, before=None)
+                 if one.get("role") == "system" and (one.get("metadata") or {}).get("origin") == "compacted"]
+        points = sorted({str((one["metadata"] or {}).get("at") or "") for one in marks} - {""})
+        if around:
+            found = app.conversations.message(around)
+            if not found or found.get("conversation_id") != ident:
+                return {"conversation_id": ident, "messages": [], "followups": [], "earlier": bool(before),
+                        "from": before or ""}
+            lead = app.conversations.stretch(ident, before=found["created_at"], limit=SIDE_AROUND)
+            since = lead[0]["created_at"] if lead else found["created_at"]
+            said = app.conversations.stretch(ident, before=before, since=since, limit=SIDE_MOST_AT_ONCE)
+        else:
+            back = [one for one in points if not before or one < before]
+            # The point before the last one under it: what is shown begins just after the last one.
+            start = back[-2] if len(back) >= 2 else None
+            if start:
+                said = app.conversations.stretch(ident, before=before, after=start, limit=SIDE_MOST_AT_ONCE)
+            else:
+                said = app.conversations.stretch(ident, before=before, limit=SIDE_MESSAGES_SHOWN)
+        said = [one for one in said if one.get("role") != "system"]
+        oldest = said[0]["created_at"] if said else (before or "")
+        # Its summary marks, where they stand among what comes.
+        shown = said + [one for one in marks if oldest <= str((one["metadata"] or {}).get("at") or "")
+                        and (not before or str((one["metadata"] or {}).get("at") or "") < before)]
+        earlier = bool(oldest and app.conversations.stretch(ident, before=oldest, limit=1))
+        return {"conversation_id": ident, "messages": shown, "from": oldest, "earlier": earlier,
+                "followups": app.conversations.followups([one["id"] for one in said])}
+
+    def _learn_reaction(reply: Dict[str, Any], meaning: str, action: str) -> None:
+        """The user's reaction to one of the agent's chat replies: a lesson's evidence, kept as every other - the
+        reply, what they had said to it, and what they made of it."""
+        lessons = getattr(app, "lessons", None)
+        if lessons is None:
+            return
+        try:
+            # Up to it, those said in the same instant too (made one after another, they can share their time).
+            asked = [one for one in app.conversations.stretch(str(reply.get("conversation_id") or ""),
+                                                              before=str(reply.get("created_at") or "") + "￿",
+                                                              limit=8)
+                     if one.get("role") == "user" and one.get("id") != reply.get("id")]
+            situation = (f"The agent answered in the chat: \"{str(reply.get('content') or '')[:1500]}\""
+                         + (f" - to the user's \"{str(asked[-1].get('content') or '')[:500]}\"" if asked else ""))
+            lessons.record("general", str(reply.get("id") or ""), situation, action=action, reason=meaning,
+                           content=situation)
+        except Exception:
+            log.info("a reaction to a chat reply could not be learned from", exc_info=True)
+
+    @route("POST", "/api/learning/answer")
+    def learning_answer(request: Any) -> Any:
+        """A LEARNING QUESTION'S OPTION PRESSED (heartbeat/lessons/questions.py): the user's own rule, at once."""
+        try:
+            option = int(request.get("option"))
+        except (TypeError, ValueError):
+            raise ApiError("which option?") from None
+        said = app.learning_questions.answer(str(request.require("id")), option)
+        if said.get("error") and not said.get("answered"):
+            raise ApiError(said["error"], 404)
+        return said
+
+    @route("POST", "/api/side/react")
+    def side_react(request: Any) -> Any:
+        """A QUICK REACTION TO WHAT THE AGENT SAID (the user, 2026-11-17: "agent的每个回复，有一个快速emoji功能") - an
+        emoji, or `bad` (the content was bad: "要在emoji旁边加一个快速的bad content"): put on (`on`) or taken off - kept
+        with the message (and with the notification it told), told to the turns after; on a notification, an answer to
+        learn from, as every other ("bad content, emoji都是要被作为学习的对象")."""
+        from ..agent.chat_pictures import BAD_CONTENT, REACTIONS
+        bad = bool(request.get("bad", False))
+        emoji = "" if bad else str(request.get("emoji") or "")
+        if not bad and emoji not in REACTIONS:
+            return {"error": "not a reaction"}
+        on = bool(request.get("on", True))
+
+        def flip(kept: Any) -> List[str]:
+            now = [one for one in (kept or []) if one != emoji]
+            return now + [emoji] if on else now
+        ident, note = str(request.get("id") or ""), str(request.get("note") or "")
+        side = app.side_conversation()
+        target = app.conversations.message(ident) if ident else None
+        if target is None and note:
+            target = next((one for one in reversed(app.conversations.stretch(side))
+                           if one.get("role") == "assistant"
+                           and (one.get("metadata") or {}).get("notification_id") == note), None)
+        if target is not None:
+            kept = target.get("metadata") or {}
+            app.conversations.set_metadata(target["id"], {"bad_content": on} if bad
+                                           else {"reactions": flip(kept.get("reactions"))})
+            if on and not note and not kept.get("notification_id"):
+                # A CHAT REPLY'S, LEARNED FROM AT ONCE (the user, 2026-11-17: "这个一点反应就立刻学习"): not left to the
+                # quiet summary - a reply already summarised would never be learned from.
+                _learn_reaction(target, BAD_CONTENT if bad else f"reacted with {emoji} ({REACTIONS[emoji]})",
+                                "bad_content" if bad else "reaction")
+        told = app.notifications.get(note) if note else None
+        if told is not None:
+            meta = dict(told.get("metadata") or {})
+            if bad:
+                meta["bad_content"] = on
+            else:
+                meta["reactions"] = flip(meta.get("reactions"))
+            app.notifications.set_metadata(note, meta)
+            if on:
+                try:
+                    app.learn_answer(told, "bad_content" if bad else "reaction",
+                                     meaning=BAD_CONTENT if bad else f"reacted with {emoji} ({REACTIONS[emoji]})")
+                except Exception:
+                    log.info("a reaction could not be learned from", exc_info=True)
+        return {"ok": target is not None or told is not None}
+
+    @route("GET", "/api/side/search")
+    def side_search(request: Any) -> Any:
+        """WORDS FOUND IN WHAT WAS SAID (the user, 2026-11-17: "要支持搜索功能，可以做exact match找到之前的聊天内容并且
+        display in chat context (类似wechat的搜索机制)"): the messages with them, exactly, the newest first - each with
+        a little round where they are."""
+        words = str(request.get("q") or "").strip()
+        found = app.conversations.search(app.side_conversation(), words, limit=SIDE_SEARCH_MOST) if words else []
+        hits = []
+        for one in found:
+            text = str(one.get("content") or "")
+            at = text.lower().find(words.lower())
+            start = max(0, at - SIDE_SEARCH_ROUND)
+            hits.append({"id": one["id"], "role": one["role"], "created_at": one["created_at"],
+                         "before": ("…" if start else "") + text[start:at], "found": text[at:at + len(words)],
+                         "after": text[at + len(words):at + len(words) + SIDE_SEARCH_ROUND * 2]})
+        return {"hits": hits}
+
+    @route("GET", "/api/side/stream")
+    def side_stream(request: Any) -> Any:
+        """THE SIDE PANEL TOLD WHAT CHANGED, AS IT CHANGES (api/side_events.py): one connection held open -
+        "notes", the waiting list; "turn", a chat turn by its id. Back after a moment away, what it missed
+        since the last it had (its Last-Event-ID, or ?since=)."""
+        said = request.headers.get("Last-Event-ID") or request.get("since") or 0
+        try:
+            since = int(said)
+        except (TypeError, ValueError):
+            since = 0
+        return Stream(app.side_events.stream(since))
 
     @route("POST", "/api/notifications/open_link")
     def notifications_open_link(request: Any) -> Any:
@@ -4479,6 +4864,17 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         url = str(request.require("url")).strip()
         if not url.lower().startswith(("http://", "https://")):
             raise ApiError("only a web address is opened")
+        # A PLACE IN THE REPORT (the user, 2026-11-17: "这个需要加link, 跳到panel里的细节"): the app's own window
+        # turned to the report, that event opened - as a notification's "Go to it" does.
+        from ..agent.reports import REPORT_PLACE
+        base = getattr(app, "api_base_url", "")
+        own, _hash, place = url.partition("#")
+        if isinstance(base, str) and base and own.rstrip("/") == base.rstrip("/") and place.startswith(REPORT_PLACE):
+            from urllib.parse import unquote
+            import time as _time
+            app.report_wanted = {"place": {"event": unquote(place[len(REPORT_PLACE):])}, "at": _time.time()}
+            opener = getattr(app, "open_report_window", None)
+            return {"opened": bool(opener()) if callable(opener) else False, "report": True}
         import webbrowser
         return {"opened": bool(webbrowser.open(url))}
 
@@ -4501,6 +4897,46 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             return {"hidden": bool(hide()) if callable(hide) else False}
         except Exception:
             return {"hidden": False}
+
+    @route("POST", "/api/notifications/panel_wide")
+    def notifications_panel_wide(request: Any) -> Any:
+        """THE SIDE PANEL WIDER FOR ITS PICTURE, OR BACK (2026-11-16) - `wide` False where the desktop cannot
+        make it so: the page puts the picture above the chat."""
+        # DRAGGED BY ITS EDGE (2026-11-16: "那个side bar 要允许我鼠标拖动size"): "width" as it is dragged, "final"
+        # when it is let go - kept, and the other windows moved for it then.
+        # PRESSED, ON WINDOWS: followed by the desktop from where the pointer is, till it is let go.
+        if request.get("grab"):
+            grab = getattr(app, "grab_notes_panel", None)
+            try:
+                return {"grabbed": bool(grab(bool(request.get("wide")))) if callable(grab) else False}
+            except Exception:
+                return {"grabbed": False}
+        if request.get("width") is not None:
+            size = getattr(app, "size_notes_panel", None)
+            try:
+                return {"sized": bool(size(int(request.get("width")), bool(request.get("final")),
+                                           bool(request.get("wide"))))
+                        if callable(size) else False}
+            except (TypeError, ValueError):
+                raise ApiError("width is a number")
+            except Exception:
+                return {"sized": False}
+        widen = getattr(app, "widen_notes_panel", None)
+        try:
+            return {"wide": bool(widen(bool(request.get("wide")))) if callable(widen) else False}
+        except Exception:
+            return {"wide": False}
+
+    @route("POST", "/api/notifications/panel_pin")
+    def notifications_panel_pin(request: Any) -> Any:
+        """THE SIDE PANEL PINNED TO THE RIGHT, OR NOT (the user, 2026-11-16: "只有user主动选择固定在右边，才是缩放的
+        view") - "pinned" true or false; none, only asked. Whether it is pinned."""
+        pin = getattr(app, "pin_notes_panel", None)
+        said = request.get("pinned")
+        try:
+            return {"pinned": bool(pin(None if said is None else bool(said))) if callable(pin) else False}
+        except Exception:
+            return {"pinned": False}
 
     @route("POST", "/api/notifications/bad")
     def notifications_bad(request: Any) -> Any:

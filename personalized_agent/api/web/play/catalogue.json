@@ -1,0 +1,4628 @@
+{
+"themes": {
+"meadow": "green meadows, flowers, round trees",
+"autumn": "autumn leaves, orange trees",
+"enchanted": "an enchanted, magical wood",
+"desert": "sand, cacti, dry rock",
+"seaside": "beach sand, palms, the sea",
+"forest": "deep pine forest",
+"highland": "rocky highlands",
+"snow": "snow and ice",
+"city": "a modern city: streets, lamps, benches, bins",
+"farmland": "farms, fields, crops, animals",
+"cavern": "caves, crystals, ore",
+"lakeside": "lakes and reeds",
+"toytown": "a toy town in bright colours",
+"underwater": "the sea floor: fish, sharks, turtles, coral",
+"skycity": "a city in the clouds",
+"space": "space: moon rock, robots, ships",
+"scifi": "the future: robots, neon",
+"zoo": "a zoo: lions, tigers, elephants, giraffes, bears",
+"ruins": "ancient ruins: pillars, broken stone",
+"graveyard": "a decaying graveyard: gravestones, dead trees, mist",
+"christmas": "Christmas: trees, presents, reindeer",
+"newyear": "(Lunar) New Year: red lanterns, firecrackers, gold ingots, blossom",
+"halloween": "Halloween: pumpkins, candles",
+"valentine": "Valentine's Day: hearts, roses, balloons",
+"funfair": "a funfair: rides, balloons, candy stands",
+"botanical": "a botanic garden: greenhouse, flowers, vegetables",
+"skyline": "a city skyline: skyscrapers",
+"school": "a school's yard",
+"office": "an office's yard",
+"apartment": "a block of flats' yard",
+"laboratory": "a laboratory's yard",
+"skyscraper": "a skyscraper's yard",
+"primeval": "a primeval forest: dense old trees, ferns, moss, deer and bears",
+"home": "a home's yard: flowers, benches, pets",
+"haunted": "a haunted house's yard",
+"futuristic": "a futuristic building's yard",
+"magic": "a magic building's yard",
+"toy": "a toy building's yard",
+"ruins_yard": "a ruined building's yard",
+"sky": "a sky building's yard",
+"general": "anything else",
+"ancient_ruins": "ancient ruins",
+"cafe": "cafe",
+"camp": "camp",
+"christmas_tree": "christmas tree",
+"crystals": "crystals",
+"fair": "fair",
+"fountain": "fountain",
+"giant_heart": "giant heart",
+"giant_pet": "giant pet",
+"great_tree": "great tree",
+"greenhouse": "greenhouse",
+"lantern_gate": "lantern gate",
+"library": "library",
+"market": "market",
+"mausoleum": "mausoleum",
+"pond": "pond",
+"rocket": "rocket",
+"screening": "screening",
+"station": "station",
+"statue": "statue",
+"stones": "stones",
+"studio": "studio",
+"study": "study"
+},
+"things": {
+"roundTree": {
+"what": "round tree",
+"themes": [
+"botanical",
+"forest",
+"great_tree",
+"lakeside",
+"meadow"
+],
+"spec": [
+"rpg",
+13,
+10,
+1,
+1
+]
+},
+"smallTree": {
+"what": "small tree",
+"themes": [
+"lakeside",
+"meadow",
+"seaside"
+],
+"spec": [
+"rpg",
+13,
+9,
+1,
+1
+]
+},
+"autumnTree": {
+"what": "autumn tree",
+"themes": [
+"autumn"
+],
+"spec": [
+"rpg",
+14,
+10,
+1,
+1
+]
+},
+"autumnSmall": {
+"what": "autumn small",
+"themes": [
+"autumn"
+],
+"spec": [
+"rpg",
+14,
+9,
+1,
+1
+]
+},
+"darkTree": {
+"what": "dark tree",
+"themes": [
+"enchanted",
+"forest",
+"great_tree",
+"primeval"
+],
+"spec": [
+"rpg",
+15,
+10,
+1,
+1
+]
+},
+"pine": {
+"what": "pine",
+"themes": [
+"christmas",
+"forest",
+"primeval",
+"snow"
+],
+"spec": [
+"rpg",
+16,
+10,
+1,
+1
+]
+},
+"autumnPine": {
+"what": "autumn pine",
+"themes": [
+"autumn"
+],
+"spec": [
+"rpg",
+17,
+10,
+1,
+1
+]
+},
+"darkPine": {
+"what": "dark pine",
+"themes": [
+"christmas",
+"enchanted",
+"forest",
+"highland",
+"primeval",
+"snow"
+],
+"spec": [
+"rpg",
+18,
+10,
+1,
+1
+]
+},
+"smallPine": {
+"what": "small pine",
+"themes": [
+"forest",
+"highland",
+"snow"
+],
+"spec": [
+"rpg",
+16,
+9,
+1,
+1
+]
+},
+"bush": {
+"what": "bush",
+"themes": [
+"apartment",
+"forest",
+"home",
+"library",
+"meadow",
+"screening",
+"studio",
+"study",
+"zoo"
+],
+"spec": [
+"rpg",
+19,
+9,
+1,
+1
+]
+},
+"orangeBush": {
+"what": "orange bush",
+"themes": [
+"autumn"
+],
+"spec": [
+"rpg",
+20,
+9,
+1,
+1
+]
+},
+"greenBush": {
+"what": "green bush",
+"themes": [
+"lakeside",
+"meadow",
+"primeval",
+"seaside"
+],
+"spec": [
+"rpg",
+21,
+9,
+1,
+1
+]
+},
+"cactus": {
+"what": "cactus",
+"themes": [
+"desert"
+],
+"spec": [
+"rpg",
+22,
+9,
+1,
+1
+]
+},
+"cactusSmall": {
+"what": "cactus small",
+"themes": [
+"desert",
+"ruins"
+],
+"spec": [
+"rpg",
+22,
+10,
+1,
+1
+]
+},
+"fruitTree": {
+"what": "fruit tree",
+"themes": [
+"botanical"
+],
+"spec": [
+"rpg",
+23,
+10,
+1,
+2
+]
+},
+"berryBush": {
+"what": "berry bush",
+"themes": [
+"farmland",
+"home"
+],
+"spec": [
+"rpg",
+24,
+10,
+1,
+1
+]
+},
+"flowerBush": {
+"what": "flower bush",
+"themes": [
+"botanical",
+"farmland",
+"funfair",
+"home",
+"school",
+"valentine"
+],
+"spec": [
+"rpg",
+25,
+10,
+1,
+1
+]
+},
+"orangeFruit": {
+"what": "orange fruit",
+"themes": [
+"farmland"
+],
+"spec": [
+"rpg",
+26,
+10,
+1,
+1
+]
+},
+"deadTree": {
+"what": "dead tree",
+"themes": [
+"desert",
+"halloween",
+"ruins",
+"ruins_yard"
+],
+"spec": [
+"rpg",
+27,
+9,
+1,
+1
+]
+},
+"blueFlower": {
+"what": "blue flower",
+"themes": [
+"botanical",
+"lakeside",
+"meadow",
+"pond",
+"sky",
+"skycity",
+"study"
+],
+"spec": [
+"rpg",
+28,
+9,
+1,
+1
+]
+},
+"redFlower": {
+"what": "red flower",
+"themes": [
+"botanical",
+"cafe",
+"funfair",
+"giant_pet",
+"home",
+"meadow",
+"newyear",
+"statue",
+"valentine"
+],
+"spec": [
+"rpg",
+29,
+9,
+1,
+1
+]
+},
+"purpleFlower": {
+"what": "purple flower",
+"themes": [
+"enchanted",
+"magic"
+],
+"spec": [
+"rpg",
+30,
+9,
+1,
+1
+]
+},
+"whiteFlower": {
+"what": "white flower",
+"themes": [
+"botanical",
+"giant_pet",
+"great_tree",
+"home",
+"lakeside",
+"library",
+"meadow",
+"pond",
+"sky",
+"skycity",
+"valentine"
+],
+"spec": [
+"rpg",
+31,
+9,
+1,
+1
+]
+},
+"mushroom": {
+"what": "mushroom",
+"themes": [
+"enchanted",
+"forest",
+"magic"
+],
+"spec": [
+"rpg",
+48,
+3,
+1,
+1
+]
+},
+"mushroom2": {
+"what": "mushroom 2",
+"themes": [
+"enchanted",
+"magic"
+],
+"spec": [
+"rpg",
+48,
+5,
+1,
+1
+]
+},
+"brownRock": {
+"what": "brown rock",
+"themes": [
+"autumn",
+"desert",
+"ruins"
+],
+"spec": [
+"rpg",
+54,
+19,
+1,
+1
+]
+},
+"brownRock2": {
+"what": "brown rock 2",
+"themes": [
+"desert"
+],
+"spec": [
+"rpg",
+55,
+20,
+1,
+1
+]
+},
+"greyRock": {
+"what": "grey rock",
+"themes": [
+"ancient_ruins",
+"highland",
+"ruins",
+"ruins_yard",
+"seaside",
+"snow",
+"space",
+"stones"
+],
+"spec": [
+"rpg",
+54,
+21,
+1,
+1
+]
+},
+"greyRock2": {
+"what": "grey rock 2",
+"themes": [
+"highland",
+"space",
+"stones"
+],
+"spec": [
+"rpg",
+55,
+21,
+1,
+1
+]
+},
+"mossRock": {
+"what": "moss rock",
+"themes": [
+"ancient_ruins",
+"highland",
+"primeval",
+"ruins",
+"ruins_yard"
+],
+"spec": [
+"rpg",
+54,
+22,
+1,
+1
+]
+},
+"seaRock": {
+"what": "sea rock",
+"themes": [
+"seaside",
+"underwater"
+],
+"spec": [
+"rpg",
+56,
+21,
+1,
+1
+]
+},
+"cityTree": {
+"what": "city tree",
+"themes": [
+"city"
+],
+"spec": [
+"city",
+31,
+12,
+1,
+1
+]
+},
+"cityTree2": {
+"what": "city tree 2",
+"themes": [
+"city"
+],
+"spec": [
+"city",
+33,
+12,
+1,
+1
+]
+},
+"hydrant": {
+"what": "hydrant",
+"themes": [
+"city"
+],
+"spec": [
+"city",
+15,
+14,
+1,
+1
+]
+},
+"bin": {
+"what": "bin",
+"themes": [
+"city"
+],
+"spec": [
+"city",
+15,
+13,
+1,
+1
+]
+},
+"mailbox": {
+"what": "mailbox",
+"themes": [
+"city"
+],
+"spec": [
+"city",
+12,
+16,
+1,
+1
+]
+},
+"caveRock": {
+"what": "cave rock",
+"themes": [
+"cavern",
+"crystals"
+],
+"spec": [
+"cave",
+0,
+0,
+1,
+1
+]
+},
+"caveRock2": {
+"what": "cave rock 2",
+"themes": [
+"cavern",
+"crystals"
+],
+"spec": [
+"cave",
+4,
+1,
+1,
+1
+]
+},
+"caveRock3": {
+"what": "cave rock 3",
+"themes": [
+"cavern"
+],
+"spec": [
+"cave",
+5,
+1,
+1,
+1
+]
+},
+"ore": {
+"what": "ore",
+"themes": [
+"cavern",
+"crystals",
+"space"
+],
+"spec": [
+"cave",
+14,
+12,
+1,
+1
+]
+},
+"ore2": {
+"what": "ore 2",
+"themes": [
+"cavern",
+"crystals"
+],
+"spec": [
+"cave",
+15,
+12,
+1,
+1
+]
+},
+"ore3": {
+"what": "ore 3",
+"themes": [
+"cavern",
+"crystals"
+],
+"spec": [
+"cave",
+15,
+13,
+1,
+1
+]
+},
+"caveShroom": {
+"what": "cave shroom",
+"themes": [
+"cavern"
+],
+"spec": [
+"cave",
+1,
+3,
+1,
+1
+]
+},
+"signpost": {
+"what": "signpost",
+"themes": [
+"station",
+"study"
+],
+"spec": [
+"rpg",
+19,
+0,
+1,
+1
+]
+},
+"signpost2": {
+"what": "signpost 2",
+"themes": [
+"general"
+],
+"spec": [
+"rpg",
+20,
+0,
+1,
+1
+]
+},
+"barrel": {
+"what": "barrel",
+"themes": [
+"cafe",
+"camp",
+"market",
+"station",
+"studio"
+],
+"spec": [
+"rpg",
+23,
+0,
+1,
+1
+]
+},
+"barrel2": {
+"what": "barrel 2",
+"themes": [
+"cafe",
+"studio"
+],
+"spec": [
+"rpg",
+24,
+0,
+1,
+1
+]
+},
+"crate": {
+"what": "crate",
+"themes": [
+"cafe",
+"camp",
+"market",
+"studio"
+],
+"spec": [
+"rpg",
+25,
+0,
+1,
+1
+]
+},
+"anvil": {
+"what": "anvil",
+"themes": [
+"studio"
+],
+"spec": [
+"rpg",
+15,
+0,
+1,
+1
+]
+},
+"lamp": {
+"what": "lamp",
+"themes": [
+"fountain",
+"station",
+"statue"
+],
+"spec": [
+"rpg",
+15,
+7,
+1,
+1
+]
+},
+"torch": {
+"what": "torch",
+"themes": [
+"general"
+],
+"spec": [
+"rpg",
+17,
+7,
+1,
+1
+]
+},
+"bench": {
+"what": "bench",
+"themes": [
+"apartment",
+"cafe",
+"fountain",
+"funfair",
+"giant_heart",
+"giant_pet",
+"great_tree",
+"home",
+"laboratory",
+"library",
+"office",
+"pond",
+"school",
+"screening",
+"skyline",
+"skyscraper",
+"station",
+"study",
+"valentine"
+],
+"spec": [
+"rpg",
+18,
+4,
+1,
+1
+]
+},
+"pennant": {
+"what": "pennant",
+"themes": [
+"screening",
+"sky",
+"skycity"
+],
+"spec": [
+"rpg",
+53,
+0,
+1,
+1
+]
+},
+"shield": {
+"what": "shield",
+"themes": [
+"general"
+],
+"spec": [
+"rpg",
+51,
+0,
+1,
+1
+]
+},
+"gold": {
+"what": "gold",
+"themes": [
+"market"
+],
+"spec": [
+"rpg",
+41,
+11,
+1,
+1
+]
+},
+"rail": {
+"what": "rail",
+"themes": [
+"station"
+],
+"spec": [
+"rpg",
+44,
+18,
+1,
+1
+]
+},
+"fence": {
+"what": "fence",
+"themes": [
+"farmland",
+"zoo"
+],
+"spec": [
+"rpg",
+47,
+23,
+1,
+1
+]
+},
+"fence2": {
+"what": "fence 2",
+"themes": [
+"farmland",
+"zoo"
+],
+"spec": [
+"rpg",
+48,
+23,
+1,
+1
+]
+},
+"scroll": {
+"what": "a red scroll",
+"themes": [
+"library",
+"newyear"
+],
+"spec": [
+"festive",
+12,
+0,
+1,
+1
+]
+},
+"campfire": {
+"what": "a crackling campfire",
+"themes": [
+"camp",
+"christmas"
+],
+"spec": [
+"festive",
+9,
+0,
+1,
+1
+]
+},
+"tentGreen": {
+"what": "tent green",
+"themes": [
+"camp"
+],
+"spec": [
+"rpg",
+46,
+10,
+2,
+2
+]
+},
+"tentWhite": {
+"what": "tent white",
+"themes": [
+"camp"
+],
+"spec": [
+"rpg",
+48,
+10,
+2,
+2
+]
+},
+"statue": {
+"what": "statue",
+"themes": [
+"ancient_ruins",
+"ruins",
+"ruins_yard",
+"skycity",
+"statue"
+],
+"spec": [
+"rpg",
+50,
+10,
+1,
+2
+]
+},
+"fountain": {
+"what": "fountain",
+"themes": [
+"fountain"
+],
+"spec": [
+"city",
+26,
+4,
+3,
+3
+]
+},
+"pondBig": {
+"what": "pond big",
+"themes": [
+"pond"
+],
+"spec": [
+"rpg",
+2,
+0,
+3,
+3
+]
+},
+"stall": {
+"what": "stall",
+"themes": [
+"market"
+],
+"spec": [
+"city",
+34,
+15,
+1,
+1
+]
+},
+"stall2": {
+"what": "stall 2",
+"themes": [
+"market"
+],
+"spec": [
+"city",
+35,
+15,
+1,
+1
+]
+},
+"crystal": {
+"what": "crystal",
+"themes": [
+"crystals",
+"enchanted",
+"magic",
+"space",
+"stones"
+],
+"spec": [
+"cave",
+14,
+11,
+1,
+1
+]
+},
+"streetLamp": {
+"what": "a modern street lamp (tall)",
+"themes": [
+"apartment",
+"funfair",
+"futuristic",
+"home",
+"laboratory",
+"library",
+"office",
+"rocket",
+"school",
+"screening",
+"skyline",
+"skyscraper",
+"station",
+"study"
+],
+"spec": [
+"urban",
+7,
+6,
+1,
+2
+]
+},
+"gasLamp": {
+"what": "an old gas street lamp (tall)",
+"themes": [
+"general"
+],
+"spec": [
+"urban",
+0,
+6,
+1,
+2
+]
+},
+"torchPost": {
+"what": "a torch on a post",
+"themes": [
+"magic"
+],
+"spec": [
+"rpg",
+17,
+7,
+1,
+1
+]
+},
+"brazier": {
+"what": "a fire brazier",
+"themes": [
+"general"
+],
+"spec": [
+"rpg",
+14,
+8,
+1,
+1
+]
+},
+"lion": {
+"what": "lion",
+"themes": [
+"zoo"
+],
+"spec": [
+"creatures",
+6,
+15,
+1,
+1
+]
+},
+"tiger": {
+"what": "tiger",
+"themes": [
+"zoo"
+],
+"spec": [
+"creatures",
+7,
+15,
+1,
+1
+]
+},
+"elephant": {
+"what": "elephant",
+"themes": [
+"zoo"
+],
+"spec": [
+"creatures",
+8,
+15,
+1,
+1
+]
+},
+"giraffe": {
+"what": "giraffe",
+"themes": [
+"zoo"
+],
+"spec": [
+"creatures",
+9,
+15,
+1,
+1
+]
+},
+"zebra": {
+"what": "zebra",
+"themes": [
+"zoo"
+],
+"spec": [
+"creatures",
+5,
+15,
+1,
+1
+]
+},
+"bear": {
+"what": "bear",
+"themes": [
+"primeval",
+"zoo"
+],
+"spec": [
+"creatures",
+3,
+16,
+1,
+1
+]
+},
+"polarBear": {
+"what": "a polar bear",
+"themes": [
+"zoo"
+],
+"spec": [
+"creatures",
+4,
+16,
+1,
+1
+]
+},
+"gorilla": {
+"what": "gorilla",
+"themes": [
+"zoo"
+],
+"spec": [
+"creatures",
+5,
+16,
+1,
+1
+]
+},
+"monkey": {
+"what": "monkey",
+"themes": [
+"zoo"
+],
+"spec": [
+"creatures",
+7,
+16,
+1,
+1
+]
+},
+"rhino": {
+"what": "rhino",
+"themes": [
+"zoo"
+],
+"spec": [
+"creatures",
+0,
+17,
+1,
+1
+]
+},
+"hippo": {
+"what": "hippo",
+"themes": [
+"zoo"
+],
+"spec": [
+"creatures",
+1,
+17,
+1,
+1
+]
+},
+"camel": {
+"what": "camel",
+"themes": [
+"zoo"
+],
+"spec": [
+"creatures",
+9,
+12,
+1,
+1
+]
+},
+"croc": {
+"what": "a crocodile",
+"themes": [
+"zoo"
+],
+"spec": [
+"creatures",
+8,
+14,
+1,
+1
+]
+},
+"turtle": {
+"what": "turtle",
+"themes": [
+"underwater",
+"zoo"
+],
+"spec": [
+"creatures",
+9,
+14,
+1,
+1
+]
+},
+"owl": {
+"what": "owl",
+"themes": [
+"primeval",
+"zoo"
+],
+"spec": [
+"creatures",
+1,
+13,
+1,
+1
+]
+},
+"eagle": {
+"what": "eagle",
+"themes": [
+"skycity"
+],
+"spec": [
+"creatures",
+4,
+13,
+1,
+1
+]
+},
+"shark": {
+"what": "shark",
+"themes": [
+"underwater"
+],
+"spec": [
+"creatures",
+2,
+17,
+1,
+1
+]
+},
+"dolphin": {
+"what": "dolphin",
+"themes": [
+"underwater"
+],
+"spec": [
+"creatures",
+3,
+17,
+1,
+1
+]
+},
+"orca": {
+"what": "orca",
+"themes": [
+"underwater"
+],
+"spec": [
+"creatures",
+4,
+17,
+1,
+1
+]
+},
+"fish1": {
+"what": "a fish",
+"themes": [
+"general"
+],
+"spec": [
+"creatures",
+0,
+6,
+1,
+1
+]
+},
+"fish2": {
+"what": "a fish",
+"themes": [
+"general"
+],
+"spec": [
+"creatures",
+1,
+6,
+1,
+1
+]
+},
+"fish3": {
+"what": "a fish",
+"themes": [
+"general"
+],
+"spec": [
+"creatures",
+3,
+6,
+1,
+1
+]
+},
+"fish4": {
+"what": "a fish",
+"themes": [
+"general"
+],
+"spec": [
+"creatures",
+4,
+6,
+1,
+1
+]
+},
+"smallFish": {
+"what": "a small fish",
+"themes": [
+"general"
+],
+"spec": [
+"creatures",
+0,
+7,
+1,
+1
+]
+},
+"cat": {
+"what": "cat",
+"themes": [
+"apartment",
+"home"
+],
+"spec": [
+"creatures",
+4,
+9,
+1,
+1
+]
+},
+"dog": {
+"what": "dog",
+"themes": [
+"home"
+],
+"spec": [
+"creatures",
+9,
+16,
+1,
+1
+]
+},
+"rabbit": {
+"what": "rabbit",
+"themes": [
+"home"
+],
+"spec": [
+"creatures",
+7,
+17,
+1,
+1
+]
+},
+"squirrel": {
+"what": "squirrel",
+"themes": [
+"general"
+],
+"spec": [
+"creatures",
+5,
+17,
+1,
+1
+]
+},
+"chicken": {
+"what": "chicken",
+"themes": [
+"general"
+],
+"spec": [
+"creatures",
+0,
+15,
+1,
+1
+]
+},
+"cow": {
+"what": "cow",
+"themes": [
+"general"
+],
+"spec": [
+"creatures",
+1,
+15,
+1,
+1
+]
+},
+"sheep": {
+"what": "sheep",
+"themes": [
+"general"
+],
+"spec": [
+"creatures",
+3,
+15,
+1,
+1
+]
+},
+"goat": {
+"what": "goat",
+"themes": [
+"general"
+],
+"spec": [
+"creatures",
+2,
+15,
+1,
+1
+]
+},
+"robot1": {
+"what": "a robot",
+"themes": [
+"futuristic",
+"scifi",
+"space"
+],
+"spec": [
+"creatures",
+0,
+8,
+1,
+1
+]
+},
+"robot2": {
+"what": "a small robot",
+"themes": [
+"futuristic",
+"scifi",
+"space"
+],
+"spec": [
+"creatures",
+1,
+8,
+1,
+1
+]
+},
+"robot3": {
+"what": "a tiny robot",
+"themes": [
+"futuristic",
+"laboratory",
+"scifi",
+"space"
+],
+"spec": [
+"creatures",
+2,
+8,
+1,
+1
+]
+},
+"wisp": {
+"what": "a glowing wisp",
+"themes": [
+"futuristic",
+"scifi",
+"space"
+],
+"spec": [
+"creatures",
+9,
+8,
+1,
+1
+]
+},
+"sunflower": {
+"what": "sunflower",
+"themes": [
+"botanical",
+"greenhouse"
+],
+"spec": [
+"farm",
+11,
+6,
+1,
+1
+]
+},
+"pumpkinCrate": {
+"what": "a crate of pumpkins",
+"themes": [
+"general"
+],
+"spec": [
+"farm",
+11,
+0,
+1,
+1
+]
+},
+"pillar": {
+"what": "a stone pillar (tall)",
+"themes": [
+"ancient_ruins",
+"ruins"
+],
+"spec": [
+"rpg",
+13,
+19,
+1,
+2
+]
+},
+"brokenPillar": {
+"what": "a broken pillar (tall)",
+"themes": [
+"ancient_ruins",
+"ruins",
+"ruins_yard"
+],
+"spec": [
+"rpg",
+14,
+19,
+1,
+2
+]
+},
+"greyPillar": {
+"what": "a grey pillar (tall)",
+"themes": [
+"ruins"
+],
+"spec": [
+"rpg",
+20,
+19,
+1,
+2
+]
+},
+"ship": {
+"what": "a spaceship",
+"themes": [
+"general"
+],
+"spec": [
+"ships",
+0,
+0,
+2,
+2
+]
+},
+"ship2": {
+"what": "a rocket ship",
+"themes": [
+"rocket"
+],
+"spec": [
+"ships",
+2,
+0,
+2,
+2
+]
+},
+"ship3": {
+"what": "a spaceship",
+"themes": [
+"general"
+],
+"spec": [
+"ships",
+4,
+0,
+2,
+2
+]
+},
+"deer": {
+"what": "a deer",
+"themes": [
+"primeval"
+],
+"spec": [
+"creatures",
+1,
+16,
+1,
+1
+]
+},
+"giantCat": {
+"what": "a giant cat (large)",
+"themes": [
+"giant_pet"
+],
+"spec": [
+"creatures",
+4,
+9,
+3,
+3,
+true
+]
+},
+"giantDog": {
+"what": "a giant dog (large)",
+"themes": [
+"giant_pet"
+],
+"spec": [
+"creatures",
+9,
+16,
+3,
+3,
+true
+]
+},
+"lantern": {
+"what": "a red Chinese lantern",
+"themes": [
+"newyear"
+],
+"spec": [
+"drawn",
+0,
+0,
+1,
+1
+]
+},
+"firecrackers": {
+"what": "a string of red firecrackers",
+"themes": [
+"lantern_gate",
+"newyear"
+],
+"spec": [
+"drawn",
+1,
+0,
+1,
+1
+]
+},
+"fuSign": {
+"what": "a red diamond with a gold 福 (fortune)",
+"themes": [
+"lantern_gate",
+"newyear"
+],
+"spec": [
+"drawn",
+2,
+0,
+1,
+1
+]
+},
+"redEnvelope": {
+"what": "a red envelope (hongbao)",
+"themes": [
+"lantern_gate",
+"newyear"
+],
+"spec": [
+"drawn",
+3,
+0,
+1,
+1
+]
+},
+"balloons": {
+"what": "red and blue balloons",
+"themes": [
+"fair",
+"funfair",
+"giant_heart",
+"valentine"
+],
+"spec": [
+"drawn",
+4,
+0,
+1,
+1
+]
+},
+"queueRail": {
+"what": "a queue line rail",
+"themes": [
+"fair",
+"funfair"
+],
+"spec": [
+"drawn",
+5,
+0,
+1,
+1
+]
+},
+"jellyfish": {
+"what": "a pink jellyfish",
+"themes": [
+"underwater"
+],
+"spec": [
+"drawn",
+6,
+0,
+1,
+1
+]
+},
+"coral": {
+"what": "orange and pink coral",
+"themes": [
+"underwater"
+],
+"spec": [
+"drawn",
+7,
+0,
+1,
+1
+]
+},
+"anemone": {
+"what": "a sea anemone",
+"themes": [
+"underwater"
+],
+"spec": [
+"drawn",
+8,
+0,
+1,
+1
+]
+},
+"bubbles": {
+"what": "rising bubbles",
+"themes": [
+"underwater"
+],
+"spec": [
+"drawn",
+9,
+0,
+1,
+1
+]
+},
+"coasterCar": {
+"what": "a roller coaster car",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+13,
+0,
+1,
+1
+]
+},
+"sparkle": {
+"what": "a twinkling star",
+"themes": [
+"sky",
+"skycity",
+"space"
+],
+"spec": [
+"drawn",
+14,
+0,
+1,
+1
+]
+},
+"seaweed": {
+"what": "tall seaweed (tall)",
+"themes": [
+"underwater"
+],
+"spec": [
+"drawn",
+15,
+0,
+1,
+2
+]
+},
+"lanternString": {
+"what": "a string of red lanterns",
+"themes": [
+"lantern_gate",
+"newyear"
+],
+"spec": [
+"drawn",
+16,
+0,
+2,
+1
+]
+},
+"bunting": {
+"what": "colourful bunting flags",
+"themes": [
+"funfair"
+],
+"spec": [
+"drawn",
+18,
+0,
+2,
+1
+]
+},
+"fishTank": {
+"what": "a fish tank with fish",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+20,
+0,
+2,
+1
+]
+},
+"bigFishTank": {
+"what": "a big aquarium tank full of fish (large)",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+22,
+0,
+4,
+2
+]
+},
+"coupletDoor": {
+"what": "a red door with New Year couplets",
+"themes": [
+"lantern_gate"
+],
+"spec": [
+"drawn",
+26,
+0,
+2,
+2
+]
+},
+"firework": {
+"what": "a firework bursting",
+"themes": [
+"lantern_gate",
+"newyear"
+],
+"spec": [
+"drawn",
+28,
+0,
+2,
+2
+]
+},
+"lionHead": {
+"what": "a lion dance head",
+"themes": [
+"lantern_gate"
+],
+"spec": [
+"drawn",
+30,
+0,
+2,
+2
+]
+},
+"plumTree": {
+"what": "a plum tree in blossom",
+"themes": [
+"lantern_gate",
+"newyear"
+],
+"spec": [
+"drawn",
+32,
+0,
+2,
+2
+]
+},
+"ticketBooth": {
+"what": "a fairground ticket booth",
+"themes": [
+"fair"
+],
+"spec": [
+"drawn",
+34,
+0,
+2,
+2
+]
+},
+"iceCreamStand": {
+"what": "an ice cream stand",
+"themes": [
+"fair"
+],
+"spec": [
+"drawn",
+36,
+0,
+2,
+2
+]
+},
+"hotDogStand": {
+"what": "a hot dog stand",
+"themes": [
+"fair"
+],
+"spec": [
+"drawn",
+38,
+0,
+2,
+2
+]
+},
+"candyStand": {
+"what": "a candy floss stand",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+40,
+0,
+2,
+2
+]
+},
+"coasterStation": {
+"what": "a roller coaster station",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+42,
+0,
+4,
+2
+]
+},
+"circusTent": {
+"what": "a striped circus tent (large)",
+"themes": [
+"fair"
+],
+"spec": [
+"drawn",
+46,
+0,
+3,
+3
+]
+},
+"heartArch": {
+"what": "an arch of roses and hearts",
+"themes": [
+"giant_heart"
+],
+"spec": [
+"drawn",
+49,
+0,
+3,
+3
+]
+},
+"swingShip": {
+"what": "a swinging pirate ship ride (large)",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+52,
+0,
+4,
+3
+]
+},
+"carousel": {
+"what": "a carousel with horses (large)",
+"themes": [
+"fair"
+],
+"spec": [
+"drawn",
+56,
+0,
+4,
+4
+]
+},
+"dropTower": {
+"what": "a drop tower ride (tall)",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+60,
+0,
+2,
+5
+]
+},
+"ferrisWheel": {
+"what": "a ferris wheel (large)",
+"themes": [
+"fair"
+],
+"spec": [
+"drawn",
+62,
+0,
+5,
+5
+]
+},
+"clownfish": {
+"what": "a clownfish",
+"themes": [
+"underwater"
+],
+"spec": [
+"sea",
+0,
+0,
+1,
+1
+]
+},
+"clownfish2": {
+"what": "a clownfish",
+"themes": [
+"general"
+],
+"spec": [
+"sea",
+1,
+0,
+1,
+1
+]
+},
+"butterflyfish2": {
+"what": "a butterflyfish",
+"themes": [
+"underwater"
+],
+"spec": [
+"sea",
+2,
+0,
+1,
+1
+]
+},
+"butterflyfish3": {
+"what": "a butterflyfish",
+"themes": [
+"general"
+],
+"spec": [
+"sea",
+3,
+0,
+1,
+1
+]
+},
+"yellowTang": {
+"what": "a yellow tang",
+"themes": [
+"underwater"
+],
+"spec": [
+"sea",
+4,
+0,
+1,
+1
+]
+},
+"blueTang": {
+"what": "a blue tang",
+"themes": [
+"underwater"
+],
+"spec": [
+"sea",
+5,
+0,
+1,
+1
+]
+},
+"moorishIdol": {
+"what": "a moorish idol",
+"themes": [
+"underwater"
+],
+"spec": [
+"sea",
+6,
+0,
+1,
+1
+]
+},
+"angelfish": {
+"what": "an angelfish",
+"themes": [
+"underwater"
+],
+"spec": [
+"sea",
+7,
+0,
+2,
+2
+]
+},
+"angelfish2": {
+"what": "a queen angelfish",
+"themes": [
+"general"
+],
+"spec": [
+"sea",
+9,
+0,
+2,
+1
+]
+},
+"parrotfish": {
+"what": "a parrotfish",
+"themes": [
+"underwater"
+],
+"spec": [
+"sea",
+11,
+0,
+2,
+1
+]
+},
+"parrotfish2": {
+"what": "a parrotfish",
+"themes": [
+"general"
+],
+"spec": [
+"sea",
+13,
+0,
+2,
+1
+]
+},
+"koi": {
+"what": "a koi carp",
+"themes": [
+"underwater"
+],
+"spec": [
+"sea",
+15,
+0,
+2,
+1
+]
+},
+"wrasse": {
+"what": "a wrasse",
+"themes": [
+"underwater"
+],
+"spec": [
+"sea",
+17,
+0,
+1,
+1
+]
+},
+"redSnapper": {
+"what": "a red snapper",
+"themes": [
+"general"
+],
+"spec": [
+"sea",
+18,
+0,
+2,
+1
+]
+},
+"triggerfish": {
+"what": "a triggerfish",
+"themes": [
+"general"
+],
+"spec": [
+"sea",
+20,
+0,
+1,
+1
+]
+},
+"boxfish": {
+"what": "a boxfish",
+"themes": [
+"general"
+],
+"spec": [
+"sea",
+21,
+0,
+1,
+1
+]
+},
+"grouper": {
+"what": "a red grouper",
+"themes": [
+"general"
+],
+"spec": [
+"sea",
+22,
+0,
+2,
+1
+]
+},
+"redHeart": {
+"what": "a red heart",
+"themes": [
+"valentine"
+],
+"spec": [
+"love",
+0,
+0,
+1,
+1
+]
+},
+"pinkHeart": {
+"what": "a pink heart",
+"themes": [
+"valentine"
+],
+"spec": [
+"love",
+1,
+0,
+1,
+1
+]
+},
+"goldHeart": {
+"what": "a gold heart",
+"themes": [
+"general"
+],
+"spec": [
+"love",
+2,
+0,
+1,
+1
+]
+},
+"blueHeart": {
+"what": "a blue heart",
+"themes": [
+"general"
+],
+"spec": [
+"love",
+3,
+0,
+1,
+1
+]
+},
+"rose": {
+"what": "a red rose",
+"themes": [
+"giant_heart",
+"valentine"
+],
+"spec": [
+"love",
+4,
+0,
+1,
+1
+]
+},
+"roseVine": {
+"what": "a climbing rose",
+"themes": [
+"valentine"
+],
+"spec": [
+"love",
+5,
+0,
+1,
+1
+]
+},
+"lovePotion": {
+"what": "a love potion",
+"themes": [
+"giant_heart"
+],
+"spec": [
+"love",
+6,
+0,
+1,
+1
+]
+},
+"loveLetter": {
+"what": "a love letter",
+"themes": [
+"giant_heart",
+"valentine"
+],
+"spec": [
+"love",
+7,
+0,
+1,
+1
+]
+},
+"bow": {
+"what": "a ribbon bow",
+"themes": [
+"valentine"
+],
+"spec": [
+"love",
+8,
+0,
+1,
+1
+]
+},
+"jackOLantern": {
+"what": "a grinning jack-o'-lantern",
+"themes": [
+"halloween"
+],
+"spec": [
+"love",
+9,
+0,
+1,
+1
+]
+},
+"runeStone": {
+"what": "a mossy rune stone",
+"themes": [
+"graveyard"
+],
+"spec": [
+"yard",
+0,
+0,
+1,
+1
+]
+},
+"runeStone2": {
+"what": "a mossy carved stone",
+"themes": [
+"general"
+],
+"spec": [
+"yard",
+1,
+0,
+1,
+1
+]
+},
+"runeStone3": {
+"what": "a mossy spiral stone",
+"themes": [
+"general"
+],
+"spec": [
+"yard",
+2,
+0,
+1,
+1
+]
+},
+"greyStone": {
+"what": "a grey standing stone",
+"themes": [
+"general"
+],
+"spec": [
+"yard",
+3,
+0,
+1,
+1
+]
+},
+"greyStone2": {
+"what": "a grey carved stone",
+"themes": [
+"general"
+],
+"spec": [
+"yard",
+4,
+0,
+1,
+1
+]
+},
+"greyStone3": {
+"what": "a grey spiral stone",
+"themes": [
+"graveyard"
+],
+"spec": [
+"yard",
+5,
+0,
+1,
+1
+]
+},
+"mossRock2": {
+"what": "a mossy boulder",
+"themes": [
+"graveyard",
+"primeval"
+],
+"spec": [
+"yard",
+6,
+0,
+1,
+1
+]
+},
+"mossRock3": {
+"what": "a mossy boulder",
+"themes": [
+"primeval"
+],
+"spec": [
+"yard",
+7,
+0,
+1,
+1
+]
+},
+"greyBoulder": {
+"what": "a grey boulder",
+"themes": [
+"general"
+],
+"spec": [
+"yard",
+8,
+0,
+1,
+1
+]
+},
+"greyBoulder2": {
+"what": "a grey boulder",
+"themes": [
+"general"
+],
+"spec": [
+"yard",
+9,
+0,
+1,
+1
+]
+},
+"graveTall": {
+"what": "a pointed gravestone",
+"themes": [
+"graveyard",
+"halloween"
+],
+"spec": [
+"yard",
+10,
+0,
+1,
+1
+]
+},
+"graveUrn": {
+"what": "a gravestone with an urn (tall)",
+"themes": [
+"general"
+],
+"spec": [
+"yard",
+11,
+0,
+1,
+2
+]
+},
+"graveBlock": {
+"what": "a square gravestone",
+"themes": [
+"graveyard"
+],
+"spec": [
+"yard",
+12,
+0,
+1,
+1
+]
+},
+"graveBlock2": {
+"what": "a square gravestone",
+"themes": [
+"graveyard"
+],
+"spec": [
+"yard",
+13,
+0,
+1,
+1
+]
+},
+"graveBlock3": {
+"what": "a square gravestone",
+"themes": [
+"graveyard"
+],
+"spec": [
+"yard",
+14,
+0,
+1,
+1
+]
+},
+"graveBlock4": {
+"what": "a square gravestone",
+"themes": [
+"graveyard"
+],
+"spec": [
+"yard",
+15,
+0,
+1,
+1
+]
+},
+"graveSquare": {
+"what": "a low gravestone",
+"themes": [
+"graveyard"
+],
+"spec": [
+"yard",
+16,
+0,
+1,
+1
+]
+},
+"graveSquare2": {
+"what": "a low gravestone",
+"themes": [
+"graveyard"
+],
+"spec": [
+"yard",
+17,
+0,
+1,
+1
+]
+},
+"graveSquare3": {
+"what": "a low gravestone",
+"themes": [
+"general"
+],
+"spec": [
+"yard",
+18,
+0,
+1,
+1
+]
+},
+"graveSquare4": {
+"what": "a low gravestone",
+"themes": [
+"general"
+],
+"spec": [
+"yard",
+19,
+0,
+1,
+1
+]
+},
+"graveSlab": {
+"what": "a grave slab",
+"themes": [
+"general"
+],
+"spec": [
+"yard",
+20,
+0,
+1,
+1
+]
+},
+"goldBush": {
+"what": "a golden bush",
+"themes": [
+"primeval"
+],
+"spec": [
+"yard",
+21,
+0,
+1,
+2
+]
+},
+"paleBush": {
+"what": "a pale bush",
+"themes": [
+"primeval"
+],
+"spec": [
+"yard",
+22,
+0,
+1,
+1
+]
+},
+"wreath": {
+"what": "a wreath of flowers",
+"themes": [
+"graveyard"
+],
+"spec": [
+"yard",
+23,
+0,
+1,
+1
+]
+},
+"wreath2": {
+"what": "a wreath of yellow flowers",
+"themes": [
+"graveyard"
+],
+"spec": [
+"yard",
+24,
+0,
+1,
+1
+]
+},
+"wreath3": {
+"what": "a wreath of flowers",
+"themes": [
+"halloween"
+],
+"spec": [
+"yard",
+25,
+0,
+1,
+1
+]
+},
+"graveCandles": {
+"what": "candles on a grave",
+"themes": [
+"graveyard"
+],
+"spec": [
+"yard",
+26,
+0,
+1,
+2
+]
+},
+"graveCandle": {
+"what": "a white candle",
+"themes": [
+"graveyard",
+"halloween"
+],
+"spec": [
+"yard",
+27,
+0,
+1,
+1
+]
+},
+"graveCandle2": {
+"what": "a white candle",
+"themes": [
+"general"
+],
+"spec": [
+"yard",
+28,
+0,
+1,
+1
+]
+},
+"redCandle": {
+"what": "a red candle",
+"themes": [
+"graveyard",
+"halloween"
+],
+"spec": [
+"yard",
+29,
+0,
+1,
+1
+]
+},
+"redCandle2": {
+"what": "a red candle",
+"themes": [
+"general"
+],
+"spec": [
+"yard",
+30,
+0,
+1,
+1
+]
+},
+"ropePost": {
+"what": "a rope post",
+"themes": [
+"general"
+],
+"spec": [
+"yard",
+31,
+0,
+1,
+1
+]
+},
+"fern": {
+"what": "a fern (tall)",
+"themes": [
+"graveyard",
+"primeval"
+],
+"spec": [
+"yard",
+32,
+0,
+1,
+3
+]
+},
+"tallFern": {
+"what": "a tall fern (tall)",
+"themes": [
+"primeval"
+],
+"spec": [
+"yard",
+33,
+0,
+1,
+3
+]
+},
+"gloomTree": {
+"what": "a dark old tree (tall)",
+"themes": [
+"primeval"
+],
+"spec": [
+"yard",
+34,
+0,
+1,
+2
+]
+},
+"gloomTree2": {
+"what": "a dark old tree (tall)",
+"themes": [
+"primeval"
+],
+"spec": [
+"yard",
+35,
+0,
+1,
+2
+]
+},
+"gloomTree3": {
+"what": "a dark old tree with berries (tall)",
+"themes": [
+"primeval"
+],
+"spec": [
+"yard",
+36,
+0,
+1,
+2
+]
+},
+"gloomTree4": {
+"what": "a dark old tree (tall)",
+"themes": [
+"primeval"
+],
+"spec": [
+"yard",
+37,
+0,
+1,
+2
+]
+},
+"gloomTree5": {
+"what": "a deep green tree (tall)",
+"themes": [
+"graveyard",
+"primeval"
+],
+"spec": [
+"yard",
+38,
+0,
+1,
+2
+]
+},
+"gloomTree6": {
+"what": "a deep green tree (tall)",
+"themes": [
+"halloween",
+"primeval"
+],
+"spec": [
+"yard",
+39,
+0,
+1,
+2
+]
+},
+"gloomTree7": {
+"what": "a deep green tree with berries (tall)",
+"themes": [
+"graveyard",
+"primeval"
+],
+"spec": [
+"yard",
+40,
+0,
+1,
+2
+]
+},
+"gloomTree8": {
+"what": "a teal tree (tall)",
+"themes": [
+"primeval"
+],
+"spec": [
+"yard",
+41,
+0,
+1,
+2
+]
+},
+"heart": {
+"what": "a pink heart",
+"themes": [
+"general"
+],
+"spec": [
+"love",
+1,
+0,
+1,
+1
+]
+},
+"roses": {
+"what": "a bouquet of roses",
+"themes": [
+"general"
+],
+"spec": [
+"love",
+4,
+0,
+1,
+1
+]
+},
+"giantHeart": {
+"what": "a giant heart (large)",
+"themes": [
+"giant_heart"
+],
+"spec": [
+"love",
+0,
+0,
+3,
+3,
+true
+]
+},
+"giantJackOLantern": {
+"what": "a giant jack-o'-lantern (large)",
+"themes": [
+"general"
+],
+"spec": [
+"love",
+10,
+0,
+3,
+3,
+true
+]
+},
+"whiteboard": {
+"what": "a whiteboard",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+89,
+0,
+2,
+1
+]
+},
+"schoolDesk": {
+"what": "a school desk",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+91,
+0,
+1,
+1
+]
+},
+"labBench": {
+"what": "a lab bench with flasks",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+92,
+0,
+2,
+1
+]
+},
+"microscope": {
+"what": "a microscope",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+94,
+0,
+1,
+1
+]
+},
+"computer": {
+"what": "a computer",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+95,
+0,
+1,
+1
+]
+},
+"cubicle": {
+"what": "an office cubicle",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+96,
+0,
+2,
+2
+]
+},
+"waterCooler": {
+"what": "a water cooler (tall)",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+98,
+0,
+1,
+2
+]
+},
+"printer": {
+"what": "a printer",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+99,
+0,
+1,
+1
+]
+},
+"lockers": {
+"what": "a row of lockers",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+100,
+0,
+2,
+2
+]
+},
+"bunkBed": {
+"what": "a bunk bed",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+102,
+0,
+2,
+2
+]
+},
+"kitchenette": {
+"what": "a small kitchen",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+104,
+0,
+2,
+1
+]
+},
+"serverRack": {
+"what": "a server rack (tall)",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+106,
+0,
+1,
+2
+]
+},
+"towerGlass": {
+"what": "a glass skyscraper (large)",
+"themes": [
+"skyline"
+],
+"spec": [
+"drawn",
+107,
+0,
+2,
+5
+]
+},
+"towerBrick": {
+"what": "a brick tower block (large)",
+"themes": [
+"skyline"
+],
+"spec": [
+"drawn",
+109,
+0,
+2,
+4
+]
+},
+"towerTall": {
+"what": "a tall glass skyscraper (large)",
+"themes": [
+"skyline"
+],
+"spec": [
+"drawn",
+111,
+0,
+3,
+6
+]
+},
+"trainEngine": {
+"what": "a steam train engine",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+67,
+0,
+2,
+1
+]
+},
+"trainCarriage": {
+"what": "a train carriage",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+69,
+0,
+2,
+1
+]
+},
+"trainStation": {
+"what": "a train station with a clock",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+71,
+0,
+3,
+2
+]
+},
+"ferry": {
+"what": "a ferry boat",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+74,
+0,
+3,
+2
+]
+},
+"pier": {
+"what": "a wooden pier",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+77,
+0,
+2,
+1
+]
+},
+"airplane": {
+"what": "an airplane",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+79,
+0,
+3,
+3
+]
+},
+"helipad": {
+"what": "a landing pad",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+82,
+0,
+2,
+2
+]
+},
+"airship": {
+"what": "an airship",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+84,
+0,
+3,
+2
+]
+},
+"skyDock": {
+"what": "a dock floating on a cloud",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+87,
+0,
+2,
+2
+]
+},
+"hauntedStone": {
+"what": "an old rounded gravestone",
+"themes": [
+"haunted",
+"mausoleum"
+],
+"spec": [
+"grave",
+0,
+0,
+1,
+1
+]
+},
+"hauntedCross": {
+"what": "a gravestone with a cross",
+"themes": [
+"graveyard",
+"mausoleum"
+],
+"spec": [
+"grave",
+1,
+0,
+1,
+1
+]
+},
+"hauntedTree": {
+"what": "a twisted red dead tree (tall)",
+"themes": [
+"graveyard",
+"halloween",
+"haunted"
+],
+"spec": [
+"grave",
+2,
+0,
+1,
+2
+]
+},
+"hauntedTree2": {
+"what": "a twisted red dead tree (tall)",
+"themes": [
+"graveyard"
+],
+"spec": [
+"grave",
+3,
+0,
+1,
+2
+]
+},
+"hauntedVine": {
+"what": "creeping green vines (tall)",
+"themes": [
+"primeval"
+],
+"spec": [
+"grave",
+4,
+0,
+1,
+2
+]
+},
+"hauntedLamp": {
+"what": "an iron graveyard lamp (tall)",
+"themes": [
+"haunted"
+],
+"spec": [
+"grave",
+5,
+0,
+1,
+2
+]
+},
+"ironFence": {
+"what": "a wrought iron fence",
+"themes": [
+"general"
+],
+"spec": [
+"grave",
+6,
+0,
+2,
+2
+]
+},
+"hauntedMist": {
+"what": "low purple mist",
+"themes": [
+"graveyard"
+],
+"spec": [
+"grave",
+8,
+0,
+2,
+1
+]
+},
+"candle": {
+"what": "a lit candle",
+"themes": [
+"haunted",
+"mausoleum"
+],
+"spec": [
+"grave",
+10,
+0,
+1,
+1
+]
+},
+"candles": {
+"what": "lit candles",
+"themes": [
+"general"
+],
+"spec": [
+"grave",
+11,
+0,
+1,
+1
+]
+},
+"graveStatue": {
+"what": "a gargoyle on a plinth",
+"themes": [
+"general"
+],
+"spec": [
+"grave",
+12,
+0,
+1,
+1
+]
+},
+"graveStatue2": {
+"what": "a skull on a plinth",
+"themes": [
+"general"
+],
+"spec": [
+"grave",
+13,
+0,
+1,
+1
+]
+},
+"graveStatue3": {
+"what": "a small stone shrine",
+"themes": [
+"general"
+],
+"spec": [
+"grave",
+14,
+0,
+1,
+1
+]
+},
+"deadWeed": {
+"what": "dead weeds",
+"themes": [
+"haunted"
+],
+"spec": [
+"grave",
+15,
+0,
+1,
+1
+]
+},
+"deadWeed2": {
+"what": "dead weeds",
+"themes": [
+"general"
+],
+"spec": [
+"grave",
+16,
+0,
+1,
+1
+]
+},
+"graveRocks": {
+"what": "grey stones",
+"themes": [
+"general"
+],
+"spec": [
+"grave",
+17,
+0,
+1,
+1
+]
+},
+"coffin": {
+"what": "a wooden coffin",
+"themes": [
+"general"
+],
+"spec": [
+"grave",
+18,
+0,
+2,
+2
+]
+},
+"vault": {
+"what": "a stone tomb door with a cross",
+"themes": [
+"general"
+],
+"spec": [
+"grave",
+20,
+0,
+2,
+2
+]
+},
+"vault2": {
+"what": "a stone tomb door",
+"themes": [
+"general"
+],
+"spec": [
+"grave",
+22,
+0,
+2,
+2
+]
+},
+"cypress": {
+"what": "a dark cypress tree",
+"themes": [
+"haunted"
+],
+"spec": [
+"grave",
+24,
+0,
+2,
+2
+]
+},
+"mausoleum": {
+"what": "a pillared mausoleum (large)",
+"themes": [
+"mausoleum"
+],
+"spec": [
+"grave",
+26,
+0,
+4,
+4
+]
+},
+"mausoleum2": {
+"what": "a stone mausoleum with a grille (large)",
+"themes": [
+"general"
+],
+"spec": [
+"grave",
+30,
+0,
+4,
+4
+]
+},
+"angelStatue": {
+"what": "a winged angel statue (large)",
+"themes": [
+"mausoleum"
+],
+"spec": [
+"grave",
+34,
+0,
+4,
+4
+]
+},
+"skullStatue": {
+"what": "a giant skull statue (large)",
+"themes": [
+"mausoleum"
+],
+"spec": [
+"grave",
+38,
+0,
+4,
+4
+]
+},
+"present": {
+"what": "a wrapped gift box",
+"themes": [
+"christmas",
+"christmas_tree"
+],
+"spec": [
+"festive",
+0,
+0,
+1,
+1
+]
+},
+"present2": {
+"what": "a wrapped gift box",
+"themes": [
+"christmas",
+"christmas_tree"
+],
+"spec": [
+"festive",
+1,
+0,
+1,
+1
+]
+},
+"present3": {
+"what": "a wrapped gift box",
+"themes": [
+"christmas",
+"christmas_tree"
+],
+"spec": [
+"festive",
+2,
+0,
+1,
+1
+]
+},
+"present4": {
+"what": "a wrapped gift box",
+"themes": [
+"christmas"
+],
+"spec": [
+"festive",
+3,
+0,
+1,
+1
+]
+},
+"xmasTree": {
+"what": "a decorated Christmas tree",
+"themes": [
+"christmas"
+],
+"spec": [
+"festive",
+4,
+0,
+1,
+1
+]
+},
+"xmasTree2": {
+"what": "a decorated Christmas tree with a star",
+"themes": [
+"christmas"
+],
+"spec": [
+"festive",
+5,
+0,
+1,
+1
+]
+},
+"sleigh": {
+"what": "Santa's red sleigh",
+"themes": [
+"christmas_tree"
+],
+"spec": [
+"festive",
+6,
+0,
+2,
+1
+]
+},
+"reindeer": {
+"what": "a reindeer",
+"themes": [
+"christmas",
+"christmas_tree"
+],
+"spec": [
+"festive",
+8,
+0,
+1,
+1
+]
+},
+"santa": {
+"what": "Santa Claus with his sack",
+"themes": [
+"general"
+],
+"spec": [
+"festive",
+10,
+0,
+1,
+1
+]
+},
+"goldIngot": {
+"what": "a gold ingot (yuanbao)",
+"themes": [
+"newyear"
+],
+"spec": [
+"festive",
+11,
+0,
+1,
+1
+]
+},
+"peach": {
+"what": "a peach of long life",
+"themes": [
+"newyear"
+],
+"spec": [
+"festive",
+13,
+0,
+1,
+1
+]
+},
+"blossom": {
+"what": "a plum blossom",
+"themes": [
+"newyear"
+],
+"spec": [
+"festive",
+14,
+0,
+1,
+1
+]
+},
+"panda": {
+"what": "a panda",
+"themes": [
+"newyear"
+],
+"spec": [
+"festive",
+15,
+0,
+1,
+1
+]
+},
+"yinYang": {
+"what": "a yin-yang sign",
+"themes": [
+"general"
+],
+"spec": [
+"festive",
+16,
+0,
+1,
+1
+]
+},
+"pumpkin": {
+"what": "a pumpkin",
+"themes": [
+"halloween",
+"haunted"
+],
+"spec": [
+"festive",
+17,
+0,
+1,
+1
+]
+},
+"pumpkin2": {
+"what": "a big pumpkin",
+"themes": [
+"halloween"
+],
+"spec": [
+"festive",
+18,
+0,
+1,
+1
+]
+},
+"pumpkin3": {
+"what": "a squat pumpkin",
+"themes": [
+"general"
+],
+"spec": [
+"festive",
+19,
+0,
+1,
+1
+]
+},
+"giantXmasTree": {
+"what": "a giant Christmas tree (large)",
+"themes": [
+"christmas_tree"
+],
+"spec": [
+"festive",
+4,
+0,
+3,
+3,
+true
+]
+},
+"greenhouse": {
+"what": "a glass greenhouse (large)",
+"themes": [
+"greenhouse"
+],
+"spec": [
+"farm",
+9,
+7,
+3,
+4
+]
+},
+"barn": {
+"what": "a red barn (large)",
+"themes": [
+"general"
+],
+"spec": [
+"farm",
+6,
+7,
+3,
+4
+]
+},
+"cabbage": {
+"what": "a cabbage",
+"themes": [
+"botanical"
+],
+"spec": [
+"farm",
+6,
+4,
+1,
+1
+]
+},
+"tomato": {
+"what": "a tomato plant",
+"themes": [
+"botanical"
+],
+"spec": [
+"farm",
+8,
+3,
+1,
+1
+]
+},
+"corn": {
+"what": "corn",
+"themes": [
+"botanical"
+],
+"spec": [
+"farm",
+8,
+2,
+1,
+1
+]
+},
+"carrot": {
+"what": "a carrot",
+"themes": [
+"botanical"
+],
+"spec": [
+"farm",
+8,
+0,
+1,
+1
+]
+},
+"turnip": {
+"what": "a turnip",
+"themes": [
+"botanical"
+],
+"spec": [
+"farm",
+8,
+1,
+1,
+1
+]
+},
+"wheat": {
+"what": "wheat",
+"themes": [
+"general"
+],
+"spec": [
+"farm",
+6,
+5,
+1,
+1
+]
+},
+"seedling": {
+"what": "a seedling",
+"themes": [
+"botanical"
+],
+"spec": [
+"farm",
+7,
+6,
+1,
+1
+]
+},
+"wateringCan": {
+"what": "a watering can",
+"themes": [
+"botanical"
+],
+"spec": [
+"farm",
+0,
+7,
+1,
+1
+]
+},
+"hayBale": {
+"what": "a hay bale",
+"themes": [
+"general"
+],
+"spec": [
+"farm",
+0,
+8,
+1,
+1
+]
+},
+"townPine": {
+"what": "town pine",
+"themes": [
+"christmas",
+"forest",
+"toytown"
+],
+"spec": [
+"town",
+4,
+0,
+1,
+2
+]
+},
+"townAutumnPine": {
+"what": "town autumn pine",
+"themes": [
+"autumn"
+],
+"spec": [
+"town",
+3,
+0,
+1,
+2
+]
+},
+"townBush": {
+"what": "town bush",
+"themes": [
+"meadow",
+"toytown"
+],
+"spec": [
+"town",
+5,
+0,
+1,
+1
+]
+},
+"townTree": {
+"what": "town tree",
+"themes": [
+"forest",
+"meadow",
+"newyear",
+"skycity",
+"toytown",
+"valentine",
+"zoo"
+],
+"spec": [
+"town",
+4,
+2,
+1,
+1
+]
+},
+"townAutumnTree": {
+"what": "town autumn tree",
+"themes": [
+"autumn",
+"halloween",
+"toytown"
+],
+"spec": [
+"town",
+3,
+2,
+1,
+1
+]
+},
+"townSmallTree": {
+"what": "town small tree",
+"themes": [
+"meadow"
+],
+"spec": [
+"town",
+4,
+2,
+1,
+1
+]
+},
+"townMushrooms": {
+"what": "town mushrooms",
+"themes": [
+"enchanted",
+"magic",
+"meadow",
+"primeval",
+"toy",
+"toytown"
+],
+"spec": [
+"town",
+5,
+2,
+1,
+1
+]
+},
+"townSprout": {
+"what": "town sprout",
+"themes": [
+"farmland",
+"home",
+"meadow",
+"toy",
+"toytown"
+],
+"spec": [
+"town",
+5,
+1,
+1,
+1
+]
+},
+"beehive": {
+"what": "beehive",
+"themes": [
+"farmland",
+"toy",
+"toytown"
+],
+"spec": [
+"town",
+10,
+7,
+1,
+1
+]
+},
+"sign": {
+"what": "sign",
+"themes": [
+"farmland"
+],
+"spec": [
+"town",
+11,
+6,
+1,
+1
+]
+},
+"log": {
+"what": "log",
+"themes": [
+"farmland",
+"studio"
+],
+"spec": [
+"town",
+10,
+8,
+1,
+1
+]
+},
+"pot": {
+"what": "pot",
+"themes": [
+"botanical",
+"farmland",
+"home",
+"toytown"
+],
+"spec": [
+"town",
+11,
+8,
+1,
+1
+]
+},
+"target": {
+"what": "target",
+"themes": [
+"toy",
+"toytown"
+],
+"spec": [
+"town",
+11,
+7,
+1,
+1
+]
+},
+"uBench": {
+"what": "u bench",
+"themes": [
+"station"
+],
+"spec": [
+"urban",
+0,
+10,
+1,
+1
+]
+},
+"parkBench": {
+"what": "park bench",
+"themes": [
+"cafe",
+"library",
+"study"
+],
+"spec": [
+"urban",
+3,
+14,
+1,
+1
+]
+},
+"uTrash": {
+"what": "a city litter bin",
+"themes": [
+"city",
+"funfair",
+"futuristic",
+"office",
+"scifi",
+"screening",
+"skyscraper",
+"station"
+],
+"spec": [
+"urban",
+9,
+9,
+1,
+1
+]
+},
+"uTrash2": {
+"what": "u trash 2",
+"themes": [
+"general"
+],
+"spec": [
+"urban",
+10,
+10,
+1,
+1
+]
+},
+"uHydrant": {
+"what": "a fire hydrant",
+"themes": [
+"city",
+"scifi"
+],
+"spec": [
+"urban",
+8,
+10,
+1,
+1
+]
+},
+"uMailbox": {
+"what": "u mailbox",
+"themes": [
+"city",
+"station"
+],
+"spec": [
+"urban",
+8,
+11,
+1,
+1
+]
+},
+"planter": {
+"what": "planter",
+"themes": [
+"apartment",
+"botanical",
+"city",
+"funfair",
+"greenhouse",
+"home",
+"laboratory",
+"office",
+"scifi",
+"skyscraper",
+"toy",
+"toytown"
+],
+"spec": [
+"urban",
+6,
+10,
+1,
+1
+]
+},
+"planter2": {
+"what": "planter 2",
+"themes": [
+"cafe",
+"toy",
+"toytown"
+],
+"spec": [
+"urban",
+7,
+10,
+1,
+1
+]
+},
+"uTreeSmall": {
+"what": "a small city tree",
+"themes": [
+"city",
+"school",
+"scifi",
+"skyscraper"
+],
+"spec": [
+"urban",
+22,
+9,
+1,
+1
+]
+},
+"uTreeSmall2": {
+"what": "a small city tree",
+"themes": [
+"city"
+],
+"spec": [
+"urban",
+22,
+10,
+1,
+1
+]
+},
+"uAutumnSmall": {
+"what": "u autumn small",
+"themes": [
+"autumn"
+],
+"spec": [
+"urban",
+22,
+13,
+1,
+1
+]
+},
+"uTree": {
+"what": "a tall city tree",
+"themes": [
+"city",
+"forest"
+],
+"spec": [
+"urban",
+16,
+8,
+1,
+2
+]
+},
+"uAutumnTree": {
+"what": "a tall autumn city tree",
+"themes": [
+"autumn"
+],
+"spec": [
+"urban",
+16,
+11,
+1,
+2
+]
+},
+"barrier": {
+"what": "barrier",
+"themes": [
+"rocket"
+],
+"spec": [
+"urban",
+5,
+8,
+1,
+1
+]
+},
+"dBarrel": {
+"what": "d barrel",
+"themes": [
+"studio"
+],
+"spec": [
+"dungeon",
+6,
+5,
+1,
+1
+]
+},
+"parasol": {
+"what": "parasol",
+"themes": [
+"market"
+],
+"spec": [
+"city",
+34,
+14,
+1,
+1
+]
+},
+"parasol2": {
+"what": "parasol 2",
+"themes": [
+"market"
+],
+"spec": [
+"city",
+35,
+14,
+1,
+1
+]
+}
+}
+}

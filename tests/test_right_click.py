@@ -341,11 +341,16 @@ class ExtensionTests(unittest.TestCase):
         self.assertIn("nativeMessaging", chromium["permissions"])
         # A script in every page, for what can be seen of it (the user, 2026-11-05).
         for one in (chromium, firefox):
-            self.assertEqual(one["content_scripts"][0]["js"], ["visible.js", "fill.js"], "and the filler (0.0.4)")
+            self.assertEqual(one["content_scripts"][0]["js"], ["visible.js", "fill.js", "side.js"],
+                             "and the filler (0.0.4), and the side panel's state (0.0.7)")
+            # 0.0.7: a page's full screen beside the pinned side panel - in the page's own world, from its start.
+            self.assertEqual(one["content_scripts"][1], {"matches": ["http://*/*", "https://*/*"],
+                                                         "js": ["fullscreen.js"], "run_at": "document_start",
+                                                         "world": "MAIN"})
             self.assertNotIn("<all_urls>", one["content_scripts"][0]["matches"])
             self.assertNotIn("host_permissions", one)
         for flavor in folders.values():
-            for name in ("background.js", "help.html", "help.js", "icons/128.png",
+            for name in ("background.js", "help.html", "help.js", "icons/128.png", "side.js", "fullscreen.js",
                          "_locales/en/messages.json", "_locales/zh_CN/messages.json"):
                 self.assertTrue((Path(flavor) / name).exists(), name)
         words = json.loads((Path(folders["chromium"]) / "_locales/zh_CN/messages.json")

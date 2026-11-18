@@ -268,6 +268,10 @@ class Monitor:
             return module_on(self.config, "calendar")
         if activator.get("group") == "recommend" and not module_on(self.config, "recommendation"):
             return False
+        # The Monitor's own systems, each its switch under it (common/modules.py).
+        if activator.get("group") in ("heads_up", "co_play", "learning_questions") \
+                and not module_on(self.config, str(activator["group"])):
+            return False
         return self.enabled()
 
     def text_rules(self) -> List[ActivatorRule]:

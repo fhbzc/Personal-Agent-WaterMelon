@@ -79,7 +79,9 @@ CREATE TABLE IF NOT EXISTS monitor_quiet (
 );
 """
 
-GROUPS = ("recommend", "risk", "calendar", "deadline", "rest", "summary", "system", "other")
+# The Monitor's own systems too (2026-11-17): heads-up, co-play, learning questions - each its switch (modules).
+GROUPS = ("recommend", "risk", "calendar", "deadline", "rest", "summary", "heads_up", "co_play",
+          "learning_questions", "system", "other")
 #: FIXED: the application's own that nobody switches off or unprotects - what the user must know of the
 #: application itself (the user, 2026-11-15: "除了system, 是fixed, fixed的on/protected是不能修改的按钮"). Every other
 #: one is protected or not, as the user sets it.
