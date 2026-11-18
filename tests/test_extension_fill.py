@@ -300,6 +300,7 @@ class FullScreenBesideThePanelTests(unittest.TestCase):
             (Path(folder) / "side_panel_dock.json").write_text("{}", encoding="utf-8")
             self.assertEqual(ask(), {"ok": True, "docked": True})
 
+    @unittest.skipUnless(HAS_SOURCE, SOURCES)                  # the extension's source is private: not in the public repo
     def test_its_scripts_read_and_send_nothing_of_the_page(self) -> None:
         from personalized_agent.platform_layer import browser_extension as extension
         whole = (extension.source() / "fullscreen.js").read_text(encoding="utf-8")
