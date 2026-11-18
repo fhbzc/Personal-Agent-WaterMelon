@@ -470,6 +470,8 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.3.8](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.8) | 2026-11-18 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.8) |
+| [v0.3.7.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7.1) | 2026-11-16 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7.1) |
 | [v0.3.7](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7) | 2026-11-15 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7) |
 | [v0.3.5](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.5) | 2026-11-14 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.5/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.5/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.5/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.5) |
 | [v0.3.4](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.4) | 2026-11-14 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.4) |
@@ -741,6 +743,37 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.3.8](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.8) (2026-11-18, a pre-release)
+
+The side panel becomes your agent's one conversation - it decides what to tell you and when, and learns from what you say there - and a new **Play** view: a small world your agent grows from your days, to walk in.
+
+**The side panel is the conversation**
+- Notifications, summaries and recommendations are your agent's messages in the chat, each with **Open the page**; something urgent comes first, as an interruption, and is shown the moment it is written.
+- **Your agent judges what to tell and when**: each notification waits in a queue and is told now, at a later time it names, or dropped (dropped ones are only logged). Your own reminders are never dropped nor told late. While you chat, it weaves in what fits.
+- **It learns from the chat**: what you say is summarised while it is quiet, lessons are kept like every other (a rule you state applies at once), and facts go into its memory - readable Markdown files with an index. A decision shows the learned rules it followed (at most three), for you to judge.
+- Pictures and files by **+**, paste or drop; follow-ups with **Ask about**; a time and date on every message; zoom down to 40 %.
+- **Pinned**, the panel keeps its strip of the screen and other windows stand beside it - opening the report no longer puts it away; put away, a small tab stays at the screen's edge with a dot when something waits.
+- The avatar no longer freezes now and then.
+
+**Play: a world grown from your days** (a new view in the side panel; its growing is a module of its own you can switch off)
+- Every task that took an hour or more gets its own place, named after it and as large as the work was; leisure too. Smaller tasks are grouped into one whole scene. Places are dated by when you lived them.
+- Places follow the road of your life in order, with signposts; tasks begun together branch off, and join again after. Like things stand together; a task unlike all others may get an island or a lone cave, reached by portal. Related places can later be merged into a town or one great house.
+- Many lands and styles - meadows, forests and a primeval forest, the sea floor, a city in the sky, space, a zoo, ruins, a graveyard, Christmas, the New Year, Halloween, Valentine's, a fair with a great roller coaster, a botanic garden, a city skyline with schools, labs, offices and flats - and a catalogue of over 300 things your agent chooses from, comparing their pictures when unsure.
+- **Things to do**: walk, run, jump; sit on chairs and benches; switch lamps and torches on and off; swim and fish; ride the train, the ferry, an airship or a plane; travel by portal. Birds and small animals move about; day and night and the weather change with the game's own clock, which runs even while the app is closed.
+- Music and sounds by place, a minimap of the real world drawn small, signs in several styles.
+- Every picture and sound is CC0 or made for the app (listed in the app's play/ASSETS.txt).
+
+### [v0.3.7.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7.1) (2026-11-16, a pre-release)
+
+A fix for v0.3.7: from this version on, updates go in where they used to stop, your agent watches the folders you work in rather than every drive, and its sentence model needs a quarter of the memory - carried in the installer, so nothing is downloaded for it.
+
+- **Updates go in.** Watching a whole drive, the version before could take minutes to close, and an update waiting for it to close gave up with "could not move ... aside". It now closes within seconds; the update ends a version that is still closing, waits its turn when another is under way, and tries again later instead of giving up.
+- **Watched folders**: by default your Desktop, Documents and Downloads, and every folder you give a piece of work. AppData is left out with the other system folders. A copy still watching every drive by the old default is moved to these, once; a list you changed yourself is kept as you set it.
+- **A lighter sentence model.** The model that groups what you do and finds what was learned before now runs on ONNX Runtime: about 160 MB while it works instead of about 600, ready in a second or two instead of twenty. Its results are the same, so nothing is grouped anew. It comes in the installer, so it works offline and where Hugging Face cannot be reached, and the installer is smaller.
+- **The Agents Society**: a message is never sent twice - not by a double click on Yes, send it, and not when your agent would send the same words to the same person again within ten minutes.
+- **The report** is in three parts - Important, Worth a look, Can wait - each with why. What your agent handled on the Agents Society and wants you to know is in the report too.
+- **Settings > Updates**: What is new stays open while the page refreshes.
 
 ### [v0.3.7](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7) (2026-11-15)
 
