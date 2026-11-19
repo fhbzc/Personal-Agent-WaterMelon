@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 import threading
 import time
@@ -649,6 +650,11 @@ class AgentApplication:
         self.heads_up = HeadsUp(self.db, self.agent.models, self.notifications, self.config,
                                 context=self._heads_up_context,
                                 tell=lambda title, message, **kw: self.monitor.relay("heads_up", title, message, **kw))
+        # MISSED CHANCES (the user, 2026-11-19: "把'错过的时机'当作学习信号 ... 加到我们的learning里，类似于之前基于chat的
+        # 学习"): agent/missed_chances.py - the times it was silent and help was wanted, kept as lessons.
+        from .agent.missed_chances import MissedChances
+        self.missed_chances = MissedChances(self.db, self.agent.models, self.lessons, self.config,
+                                            chat=self._side_asks, busy=self._side_chatting)
         # CO-PLAY (the user, 2026-11-17: "我在看其它所有内容，模型可以根据我的喜好决定要不要和我说话"):
         # heartbeat/monitor/co_play.py.
         from .heartbeat.monitor.co_play import CoPlay
@@ -659,7 +665,9 @@ class AgentApplication:
         # THE PLAY WORLD (the user, 2026-11-17): agent/playworld.py - grown from what the user lived, their chat
         # pictures framed in it.
         from .agent.playworld import (PlayWorld, chat_pictures_offered, earliest_lived, important_tasks, lived_between,
+                                      task_lineage,
                                       look_up, tastes_of)
+        from .agent.playmuse import feelings_between, work_cards
         self.play_world = PlayWorld(
             Path(self.paths.data_dir) / "playworld", self.agent.models, self.config, context=self._heads_up_context,
             pictures=lambda: chat_pictures_offered(self.conversations, self.side_conversation(),
@@ -668,9 +676,27 @@ class AgentApplication:
             earliest=lambda: earliest_lived(self.db),
             look=lambda asked, until: look_up(self.db, Path(self.paths.data_dir) / "memory", asked, until),
             tastes=lambda: tastes_of(Path(self.paths.data_dir) / "memory", self.db),
-            tasks=lambda since, until: important_tasks(self.db, since, until))
+            tasks=lambda since, until: important_tasks(self.db, since, until),
+            lineage=lambda: task_lineage(self.db),
+            # The feeling of these days, from their words in their chats and the rhythm of their days only (the user,
+            # 2026-11-18: "聊天里的话, 任务和工作节奏").
+            feelings=lambda since, until: feelings_between(self.db, since, until),
+            # Each task's work as the Work panel keeps it, read only - every card a thing in the world (2026-11-19).
+            cards=lambda task_ids: work_cards(self.db, task_ids))
         self.chat_digest.tidy = self.chat_pictures.tidy
         _chat_picture_tools(self.agent.tools, self.chat_pictures, self.memory_files)
+        # THE AGENT ON THE SCREEN (agent/screen_control.py; the user, 2026-11-18): taken when the user says so in the
+        # chat, each step said in the side panel first, given back at the user's first touch of the mouse or a key.
+        from .agent.screen_control import ScreenControl, add_tools as _screen_tools
+        self.screen_control = ScreenControl(
+            self.config, said=self._screen_said, panel=self._screen_panel,
+            folder=Path(self.paths.data_dir) / "screen_pictures",
+            panel_box=lambda: (getattr(self, "side_panel_box", None) or (lambda: None))(),
+            panel_front=lambda: bool((getattr(self, "side_panel_front", None) or (lambda: False))()),
+            read_front=self._screen_window_text, language=self._chat_language, counting=self._screen_count)
+        _screen_tools(self.agent.tools, self.screen_control)
+        self.agent.more_rounds = self.screen_control.rounds
+        self.agent.picture_named = self.screen_control.named
         # A NEWSPAPER SPECIAL ISSUE FROM CHAT (the user, 2026-11-03, from PR
         # #8): the brief agreed in the chat handed to the newspaper.
         self._add_special_issue_tool()
@@ -1189,6 +1215,81 @@ class AgentApplication:
     WEAK_ANSWERS = {"got_it": 0.5, "acknowledged": 0.5}
 
     # -- the side panel's one conversation ---------------------------------------------------------------
+    def _screen_said(self, words: str) -> None:
+        """A step of the agent's on the screen, said in the side panel: a message of its own in its conversation, shown
+        at once (api/web/notes.js "control")."""
+        one: Dict[str, Any] = {}
+        try:
+            one = self.conversations.add_message(self.side_conversation(), "assistant", words, {"kind": "screen_control"})
+        except Exception:
+            log.info("a step on the screen could not be kept in the side conversation", exc_info=True)
+        side = getattr(self, "side_events", None)
+        if side is not None:
+            control = getattr(self, "screen_control", None)
+            side.tell("control", on=bool(control is not None and control.on), said=words,
+                      at=str(one.get("created_at") or ""), id=str(one.get("id") or ""))
+
+    def _screen_count(self, left: int) -> None:
+        """The count before the agent begins on the screen, on the side panel's red bar (api/web/notes.js "control")."""
+        side = getattr(self, "side_events", None)
+        control = getattr(self, "screen_control", None)
+        if side is not None:
+            side.tell("control", on=True, count=int(left), bar=control.bar_words(left) if control is not None else "")
+
+    def _chat_language(self) -> str:
+        """The language the user writes to the side panel in - "zh" when their latest message there is in Chinese -
+        else "" (the display language then)."""
+        try:
+            for one in reversed(self.conversations.messages(self.side_conversation())[-12:]):
+                if one.get("role") == "user" and str(one.get("content") or "").strip():
+                    return "zh" if re.search(r"[一-鿿]", str(one["content"])) else ""
+        except Exception:
+            log.debug("the chat's language could not be read", exc_info=True)
+        return ""
+
+    def _screen_window_text(self) -> Dict[str, str]:
+        """The window in front, read now as the listener reads one (UI Automation, the Mac's accessibility): its
+        program, title and every word; its web address as the listener last saw it (agent/front_screen.py)."""
+        out: Dict[str, str] = {}
+        try:
+            from .agent.front_screen import front_now
+            seen = front_now(self.db, self.config)
+            out.update({key: seen[key] for key in ("application", "title", "address") if seen.get(key)})
+        except Exception:
+            log.debug("what the listener saw in front could not be read", exc_info=True)
+        read = None
+        try:
+            # The platform's activity provider reads it - Windows' UI Automation, the Mac's accessibility (2026-11-18:
+            # asked of the platform itself, which has no such reader, every screen_read failed).
+            activity = getattr(getattr(self, "platform", None), "activity", None)
+            read = activity.text_in_front() if activity is not None else None
+        except Exception:
+            log.info("the window in front could not be read", exc_info=True)
+        if read is not None:
+            title = str(getattr(read, "title", "") or "")
+            if title and out.get("title") and title != out["title"]:
+                out.pop("address", None)                 # another window than the listener's last: its address unknown
+            out.update({"application": str(getattr(read, "application", "") or out.get("application", "")),
+                        "title": title or out.get("title", ""), "text": str(getattr(read, "text", "") or "")})
+        return out
+
+    def _screen_panel(self, on: bool) -> None:
+        """The side panel while the agent has the screen: brought in, its edge flashing red; plain again after."""
+        side = getattr(self, "side_events", None)
+        control = getattr(self, "screen_control", None)
+        if side is not None:
+            side.tell("control", on=bool(on), **({"bar": control.bar_words(control.count)}
+                                                 if on and control is not None else {}))
+        # HELD OUT WHILE THE AGENT HAS THE SCREEN (the user, 2026-11-18: "操控屏幕的时候claude 不能collapose sidebar"):
+        # never put away by itself, over a film too, brought back if anything takes it away (ui/desktop.py).
+        holder = getattr(self, "side_panel_hold", None)
+        if callable(holder):
+            holder(bool(on))
+            return
+        opener = getattr(self, "side_panel_in", None)
+        if on and callable(opener):
+            opener()
+
     def side_conversation(self) -> str:
         """THE SIDE PANEL'S CONVERSATION, ONE FOR ALL OF IT (the user, 2026-11-16: "所有agent的话，所有我的话都在一个
         session里，并且按照claude cli的方式空了就recap/summarize"): every message there, every notification the agent
@@ -1298,7 +1399,23 @@ line starting with "- ", each in a few words. Leave the block out when no learne
                 parts.append("WHAT THEY WANT TO BE TOLD (learned):\n" + lessons[:3000])
         except Exception:
             log.debug("the lessons could not be read for the side watch", exc_info=True)
+        try:
+            from .agent.missed_chances import recent
+            missed = recent(self.db)
+            if missed:
+                # THE TIMES IT WAS SILENT AND HELP WAS WANTED (agent/missed_chances.py): in a moment like one, speak.
+                parts.append("WHEN THEY NEEDED HELP AND THE AGENT WAS SILENT (learned - in a moment like one of these, "
+                             "offer that help):\n" + missed[:3000])
+        except Exception:
+            log.debug("the missed chances could not be read for the side watch", exc_info=True)
         return "\n\n".join(parts)
+
+    def _side_asks(self, after: str, before: str) -> List[Dict[str, Any]]:
+        """What the user asked in the side panel between two times (agent/missed_chances.py): [{"at", "text"}]."""
+        side = self.side_conversation()
+        return [{"at": str(one.get("created_at") or ""), "text": str(one.get("content") or "")}
+                for one in self.conversations.messages(side, limit=None)
+                if one.get("role") == "user" and after < str(one.get("created_at") or "") <= before]
 
     def _more_context(self, conversation_id: Optional[str], asked: str = "") -> str:
         """What every answer is given besides its own conversation: the agent's memory's index - and, in a
@@ -1383,7 +1500,9 @@ line starting with "- ", each in a few words. Leave the block out when no learne
         self._side_said("assistant", words, {"origin": "notification", "notification_id": str(said.get("id") or ""),
                                              "category": category_of(said), "url": str(meta.get("url") or ""),
                                              "title": title, "why": why, "words": message, "said": spoken,
-                                             "rules": list(meta.get("rules_used") or [])})
+                                             "rules": list(meta.get("rules_used") or []),
+                                             **({"report_groups": meta["report_groups"]}
+                                                if isinstance(meta.get("report_groups"), list) else {})})
 
     def learn_answer(self, notification: Optional[Dict[str, Any]], answer: str, meaning: str = "",
                      said: str = "", question: Optional[Dict[str, Any]] = None) -> Optional[str]:
@@ -1765,6 +1884,8 @@ line starting with "- ", each in a few words. Leave the block out when no learne
                 "note": shown("Trigger: {0}", self.config).replace(
                     "{0}", shown(told_from(meta), self.config)
                     + (f" - {what_set_it_off(meta)}" if what_set_it_off(meta) else "")),
+                # THE REPORT'S EVENTS, ALL OF THEM, drawn in the chat by group (agent/reports.py _chat_groups).
+                **({"report": list(meta["report_groups"])} if isinstance(meta.get("report_groups"), list) else {}),
                 "actions": actions, "goes": bool(place)})
         # ONE ALONE IS OPEN (the user, 2026-11-06): there is nothing to choose between.
         waiting = [row for rows in parts.values() for row in rows]
@@ -2174,8 +2295,13 @@ line starting with "- ", each in a few words. Leave the block out when no learne
                            "user, in a few words."}
 
     def _event_tool_carry(self, payload: Dict[str, Any]) -> None:
-        """A tool a review held, run once the user approves it - as the agent would have."""
-        said = self.agent.tools.call(str(payload.get("tool") or ""), payload.get("arguments") or {})
+        """A tool a review held, run once the user approves it - as the agent would have. Never the screen: that is
+        only for the user's own chat (agent_core.CHAT_ONLY_TOOLS)."""
+        from .agent.core.agent_core import CHAT_ONLY_TOOLS
+        tool = str(payload.get("tool") or "")
+        if tool in CHAT_ONLY_TOOLS:
+            raise ValueError(f"{tool} is only for the user's own chat, at their word")
+        said = self.agent.tools.call(tool, payload.get("arguments") or {})
         if isinstance(said, dict) and said.get("error"):
             raise ValueError(str(said["error"]))
 
@@ -3094,6 +3220,7 @@ WHAT I WOULD DO ON MY OWN where that applies. Their words:
             self.chat_digest.start()             # the chat summarised and learned from while quiet
             self.learning_questions.start()      # the lessons it is unsure of asked about now and then
             self.heads_up.start()                # what the user may have missed, said
+            self.missed_chances.start()          # the times it was silent and help was wanted, learned from
             self.co_play.start()                 # company while they watch or read
             self.play_world.start()              # the play world, grown once a day
             self._started = True
@@ -3321,6 +3448,9 @@ WHAT I WOULD DO ON MY OWN where that applies. Their words:
             asking = getattr(self, "learning_questions", None)
             if asking is not None:
                 asking.stop()
+            looking_back = getattr(self, "missed_chances", None)
+            if looking_back is not None:
+                looking_back.stop()
             watching = getattr(self, "heads_up", None)
             if watching is not None:
                 watching.stop()

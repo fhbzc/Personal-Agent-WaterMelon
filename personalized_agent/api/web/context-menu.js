@@ -26,6 +26,9 @@
 
   document.addEventListener("contextmenu", (event) => {
     if (!ours()) return;
+    // NONE OVER THE WORLD (the user, 2026-11-19: "在play view下不能右键弹出copy的panel"): a right-click in the Play view
+    // opens nothing - neither this menu nor the browser's.
+    if (event.target.closest && event.target.closest(".side-play")) { event.preventDefault(); close(); return; }
     if (event.target.closest && event.target.closest("input, textarea, [contenteditable='true']")) return;
     event.preventDefault();
     close();

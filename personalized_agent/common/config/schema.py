@@ -350,6 +350,12 @@ SETTINGS_SCHEMA: List[SettingField] = [
                  "source, a portable folder - you are only told. A required fix is "
                  "had whatever is chosen here, Off too, and you are told of it.",
                  choices=["ask", "install", "off"]),
+    # PLAY'S OWN LANGUAGE (the user, 2026-11-19: "选语言的setting, 要放在play panel里（这个setting是只对play panel内生效
+    # 的，即使display languagde还是英文，play也可以选中文）"): set from the Play panel's own button; "" follows the
+    # display language.
+    SettingField("play_language", "Play language", "choice", "", "General",
+                 "The language the Play world is shown in - its names, signs and the agent's words in it. "
+                 "Empty: the display language.", choices=["", "en", "zh"], hidden=True),
     SettingField("display_language", "Display language", "choice",
                  _default_display(), "General",
                  "The language you see: this application's screens, and "

@@ -1,0 +1,226 @@
+{
+ "about": "THE MATERIALS A ROOM IS MADE OF (the user, 2026-11-19: \"墙壁，地板的style再给不同的素材（比如冰面，大理石，木质，石头等等）\"; \"区域的整体材质主题和风格的选择会影响内饰\"): floors - each a tile drawn as a 16 x 16 SVG, put into pixels by the page (play.js playMaterialTiles); walls - each one of the four wall sets (sandstone, stone, marble, timber) washed with a colour. The model chooses among them for each room, and may make new ones (agent/playmade.py) - kept beside the world and used again.",
+ "floors": {
+  "wood": {
+   "description": "warm wooden boards",
+   "builtin": "wood"
+  },
+  "stone": {
+   "description": "grey stone flags",
+   "builtin": "stone"
+  },
+  "tiles": {
+   "description": "plain square tiles",
+   "builtin": "tiles"
+  },
+  "ice": {
+   "description": "clear blue ice, cracked and shining",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#bfe3f2'/><path d='M0 5 L6 3 L9 8 L16 6 M5 16 L7 10 L12 11 L14 16' stroke='#e8f8ff' stroke-width='0.7' fill='none'/><rect x='2' y='9' width='3' height='1' fill='#ffffff' opacity='0.7'/><rect x='10' y='2' width='2' height='1' fill='#ffffff' opacity='0.8'/></svg>"
+  },
+  "white_marble": {
+   "description": "white marble veined with grey",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#eeebe4'/><path d='M0 3 Q5 6 8 4 T16 7 M2 16 Q6 11 11 12 T16 10' stroke='#b9b4ad' stroke-width='0.6' fill='none'/><rect x='0' y='15' width='16' height='1' fill='#d8d3cb'/><rect x='15' y='0' width='1' height='16' fill='#d8d3cb'/></svg>"
+  },
+  "black_marble": {
+   "description": "black marble veined with gold",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#23222a'/><path d='M0 4 Q6 7 9 5 T16 8 M3 16 Q7 12 12 13' stroke='#c9a227' stroke-width='0.5' fill='none'/><rect x='0' y='15' width='16' height='1' fill='#15141a'/><rect x='15' y='0' width='1' height='16' fill='#15141a'/></svg>"
+  },
+  "checker": {
+   "description": "black and white checks",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#f2efe8'/><rect width='8' height='8' fill='#2a2a30'/><rect x='8' y='8' width='8' height='8' fill='#2a2a30'/></svg>"
+  },
+  "parquet": {
+   "description": "herringbone parquet",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#a8703f'/><path d='M0 0 L8 8 L0 16 M8 0 L16 8 L8 16' stroke='#7a4e2a' stroke-width='1' fill='none'/><path d='M4 0 L12 8 L4 16' stroke='#c08a55' stroke-width='0.5' fill='none'/></svg>"
+  },
+  "dark_planks": {
+   "description": "dark worn planks",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#5a3a22'/><rect y='5' width='16' height='1' fill='#3a2414'/><rect y='11' width='16' height='1' fill='#3a2414'/><rect x='6' y='0' width='1' height='5' fill='#3a2414'/><rect x='11' y='6' width='1' height='5' fill='#3a2414'/><rect x='2' y='12' width='1' height='4' fill='#3a2414'/></svg>"
+  },
+  "tatami": {
+   "description": "woven straw tatami with a dark border",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#c9c27a'/><path d='M0 2 H16 M0 4 H16 M0 6 H16 M0 8 H16 M0 10 H16 M0 12 H16 M0 14 H16' stroke='#b0a965' stroke-width='0.5'/><rect width='16' height='1' fill='#2f4a2f'/><rect y='15' width='16' height='1' fill='#2f4a2f'/></svg>"
+  },
+  "red_carpet": {
+   "description": "a deep red carpet with a gold pattern",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#8e2d36'/><path d='M8 3 L11 8 L8 13 L5 8 Z' fill='none' stroke='#c9a227' stroke-width='0.6'/><circle cx='8' cy='8' r='1' fill='#c9a227'/></svg>"
+  },
+  "blue_carpet": {
+   "description": "a soft blue carpet",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#3d5a8a'/><circle cx='4' cy='4' r='0.6' fill='#5a7ab0'/><circle cx='12' cy='12' r='0.6' fill='#5a7ab0'/><circle cx='12' cy='4' r='0.4' fill='#5a7ab0'/><circle cx='4' cy='12' r='0.4' fill='#5a7ab0'/></svg>"
+  },
+  "terrazzo": {
+   "description": "speckled terrazzo",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#e3ddd2'/><circle cx='3' cy='4' r='0.8' fill='#c96f4a'/><circle cx='11' cy='3' r='0.6' fill='#3a6ea5'/><circle cx='7' cy='9' r='0.7' fill='#6b8f3a'/><circle cx='13' cy='12' r='0.9' fill='#8a8f98'/><circle cx='4' cy='13' r='0.5' fill='#c9a227'/></svg>"
+  },
+  "mosaic": {
+   "description": "a mosaic of small blue and white tiles",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#f2efe8'/><rect x='0' y='0' width='4' height='4' fill='#3a6ea5'/><rect x='8' y='0' width='4' height='4' fill='#5ad1c6'/><rect x='4' y='4' width='4' height='4' fill='#5ad1c6'/><rect x='12' y='4' width='4' height='4' fill='#3a6ea5'/><rect x='0' y='8' width='4' height='4' fill='#5ad1c6'/><rect x='8' y='8' width='4' height='4' fill='#3a6ea5'/><rect x='4' y='12' width='4' height='4' fill='#3a6ea5'/><rect x='12' y='12' width='4' height='4' fill='#5ad1c6'/></svg>"
+  },
+  "metal_plate": {
+   "description": "riveted steel plate",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#8a9098'/><path d='M0 2 L2 0 M4 6 L6 4 M8 10 L10 8 M12 14 L14 12' stroke='#a6acb4' stroke-width='0.8'/><circle cx='1.5' cy='1.5' r='0.6' fill='#5e646c'/><circle cx='14.5' cy='14.5' r='0.6' fill='#5e646c'/><rect y='15' width='16' height='1' fill='#5e646c'/></svg>"
+  },
+  "glass": {
+   "description": "glass over light",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#cfeaf2'/><path d='M2 14 L14 2' stroke='#ffffff' stroke-width='1' opacity='0.8'/><rect y='15' width='16' height='1' fill='#9fc6d4'/><rect x='15' width='1' height='16' fill='#9fc6d4'/></svg>"
+  },
+  "slate": {
+   "description": "dark slate slabs",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#4a5058'/><rect x='0' y='7' width='16' height='1' fill='#353a40'/><rect x='9' y='0' width='1' height='7' fill='#353a40'/><rect x='4' y='8' width='1' height='8' fill='#353a40'/><rect x='2' y='2' width='3' height='1' fill='#5a6068'/></svg>"
+  },
+  "sandstone_tile": {
+   "description": "warm sandstone tiles",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#d9b07a'/><rect x='0' y='7' width='16' height='1' fill='#b98d58'/><rect x='7' y='0' width='1' height='16' fill='#b98d58'/><circle cx='3' cy='3' r='0.5' fill='#c99f68'/><circle cx='12' cy='11' r='0.6' fill='#c99f68'/></svg>"
+  },
+  "moss_stone": {
+   "description": "old stone with moss in the cracks",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#8a8a80'/><path d='M0 8 H16 M8 0 V8 M4 8 V16' stroke='#4f6b2a' stroke-width='1'/><rect x='10' y='11' width='3' height='2' fill='#6b8f3a' opacity='0.7'/></svg>"
+  },
+  "gold_inlay": {
+   "description": "pale stone inlaid with gold lines",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#efe6cf'/><rect x='0' y='0' width='16' height='16' fill='none' stroke='#c9a227' stroke-width='0.8'/><path d='M8 2 L14 8 L8 14 L2 8 Z' fill='none' stroke='#c9a227' stroke-width='0.5'/></svg>"
+  },
+  "cloud": {
+   "description": "soft cloud underfoot",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#eef4fb'/><circle cx='4' cy='5' r='3' fill='#ffffff'/><circle cx='11' cy='11' r='3.5' fill='#ffffff'/><circle cx='13' cy='3' r='1.5' fill='#dfe9f5'/></svg>"
+  }
+ },
+ "walls": {
+  "sandstone": {
+   "description": "warm sandstone blocks",
+   "set": "sandstone",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#d9b47c'/><rect x='0' y='4' width='16' height='1' fill='#a9844f'/><rect x='0' y='0' width='1' height='4' fill='#a9844f'/><rect x='8' y='0' width='1' height='4' fill='#a9844f'/><rect x='0' y='0' width='1' height='4' fill='#a9844f'/><rect x='1' y='0' width='5' height='1' fill='#ecd2a2'/><rect x='0' y='9' width='16' height='1' fill='#a9844f'/><rect x='4' y='5' width='1' height='4' fill='#a9844f'/><rect x='12' y='5' width='1' height='4' fill='#a9844f'/><rect x='4' y='5' width='1' height='4' fill='#a9844f'/><rect x='5' y='5' width='5' height='1' fill='#ecd2a2'/><rect x='0' y='14' width='16' height='1' fill='#a9844f'/><rect x='0' y='10' width='1' height='4' fill='#a9844f'/><rect x='8' y='10' width='1' height='4' fill='#a9844f'/><rect x='0' y='10' width='1' height='4' fill='#a9844f'/><rect x='1' y='10' width='5' height='1' fill='#ecd2a2'/></svg>"
+  },
+  "stone": {
+   "description": "grey stone blocks",
+   "set": "stone",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#9a9a96'/><rect x='0' y='4' width='16' height='1' fill='#5f5f5c'/><rect x='0' y='0' width='1' height='4' fill='#5f5f5c'/><rect x='7' y='0' width='1' height='4' fill='#5f5f5c'/><rect x='14' y='0' width='1' height='4' fill='#5f5f5c'/><rect x='5' y='0' width='1' height='4' fill='#5f5f5c'/><rect x='1' y='0' width='4' height='1' fill='#b9b9b4'/><rect x='0' y='9' width='16' height='1' fill='#5f5f5c'/><rect x='3' y='5' width='1' height='4' fill='#5f5f5c'/><rect x='10' y='5' width='1' height='4' fill='#5f5f5c'/><rect x='1' y='5' width='1' height='4' fill='#5f5f5c'/><rect x='4' y='5' width='4' height='1' fill='#b9b9b4'/><rect x='0' y='14' width='16' height='1' fill='#5f5f5c'/><rect x='0' y='10' width='1' height='4' fill='#5f5f5c'/><rect x='7' y='10' width='1' height='4' fill='#5f5f5c'/><rect x='14' y='10' width='1' height='4' fill='#5f5f5c'/><rect x='5' y='10' width='1' height='4' fill='#5f5f5c'/><rect x='1' y='10' width='4' height='1' fill='#b9b9b4'/></svg>"
+  },
+  "marble": {
+   "description": "pale marble",
+   "set": "marble",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#f1efe9'/><path d='M0 4 Q5 2 8 6 T16 5 M2 16 Q6 11 11 12 T16 9' stroke='#c9c6d4' stroke-width='0.6' fill='none'/><path d='M3 0 Q4 3 2 6' stroke='#d8d5e0' stroke-width='0.4' fill='none'/></svg>"
+  },
+  "timber": {
+   "description": "timber frame and plaster",
+   "set": "timber",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#efe3c8'/><rect x='0' y='0' width='16' height='2' fill='#6b4428'/><rect x='0' y='14' width='16' height='2' fill='#6b4428'/><rect x='0' y='0' width='2' height='16' fill='#6b4428'/><path d='M2 14 L14 2' stroke='#6b4428' stroke-width='2'/></svg>"
+  },
+  "ice": {
+   "description": "blocks of ice",
+   "set": "marble",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#bfe6f5'/><rect x='0' y='4' width='16' height='1' fill='#8cc7df'/><rect x='0' y='0' width='1' height='4' fill='#8cc7df'/><rect x='8' y='0' width='1' height='4' fill='#8cc7df'/><rect x='0' y='0' width='1' height='4' fill='#8cc7df'/><rect x='1' y='0' width='5' height='1' fill='#f2fbff'/><rect x='0' y='12' width='16' height='1' fill='#8cc7df'/><rect x='4' y='8' width='1' height='4' fill='#8cc7df'/><rect x='12' y='8' width='1' height='4' fill='#8cc7df'/><rect x='4' y='8' width='1' height='4' fill='#8cc7df'/><rect x='5' y='8' width='5' height='1' fill='#f2fbff'/><path d='M3 2 L6 6 M10 9 L13 13' stroke='#ffffff' stroke-width='0.6' opacity='0.8'/></svg>"
+  },
+  "brick": {
+   "description": "red brick",
+   "set": "sandstone",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#b5523b'/><rect x='0' y='3' width='16' height='1' fill='#e2cdb3'/><rect x='0' y='0' width='1' height='3' fill='#e2cdb3'/><rect x='6' y='0' width='1' height='3' fill='#e2cdb3'/><rect x='12' y='0' width='1' height='3' fill='#e2cdb3'/><rect x='2' y='0' width='1' height='3' fill='#e2cdb3'/><rect x='0' y='8' width='16' height='1' fill='#e2cdb3'/><rect x='3' y='3' width='1' height='3' fill='#e2cdb3'/><rect x='9' y='3' width='1' height='3' fill='#e2cdb3'/><rect x='15' y='3' width='1' height='3' fill='#e2cdb3'/><rect x='5' y='3' width='1' height='3' fill='#e2cdb3'/><rect x='0' y='12' width='16' height='1' fill='#e2cdb3'/><rect x='0' y='8' width='1' height='3' fill='#e2cdb3'/><rect x='6' y='8' width='1' height='3' fill='#e2cdb3'/><rect x='12' y='8' width='1' height='3' fill='#e2cdb3'/><rect x='2' y='8' width='1' height='3' fill='#e2cdb3'/><rect x='0' y='16' width='16' height='1' fill='#e2cdb3'/><rect x='3' y='12' width='1' height='3' fill='#e2cdb3'/><rect x='9' y='12' width='1' height='3' fill='#e2cdb3'/><rect x='15' y='12' width='1' height='3' fill='#e2cdb3'/><rect x='5' y='12' width='1' height='3' fill='#e2cdb3'/></svg>"
+  },
+  "metal": {
+   "description": "riveted steel panels",
+   "set": "stone",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#8d99a8'/><rect x='0' y='7' width='16' height='1' fill='#5a6573'/><rect x='7' y='0' width='1' height='16' fill='#5a6573'/><rect x='2' y='2' width='1' height='1' fill='#d5dde6'/><rect x='2' y='12' width='1' height='1' fill='#d5dde6'/><rect x='12' y='2' width='1' height='1' fill='#d5dde6'/><rect x='12' y='12' width='1' height='1' fill='#d5dde6'/><rect x='1' y='1' width='5' height='1' fill='#b7c2ce'/></svg>"
+  },
+  "glass": {
+   "description": "glass panes in frames",
+   "set": "marble",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#bfe4f0'/><rect x='0' y='0' width='16' height='1' fill='#5d7a8a'/><rect x='0' y='8' width='16' height='1' fill='#5d7a8a'/><rect x='0' y='0' width='1' height='16' fill='#5d7a8a'/><rect x='8' y='0' width='1' height='16' fill='#5d7a8a'/><path d='M2 6 L6 2 M10 14 L14 10' stroke='#ffffff' stroke-width='0.8' opacity='0.8'/></svg>"
+  },
+  "bamboo": {
+   "description": "bamboo and paper",
+   "set": "timber",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#c8cf86'/><rect x='0' y='0' width='3' height='16' fill='#a9b45a'/><rect x='0' y='5' width='3' height='1' fill='#6f7a32'/><rect x='0' y='12' width='3' height='1' fill='#6f7a32'/><rect x='3' y='0' width='1' height='16' fill='#5e672a'/><rect x='4' y='0' width='3' height='16' fill='#a9b45a'/><rect x='4' y='5' width='3' height='1' fill='#6f7a32'/><rect x='4' y='12' width='3' height='1' fill='#6f7a32'/><rect x='7' y='0' width='1' height='16' fill='#5e672a'/><rect x='8' y='0' width='3' height='16' fill='#a9b45a'/><rect x='8' y='5' width='3' height='1' fill='#6f7a32'/><rect x='8' y='12' width='3' height='1' fill='#6f7a32'/><rect x='11' y='0' width='1' height='16' fill='#5e672a'/><rect x='12' y='0' width='3' height='16' fill='#a9b45a'/><rect x='12' y='5' width='3' height='1' fill='#6f7a32'/><rect x='12' y='12' width='3' height='1' fill='#6f7a32'/><rect x='15' y='0' width='1' height='16' fill='#5e672a'/></svg>"
+  },
+  "plaster": {
+   "description": "cream plaster",
+   "set": "sandstone",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#f2e8cf'/><rect x='3' y='4' width='2' height='1' fill='#e4d6b5'/><rect x='10' y='10' width='3' height='1' fill='#e4d6b5'/><rect x='12' y='3' width='1' height='1' fill='#fff8e6'/><rect x='0' y='15' width='16' height='1' fill='#d6c7a3'/></svg>"
+  },
+  "obsidian": {
+   "description": "black volcanic glass",
+   "set": "stone",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#1e1828'/><path d='M0 3 L7 0 L12 6 L16 4 M0 12 L5 8 L10 13 L16 10' stroke='#4b3d6b' stroke-width='0.8' fill='none'/><rect x='6' y='2' width='2' height='1' fill='#8a7bb8'/><rect x='11' y='11' width='1' height='1' fill='#8a7bb8'/></svg>"
+  },
+  "jade": {
+   "description": "green jade",
+   "set": "marble",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#6dbb8f'/><path d='M0 6 Q4 3 8 7 T16 6 M0 13 Q6 10 10 14' stroke='#3f8d63' stroke-width='0.8' fill='none'/><rect x='3' y='2' width='3' height='1' fill='#b9ead0'/></svg>"
+  },
+  "gold": {
+   "description": "gilded panels",
+   "set": "marble",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#d4ab3c'/><rect x='1' y='1' width='14' height='14' fill='none' stroke='#a8801f' stroke-width='1'/><rect x='4' y='4' width='8' height='8' fill='#e7c45a'/><rect x='5' y='5' width='3' height='1' fill='#fff1b8'/></svg>"
+  },
+  "coral": {
+   "description": "pink coral",
+   "set": "sandstone",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#ea8d80'/><circle cx='3' cy='3' r='1.2' fill='#f7b3a5'/><circle cx='10' cy='2' r='1.2' fill='#f7b3a5'/><circle cx='6' cy='8' r='1.2' fill='#f7b3a5'/><circle cx='13' cy='9' r='1.2' fill='#f7b3a5'/><circle cx='2' cy='13' r='1.2' fill='#f7b3a5'/><circle cx='9' cy='14' r='1.2' fill='#f7b3a5'/><path d='M0 6 Q4 5 7 11 T16 13' stroke='#c96b5d' stroke-width='0.6' fill='none'/></svg>"
+  },
+  "candy": {
+   "description": "candy stripes",
+   "set": "marble",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#ee8fb7'/><path d='M-12 16 L4 0' stroke='#ffffff' stroke-width='2.5'/><path d='M-4 16 L12 0' stroke='#ffffff' stroke-width='2.5'/><path d='M4 16 L20 0' stroke='#ffffff' stroke-width='2.5'/><path d='M12 16 L28 0' stroke='#ffffff' stroke-width='2.5'/></svg>"
+  },
+  "moss": {
+   "description": "moss-grown stone",
+   "set": "stone",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#86887c'/><rect x='0' y='4' width='16' height='1' fill='#565850'/><rect x='0' y='0' width='1' height='4' fill='#565850'/><rect x='7' y='0' width='1' height='4' fill='#565850'/><rect x='14' y='0' width='1' height='4' fill='#565850'/><rect x='5' y='0' width='1' height='4' fill='#565850'/><rect x='0' y='9' width='16' height='1' fill='#565850'/><rect x='3' y='5' width='1' height='4' fill='#565850'/><rect x='10' y='5' width='1' height='4' fill='#565850'/><rect x='1' y='5' width='1' height='4' fill='#565850'/><rect x='0' y='14' width='16' height='1' fill='#565850'/><rect x='0' y='10' width='1' height='4' fill='#565850'/><rect x='7' y='10' width='1' height='4' fill='#565850'/><rect x='14' y='10' width='1' height='4' fill='#565850'/><rect x='5' y='10' width='1' height='4' fill='#565850'/><path d='M0 0 Q3 3 6 1 Q9 4 12 1 L16 2 L16 0 Z' fill='#5f8a3c'/><rect x='9' y='10' width='3' height='2' fill='#6f9a45'/></svg>"
+  },
+  "logs": {
+   "description": "round logs, a cabin's",
+   "set": "timber",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#9a6a3c'/><rect x='0' y='0' width='16' height='4' fill='#9a6a3c'/><rect x='0' y='0' width='16' height='1' fill='#c08a54'/><rect x='0' y='3' width='16' height='1' fill='#5e3d20'/><rect x='0' y='4' width='16' height='4' fill='#9a6a3c'/><rect x='0' y='4' width='16' height='1' fill='#c08a54'/><rect x='0' y='7' width='16' height='1' fill='#5e3d20'/><rect x='0' y='8' width='16' height='4' fill='#9a6a3c'/><rect x='0' y='8' width='16' height='1' fill='#c08a54'/><rect x='0' y='11' width='16' height='1' fill='#5e3d20'/><rect x='0' y='12' width='16' height='4' fill='#9a6a3c'/><rect x='0' y='12' width='16' height='1' fill='#c08a54'/><rect x='0' y='15' width='16' height='1' fill='#5e3d20'/></svg>"
+  },
+  "cobble": {
+   "description": "rough cobbles",
+   "set": "stone",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#7d786d'/><ellipse cx='3' cy='3' rx='3' ry='2.2' fill='#a49e92' stroke='#6c675e' stroke-width='0.6'/><ellipse cx='10' cy='2.5' rx='3.5' ry='2.2' fill='#a49e92' stroke='#6c675e' stroke-width='0.6'/><ellipse cx='6' cy='8' rx='3' ry='2.2' fill='#a49e92' stroke='#6c675e' stroke-width='0.6'/><ellipse cx='13' cy='8' rx='2.6' ry='2.2' fill='#a49e92' stroke='#6c675e' stroke-width='0.6'/><ellipse cx='2' cy='13' rx='2.5' ry='2.2' fill='#a49e92' stroke='#6c675e' stroke-width='0.6'/><ellipse cx='9' cy='13.5' rx='3.5' ry='2.2' fill='#a49e92' stroke='#6c675e' stroke-width='0.6'/></svg>"
+  },
+  "crystal": {
+   "description": "crystal facets",
+   "set": "marble",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#a982d6'/><path d='M0 8 L8 0 L16 8 L8 16 Z' fill='#d7b8f2'/><path d='M8 0 L8 16 M0 8 L16 8' stroke='#f5eaff' stroke-width='0.6'/><path d='M4 4 L6 6' stroke='#ffffff' stroke-width='0.8'/></svg>"
+  },
+  "shoji": {
+   "description": "paper screens in a wooden lattice",
+   "set": "timber",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#f7f1e1'/><rect x='0' y='0' width='16' height='1' fill='#7a5432'/><rect x='0' y='15' width='16' height='1' fill='#7a5432'/><rect x='0' y='0' width='1' height='16' fill='#8b623c'/><rect x='5' y='0' width='1' height='16' fill='#8b623c'/><rect x='10' y='0' width='1' height='16' fill='#8b623c'/><rect x='15' y='0' width='1' height='16' fill='#8b623c'/><rect x='0' y='5' width='16' height='1' fill='#8b623c'/><rect x='0' y='10' width='16' height='1' fill='#8b623c'/></svg>"
+  },
+  "azulejo": {
+   "description": "blue painted tiles",
+   "set": "marble",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#f7f9fc'/><rect x='0' y='7' width='16' height='1' fill='#e8eef7'/><rect x='7' y='0' width='1' height='16' fill='#e8eef7'/><circle cx='3.5' cy='3.5' r='1.6' fill='none' stroke='#2a5aa8' stroke-width='0.8'/><rect x='3.0' y='3.0' width='1' height='1' fill='#2a5aa8'/><circle cx='3.5' cy='11.5' r='1.6' fill='none' stroke='#2a5aa8' stroke-width='0.8'/><rect x='3.0' y='11.0' width='1' height='1' fill='#2a5aa8'/><circle cx='11.5' cy='3.5' r='1.6' fill='none' stroke='#2a5aa8' stroke-width='0.8'/><rect x='11.0' y='3.0' width='1' height='1' fill='#2a5aa8'/><circle cx='11.5' cy='11.5' r='1.6' fill='none' stroke='#2a5aa8' stroke-width='0.8'/><rect x='11.0' y='11.0' width='1' height='1' fill='#2a5aa8'/></svg>"
+  },
+  "snow": {
+   "description": "packed snow blocks",
+   "set": "marble",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#f1f6fa'/><rect x='0' y='4' width='16' height='1' fill='#c9d7e2'/><rect x='0' y='0' width='1' height='4' fill='#c9d7e2'/><rect x='10' y='0' width='1' height='4' fill='#c9d7e2'/><rect x='4' y='0' width='1' height='4' fill='#c9d7e2'/><rect x='1' y='0' width='7' height='1' fill='#ffffff'/><rect x='0' y='12' width='16' height='1' fill='#c9d7e2'/><rect x='5' y='8' width='1' height='4' fill='#c9d7e2'/><rect x='15' y='8' width='1' height='4' fill='#c9d7e2'/><rect x='9' y='8' width='1' height='4' fill='#c9d7e2'/><rect x='6' y='8' width='7' height='1' fill='#ffffff'/></svg>"
+  },
+  "hedge": {
+   "description": "a clipped hedge",
+   "set": "timber",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#3c722d'/><circle cx='2' cy='2' r='2' fill='#4c8a3a'/><circle cx='8' cy='3' r='2' fill='#5aa045'/><circle cx='13' cy='2' r='2' fill='#4c8a3a'/><circle cx='5' cy='8' r='2' fill='#5aa045'/><circle cx='11' cy='9' r='2' fill='#4c8a3a'/><circle cx='2' cy='13' r='2' fill='#5aa045'/><circle cx='9' cy='14' r='2' fill='#4c8a3a'/><circle cx='14' cy='13' r='2' fill='#5aa045'/></svg>"
+  },
+  "wallpaper": {
+   "description": "flowered wallpaper",
+   "set": "marble",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#f6ead8'/><circle cx='4' cy='3' r='1.3' fill='#d0758a'/><rect x='3.5' y='4.3' width='1' height='2' fill='#6f9a5a'/><circle cx='12' cy='9' r='1.3' fill='#d0758a'/><rect x='11.5' y='10.3' width='1' height='2' fill='#6f9a5a'/><rect x='7' y='0' width='1' height='16' fill='#efe2cf'/></svg>"
+  },
+  "rammed_earth": {
+   "description": "layered rammed earth",
+   "set": "sandstone",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#b98a5e'/><rect x='0' y='0' width='16' height='3' fill='#b98a5e'/><rect x='0' y='3' width='16' height='2' fill='#a7774d'/><rect x='0' y='5' width='16' height='4' fill='#c79a6d'/><rect x='0' y='9' width='16' height='2' fill='#a7774d'/><rect x='0' y='11' width='16' height='3' fill='#b98a5e'/><rect x='0' y='14' width='16' height='2' fill='#9c6c43'/></svg>"
+  },
+  "copper": {
+   "description": "copper with verdigris",
+   "set": "stone",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#b8713f'/><rect x='0' y='4' width='16' height='1' fill='#7d4825'/><rect x='0' y='0' width='1' height='4' fill='#7d4825'/><rect x='8' y='0' width='1' height='4' fill='#7d4825'/><rect x='0' y='0' width='1' height='4' fill='#7d4825'/><rect x='1' y='0' width='5' height='1' fill='#d99a68'/><rect x='0' y='12' width='16' height='1' fill='#7d4825'/><rect x='4' y='8' width='1' height='4' fill='#7d4825'/><rect x='12' y='8' width='1' height='4' fill='#7d4825'/><rect x='4' y='8' width='1' height='4' fill='#7d4825'/><rect x='5' y='8' width='5' height='1' fill='#d99a68'/><rect x='2' y='5' width='3' height='2' fill='#5fae96'/><rect x='11' y='12' width='2' height='2' fill='#5fae96'/></svg>"
+  },
+  "dark_wood": {
+   "description": "dark wooden boards",
+   "set": "timber",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#4a2e1a'/><rect x='0' y='0' width='1' height='16' fill='#2e1b0f'/><rect x='4' y='0' width='1' height='16' fill='#2e1b0f'/><rect x='8' y='0' width='1' height='16' fill='#2e1b0f'/><rect x='12' y='0' width='1' height='16' fill='#2e1b0f'/><rect x='2' y='5' width='1' height='2' fill='#5b3a22'/><rect x='10' y='11' width='1' height='2' fill='#5b3a22'/></svg>"
+  }
+ }
+}

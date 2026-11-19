@@ -5191,6 +5191,31 @@ body.side-stacked #side-visual { flex: 0 0 auto; max-height: 48vh; overflow-y: a
 .side-note-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--note-ink); display: inline-block; }
 .side-note-why { margin: 0; color: var(--ink); }
 .side-note-title { font-weight: 650; }
+/* THE REPORT IN THE CHAT (notes.js sideReportCard; the user, 2026-11-19: "在chat里就显示所有need your look, done, yours to
+   do 的东西是什么"): a group to each tab - its name, how many, a mark of its own colour - then one event a line, its title
+   the link, where it is in small muted words under it; a new one marked. */
+.side-report { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.side-report-group { --group: var(--muted); border-left: 2px solid color-mix(in srgb, var(--group) 70%, transparent);
+  padding-left: 8px; }
+.side-report-group.tab-needs_you { --group: #e8913a; }
+.side-report-group.tab-yours { --group: var(--accent); }
+.side-report-group.tab-done { --group: #3fae7a; }
+.side-report-group > summary { cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: 6px;
+  font-weight: 650; font-size: 13px; }
+.side-report-group > summary::-webkit-details-marker { display: none; }
+.side-report-group > summary::before { content: "\25B8"; font-size: 10px; color: var(--muted); transition: transform 0.15s; }
+.side-report-group[open] > summary::before { transform: rotate(90deg); }
+.side-report-count { font-size: 11px; font-weight: 600; color: var(--group); padding: 0 7px; border-radius: 9px;
+  background: color-mix(in srgb, var(--group) 14%, transparent); }
+.side-report-events { list-style: none; margin: 4px 0 2px; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.side-report-event { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; line-height: 1.35; }
+.side-report-event > a { color: var(--ink); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--ink) 25%, transparent); }
+.side-report-event > a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+.side-report-note { flex: 1 0 100%; font-size: 12px; color: var(--muted); }
+.side-report-new { font-size: 10.5px; font-weight: 700; color: #fff; background: #e8913a; border-radius: 7px; padding: 0 6px; }
+.side-report-things { font-size: 11px; color: var(--muted); }
+.side-report-things::before { content: "\00D7"; }
+.side-report-more { font-size: 12px; color: var(--muted); }
 .side-note .notes-answers { display: flex; flex-wrap: wrap; gap: 6px; }
 .side-note .notes-why { margin: 0; font-size: 12.5px; color: var(--muted); }
 .side-note.answered { opacity: 1; }
@@ -5792,6 +5817,9 @@ button.report-deliverable-title:focus-visible { outline: 2px solid var(--accent)
    press). A note is a grid (its gap counted); a reply, a block. */
 .side-msg > .side-react-row:last-child { margin-top: 6px; }
 .side-msg:has(> .side-react-row:last-child)::after { margin-top: -24px !important; line-height: 24px; pointer-events: none; }
+/* NEVER THE TIME UNDER THE BUTTONS (the user, 2026-11-18: "这个输出为什么感觉乱码" - a reply of one letter so far, its
+   time and its buttons drawn over each other): a message with its buttons as wide as the two side by side. */
+.side-msg:has(> .side-react-row:last-child) { min-width: min(17em, 82%); }
 .side-msg.side-note > .side-react-row:last-child { margin-top: 0; }
 .side-msg.side-note:has(> .side-react-row:last-child)::after { margin-top: -30px !important; }
 .side-react-chip { border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); background:
@@ -6032,6 +6060,16 @@ body.side-playing .side-rail [data-drawer="picture"] { display: none; }
 .side-play-sound label { display: grid; grid-template-columns: 52px 1fr; align-items: center; gap: 8px; }
 .side-play-sound input[type=range] { width: 100%; accent-color: #8a4f24; }
 .side-play-sound .side-play-quiet { grid-template-columns: auto 1fr; }
+.side-play-language { position: absolute; top: 42px; right: 8px; width: 130px; padding: 10px 12px; display: grid; gap: 6px;
+  background: #f3d7a4; border: 2px solid #8a4f24; border-radius: 8px; box-shadow: 0 3px 0 #5c3317;
+  color: #3b2414; font: 12.5px/1.3 system-ui, sans-serif; z-index: 2; }
+.side-play-language button { font: inherit; text-align: left; padding: 5px 8px; border-radius: 6px; cursor: pointer;
+  background: #fbe9c6; color: inherit; border: 1px solid #b07a46; }
+.side-play-language button:hover, .side-play-language button:focus-visible { background: #ffd99a; outline: none; }
+.side-play-language button { display: flex; align-items: center; gap: 6px; }
+.side-play-language button[aria-pressed="true"] { background: #fbe9c6; font-weight: 600; cursor: default; }
+.side-play-language button:disabled { color: inherit; opacity: 1; }
+.side-play-tick { display: inline-block; width: 1em; text-align: center; color: #8a4f24; font-weight: 700; }
 
 /* The play view's menu of where to go (play-act.js): a portal's, a stop's. */
 .side-play-menu { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); min-width: 220px; max-width: 80%;
@@ -6044,3 +6082,41 @@ body.side-playing .side-rail [data-drawer="picture"] { display: none; }
 .side-play-menu button span { display: inline-block; min-width: 1.4em; text-align: center; background: #c98f4e; color: #2a170b;
   border-radius: 4px; font-weight: bold; }
 .side-play-menu small { opacity: 0.7; }
+
+/* THE AGENT HAS THE SCREEN (agent/screen_control.py): the side panel's edge flashing red, a line at its top. */
+body.side-controlling::after {
+  content: ""; position: fixed; inset: 0; z-index: 9999; pointer-events: none;
+  border: 4px solid #e5484d; animation: side-control-blink 1s steps(2, jump-none) infinite;
+}
+@keyframes side-control-blink { 0% { border-color: #e5484d; } 100% { border-color: rgba(229, 72, 77, 0.15); } }
+#side-control-bar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 9998; padding: 10px 14px; text-align: center;
+  background: #d93a3f; color: #fff; font-size: 14px; font-weight: 700; line-height: 1.35;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); white-space: normal; overflow-wrap: anywhere;
+}
+#side-control-bar::before { content: "● "; }
+/* The count before it begins: large, that it is seen (notes.js sideControlling). */
+#side-control-bar.counting { font-size: 22px; padding: 16px 14px; letter-spacing: 0.02em; }
+@media (prefers-reduced-motion: reduce) { body.side-controlling::after { animation: none; } }
+/* Each time the agent had the screen: one folding block in red, the screen's colour while it has it (the user,
+   2026-11-18: "操纵screen collapose的用红色") - its steps inside (notes.js sideControlRun). */
+:root { --control-red: #d93a3f; --control-red-soft: rgba(229, 72, 77, 0.09); --control-red-line: rgba(229, 72, 77, 0.45); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --control-red: #ff7a7e; --control-red-soft: rgba(255, 99, 104, 0.12); --control-red-line: rgba(255, 99, 104, 0.5); }
+}
+:root[data-theme="dark"] { --control-red: #ff7a7e; --control-red-soft: rgba(255, 99, 104, 0.12); --control-red-line: rgba(255, 99, 104, 0.5); }
+.side-control-run details { border: 1px solid var(--control-red-line); border-left: 4px solid var(--control-red);
+  border-radius: 8px; background: var(--control-red-soft); margin: 4px 0; }
+.side-control-run summary { cursor: pointer; padding: 6px 10px; display: flex; gap: 8px; align-items: baseline;
+  font-size: 12.5px; font-weight: 600; color: var(--control-red); list-style: none; }
+.side-control-run summary::-webkit-details-marker { display: none; }
+.side-control-run summary::before { content: "▸"; color: var(--control-red); transition: transform 0.15s; }
+.side-control-run details[open] summary::before { transform: rotate(90deg); }
+.side-control-run-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.side-control-run-count { color: var(--control-red); opacity: 0.8; font-weight: 400; white-space: nowrap; }
+.side-control-steps { margin: 0; padding: 0 10px 8px 28px; font-size: 12.5px; color: var(--ink); }
+.side-control-steps li { margin: 2px 0; }
+.side-control-steps li::marker { color: var(--control-red); }
+.side-control-steps time { color: var(--control-red); opacity: 0.75; font-size: 11px; margin-right: 4px;
+  font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .side-control-run summary::before { transition: none; } }

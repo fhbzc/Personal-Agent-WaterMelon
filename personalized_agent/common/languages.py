@@ -232,7 +232,8 @@ class Language:
         return hash(self.parts)
 
     def __repr__(self) -> str:
-        return " + ".join(f"in_{'english' if rule == INTERNAL else 'display'}({what!r})"
+        return " + ".join(f"in_language({rule[len(GIVEN):]!r}, {what!r})" if rule.startswith(GIVEN)
+                          else f"in_{'english' if rule == INTERNAL else 'display'}({what!r})"
                           for rule, what in self.parts) or "Language()"
 
     def rules(self) -> list:
@@ -256,7 +257,13 @@ class Language:
         written in English; English alone said as such."""
         shown = [what for rule, what in self.parts if rule == DISPLAY]
         kept = [what for rule, what in self.parts if rule == INTERNAL]
+        given = [(rule[len(GIVEN):], what) for rule, what in self.parts if rule.startswith(GIVEN)]
         lines = []
+        for code, what in given:                         # a language of its own, named (in_language)
+            line = f"WRITE IT IN THIS LANGUAGE: {name_of(code)}."
+            if what != EVERYTHING_READ:
+                line += f" That is: {what}."
+            lines.append(line)
         if shown:
             line = (f"WRITE IT IN THIS LANGUAGE: {name_of(display_language(config))}. "
                     + display_instruction(config))
@@ -296,6 +303,16 @@ def in_display(what: str = EVERYTHING_READ) -> Language:
     return Language(((DISPLAY, str(what)),))
 
 
+#: A rule naming its own language (in_language): "language:" and the language's code.
+GIVEN = "language:"
+
+
+def in_language(code: str, what: str = EVERYTHING_READ) -> Language:
+    """These parts of the output in this language (a code of CODES) - for a view of its own language, as the Play
+    view's (agent/playworld.py: its own setting, the display language till it is chosen)."""
+    return Language(((f"{GIVEN}{code}", str(what)),))
+
+
 def in_english(what: str) -> Language:
     """These parts of the output in English: kept for the agent's own use."""
     return Language(((INTERNAL, str(what)),))
@@ -304,4 +321,4 @@ def in_english(what: str) -> Language:
 __all__ = ["LANGUAGES", "CODES", "BASE", "DEFAULT", "normalise",
            "system_language", "name_of", "label_of", "display_language",
            "display_instruction", "PINNED_LANGUAGES", "Language", "in_display",
-           "in_english", "DISPLAY", "INTERNAL", "EVERYTHING_READ", "needs_english_copy"]
+           "in_english", "in_language", "GIVEN", "DISPLAY", "INTERNAL", "EVERYTHING_READ", "needs_english_copy"]

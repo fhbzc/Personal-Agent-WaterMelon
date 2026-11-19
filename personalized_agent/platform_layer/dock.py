@@ -203,6 +203,7 @@ class Dock:
         shell32.SHAppBarMessage(ABM_SETPOS, ctypes.byref(data))
         strip = (data.rc.left, max(data.rc.top, work[1]), data.rc.right, min(data.rc.bottom, work[3]))
         self.strip = strip
+        self.width, self.monitor = width, monitor            # its screen as it was: a change of it seen (_watch)
         # ABOVE THE OTHERS WHILE PINNED, AS THE TASKBAR IS (the user, 2026-11-16: "windows上显示桌面，即使右边pin了也会被
         # 最小化，不应该这样"): Show desktop leaves the windows always on top - the strip is its own, nothing is
         # under it to be covered.
@@ -239,8 +240,18 @@ class Dock:
             _per_monitor()
             behind = 0
             while not stop.wait(FULL_SCREEN_LOOK):
+                # ANOTHER SCREEN, OR THIS ONE OTHERWISE (the user, 2026-11-19: "如果换显示屏之后，他的sidebar的位置会变" -
+                # a small screen, then the large one again: its strip kept the small one's width, the panel beside it,
+                # neither at the edge): its strip taken again at the right of the screen it is on now.
                 try:
-                    film = _film_front(monitor, but=handle)
+                    now = _window_screen(handle)[0]
+                    if now != getattr(self, "monitor", now) and self.handle == handle:
+                        self._again(handle)
+                except Exception:
+                    log.debug("the side panel's screen could not be looked at", exc_info=True)
+                screen = getattr(self, "monitor", None) or monitor     # the screen as it is now (_again)
+                try:
+                    film = _film_front(screen, but=handle)
                 except Exception:
                     continue
                 if stop.is_set():
@@ -262,6 +273,34 @@ class Dock:
             if behind and self.handle is None:
                 self.stepped_aside = False
         threading.Thread(target=watch, name="side-panel-full-screen", daemon=True).start()
+
+    def _again(self, handle: int) -> None:
+        """ITS STRIP TAKEN AGAIN on the screen the panel is on now (its size or place changed): at its right edge, as
+        wide as before, the panel put into it and the windows it would cover moved again."""
+        import ctypes
+        with self._lock:
+            if self.handle != handle:
+                return
+            monitor, work = _window_screen(handle)
+            width = int(getattr(self, "width", 0) or (self.strip[2] - self.strip[0] if self.strip else 0))
+            if width <= 0:
+                return
+            data = _bar(handle)
+            data.uEdge = ABE_RIGHT
+            data.rc.left, data.rc.top = monitor[2] - width, monitor[1]
+            data.rc.right, data.rc.bottom = monitor[2], monitor[3]
+            shell32 = ctypes.windll.shell32
+            shell32.SHAppBarMessage(ABM_QUERYPOS, ctypes.byref(data))
+            data.rc.left = data.rc.right - width
+            shell32.SHAppBarMessage(ABM_SETPOS, ctypes.byref(data))
+            monitor, work = _window_screen(handle)           # its work area as the strip now leaves it
+            strip = (data.rc.left, max(data.rc.top, work[1]), data.rc.right, min(data.rc.bottom, work[3]))
+            self.strip, self.monitor = strip, monitor
+            ctypes.windll.user32.SetWindowPos(handle, 0, strip[0], strip[1], strip[2] - strip[0], strip[3] - strip[1],
+                                              SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS)
+            self._remember()
+            self._make_room(handle, strip, (work[0], work[1], strip[0], work[3]))
+            log.info("the side panel took its strip again: its screen changed (%s)", monitor)
 
     def _make_room(self, panel: int, strip: Rect, left_over: Rect) -> None:
         """The windows a hand placed that the strip covers, beside it - each without waiting for it."""
@@ -428,6 +467,26 @@ def _bar(handle: int) -> Any:
     data.hWnd = handle
     data.uCallbackMessage = CALLBACK
     return data
+
+
+def _window_screen(handle: int) -> Tuple[Rect, Rect]:
+    """(the whole screen, its work area) of the screen the window is on (the nearest), in pixels."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _MonitorInfo(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+    user32 = ctypes.windll.user32
+    user32.MonitorFromWindow.restype = ctypes.c_void_p
+    user32.MonitorFromWindow.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+    monitor = user32.MonitorFromWindow(handle, 2)                 # MONITOR_DEFAULTTONEAREST
+    info = _MonitorInfo()
+    info.cbSize = ctypes.sizeof(_MonitorInfo)
+    user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    user32.GetMonitorInfoW(monitor, ctypes.byref(info))
+    whole, work = info.rcMonitor, info.rcWork
+    return (whole.left, whole.top, whole.right, whole.bottom), (work.left, work.top, work.right, work.bottom)
 
 
 def _pointer_screen() -> Tuple[Rect, Rect]:

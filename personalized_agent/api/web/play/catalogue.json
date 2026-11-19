@@ -40,6 +40,8 @@
 "toy": "a toy building's yard",
 "ruins_yard": "a ruined building's yard",
 "sky": "a sky building's yard",
+"harvest": "crops at every stage - sown, sprouting, growing, ripe, picked - fruits and vegetables: melons, a watermelon, grapes, corn",
+"robots": "robots and machines of many kinds and metals",
 "general": "anything else",
 "ancient_ruins": "ancient ruins",
 "cafe": "cafe",
@@ -66,6 +68,3036 @@
 "study": "study"
 },
 "things": {
+"turnipPicked": {
+"what": "picked turnip",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+0,
+0,
+1,
+1
+]
+},
+"turnipRipe": {
+"what": "a turnip plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+1,
+0,
+1,
+1
+]
+},
+"turnipGrowing": {
+"what": "a turnip plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+2,
+0,
+1,
+1
+]
+},
+"turnipYoung": {
+"what": "a young turnip plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+3,
+0,
+1,
+1
+]
+},
+"turnipSprout": {
+"what": "a turnip sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+4,
+0,
+1,
+1
+]
+},
+"turnipSeeded": {
+"what": "a patch sown with turnip seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+5,
+0,
+1,
+1
+]
+},
+"rosePicked": {
+"what": "picked rose",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+6,
+0,
+1,
+1
+]
+},
+"roseRipe": {
+"what": "a rose plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+7,
+0,
+1,
+1
+]
+},
+"roseGrowing": {
+"what": "a rose plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+8,
+0,
+1,
+1
+]
+},
+"roseYoung": {
+"what": "a young rose plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+9,
+0,
+1,
+1
+]
+},
+"roseSprout": {
+"what": "a rose sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+10,
+0,
+1,
+1
+]
+},
+"roseSeeded": {
+"what": "a patch sown with rose seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+11,
+0,
+1,
+1
+]
+},
+"cucumberPicked": {
+"what": "picked cucumber",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+0,
+1,
+1,
+1
+]
+},
+"cucumberRipe": {
+"what": "a cucumber plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+1,
+1,
+1,
+1
+]
+},
+"cucumberGrowing": {
+"what": "a cucumber plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+2,
+1,
+1,
+1
+]
+},
+"cucumberYoung": {
+"what": "a young cucumber plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+3,
+1,
+1,
+1
+]
+},
+"cucumberSprout": {
+"what": "a cucumber sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+4,
+1,
+1,
+1
+]
+},
+"cucumberSeeded": {
+"what": "a patch sown with cucumber seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+5,
+1,
+1,
+1
+]
+},
+"tulipPicked": {
+"what": "picked tulip",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+6,
+1,
+1,
+1
+]
+},
+"tulipRipe": {
+"what": "a tulip plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+7,
+1,
+1,
+1
+]
+},
+"tulipGrowing": {
+"what": "a tulip plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+8,
+1,
+1,
+1
+]
+},
+"tulipYoung": {
+"what": "a young tulip plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+9,
+1,
+1,
+1
+]
+},
+"tulipSprout": {
+"what": "a tulip sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+10,
+1,
+1,
+1
+]
+},
+"tulipSeeded": {
+"what": "a patch sown with tulip seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+11,
+1,
+1,
+1
+]
+},
+"tomatoPicked": {
+"what": "picked tomato",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+0,
+2,
+1,
+1
+]
+},
+"tomatoRipe": {
+"what": "a tomato plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+1,
+2,
+1,
+1
+]
+},
+"tomatoGrowing": {
+"what": "a tomato plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+2,
+2,
+1,
+1
+]
+},
+"tomatoYoung": {
+"what": "a young tomato plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+3,
+2,
+1,
+1
+]
+},
+"tomatoSprout": {
+"what": "a tomato sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+4,
+2,
+1,
+1
+]
+},
+"tomatoSeeded": {
+"what": "a patch sown with tomato seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+5,
+2,
+1,
+1
+]
+},
+"melonPicked": {
+"what": "picked melon",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+6,
+2,
+1,
+1
+]
+},
+"melonRipe": {
+"what": "a melon plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+7,
+2,
+1,
+1
+]
+},
+"melonGrowing": {
+"what": "a melon plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+8,
+2,
+1,
+1
+]
+},
+"melonYoung": {
+"what": "a young melon plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+9,
+2,
+1,
+1
+]
+},
+"melonSprout": {
+"what": "a melon sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+10,
+2,
+1,
+1
+]
+},
+"melonSeeded": {
+"what": "a patch sown with melon seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+11,
+2,
+1,
+1
+]
+},
+"eggplantPicked": {
+"what": "picked eggplant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+0,
+3,
+1,
+1
+]
+},
+"eggplantRipe": {
+"what": "a eggplant plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+1,
+3,
+1,
+1
+]
+},
+"eggplantGrowing": {
+"what": "a eggplant plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+2,
+3,
+1,
+1
+]
+},
+"eggplantYoung": {
+"what": "a young eggplant plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+3,
+3,
+1,
+1
+]
+},
+"eggplantSprout": {
+"what": "a eggplant sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+4,
+3,
+1,
+1
+]
+},
+"eggplantSeeded": {
+"what": "a patch sown with eggplant seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+5,
+3,
+1,
+1
+]
+},
+"lemonPicked": {
+"what": "picked lemon",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+6,
+3,
+1,
+1
+]
+},
+"lemonRipe": {
+"what": "a lemon plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+7,
+3,
+1,
+1
+]
+},
+"lemonGrowing": {
+"what": "a lemon plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+8,
+3,
+1,
+1
+]
+},
+"lemonYoung": {
+"what": "a young lemon plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+9,
+3,
+1,
+1
+]
+},
+"lemonSprout": {
+"what": "a lemon sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+10,
+3,
+1,
+1
+]
+},
+"lemonSeeded": {
+"what": "a patch sown with lemon seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+11,
+3,
+1,
+1
+]
+},
+"pineapplePicked": {
+"what": "picked pineapple",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+0,
+4,
+1,
+1
+]
+},
+"pineappleRipe": {
+"what": "a pineapple plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+1,
+4,
+1,
+1
+]
+},
+"pineappleGrowing": {
+"what": "a pineapple plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+2,
+4,
+1,
+1
+]
+},
+"pineappleYoung": {
+"what": "a young pineapple plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+3,
+4,
+1,
+1
+]
+},
+"pineappleSprout": {
+"what": "a pineapple sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+4,
+4,
+1,
+1
+]
+},
+"pineappleSeeded": {
+"what": "a patch sown with pineapple seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+5,
+4,
+1,
+1
+]
+},
+"ricePicked": {
+"what": "picked rice",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+6,
+4,
+1,
+1
+]
+},
+"riceRipe": {
+"what": "a rice plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+7,
+4,
+1,
+1
+]
+},
+"riceGrowing": {
+"what": "a rice plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+8,
+4,
+1,
+1
+]
+},
+"riceYoung": {
+"what": "a young rice plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+9,
+4,
+1,
+1
+]
+},
+"riceSprout": {
+"what": "a rice sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+10,
+4,
+1,
+1
+]
+},
+"riceSeeded": {
+"what": "a patch sown with rice seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+11,
+4,
+1,
+1
+]
+},
+"wheatPicked": {
+"what": "picked wheat",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+0,
+5,
+1,
+1
+]
+},
+"wheatRipe": {
+"what": "a wheat plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+1,
+5,
+1,
+1
+]
+},
+"wheatGrowing": {
+"what": "a wheat plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+2,
+5,
+1,
+1
+]
+},
+"wheatYoung": {
+"what": "a young wheat plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+3,
+5,
+1,
+1
+]
+},
+"wheatSprout": {
+"what": "a wheat sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+4,
+5,
+1,
+1
+]
+},
+"wheatSeeded": {
+"what": "a patch sown with wheat seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+5,
+5,
+1,
+1
+]
+},
+"grapesPicked": {
+"what": "picked grapes",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+6,
+5,
+1,
+1
+]
+},
+"grapesRipe": {
+"what": "a grapes plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+7,
+5,
+1,
+1
+]
+},
+"grapesGrowing": {
+"what": "a grapes plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+8,
+5,
+1,
+1
+]
+},
+"grapesYoung": {
+"what": "a young grapes plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+9,
+5,
+1,
+1
+]
+},
+"grapesSprout": {
+"what": "a grapes sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+10,
+5,
+1,
+1
+]
+},
+"grapesSeeded": {
+"what": "a patch sown with grapes seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+11,
+5,
+1,
+1
+]
+},
+"strawberryPicked": {
+"what": "picked strawberry",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+0,
+6,
+1,
+1
+]
+},
+"strawberryRipe": {
+"what": "a strawberry plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+1,
+6,
+1,
+1
+]
+},
+"strawberryGrowing": {
+"what": "a strawberry plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+2,
+6,
+1,
+1
+]
+},
+"strawberryYoung": {
+"what": "a young strawberry plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+3,
+6,
+1,
+1
+]
+},
+"strawberrySprout": {
+"what": "a strawberry sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+4,
+6,
+1,
+1
+]
+},
+"strawberrySeeded": {
+"what": "a patch sown with strawberry seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+5,
+6,
+1,
+1
+]
+},
+"cassavaPicked": {
+"what": "picked cassava",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+6,
+6,
+1,
+1
+]
+},
+"cassavaRipe": {
+"what": "a cassava plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+7,
+6,
+1,
+1
+]
+},
+"cassavaGrowing": {
+"what": "a cassava plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+8,
+6,
+1,
+1
+]
+},
+"cassavaYoung": {
+"what": "a young cassava plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+9,
+6,
+1,
+1
+]
+},
+"cassavaSprout": {
+"what": "a cassava sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+10,
+6,
+1,
+1
+]
+},
+"cassavaSeeded": {
+"what": "a patch sown with cassava seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+11,
+6,
+1,
+1
+]
+},
+"potatoPicked": {
+"what": "picked potato",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+0,
+7,
+1,
+1
+]
+},
+"potatoRipe": {
+"what": "a potato plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+1,
+7,
+1,
+1
+]
+},
+"potatoGrowing": {
+"what": "a potato plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+2,
+7,
+1,
+1
+]
+},
+"potatoYoung": {
+"what": "a young potato plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+3,
+7,
+1,
+1
+]
+},
+"potatoSprout": {
+"what": "a potato sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+4,
+7,
+1,
+1
+]
+},
+"potatoSeeded": {
+"what": "a patch sown with potato seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+5,
+7,
+1,
+1
+]
+},
+"coffeePicked": {
+"what": "picked coffee",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+6,
+7,
+1,
+1
+]
+},
+"coffeeRipe": {
+"what": "a coffee plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+7,
+7,
+1,
+1
+]
+},
+"coffeeGrowing": {
+"what": "a coffee plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+8,
+7,
+1,
+1
+]
+},
+"coffeeYoung": {
+"what": "a young coffee plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+9,
+7,
+1,
+1
+]
+},
+"coffeeSprout": {
+"what": "a coffee sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+10,
+7,
+1,
+1
+]
+},
+"coffeeSeeded": {
+"what": "a patch sown with coffee seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+11,
+7,
+1,
+1
+]
+},
+"orangePicked": {
+"what": "picked orange",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+0,
+8,
+1,
+1
+]
+},
+"orangeRipe": {
+"what": "a orange plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+1,
+8,
+1,
+1
+]
+},
+"orangeGrowing": {
+"what": "a orange plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+2,
+8,
+1,
+1
+]
+},
+"orangeYoung": {
+"what": "a young orange plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+3,
+8,
+1,
+1
+]
+},
+"orangeSprout": {
+"what": "a orange sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+4,
+8,
+1,
+1
+]
+},
+"orangeSeeded": {
+"what": "a patch sown with orange seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+5,
+8,
+1,
+1
+]
+},
+"avocadoPicked": {
+"what": "picked avocado",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+6,
+8,
+1,
+1
+]
+},
+"avocadoRipe": {
+"what": "a avocado plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+7,
+8,
+1,
+1
+]
+},
+"avocadoGrowing": {
+"what": "a avocado plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+8,
+8,
+1,
+1
+]
+},
+"avocadoYoung": {
+"what": "a young avocado plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+9,
+8,
+1,
+1
+]
+},
+"avocadoSprout": {
+"what": "a avocado sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+10,
+8,
+1,
+1
+]
+},
+"avocadoSeeded": {
+"what": "a patch sown with avocado seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+11,
+8,
+1,
+1
+]
+},
+"cornPicked": {
+"what": "picked corn",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+0,
+9,
+1,
+1
+]
+},
+"cornRipe": {
+"what": "a corn plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+1,
+9,
+1,
+1
+]
+},
+"cornGrowing": {
+"what": "a corn plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+2,
+9,
+1,
+1
+]
+},
+"cornYoung": {
+"what": "a young corn plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+3,
+9,
+1,
+1
+]
+},
+"cornSprout": {
+"what": "a corn sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+4,
+9,
+1,
+1
+]
+},
+"cornSeeded": {
+"what": "a patch sown with corn seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+5,
+9,
+1,
+1
+]
+},
+"sunflowerPicked": {
+"what": "picked sunflower",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+6,
+9,
+1,
+1
+]
+},
+"sunflowerRipe": {
+"what": "a sunflower plant, ripe",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+7,
+9,
+1,
+1
+]
+},
+"sunflowerGrowing": {
+"what": "a sunflower plant, growing",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+8,
+9,
+1,
+1
+]
+},
+"sunflowerYoung": {
+"what": "a young sunflower plant",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+9,
+9,
+1,
+1
+]
+},
+"sunflowerSprout": {
+"what": "a sunflower sprout",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+10,
+9,
+1,
+1
+]
+},
+"sunflowerSeeded": {
+"what": "a patch sown with sunflower seeds",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+11,
+9,
+1,
+1
+]
+},
+"grapesBunch": {
+"what": "a bunch of purple grapes",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+0,
+10,
+1,
+1
+]
+},
+"mango": {
+"what": "a mango",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+1,
+10,
+1,
+1
+]
+},
+"orangeFruit2": {
+"what": "an orange",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+2,
+10,
+1,
+1
+]
+},
+"plum": {
+"what": "a plum",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+3,
+10,
+1,
+1
+]
+},
+"pineappleFruit": {
+"what": "a pineapple",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+4,
+10,
+1,
+1
+]
+},
+"raspberry": {
+"what": "a raspberry",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+5,
+10,
+1,
+1
+]
+},
+"pear": {
+"what": "a pear",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+6,
+10,
+1,
+1
+]
+},
+"cantaloupe": {
+"what": "a netted cantaloupe melon",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+7,
+10,
+1,
+1
+]
+},
+"blueberry": {
+"what": "a blueberry",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+8,
+10,
+1,
+1
+]
+},
+"lime": {
+"what": "a lime",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+9,
+10,
+1,
+1
+]
+},
+"broccoli": {
+"what": "a broccoli",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+10,
+10,
+1,
+1
+]
+},
+"carrotRoot": {
+"what": "a carrot \\1oot",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+11,
+10,
+1,
+1
+]
+},
+"pumpkinWhole": {
+"what": "a big orange pumpkin",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+0,
+11,
+1,
+1
+]
+},
+"cornCob": {
+"what": "an ear of corn",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+1,
+11,
+1,
+1
+]
+},
+"mushroomCap": {
+"what": "a red-capped mushroom",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+2,
+11,
+1,
+1
+]
+},
+"garlic": {
+"what": "a garlic",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+3,
+11,
+1,
+1
+]
+},
+"peaPod": {
+"what": "a pea pod",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+4,
+11,
+1,
+1
+]
+},
+"cabbageHead": {
+"what": "a head of cabbage",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+5,
+11,
+1,
+1
+]
+},
+"turnipRoot": {
+"what": "a turnip",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+6,
+11,
+1,
+1
+]
+},
+"bellPepper": {
+"what": "a red bell pepper",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+7,
+11,
+1,
+1
+]
+},
+"redOnion": {
+"what": "a red onion",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+8,
+11,
+1,
+1
+]
+},
+"gourd": {
+"what": "a bottle gourd",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+9,
+11,
+1,
+1
+]
+},
+"strawberryFruit": {
+"what": "a strawberry",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+10,
+11,
+1,
+1
+]
+},
+"sweetPotato": {
+"what": "a sweet potato",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+11,
+11,
+1,
+1
+]
+},
+"tomatoFruit": {
+"what": "a tomato",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+0,
+12,
+1,
+1
+]
+},
+"lemonFruit": {
+"what": "a lemon",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+1,
+12,
+1,
+1
+]
+},
+"greenApple": {
+"what": "a green apple",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+2,
+12,
+1,
+1
+]
+},
+"redApple": {
+"what": "a red apple",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+3,
+12,
+1,
+1
+]
+},
+"banana": {
+"what": "a banana",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+4,
+12,
+1,
+1
+]
+},
+"chili": {
+"what": "a red chili",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+5,
+12,
+1,
+1
+]
+},
+"cherries": {
+"what": "a cherries",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+6,
+12,
+1,
+1
+]
+},
+"watermelon": {
+"what": "a whole striped watermelon",
+"themes": [
+"botanical",
+"farmland",
+"harvest"
+],
+"spec": [
+"produce",
+7,
+12,
+1,
+1
+]
+},
+"metalBot1": {
+"what": "a small silver robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+0,
+13,
+1,
+1
+]
+},
+"metalBot2": {
+"what": "a small blue robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+1,
+13,
+1,
+1
+]
+},
+"metalBot3": {
+"what": "a small gold robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+2,
+13,
+1,
+1
+]
+},
+"metalBot4": {
+"what": "a small green robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+3,
+13,
+1,
+1
+]
+},
+"metalBot5": {
+"what": "a small rose robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+4,
+13,
+1,
+1
+]
+},
+"metalBot6": {
+"what": "a small violet robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+5,
+13,
+1,
+1
+]
+},
+"metalBot7": {
+"what": "a small silver robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+6,
+13,
+1,
+1
+]
+},
+"metalBot8": {
+"what": "a small blue robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+7,
+13,
+1,
+1
+]
+},
+"metalBot9": {
+"what": "a small gold robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+8,
+13,
+1,
+1
+]
+},
+"metalBot10": {
+"what": "a small green robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+9,
+13,
+1,
+1
+]
+},
+"metalBot11": {
+"what": "a small rose robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+10,
+13,
+1,
+1
+]
+},
+"metalBot12": {
+"what": "a small violet robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+11,
+13,
+1,
+1
+]
+},
+"metalBot13": {
+"what": "a small silver robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+0,
+14,
+1,
+1
+]
+},
+"metalBot14": {
+"what": "a small blue robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+1,
+14,
+1,
+1
+]
+},
+"metalBot15": {
+"what": "a small gold robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+2,
+14,
+1,
+1
+]
+},
+"metalBot16": {
+"what": "a small green robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+3,
+14,
+1,
+1
+]
+},
+"metalBot17": {
+"what": "a small rose robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+4,
+14,
+1,
+1
+]
+},
+"metalBot18": {
+"what": "a small violet robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+5,
+14,
+1,
+1
+]
+},
+"metalBot19": {
+"what": "a small silver robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+6,
+14,
+1,
+1
+]
+},
+"metalBot20": {
+"what": "a small blue robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+7,
+14,
+1,
+1
+]
+},
+"metalBot21": {
+"what": "a small gold robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+8,
+14,
+1,
+1
+]
+},
+"metalBot22": {
+"what": "a small green robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+9,
+14,
+1,
+1
+]
+},
+"metalBot23": {
+"what": "a small rose robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+10,
+14,
+1,
+1
+]
+},
+"metalBot24": {
+"what": "a small violet robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+11,
+14,
+1,
+1
+]
+},
+"metalBot25": {
+"what": "a small silver robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+0,
+15,
+1,
+1
+]
+},
+"metalBot26": {
+"what": "a small blue robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+1,
+15,
+1,
+1
+]
+},
+"metalBot27": {
+"what": "a small gold robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+2,
+15,
+1,
+1
+]
+},
+"metalBot28": {
+"what": "a small green robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+3,
+15,
+1,
+1
+]
+},
+"metalBot29": {
+"what": "a small rose robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+4,
+15,
+1,
+1
+]
+},
+"metalBot30": {
+"what": "a small violet robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+5,
+15,
+1,
+1
+]
+},
+"metalBot31": {
+"what": "a small silver robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+6,
+15,
+1,
+1
+]
+},
+"metalBot32": {
+"what": "a small blue robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+7,
+15,
+1,
+1
+]
+},
+"metalBot33": {
+"what": "a small gold robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+8,
+15,
+1,
+1
+]
+},
+"metalBot34": {
+"what": "a small green robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+9,
+15,
+1,
+1
+]
+},
+"metalBot35": {
+"what": "a small rose robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+10,
+15,
+1,
+1
+]
+},
+"metalBot36": {
+"what": "a small violet robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+11,
+15,
+1,
+1
+]
+},
+"metalBot37": {
+"what": "a small silver robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+0,
+16,
+1,
+1
+]
+},
+"metalBot38": {
+"what": "a small blue robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+1,
+16,
+1,
+1
+]
+},
+"metalBot39": {
+"what": "a small gold robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+2,
+16,
+1,
+1
+]
+},
+"metalBot40": {
+"what": "a small green robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+3,
+16,
+1,
+1
+]
+},
+"metalBot41": {
+"what": "a small rose robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+4,
+16,
+1,
+1
+]
+},
+"metalBot42": {
+"what": "a small violet robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+5,
+16,
+1,
+1
+]
+},
+"metalBot43": {
+"what": "a small silver robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+6,
+16,
+1,
+1
+]
+},
+"metalBot44": {
+"what": "a small blue robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+7,
+16,
+1,
+1
+]
+},
+"metalBot45": {
+"what": "a small gold robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+8,
+16,
+1,
+1
+]
+},
+"metalBot46": {
+"what": "a small green robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+9,
+16,
+1,
+1
+]
+},
+"metalBot47": {
+"what": "a small rose robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+10,
+16,
+1,
+1
+]
+},
+"metalBot48": {
+"what": "a small violet robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+11,
+16,
+1,
+1
+]
+},
+"metalBot49": {
+"what": "a small silver robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+0,
+17,
+1,
+1
+]
+},
+"metalBot50": {
+"what": "a small blue robot (one of fifty kinds)",
+"themes": [
+"robots",
+"scifi",
+"space"
+],
+"spec": [
+"produce",
+1,
+17,
+1,
+1
+]
+},
 "roundTree": {
 "what": "round tree",
 "themes": [
@@ -4476,6 +7508,7 @@ true
 "laboratory",
 "office",
 "scifi",
+"skyline",
 "skyscraper",
 "toy",
 "toytown"
@@ -4509,6 +7542,7 @@ true
 "city",
 "school",
 "scifi",
+"skyline",
 "skyscraper"
 ],
 "spec": [
@@ -4549,7 +7583,8 @@ true
 "what": "a tall city tree",
 "themes": [
 "city",
-"forest"
+"forest",
+"skyline"
 ],
 "spec": [
 "urban",

@@ -1261,11 +1261,16 @@ class OneCallPerStepTests(unittest.TestCase):
 
     def test_a_model_that_is_away_stops_the_run_rather_than_failing_four_times(self) -> None:
         """Asking three more times is three more failures and the same answer."""
+        import threading
+        import traceback
         calls = []
         original = self.agent.app.models.invoke
 
         def refuse(request, role=""):
-            calls.append(role)
+            # WHO ASKED, kept (2026-11-19: a full run saw a second call once in a while, never reproduced alone -
+            # the next failure says which task, which thread, from where).
+            calls.append({"task": getattr(request, "task", ""), "role": role, "thread": threading.current_thread().name,
+                          "from": " < ".join(f"{f.name}:{f.lineno}" for f in traceback.extract_stack(limit=9)[-8:-1][::-1])})
             raise self._away()
 
         self.agent.app.models.invoke = refuse
@@ -1274,7 +1279,7 @@ class OneCallPerStepTests(unittest.TestCase):
         finally:
             self.agent.app.models.invoke = original
         self.assertTrue(report.get("blocked"))
-        self.assertEqual(len(calls), 1, "asked once, not four times")
+        self.assertEqual(len(calls), 1, f"asked once, not four times: {calls}")
 
     def test_a_blocked_run_still_shows_what_every_step_gathered(self) -> None:
         def refuse(request, role=""):

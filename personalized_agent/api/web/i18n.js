@@ -23,7 +23,8 @@
   const LOCALES = { zh: "zh-CN" };
   const ATTRIBUTES = ["placeholder", "title", "aria-label", "label"];
   // Where the words are the user's or the agent's, never the application's.
-  const LEAVE = ".msg-text, .chat-message, .fu-body, .cx-summary, .xp-live-text, .lesson-card-words, .xp-added-words, textarea, pre, code";
+  // The Play view is in its own language (play.js playWords, playRelabel - its own setting), left to it.
+  const LEAVE = ".msg-text, .chat-message, .fu-body, .cx-summary, .xp-live-text, .lesson-card-words, .xp-added-words, textarea, pre, code, .side-play";
   const SLOT = /\{(\d+)\}/g;
   let exact = null;
   let patterns = [];

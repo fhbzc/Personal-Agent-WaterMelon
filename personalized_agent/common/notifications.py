@@ -38,11 +38,11 @@ NOT_A_TRIGGER_AT_ALL = "None: sent by the application"
 #: WHAT KIND EACH IS, as the waiting list groups them and its line counts them (the user,
 #: 2026-11-07: "return back to old project 和晚间summary改成 summary类型（不同于notification和
 #: recommendation)"; "N waiting的时候，要写清楚category"). In this order; each counted in these words.
-CATEGORIES = ("Heads up", "Recommended content", "Summaries", "Reminders", "Other")
+CATEGORIES = ("Heads up", "Recommended content", "Summaries", "Report", "Reminders", "Other")
 #: THE LINE BESIDE THE AVATAR, a row a kind in this order (the user, 2026-11-07: "应该是分行 X
 #: notification / X summary / X recommendation ... 按照这个顺序，每行不同的颜色"): its name, the
 #: groups of the list it counts, its words.
-LINE_KINDS = (("notifications", ("Reminders", "Other"), ("{0} notification", "{0} notifications")),
+LINE_KINDS = (("notifications", ("Report", "Reminders", "Other"), ("{0} notification", "{0} notifications")),
               ("summaries", ("Summaries",), ("{0} summary", "{0} summaries")),
               # What the user may have missed, said by the side watch (heartbeat/monitor/heads_up.py).
               ("headsup", ("Heads up",), ("{0} heads-up", "{0} heads-ups")),
@@ -68,6 +68,8 @@ def category_of(row: Dict[str, Any]) -> str:
             metadata = {}
     if metadata.get("heads_up"):
         return "Heads up"
+    if metadata.get("report"):                 # the report at the user's times (agent/reports.py; the user,
+        return "Report"                         # 2026-11-19: "report的类型变成report, 而不是other")
     if metadata.get("summary"):
         return "Summaries"
     if metadata.get("recommended"):

@@ -266,6 +266,7 @@ class AgentCore:
         after_quick: Optional[Dict[str, Any]] = None,
         front: str = "",
         seen: Optional[List[Dict[str, str]]] = None,
+        chat: bool = False,
     ) -> Dict[str, Any]:
         """One turn of a conversation. `front`: what is in front of the user
         (agent/front_screen.py), read with this message and not written down
@@ -332,7 +333,7 @@ class AgentCore:
                                               nothing=NOTHING_TO_ADD, questions=QUESTIONS)
             began = time.monotonic()
             result = self.run_instruction(
-                asked, {"conversation_id": conversation_id, "origin": origin,
+                asked, {"conversation_id": conversation_id, "origin": origin, "chat": bool(chat),
                         "earlier": earlier, "said": text, "on_text": on_text,
                         "pictures": (attached["pictures"] if attached else []) + list(seen or [])},
                 debug=debug)
@@ -652,7 +653,8 @@ class AgentCore:
                 result = self._reason(instruction, task_id, trace_id, started, more=more,
                                       pictures=context.get("pictures"), said=said,
                                       on_text=context.get("on_text"),
-                                      withheld=WITHHELD_FROM.get(origin, ()),
+                                      withheld=tuple(WITHHELD_FROM.get(origin, ()))
+                                      + (() if context.get("chat") is True else CHAT_ONLY_TOOLS),
                                       history=history, summary=summary, debug=debug,
                                       folder=folder, topic=topic,
                                       gate={"conversation_id": cid, "said": said})
@@ -710,7 +712,8 @@ class AgentCore:
             # Not offered is not enough: a call written out by hand is
             # still refused.
             if name in withheld:
-                outcome: Any = {"error": f"{name} is not available to a scheduled run"}
+                outcome: Any = {"error": f"{name} is only for the user's own chat, at their word" if name in CHAT_ONLY_TOOLS
+                                else f"{name} is not available to a scheduled run"}
             elif name in CHAT_WEB_TOOL_NAMES:
                 outcome = self._web(guard, name, arguments)
             elif self.tool_gate is not None and (held := self.tool_gate(name, arguments, gate or {})) \
@@ -736,7 +739,14 @@ class AgentCore:
                 made["classification"] = "delayed"  # section 53
             return outcome
 
-        for iteration in range(self.max_tool_iterations):
+        screens_seen: List[Any] = []
+        # MORE STEPS WHILE THE AGENT HAS THE SCREEN (agent/screen_control.py): taken in this turn or before, the turn
+        # may go on to its rounds - asked at each step, so a takeover begun mid-turn counts.
+        for iteration in range(max(self.max_tool_iterations, 200)):
+            extra_rounds = getattr(self, "more_rounds", None)
+            if iteration >= max(self.max_tool_iterations, int(extra_rounds() or 0) if callable(extra_rounds) else 0):
+                error = error or "tool iteration limit reached"
+                break
             made["iteration"] = iteration
             self._step(task_id, "Thinking",
                        f"{self._model_label()}"
@@ -823,8 +833,11 @@ class AgentCore:
             messages.append({"role": "assistant",
                              "content": response.raw_content or response.text})
             results_block = []
+            screens_now: List[Any] = []
             for call in response.tool_calls:
                 outcome = run_tool(call.name, call.arguments, call.id)
+                if isinstance(outcome, dict) and outcome.get("_screen_picture"):
+                    screens_now.append((len(results_block), str(outcome["_screen_picture"])))
                 # A picture it read goes as a picture (models/vision.py).
                 from ...models.vision import tool_content
                 results_block.append(
@@ -837,6 +850,16 @@ class AgentCore:
                     }
                 )
             messages.append({"role": "user", "content": results_block})
+            # ONE PICTURE OF THE SCREEN AT A TIME (agent/screen_control.py; the user, 2026-11-18: "每次只给最新的截图，
+            # 让agent给每个过去截图署名"): each earlier one in this turn is the name the agent gave it, from here on.
+            if screens_now:
+                named = getattr(self, "picture_named", None)
+                for at, block, ident in [*screens_seen, *[(len(messages) - 1, b, i) for b, i in screens_now[:-1]]]:
+                    name = named(ident) if callable(named) else ""
+                    messages[at]["content"][block]["content"] = (
+                        f"(An earlier picture of the screen, {ident}: {name or 'not named'}. Not shown any more - "
+                        f"screen_picture with its id shows it again.)")
+                screens_seen = [(len(messages) - 1, screens_now[-1][0], screens_now[-1][1])]
         else:
             error = error or "tool iteration limit reached"
 
@@ -963,6 +986,12 @@ class AgentCore:
 #: when the user asks in the chat, or by the heartbeat's own step - never
 #: by a task.
 WITHHELD_FROM = {"scheduler": ("schedule_task",)}
+#: THE SCREEN ONLY IN A CHAT WITH THE USER (the user, 2026-11-18: "agent是不能主动trigger screen control的，包括dlegate work,
+#: notification 什么的，这个只在chat里提供"): withheld from every turn that is not the user's own message in a chat - the
+#: side panel, the chat page, the bubble (`handle_message(chat=True)`) - a report event's thread, the debugger's runs,
+#: anything else; refused there if called by hand. Giving the screen back is never withheld.
+CHAT_ONLY_TOOLS = ("screen_control_start", "screen_look", "screen_act", "screen_read", "screen_picture",
+                   "screen_pictures_search")
 
 
 #: Arguments that say what a call is *about*, in the order they answer it.

@@ -18,6 +18,17 @@ sfx/*.ogg        - "50 RPG sound effects" by Kenney (www.kenney.nl), CC0 (openga
 music/quaint-town.mp3 - "Quaint Town" (loopable), CC0 (opengameart.org/content/quaint-town), 2026-11-17.
 music/jrpg-piano.mp3  - "JRPG Piano", CC0 (opengameart.org/content/jrpg-piano), 2026-11-17.
 music/calm-piano.mp3  - "Calm Piano 1 (Vaporware)", CC0 (opengameart.org/content/calm-piano-1-vaporware), 2026-11-17.
+music/frogtown.mp3 - "FrogTown" by LushoGames, CC0 (https://opengameart.org/content/frogtown), 2026-11-19.
+music/calm-loop.mp3 - "Calm Loop" by wipics, CC0 (https://opengameart.org/content/calm-loop), 2026-11-19.
+music/the-hope.mp3 - "The Hope" by TAD, CC0 (https://opengameart.org/content/the-hope), 2026-11-19.
+music/snow-fest.mp3 - "Snow_Fest" by G_P, CC0 (https://opengameart.org/content/snowfest), 2026-11-19.
+music/brand-new-wisdom.ogg - "A Brand New Wisdom (Short Loops pack)" by hernandack, CC0 (https://opengameart.org/content/short-loops-background-music-pack), 2026-11-19.
+music/just-saying-tho.ogg - "Just Saying Tho (Short Loops pack)" by hernandack, CC0 (https://opengameart.org/content/short-loops-background-music-pack), 2026-11-19.
+music/winter-dust.ogg - "Winter Dust (Short Loops pack)" by hernandack, CC0 (https://opengameart.org/content/short-loops-background-music-pack), 2026-11-19.
+music/swinging-sweet.ogg - "Swinging Sweet (Short Loops pack)" by hernandack, CC0 (https://opengameart.org/content/short-loops-background-music-pack), 2026-11-19.
+music/treasure-hunter.mp3 - "Treasure Hunter" by opengameart.org, CC0 (https://opengameart.org/comment/112904), 2026-11-19.
+music/magic-puzzle.ogg - "Magic Puzzle In-Game 1" by MintoDog, CC0 (https://opengameart.org/comment/112769), 2026-11-19.
+music/busy-calm-street.ogg - "Busy but Calm Street" by SkyleTheFrench, CC0 (https://opengameart.org/comment/112730), 2026-11-19.
 town.png    - Kenney "Tiny Town" 1.1 (Tilemap/tilemap.png), CC0, from opengameart.org/content/tiny-town, 2026-11-17.
 urban.png   - Kenney "RPG Urban Pack" 1.0 (Tilemap/tilemap.png), CC0, from opengameart.org/content/rpg-urban-pack, 2026-11-17.
 dungeon.png - Kenney "Tiny Dungeon" 1.0 (Tilemap/tilemap.png), CC0, from opengameart.org/content/tiny-dungeon, 2026-11-17.
@@ -48,3 +59,11 @@ catalogue.json - the things above by theme, each with its words (scripts/play_ca
 
 Every picture and sound here is CC0 (public domain) or made for this application (watermelon.png, and the tunes and
 sounds api/web/play-sound.js makes as it plays).
+produce.png   - laid by scripts/play_produce_sheet.py (2026-11-18) from three CC0 packs: "Farming crops 16x16" by josehzz
+                (opengameart.org/content/farming-crops-16x16; rows 0-9 as they were), "32 free fruits and veggies" by
+                Crumpaloo (crumpaloo.itch.io/32-free-fruits-and-veggies-asset-pack; each put in a tile of its own), and "1 bit
+                robots 16x16" by nightgane (opengameart.org/content/1-bit-robots-16x16; their white made metals, shaded).
+hangings.json - not a picture: each theme's things to hang (2026-11-19), their shapes and colours, drawn by
+                api/web/play.js playThemeHangingDraw - made for this application, nothing taken.
+materials.json - not a picture: the floors (each a 16 x 16 tile drawn as SVG) and the walls (a wall set and a wash)
+                a room may be made of (2026-11-19), put into pixels by api/web/play.js - made for this application.

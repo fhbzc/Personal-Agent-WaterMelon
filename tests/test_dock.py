@@ -363,3 +363,29 @@ class ItsStripKeptTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(sys.platform == "win32", "the strip is Windows'")
+class AnotherScreenTests(unittest.TestCase):
+    """2026-11-19: "如果换显示屏之后，他的sidebar的位置会变" - a small screen, then the large one again: the strip kept the
+    small one's width and place."""
+
+    def test_its_strip_is_taken_again_at_the_right_of_the_screen_it_is_on_now(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            dock = dk.Dock(Path(folder) / "dock.json")
+            dock.handle, dock.width = 777, 600
+            dock.strip, dock.monitor = (766, 0, 1366, 728), (0, 0, 1366, 768)
+            big = ((0, 0, 2560, 1440), (0, 0, 1960, 1400))
+            moved = []
+            fake = mock.MagicMock()
+            fake.shell32.SHAppBarMessage.return_value = 1
+            fake.user32.SetWindowPos.side_effect = lambda *args: moved.append(args) or 1
+            with mock.patch.object(dk, "_window_screen", return_value=big), \
+                    mock.patch.object(dock, "_make_room") as room, mock.patch("ctypes.windll", fake):
+                dock._again(777)
+            self.assertEqual(dock.monitor, (0, 0, 2560, 1440))
+            self.assertEqual(dock.strip[2] - dock.strip[0], 600, "as wide as it was")
+            self.assertEqual(moved[0][0], 777, "the panel put into it")
+            room.assert_called_once()
+        source = (ROOT / "personalized_agent" / "platform_layer" / "dock.py").read_text(encoding="utf-8")
+        self.assertIn("if now != getattr(self, \"monitor\", now) and self.handle == handle:", source, "looked at each second")

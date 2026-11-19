@@ -606,10 +606,19 @@ class Report:
         title = self._say("Your report: {0} need your look, {1} done, {2} yours to do").replace(
             "{0}", str(counts["needs_you"])).replace("{1}", str(counts["done"])).replace(
             "{2}", str(counts["yours"]))
-        fresh = [event for tab in ("needs_you", "yours", "done") for event in tabs.get(tab) or []
-                 if any(one.get("key") in new for one in event.get("items") or [])]
-        lines = ([f"- {self._say('New')}: {self._linked(one)}" for one in fresh[:6]]
-                 + [f"- {self._linked(one)}" for one in (tabs.get("needs_you") or [])[:6] if one not in fresh])[:8]
+        # EVERY EVENT OF IT, IN THE CHAT ITSELF (the user, 2026-11-19: "这个report, 我觉得是不是应该在chat里就显示所有need
+        # your look, done, yours to do 的东西是什么，不需要去panel里找（panel里只有要看细节才算）"): its three groups, what
+        # asks something of them first - each event its title, a link to its details, a line of what it is at, new
+        # ones marked; the page draws them from "report_groups", the words say the same for anywhere else.
+        groups = self._chat_groups(tabs, new)
+        lines = []
+        for group in groups:
+            lines.append(f"{group['label']} ({group['count']})")
+            lines += [f"- {self._say('New') + ' · ' if one['new'] else ''}{one['linked']}"
+                      + (f" - {one['note']}" if one["note"] else "") for one in group["events"]]
+            if group["more"]:
+                lines.append(f"- {self._say('and {0} more in the report').replace('{0}', str(group['more']))}")
+            lines.append("")
         self.mark_reported()
         # THROUGH THE MONITOR'S "YOUR REPORT" (the user, 2026-11-13: "summary 按照report设置的时间 ... monitor那里只有
         # 开关"): its switch, its silences.
@@ -617,10 +626,46 @@ class Report:
         if monitor is None:
             return None
         return monitor.relay(
-            "summary", title, "\n".join(lines) or self._say("Nothing waits for your approval."),
+            "summary", title, "\n".join(lines).strip() or self._say("Nothing waits for your approval."),
             kind="approval" if counts["needs_you"] else "info",
-            metadata={"report": True, "issue": made["id"], "approvals": bool(counts["needs_you"])},
+            metadata={"report": True, "issue": made["id"], "approvals": bool(counts["needs_you"]),
+                      "report_groups": [{key: group[key] for key in ("tab", "label", "count", "more")}
+                                        | {"events": [{k: v for k, v in one.items() if k != "linked"}
+                                                      for one in group["events"]]} for group in groups]},
             dedupe_key=f"report-{_now()[:16]}")
+
+    #: In the chat, the events of a group shown at most (the rest a press away, in the report).
+    CHAT_EVENTS_MOST = 40
+
+    def _chat_groups(self, tabs: Dict[str, List[Dict[str, Any]]], new: set) -> List[Dict[str, Any]]:
+        """The report's groups for the chat: what needs their look, what is theirs to do, what was done - in that
+        order, what asks something of them first; in each, the new first, then the last active. Each event: its
+        title, its link, a line of where it is (its progress, else its first open thing) and whether it is new."""
+        out = []
+        for tab, label in (("needs_you", "Need your look"), ("yours", "Yours to do"), ("done", "Done")):
+            events = list(tabs.get(tab) or [])
+            if not events:
+                continue
+            fresh = lambda e: any(one.get("key") in new for one in e.get("items") or [])   # noqa: E731
+            events.sort(key=lambda e: str(e.get("active_at") or ""), reverse=True)
+            events.sort(key=lambda e: not fresh(e))
+            shown = []
+            for event in events[:self.CHAT_EVENTS_MOST]:
+                title = " ".join(str(event.get("title") or "").split())
+                open_ones = [one for one in event.get("items") or [] if one.get("state", "open") == "open"]
+                note = " ".join(str(event.get("progress") or "").split())
+                if not note and open_ones and str(open_ones[0].get("title") or "").strip() != title:
+                    note = " ".join(str(open_ones[0].get("title") or "").split())
+                if len(note) > 90:
+                    note = note[:89].rstrip() + "…"
+                link = self._linked(event)
+                shown.append({"id": str(event.get("id") or ""), "title": title, "note": note, "new": fresh(event),
+                              "things": len(open_ones) if tab != "done" else len(event.get("items") or []),
+                              "url": link[link.rfind("(") + 1:-1] if link.endswith(")") and link.startswith("[") else "",
+                              "linked": link})
+            out.append({"tab": tab, "label": self._say(label), "count": len(events), "events": shown,
+                        "more": max(0, len(events) - len(shown))})
+        return out
 
     def _linked(self, event: Dict[str, Any]) -> str:
         """AN EVENT OF THE REPORT, A LINK TO IT (the user, 2026-11-17: "这个需要加link, 跳到panel里的细节"): its title

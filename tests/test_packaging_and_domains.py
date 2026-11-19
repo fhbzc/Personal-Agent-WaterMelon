@@ -958,3 +958,54 @@ class SchemaMigrationTests(unittest.TestCase):
         second = {row["name"] for row in Database(path).query(
             "PRAGMA table_info(checklist_items)")}
         self.assertEqual(first, second)
+
+
+class ThirdPartyNoticesTests(unittest.TestCase):
+    """2026-11-19: "加一份许可清单，或者确认打包方式符合 LGPL" - svglib (LGPL) added to the requirements."""
+
+    def test_the_notices_name_each_library_and_carry_its_license_texts(self) -> None:
+        sys.path.insert(0, str(ROOT))
+        from build.third_party_notices import write_notices
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder) / "THIRD_PARTY_NOTICES.txt"
+            said = write_notices(ROOT / "requirements.txt", out)
+            text = out.read_text(encoding="utf-8")
+        self.assertIn("THIRD-PARTY SOFTWARE NOTICES", text)
+        for name in ("Pillow", "cryptography", "psutil"):
+            if importlib.util.find_spec({"Pillow": "PIL"}.get(name, name)):
+                self.assertIn(name.lower(), {k.lower() for k in said}, f"{name} listed")
+        if importlib.util.find_spec("svglib"):
+            self.assertIn("LGPL", said["svglib"])
+            self.assertIn('in the folder "svglib" beside the program', text, "where to replace it")
+            self.assertIn("GNU LESSER GENERAL PUBLIC LICENSE", text.upper())
+
+    def test_lgpl_libraries_are_shipped_as_their_own_replaceable_source(self) -> None:
+        sys.path.insert(0, str(ROOT))
+        from build import common
+        from build.third_party_notices import LGPL_SOURCE
+        for target in ("windows", "macos", "linux"):
+            self.assertNotIn("pystray", common.COLLECT_ALL_PACKAGES.get(target, []), "not packed: its own folder")
+        args = common.lgpl_source_arguments("windows", ";")
+        for package in LGPL_SOURCE:
+            if importlib.util.find_spec(package):
+                self.assertIn(package, args[args.index("--exclude-module") + 1::4] + [args[i + 1] for i, a in
+                                                                                     enumerate(args) if a == "--exclude-module"])
+                self.assertTrue(any(a.endswith(f";{package}") for a in args), f"{package}'s folder carried as it is")
+        source = (ROOT / "build" / "common.py").read_text(encoding="utf-8")
+        self.assertIn("*lgpl_source_arguments(target, separator),", source)
+        self.assertIn("*notices_arguments(target, separator),", source)
+
+
+class LgplImportsReadOffTheSourceTests(unittest.TestCase):
+    """2026-11-19 (a side agent): pystray's Mac and Linux backends listed by hand could be left out - the tray gone."""
+
+    def test_every_backend_a_library_imports_is_found_in_its_own_source(self) -> None:
+        sys.path.insert(0, str(ROOT))
+        from build import common
+        if not importlib.util.find_spec("pystray"):
+            self.skipTest("pystray is not installed")
+        import pystray
+        found = common._imports_of(Path(pystray.__file__).parent, "pystray")
+        for module in ("AppKit", "Xlib.display", "ctypes"):
+            self.assertIn(module, found, "each platform's backend")
+        self.assertFalse([name for name in found if name.split(".")[0] == "pystray"], "not its own")

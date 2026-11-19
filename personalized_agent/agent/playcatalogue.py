@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -45,10 +46,10 @@ def size_of(thing: str) -> Optional[Tuple[int, int]]:
 #: THE THEMES IN GROUPS (the user: "如果太多还可以topic上再有hierarchy"): what the model chooses among first.
 GROUPS = {
     "nature": ("meadow", "autumn", "forest", "highland", "snow", "desert", "seaside", "lakeside", "cavern", "underwater",
-               "botanical", "farmland", "primeval", "great_tree", "pond", "stones", "crystals"),
+               "botanical", "farmland", "harvest", "primeval", "great_tree", "pond", "stones", "crystals"),
     "seasons and festivals": ("christmas", "christmas_tree", "newyear", "lantern_gate", "halloween", "valentine",
                               "giant_heart"),
-    "town, city and future": ("city", "skyline", "toytown", "scifi", "space", "rocket", "skycity", "station", "market", "fountain",
+    "town, city and future": ("city", "skyline", "toytown", "scifi", "robots", "space", "rocket", "skycity", "station", "market", "fountain",
                               "statue", "cafe", "library", "screening", "studio", "study"),
     "fantasy and the spooky": ("enchanted", "ruins", "ancient_ruins", "graveyard", "mausoleum", "camp"),
     "fun and animals": ("zoo", "funfair", "fair", "giant_pet", "greenhouse"),
@@ -73,6 +74,10 @@ def theme_tree() -> Dict[str, Dict[str, str]]:
     return out
 
 
+#: The pets and the animals of the fields and woods - walking about, never offered as still things.
+FIELD_ANIMALS = {"cat", "dog", "rabbit", "squirrel", "chicken", "cow", "sheep", "goat", "deer", "owl", "eagle"}
+
+
 def by_theme(chosen: Optional[List[str]] = None) -> Dict[str, Any]:
     """For the model: each theme (those `chosen`, else all), what it is, and its things as "id: what (w x h)"."""
     data = catalogue()
@@ -80,8 +85,9 @@ def by_theme(chosen: Optional[List[str]] = None) -> Dict[str, Any]:
     for theme, what in data["themes"].items():
         if chosen is not None and theme not in chosen:
             continue
+        # No pets or field animals offered as things: they walk about on their own, never stand still (2026-11-18).
         things = [f"{name}: {one['what']}" + ("" if size_of(name) == (1, 1) else " ({}x{})".format(*size_of(name)))
-                  for name, one in data["things"].items() if theme in one["themes"]]
+                  for name, one in data["things"].items() if theme in one["themes"] and name not in FIELD_ANIMALS]
         if things:
             out[theme] = {"what": what, "things": things}
     return out

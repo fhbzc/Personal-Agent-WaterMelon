@@ -57,6 +57,47 @@ class OnlyTheFullAgentOfTheSidePanelIsToldTests(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("node"), "no node here")
+class KeptAtTheEndTests(unittest.TestCase):
+    """2026-11-18: "你这个现在chat没有拉到很底下，刚刚那个looking into it都没有显示出来"."""
+
+    def test_what_grows_after_it_was_at_the_end_keeps_it_there(self) -> None:
+        notes = (WEB / "notes.js").read_text(encoding="utf-8")
+        start = notes.index("function sideToEnd()")
+        body = notes[start:notes.index("/* One line said", start)]
+        self.assertIn("sideChat.atEnd = true;", body, "taken to the end: kept there")
+        self.assertIn("new ResizeObserver(", body, "as what is in it grows")
+        self.assertIn("keep.observe(SIDE_LOG);", body)
+        self.assertIn("scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 48", body,
+                      "scrolled up by the user: left where it is read")
+
+
+class TheWorldKeepsItsKeysTests(unittest.TestCase):
+    """2026-11-18: "还是刚刚的问题，一开始不能移动"."""
+
+    def test_the_panel_coming_in_gives_the_keys_to_the_open_world(self) -> None:
+        notes = (WEB / "notes.js").read_text(encoding="utf-8")
+        home = notes[notes.index("function sideKeysHome()"):notes.index("function sideKept()")]
+        self.assertIn("play.on && play.canvas ? play.canvas", home)
+        self.assertNotIn('setTimeout(() => $("#side-input")?.focus', notes, "never the chat's box over the open world")
+        self.assertIn("sideKeysHome();\n  }, 30));", notes)
+        page = (WEB / "play.js").read_text(encoding="utf-8")
+        self.assertIn("playBlocked(play.me.x + dx, play.me.y + dy))) playUnstuck();", page, "never opened boxed in")
+        # 2026-11-18: "要把你继续监控着（对debugger模式生效)": its first seconds told to the log, in the Debugger's mode only.
+        self.assertIn('api.post("/api/play/note"', page)
+        routes = (ROOT / "personalized_agent" / "api" / "routes.py").read_text(encoding="utf-8")
+        note = routes[routes.index('@route("POST", "/api/play/note")'):routes.index('@route("POST", "/api/play/showing")')]
+        self.assertIn('debugger_available() and bool(app.config.get("debugger_enabled", True))', note)
+        # 2026-11-18: "你现在椅子sit之后不能起身了": stood up where it sat down from.
+        self.assertIn("play.me.x = was.fromX;", page)
+        self.assertIn("if (playBlocked(play.me.x, play.me.y)) playUnstuck();", page)
+        # 2026-11-19: "你现在chat的ask about 在切换进play之后还留在屏幕上": put away as the world opens.
+        opened = page[page.index("async function playOpen()"):page.index("playFirst.at = performance.now();")]
+        self.assertIn('document.querySelectorAll(".side-ask, #fu-pick").forEach((one) => one.remove());', opened)
+        # 2026-11-19: "在play view下不能右键弹出copy的panel".
+        menu = (WEB / "context-menu.js").read_text(encoding="utf-8")
+        self.assertIn('if (event.target.closest && event.target.closest(".side-play")) { event.preventDefault(); close(); return; }', menu)
+
+
 class ThePageReadsItTests(unittest.TestCase):
     def run_js(self, body: str):
         source = (WEB / "side-visual.js").read_text(encoding="utf-8")

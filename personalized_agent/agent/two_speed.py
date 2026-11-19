@@ -75,10 +75,35 @@ done; anything about the user, their work, their past messages or anything attac
 wrongly loses what the user asked for; running needlessly costs little.
 
 "reply": one to three short sentences, as yourself.
+- WHAT YOU CANNOT DO AND THE FULL AGENT CAN, SAY IT WILL DO (the user, 2026-11-18: "快速agent对自己不能handle, 但是完整agent \
+可以handle的事情，要说等完整agent做"): anything a tool below does, or anything that needs what you cannot see, is not \
+yours to refuse - say the full agent is doing it and to wait for it below, and leave it running ("full_agent": "run").
+- Never say the agent cannot do what one of the full agent's tools below does: it can, after you.
+- Asked to do something ON THEIR SCREEN - fill this in, click that, open it, type there - that is the user's word to \
+take it (the user, 2026-11-18: "你填这个job application" was answered "我现在没法直接操作你的浏览器"): say the agent is \
+taking their screen to do it; never that it cannot, never that they must first allow it.
+- Never say the agent lacks their information, files or past: you cannot see them; the full agent looks.
 - Never state anything about the user's data, schedule, contacts, files or past: you cannot know it.
 - Never say something is done: you can do nothing here. Say it is being handled.
 - When the full agent runs, say what you can and tell the user that you are looking into this and \
 that more will follow below."""
+
+#: EVERY TOOL OF THE FULL AGENT, KNOWN (the user, 2026-11-18: "快速回复也要知道他有这个能力（快速回复会知道所有的能力
+#: 和description，只是不能调用)" - asked to fill a form on the screen, the quick voice said the agent could not
+#: control the screen, which the full agent then did): each by its name and its whole description, to know what
+#: can be done - never to call.
+TOOLS_KNOWN = """
+
+THE FULL AGENT'S TOOLS - what it can do after you. You cannot call any of them; know them so that you never \
+say something cannot be done that one of them does, and so that you leave the full agent running for it:
+{tools}"""
+
+
+def tools_known(specs: Sequence[Any]) -> str:
+    """The full agent's tools, each its name and description, for the quick voice to know."""
+    lines = [f"- {one.name}: {' '.join(str(one.description or '').split())}" for one in specs]
+    return TOOLS_KNOWN.format(tools="\n".join(lines)) if lines else ""
+
 
 #: WHAT WAS WRITTEN WHILE IT WAITED (the user, 2026-11-09: a "1" sent before a question was asked
 #: was taken as its yes - the answer to the message before it, written while this one waited, came
@@ -272,6 +297,15 @@ class TwoSpeed:
         except KeyError:
             raise ValueError("a file attached is no longer there")
 
+    def _full_tools(self) -> List[Any]:
+        """The tools the full agent is offered now - its own and the chat's web tools."""
+        try:
+            from .core.agent_core import CHAT_WEB_TOOLS
+            return [*self.agent.tools.specs, *CHAT_WEB_TOOLS]
+        except Exception:
+            log.info("the full agent's tools could not be listed for the quick voice", exc_info=True)
+            return []
+
     def _quick(self, text: str, earlier: List[Dict[str, Any]],
                files: List[Dict[str, Any]], front: str = "",
                seen: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
@@ -292,9 +326,10 @@ class TwoSpeed:
                 str(one["name"]) for one in files) + "]"
         said += front
         try:
+            known = tools_known(self._full_tools())
             answer = self.models.invoke(ModelRequest(
                 messages=[*turns, {"role": "user", "content": _with_pictures(said, seen)}],
-                system=self.agent._system_prompt() + QUICK_RULES, max_tokens=QUICK_TOKENS,
+                system=self.agent._system_prompt() + QUICK_RULES + known, max_tokens=QUICK_TOKENS,
                 task="chat_fast", language=in_display()), role="fast_reply")
         except Exception:
             log.info("the quick reply could not be had", exc_info=True)
@@ -394,6 +429,7 @@ class TwoSpeed:
                 attachments=[f for one in jobs for f in one["attachments"]] or None,
                 mentions=[f for one in jobs for f in one["mentions"]] or None, on_text=told,
                 front=jobs[-1].get("front", ""), seen=jobs[-1].get("seen"),
+                chat=True,                                   # the user's own messages: the screen may be asked for
                 after_quick={"ids": [i for one in jobs for i in one["ids"]],
                              "reply": "\n".join(one["reply"] for one in jobs if one["reply"]),
                              "did": lambda said: self._did(mark, said)})

@@ -67,6 +67,22 @@ def inner_walls(zone: Dict[str, Any]) -> Set[Tuple[int, int]]:
     return out
 
 
+def inner_doorways(zone: Dict[str, Any]) -> Set[Tuple[int, int]]:
+    """The doorways in a building's inner walls (inner_walls' gaps) and a step either side of each - a way kept clear."""
+    if zone.get("kind") in OUTDOOR:
+        return set()
+    left, top, w, h = zone["x"] + 1, zone["y"] + 3, zone["w"], zone["h"]
+    walls = inner_walls(zone)
+    out: Set[Tuple[int, int]] = set()
+    if w > 16:
+        vx = left + w // 3
+        out |= {(vx + d, y) for y in range(top, top + h) if (vx, y) not in walls for d in (-1, 0, 1)}
+    if h > 10:
+        hy = top + h // 2
+        out |= {(x, hy + d) for x in range(left, left + w) if (x, hy) not in walls for d in (-1, 0, 1)}
+    return out
+
+
 def rooms_of(zone: Dict[str, Any], floor: Tuple[int, int, int, int]) -> List[Tuple[int, int, int, int]]:
     """The rooms inside a building, parted by its inside walls: [left, top, right, bottom) each; the floor whole for one
     cell or outdoors."""
@@ -257,8 +273,11 @@ def zone_rect(zone: Dict[str, Any]) -> Tuple[int, int, int, int]:
 
 def bounds(region: Dict[str, Any]) -> Tuple[int, int, int, int]:
     """Where a region's places may stand: its land, a little in from its edge."""
+    from .playregions import BAND, SPAN, spread_of
     ox, oy = region["ox"], region["oy"]
-    return ox - 2 * CELL_W + 1, oy - 2 * CELL_H + 1, ox + 3 * CELL_W - 1, oy + 3 * CELL_H - 1
+    sx, sy = spread_of(region)                   # a district over several region cells: their land, and the bands between
+    return ox - 2 * CELL_W + 1, oy - 2 * CELL_H + 1, ox + 3 * CELL_W - 1 + (sx - 1) * (SPAN * CELL_W + BAND), \
+        oy + 3 * CELL_H - 1 + (sy - 1) * (SPAN * CELL_H + BAND)
 
 
 def square(region: Dict[str, Any]) -> Optional[Tuple[int, int, int, int]]:
@@ -284,6 +303,44 @@ def heart(world: Dict[str, Any], region: Dict[str, Any]) -> Tuple[float, float]:
     return region["ox"] + CELL_W / 2, region["oy"] + CELL_H / 2
 
 
+#: A LAND'S OWN OUTLINE (the user, 2026-11-18: "你现在layout还不是很行，没有脱离矩形" - a world map of islands for what is
+#: meant): where a region's places may stand is not its whole rectangle but a round shape of its own within it - its
+#: corners off, its sides in and out by three waves whose turn is the region's own - so a land filled is a blob, an
+#: island's shape, never a rectangle; the coast (api/web/play-regions.js playLandReach) follows what stands there.
+SHAPE_REACH = 1.2                                    # how far out, as a share of the half-widths, the outline reaches
+SHAPE_WAVES = ((2, 0.22), (3, 0.16), (5, 0.08))      # each wave round the outline: how many times, how far in and out
+
+
+#: A land's chosen outline (agent/playshapes.py) reaches this far, in half-widths of its bounds.
+CHOSEN_REACH = 1.08
+
+
+def shape_limit(region: Dict[str, Any], angle: float) -> float:
+    """How far the region's outline reaches at this angle from its middle, as a share of its half-widths: its chosen
+    outline (a star, a triangle, a circle - the user, 2026-11-19: "每个项目的整片土地"), else its own blob."""
+    import hashlib
+    import math
+    from .playshapes import reach
+    chosen = reach(str(region.get("shape") or ""), angle)
+    if chosen is not None:
+        return CHOSEN_REACH * chosen
+    seed = hashlib.sha1(str(region.get("id") or "").encode()).digest()
+    return SHAPE_REACH + sum(size * math.sin(times * angle + seed[n] / 255 * 2 * math.pi)
+                             for n, (times, size) in enumerate(SHAPE_WAVES))
+
+
+def within_shape(region: Dict[str, Any], rect: Tuple[int, int, int, int]) -> bool:
+    """Whether every corner of `rect` is inside the region's own outline."""
+    import math
+    b = bounds(region)
+    cx, cy, ax, ay = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2, (b[2] - b[0]) / 2, (b[3] - b[1]) / 2
+    for x, y in ((rect[0], rect[1]), (rect[2], rect[1]), (rect[0], rect[3]), (rect[2], rect[3])):
+        dx, dy = (x - cx) / ax, (y - cy) / ay
+        if math.hypot(dx, dy) > shape_limit(region, math.atan2(dy, dx)):
+            return False
+    return True
+
+
 def _seeded(seed: str, x: int, y: int) -> float:
     import hashlib
     return int(hashlib.sha1(f"{seed}:{x}:{y}".encode()).hexdigest()[:8], 16) / 0xFFFFFFFF
@@ -295,7 +352,18 @@ def find_spot(world: Dict[str, Any], region: Dict[str, Any], kind: str, w: int, 
               within: Optional[Tuple[int, int, int, int]] = None) -> Optional[Tuple[int, int]]:
     """WHERE A PLACE OF THIS SIZE MAY STAND: within its region, GAP tiles from every other place and every landmark's
     square, as near `anchor` as it fits - a little off at random (the same each time for the same place), so places
-    gather in loose clusters, not rows. None when nowhere."""
+    gather in loose clusters, not rows. Within the land's own outline (within_shape) if there is room there; else
+    anywhere in its land - a place is never left out for the outline. None when nowhere."""
+    if within is None:
+        inside = _find_spot(world, region, kind, w, h, anchor, seed, others, None, shaped=True)
+        if inside is not None:
+            return inside
+    return _find_spot(world, region, kind, w, h, anchor, seed, others, within, shaped=False)
+
+
+def _find_spot(world: Dict[str, Any], region: Dict[str, Any], kind: str, w: int, h: int,
+               anchor: Tuple[float, float], seed: str, others: Optional[List[Tuple[int, int, int, int]]],
+               within: Optional[Tuple[int, int, int, int]], shaped: bool) -> Optional[Tuple[int, int]]:
     import math
     b = within or bounds(region)                       # a project's plot: its parts inside it only
     taken = list(others) if others is not None else [zone_rect(one) for one in world.get("zones") or []
@@ -313,6 +381,8 @@ def find_spot(world: Dict[str, Any], region: Dict[str, Any], kind: str, w: int, 
                 continue
             if any(r[0] < g[2] and r[2] > g[0] and r[1] < g[3] and r[3] > g[1] for g in grown):
                 continue
+            if shaped and not within_shape(region, r):
+                continue                               # outside the land's own outline
             cx, cy = centre(r)
             score = math.hypot(cx - anchor[0], cy - anchor[1]) + _seeded(seed, x // 4, y // 4) * 7
             if best is None or score < best[0]:

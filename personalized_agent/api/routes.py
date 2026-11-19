@@ -1295,6 +1295,21 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         # its words the display language's.
         if any(key in values for key in ("character", "display_language")):
             app.follow_explorer_menu()
+        # THE SIDE PANEL IN THE NEW LANGUAGE TOO (the user, 2026-11-19: "你现在这个中英文切换的setting好像没做呀"): its
+        # own window, drawn again - the Play world's words with it.
+        if "display_language" in values and getattr(app, "side_events", None) is not None:
+            app.side_events.tell("language", language=str(app.config.get("display_language", "") or ""))
+        # THE WORLD PUT INTO IT, ONE AFTER ANOTHER (the user, 2026-11-19: "设置了切换为中文，会开始逐个翻译，直到所有都变成中文"):
+        # at once, in the background; what was put in another language before is kept, a change back needs nothing asked.
+        world = getattr(app, "play_world", None)
+        changed = "display_language" in values or "play_language" in values     # Play's own too (its panel's button)
+        if changed and world is not None and hasattr(world, "translate_all"):
+            import threading as _threading
+            side = getattr(app, "side_events", None)
+            if "play_language" in values and side is not None:
+                side.tell("world")                       # shown at once in what it has of that language
+            _threading.Thread(target=world.translate_all, name="play-world-language", daemon=True,
+                              kwargs={"on_round": (lambda: side.tell("world")) if side is not None else None}).start()
         return {"applied": applied, "values": app.config.all(),
                 "corrected": corrected}
 
@@ -1996,7 +2011,7 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         try:
             return app.agent.handle_message(
                 message, request.get("conversation_id"), attachments=attachments or None,
-                mentions=[str(one) for one in request.get("mentions") or []] or None)
+                mentions=[str(one) for one in request.get("mentions") or []] or None, chat=True)
         except ValueError as exc:
             raise ApiError(str(exc), 400)
 
@@ -2037,7 +2052,7 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                                           mentions, front=front, seen=seen)
             said = app.agent.handle_message(message, request.get("conversation_id"),
                                             attachments=attachments or None,
-                                            mentions=mentions or None)
+                                            mentions=mentions or None, chat=True)
         except ValueError as exc:
             raise ApiError(str(exc), 400)
         return {**said, "layer": "", "turn": ""}
@@ -4543,6 +4558,13 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             app.notifications.mark_read(ident)
         return {"seen": ids}
 
+    @route("GET", "/api/side/control")
+    def side_control(_request: Any) -> Any:
+        """WHETHER THE AGENT HAS THE SCREEN NOW, asked by the side panel when it opens or its line comes back (the
+        user, 2026-11-18: "那个sidebar上面不是要有红色栏吗") - a panel put away missed the moment it was told."""
+        control = getattr(app, "screen_control", None)
+        return control.state() if control is not None else {"on": False, "count": 0}
+
     @route("GET", "/api/side/told")
     def side_told(_request: Any) -> Any:
         """WHAT THE AGENT TOLD LATELY, READ OR NOT (the side panel's drawer, the user, 2026-11-16: "再展开一层sidebar ...
@@ -4625,15 +4647,40 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         world = world_keeper.world()
         if new and world_keeper.on():
             world_keeper.grow_soon()
+        try:
+            world_keeper.cards_now(world)          # the widgets and great pieces as far as the work is now
+        except Exception:
+            pass
         for one in world.get("items", []):
             one["picture_url"] = f"/api/play/picture?id={one['id']}" if one.get("picture") else ""
+            # A THING'S SCREENSHOT, IN ITS CARD; EACH PICTURE'S ORIGINAL, OPENED FROM THERE (agent/playworld.py _attach_shot).
+            one["shot_url"] = f"/api/play/picture?id=shot-{one['id']}" if one.get("shot") else ""
+            source = one.get("shot_source") or one.get("picture_source")
+            one["original_url"] = (f"/api/play/picture?id={'shot-' if one.get('shot') else ''}{one['id']}&full=1"
+                                   if source else "")
+            for hidden in ("shot_source", "picture_source"):
+                one.pop(hidden, None)                    # where it is on their disk stays here
         for one in world.get("zones", []):
             one["floor_picture_url"] = f"/api/play/picture?id=floor-{one['id']}" if one.get("floor_picture") else ""
-        return {"world": world, "growing": world_keeper._growing.locked(), "grows": world_keeper.on()}
+        try:
+            made = world_keeper.made()                  # the things and floors the agent made, kept to be used again
+        except Exception:
+            made = {"items": {}, "floors": {}}
+        return {"world": world, "made": made, "growing": world_keeper._growing.locked(), "grows": world_keeper.on(),
+                # Not yet caught up: more is coming, even between two parts (the page keeps looking).
+                "behind": bool(world_keeper.on() and world_keeper.behind()),
+                # The language it is shown in: Play's own, chosen in its panel, else the display language.
+                "language": world_keeper._shown_language(),
+                "play_language": str(app.config.get("play_language", "") or "")}
 
     @route("GET", "/api/play/picture")
     def play_picture(request: Any) -> Any:
         world_keeper = getattr(app, "play_world", None)
+        if world_keeper is not None and str(request.get("full") or "") == "1":
+            whole = world_keeper.original(str(request.require("id")))    # the original, opened from its card
+            if whole is None:
+                raise ApiError("no picture for that thing", 404)
+            return Raw(*whole)
         found = world_keeper.picture(str(request.require("id"))) if world_keeper is not None else None
         if found is None:
             raise ApiError("no picture for that thing", 404)
@@ -4647,6 +4694,29 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             return {"error": "Cutting out the screen needs the desktop app."}
         snip()
         return {"started": True}
+
+    @route("POST", "/api/play/translate")
+    def play_translate(request: Any) -> Any:
+        """One thing of the world put into Play's language now - looked at before the rounds reached it
+        (agent/playworld.py translate_one)."""
+        world = getattr(app, "play_world", None)
+        key = str(request.get("key") or "")[:80]
+        if world is None or not key:
+            return {"language": "", "words": {}}
+        return world.translate_one(key)
+
+    @route("POST", "/api/play/note")
+    def play_note(request: Any) -> Any:
+        """THE PLAY VIEW'S FIRST SECONDS, IN THE LOG (play.js playNote; the user, 2026-11-18: "开始的时候play不能操控"):
+        when it opened and loaded, each key and where the keys were, whether the walker moved - keys' names and focus
+        only. Read by whoever looks into why it would not move. KEPT IN THE DEBUGGER'S MODE ONLY (the user, 2026-11-18:
+        "要把你继续监控着（对debugger模式生效)"): a build that carries the Debugger, its collecting on."""
+        from ..build_flags import debugger_available
+        if not (debugger_available() and bool(app.config.get("debugger_enabled", True))):
+            return {"kept": 0}
+        notes = [" ".join(str(one).split())[:240] for one in (request.get("notes") or [])[:40]]
+        log.info("the Play view's first seconds:\n  %s", "\n  ".join(notes) or "(nothing)")
+        return {"kept": len(notes)}
 
     @route("POST", "/api/play/showing")
     def play_showing(request: Any) -> Any:

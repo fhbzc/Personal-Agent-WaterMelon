@@ -436,6 +436,13 @@ class DesktopAgent:
         # THE AVATAR IN THE WORLD, NOT ON THE SCREEN, while the Play view is open (api/web/play.js).
         # The small screen's own screenshot button: the shortcut's cut-out (api/web/side-board.js sideBoardSnip).
         self.app.snip_into_board = lambda: DesktopAgent._snip_by_shortcut(self)
+        # The side panel brought in while the agent has the screen (agent/screen_control.py) - quietly: the keys stay
+        # where the agent is typing.
+        self.app.side_panel_in = lambda: self.queue.put(("call", lambda: DesktopAgent.open_notifications(self, quietly=True)))
+        self.app.side_panel_hold = lambda on: self.queue.put(("call", lambda: DesktopAgent._hold_side_panel(self, on)))
+        # Where the side panel is, and whether it is in front - never the agent's to touch.
+        self.app.side_panel_box = lambda: DesktopAgent._side_panel_box(self)
+        self.app.side_panel_front = lambda: DesktopAgent._side_panel_front(self)
         self.app.avatar_in_play = lambda on: self.queue.put(("call", lambda: DesktopAgent.avatar_in_play(self, on)))
         self.app.bus.subscribe("agent.speaking", self._on_speaking)
         self.app.bus.subscribe("character.changed", self._on_character_changed)
@@ -2166,7 +2173,7 @@ class DesktopAgent:
         note, seen = self._front_for_chat()
         return self.app.agent.handle_message(text, conversation, attachments=files or None,
                                              mentions=mentions or None, on_text=on_text,
-                                             front=note, seen=seen)
+                                             front=note, seen=seen, chat=True)
 
     def _front_for_chat(self, told: Optional[Dict[str, Any]] = None) -> tuple:
         """What goes with a message: what the bubble says, and the picture of the
@@ -2616,6 +2623,7 @@ class DesktopAgent:
             "set_off": what_set_it_off(metadata),
             "recommended": bool(metadata.get("recommended")),
             "summary": bool(metadata.get("summary")),
+            "report": bool(metadata.get("report")),       # the report (common/notifications.py category_of)
             "through": bool(metadata.get("through"))}))
 
     def _on_speaking(self, _topic: str, payload: Any) -> None:
@@ -3005,7 +3013,7 @@ class DesktopAgent:
 
         # OPENED BY A NOTIFICATION, OVER THE WINDOWS ONLY (2026-11-16: pinned and put away, a notification took the
         # strip again and moved the user's windows as they typed) - and put away again untouched (`_put_away_untouched`).
-        if quietly and DesktopAgent._film_in_front(self):
+        if quietly and not getattr(self, "_held_for_screen", False) and DesktopAgent._film_in_front(self):
             # NOT OVER A FILM (the user, 2026-11-16: "全屏的时候我把他collapse, 他自动又会出现"): a notification while
             # something fills the screen waits - told in the panel once it is over.
             if not getattr(self, "_notes_after_film", False):
@@ -3153,10 +3161,38 @@ class DesktopAgent:
 
     #: How long a side panel a notification opened stays, never touched, before it is put away again.
     UNTOUCHED_MS = 45000
+    HELD_LOOK_MS = 1500
+
+    def _hold_side_panel(self, on: bool) -> None:
+        """HELD OUT WHILE THE AGENT HAS THE SCREEN (the user, 2026-11-18: "操控屏幕的时候claude 不能collapose sidebar"): brought
+        in - quietly, the keys left where the agent types - over a film too, and never put away by itself (as one a
+        notification opened is, untouched); looked at every HELD_LOOK_MS and brought in again whenever it is not shown.
+        Let go when the screen is given back - the user's hand takes the screen first, so their own putting away is
+        theirs."""
+        self._held_for_screen = bool(on)
+        if not on:
+            return
+        DesktopAgent.open_notifications(self, quietly=True)
+        self._quiet_opened_at = None                     # not put away untouched
+
+        def look() -> None:
+            if not getattr(self, "_held_for_screen", False):
+                return
+            try:
+                shown = DesktopAgent._side_panel_shown(self)
+            except Exception:
+                shown = True
+            if not shown:
+                DesktopAgent.open_notifications(self, quietly=True)
+                self._quiet_opened_at = None
+            self.root.after(self.HELD_LOOK_MS, look)
+        self.root.after(self.HELD_LOOK_MS, look)
 
     def _put_away_untouched(self, opened_at: float) -> None:
         """A side panel a notification opened, untouched since (pressed on, typed in - api/routes.py side_touched),
-        put away again - not when the user opened it since; pinned or not."""
+        put away again - not when the user opened it since; pinned or not. Never while the agent has the screen."""
+        if getattr(self, "_held_for_screen", False):
+            return
         if getattr(self, "_quiet_opened_at", None) != opened_at:
             return
         if float(getattr(self.app, "side_touched_at", 0.0) or 0.0) >= opened_at:
@@ -3194,6 +3230,69 @@ class DesktopAgent:
             dock.dock(*placed)
         except Exception:                        # the panel open over the others, then
             log.info("the other windows could not be moved for the side panel", exc_info=True)
+
+    def _side_panel_box(self) -> Optional[Tuple[float, float, float, float]]:
+        """The side panel on the screen as shares of it - left, top, right, bottom - as the agent's hands count them
+        (platform_layer/input_control.py: of the whole desktop on Windows, of the main display on the Mac); None when it
+        is not shown. Asked from the agent's thread."""
+        titles = self._notes_titles()
+        try:
+            if sys.platform == "win32":
+                import ctypes
+                from ctypes import wintypes
+                from ..platform_layer import app_window
+                handle = app_window._windows_page(titles)
+                if not handle:
+                    return None
+                user32 = ctypes.windll.user32
+                rect = wintypes.RECT()
+                user32.GetWindowRect(handle, ctypes.byref(rect))
+                vx, vy, vw, vh = (user32.GetSystemMetrics(n) for n in (76, 77, 78, 79))
+                return ((rect.left - vx) / max(1, vw), (rect.top - vy) / max(1, vh),
+                        (rect.right - vx) / max(1, vw), (rect.bottom - vy) / max(1, vh))
+            if self._notes_on_a_mac():
+                import Quartz
+                from . import mac_panel
+                bounds = Quartz.CGDisplayBounds(Quartz.CGMainDisplayID())
+                for title in titles:
+                    got = mac_panel.side_panel_strip(title)
+                    if got:
+                        left, top, right, bottom = got[0]
+                        w, h = max(1.0, bounds.size.width), max(1.0, bounds.size.height)
+                        return left / w, top / h, right / w, bottom / h
+        except Exception:
+            log.debug("the side panel's place could not be read", exc_info=True)
+        return None
+
+    def _side_panel_shown(self) -> bool:
+        """Whether the side panel is on the screen now - not put away, not hidden, not minimised, not slid off it."""
+        box = DesktopAgent._side_panel_box(self)
+        if box is None or box[0] >= 0.995 or box[2] <= 0.005:
+            return False
+        if sys.platform == "win32":
+            import ctypes
+            from ..platform_layer import app_window
+            handle = app_window._windows_page(self._notes_titles())
+            user32 = ctypes.windll.user32
+            return bool(handle) and bool(user32.IsWindowVisible(handle)) and not user32.IsIconic(handle)
+        return True
+
+    def _side_panel_front(self) -> bool:
+        """Whether the side panel has the keys now - typing would go into it."""
+        titles = self._notes_titles()
+        try:
+            if sys.platform == "win32":
+                import ctypes
+                from ..platform_layer import app_window
+                handle = app_window._windows_page(titles)
+                return bool(handle) and ctypes.windll.user32.GetForegroundWindow() == handle
+            if self._notes_on_a_mac():
+                from . import mac_panel
+                return any(found is not None and bool(found[0].isKeyWindow())
+                           for found in (mac_panel._side.get(title) for title in titles))
+        except Exception:
+            log.debug("whether the side panel is in front could not be read", exc_info=True)
+        return False
 
     def _notes_titles(self) -> set:
         from ..common.interface_words import shown
@@ -3298,9 +3397,10 @@ class DesktopAgent:
         self._off_this_thread(lambda: app_window.dock_titled(titles, width, dock), "side-panel-redock")
 
     #: THE SIDE PANEL'S WIDTH, AS THE USER LEFT IT (the user, 2026-11-16: "那个side bar 要允许我鼠标拖动size"), in the
-    #: screen's own units - never narrower or wider than these. With its picture beside the chat ("有图的时候才展开")
-    #: it is as wide again.
-    NOTES_NARROWEST, NOTES_WIDEST = 320, 900
+    #: screen's own units - never narrower than this; as wide as the screen at most (the user, 2026-11-19: "sidebar整体
+    #: 是不是不能拉的很右，这个允许他甚至占满整个屏幕" - it stopped at 900), the screen's own edge holding it. With its
+    #: picture beside the chat ("有图的时候才展开") it is as wide again.
+    NOTES_NARROWEST, NOTES_WIDEST = 320, 20000
 
     def _notes_width(self) -> int:
         from ..platform_layer import app_window
@@ -3685,7 +3785,7 @@ class DesktopAgent:
         kept = sum(counts.values())
         if self._blocked():
             for item in self._bubble_queue:
-                name = ("Summaries" if item.get("summary") else
+                name = ("Report" if item.get("report") else "Summaries" if item.get("summary") else
                         "Recommended content" if item.get("recommended") else "Reminders")
                 counts[name] = counts.get(name, 0) + 1
         count = sum(counts.values())
@@ -4332,7 +4432,7 @@ class DesktopAgent:
             self._answering = {}
         if notification_id in self._answering:
             return
-        name = ("Summaries" if item.get("summary") else
+        name = ("Report" if item.get("report") else "Summaries" if item.get("summary") else
                 "Recommended content" if item.get("recommended") else "Reminders")
         counts = dict(getattr(self, "_waiting_counts", None) or {})
         if name == "Reminders" and not counts.get(name) and counts.get("Other"):

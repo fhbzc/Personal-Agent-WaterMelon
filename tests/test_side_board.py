@@ -115,7 +115,10 @@ class OneButtonAndTheModelToldTests(unittest.TestCase):
         from personalized_agent.ui.desktop import DesktopAgent
         self.assertIn("focus=not quietly", inspect.getsource(DesktopAgent.open_notifications))
         notes = (WEB / "notes.js").read_text(encoding="utf-8")
-        self.assertIn('now.id === "side-search-open") $("#side-input")?.focus', notes)
+        # The keys to the chat's box - or, the Play view open, to the world (sideKeysHome, 2026-11-18).
+        self.assertIn('now.id === "side-search-open") sideKeysHome();', notes)
+        home = notes[notes.index("function sideKeysHome()"):notes.index("function sideKept()")]
+        self.assertIn('(world || $("#side-input"))?.focus', home)
 
     def test_one_button_on_the_edge(self) -> None:
         notes = (WEB / "notes.js").read_text(encoding="utf-8")

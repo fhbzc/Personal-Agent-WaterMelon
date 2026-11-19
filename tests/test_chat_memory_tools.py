@@ -110,6 +110,18 @@ class TheToolsAreOfferedToTheFullAgentAlone(_WithData):
         summary = QUICK_RULES[QUICK_RULES.index("With its tools"):QUICK_RULES.index(
             "Answer with JSON")]
         self.assertLessEqual(summary.count(". "), 2)
+        # EVERY TOOL KNOWN, NONE CALLED (2026-11-18: "快速回复也要知道他有这个能力（快速回复会知道所有的能力和
+        # description，只是不能调用)"): the quick voice had said the screen could not be controlled.
+        for spec in self.app.agent.tools.specs:
+            self.assertIn(f"- {spec.name}: {' '.join(spec.description.split())}", request.system)
+        self.assertIn("- screen_control_start: ", request.system)
+        self.assertIn("You cannot call any of them", request.system)
+        self.assertIn("Never say the agent cannot do what one of the full agent's tools below does", request.system)
+        # 2026-11-18: "你填这个job application" answered "我现在没法直接操作你的浏览器".
+        self.assertIn("that is the user's word to take it", request.system)
+        # 2026-11-18: "快速agent对自己不能handle, 但是完整agent可以handle的事情，要说等完整agent做".
+        self.assertIn("say the full agent is doing it and to wait for it below", request.system)
+        self.assertIn("never that they must first allow it", request.system)
 
     def test_the_prompt_no_longer_says_there_is_no_memory(self) -> None:
         self.assertNotIn("no memory", SYSTEM_PROMPT)

@@ -142,8 +142,8 @@ function playNightDraw(ctx, canvas, night) {
     const reach = PLAY_ITEM_LIGHTS[item.kind];
     if (!reach || !inView(item.x, item.y)) continue;
     if (play.lightsOff && play.lightsOff.has(`i:${item.id}`)) continue;          // put out (play-act.js)
-    const [iw, ih] = PLAY_SIZES[item.kind] || [1, 1];
-    lights.push([item.x + iw / 2, item.y + (item.kind === "window" ? 1.6 : ih / 2), reach]);
+    const [iw, ih] = playItemSize(item);
+    lights.push([item.x + iw / 2, item.y + (item.kind === "window" ? 1.6 : ih / 2), reach * Math.max(1, Number(item.scale) || 1)]);
   }
   for (const zone of play.world.zones) {
     if (zone.kind === "volcano" && inView(zone.x + zone.w / 2, zone.y + zone.h / 2)) lights.push([zone.x + zone.w / 2, zone.y + 1 + zone.h / 2, 7]);

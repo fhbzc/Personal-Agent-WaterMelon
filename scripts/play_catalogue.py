@@ -33,11 +33,18 @@ THEMES = {
     "primeval": "a primeval forest: dense old trees, ferns, moss, deer and bears", "home": "a home's yard: flowers, benches, pets",
     "haunted": "a haunted house's yard", "futuristic": "a futuristic building's yard", "magic": "a magic building's yard",
     "toy": "a toy building's yard", "ruins_yard": "a ruined building's yard", "sky": "a sky building's yard",
+    "harvest": "crops at every stage - sown, sprouting, growing, ripe, picked - fruits and vegetables: melons, a watermelon, grapes, corn",
+    "robots": "robots and machines of many kinds and metals",
     "general": "anything else",
 }
 
+#: Themes a picture belongs to besides where it grows (produce.png: the harvest's and the robots').
+EXTRA = {name: ["harvest", "farmland", "botanical"] if not name.startswith("metalBot") else ["robots", "scifi", "space"]
+         for name in __import__("json").loads((Path(__file__).resolve().parent / "play_produce_names.json").read_text("utf-8"))}
+
 #: What a picture is, where its name does not say it well enough.
 WHAT = {
+    **__import__("json").loads((Path(__file__).resolve().parent / "play_produce_names.json").read_text("utf-8")),
     "uTrash": "a city litter bin", "uHydrant": "a fire hydrant", "uTreeSmall": "a small city tree", "uTreeSmall2": "a small city tree",
     "uTree": "a tall city tree", "uAutumnTree": "a tall autumn city tree", "streetLamp": "a modern street lamp (tall)",
     "gasLamp": "an old gas street lamp (tall)", "torchPost": "a torch on a post", "brazier": "a fire brazier",
@@ -133,6 +140,8 @@ def main() -> None:
     for mark, pieces in said["landmarks"].items():
         for piece in pieces:
             themes.setdefault(piece[0], set()).add(mark)
+    for name, mine in EXTRA.items():
+        themes.setdefault(name, set()).update(mine)
     for style, names in said["yards"].items():
         for name in names:
             themes.setdefault(name, set()).add("ruins_yard" if style == "ruins" else style)

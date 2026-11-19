@@ -67,6 +67,19 @@ def region_cells(count: int) -> List[Tuple[int, int]]:
     return out[:count]
 
 
+def spread_of(region: Dict[str, Any]) -> Tuple[int, int]:
+    """How many region cells a region takes across and down - a great project's district more than one."""
+    s = region.get("spread") or [1, 1]
+    return max(1, int(s[0])), max(1, int(s[1]))
+
+
+def cells_of(region: Dict[str, Any]) -> List[Tuple[int, int]]:
+    """Every region cell a region stands on: its own, and those it spreads to, right and down."""
+    cx, cy = region["cell"]
+    sx, sy = spread_of(region)
+    return [(cx + i, cy + j) for j in range(sy) for i in range(sx)]
+
+
 def origin(cell: Tuple[int, int], cell_w: int, cell_h: int) -> Tuple[int, int]:
     """The tile of a region's middle cell's corner - the starting village's is (0, 0), as the world always had."""
     return cell[0] * (SPAN * cell_w + BAND), cell[1] * (SPAN * cell_h + BAND)
@@ -158,22 +171,29 @@ def area_of(region: Dict[str, Any]) -> str:
     return str(region.get("area") or "a1")
 
 
+def area_cells(world: Dict[str, Any], area: str) -> int:
+    """How many region cells an area's lands take - a great district's several counted."""
+    return sum(len(cells_of(one)) for one in world.get("regions") or [] if area_of(one) == area and not one.get("apart"))
+
+
 def open_region(world: Dict[str, Any], style: Dict[str, str], name: str, why: str, at: str,
-                days: Optional[Tuple[str, str]], cell_w: int, cell_h: int) -> Dict[str, Any]:
+                days: Optional[Tuple[str, str]], cell_w: int, cell_h: int, travel: bool = False) -> Dict[str, Any]:
     """A new region beside the others, joined to the one the user is in now - or, its area full, the first of a new
     area, apart from every other region and joined to none (reached by the areas' gates)."""
     regions = world["regions"]
-    taken = {tuple(one["cell"]) for one in regions}
+    taken = {cell for one in regions for cell in cells_of(one)}
     area = area_of(regions[-1])
     joined: Optional[str] = regions[-1]["id"]
-    if sum(1 for one in regions if area_of(one) == area) >= AREA_REGIONS:
+    # A NEW AREA when this one is full - its cells, a district's several counted - or the user has travelled (the
+    # user: "地图过大换一个完整区域（或者比如用户travel到另一个国家，换一个完整区域）").
+    if travel or area_cells(world, area) >= AREA_REGIONS:
         area = f"a{1 + max(int(area_of(one)[1:] or 1) for one in regions)}"
         joined = None
         cell = next(one for one in region_cells(len(taken) * 9 + 60)
                     if one not in taken and not any((one[0] + dx, one[1] + dy) in taken
                                                      for dx in (-1, 0, 1) for dy in (-1, 0, 1)))
     else:
-        mine = {tuple(one["cell"]) for one in regions if area_of(one) == area}
+        mine = {cell for one in regions if area_of(one) == area for cell in cells_of(one)}
         cells = [one for one in region_cells(len(taken) * 9 + 60) if one not in taken]
         # Beside its own area's regions, not another area's.
         cell = next((one for one in cells if any((one[0] + dx, one[1] + dy) in mine for dx in (-1, 0, 1) for dy in (-1, 0, 1))
@@ -181,7 +201,8 @@ def open_region(world: Dict[str, Any], style: Dict[str, str], name: str, why: st
                     cells[0])
     ox, oy = origin(cell, cell_w, cell_h)
     region = {"id": f"r{len(regions) + 1}", "starter": False, "name": name[:60], "why": why[:500], "made": at,
-              "cell": list(cell), "ox": ox, "oy": oy, "from": joined, "area": area, **style}
+              "cell": list(cell), "ox": ox, "oy": oy, "from": joined, "area": area, **style,
+              **({"travel": True} if travel else {})}
     if days:
         region["days"] = [days[0][:10], days[1][:10]]
     regions.append(region)
@@ -197,7 +218,7 @@ def open_apart(world: Dict[str, Any], kind: str, name: str, why: str, at: str, c
     """A LAND APART (the user: "孤岛，或者孤独山洞，反正只能用传送门到"): a cell with no land on any side of it, joined to
     nothing - no road to it; the road of their life does not go there either. Reached by the portals only."""
     regions = world["regions"]
-    taken = {tuple(one["cell"]) for one in regions}
+    taken = {cell for one in regions for cell in cells_of(one)}
     cell = next(one for one in region_cells(len(taken) * 9 + 60)
                 if one not in taken and not any((one[0] + dx, one[1] + dy) in taken
                                                  for dx in (-1, 0, 1) for dy in (-1, 0, 1)))
@@ -248,6 +269,6 @@ def may_leave(world: Dict[str, Any], drawn_days: int) -> Optional[str]:
     return "change" if apart >= CHANGE_DAYS else None
 
 
-__all__ = ["LIGHTS", "WEATHERS", "BIOMES", "LAYOUTS", "PALETTES", "ARCHITECTURES", "THEMES", "LANDMARKS", "SETTINGS", "STARTER", "SPAN",
+__all__ = ["area_cells", "spread_of", "cells_of", "LIGHTS", "WEATHERS", "BIOMES", "LAYOUTS", "PALETTES", "ARCHITECTURES", "THEMES", "LANDMARKS", "SETTINGS", "STARTER", "SPAN",
            "BAND", "ROOMS_MOST", "region_cells", "origin", "room_order", "chosen", "migrate", "open_region",
            "free_cell", "may_leave"]

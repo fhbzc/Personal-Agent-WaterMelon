@@ -111,6 +111,7 @@ function notesCard(row, kind) {
     said ? sideContentHtml({ title: row.title, detail: row.detail }) : "",
     row.note ? `<p>${linkify(escapeHtml(row.note))}</p>` : ""].filter((one) => one.trim()).join("");
   const url = String(row.url || "").trim();
+  if (Array.isArray(row.report) && row.report.length) return sideReportCard(row, kind);
   return `<div class="side-note-head"><i class="side-note-dot" aria-hidden="true"></i><span class="notes-kind">${escapeHtml(kind)}</span>
       <span class="notes-when">${escapeHtml(notesAt(row.at))}</span></div>
     ${said ? `<div class="notes-text chat-message">${linkify(escapeHtml(said))}</div>
@@ -119,6 +120,33 @@ function notesCard(row, kind) {
     ${row.learning ? sideLearningHtml(row) : ""}
     ${sideExtras([{ key: "rules", label: "Rules used", html: sideRulesList(row.rules) },
                   { key: "details", label: "More details", html: said ? details : (row.note ? `<p>${linkify(escapeHtml(row.note))}</p>` : "") }])}
+    ${typeof sideReactHtml === "function" ? sideReactHtml(row.reactions || [], row.bad) : ""}`;
+}
+
+/* THE REPORT, EVERY EVENT OF IT IN THE CHAT (the user, 2026-11-19: "这个report, 我觉得是不是应该在chat里就显示所有need
+   your look, done, yours to do 的东西是什么，不需要去panel里找（panel里只有要看细节才算）。你display的时候想想怎么展示好"):
+   a group to each tab, what asks something of them first - its name and how many, then each event on its own line,
+   its title the link to its details in the report, a short line of where it is under it, a new one marked. What
+   needs their look and what is theirs open; what was done folded, a press away. */
+function sideReportCard(row, kind) {
+  const groups = row.report.map((group) => {
+    const open = group.tab !== "done";
+    const events = (group.events || []).map((one) => `<li class="side-report-event${one.new ? " fresh" : ""}">
+        ${one.new ? `<span class="side-report-new">${escapeHtml("New")}</span>` : ""}
+        ${one.url ? `<a href="${escapeHtml(one.url)}" target="_blank" rel="noopener noreferrer" class="chat-message">${escapeHtml(one.title)}</a>`
+                  : `<span class="chat-message">${escapeHtml(one.title)}</span>`}
+        ${one.things > 1 ? `<span class="side-report-things">${escapeHtml(String(one.things))}</span>` : ""}
+        ${one.note ? `<span class="side-report-note chat-message">${escapeHtml(one.note)}</span>` : ""}</li>`).join("");
+    const more = group.more ? `<li class="side-report-more">${escapeHtml("and {0} more in the report").replace("{0}", String(group.more))}</li>` : "";
+    return `<details class="side-report-group tab-${escapeHtml(group.tab)}"${open ? " open" : ""}>
+        <summary><span class="side-report-label">${escapeHtml(group.label)}</span><span class="side-report-count">${escapeHtml(String(group.count))}</span></summary>
+        <ul class="side-report-events">${events}${more}</ul></details>`;
+  }).join("");
+  return `<div class="side-note-head"><i class="side-note-dot" aria-hidden="true"></i><span class="notes-kind">${escapeHtml(kind)}</span>
+      <span class="notes-when">${escapeHtml(notesAt(row.at))}</span></div>
+    ${row.title ? `<div class="side-note-title chat-message">${escapeHtml(row.title)}</div>` : ""}
+    <div class="side-report">${groups}</div>
+    ${sideOpenThePage("", row.goes ? row.id : "")}
     ${typeof sideReactHtml === "function" ? sideReactHtml(row.reactions || [], row.bad) : ""}`;
 }
 
@@ -541,6 +569,14 @@ const SIDE_SHOWN = 30;
 const sideChat = { id: "", used: false, sending: false, turns: new Map(), target: "", replyTo: null,
   oldest: "", earlier: false, loadingEarlier: false };
 
+/* WHERE THE KEYS GO WHEN THE PANEL COMES IN: the chat's box - or, while the Play view is open, the world (the user,
+   2026-11-18: "还是刚刚的问题，一开始不能移动" - the panel slid in gave its box the keys over the open world, and the arrows
+   moved its caret, not the walker). */
+function sideKeysHome() {
+  const world = typeof play !== "undefined" && play.on && play.canvas ? play.canvas : null;
+  (world || $("#side-input"))?.focus({ preventScroll: true });
+}
+
 function sideKept() { try { return localStorage.getItem(SIDE_KEPT) || ""; } catch (_err) { return ""; } }
 function sideKeep(id) { try { localStorage.setItem(SIDE_KEPT, id); } catch (_err) { /* kept for this time only */ } }
 
@@ -551,6 +587,25 @@ function sideNearEnd() {
 function sideToEnd() {
   const scroll = document.querySelector("#notes-page .notes-scroll");
   if (scroll) scroll.scrollTop = scroll.scrollHeight;
+  sideChat.atEnd = true;
+  sideStickToEnd();
+}
+/* KEPT AT THE END WHILE IT IS READ THERE (the user, 2026-11-18: "你这个现在chat没有拉到很底下，刚刚那个looking into it都没有
+   显示出来"): what grows after the chat was taken to its end - a reply written into its line, its time and its
+   buttons, a picture come in, a line under it - keeps it at its end; scrolled up by the user, it is left where it is
+   read. */
+function sideStickToEnd() {
+  const scroll = document.querySelector("#notes-page .notes-scroll");
+  if (!scroll || !SIDE_LOG || sideChat.sticking || typeof ResizeObserver === "undefined") return;
+  sideChat.sticking = true;
+  scroll.addEventListener("scroll", () => {
+    sideChat.atEnd = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 48;
+  }, { passive: true });
+  const keep = new ResizeObserver(() => {
+    if (sideChat.atEnd) scroll.scrollTop = scroll.scrollHeight;
+  });
+  keep.observe(SIDE_LOG);
+  keep.observe(scroll);                            // the chat's own box grown or shrunk (its input dragged taller)
 }
 
 /* One line said: by "you" or the "agent"; its words the user's or the model's - never looked up to be translated
@@ -798,6 +853,8 @@ function sidePeeking(peeking) {
 }
 
 /* Words still coming: a picture's block not yet whole is not shown as words. */
+/* How much of a reply must have come before it takes the place of "Looking into it…". */
+const SIDE_COMING_LEAST = 24;
 function sideComing(words) {
   const at = String(words || "").lastIndexOf("```view");
   return at >= 0 ? String(words).slice(0, at).trimEnd() : String(words || "");
@@ -893,7 +950,7 @@ async function sideDrawTold() {
   if (!box) return;
   let said;
   try { said = await api.get("/api/side/told"); } catch (_err) { return; }
-  const ink = { "Summaries": "summaries", "Recommended content": "recommendations", "Heads up": "headsup" };
+  const ink = { "Summaries": "summaries", "Report": "summaries", "Recommended content": "recommendations", "Heads up": "headsup" };
   box.innerHTML = (said.told || []).map((one) => `<div class="side-told ink-${ink[one.kind] || "notifications"}">
       <div class="side-told-head">${escapeHtml(one.kind)} · ${escapeHtml(notesAt(one.at))}</div>
       ${one.said ? `<div class="chat-message">${linkify(escapeHtml(one.said))}</div>${one.url && !one.said.includes(one.url) ? sideContentHtml({ url: one.url }) : ""}`
@@ -930,6 +987,7 @@ async function sideLoad() {
   // agent told and what was said here, as the agent reads it - kept by the agent, not by this page. A STRETCH AT A
   // TIME (2026-11-17: "默认显示的是到上上个summary point 为止的history, 如果用户继续上翻会继续load之前的"): the rest
   // as the user scrolls up (sideLoadEarlier).
+  sideAskControl();                                // the agent may have the screen already
   let said;
   try { said = await api.get("/api/side/conversation"); } catch (_err) { return; }
   sideChat.id = said.conversation_id || "";
@@ -953,9 +1011,17 @@ function sideShowPast(said) {
     if (!asked.has(one.message_id)) asked.set(one.message_id, []);
     asked.get(one.message_id).push(one);
   });
+  let run = null;                                  // the screen's steps one after another, in one folded block
   for (const one of said.messages || []) {
     const meta = one.metadata || {};
     if (meta.origin === "notification_answer") continue;   // the agent's to read, not a line said
+    if (meta.kind === "screen_control") {
+      if (document.querySelector(`[data-message-id="${CSS.escape(String(one.id))}"]`)) continue;
+      if (!run) run = sideControlRun(one.created_at, false);
+      sideControlStep(run, String(one.content || ""), one.created_at, String(one.id || ""));
+      continue;
+    }
+    run = null;
     if (meta.origin === "notification") {
       sidePastNote(one);
       // Its follow-ups under it - on its live card when it is still waiting (that took its place).
@@ -1174,7 +1240,7 @@ function sidePastNote(one) {
   const meta = one.metadata || {};
   if (!SIDE_LOG || !meta.notification_id) return;
   if ([...SIDE_LOG.querySelectorAll(".side-note")].some((node) => node.dataset.note === meta.notification_id)) return;
-  const ink = { "Summaries": "summaries", "Recommended content": "recommendations", "Heads up": "headsup" }[meta.category]
+  const ink = { "Summaries": "summaries", "Report": "summaries", "Recommended content": "recommendations", "Heads up": "headsup" }[meta.category]
     || "notifications";
   // KEPT BEFORE ITS PARTS WERE (2026-11-16: "recommendation content怎么都变成untitled了"): its words as they were said
   // then - the message itself, its first line (for the model) left out.
@@ -1188,7 +1254,8 @@ function sidePastNote(one) {
   line.dataset.time = notesAt(one.created_at);   // under it, as every other message's
   line.innerHTML = notesCard({ id: meta.notification_id, at: one.created_at, why: meta.why || "",
     title: meta.title || "", detail: meta.words || "", url: meta.url || "", said: meta.said || spoken,
-    rules: meta.rules || [], reactions: meta.reactions || [], bad: Boolean(meta.bad_content) },
+    rules: meta.rules || [], reactions: meta.reactions || [], bad: Boolean(meta.bad_content),
+    report: Array.isArray(meta.report_groups) ? meta.report_groups : null },
     meta.category || "");
   line._reactions = [...(meta.reactions || [])];
   line._bad = Boolean(meta.bad_content);
@@ -1268,7 +1335,13 @@ async function sideTurn(turn) {
   try { state = await api.get(`/api/chat/turn?id=${encodeURIComponent(turn)}`); } catch (_err) { return; }
   if (!sideChat.turns.has(turn)) return;
   if (state.state === "running") {
-    if (state.text) { sideWrite(line, sideComing(state.text), "", false); sideToEnd(); }
+    // ITS FIRST WORDS ONCE THEY MAKE SENSE (2026-11-18: a reply shown as its first letter alone, "I", under its
+    // buttons): "Looking into it…" until a few words have come, then the reply as it is written.
+    const coming = sideComing(state.text || "");
+    if (coming.trim().length >= SIDE_COMING_LEAST || /[.!?。！？\n]/.test(coming)) {
+      sideWrite(line, coming, "", false);
+      sideToEnd();
+    }
     return;
   }
   sideChat.turns.delete(turn);
@@ -1340,6 +1413,21 @@ function notesListen() {
   const line = new EventSource("/api/side/stream");
   line.addEventListener("notes", () => loadNotes());
   line.addEventListener("compacted", () => sideCompactedNow());
+  // THE LANGUAGE CHANGED IN SETTINGS (api/routes.py; the user, 2026-11-19: "中英文切换的setting好像没做"): the panel
+  // drawn again in it - its words, and the Play world's (play.js playInLanguage) - the walker kept where it stood.
+  // THE WORLD'S WORDS PUT INTO THE LANGUAGE, A BATCH AT A TIME (agent/playworld.py translate_all): shown as they come.
+  line.addEventListener("world", () => {
+    if (typeof play !== "undefined" && play.on && typeof playLoadWorld === "function") playLoadWorld().then(playDraw);
+  });
+  line.addEventListener("language", () => {
+    try {
+      if (typeof play !== "undefined" && play.on) {
+        if (typeof playKeepWhere === "function") playKeepWhere();
+        sessionStorage.setItem("playOpenAgain", "1");     // opened again once drawn (sideReopenPlay)
+      }
+    } catch (_err) { /* drawn again all the same */ }
+    setTimeout(() => window.location.reload(), 200);
+  });
   line.addEventListener("panel", (event) => {
     let said = {};
     try { said = JSON.parse(event.data); } catch (_err) { said = {}; }
@@ -1350,7 +1438,7 @@ function notesListen() {
     if (said.peeking) sideLookedAt = 0;          // put away: what comes now waits to be seen
     else if (said.by_user) sideLooked();         // opened by the user: what it shows is seen
     // Its keys pressed while it is pinned: the keys to the chat's box (ui/desktop.py _keys_to_the_side_chat).
-    if (said.focus) setTimeout(() => $("#side-input")?.focus({ preventScroll: true }), 0);
+    if (said.focus) setTimeout(() => sideKeysHome(), 0);
   });
   // A PART OF THE SCREEN CUT OUT FOR THE SMALL SCREEN (ui/desktop.py _snip_into_the_board): taken in, or why not said.
   line.addEventListener("board", (event) => {
@@ -1359,13 +1447,100 @@ function notesListen() {
     if (said.error) { toast(said.error, "error"); return; }
     if (typeof sideBoardInbox === "function") sideBoardInbox();
   });
+  // THE AGENT HAS THE SCREEN (agent/screen_control.py; the user, 2026-11-18: "sidebar边框红色不断闪烁"): the panel's edge
+  // flashing red while it does, a line across its top saying how to take it back; each step it says, a message of its
+  // own, at once.
+  line.addEventListener("control", (event) => {
+    let said = {};
+    try { said = JSON.parse(event.data); } catch (_err) { said = {}; }
+    sideControlling(Boolean(said.on), said.count === undefined ? null : Number(said.count) || 0, said.bar || "");
+    // EVERY STEP IN ONE FOLDING BLOCK (the user, 2026-11-18: "因为文字很多，所有输出是在一个可以collapse的session里"):
+    // open while the agent has the screen, folded when it is given back.
+    if (said.said && !(said.id && document.querySelector(`[data-message-id="${CSS.escape(said.id)}"]`))) {
+      const run = sideChat.controlRun && sideChat.controlRun.isConnected ? sideChat.controlRun : sideControlRun(said.at || "", true);
+      sideChat.controlRun = run;
+      sideControlStep(run, String(said.said), said.at || "", said.id || "");
+      sideToEnd();
+    }
+    if (!said.on && sideChat.controlRun) {
+      const box = sideChat.controlRun.querySelector("details");
+      if (box) box.open = false;
+      sideChat.controlRun = null;
+    }
+  });
   line.addEventListener("turn", (event) => {
     try { sideTurn(JSON.parse(event.data).id); } catch (_err) { /* asked at the next */ }
   });
-  // Back after the line dropped: whatever turn was waiting, read again.
-  line.addEventListener("hello", () => sideChat.turns.forEach((_line, turn) => sideTurn(turn)));
+  // Back after the line dropped: whatever turn was waiting, read again - and whether the agent has the screen.
+  line.addEventListener("hello", () => { sideChat.turns.forEach((_line, turn) => sideTurn(turn)); sideAskControl(); });
   return line;
 }
+
+/* ONE TIME THE AGENT HAD THE SCREEN, FOLDED (the user, 2026-11-18: "因为文字很多，所有输出是在一个可以collapse的session里"):
+   a block in the chat in its place by time - its head what it was for and how many steps, its steps inside, each
+   with its time; open while it goes on, folded once done (and when drawn from before). */
+function sideWords(words) {
+  try { return (window.interfaceLanguage && window.interfaceLanguage.lookUp(words)) || words; } catch (_err) { return words; }
+}
+function sideControlRun(at, open) {
+  const line = document.createElement("div");
+  line.dataset.who = "agent";
+  line.className = "side-control-run";
+  line.dataset.time = notesAt(at || new Date().toISOString());
+  line.innerHTML = `<details${open ? " open" : ""}><summary><span class="side-control-run-title"></span>
+    <span class="side-control-run-count"></span></summary><ol class="side-control-steps"></ol></details>`;
+  sideInsert(line, at || new Date().toISOString());
+  return line;
+}
+function sideControlStep(run, words, at, id) {
+  const steps = run.querySelector(".side-control-steps");
+  const step = document.createElement("li");
+  if (id) step.dataset.messageId = id;
+  step.innerHTML = `<time>${escapeHtml(notesAt(at || new Date().toISOString()))}</time> <span class="chat-message"></span>`;
+  step.querySelector(".chat-message").textContent = words;
+  steps.appendChild(step);
+  if (!run.dataset.title) {                       // its head: what the first step said it was for
+    run.dataset.title = words.replace(/^I have your screen now:\s*/i, "").replace(/^我现在接管你的屏幕：/, "")
+      .replace(/\.\s*(Move your mouse|Press any).*$/i, "").replace(/。(动一下鼠标|按任意键|按键盘上).*$/, "");
+    run.querySelector(".side-control-run-title").textContent = `${sideWords("Using your screen")}: ${run.dataset.title}`;
+  }
+  const n = steps.children.length;
+  run.querySelector(".side-control-run-count").textContent = `${n} ${sideWords(n === 1 ? "step" : "steps")}`;
+}
+
+/* THE RED BAR ACROSS THE SIDE PANEL'S TOP, WHICH THE AGENT NEVER TOUCHES (the user, 2026-11-18: "我说的那个红色提醒，是在
+   sidebar上(注意agent是不能操作sidebar的)"; "你现在倒计时要显示出来，而且那个sidebar上面不是要有红色栏吗"): the count before
+   it begins, large - "Screen control starts in 2…", "1…" - then how to take the screen back; its words the agent's
+   (`words`, in the chat's language), else the page's own. `count` null: as it was. */
+function sideControlling(on, count = null, words = "") {
+  document.body.classList.toggle("side-controlling", on);
+  let bar = document.getElementById("side-control-bar");
+  if (!on) {
+    if (bar) bar.remove();
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "side-control-bar";
+    bar.setAttribute("role", "status");
+    bar.setAttribute("aria-live", "assertive");
+    const plain = "The agent is using your screen - move the mouse or press any one key on your keyboard to take it back";
+    let shown = plain;
+    try { shown = (window.interfaceLanguage && window.interfaceLanguage.lookUp(plain)) || plain; } catch (_err) { shown = plain; }
+    bar.textContent = shown;
+    document.body.appendChild(bar);
+  }
+  if (words) bar.textContent = words;
+  if (count !== null) bar.classList.toggle("counting", count > 0);
+}
+/* Whether the agent has the screen now, asked - the panel opened, shown again, or its line back. */
+async function sideAskControl() {
+  try {
+    const said = await api.get("/api/side/control");
+    sideControlling(Boolean(said.on), Number(said.count) || 0, said.bar || "");
+  } catch (_err) { /* told at the next event */ }
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) sideAskControl(); });
 
 /* FILES AND PICTURES WITH THE NEXT MESSAGE (the user, 2026-11-16: "chat也要输入我的图片"): "+", pasted, or dropped on
    the panel - kept by the agent (agent/chat_files.py) as the chat page's are, sent with the next message. */
@@ -1801,6 +1976,13 @@ if (NOTES_SOLO) {
   loadNotes(true);
   sideLoad();
   sideGrip();
+  // Play open when the panel was drawn again for a new language: open again, where the walker stood.
+  try {
+    if (sessionStorage.getItem("playOpenAgain")) {
+      sessionStorage.removeItem("playOpenAgain");
+      setTimeout(() => { if (typeof playOpen === "function" && !(typeof play !== "undefined" && play.on)) playOpen(); }, 400);
+    }
+  } catch (_err) { /* left closed */ }
   sideZoom();
   const box = $("#side-input");
   const fit = () => {
@@ -1891,7 +2073,7 @@ if (NOTES_SOLO) {
   window.addEventListener("focus", () => setTimeout(() => {
     if (Date.now() - sidePressedAt < 400) return;
     const now = document.activeElement;
-    if (!now || now === document.body || now.id === "side-search-open") $("#side-input")?.focus({ preventScroll: true });
+    if (!now || now === document.body || now.id === "side-search-open") sideKeysHome();
   }, 30));
   // SLID BACK IN: what waits now, at once.
   // UNCOVERED AGAIN (another window over it, then not - WebView2 calls that hidden): what waits looked at, nothing drawn

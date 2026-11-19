@@ -565,6 +565,24 @@ class TheIssuesTests(unittest.TestCase):
         [event] = Report(app).latest_issue()["tabs"]["needs_you"]
         link = f"http://127.0.0.1:8756/#report={event['id']}"
         self.assertIn(f"]({link})", message, "its title, linked")
+        # 2026-11-19: "在chat里就显示所有need your look, done, yours to do 的东西是什么": every event of it, by group, in
+        # the words and as the groups the page draws.
+        self.assertTrue(message.startswith(f"Need your look (1)\n- New · [{event['title']}]("), message)
+        relayed = []
+        app.monitor = SimpleNamespace(relay=lambda builtin, *a, **k: relayed.append(k) or {"id": "n2"})
+        from personalized_agent.agent import reports as rp
+        Report(app)._set(rp.TOLD_KEYS, "[]")
+        Report(app).tell()
+        [groups] = [one["metadata"]["report_groups"] for one in relayed]
+        self.assertEqual([g["tab"] for g in groups], ["needs_you"])
+        [shown] = groups[0]["events"]
+        self.assertEqual((shown["title"], shown["url"], shown["new"]), (event["title"], link, True))
+        page = (Path(__file__).resolve().parents[1] / "personalized_agent" / "api" / "web" / "notes.js").read_text(encoding="utf-8")
+        self.assertIn("if (Array.isArray(row.report) && row.report.length) return sideReportCard(row, kind);", page)
+        # 2026-11-19: "report的类型变成report, 而不是other".
+        from personalized_agent.common.notifications import category_of
+        self.assertEqual(category_of({"metadata": {"report": True, "summary": False}}), "Report")
+        self.assertIn('"Report": "summaries"', page)
         routes = build_routes(app)
         answer = routes[("POST", "/api/notifications/open_link")](SimpleNamespace(
             require=lambda key: link, get=lambda key, default=None: default))

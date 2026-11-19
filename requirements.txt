@@ -21,6 +21,8 @@ pywebview>=5.0; sys_platform == 'win32'  # the side panel in WebView2, in a proc
 pypdf>=4.0              # the text of a PDF the user opens (19); Word and PowerPoint need nothing
 pypdfium2>=4.0          # a scanned PDF's pages drawn as pictures, so their words can be read
 openpyxl>=3.1           # the cells of a workbook the user opens or hands over
+svglib>=2.0             # a Play great piece's SVG drawn as a picture, for the model to look at (LGPL; agent/playpieces.py)
+reportlab>=4.0          # what svglib draws with (BSD)
 
 # Reading states by meaning rather than by which words they share (34.3).
 # Optional like everything else here: with no model on disk the state

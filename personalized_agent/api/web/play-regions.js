@@ -38,6 +38,43 @@ const PLAY_MORE_GROUND = {
 };
 /* [sheet, column, row, width, height] of what stands about. */
 const PLAY_SCENERY = {
+  // THE HARVEST AND THE ROBOTS (produce.png, scripts/play_produce_sheet.py - the user, 2026-11-18: "你的西瓜什么太不像了，
+  // 水果/植物的图库重新找，另外加上机器人主题的"): each crop picked and at each stage of its plant, fruits and vegetables,
+  // fifty robots.
+  turnipPicked: ["produce", 0, 0, 1, 1], turnipRipe: ["produce", 1, 0, 1, 1], turnipGrowing: ["produce", 2, 0, 1, 1], turnipYoung: ["produce", 3, 0, 1, 1], turnipSprout: ["produce", 4, 0, 1, 1], turnipSeeded: ["produce", 5, 0, 1, 1],
+  rosePicked: ["produce", 6, 0, 1, 1], roseRipe: ["produce", 7, 0, 1, 1], roseGrowing: ["produce", 8, 0, 1, 1], roseYoung: ["produce", 9, 0, 1, 1], roseSprout: ["produce", 10, 0, 1, 1], roseSeeded: ["produce", 11, 0, 1, 1],
+  cucumberPicked: ["produce", 0, 1, 1, 1], cucumberRipe: ["produce", 1, 1, 1, 1], cucumberGrowing: ["produce", 2, 1, 1, 1], cucumberYoung: ["produce", 3, 1, 1, 1], cucumberSprout: ["produce", 4, 1, 1, 1], cucumberSeeded: ["produce", 5, 1, 1, 1],
+  tulipPicked: ["produce", 6, 1, 1, 1], tulipRipe: ["produce", 7, 1, 1, 1], tulipGrowing: ["produce", 8, 1, 1, 1], tulipYoung: ["produce", 9, 1, 1, 1], tulipSprout: ["produce", 10, 1, 1, 1], tulipSeeded: ["produce", 11, 1, 1, 1],
+  tomatoPicked: ["produce", 0, 2, 1, 1], tomatoRipe: ["produce", 1, 2, 1, 1], tomatoGrowing: ["produce", 2, 2, 1, 1], tomatoYoung: ["produce", 3, 2, 1, 1], tomatoSprout: ["produce", 4, 2, 1, 1], tomatoSeeded: ["produce", 5, 2, 1, 1],
+  melonPicked: ["produce", 6, 2, 1, 1], melonRipe: ["produce", 7, 2, 1, 1], melonGrowing: ["produce", 8, 2, 1, 1], melonYoung: ["produce", 9, 2, 1, 1], melonSprout: ["produce", 10, 2, 1, 1], melonSeeded: ["produce", 11, 2, 1, 1],
+  eggplantPicked: ["produce", 0, 3, 1, 1], eggplantRipe: ["produce", 1, 3, 1, 1], eggplantGrowing: ["produce", 2, 3, 1, 1], eggplantYoung: ["produce", 3, 3, 1, 1], eggplantSprout: ["produce", 4, 3, 1, 1], eggplantSeeded: ["produce", 5, 3, 1, 1],
+  lemonPicked: ["produce", 6, 3, 1, 1], lemonRipe: ["produce", 7, 3, 1, 1], lemonGrowing: ["produce", 8, 3, 1, 1], lemonYoung: ["produce", 9, 3, 1, 1], lemonSprout: ["produce", 10, 3, 1, 1], lemonSeeded: ["produce", 11, 3, 1, 1],
+  pineapplePicked: ["produce", 0, 4, 1, 1], pineappleRipe: ["produce", 1, 4, 1, 1], pineappleGrowing: ["produce", 2, 4, 1, 1], pineappleYoung: ["produce", 3, 4, 1, 1], pineappleSprout: ["produce", 4, 4, 1, 1], pineappleSeeded: ["produce", 5, 4, 1, 1],
+  ricePicked: ["produce", 6, 4, 1, 1], riceRipe: ["produce", 7, 4, 1, 1], riceGrowing: ["produce", 8, 4, 1, 1], riceYoung: ["produce", 9, 4, 1, 1], riceSprout: ["produce", 10, 4, 1, 1], riceSeeded: ["produce", 11, 4, 1, 1],
+  wheatPicked: ["produce", 0, 5, 1, 1], wheatRipe: ["produce", 1, 5, 1, 1], wheatGrowing: ["produce", 2, 5, 1, 1], wheatYoung: ["produce", 3, 5, 1, 1], wheatSprout: ["produce", 4, 5, 1, 1], wheatSeeded: ["produce", 5, 5, 1, 1],
+  grapesPicked: ["produce", 6, 5, 1, 1], grapesRipe: ["produce", 7, 5, 1, 1], grapesGrowing: ["produce", 8, 5, 1, 1], grapesYoung: ["produce", 9, 5, 1, 1], grapesSprout: ["produce", 10, 5, 1, 1], grapesSeeded: ["produce", 11, 5, 1, 1],
+  strawberryPicked: ["produce", 0, 6, 1, 1], strawberryRipe: ["produce", 1, 6, 1, 1], strawberryGrowing: ["produce", 2, 6, 1, 1], strawberryYoung: ["produce", 3, 6, 1, 1], strawberrySprout: ["produce", 4, 6, 1, 1], strawberrySeeded: ["produce", 5, 6, 1, 1],
+  cassavaPicked: ["produce", 6, 6, 1, 1], cassavaRipe: ["produce", 7, 6, 1, 1], cassavaGrowing: ["produce", 8, 6, 1, 1], cassavaYoung: ["produce", 9, 6, 1, 1], cassavaSprout: ["produce", 10, 6, 1, 1], cassavaSeeded: ["produce", 11, 6, 1, 1],
+  potatoPicked: ["produce", 0, 7, 1, 1], potatoRipe: ["produce", 1, 7, 1, 1], potatoGrowing: ["produce", 2, 7, 1, 1], potatoYoung: ["produce", 3, 7, 1, 1], potatoSprout: ["produce", 4, 7, 1, 1], potatoSeeded: ["produce", 5, 7, 1, 1],
+  coffeePicked: ["produce", 6, 7, 1, 1], coffeeRipe: ["produce", 7, 7, 1, 1], coffeeGrowing: ["produce", 8, 7, 1, 1], coffeeYoung: ["produce", 9, 7, 1, 1], coffeeSprout: ["produce", 10, 7, 1, 1], coffeeSeeded: ["produce", 11, 7, 1, 1],
+  orangePicked: ["produce", 0, 8, 1, 1], orangeRipe: ["produce", 1, 8, 1, 1], orangeGrowing: ["produce", 2, 8, 1, 1], orangeYoung: ["produce", 3, 8, 1, 1], orangeSprout: ["produce", 4, 8, 1, 1], orangeSeeded: ["produce", 5, 8, 1, 1],
+  avocadoPicked: ["produce", 6, 8, 1, 1], avocadoRipe: ["produce", 7, 8, 1, 1], avocadoGrowing: ["produce", 8, 8, 1, 1], avocadoYoung: ["produce", 9, 8, 1, 1], avocadoSprout: ["produce", 10, 8, 1, 1], avocadoSeeded: ["produce", 11, 8, 1, 1],
+  cornPicked: ["produce", 0, 9, 1, 1], cornRipe: ["produce", 1, 9, 1, 1], cornGrowing: ["produce", 2, 9, 1, 1], cornYoung: ["produce", 3, 9, 1, 1], cornSprout: ["produce", 4, 9, 1, 1], cornSeeded: ["produce", 5, 9, 1, 1],
+  sunflowerPicked: ["produce", 6, 9, 1, 1], sunflowerRipe: ["produce", 7, 9, 1, 1], sunflowerGrowing: ["produce", 8, 9, 1, 1], sunflowerYoung: ["produce", 9, 9, 1, 1], sunflowerSprout: ["produce", 10, 9, 1, 1], sunflowerSeeded: ["produce", 11, 9, 1, 1],
+  grapesBunch: ["produce", 0, 10, 1, 1], mango: ["produce", 1, 10, 1, 1], orangeFruit2: ["produce", 2, 10, 1, 1], plum: ["produce", 3, 10, 1, 1], pineappleFruit: ["produce", 4, 10, 1, 1], raspberry: ["produce", 5, 10, 1, 1],
+  pear: ["produce", 6, 10, 1, 1], cantaloupe: ["produce", 7, 10, 1, 1], blueberry: ["produce", 8, 10, 1, 1], lime: ["produce", 9, 10, 1, 1], broccoli: ["produce", 10, 10, 1, 1], carrotRoot: ["produce", 11, 10, 1, 1],
+  pumpkinWhole: ["produce", 0, 11, 1, 1], cornCob: ["produce", 1, 11, 1, 1], mushroomCap: ["produce", 2, 11, 1, 1], garlic: ["produce", 3, 11, 1, 1], peaPod: ["produce", 4, 11, 1, 1], cabbageHead: ["produce", 5, 11, 1, 1],
+  turnipRoot: ["produce", 6, 11, 1, 1], bellPepper: ["produce", 7, 11, 1, 1], redOnion: ["produce", 8, 11, 1, 1], gourd: ["produce", 9, 11, 1, 1], strawberryFruit: ["produce", 10, 11, 1, 1], sweetPotato: ["produce", 11, 11, 1, 1],
+  tomatoFruit: ["produce", 0, 12, 1, 1], lemonFruit: ["produce", 1, 12, 1, 1], greenApple: ["produce", 2, 12, 1, 1], redApple: ["produce", 3, 12, 1, 1], banana: ["produce", 4, 12, 1, 1], chili: ["produce", 5, 12, 1, 1],
+  cherries: ["produce", 6, 12, 1, 1], watermelon: ["produce", 7, 12, 1, 1], metalBot1: ["produce", 0, 13, 1, 1], metalBot2: ["produce", 1, 13, 1, 1], metalBot3: ["produce", 2, 13, 1, 1], metalBot4: ["produce", 3, 13, 1, 1],
+  metalBot5: ["produce", 4, 13, 1, 1], metalBot6: ["produce", 5, 13, 1, 1], metalBot7: ["produce", 6, 13, 1, 1], metalBot8: ["produce", 7, 13, 1, 1], metalBot9: ["produce", 8, 13, 1, 1], metalBot10: ["produce", 9, 13, 1, 1],
+  metalBot11: ["produce", 10, 13, 1, 1], metalBot12: ["produce", 11, 13, 1, 1], metalBot13: ["produce", 0, 14, 1, 1], metalBot14: ["produce", 1, 14, 1, 1], metalBot15: ["produce", 2, 14, 1, 1], metalBot16: ["produce", 3, 14, 1, 1],
+  metalBot17: ["produce", 4, 14, 1, 1], metalBot18: ["produce", 5, 14, 1, 1], metalBot19: ["produce", 6, 14, 1, 1], metalBot20: ["produce", 7, 14, 1, 1], metalBot21: ["produce", 8, 14, 1, 1], metalBot22: ["produce", 9, 14, 1, 1],
+  metalBot23: ["produce", 10, 14, 1, 1], metalBot24: ["produce", 11, 14, 1, 1], metalBot25: ["produce", 0, 15, 1, 1], metalBot26: ["produce", 1, 15, 1, 1], metalBot27: ["produce", 2, 15, 1, 1], metalBot28: ["produce", 3, 15, 1, 1],
+  metalBot29: ["produce", 4, 15, 1, 1], metalBot30: ["produce", 5, 15, 1, 1], metalBot31: ["produce", 6, 15, 1, 1], metalBot32: ["produce", 7, 15, 1, 1], metalBot33: ["produce", 8, 15, 1, 1], metalBot34: ["produce", 9, 15, 1, 1],
+  metalBot35: ["produce", 10, 15, 1, 1], metalBot36: ["produce", 11, 15, 1, 1], metalBot37: ["produce", 0, 16, 1, 1], metalBot38: ["produce", 1, 16, 1, 1], metalBot39: ["produce", 2, 16, 1, 1], metalBot40: ["produce", 3, 16, 1, 1],
+  metalBot41: ["produce", 4, 16, 1, 1], metalBot42: ["produce", 5, 16, 1, 1], metalBot43: ["produce", 6, 16, 1, 1], metalBot44: ["produce", 7, 16, 1, 1], metalBot45: ["produce", 8, 16, 1, 1], metalBot46: ["produce", 9, 16, 1, 1],
+  metalBot47: ["produce", 10, 16, 1, 1], metalBot48: ["produce", 11, 16, 1, 1], metalBot49: ["produce", 0, 17, 1, 1], metalBot50: ["produce", 1, 17, 1, 1],
   roundTree: ["rpg", 13, 10, 1, 1], smallTree: ["rpg", 13, 9, 1, 1], autumnTree: ["rpg", 14, 10, 1, 1],
   autumnSmall: ["rpg", 14, 9, 1, 1], darkTree: ["rpg", 15, 10, 1, 1], pine: ["rpg", 16, 10, 1, 1],
   autumnPine: ["rpg", 17, 10, 1, 1], darkPine: ["rpg", 18, 10, 1, 1], smallPine: ["rpg", 16, 9, 1, 1],
@@ -465,10 +502,22 @@ function playNoise(x, y, salt, step = 8) {
   return (a + (b - a) * s(fx)) + ((c + (d - c) * s(fx)) - (a + (b - a) * s(fx))) * s(fy);
 }
 
+/* NO STILL ANIMALS IN THE FIELDS (the user, 2026-11-18: "所以这里这么多动物只是固定的吗"; "要是动画item放上去不动，那你还是别放
+   会动的item"; "围栏里的狮虎和海底的鱼 ... 这些不要移除"; "这些你可以把它们变成动的画"): the pets and the animals of the
+   fields and woods - cats, dogs, rabbits, squirrels, hens, cows, sheep, goats, deer, owls, eagles - where a land lays
+   one it lives: it walks about there (play-act.js playResidents), never a still picture. A zoo's beasts in their pens,
+   the sea's fish, the statues, the robots, a wisp stay as they were. */
+const PLAY_ANIMALS_A_BLOCK = 2;                 // a land's own animals in a block (PLAY_CHUNK x PLAY_CHUNK tiles), at most
+const PLAY_FIELD_ANIMALS = new Set(["cat", "dog", "rabbit", "squirrel", "chicken", "cow", "sheep", "goat", "deer", "owl", "eagle"]);
+function playAlive(name) {
+  return PLAY_FIELD_ANIMALS.has(name);
+}
 function playRegionRect(region) {
-  const half = Math.floor(PLAY_SPAN / 2);
+  // A great project's district over several region cells (agent/playregions.py spread_of): theirs and the bands between.
+  const half = Math.floor(PLAY_SPAN / 2), [sx, sy] = region.spread || [1, 1];
   return [region.ox - half * PLAY_CELL[0], region.oy - half * PLAY_CELL[1],
-          region.ox + (half + 1) * PLAY_CELL[0], region.oy + (half + 1) * PLAY_CELL[1]];
+          region.ox + (half + 1) * PLAY_CELL[0] + (sx - 1) * (PLAY_SPAN * PLAY_CELL[0] + PLAY_BAND),
+          region.oy + (half + 1) * PLAY_CELL[1] + (sy - 1) * (PLAY_SPAN * PLAY_CELL[1] + PLAY_BAND)];
 }
 function playRectDistance(rect, x, y) {
   const dx = Math.max(rect[0] - x, 0, x - (rect[2] - 1)), dy = Math.max(rect[1] - y, 0, y - (rect[3] - 1));
@@ -500,7 +549,7 @@ const PLAY_LAID_MOST = 96;                // blocks kept laid
    paths, the landmarks - its edge wavering; past it, dark. Islands: a little land round each place, water between,
    the paths over it as boardwalks. Worked out once for the world (a few routes); the tiles are laid block by block. */
 const PLAY_WOBBLE = { grid: 0, village: 2.2, scattered: 3.4, plaza: 1.2, river: 1.6, islands: 1.4 };
-const PLAY_LAND_MOST = 9;                  // how far the land may reach from what is there
+const PLAY_LAND_MOST = 44;                 // how far the land and its sea may reach from what is there
 
 /* The way from one tile to another, round what stands in the way: cheapest by its tiles' costs (A*). */
 function playRoute(blocked, from, to, wobble, salt, paths) {
@@ -628,19 +677,29 @@ function playLay(world, area) {
     return first ? first.out : [region.ox + Math.floor(PLAY_CELL[0] / 2), region.oy + PLAY_CELL[1] - 1];
   });
   const paths = new Map();             // "x,y" -> { region: n, wide: bool }
+  const planRoads = ((world.transport || {}).roads || []).filter((one) => one && one.from && one.to);
+  const planned = new Set(planRoads.flatMap((one) => [byId[one.from], byId[one.to]]).filter((n) => typeof n === "number"));
   const doorways = new Set();
-  const lay = (route, n, wide) => {
+  // ITS WAYS AS DESIGNED (the user, 2026-11-19: "道路的材质，和宽度（允许多格道路），弯曲程度都是设计的一部分"): each
+  // as wide as it was made (one to three tiles), of what it was made of.
+  const lay = (route, n, wide, material) => {
+    const w = wide === true ? 2 : Math.max(1, Math.min(3, Number(wide) || 1));
     for (const [x, y] of route) {
-      const key = `${x},${y}`;
-      if (!paths.has(key)) paths.set(key, { region: n, wide });
-      if (wide && !blocked.has(`${x + 1},${y}`) && !paths.has(`${x + 1},${y}`)) paths.set(`${x + 1},${y}`, { region: n, wide });
+      for (let dy = 0; dy < w; dy += 1) {
+        for (let dx = 0; dx < w; dx += 1) {
+          const key = `${x + dx},${y + dy}`;
+          if ((dx || dy) && blocked.has(key)) continue;
+          if (!paths.has(key)) paths.set(key, { region: n, wide: w > 1, material: material || "" });
+        }
+      }
     }
   };
   regions.forEach((region, n) => {
     const layout = region.layout || "village";
     const wobble = PLAY_WOBBLE[layout] ?? 2;
-    const nodes = [hearts[n], ...zones.filter((one) => one.region === region).map((one) => one.out)]
-      .filter((one, k, all) => all.findIndex((other) => other[0] === one[0] && other[1] === one[1]) === k);
+    const stops = [{ at: hearts[n], zone: null }, ...zones.filter((one) => one.region === region).map((one) => ({ at: one.out, zone: one.zone }))]
+      .filter((one, k, all) => all.findIndex((other) => other.at[0] === one.at[0] && other.at[1] === one.at[1]) === k);
+    const nodes = stops.map((one) => one.at);
     // A tree joining them, nearest first (Prim), then one more edge for a loop.
     const inTree = [0], edges = [];
     const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
@@ -665,13 +724,25 @@ function playLay(world, area) {
     }
     edges.sort((p, q) => dist(nodes[p[0]], nodes[p[1]]) - dist(nodes[q[0]], nodes[q[1]]));
     for (const [a, b] of edges) {
-      const route = playRoute(blocked, nodes[b], nodes[a], wobble, 71 + n, paths);
+      // The way to a place as it was designed (its "road"), else its land's, else its layout's.
+      const way = (stops[b].zone && stops[b].zone.road) || region.road || {};
+      const bend = Number.isFinite(way.curve) ? way.curve * 4 : wobble;
+      const route = playRoute(blocked, nodes[b], nodes[a], bend, 71 + n, paths);
       route.slice(0, 3).forEach(([x, y]) => doorways.add(`${x},${y}`));     // the way from a door: kept clear
-      lay(route, n, layout === "plaza" || a === 0);
+      lay(route, n, way.width || (layout === "plaza" || a === 0 ? 2 : 1), way.material);
     }
-    // Joined to the region it was opened from, heart to heart - a wide way.
+    // Joined to the region it was opened from, heart to heart - a wide way: unless the roads between the lands were
+    // planned (below), or as the one way to a land no planned road reaches.
     const from = region.from ? byId[region.from] : undefined;
-    if (typeof from === "number" && from !== n) lay(playRoute(blocked, hearts[from], hearts[n], wobble, 97 + n, paths), n, true);
+    if (typeof from === "number" && from !== n && !planned.has(n)) lay(playRoute(blocked, hearts[from], hearts[n], wobble, 97 + n, paths), n, true);
+  });
+  // THE ROADS BETWEEN THE LANDS, PLANNED AS ONE WITH THE TRANSPORT (agent/playmuse.py read_transport; the user,
+  // 2026-11-19: "场景之间的道路和交通工具一样设计，是整体规划"): each as wide, as winding and of what it was planned.
+  planRoads.forEach((one, k) => {
+    const a = byId[one.from], b = byId[one.to];
+    if (typeof a !== "number" || typeof b !== "number") return;
+    const bend = Number.isFinite(one.curve) ? one.curve * 4 : 2;
+    lay(playRoute(blocked, hearts[a], hearts[b], bend, 131 + k, paths), b, one.width || 2, one.material);
   });
   // THE ROAD OF THEIR LIFE: each place joined to those it follows in time, its signposts along the way.
   const life = playLifeRoad(world, zones, regions, byId, hearts, blocked, paths, doorways, lay);
@@ -683,7 +754,18 @@ function playLay(world, area) {
     if (!pathBlocks.has(bk)) pathBlocks.set(bk, []);
     pathBlocks.get(bk).push([x, y, one]);
   }
-  return { regions, byId, zones, landmarks, items: world.items, laid: new Map(), paths, pathBlocks, doorways, hearts, life, blocked };
+  // LANDS JOINED BY THEIR DAYS (agent/playworld.py: a commute where two lands' tasks shared many days) are one shore;
+  // the rest, a strait between (playLandReach).
+  const joined = new Set();
+  for (const one of world.commutes || []) {
+    const p = byId[one.from], q = byId[one.to];
+    if (typeof p === "number" && typeof q === "number") joined.add(`${Math.min(p, q)},${Math.max(p, q)}`);
+  }
+  // ONLY THE HOUSE, TILL THE WORLD OUTSIDE IS MADE (the user, 2026-11-19: "不要从起始村，从一个起始房子，是看不到外面的那种"):
+  // the first land closed (agent/playworld.py) - nothing laid round the house till the feeling of their days opens it.
+  const closed = regions.length === 1 && Boolean(regions[0].closed);
+  return { regions, byId, zones, landmarks: closed ? [] : landmarks, items: world.items, laid: new Map(), paths, pathBlocks,
+           doorways, hearts, life, blocked, joined, closed };
 }
 
 /* THE ORDER OF THEIR LIFE - the same rule as agent/playplaces.py life_road: each place on the road by when it began,
@@ -778,7 +860,233 @@ function playWhose(index, x, y) {
     if (d < da) { b = a; db = da; a = n; da = d; } else if (d < db) { b = n; db = d; }
   }
   const t = b < 0 ? 1 : Math.min(1, (db - da) / PLAY_BLEND);
-  return { a, b, toB: b < 0 ? 0 : 0.5 * (1 - t) };
+  return { a, b, toB: b < 0 ? 0 : 0.5 * (1 - t), gap: b < 0 ? Infinity : db - da };
+}
+
+/* THE LAND'S OWN SHAPE (the user, 2026-11-18: "你现在layout还不是很行，没有脱离矩形" - a world map of islands, capes and
+   bays for a picture of what is meant): the land reaches past what is there by a coast of its own - hugging the places
+   in one stretch, out in a long cape or a broad headland in the next, by noise at three sizes - and past the coast, the
+   sea, then the dark. Two lands not joined by their days (world.commutes) have a strait between them, the road over it
+   a bridge; two that are, one shore. Far out on a cape, away from every place, the land grows wild: a forest close, or,
+   in the hills and the snow, a mountain's rock. */
+const PLAY_COAST_NEAR = 3, PLAY_COAST_FAR = 24;    // how far the land reaches past what is there: least, at a cape most
+const PLAY_SEA_MOST = 18;                           // the sea round the land; past it, the dark
+const PLAY_SHALLOW = 3;                             // the sea's light water near the shore; deeper past it
+const PLAY_WILD_FROM = 6;                           // this far from every place, the land is wild
+const PLAY_WILD = {
+  highland: { ground: ["rock", "rock2"], grows: ["greyRock", "greyRock2", "mossRock", "darkPine", "smallPine"], thick: 0.32 },
+  snow: { ground: ["snow", "snow2"], grows: ["darkPine", "pine", "smallPine", "greyRock"], thick: 0.3 },
+  desert: { ground: ["sand", "sand2"], grows: ["cactus", "cactusSmall", "brownRock", "brownRock2"], thick: 0.12 },
+};
+const PLAY_SHORE = { snow: "snow", city: "paving", desert: "sand2" };
+/* EACH LAND ITS OWN EDGE (the user, 2026-11-19: "每个场景应该都有自己的外围地形"; agent/playmuse.py SCENE_LIFE): what a
+   land runs out in, chosen by the agent of its scene's own - its ground, what grows thick on it; not to be walked. */
+const PLAY_EDGES = {
+  thicket: { ground: ["grass2", "dirt2"], grows: ["darkPine", "pine", "darkTree", "bush", "smallPine"], thick: 0.75 },
+  jungle: { ground: ["grass2", "grass"], grows: ["tallFern", "fern", "darkTree", "roundTree", "bush"], thick: 0.85 },
+  snowdrift: { ground: ["snow", "snow2"], grows: ["darkPine", "pine", "greyRock"], thick: 0.4 },
+  icecliff: { ground: ["snow2", "rock2"], grows: ["greyRock", "greyBoulder", "darkPine"], thick: 0.55 },
+  dunes: { ground: ["sand", "sand2"], grows: ["cactus", "cactusSmall", "brownRock"], thick: 0.2 },
+  mesa: { ground: ["sand2", "rock"], grows: ["brownRock", "brownRock2", "cactus"], thick: 0.45 },
+  lava: { ground: ["lava", "lava2", "caveGrey"], grows: ["greyRock"], thick: 0.15 },
+  ashrock: { ground: ["caveGrey", "rock2"], grows: ["greyRock", "deadTree"], thick: 0.45 },
+  cliffs: { ground: ["rock", "rock2"], grows: ["greyRock", "mossRock", "smallPine"], thick: 0.5 },
+  moor: { ground: ["grass2", "dirt2"], grows: ["greyRock", "mossRock", "bush"], thick: 0.3 },
+  rubble: { ground: ["cracked", "stone"], grows: ["greyStone", "greyBoulder", "mossRock2"], thick: 0.45 },
+  graves: { ground: ["grass2", "dirt2"], grows: ["graveTall", "deadTree", "gloomTree", "ironFence"], thick: 0.5 },
+  hedges: { ground: ["grass", "grass2"], grows: ["bush", "greenBush", "flowerBush", "roundTree"], thick: 0.7 },
+  orchard: { ground: ["grass", "grass2"], grows: ["plumTree", "blossom", "roundTree", "peach"], thick: 0.55 },
+  fields: { ground: ["grass2", "dirt2"], grows: ["wheat", "corn", "hayBale", "cabbage"], thick: 0.6 },
+  autumnwood: { ground: ["grass2", "dirt2"], grows: ["autumnPine", "autumnSmall", "townAutumnTree", "uAutumnTree"], thick: 0.7 },
+  mushroomwood: { ground: ["grass2", "dirt2"], grows: ["mushroom2", "purpleFlower", "gloomTree", "mushroom"], thick: 0.6 },
+  citywall: { ground: ["paving", "pavement2"], grows: ["townPine", "uTreeSmall2", "hydrant", "uTrash", "planter"], thick: 0.35 },
+  industrial: { ground: ["pavement2", "paving", "cracked"], grows: ["crate", "uTrash", "hydrant"], thick: 0.3 },   // not flat asphalt
+  caverock: { ground: ["caveGrey", "caveSand"], grows: ["caveRock", "ore", "greyRock"], thick: 0.55 },
+  toyland: { ground: ["toyGrass", "toyStone"], grows: ["balloons", "present", "bush"], thick: 0.3 },
+  winterwood: { ground: ["snow", "snow2"], grows: ["xmasTree", "pine", "darkPine"], thick: 0.55 },
+  lanterns: { ground: ["paving", "cobble"], grows: ["lantern", "lanternString", "plumTree"], thick: 0.25 },
+  hearts: { ground: ["grass", "grass2"], grows: ["rose", "roseVine", "redHeart", "plumTree"], thick: 0.45 },
+  reeds: { ground: ["grass2", "dirt2"], grows: ["fern", "tallFern", "bush", "mossRock"], thick: 0.5 },
+};
+/* OUTLINES OF ANY SHAPE (agent/playshapes.py - the same points and sums; the user, 2026-11-19: "每个区域都可以选其他形状，
+   比如五角星，三角形，圆形等"): each a polygon filling the box from -1 to 1, y down; "circle" the round one. */
+const PLAY_SHAPE_POLYS = {
+  triangle: [[0.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
+  star: [[0.0, -1.0], [0.2781, -0.2969], [1.0, -0.2361], [0.45, 0.2593], [0.618, 1.0], [0.0, 0.6031], [-0.618, 1.0], [-0.45, 0.2593], [-1.0, -0.2361], [-0.2781, -0.2969]],
+  star6: [[0.0, -1.0], [0.3349, -0.5023], [1.0, -0.5], [0.6697, 0.0], [1.0, 0.5], [0.3349, 0.5023], [0.0, 1.0], [-0.3349, 0.5023], [-1.0, 0.5], [-0.6697, 0.0], [-1.0, -0.5], [-0.3349, -0.5023]],
+  diamond: [[0.0, -1.0], [1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]],
+  pentagon: [[0.0, -1.0], [1.0, -0.2361], [0.618, 1.0], [-0.618, 1.0], [-1.0, -0.2361]],
+  octagon: [[0.4142, -1.0], [1.0, -0.4142], [1.0, 0.4142], [0.4142, 1.0], [-0.4142, 1.0], [-1.0, 0.4142], [-1.0, -0.4142], [-0.4142, -1.0]],
+  heart: [[0.0, -0.5275], [0.0074, -0.5804], [0.056, -0.7157], [0.1715, -0.8742], [0.3536, -0.9863], [0.5748, -1.0], [0.7886, -0.8996], [0.9435, -0.7053], [1.0, -0.4581], [0.9435, -0.1988], [0.7886, 0.0479], [0.5748, 0.2754], [0.3536, 0.4866], [0.1715, 0.681], [0.056, 0.8459], [0.0074, 0.9593], [0.0, 1.0], [-0.0074, 0.9593], [-0.056, 0.8459], [-0.1715, 0.681], [-0.3536, 0.4866], [-0.5748, 0.2754], [-0.7886, 0.0479], [-0.9435, -0.1988], [-1.0, -0.4581], [-0.9435, -0.7053], [-0.7886, -0.8996], [-0.5748, -1.0], [-0.3536, -0.9863], [-0.1715, -0.8742], [-0.056, -0.7157], [-0.0074, -0.5804]],
+  cross: [[-0.34, -1.0], [0.34, -1.0], [0.34, -0.34], [1.0, -0.34], [1.0, 0.34], [0.34, 0.34], [0.34, 1.0], [-0.34, 1.0], [-0.34, 0.34], [-1.0, 0.34], [-1.0, -0.34], [-0.34, -0.34]],
+  trapezoid: [[-0.55, -1.0], [0.55, -1.0], [1.0, 1.0], [-1.0, 1.0]]
+};
+/* Whether (u, v) of the box is inside this outline; null when it is not one of these. */
+function playShapeHasPoly(kind, u, v) {
+  if (kind === "circle") return u * u + v * v <= 1.0;
+  const points = PLAY_SHAPE_POLYS[kind];
+  if (!points) return null;
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i, i += 1) {
+    const [xi, yi] = points[i], [xj, yj] = points[j];
+    if ((yi > v) !== (yj > v) && u < (xj - xi) * (v - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+/* How far this outline reaches from the middle at `angle`, in half-widths; null when it is not one of these. */
+function playShapeReach(kind, angle) {
+  if (kind === "circle") return 1.0;
+  const points = PLAY_SHAPE_POLYS[kind];
+  if (!points) return null;
+  const dx = Math.cos(angle), dy = Math.sin(angle);
+  let best = 0;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i, i += 1) {
+    const [xi, yi] = points[i], [xj, yj] = points[j];
+    const ex = xj - xi, ey = yj - yi, den = dx * ey - dy * ex;
+    if (Math.abs(den) > 1e-9) {
+      const along = (xi * ey - yi * ex) / den, on = (xi * dy - yi * dx) / den;
+      if (along > 0 && on >= 0 && on <= 1) best = Math.max(best, along);
+    }
+  }
+  return best || 0.05;
+}
+/* A LAND OF ITS OWN OUTLINE (agent/playplaces.py shape_limit, CHOSEN_REACH): how far outside it a tile is, in tiles -
+   nought or less inside. null for a land without one (its coast by what stands there, playLandReach). */
+const PLAY_CHOSEN_REACH = 1.08;
+function playLandShapeOut(region, x, y) {
+  const reach0 = region && region.shape ? playShapeReach(String(region.shape), 0) : null;
+  if (reach0 === null) return null;
+  const r = region.rect, b = [r[0] + 1, r[1] + 1, r[2] - 1, r[3] - 1];   // agent/playplaces.py bounds
+  const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2, ax = (b[2] - b[0]) / 2, ay = (b[3] - b[1]) / 2;
+  const dx = (x + 0.5 - cx) / ax, dy = (y + 0.5 - cy) / ay;
+  const limit = PLAY_CHOSEN_REACH * playShapeReach(String(region.shape), Math.atan2(dy, dx));
+  return (Math.hypot(dx, dy) / limit - 1) * Math.min(ax, ay) * limit;
+}
+/* A ROOM UNDER A ROOF OF ITS OWN OUTLINE (agent/playworld.py shaped_room - the same tiles): its outline in its floor,
+   a way up from its door to it; its walls the outline's edge. {inside, rim, floor} as sets of "x,y". */
+function playShapedRoom(zone, door) {
+  const [left, top, w, h] = playFloorOf(zone);
+  const inside = new Set();
+  for (let y = top; y < top + h; y += 1) for (let x = left; x < left + w; x += 1) {
+    if (playShapeHas(zone.shape, [left, top, w, h], x, y)) inside.add(`${x},${y}`);
+  }
+  const way = new Set();                                     // the way in, up from the door into the outline
+  for (let x = door; x < door + PLAY_DOOR_W; x += 1) {
+    for (let y = top + h - 1; y >= top; y -= 1) { way.add(`${x},${y}`); if (inside.has(`${x},${y}`)) break; }
+  }
+  for (const key of way) inside.add(key);
+  const rim = new Set(), floor = new Set();
+  for (const key of inside) {
+    const [x, y] = key.split(",").map(Number);
+    const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => !inside.has(`${x + dx},${y + dy}`)
+      && x + dx >= left && x + dx < left + w && y + dy >= top && y + dy < top + h);
+    // How open, as any house (agent/playworld.py shaped_room): a pavilion no wall; open in front or round a court,
+    // its back half walled and its front half open; closed, walled all round.
+    const form = zone.form || "closed";
+    const walled = form !== "pavilion" && !((form === "open_front" || form === "u_court") && 2 * (y - top) >= h);
+    if (edge && !way.has(key) && walled) rim.add(key); else floor.add(key);
+  }
+  return { inside, rim, floor, box: [left, top, w, h] };
+}
+/* WHETHER A TILE IS IN A SHAPE (agent/playgreat.py shape_has - the same sums, so the page lays what was designed):
+   `box` its left, top, width, height. */
+function playShapeHas(shape, box, x, y) {
+  const [left, top, w, h] = box;
+  if (!(x >= left && x < left + w && y >= top && y < top + h)) return false;
+  const kind = String((shape && shape.kind) || "rect");
+  if (kind === "rect" || w < 3 || h < 3) return true;
+  const seed = (Number((shape && shape.seed) || 0)) % 6.283;
+  const u = (x + 0.5 - left) / w * 2 - 1, v = (y + 0.5 - top) / h * 2 - 1, d = u * u + v * v;
+  const polygon = playShapeHasPoly(kind, u, v);
+  if (polygon !== null) return polygon;                     // a star, a triangle, a heart... (PLAY_SHAPE_POLYS)
+  if (kind === "ellipse") return d <= 1.0;
+  if (kind === "ring") return d >= 0.16 && d <= 1.0;
+  if (kind === "hexagon") return Math.abs(u) <= 1.0 - 0.5 * Math.abs(v);
+  if (kind === "parallelogram") return Math.abs(u + 0.35 * v) <= 0.65;
+  if (kind === "band") return Math.abs(u - 0.6 * v) <= 0.55;
+  if (kind === "l_shape") {
+    const corner = Math.floor(seed * 4 / 6.283) % 4;
+    const su = [1, -1, -1, 1][corner], sv = [-1, -1, 1, 1][corner];
+    return !(u * su > 0.15 && v * sv > 0.15);
+  }
+  if (kind === "blob") {
+    const angle = Math.atan2(v, u);
+    const reach = 0.88 + 0.08 * Math.sin(3 * angle + seed) + 0.06 * Math.sin(5 * angle + 2 * seed) + 0.04 * Math.sin(7 * angle + 3 * seed);
+    return Math.sqrt(d) <= reach;
+  }
+  return true;
+}
+/* What stands in the way here, of the land's own (its edge kind's): a tree, a rock, a cactus - one a tile wide, not one
+   stepped over. "" when the land has none. */
+function playStandingOf(region, x, y) {
+  const edge = playEdgeOf(region, x, y);
+  const standing = (edge.grows || []).filter((one) => !PLAY_UNDERFOOT.has(one) && PLAY_SCENERY[one]
+    && PLAY_SCENERY[one][3] === 1 && PLAY_SCENERY[one][4] <= 2);
+  return standing.length ? standing[Math.floor(playHash(x, y, 23) * standing.length) % standing.length] : "";
+}
+/* A land's edge here: one of the kinds chosen for it, by where it is - else its own wild, else its own ground. */
+function playEdgeOf(region, x, y) {
+  const kinds = (region.edges || []).filter((one) => PLAY_EDGES[one]);
+  if (kinds.length) return PLAY_EDGES[kinds[Math.floor(playNoise(x, y, 77, 9) * kinds.length) % kinds.length]];
+  const wild = PLAY_WILD[region.biome];
+  return wild || { ground: region.land.ground, grows: region.land.grows, thick: Math.max(0.3, region.land.thick * 2) };
+}
+/* A PICTURE'S TRANSPARENT CORNERS NEVER WALLS (the user, 2026-11-19: "你要防止未来出现这个情况呀" - a ferris wheel, a
+   landmark, a great tree standing over several tiles, its corners empty): whether a tile of a picture shows something
+   - enough of its pixels drawn - worked out once from its sheet. A sheet not yet loaded, or a picture drawn large
+   from one tile: every tile counts. */
+const PLAY_DRAWN_TILES = new Map();
+const PLAY_DRAWN_LEAST = 12;                 // pixels of the 256 of a tile, for it to count as drawn
+function playTileDrawn(spec, dx, dy) {
+  if (!Array.isArray(spec) || spec[5] || (spec[3] === 1 && spec[4] === 1)) return true;
+  const key = spec.slice(0, 5).join(",");
+  let mask = PLAY_DRAWN_TILES.get(key);
+  if (mask === undefined) {
+    mask = null;
+    try {
+      const sheet = typeof play !== "undefined" && play.sheets && play.sheets[spec[0]];
+      if (sheet && sheet.complete && sheet.naturalWidth && typeof document !== "undefined") {
+        const w = spec[3], h = spec[4], canvas = document.createElement("canvas");
+        canvas.width = w * 16; canvas.height = h * 16;
+        const c = canvas.getContext("2d", { willReadFrequently: true });
+        for (let ty = 0; ty < h; ty += 1) {
+          for (let tx = 0; tx < w; tx += 1) c.drawImage(sheet, (spec[1] + tx) * 17, (spec[2] + ty) * 17, 16, 16, tx * 16, ty * 16, 16, 16);
+        }
+        const data = c.getImageData(0, 0, canvas.width, canvas.height).data;
+        mask = [];
+        for (let ty = 0; ty < h; ty += 1) {
+          for (let tx = 0; tx < w; tx += 1) {
+            let drawn = 0;
+            for (let py = 0; py < 16; py += 1) for (let px = 0; px < 16; px += 1) {
+              if (data[(((ty * 16 + py) * canvas.width) + tx * 16 + px) * 4 + 3] > 40) drawn += 1;
+            }
+            mask.push(drawn >= PLAY_DRAWN_LEAST);
+          }
+        }
+      }
+    } catch (_err) { mask = null; }
+    if (mask) PLAY_DRAWN_TILES.set(key, mask);       // not loaded yet: asked again next time
+  }
+  return !mask || Boolean(mask[dy * spec[3] + dx]);
+}
+/* GROUND THAT SHOWS IT STANDS IN THE WAY: a wall, its face and its door posts, water and the falls, lava, the dark. */
+const PLAY_SOLID_GROUND = /^(wall|face|out|door|water|sea|lava|none|void|tunnelGlass)/;
+function playSolidSeen(piece) {
+  return PLAY_SOLID_GROUND.test(String(piece || ""));
+}
+/* A LAND WITH WATER ROUND IT: islands, a coast, a lake's shores, the sea floor - the rest end in their own edge. */
+const PLAY_WET_BIOMES = new Set(["seaside", "lakeside", "underwater"]);
+function playWetLand(region) {
+  if (Array.isArray(region.edges) && region.edges.length) return region.edges.includes("sea");
+  return (region.layout || "") === "islands" || PLAY_WET_BIOMES.has(region.biome || "");
+}
+const PLAY_MORE_SEA = { seaDeep: ["#2d6fb0"], seaDeep2: ["#2b6aa9"] };
+Object.assign(PLAY_MORE_GROUND, PLAY_MORE_SEA);
+function playLandReach(x, y, islands) {
+  const big = playNoise(x, y, 41, 22), mid = playNoise(x, y, 45, 9), small = playNoise(x, y, 47, 4);
+  if (islands) return 2 + small * 2 + mid;
+  const cape = Math.max(0, big - 0.36) / 0.64;              // nought where the coast hugs; one at a cape's end
+  return PLAY_COAST_NEAR + cape * cape * (PLAY_COAST_FAR - PLAY_COAST_NEAR) + (mid - 0.5) * 5 + (small - 0.5) * 2;
 }
 
 /* How far each tile of an area is from what is there (a place, a path, a landmark's square) - a step at a time, up to
@@ -972,12 +1280,15 @@ function playLayBlock(index, cx, cy) {
   const ground = new Array(count), under = new Array(count), solid = new Uint8Array(count), kept = new Uint8Array(count);
   const doorway = new Uint8Array(count), none = new Uint8Array(count), owner = new Uint8Array(count);
   const nearest = new Uint8Array(count), light = new Float32Array(count * 7), inside = new Uint8Array(count);
+  const far = new Uint8Array(count), sea = new Uint8Array(count), shore = new Uint8Array(count);   // from every place; the sea; its shore
+  const rim = new Uint8Array(count);           // a dry land's own edge (playEdgeOf)
+  const seen = new Uint8Array(count);          // something drawn there that shows it stands in the way (playSolidSeen)
   const at = (x, y) => (x >= x0 && x < x1 && y >= y0 && y < y1 ? (y - y0) * W + (x - x0) : -1);
   // 1. Whose ground, its patches, its light; beyond the edge, nothing.
   const reach = playReach(index, x0, y0, W);
   for (let y = y0; y < y1; y += 1) {
     for (let x = x0; x < x1; x += 1) {
-      const { a, b, toB } = playWhose(index, x, y);
+      const { a, b, toB, gap } = playWhose(index, x, y);
       const i = at(x, y);
       const mine = playHash(x, y, 7) < toB ? b : a;
       owner[i] = mine;
@@ -997,13 +1308,50 @@ function playLayBlock(index, cx, cy) {
       if (wa[3] > washA[3]) washA.splice(0, 4, ...wa);
       if (wb[3] > washB[3]) washB.splice(0, 4, ...wb);
       for (let k = 0; k < 4; k += 1) light[i * 7 + 3 + k] = mix(washA[k], washB[k]);
-      // LAND ONLY ROUND WHAT IS THERE, its edge wavering; past it, dark - or, round an island, the sea.
-      const d = reach(x, y);
+      // THE LAND'S OWN SHAPE (playLandReach): its coast, the sea past it, the dark past that - a land of the sky or of
+      // space its own void; between two lands not joined, a strait.
+      const d0 = reach(x, y);
       const islands = (regions[a].layout || "") === "islands";
-      const landReach = islands ? 2 + playNoise(x, y, 43, 5) * 2 : 4 + playNoise(x, y, 41, 6) * 6;
-      if (d > landReach) {
-        if (islands && d <= landReach + 7) { ground[i] = playHash(x, y, 5) < 0.5 ? "water" : "water2"; solid[i] = 1; }
-        else { none[i] = 1; ground[i] = under[i] = regions[a].land.void || "none"; solid[i] = 1; }
+      // ITS CHOSEN OUTLINE (playLandShapeOut): its coast where the outline is - land within it, and a little round
+      // what stands past it - else by what stands there.
+      const shapeOut = playLandShapeOut(regions[a], x, y);
+      // (Shaped: its reach two tiles past the outline's own distance - the shore just inside it, the sea or its wild
+      // just past it; what stands past the outline keeps two tiles of ground round it.)
+      const landReach = shapeOut === null ? playLandReach(x, y, islands) : 2;
+      const d = shapeOut === null ? d0 : Math.max(0, Math.min(shapeOut + 2, d0 <= 2 ? d0 : 255));
+      // The strait as wide as noise says, here two tiles each side, there seven - a shore, not a ruled line.
+      const straitHalf = 1.5 + 5.5 * playNoise(x, y, 51, 7);
+      // ONLY BETWEEN THE LANDS (the user, 2026-11-19: "小地图上白框显示这里是黑的" - a strait was laid all along the line
+      // between two lands, out past them both to no end: a dry land's edge woods there, far off the map): past the
+      // lands' reach and their sea, the dark as anywhere.
+      const strait = d - landReach <= PLAY_SEA_MOST && gap / 2 < straitHalf
+        && !index.joined.has(`${Math.min(a, b)},${Math.max(a, b)}`);
+      far[i] = Math.min(255, d);
+      if (d > landReach || strait) {
+        const out = strait ? Math.max(1, Math.min(d - landReach, PLAY_SEA_MOST), straitHalf - gap / 2) : d - landReach;
+        if (regions[a].land.void || out > PLAY_SEA_MOST) {
+          none[i] = 1; ground[i] = under[i] = regions[a].land.void || "none"; solid[i] = 1;
+        } else if (!playWetLand(regions[a])) {
+          // ITS OWN EDGE, NOT THE SEA (the user, 2026-11-19: "我看你现在出来是海岛，好像之前都是海岛"): a land the feeling
+          // made dry - a forest, a snowfield, a desert, a city - runs out in its own wild, not to be walked, then the dark.
+          const edge = playEdgeOf(regions[a], x, y);
+          // ITS GROUND IN PATCHES, NOT TILE BY TILE (the user, 2026-11-19: "为啥这些是黑底的" - asphalt and paving
+          // picked at random each tile, a scatter of dark squares): its first most of it, the next where noise is higher.
+          const patch = playNoise(x, y, 33, 6);
+          ground[i] = under[i] = edge.ground[patch < 0.6 ? 0 : Math.min(edge.ground.length - 1,
+            1 + Math.floor((patch - 0.6) / 0.4 * (edge.ground.length - 1)))];
+          rim[i] = 1;                               // grown thick (claim) - what grows there stands in the way
+        } else {
+          const deep = out > PLAY_SHALLOW;
+          ground[i] = under[i] = deep ? (playHash(x, y, 5) < 0.5 ? "seaDeep" : "seaDeep2") : (playHash(x, y, 5) < 0.5 ? "water" : "water2");
+          solid[i] = 1; sea[i] = 1;
+        }
+      } else if (landReach - d < 1.4 && !islands && playWetLand(regions[a])) {
+        ground[i] = under[i] = PLAY_SHORE[regions[a].biome] || (playHash(x, y, 9) < 0.5 ? "sand" : "sand2");   // the shore
+        shore[i] = 1;
+      } else if (d >= PLAY_WILD_FROM && PLAY_WILD[regions[mine].biome]) {
+        const wild = PLAY_WILD[regions[mine].biome];
+        ground[i] = under[i] = wild.ground[Math.floor(playHash(x, y, 31) * wild.ground.length)];
       }
     }
   }
@@ -1017,7 +1365,7 @@ function playLayBlock(index, cx, cy) {
   const road = (x, y, piece) => {
     const i = at(x, y);
     if (i < 0 || kept[i] === 1 || kept[i] === 3) return;
-    const wet = ground[i].startsWith("water");
+    const wet = ground[i].startsWith("water") || sea[i];
     none[i] = 0;                                    // a road reaches on, into the dark if it must
     put(x, y, wet ? "bridge" : (piece || pathOf(x, y)), false, 2);
   };
@@ -1055,7 +1403,7 @@ function playLayBlock(index, cx, cy) {
         const i = at(x, y);
         if (i < 0) continue;
         const region = regions[one.region], layout = region.layout || "village";
-        road(x, y, layout === "grid" ? region.land.street : layout === "islands" ? "bridge" : null);
+        road(x, y, one.material || (layout === "grid" ? region.land.street : layout === "islands" ? "bridge" : null));
         if (index.doorways.has(`${x},${y}`)) doorway[i] = 1;
       }
     }
@@ -1064,12 +1412,19 @@ function playLayBlock(index, cx, cy) {
   for (const one of rooms) {
     const zone = one.zone;
     const style = PLAY_STYLES[zone.style];
-    const arch = `~${(style && style[0]) || one.region.architecture || "sandstone"}`;
-    const floor = (style && style[1]) || PLAY_FLOORS[zone.kind] || "wood";
+    // ITS OWN MATERIALS (agent/playmade.py; the user, 2026-11-19: "墙壁，地板的style再给不同的素材"): the floor and the
+    // walls its design chose, else its style's, else its kind's.
+    const wallMat = zone.wall_material && typeof PLAY_ROOM_MATERIALS !== "undefined"
+      ? (PLAY_ROOM_MATERIALS.walls || {})[zone.wall_material] || ((play.made && play.made.walls) || {})[zone.wall_material] || null
+      : null;                                                    // built in, else made by the agent (agent/playmade.py)
+    const arch = `~${(wallMat && wallMat.set) || (style && style[0]) || one.region.architecture || "sandstone"}`
+      + (wallMat && wallMat.svg ? `^${zone.wall_material}` : "");      // its own face over the set's (playWallTile)
+    const floor = (zone.floor_material && typeof playFloorPiece === "function" && playFloorPiece(zone.floor_material))
+      || (style && style[1]) || PLAY_FLOORS[zone.kind] || "wood";
     if (one.garden) {
       // AN OPEN PLACE: its edge, its ground; a pool's water two in from its edge; a park's path round it.
       const [fx, fy, fw, fh] = playFloorOf(zone);
-      const ground2 = PLAY_FLOORS[zone.kind] || "grass", edgeOf = PLAY_OUTDOOR[zone.kind] || "flowers";
+      const ground2 = PLAY_FLOORS[zone.kind] || "grass";
       const pool = zone.kind === "pool" && fw >= 7 && fh >= 6;
       const nature = playNatural(zone);
       for (let y = fy - 1; y <= fy + fh; y += 1) {
@@ -1078,12 +1433,22 @@ function playLayBlock(index, cx, cy) {
           const ring = zone.kind === "park" && !edge && (y === fy || y === fy + fh - 1 || x === fx || x === fx + fw - 1);
           const wet = pool && x >= fx + 2 && x < fx + fw - 2 && y >= fy + 2 && y < fy + fh - 2;
           const made = !edge && nature.get(`${x},${y}`);
+          // ITS OWN OUTLINE (agent/playgreat.py shape_has; the user, 2026-11-19: "你的区域可以是圆形的，平行四边形的，不一定是
+          // 长方形"): a great ground, and each open part of it, only where its shape is - the land's own round it.
+          if (zone.shape && !playShapeHas(zone.shape, [fx, fy, fw, fh], x, y)) continue;
+          // NO RING ROUND IT (the user, 2026-11-19: "这个开放space, 没有必要旁边也有一个圈的地块"; "所有开放space都是，
+          // 不需要地块"; "不需要周围一圈的地块"; then "这块地也是要铺满的，你现在看起来这个路像没走到这个空地一样（差一格）"):
+          // its own ground out to its edge - the road, which comes to that edge, running onto it.
           if (zone.plot) {                                     // a project's ground: its roads kept across it
             const i0 = at(x, y);
             if (i0 >= 0 && kept[i0] === 2) continue;
           }
-          if (made) put(x, y, made[0], made[1], 1);
-          else put(x, y, wet ? (playHash(x, y, 5) < 0.5 ? "water" : "water2") : edge ? edgeOf : ring ? "dirt" : ground2, wet, 1);
+          if (made) {
+            put(x, y, made[0], made[1], 1);
+            const i1 = at(x, y);
+            if (made[1] && i1 >= 0) seen[i1] = 1;               // a mountain's rock, under a coaster's track: its own
+          }
+          else put(x, y, wet ? (playHash(x, y, 5) < 0.5 ? "water" : "water2") : ring ? "dirt" : ground2, wet, 1);
           const i = at(x, y);
           if (i >= 0) none[i] = 0;
         }
@@ -1096,7 +1461,6 @@ function playLayBlock(index, cx, cy) {
     // pillars, every few tiles, and its back eaves; a hall open in front; round a court, its middle an open yard.
     const form = zone.form || "closed";
     const pavilion = form === "pavilion", openFront = form !== "closed";
-    const pillarAt = (x, y) => (x === zx0 || x === zx1 || (x - zx0) % 4 === 0) && (y === zy0 + 3 || y === yb || (y - zy0) % 4 === 0);
     const court = form === "u_court" ? [zx0 + Math.max(3, Math.floor(zone.w / 4)), zy0 + 3 + Math.max(2, Math.floor(zone.h / 3)),
                                         zx1 - Math.max(3, Math.floor(zone.w / 4)), yb + 2] : null;
     const yard = (x, y) => court && x > court[0] && x < court[2] && y >= court[1] && y <= court[3];
@@ -1114,14 +1478,18 @@ function playLayBlock(index, cx, cy) {
       }
       for (let y = zy0 + 3; y < yb; y += 1) {
         if (yard(x, y)) { put(x, y, playHash(x, y, 37) < 0.15 ? "flowers" : "grass", false, 1); continue; }
-        const wall = end && (!pavilion || pillarAt(x, y));
+        // AN OPEN SIDE ALL OPEN (the user, 2026-11-19: "半开放设计，不存在门上两个柱子的情况，一个地方开了就是这个边全空"):
+        // a pavilion's sides only its corner posts.
+        // NO POSTS (the user, 2026-11-19: "旁边4个柱子块既然是开放空间，就不用那4个突兀的块"): a pavilion open all round,
+        // its sides nothing standing - only its eaves at the back.
+        const wall = end && !pavilion;
         put(x, y, wall ? "wallSide" + arch : floor, Boolean(wall), 1);
         const i = at(x, y);
         if (i >= 0 && !wall) inside[i] = 1;
       }
-      if (openFront) {                                         // open in front: its floor out to the step, pillars along it
+      if (openFront) {                                         // open in front: its floor out to the step, the edge all open
         for (let y = yb; y <= yb + 2; y += 1) {
-          const pillar = y === yb && (end || (pavilion || form === "open_front") && (x - zx0) % 4 === 0);
+          const pillar = y === yb && Boolean(end) && !pavilion;  // a hall's side walls end at a corner; a pavilion none
           if (yard(x, y)) put(x, y, "grass", false, 1);
           else put(x, y, pillar ? "wallSide" + arch : floor, pillar, 1);
           const i = at(x, y);
@@ -1137,15 +1505,37 @@ function playLayBlock(index, cx, cy) {
       }
       for (let y = zy0; y <= yb + 2; y += 1) { const i = at(x, y); if (i >= 0) none[i] = 0; }
     }
+    const outlined = Boolean(zone.shape && zone.shape.kind && zone.shape.kind !== "rect");
+    if (outlined) {                                           // any room, a great ground's hall too
+      // ITS OWN OUTLINE (playShapedRoom): within its box its outline's floor, its edge a wall; past the outline the
+      // land's own ground; the box's walls only where the outline meets them.
+      const shaped = playShapedRoom(zone, door), [fx, fy, fw, fh] = shaped.box;
+      const has = (x, y) => shaped.inside.has(`${x},${y}`);
+      const outside = (x, y) => { const i = at(x, y); if (i >= 0) { ground[i] = under[i]; solid[i] = 0; inside[i] = 0; } };
+      for (let y = fy; y < fy + fh; y += 1) for (let x = fx; x < fx + fw; x += 1) {
+        const key = `${x},${y}`, i = at(x, y);
+        if (i < 0) continue;
+        if (shaped.rim.has(key)) { ground[i] = "wallT" + arch; solid[i] = 1; inside[i] = 1; } else if (!has(x, y)) outside(x, y);
+      }
+      for (let x = zx0; x <= zx1; x += 1) {                     // the walls at the top and the bottom
+        const col = Math.min(fx + fw - 1, Math.max(fx, x));
+        if (!has(col, fy)) for (let y = zy0; y < fy; y += 1) outside(x, y);
+        if (!has(col, fy + fh - 1)) for (let y = yb; y <= yb + 2; y += 1) outside(x, y);
+      }
+      for (let y = fy; y < fy + fh; y += 1) {                   // and at the sides
+        if (!has(fx, y)) outside(zx0, y);
+        if (!has(fx + fw - 1, y)) outside(zx1, y);
+      }
+    }
     // The walls inside a building of more than a cell, in its material.
-    const tint = PLAY_STYLE_WALLS[zone.style];
+    const tint = wallMat ? wallMat.tint : PLAY_STYLE_WALLS[zone.style];      // a material's face its own colour
     if (tint) {
       for (let y = zy0; y <= yb + 2; y += 1) for (let x = zx0; x <= zx1; x += 1) {
         const i = at(x, y);
         if (i >= 0 && solid[i] && !inside[i]) { const k = i * 7; light[k + 3] = tint[0]; light[k + 4] = tint[1]; light[k + 5] = tint[2]; light[k + 6] = tint[3]; }
       }
     }
-    const insideWalls = form === "pavilion" ? new Set() : playInnerWalls(zone);
+    const insideWalls = form === "pavilion" || outlined ? new Set() : playInnerWalls(zone);
     for (const key of insideWalls) {
       const [wx, wy] = key.split(",").map(Number);
       const i = at(wx, wy);
@@ -1154,11 +1544,45 @@ function playLayBlock(index, cx, cy) {
       if (i >= 0) { ground[i] = (across ? "wallT" : "wallSide") + arch; solid[i] = 1; inside[i] = 1; }
     }
   }
+  // ROOMS OF ONE BUILDING (agent/playworld.py _join_halls; the user, 2026-11-19: "真正连通，允许有的连通有的不，像一个个
+  // 房间"): a door through the wall two halls share, two tall, in the floor of the room it opens from.
+  for (const one of rooms) {
+    const zone = one.zone, style = PLAY_STYLES[zone.style];
+    const floor = (style && style[1]) || PLAY_FLOORS[zone.kind] || "wood";
+    for (const way of zone.inner_doors || []) {
+      for (let y = way.y; y < way.y + 2; y += 1) {
+        put(way.x, y, floor, false, 1);
+        const i = at(way.x, y);
+        if (i >= 0) inside[i] = 1;
+      }
+    }
+  }
   // The things in the rooms stand in the way (the user: "agent家居什么没有碰撞阻拦") - all but what hangs or lies flat.
   for (const item of index.items) {
-    if (PLAY_WALL_KINDS.has(item.kind) || PLAY_UNDER_KINDS.has(item.kind)) continue;
-    const [iw, ih] = PLAY_SIZES[item.kind] || [1, 1];
-    for (let dy = 0; dy < ih; dy += 1) for (let dx = 0; dx < iw; dx += 1) { const i = at(item.x + dx, item.y + dy); if (i >= 0) solid[i] = 1; }
+    if (PLAY_WALL_KINDS.has(item.kind) || PLAY_UNDER_KINDS.has(item.kind) || item.on || item.hang) continue;
+    if (item.kind === "piece") {
+      // A GREAT PIECE stands in the way on its ground - but for its way in, two tiles at the middle of its foot.
+      // its way in where its picture put it (agent/playpieces.py read_svg "entrance"), else the middle of its foot
+      const way = (item.spec && item.spec.entrance) || [Math.floor((item.w - 1) / 2), Math.floor((item.w - 1) / 2) + 1];
+      for (let dy = 0; dy < item.h; dy += 1) for (let dx = 0; dx < item.w; dx += 1) {
+        const x = item.x + dx, y = item.y + dy;
+        if (dy === item.h - 1 && dx >= way[0] && dx <= way[way.length - 1]) continue;
+        const i = at(x, y);
+        if (i >= 0) { solid[i] = 1; seen[i] = 1; }
+      }
+      continue;
+    }
+    const [iw, ih] = playItemSize(item);                 // a thing made large stands in the way as large
+    const items = typeof PLAY_ITEMS !== "undefined" ? PLAY_ITEMS : {};
+    const plain = typeof playItemScale !== "function" || playItemScale(item) === 1;
+    const look = plain && !item.picture_url && !item.picture && !item.pixels
+      ? (Array.isArray(items[item.kind]) ? items[item.kind] : Array.isArray(PLAY_SCENERY[item.kind]) ? PLAY_SCENERY[item.kind] : null) : null;
+    for (let dy = 0; dy < ih; dy += 1) {
+      for (let dx = 0; dx < iw; dx += 1) {
+        const i = at(item.x + dx, item.y + dy);
+        if (i >= 0 && (!look || playTileDrawn(look, dx, dy))) { solid[i] = 1; seen[i] = 1; }
+      }
+    }
   }
   // 6. The landmarks, on their paved squares.
   const deco = [];
@@ -1167,7 +1591,12 @@ function playLayBlock(index, cx, cy) {
     if (!spec) return;
     const underfoot = PLAY_UNDERFOOT.has(name);
     for (let dy = 0; dy < spec[4]; dy += 1) {
-      for (let dx = 0; dx < spec[3]; dx += 1) { const i = at(x + dx, y + dy); if (i >= 0) { if (!underfoot) solid[i] = 1; kept[i] = kept[i] || 4; } }
+      for (let dx = 0; dx < spec[3]; dx += 1) {
+        const i = at(x + dx, y + dy);
+        if (i < 0) continue;
+        if (!underfoot && playTileDrawn(spec, dx, dy)) { solid[i] = 1; seen[i] = 1; }
+        kept[i] = kept[i] || 4;
+      }
     }
     const sound = PLAY_SCENERY_SOUND[name] || (PLAY_BIRD_TREES.has(name) && playHash(x, y, 29) < 0.3 ? "birds" : "");
     deco.push({ spec, x, y, region, name, sound });
@@ -1185,6 +1614,13 @@ function playLayBlock(index, cx, cy) {
   const claim = (x, y) => {
     const i = at(x, y);
     if (i < 0 || kept[i] || solid[i] || none[i]) return null;
+    if (rim[i]) {
+      // ITS EDGE GROWN SHUT (the user, 2026-11-19: "比如是个原始森林，你那些挡路的格子可以全部种上挡路的植物之类（根据不同的
+      // 场景，挡路元素不一样）"): every tile of it one of what stands there in its scene - trees close in a primeval
+      // forest, pines and rocks in the snow, cacti in the sand - seen, and not walked through.
+      const name = playStandingOf(regions[owner[i]], x, y);
+      return name ? { name, region: regions[owner[i]], strength: playHash(x, y, 61), underfoot: false, rim: true } : null;
+    }
     if (near(x, y, (j) => kept[j] === 1 || doorway[j] || kept[j] === 3 || (solid[j] && !ground[j].startsWith("water")))) return null;
     const region = regions[owner[i]];
     // A YARD ROUND EVERY BUILDING (the user: the world as rich as the life): two or three tiles out, what suits the place.
@@ -1202,6 +1638,13 @@ function playLayBlock(index, cx, cy) {
       // A street lamp by the way now and then (the user: "夜晚周围暗，但是有路灯"), else the theme's.
       if (playHash(x, y, 83) < 0.045) name = "streetLamp";
       else if (playHash(x, y, 13) < 0.09) name = props[Math.floor(playHash(x, y, 17) * props.length)];
+    } else if (shore[i]) {
+      if (playHash(x, y, 19) < 0.03) name = "seaRock";                    // a rock now and then on the shore
+    } else if (far[i] >= PLAY_WILD_FROM) {
+      // THE WILD, far from every place: a mountain's rock and pines, or a forest close - the further, the closer.
+      const wild = PLAY_WILD[region.biome];
+      const grows = wild ? wild.grows : region.land.grows, thick = wild ? wild.thick : region.land.thick * 1.5 * Math.min(4, 1 + (far[i] - PLAY_WILD_FROM + 1) * 0.6);
+      if (playHash(x, y, 19) < thick) name = grows[Math.floor(playHash(x, y, 23) * grows.length)];
     } else if (playHash(x, y, 19) < region.land.thick * 1.5) {
       name = region.land.grows[Math.floor(playHash(x, y, 23) * region.land.grows.length)];
     }
@@ -1210,15 +1653,16 @@ function playLayBlock(index, cx, cy) {
     if (!spec || spec[3] !== 1 || spec[4] > 2) return null;
     return { name, region, strength: playHash(x, y, 61), underfoot: PLAY_UNDERFOOT.has(name) };
   };
+  const animals = [];
   for (let y = y0 + 2; y < y1 - 2; y += 1) {
     for (let x = x0 + 2; x < x1 - 2; x += 1) {
       const mine = claim(x, y);
       if (!mine) continue;
-      if (!mine.underfoot) {
+      if (!mine.underfoot && !mine.rim) {          // an edge grown shut: side by side, every tile
         let beaten = false;
         // A DENSE LAND (the primeval forest - the user: "另外还有原始森林type"): only a neighbour beside it, not one
         // across its corner, keeps a tree from growing - the trees close, corner to corner.
-        const dense = mine.region.land.dense;
+        const dense = mine.region.land.dense || mine.rim;
         for (let dy = -1; dy <= 1 && !beaten; dy += 1) {
           for (let dx = -1; dx <= 1; dx += 1) {
             if (!dx && !dy) continue;
@@ -1229,14 +1673,45 @@ function playLayBlock(index, cx, cy) {
         }
         if (beaten) continue;
       }
+      // AN ANIMAL OF THE FIELDS LIVES (the user, 2026-11-18: "这些你可以把它们变成动的画"): not a still picture - one that
+      // walks about where it was laid (play-act.js playResidents).
+      if (playAlive(mine.name)) { animals.push({ name: mine.name, x, y }); continue; }
       deco.push({ spec: PLAY_SCENERY[mine.name], x, y, region: mine.region, name: mine.name, tall: PLAY_SCENERY[mine.name][4] > 1,
                   sound: PLAY_SCENERY_SOUND[mine.name] || (PLAY_BIRD_TREES.has(mine.name) && playHash(x, y, 29) < 0.3 ? "birds" : "") });
     }
   }
+  // NO WALL UNSEEN (the user, 2026-11-19: "这里好像有个隐形的墙，走不过去"): the edge's own ground is walked like any; only
+  // what grows on it stands in the way (above), and the dark past it.
+  if (index.closed) {                       // the house alone: every tile past its walls dark, nothing growing there
+    for (let y = y0; y < y1; y += 1) {
+      for (let x = x0; x < x1; x += 1) {
+        const i = at(x, y);
+        const house = index.zones.some((z) => x >= z.rect[0] && x < z.rect[2] && y >= z.rect[1]
+                                             && y < z.rect[3] - (z.garden ? 0 : 2));
+        if (!house) { none[i] = 1; solid[i] = 1; ground[i] = under[i] = "none"; }
+      }
+    }
+    deco.length = 0;
+    animals.length = 0;
+  }
   for (const one of deco) {                 // what grows stands in the way too, unless stepped over
     if (PLAY_UNDERFOOT.has(one.name)) continue;
     const i = at(one.x, one.y);
-    if (i >= 0) solid[i] = 1;
+    if (i >= 0) { solid[i] = 1; seen[i] = 1; }
+  }
+  // NO WALL UNSEEN, EVER (the user, 2026-11-19: "这里好像有个隐形的墙，走不过去"; "你要防止未来出现这个情况呀"): a tile
+  // stands in the way only where it shows it - a thing or a plant drawn on it, or ground that is a wall, water, lava or
+  // the dark. Whatever else made it solid, it is walked.
+  // WHERE IT IS MEANT TO BLOCK, SOMETHING THAT BLOCKS (the user, 2026-11-19: "你设计该挡路的地方，你就种上挡路的东西"):
+  // planted there, of its scene's own; only where nothing can stand is it opened.
+  for (let i = 0; i < count; i += 1) {
+    if (!solid[i] || seen[i] || playSolidSeen(ground[i])) continue;
+    const x = x0 + (i % W), y = y0 + Math.floor(i / W), region = regions[owner[i]];
+    const name = region && playStandingOf(region, x, y);
+    if (name) {
+      deco.push({ spec: PLAY_SCENERY[name], x, y, region, name, tall: PLAY_SCENERY[name][4] > 1, sound: "" });
+      seen[i] = 1;
+    } else solid[i] = 0;
   }
   // 8. The land fades into the dark near the edge: the nearer, the darker.
   for (let y = y0 + 3; y < y1 - 3; y += 1) {
@@ -1257,7 +1732,11 @@ function playLayBlock(index, cx, cy) {
   // Each bush by where it stands, for a step to find it.
   const bushes = new Map();
   for (const one of deco) if (PLAY_RUSTLE.has(one.name)) { one.rustle = true; bushes.set(`${one.x},${one.y}`, one); }
-  return { x0, y0, W, cx, cy, ground, under, solid, none, owner, nearest, light, inside, deco, bushes };
+  // FEW OF THEM (the user, 2026-11-18: "这些动物是有限制的（比如多少区域内不超过2个）"): of a block's own (those standing
+  // in it, not its margin), PLAY_ANIMALS_A_BLOCK at most - the same ones each time.
+  const own = animals.filter((one) => Math.floor(one.x / PLAY_CHUNK) === cx && Math.floor(one.y / PLAY_CHUNK) === cy)
+    .sort((a, b) => playHash(a.x, a.y, 41) - playHash(b.x, b.y, 41)).slice(0, PLAY_ANIMALS_A_BLOCK);
+  return { x0, y0, W, cx, cy, ground, under, solid, none, owner, nearest, light, inside, deco, bushes, animals: own };
 }
 
 /* A block, laid when first wanted; the longest unwanted let go of. */
@@ -1281,7 +1760,8 @@ function playCell(map, x, y) {
 /* A tile's picture: a ground piece, or a wall piece in its region's material ("wallT~stone"); a piece that is only a
    colour (the city's asphalt - every tile of the set has a line painted on it) is ["#rrggbb"]. */
 function playPieceSpec(piece) {
-  const [name, arch] = piece.split("~");
+  const [name, archFace] = piece.split("~");
+  const arch = archFace && archFace.split("^")[0];        // "^ice": its material's face (play.js playWallTile)
   const spec = PLAY_GROUND[name] || PLAY_MORE_GROUND[name];
   if (!spec || !arch || !PLAY_WALL_PIECES.has(name)) return spec;
   return [spec[0], spec[1] + (PLAY_ARCH_SHIFT[arch] || 0), spec[2]];

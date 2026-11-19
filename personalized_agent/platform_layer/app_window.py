@@ -617,6 +617,10 @@ def drag_left_edge_titled(titles: set, narrowest: int, widest: int, let_go: Any)
             dpi = 96
         right, top, bottom, last = rect.right, rect.top, rect.bottom, rect.left
         least, most = round(narrowest * dpi / 96), round(widest * dpi / 96)
+        try:                                               # as wide as its screen at most: never past its left edge
+            most = min(most, right - _monitor_box(handle)[0])
+        except Exception:                                  # pragma: no cover - its screen not known
+            pass
         # The button pressed, as the hand presses it: the right one where the buttons are swapped.
         button = 0x02 if user32.GetSystemMetrics(23) else 0x01
         point = wintypes.POINT()

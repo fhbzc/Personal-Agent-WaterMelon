@@ -36,6 +36,12 @@ function playActInView(x, y, pad = 3) {
   const sx = x * size - play.camera.x, sy = y * size - play.camera.y;
   return sx > -pad * size && sy > -pad * size && sx < play.canvas.width + pad * size && sy < play.canvas.height + pad * size;
 }
+/* What is in sight, in tiles - left, top, right, bottom - and `pad` tiles round it. */
+function playActView(pad = 3) {
+  const size = PLAY_TILE * play.scale;
+  return [play.camera.x / size - pad, play.camera.y / size - pad,
+          (play.camera.x + play.canvas.width) / size + pad, (play.camera.y + play.canvas.height) / size + pad];
+}
 function playActScreen(x, y) {
   const size = PLAY_TILE * play.scale;
   return [x * size - play.camera.x, y * size - play.camera.y];
@@ -67,15 +73,34 @@ function playPortals() {
     add(first.out[0] + 2, first.out[1], playWords("Start of your story"), first.region);
     if (last !== first) add(last.out[0] + 2, last.out[1], last.zone.name || last.zone.kind, last.region);
   }
+  // GATES AS DESIGNED (agent/playmuse.py read_transport): one at each end, in the look it was given.
+  // NO PORTALS (the user, 2026-11-19: "传送门取消，必须是飞机轮船，宇宙飞船，火车，地铁，出租车，公交车，直升机之类"): every way a
+  // vehicle (playLines); only another area, a world drawn apart, is flown to - from its airport.
+  spots.length = 0;
+  const design = play.world && play.world.transport;
+  if (false && design && Array.isArray(design.portals)) {
+    spots.length = 0;
+    for (const one of design.portals) {
+      for (const id of [one.from, one.to]) {
+        const n = map.regions.findIndex((region) => region.id === id);
+        if (n < 0) continue;
+        const region = map.regions[n], before = spots.length;
+        add(map.hearts[n][0] + 3, map.hearts[n][1], playWords(region.name || "") || region.biome, region);
+        if (spots.length > before) spots[spots.length - 1].look = one.look || spots[spots.length - 1].look;
+      }
+    }
+    map.portals = spots.length >= 2 ? spots : [];
+  }
   const xs = map.hearts.map((one) => one[0]), ys = map.hearts.map((one) => one[1]);
   const far = Math.max(...xs) - Math.min(...xs) > PLAY_PORTAL_FAR || Math.max(...ys) - Math.min(...ys) > PLAY_PORTAL_FAR;
   const apart = map.regions.some((one) => one.apart);
-  map.portals = spots.length >= 2 && (far || apart) ? spots : [];
+  map.portals = [];
+  void far; void apart;
   // AN AREA'S GATE (the user: "一个区域必须传送到下一个区域"): by its first land's heart, to every other area.
   const areas = playAreas(play.world);
   if (areas.length > 1 && map.hearts.length) {
     const at = playActSpotNear(map.hearts[0][0] - 3, map.hearts[0][1] + 1);
-    if (at) map.portals.push({ x: at[0], y: at[1], name: playWords("Gate to other areas"), gate: true, look: "arch" });
+    if (at) map.portals.push({ x: at[0], y: at[1], name: playWords("Airport to other areas"), gate: true, look: "airport" });
   }
   return map.portals;
 }
@@ -84,7 +109,14 @@ function playPortalDraw(one, size, now) {
   const [sx, sy] = playActScreen(one.x + 0.5, one.y + 0.9);
   const t = now / 1000;
   ctx.save();
-  if (one.look === "light") {
+  if (one.look === "airport") {
+    // AN AIRPORT, NOT A GATE: its pad, a plane waiting on it.
+    for (const [name, w, h, dy] of [["helipad", 2, 2, 0], ["airplane", 2.2, 2.2, -0.4]]) {
+      const spec = PLAY_SCENERY[name], sheet = spec && play.sheets[spec[0]];
+      if (sheet) ctx.drawImage(sheet, spec[1] * 17, spec[2] * 17, spec[3] * 17 - 1, spec[4] * 17 - 1,
+                               sx - size * w / 2, sy - size * (h - 0.2) + dy * size, size * w, size * h);
+    }
+  } else if (one.look === "light") {
     // A column of light, as on a maple island: an oval glow standing up, sparks rising through it.
     const g = ctx.createRadialGradient(sx, sy - size * 0.9, size * 0.1, sx, sy - size * 0.9, size * 1.1);
     g.addColorStop(0, "rgba(255, 255, 220, 0.95)"); g.addColorStop(0.45, "rgba(140, 220, 255, 0.55)"); g.addColorStop(1, "rgba(80, 160, 255, 0)");
@@ -152,9 +184,32 @@ function playPortalDraw(one, size, now) {
 
 /* -- LINES TO RIDE ---------------------------------------------------------------------------------------------------- */
 const PLAY_WATERY = new Set(["seaside", "lakeside", "underwater"]);
-const PLAY_LINE_LOOK = { train: "trainStation", ferry: "pier", airship: "skyDock", plane: "helipad" };
-const PLAY_LINE_SPEED = { train: 9, ferry: 5, airship: 6, plane: 22 };      // tiles a second, ridden
-const PLAY_LINE_WORDS = { train: "Train", ferry: "Ferry", airship: "Airship", plane: "Plane" };
+const PLAY_LINE_LOOK = { train: "trainStation", ferry: "pier", airship: "skyDock", plane: "helipad", road: "signpost" };
+const PLAY_LINE_SPEED = { train: 9, ferry: 5, airship: 6, plane: 22, road: 7 };      // tiles a second, ridden
+const PLAY_LINE_WORDS = { train: "Train", ferry: "Ferry", airship: "Airship", plane: "Plane", road: "Bus" };
+/* EACH LAND ITS OWN VEHICLES (agent/playmuse.py VEHICLES): what each is laid as (a train on its rails, a boat on the
+   water, a ship in the sky, a plane above), and drawn as - its engine and its cars, or its body. */
+const PLAY_VEHICLES = {
+  train: { kind: "train", runs: "rails", engine: "trainEngine", car: "trainCarriage", words: "Train" },
+  tram: { kind: "train", runs: "rails", engine: "trainEngine", car: "trainCarriage", words: "Tram" },
+  sleigh: { kind: "train", runs: "rails", engine: "reindeer", car: "sleigh", words: "Sleigh" },
+  caravan: { kind: "train", runs: "rails", engine: "camel", car: "camel", words: "Caravan" },
+  coaster: { kind: "train", runs: "rails", engine: "coasterCar", car: "coasterCar", words: "Coaster" },
+  mine_cart: { kind: "train", runs: "rails", engine: "coasterCar", car: "crate", words: "Mine cart" },
+  ferry: { kind: "ferry", runs: "water", body: "ferry", words: "Ferry" },
+  sailboat: { kind: "ferry", runs: "water", body: "ship", words: "Sailboat" },
+  airship: { kind: "airship", runs: "sky", words: "Airship" },
+  plane: { kind: "plane", runs: "air", words: "Plane" },
+  metro: { kind: "train", runs: "rails", engine: "trainCarriage", car: "trainCarriage", words: "Metro", tint: "hue-rotate(170deg) saturate(1.3)" },
+  bus: { kind: "road", runs: "road", body: "bus", words: "Bus" },
+  taxi: { kind: "road", runs: "road", body: "taxi", words: "Taxi" },
+  helicopter: { kind: "plane", runs: "air", body: "helicopter", words: "Helicopter" },
+  spaceship: { kind: "plane", runs: "air", body: "spaceship", words: "Spaceship" },
+};
+/* A line's own name for itself: its vehicle's words, or its kind's. */
+function playLineWords(line) {
+  return (PLAY_VEHICLES[line.look] || {}).words || PLAY_LINE_WORDS[line.kind];
+}
 function playLines() {
   const map = play.map;
   if (!map) return [];
@@ -163,31 +218,64 @@ function playLines() {
   const lands = map.regions.map((region, n) => ({ region, n, heart: map.hearts[n] }))
     .filter((one) => !one.region.apart && (map.zones.some((z) => z.region === one.region) || map.landmarks.some((l) => l.region === one.region)));
   const stop = (land, kind) => {
-    const off = { train: [-5, 1], ferry: [0, 4], airship: [5, -2], plane: [-6, -4] }[kind];
+    const off = { train: [-5, 1], ferry: [0, 4], airship: [5, -2], plane: [-6, -4], road: [4, 3] }[kind] || [0, 3];
     const at = playActSpotNear(land.heart[0] + off[0], land.heart[1] + off[1]);
     return at && { x: at[0], y: at[1], name: playWords(land.region.name || "") || land.region.biome, region: land.region };
   };
-  // The train: round the mainland's lands, by their angle about the middle - a loop that turns for ever.
-  const ground = lands.filter((one) => !["skycity", "underwater", "space"].includes(one.region.biome));
+  // THE WAYS AS DESIGNED (agent/playmuse.py read_transport; the user, 2026-11-19: "交通工具有一层专门的设计 ... 交通
+  // 工具要符合场景"): each line its vehicle, its stops by what it runs on - a station, a landing on the shore, a dock in
+  // the sky - a ring where it was made one. Without a design, the lines as before.
+  const design = play.world.transport;
+  const designed = Boolean(design && Array.isArray(design.lines));
+  for (const one of designed ? design.lines : []) {
+    const look = PLAY_VEHICLES[one.vehicle] || PLAY_VEHICLES.train;
+    const mine = (one.stops || []).map((id) => lands.find((l) => l.region.id === id)).filter(Boolean);
+    const stops = mine.map((l) => (look.runs === "water" ? playShoreNear(l.heart[0], l.heart[1], l.region)
+      : look.runs === "sky" ? playSkyNear(l.heart[0], l.heart[1], l.region, 1) : stop(l, look.kind))).filter(Boolean);
+    if (stops.length >= 2) lines.push({ kind: look.kind, look: one.vehicle, name: one.name || "", stops, loop: Boolean(one.ring) && stops.length >= 3 });
+  }
+  // A PROJECT'S FAR PLACES (agent/playmuse.py local_lines; the user, 2026-11-19: "project内相隔超过一段距离一定有一个交通
+  // 工具"): its line through them, a stop by each one's door.
+  for (const one of (design && design.local) || []) {
+    const look = PLAY_VEHICLES[one.vehicle] || PLAY_VEHICLES.bus;
+    const stops = (one.places || []).map((id) => map.zones.find((z) => z.zone.id === id)).filter(Boolean).map((z) => {
+      const at = look.runs === "water" ? null : playActSpotNear(z.out[0] + 2, z.out[1] + 1);
+      return at && { x: at[0], y: at[1], name: z.zone.name || z.zone.kind, region: z.region };
+    }).filter(Boolean);
+    if (stops.length >= 2) lines.push({ kind: look.kind, look: one.vehicle, name: "", stops, loop: false, local: true });
+  }
+  if (!designed) {
+  // THE COMMUTE (the user, 2026-11-18: "如果是regular rotate, 就会有通勤公交车，火车之类"): a train between two lands whose
+  // tasks shared many days (agent/playworld.py _lay_regions) - there and back. Without any, a loop round the lands.
+  const commutes = (play.world.commutes || []).map((one) => [lands.find((l) => l.region.id === one.from), lands.find((l) => l.region.id === one.to)])
+    .filter(([a, b]) => a && b);
+  for (const [a, b] of commutes) {
+    const stops = [stop(a, "train"), stop(b, "train")].filter(Boolean);
+    if (stops.length === 2) lines.push({ kind: "train", stops, loop: false, commute: true });
+  }
+  const ground = commutes.length ? [] : lands.filter((one) => !["skycity", "underwater", "space"].includes(one.region.biome));
   if (ground.length >= 2) {
     const cx = ground.reduce((s, one) => s + one.heart[0], 0) / ground.length, cy = ground.reduce((s, one) => s + one.heart[1], 0) / ground.length;
     ground.sort((a, b) => Math.atan2(a.heart[1] - cy, a.heart[0] - cx) - Math.atan2(b.heart[1] - cy, b.heart[0] - cx));
     const stops = ground.map((one) => stop(one, "train")).filter(Boolean);
     if (stops.length >= 2) lines.push({ kind: "train", stops, loop: stops.length >= 3 });
   }
-  // The ferry: between the lands by the water.
+  // The ferry: between the lands by the water - ON THE WATER (the user, 2026-11-18: "你现在怎么轮船在路上开"): each stop
+  // a landing on the shore with the water beside it; a land joined to the last by no water is left out, and with
+  // fewer than two there is no ferry.
   const wet = lands.filter((one) => PLAY_WATERY.has(one.region.biome) || one.region.layout === "islands");
   if (wet.length >= 2) {
-    const stops = wet.map((one) => stop(one, "ferry")).filter(Boolean);
+    const stops = wet.map((one) => playShoreNear(one.heart[0], one.heart[1], one.region)).filter(Boolean);
     if (stops.length >= 2) lines.push({ kind: "ferry", stops, loop: false });
   }
-  // The airship: up to each city in the sky, from the land nearest it.
-  for (const sky of lands.filter((one) => one.region.biome === "skycity")) {
-    const from = lands.filter((one) => one !== sky).sort((a, b) => Math.hypot(a.heart[0] - sky.heart[0], a.heart[1] - sky.heart[1])
-      - Math.hypot(b.heart[0] - sky.heart[0], b.heart[1] - sky.heart[1]))[0];
-    const stops = [from && stop(from, "airship"), stop(sky, "airship")].filter(Boolean);
-    if (stops.length === 2) lines.push({ kind: "airship", stops, loop: false });
-  }
+  // THE AIRSHIP IN THE SKY ONLY (the user, 2026-11-18: "你每个交通工具要有能运动的地方，比如轮船只能在水面，天空之船只能在
+  // 云端"): its landings on the cloud edge of each city in the sky - one on each side of it - and its way over the open
+  // sky between them; with fewer than two, or no sky between, no airship. (The ferry keeps to the water, the train to
+  // its rails; the plane flies above all.)
+  const skies = lands.filter((one) => one.region.biome === "skycity");
+  const docks = skies.flatMap((one) => [-1, 1].map((side) => playSkyNear(one.heart[0], one.heart[1], one.region, side))).filter(Boolean)
+    .filter((one, n, all) => all.findIndex((o) => Math.hypot(o.x - one.x, o.y - one.y) < 6) === n);
+  if (docks.length >= 2) lines.push({ kind: "airship", stops: docks, loop: false });
   // The plane: from where it began to the farthest land, when far.
   if (lands.length >= 2) {
     const first = lands[0];
@@ -198,40 +286,233 @@ function playLines() {
       if (stops.length === 2) lines.push({ kind: "plane", stops, loop: false });
     }
   }
+  }
   // Each line's way: from stop to stop (round to the first again, on a loop), and how long it is. THE TRAIN'S ON THE
   // GROUND (the user, 2026-11-17: "火车轨道 ... 从房子和地面上方直接跨过去，看着比较粗糙"): round the buildings, by the way
   // the roads are found; over water and the dark between lands, on a viaduct.
-  for (const line of lines) {
+  for (const line of lines.slice()) {
     const ends = [...line.stops, ...(line.loop ? [line.stops[0]] : [])];
-    let pts = ends.map((one) => [one.x + 0.5, one.y + 0.5]);
-    if (line.kind === "train" && map.blocked) {
-      pts = [];
-      for (let i = 1; i < ends.length; i += 1) {
-        let route = [];
-        try { route = playRoute(map.blocked, [ends[i - 1].x, ends[i - 1].y], [ends[i].x, ends[i].y], 0, 211 + i, new Map()) || []; } catch (_err) { route = []; }
-        const leg = route.length ? route.map(([x, y]) => [x + 0.5, y + 0.5]) : [[ends[i - 1].x + 0.5, ends[i - 1].y + 0.5], [ends[i].x + 0.5, ends[i].y + 0.5]];
-        pts.push(...(pts.length ? leg.slice(1) : leg));
+    const afloat = line.kind === "ferry" || line.kind === "airship";       // on the water, in the sky: its own way only
+    const at = (one) => (afloat ? [one.wx, one.wy] : [one.x, one.y]);
+    const ok = line.kind === "ferry" ? (x, y) => playIsWater(x, y) : line.kind === "airship" ? (x, y) => playIsSky(x, y)
+      : (line.kind === "train" || line.kind === "road") && map.blocked ? (x, y) => !map.blocked.has(`${x},${y}`) : null;
+    const pts = [], starts = [];
+    for (let i = 1; i < ends.length; i += 1) {
+      const a = at(ends[i - 1]), b = at(ends[i]);
+      let route = null;
+      if (afloat) route = playWaterRoute(a, b, ok);
+      else if (ok) { try { route = playRoute(map.blocked, a, b, 0, 211 + i, new Map()); } catch (_err) { route = null; } }
+      let leg = route && route.length ? route.map(([x, y]) => [x + 0.5, y + 0.5]) : null;
+      if (!leg && afloat) { line.none = true; break; }       // no water, or no sky, between: none
+      leg = leg || [[a[0] + 0.5, a[1] + 0.5], [b[0] + 0.5, b[1] + 0.5]];
+      leg = ok ? playPulled(leg, ok) : leg;
+      pts.push(...(pts.length ? leg.slice(1) : leg));
+    }
+    if (line.none || pts.length < 2) { lines.splice(lines.indexOf(line), 1); continue; }
+    // Rounded as one - where its legs meet at a stop too - and each stop then found along it, in order.
+    if (ok) pts.splice(0, pts.length, ...playRounded(pts, ok));
+    let from = 0;
+    for (const one of ends) {
+      const [sx, sy] = at(one).map((v) => v + 0.5);
+      let best = from, far = Infinity;
+      for (let i = from; i < pts.length; i += 1) {
+        const d = Math.hypot(pts[i][0] - sx, pts[i][1] - sy);
+        if (d < far) { far = d; best = i; }
+        if (far < 0.8 && d > far + 6) break;
       }
+      starts.push(best); from = best;
+    }
+    if (line.kind === "train") {
       line.bridge = pts.map(([x, y]) => { try { const [b, i] = playCell(map, Math.floor(x), Math.floor(y)); return Boolean(b.none[i]) || playActWater(x, y); } catch (_err) { return false; } });
     }
     const cum = [0];
     for (let i = 1; i < pts.length; i += 1) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
     line.pts = pts; line.cum = cum; line.length = cum[cum.length - 1];
-    line.stopAt = line.stops.map((_one, i) => cum[i]);
+    line.stopAt = line.stops.map((_one, i) => cum[starts[i]]);
   }
   map.lines = lines;
   return lines;
 }
-function playLineAt(line, d) {
-  // A point d tiles along the line (round and round on a loop; back and forth on a line), and its heading.
-  const L = line.length || 1;
-  let u = line.loop ? ((d % L) + L) % L : (() => { const m = ((d % (2 * L)) + 2 * L) % (2 * L); return m > L ? 2 * L - m : m; })();
-  let i = 1;
-  while (i < line.cum.length - 1 && line.cum[i] < u) i += 1;
-  const a = line.pts[i - 1], b = line.pts[i], seg = (line.cum[i] - line.cum[i - 1]) || 1, k = (u - line.cum[i - 1]) / seg;
-  return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, Math.atan2(b[1] - a[1], b[0] - a[0])];
+function playIsWater(x, y) {
+  try { return playActWater(x, y); } catch (_err) { return false; }
 }
-function playVehicleDraw(kind, x, y, heading, size, riding) {
+/* A landing for the ferry near a land's heart: a tile one can stand on with water beside it (the water kept with it). */
+function playShoreNear(hx, hy, region) {
+  for (let r = 2; r <= 30; r += 1) {
+    for (let dy = -r; dy <= r; dy += 1) {
+      for (let dx = -r; dx <= r; dx += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const x = Math.floor(hx) + dx, y = Math.floor(hy) + dy;
+        if (!playActFree(x, y)) continue;
+        for (const [ox, oy] of [[0, 1], [1, 0], [-1, 0], [0, -1]]) {
+          if (playIsWater(x + ox, y + oy) && playIsWater(x + 2 * ox, y + 2 * oy)) {
+            return { x, y, wx: x + 2 * ox, wy: y + 2 * oy, name: playWords(region.name || "") || region.biome, region };
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+/* The open sky: the void round a city in the sky, and its clouds' edge - where the airship goes. */
+function playIsSky(x, y) {
+  try {
+    const [block, i] = playCell(play.map, Math.floor(x), Math.floor(y));
+    return String(block.ground[i] || "") === "voidSky";
+  } catch (_err) { return false; }
+}
+/* A landing for the airship on a city in the sky, on one side of its heart (-1 west, 1 east): a tile one can stand on
+   with the open sky beside it (the sky kept with it, a tile further out). */
+function playSkyNear(hx, hy, region, side) {
+  for (let r = 2; r <= 40; r += 1) {
+    for (let dy = -Math.min(r, 8); dy <= Math.min(r, 8); dy += 1) {
+      const x = Math.floor(hx) + side * r, y = Math.floor(hy) + dy;
+      if (!playActFree(x, y)) continue;
+      if (playIsSky(x + side, y) && playIsSky(x + 2 * side, y)) {
+        return { x, y, wx: x + 2 * side, wy: y, name: playWords(region.name || "") || region.biome, region };
+      }
+    }
+  }
+  return null;
+}
+/* The way on the water - or, given `wet`, in the sky - from one tile to another (four ways, in a box round them; none
+   if they do not join). */
+function playWaterRoute(from, to, wet) {
+  const open = wet || playIsWater;
+  const pad = 30, minX = Math.min(from[0], to[0]) - pad, minY = Math.min(from[1], to[1]) - pad;
+  const W = Math.abs(from[0] - to[0]) + 2 * pad + 1, H = Math.abs(from[1] - to[1]) + 2 * pad + 1;
+  const came = new Int32Array(W * H).fill(-2), queue = new Int32Array(W * H);
+  const start = (from[0] - minX) + (from[1] - minY) * W, goal = (to[0] - minX) + (to[1] - minY) * W;
+  let head = 0, tail = 0;
+  came[start] = -1; queue[tail++] = start;
+  while (head < tail) {
+    const i = queue[head++];
+    if (i === goal) break;
+    const x = i % W, y = (i / W) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      const n = nx + ny * W;
+      if (came[n] !== -2 || !open(nx + minX, ny + minY)) continue;
+      came[n] = i; queue[tail++] = n;
+    }
+  }
+  if (came[goal] === -2) return null;
+  const route = [];
+  for (let i = goal; i !== -1; i = came[i]) route.push([(i % W) + minX, ((i / W) | 0) + minY]);
+  return route.reverse();
+}
+/* A straight run is clear when it and a little to each side of it pass only where the line may go. */
+function playClear(a, b, ok) {
+  const d = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.max(1, Math.ceil(d * 4));
+  const px = d ? -(b[1] - a[1]) / d * 0.35 : 0, py = d ? (b[0] - a[0]) / d * 0.35 : 0;
+  for (let k = 0; k <= n; k += 1) {
+    const x = a[0] + (b[0] - a[0]) * k / n, y = a[1] + (b[1] - a[1]) * k / n;
+    for (const s of [0, 1, -1]) if (!ok(Math.floor(x + px * s), Math.floor(y + py * s))) return false;
+  }
+  return true;
+}
+/* A tile route pulled straight: from each point on to the farthest it can see clear - no stairs of tiles. */
+function playPulled(pts, ok) {
+  if (pts.length < 3) return pts;
+  const out = [pts[0]];
+  let i = 0;
+  while (i < pts.length - 1) {
+    let j = Math.min(pts.length - 1, i + 60);
+    while (j > i + 1 && !playClear(pts[i], pts[j], ok)) j -= 1;
+    out.push(pts[j]);
+    i = j;
+  }
+  return out;
+}
+/* EACH TURN A CURVE (the user, 2026-11-18: "火车铁轨转弯不够smooth"): a corner rounded as wide as its runs allow (up to
+   four tiles), narrower while the curve would pass where the line may not; samples close enough to look smooth. */
+function playRounded(pts, ok) {
+  if (pts.length < 3) return pts;
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length - 1; i += 1) {
+    const [a, c, b] = [pts[i - 1], pts[i], pts[i + 1]];
+    const la = Math.hypot(a[0] - c[0], a[1] - c[1]), lb = Math.hypot(b[0] - c[0], b[1] - c[1]);
+    let r = Math.min(4, la * 0.48, lb * 0.48), curve = null;
+    while (r >= 0.5 && !curve) {
+      const p = [c[0] + (a[0] - c[0]) / la * r, c[1] + (a[1] - c[1]) / la * r];
+      const q = [c[0] + (b[0] - c[0]) / lb * r, c[1] + (b[1] - c[1]) / lb * r];
+      const steps = Math.max(4, Math.ceil(r * 3)), arc = [];
+      for (let k = 0; k <= steps; k += 1) {
+        const s = k / steps;
+        arc.push([(1 - s) * (1 - s) * p[0] + 2 * (1 - s) * s * c[0] + s * s * q[0], (1 - s) * (1 - s) * p[1] + 2 * (1 - s) * s * c[1] + s * s * q[1]]);
+      }
+      if (arc.every(([x, y]) => ok(Math.floor(x), Math.floor(y)))) curve = arc;
+      else r /= 2;
+    }
+    out.push(...(curve || [c]));
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+/* The point u tiles from the line's start (round on a loop; held at its ends on a line). */
+function playLinePoint(line, u) {
+  const L = line.length || 1, cum = line.cum;
+  u = line.loop ? ((u % L) + L) % L : Math.max(0, Math.min(L, u));
+  let lo = 1, hi = cum.length - 1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (cum[mid] < u) lo = mid + 1; else hi = mid; }
+  const a = line.pts[lo - 1], b = line.pts[lo], seg = (cum[lo] - cum[lo - 1]) || 1, k = (u - cum[lo - 1]) / seg;
+  return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k];
+}
+/* The way the line runs at u, going dir (1 or -1): from a little behind to a little ahead - so it turns as the curve
+   does, not in jumps at each of its points. */
+function playLineHeading(line, u, dir, reach = 0.7) {
+  const a = playLinePoint(line, u - reach), b = playLinePoint(line, u + reach);
+  return Math.atan2((b[1] - a[1]) * dir, (b[0] - a[0]) * dir);
+}
+function playLineAt(line, d) {
+  // A point d tiles of running along the line (round and round on a loop; back and forth on a line), its heading, how
+  // far from the start it is and which way it is going.
+  const L = line.length || 1;
+  let u = d, dir = 1;
+  if (line.loop) u = ((d % L) + L) % L;
+  else { const m = ((d % (2 * L)) + 2 * L) % (2 * L); if (m > L) { u = 2 * L - m; dir = -1; } else u = m; }
+  const [x, y] = playLinePoint(line, u);
+  return [x, y, playLineHeading(line, u, dir), u, dir];
+}
+/* THE TRAIN ON ITS RAILS (the user, 2026-11-18: "你现在的火车旋转很不行"; "你现在的火车根本没有贴在铁轨上"): each car
+   its own place along the track, a car's length apart - not pushed straight back from the engine, off the rails at
+   every turn - its middle on the rails and turned the way they run between its two bogies, both on them too. On
+   a line there and back an engine at each end, so it turns back without a jump; round a loop, one in front. */
+const PLAY_CARS = 4, PLAY_CAR_GAP = 2.05, PLAY_BOGIE = 0.85;
+function playTrainCars(line, d) {
+  const L = line.length || 1, g = PLAY_CAR_GAP, n = PLAY_CARS;
+  if (line.loop) {
+    const u = ((d % L) + L) % L;
+    return Array.from({ length: n }, (_x, k) => ({ u: u - k * g, dir: 1, engine: k === 0 }));
+  }
+  const span = Math.max(0.01, L - (n - 1) * g), m = ((d % (2 * span)) + 2 * span) % (2 * span);
+  const dir = m > span ? -1 : 1, rear = m > span ? 2 * span - m : m;
+  return Array.from({ length: n }, (_x, k) => ({ u: rear + k * g, dir, engine: k === 0 || k === n - 1 }));
+}
+function playTrainDraw(line, cars, size) {
+  const { ctx } = play;
+  const placed = cars.map((car) => {
+    const front = playLinePoint(line, car.u + car.dir * PLAY_BOGIE), back = playLinePoint(line, car.u - car.dir * PLAY_BOGIE);
+    const [x, y] = playLinePoint(line, car.u);
+    return { car, x, y, heading: Math.atan2(front[1] - back[1], front[0] - back[0]) };
+  }).sort((a, b) => a.y - b.y);                                // the nearer over the farther
+  for (const one of placed) {
+    const [sx, sy] = playActScreen(one.x, one.y);
+    const look = PLAY_VEHICLES[line.look] || PLAY_VEHICLES.train;
+    const spec = PLAY_SCENERY[one.car.engine ? look.engine : look.car], sheet = spec && play.sheets[spec[0]];
+    if (!sheet) continue;
+    const w = size * Math.min(2, spec[3]), h = size * Math.min(2, spec[4]);   // a camel, a reindeer: a tile; a carriage: two
+    ctx.save();
+    ctx.translate(sx, sy);                                   // on the rails, its middle on the way
+    // Turned the way it runs; going left, the right way up.
+    if (Math.cos(one.heading) < 0) { ctx.rotate(one.heading - Math.PI); ctx.scale(-1, 1); } else ctx.rotate(one.heading);
+    if (look.tint) ctx.filter = look.tint;                   // a metro: the carriages in its own colours
+    ctx.drawImage(sheet, spec[1] * 17, spec[2] * 17, spec[3] * 17 - 1, spec[4] * 17 - 1, -w / 2, -h / 2, w, h);
+    ctx.restore();
+  }
+}
+function playVehicleDraw(kind, x, y, heading, size, riding, look = "") {
   const { ctx } = play;
   const [sx, sy] = playActScreen(x, y);
   const draw = (name, dx, dy, w, h, flip) => {
@@ -248,61 +529,140 @@ function playVehicleDraw(kind, x, y, heading, size, riding) {
     const lift = size * 2.2;
     ctx.fillStyle = "rgba(0, 0, 0, 0.18)";                  // its shadow on the ground below
     ctx.beginPath(); ctx.ellipse(sx, sy, size * 1.1, size * 0.35, 0, 0, Math.PI * 2); ctx.fill();
-    if (kind === "plane") {
+    const body = (PLAY_VEHICLES[look] || {}).body || "";
+    if (body === "helicopter") playHelicopterDraw(sx, sy - lift, heading, size);
+    else if (body === "spaceship") {
+      ctx.save(); ctx.translate(sx, sy - lift * 1.3); ctx.rotate(heading + Math.PI / 2);
+      const spec = PLAY_SCENERY.rocket, sheet = spec && play.sheets[spec[0]];
+      if (sheet) ctx.drawImage(sheet, spec[1] * 17, spec[2] * 17, spec[3] * 17 - 1, spec[4] * 17 - 1, -size * 0.8, -size * 1.6, size * 1.6, size * 3.2);
+      ctx.fillStyle = "rgba(255, 190, 80, 0.85)";            // its flame
+      ctx.beginPath(); ctx.ellipse(0, size * 1.75, size * 0.25, size * (0.4 + 0.15 * Math.sin(performance.now() / 60)), 0, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    } else if (kind === "plane") {
       ctx.save(); ctx.translate(sx, sy - lift); ctx.rotate(heading + Math.PI / 2);
       const spec = PLAY_SCENERY.airplane, sheet = spec && play.sheets[spec[0]];
       if (sheet) ctx.drawImage(sheet, spec[1] * 17, spec[2] * 17, spec[3] * 17 - 1, spec[4] * 17 - 1, -size * 1.5, -size * 1.5, size * 3, size * 3);
       ctx.restore();
     } else draw("airship", 0, -lift + Math.sin(performance.now() / 600) * size * 0.1, size * 3, size * 2, !left);
+  } else if (kind === "road") {
+    playRoadVehicleDraw(sx, sy, heading, size, (PLAY_VEHICLES[look] || {}).body || "bus");
   } else if (kind === "ferry") {
-    draw("ferry", 0, -size * 0.6 + Math.sin(performance.now() / 500) * size * 0.06, size * 3, size * 2, left);
-  } else {
-    // The train: its engine and three carriages, one behind another along its heading.
-    for (let k = 3; k >= 0; k -= 1) {
-      const back = k * size * 2.05;
-      ctx.save();
-      ctx.translate(sx - Math.cos(heading) * back, sy - Math.sin(heading) * back - size * 0.5);
-      // Turned the way it runs; going left, the right way up.
-      if (left) { ctx.rotate(heading - Math.PI); ctx.scale(-1, 1); } else ctx.rotate(heading);
-      const spec = PLAY_SCENERY[k ? "trainCarriage" : "trainEngine"], sheet = spec && play.sheets[spec[0]];
-      if (sheet) ctx.drawImage(sheet, spec[1] * 17, spec[2] * 17, spec[3] * 17 - 1, spec[4] * 17 - 1, -size, -size / 2, size * 2, size);
-      ctx.restore();
-    }
-  }
-  if (riding) playActMeOn(sx, sy - (kind === "plane" || kind === "airship" ? size * 2.6 : size * 0.9), size);
+    const body = (PLAY_VEHICLES[look] || {}).body || "ferry";   // a ferry, a sailing boat
+    draw(body, 0, -size * 0.6 + Math.sin(performance.now() / 500) * size * 0.06, body === "ship" ? size * 2 : size * 3, size * 2, left);
+  }                                                          // the train: playTrainDraw, car by car on its rails
+  if (riding) playActMeOn(sx, sy - (kind === "plane" || kind === "airship" ? size * 2.6 : kind === "train" ? size * 0.3 : size * 0.9), size);
+}
+/* A BUS, A TAXI - drawn here (no picture of one among the packs): its body the way it runs, windows, wheels. */
+function playRoadVehicleDraw(sx, sy, heading, size, body) {
+  const { ctx } = play;
+  const bus = body === "bus";
+  const w = size * (bus ? 2.2 : 1.4), h = size * (bus ? 0.95 : 0.75);
+  ctx.save();
+  ctx.translate(sx, sy - size * 0.45);
+  if (Math.cos(heading) < 0) ctx.scale(-1, 1);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.2)";
+  ctx.fillRect(-w / 2, h / 2 - size * 0.05, w, size * 0.12);
+  ctx.fillStyle = bus ? "#d9482b" : "#f2c230";
+  ctx.fillRect(-w / 2, -h / 2, w, h);
+  ctx.fillStyle = "#cfe8f5";                                  // its windows
+  const panes = bus ? 4 : 2;
+  for (let k = 0; k < panes; k += 1) ctx.fillRect(-w / 2 + size * 0.12 + k * (w - size * 0.24) / panes, -h / 2 + size * 0.1,
+                                                  (w - size * 0.24) / panes - size * 0.06, h * 0.35);
+  if (!bus) { ctx.fillStyle = "#222"; ctx.fillRect(-size * 0.2, -h / 2 - size * 0.14, size * 0.4, size * 0.14); }   // its sign
+  ctx.fillStyle = "#222";                                     // its wheels
+  for (const at of [-w / 2 + size * 0.3, w / 2 - size * 0.3]) { ctx.beginPath(); ctx.arc(at, h / 2, size * 0.16, 0, Math.PI * 2); ctx.fill(); }
+  ctx.restore();
+}
+/* A HELICOPTER - drawn here: its body, its tail, its rotor turning. */
+function playHelicopterDraw(sx, sy, heading, size) {
+  const { ctx } = play;
+  ctx.save();
+  ctx.translate(sx, sy);
+  if (Math.cos(heading) < 0) ctx.scale(-1, 1);
+  ctx.fillStyle = "#3a7bd5";
+  ctx.beginPath(); ctx.ellipse(0, 0, size * 0.6, size * 0.38, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillRect(-size * 1.3, -size * 0.08, size * 0.8, size * 0.14);
+  ctx.fillStyle = "#cfe8f5";
+  ctx.beginPath(); ctx.ellipse(size * 0.28, -size * 0.06, size * 0.22, size * 0.18, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#222"; ctx.lineWidth = Math.max(1, size / 10);
+  const spin = performance.now() / 40;
+  ctx.beginPath();
+  ctx.moveTo(-Math.cos(spin) * size * 1.1, -size * 0.45); ctx.lineTo(Math.cos(spin) * size * 1.1, -size * 0.45);
+  ctx.moveTo(-size * 0.5, size * 0.42); ctx.lineTo(size * 0.5, size * 0.42);
+  ctx.stroke();
+  ctx.restore();
 }
 function playActMeOn(sx, sy, size) {
   const sheet = play.sheets.me;
   if (sheet) play.ctx.drawImage(sheet, 0, (PLAY_ME_ROWS.down || 0) * 16, 16, 16, sx - size * 0.4, sy - size * 0.8, size * 0.8, size * 0.8);
 }
+function playTrackDraw(line, size) {
+  // ITS TRACK AS ONE (the user, 2026-11-18: "你现在的火车铁轨也非常不行"): a gravel bed, two unbroken rails beside the way
+  // and sleepers evenly along it, across the way it turns; over water or the dark, a viaduct on piers. Only the runs in
+  // sight are drawn.
+  const { ctx } = play;
+  const pts = line.pts, n = pts.length;
+  // EACH PIECE IN SIGHT BY ITSELF (the user, 2026-11-18: "你现在的铁轨，有的时候踩上去就不显示了"): a long straight piece
+  // whose two ends are both out of sight still crosses it - asked of the piece, not of its ends, it is drawn.
+  const view = playActView(3);
+  const crosses = (a, b) => Math.max(a[0], b[0]) >= view[0] && Math.min(a[0], b[0]) <= view[2]
+    && Math.max(a[1], b[1]) >= view[1] && Math.min(a[1], b[1]) <= view[3];
+  const runs = [];
+  for (let i = 1; i < n; i += 1) {
+    if (!crosses(pts[i - 1], pts[i])) continue;
+    if (!runs.length || runs[runs.length - 1][1] !== i - 1) runs.push([i - 1, i]);
+    else runs[runs.length - 1][1] = i;
+  }
+  const normal = (i) => {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+    const dx = b[0] - a[0], dy = b[1] - a[1], d = Math.hypot(dx, dy) || 1;
+    return [-dy / d, dx / d];
+  };
+  ctx.save();
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  for (const [i0, i1] of runs) {
+    const screen = [];
+    for (let i = i0; i <= i1; i += 1) screen.push(playActScreen(pts[i][0], pts[i][1]));
+    // Piers and the deck's shadow, where it bridges.
+    for (let i = i0; i <= i1; i += 1) {
+      if (!line.bridge || !line.bridge[i] || i % 3) continue;
+      const [sx, sy] = screen[i - i0];
+      ctx.fillStyle = "#7d7368"; ctx.fillRect(sx - size * 0.12, sy, size * 0.24, size * 0.9);
+      ctx.fillStyle = "rgba(0, 0, 0, 0.18)"; ctx.fillRect(sx - size * 0.4, sy + size * 0.9, size * 0.8, size * 0.14);
+    }
+    const stroke = (colour, width, off) => {
+      ctx.strokeStyle = colour; ctx.lineWidth = width;
+      ctx.beginPath();
+      for (let i = i0; i <= i1; i += 1) {
+        const [nx, ny] = normal(i), [sx, sy] = screen[i - i0];
+        const x = sx + nx * size * off, y = sy + ny * size * off;
+        if (i === i0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    };
+    stroke("#8a7b6a", size * 0.6, 0);                                     // the bed
+    // Sleepers: every 0.5 tile along the way, across it.
+    ctx.strokeStyle = "#5b3a24"; ctx.lineWidth = Math.max(1, size * 0.12);
+    ctx.beginPath();
+    for (let i = Math.max(1, i0); i <= i1; i += 1) {
+      const from = line.cum[i - 1], to = line.cum[i], seg = to - from;
+      if (seg <= 0) continue;
+      for (let d = Math.ceil(from / 0.5) * 0.5; d < to; d += 0.5) {
+        const k = (d - from) / seg, x = pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * k, y = pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * k;
+        const nx = -(pts[i][1] - pts[i - 1][1]) / seg, ny = (pts[i][0] - pts[i - 1][0]) / seg;
+        const [sx, sy] = playActScreen(x, y);
+        ctx.moveTo(sx - nx * size * 0.26, sy - ny * size * 0.26); ctx.lineTo(sx + nx * size * 0.26, sy + ny * size * 0.26);
+      }
+    }
+    ctx.stroke();
+    for (const off of [-0.15, 0.15]) stroke("#c3c9d3", Math.max(1, size * 0.07), off);   // the rails
+  }
+  ctx.restore();
+}
 function playLinesDraw(size, now) {
   const { ctx } = play;
   for (const line of playLines()) {
-    if (line.kind === "train") {
-      // Its track: gravel, sleepers, two rails - on the ground; over water or the dark, a viaduct on its piers.
-      ctx.save();
-      const n = line.pts.length;
-      for (let i = 1; i < n; i += 1) {
-        const [ax, ay] = line.pts[i - 1], [bx, by] = line.pts[i];
-        if (!playActInView(ax, ay, 2) && !playActInView(bx, by, 2)) continue;
-        const [sa, ta] = playActScreen(ax, ay), [sb, tb] = playActScreen(bx, by);
-        const bridge = line.bridge && (line.bridge[i] || line.bridge[i - 1]);
-        if (bridge) {                                        // a pier down from it, its deck's shadow
-          ctx.fillStyle = "#7d7368"; ctx.fillRect(sb - size * 0.12, tb, size * 0.24, size * 0.9);
-          ctx.fillStyle = "rgba(0, 0, 0, 0.2)"; ctx.fillRect(Math.min(sa, sb) - size * 0.3, Math.max(ta, tb) + size * 0.9, Math.abs(sb - sa) + size * 0.6, size * 0.15);
-        }
-        ctx.strokeStyle = bridge ? "#8c8274" : "#8a7b6a"; ctx.lineWidth = size * (bridge ? 0.62 : 0.5); ctx.lineCap = "round";
-        ctx.beginPath(); ctx.moveTo(sa, ta); ctx.lineTo(sb, tb); ctx.stroke();
-        const dx = sb - sa, dy = tb - ta, d = Math.hypot(dx, dy) || 1, px = -dy / d, py = dx / d;
-        ctx.strokeStyle = "#5b3a24"; ctx.lineWidth = Math.max(1, size * 0.1);
-        ctx.beginPath(); ctx.moveTo((sa + sb) / 2 - px * size * 0.22, (ta + tb) / 2 - py * size * 0.22); ctx.lineTo((sa + sb) / 2 + px * size * 0.22, (ta + tb) / 2 + py * size * 0.22); ctx.stroke();
-        ctx.strokeStyle = "#c3c9d3"; ctx.lineWidth = Math.max(1, size * 0.06);
-        for (const off of [-0.14, 0.14]) {
-          ctx.beginPath(); ctx.moveTo(sa + px * size * off, ta + py * size * off); ctx.lineTo(sb + px * size * off, tb + py * size * off); ctx.stroke();
-        }
-      }
-      ctx.restore();
-    }
+    if (line.kind === "train") playTrackDraw(line, size);
     for (const one of line.stops) {
       if (!playActInView(one.x, one.y, 4)) continue;
       const spec = PLAY_SCENERY[PLAY_LINE_LOOK[line.kind]], sheet = spec && play.sheets[spec[0]];
@@ -313,8 +673,14 @@ function playLinesDraw(size, now) {
     }
     // Its vehicle, running when no one rides it.
     if (play.ride && play.ride.line === line) continue;
-    const at = playLineAt(line, (now / 1000) * PLAY_LINE_SPEED[line.kind] * 0.35 + line.length * 0.37);
-    if (playActInView(at[0], at[1], 8)) playVehicleDraw(line.kind, at[0], at[1], at[2], size, false);
+    const d = (now / 1000) * PLAY_LINE_SPEED[line.kind] * 0.35 + line.length * 0.37;
+    if (line.kind === "train") {
+      const cars = playTrainCars(line, d);
+      if (cars.some((car) => { const [x, y] = playLinePoint(line, car.u); return playActInView(x, y, 3); })) playTrainDraw(line, cars, size);
+      continue;
+    }
+    const at = playLineAt(line, d);
+    if (playActInView(at[0], at[1], 8)) playVehicleDraw(line.kind, at[0], at[1], at[2], size, false, line.look);
   }
 }
 
@@ -358,7 +724,8 @@ function playTravelArea(area) {
   play.area = area;
   play.map = playLay(play.world, area);
   play.chunks.clear();
-  play.miniBase = null;
+  play.miniBase = null;                        // another area: its own map, drawn as it comes
+  play.miniBuilding = null;
   play.coasters = null;
   play.critters = [];
   const gate = playPortals().find((one) => one.gate);
@@ -390,12 +757,14 @@ function playRide(line, from, to) {
     if (!ride || !play.on) return;
     const k = Math.min(1, (performance.now() - ride.at) / 1000 / ride.seconds);
     const eased = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
-    const [x, y] = playLineAt(ride.line, ride.start + ride.along * eased);
+    ride.u = ride.start + ride.along * eased;                // where it is drawn too (playActOver)
+    const [x, y] = playLineAt(ride.line, ride.u);
     play.me.x = x; play.me.y = y;
     playDraw();
     if (k < 1) { requestAnimationFrame(tick); return; }
     play.ride = null;
-    play.me.x = ride.to.x + 0.5; play.me.y = ride.to.y + 1.8;
+    const land = ride.line.kind === "ferry" ? [ride.to.x, ride.to.y] : (playActSpotNear(ride.to.x, ride.to.y + 1, 3) || [ride.to.x, ride.to.y + 1]);
+    play.me.x = land[0] + 0.5; play.me.y = land[1] + 0.8;
     playWhere(); playSoundChime(); playDraw();
   };
   requestAnimationFrame(tick);
@@ -430,8 +799,49 @@ function playDecoNear(test, tx, ty, most = 1.3) {
 }
 
 /* -- WATER: fishing, swimming -------------------------------------------------------------------------------------- */
-const PLAY_CATCH = ["clownfish", "butterflyfish2", "yellowTang", "blueTang", "moorishIdol", "angelfish", "parrotfish", "koi",
-                    "wrasse", "redSnapper", "triggerfish", "boxfish", "grouper", "fish1", "fish2", "fish3", "fish4"];
+/* WHAT EACH WATER GIVES (the user, 2026-11-18: "你现在fish是不是钓不上鱼，要改成可以钓到鱼（不同的鱼或者别的什么东西）";
+   "不同位置的鱼塘可能钓出来的东西是不一样的，这个也是你的设计的一部分"): the sea by the coast its reef fish, a lake or a pond
+   its fresh-water ones, a waterfall's pool its small quick ones - and, now and then, a thing of the land it is in (a
+   lantern of the graveyard, a love letter of Valentine's, a robot's part of the future). What the world's design said
+   a water holds (its zone's, or its land's, "catch") comes first. */
+const PLAY_CATCH_WATERS = {
+  sea: ["clownfish", "clownfish2", "blueTang", "yellowTang", "moorishIdol", "butterflyfish2", "butterflyfish3", "parrotfish",
+        "wrasse", "triggerfish", "boxfish", "redSnapper", "grouper"],
+  pond: ["koi", "fish1", "smallFish", "angelfish", "koi"],
+  falls: ["smallFish", "fish1", "smallFish", "koi"],
+};
+const PLAY_CATCH_ODD = { sea: ["jellyfish", "seaweed", "shark", "coral"], pond: ["seaweed", "goldIngot"], falls: ["runeStone"] };
+const PLAY_CATCH_LANDS = {
+  graveyard: ["graveCandle", "runeStone2"], halloween: ["jackOLantern", "pumpkin"], christmas: ["present", "present2"],
+  newyear: ["redEnvelope", "goldIngot"], valentine: ["loveLetter", "redHeart", "lovePotion"], underwater: ["coral", "anemone"],
+  scifi: ["metalBot5", "metalBot11"], space: ["metalBot17"], farmland: ["turnipRoot", "tomatoFruit"],
+  botanical: ["cherries"], enchanted: ["sparkle", "wisp"], ruins: ["runeStone3", "goldIngot"], funfair: ["balloons"],
+};
+const PLAY_CATCH_ODD_SHARE = 0.18;
+/* The water at a tile: "pond" in a lake, a pond or a fountain; "falls" in a waterfall's pool; the sea else. */
+function playCatchWater(x, y) {
+  const index = play.map;
+  const one = index && index.zones.find((z) => x >= z.rect[0] && x < z.rect[2] && y >= z.rect[1] && y < z.rect[3]);
+  const kind = one && one.zone.kind;
+  return { water: kind === "waterfall" ? "falls" : one ? "pond" : "sea", zone: one ? one.zone : null };
+}
+/* What may be caught there, each as often as it is listed. */
+function playCatchHere(x, y) {
+  const { water, zone } = playCatchWater(x, y);
+  const region = play.map ? playRegionAt(play.map, x, y) : null;
+  const drawn = (names) => (names || []).filter((one) => PLAY_SCENERY[one]);
+  const designed = drawn((zone && zone.catch) || (region && region.catch));
+  const usual = designed.length ? designed : drawn(PLAY_CATCH_WATERS[water]);
+  const odd = drawn([...(PLAY_CATCH_ODD[water] || []), ...(PLAY_CATCH_LANDS[region && region.biome] || [])]);
+  return { usual, odd, water };
+}
+function playCatchPick(x, y, roll = Math.random(), pick = Math.random()) {
+  const { usual, odd } = playCatchHere(x, y);
+  const pool = odd.length && roll < PLAY_CATCH_ODD_SHARE ? odd : usual.length ? usual : odd;
+  return pool.length ? pool[Math.floor(pick * pool.length) % pool.length] : null;
+}
+/* Long enough to see the float go under and press (it had been 1.1 s, and was often missed). */
+const PLAY_BITE_MS = 2200;
 function playFishAhead() {
   const step = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] }[play.me.facing] || [0, 1];
   for (let d = 1; d <= 3; d += 1) {
@@ -450,21 +860,26 @@ function playFishPress() {
     return true;
   }
   play.fish = null;
-  if (now >= fish.bite && now < fish.bite + 1100) {
-    const names = PLAY_CATCH.filter((one) => PLAY_SCENERY[one]);
-    const name = names[Math.floor(Math.random() * names.length)];
+  const name = now >= fish.bite && now < fish.bite + PLAY_BITE_MS ? playCatchPick(fish.x, fish.y) : null;
+  if (name) {
     play.caught = { name, at: now };
     let log = {};
     try { log = JSON.parse(localStorage.getItem("playFishCaught") || "{}"); } catch (_err) { log = {}; }
     log[name] = (log[name] || 0) + 1;
     try { localStorage.setItem("playFishCaught", JSON.stringify(log)); } catch (_err) { /* this time */ }
     const total = Object.values(log).reduce((s, n) => s + n, 0);
-    playActSay(`${playWords("Caught")}: ${String(name).replace(/([A-Z0-9])/g, " $1").toLowerCase()}! (${total})`);
+    const kind = Object.keys(log).length;
+    playActSay(`${playWords("Caught")}: ${playWords(playCatchName(name))}! (${total}, ${kind} ${playWords(kind === 1 ? "kind" : "kinds")})`);
     playSoundChime();
   } else {
     playActSay(playWords(now < fish.bite ? "Reeled in - nothing yet." : "It got away!"));
   }
   return true;
+}
+/* A catch's name as said: "yellowTang" a "yellow tang", "metalBot5" a "robot part". */
+function playCatchName(name) {
+  if (/^metalBot/.test(name)) return "robot part";
+  return String(name).replace(/[0-9]+$/, "").replace(/([A-Z])/g, " $1").toLowerCase();
 }
 function playActSay(text) {
   play.said = { text, at: performance.now(), until: performance.now() + playSayFor(text), x: play.me.x, y: play.me.y };
@@ -478,7 +893,7 @@ function playAct() {
   // A portal stood in: where it goes.
   const portal = playPortals().find((one) => Math.hypot(one.x + 0.5 - tx, one.y + 0.7 - ty) < 1.1);
   if (portal && portal.gate) {
-    playMenuOpen(playWords("Gate to other areas"), playAreas(play.world).filter((one) => one !== play.area).map((area) => ({
+    playMenuOpen(playWords("Airport to other areas"), playAreas(play.world).filter((one) => one !== play.area).map((area) => ({
       label: playAreaName(area), go: () => playTravelArea(area) })));
     return true;
   }
@@ -491,11 +906,13 @@ function playAct() {
   for (const line of playLines()) {
     const here = line.stops.findIndex((one) => Math.hypot(one.x + 0.5 - tx, one.y + 0.5 - ty) < 1.8);
     if (here < 0) continue;
-    playMenuOpen(`${playWords(PLAY_LINE_WORDS[line.kind])}`, line.stops.map((one, n) => ({ one, n })).filter(({ n }) => n !== here)
+    playMenuOpen(`${playWords(playLineWords(line))}`, line.stops.map((one, n) => ({ one, n })).filter(({ n }) => n !== here)
       .map(({ one, n }) => ({ label: one.name, go: () => playRide(line, here, n) })));
     return true;
   }
   const near = play.near;
+  // A GREAT PIECE (play.js playPieceAct; the user, 2026-11-19: "允许交互"): a track ridden, a stack climbed.
+  if (near && near.kind === "piece" && typeof playPieceAct === "function" && playPieceAct(near)) return true;
   // A seat: sat on (and what it is said, as looking does).
   const seatThing = near && !near.at && PLAY_SEATS.has(near.kind) ? near : null;
   const seatDeco = !seatThing && playDecoNear((one) => /bench/i.test(one.name), tx, ty);
@@ -518,13 +935,62 @@ function playAct() {
   if (!play.swimming && playFishAhead()) return playFishPress();
   return false;
 }
+/* WHAT E WOULD DO HERE, SHOWN (the user, 2026-11-18: "所有可交互的东西，agent在附近都要提示可以交互"): asked as playAct
+   asks, in its order, nothing done - a gate or a portal, a stop, fishing, a seat, a light, water ahead, a picture to
+   see, a thing or a sign to hear about. Nothing to do: no hint. */
+function playActHint() {
+  if (play.ride || play.sit || play.menu || !play.map) return null;
+  if (play.fish) return playWords("Reel in");
+  const tx = play.me.x, ty = play.me.y - 0.3;
+  const portal = playPortals().find((one) => Math.hypot(one.x + 0.5 - tx, one.y + 0.7 - ty) < 1.1);
+  if (portal) return playWords(portal.gate ? "Go to another area" : "Go through the portal");
+  for (const line of playLines()) {
+    if (line.stops.some((one) => Math.hypot(one.x + 0.5 - tx, one.y + 0.5 - ty) < 1.8)) {
+      return `${playWords("Ride")}: ${playWords(playLineWords(line))}`;
+    }
+  }
+  const near = play.near;
+  if ((near && !near.at && PLAY_SEATS.has(near.kind)) || playDecoNear((one) => /bench/i.test(one.name), tx, ty)) return playWords("Sit");
+  const lightKey = near && !near.at && PLAY_LIGHT_THINGS.has(near.kind) ? `i:${near.id}` : (() => {
+    const lamp = playDecoNear((one) => typeof PLAY_DECO_LIGHTS !== "undefined" && PLAY_DECO_LIGHTS[one.name], tx, ty, 1.5);
+    return lamp ? `d:${lamp.x},${lamp.y}` : null;
+  })();
+  if (lightKey) return playWords(playLightsOff().has(lightKey) ? "Light it" : "Put the light out");
+  if (!play.swimming && playFishAhead()) return playWords("Fish");
+  if (near && near.picture_url) return playWords("See the picture");
+  if (near) return playWords("Look");
+  return null;
+}
+/* The hint over the walker's head: a key cap "E" and what it does - not while something is being said. */
+function playActHintDraw(size) {
+  const words = playActHint();
+  if (!words || (play.said && performance.now() < play.said.until)) return;
+  const { ctx, canvas } = play;
+  const [cx, cy] = playActScreen(play.me.x, play.me.y - 1.55);
+  const fontPx = Math.max(11, Math.round(size * 0.42)), pad = Math.round(fontPx * 0.45);
+  ctx.save();
+  ctx.font = `600 ${fontPx}px "Microsoft YaHei", "PingFang SC", system-ui, sans-serif`;
+  ctx.textBaseline = "middle";
+  const key = fontPx + pad, text = ctx.measureText(words).width;
+  const w = key + pad + text + pad * 2, h = fontPx + pad * 2;
+  const x = Math.max(4, Math.min(canvas.width - w - 4, cx - w / 2)), y = Math.max(4, cy - h);
+  ctx.fillStyle = "rgba(28, 24, 20, 0.78)";
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, h / 2); ctx.fill();
+  ctx.fillStyle = "#fffdf6";                                 // the key
+  ctx.beginPath(); ctx.roundRect(x + pad * 0.6, y + pad * 0.5, key, h - pad, Math.round(fontPx * 0.25)); ctx.fill();
+  ctx.fillStyle = "#3b2414";
+  ctx.textAlign = "center"; ctx.fillText("E", x + pad * 0.6 + key / 2, y + h / 2 + 1);
+  ctx.fillStyle = "#fffdf6";
+  ctx.textAlign = "left"; ctx.fillText(words, x + pad * 0.6 + key + pad, y + h / 2 + 1);
+  ctx.restore();
+}
 /* What near is shown on the card: a portal or a stop. */
 function playActNear(tx, ty) {
   const portal = playPortals().find((one) => Math.hypot(one.x + 0.5 - tx, one.y + 0.7 - ty) < 1.1);
   if (portal) return { at: [portal.x + 0.5, portal.y + 0.9], portal, name: playWords("Portal") };
   for (const line of playLines()) {
     const one = line.stops.find((s) => Math.hypot(s.x + 0.5 - tx, s.y + 0.5 - ty) < 1.8);
-    if (one) return { at: [one.x + 0.5, one.y + 0.9], stop: one, line, name: playWords(PLAY_LINE_WORDS[line.kind]) };
+    if (one) return { at: [one.x + 0.5, one.y + 0.9], stop: one, line, name: playWords(playLineWords(line)) };
   }
   return null;
 }
@@ -543,18 +1009,41 @@ const PLAY_CRITTERS = { meadow: ["rabbit", "squirrel", "chicken"], farmland: ["c
                         city: ["cat", "dog"], toytown: ["cat", "dog", "rabbit"], zoo: ["monkey", "zebra", "giraffe"],
                         underwater: ["clownfish", "yellowTang", "blueTang", "moorishIdol"], lakeside: ["rabbit", "chicken"],
                         botanical: ["rabbit", "squirrel"], seaside: ["chicken"], valentine: ["rabbit", "cat"] };
-const PLAY_CRITTERS_MOST = 6;
+// FEW (the user, 2026-11-18: "小动物可以不要加这么多，减少对资源的消耗"; "你限制动物的数量就行 ... 动作还是正常速率"): two at
+// most, moving as they always did - and only one moving asks for frames.
+const PLAY_CRITTERS_MOST = 2;
+/* A LAND'S OWN ANIMALS (play-regions.js: where a land lays a field animal it lives): those of the blocks laid near the
+   walker, each at the spot it was laid, walking about it - as many as were laid, within 20 tiles; let go farther off,
+   and back at their spots when the walker comes near again. Looked for twice a second. */
+function playResidents(now) {
+  if (now - (play.residentsAt || 0) < 500 || !play.map || !play.map.laid) return;
+  play.residentsAt = now;
+  const here = new Set(play.critters.filter((one) => one.home).map((one) => one.key));
+  for (const block of play.map.laid.values()) {
+    for (const one of block.animals || []) {
+      const key = `${one.x},${one.y}`;
+      if (here.has(key) || Math.floor(one.x / PLAY_CHUNK) !== block.cx || Math.floor(one.y / PLAY_CHUNK) !== block.cy) continue;
+      if (Math.hypot(one.x - play.me.x, one.y - play.me.y) > 20 || !PLAY_SCENERY[one.name]) continue;
+      here.add(key);
+      play.critters.push({ name: one.name, key, home: [one.x + 0.5, one.y + 0.8], x: one.x + 0.5, y: one.y + 0.8,
+                           tx: one.x + 0.5, ty: one.y + 0.8, hop: Math.random() * 6, swim: false, left: playHash(one.x, one.y, 5) < 0.5 });
+    }
+  }
+}
 function playCrittersStep(seconds) {
   if (!play.map) return;
   play.critters = play.critters || [];
   const now = performance.now();
-  // Those far from the walker let go; new ones where there is room, of the land's kinds.
-  play.critters = play.critters.filter((one) => Math.hypot(one.x - play.me.x, one.y - play.me.y) < 18);
-  if (play.critters.length < PLAY_CRITTERS_MOST && Math.random() < 0.05) {
+  // Those far from the walker let go - a land's own back where they were laid, when the walker comes near again; new
+  // ones where there is room, of the land's kinds (PLAY_CRITTERS_MOST of those, the land's own besides).
+  play.critters = play.critters.filter((one) => Math.hypot(one.x - play.me.x, one.y - play.me.y) < (one.home ? 26 : 18));
+  playResidents(now);
+  if (play.critters.filter((one) => !one.home).length < PLAY_CRITTERS_MOST && Math.random() < 0.05) {
     const a = Math.random() * Math.PI * 2, d = 6 + Math.random() * 8;
     const x = Math.floor(play.me.x + Math.cos(a) * d), y = Math.floor(play.me.y + Math.sin(a) * d);
     const region = playRegionAt(play.map, x, y);
-    const kinds = region && PLAY_CRITTERS[region.biome];
+    // ITS OWN ANIMALS (the user, 2026-11-19: "不同场景的动物也是unique的"): those the agent chose for its scene.
+    const kinds = region && ((region.animals || []).length ? region.animals : PLAY_CRITTERS[region.biome]);
     const swim = region && region.biome === "underwater";
     if (kinds && (swim || playActFree(x, y))) {
       const name = kinds[Math.floor(Math.random() * kinds.length)];
@@ -563,25 +1052,37 @@ function playCrittersStep(seconds) {
   }
   for (const one of play.critters) {
     const fear = Math.hypot(one.x - play.me.x, one.y - play.me.y) < 2.2;
+    // ITS OWN CRY AS IT STARTS TO RUN (the user, 2026-11-19: "动物也是要有被追赶的音效（不同动物不一样）"; play-sound.js
+    // PLAY_CRIES) - not again for a little while.
+    if (fear && !one.afraid && now - (one.criedAt || 0) > 2500 && typeof playSoundCry === "function") {
+      one.criedAt = now;
+      playSoundCry(one.name, one.x - play.me.x, Math.hypot(one.x - play.me.x, one.y - play.me.y));
+    }
+    one.afraid = fear;
     if (fear) {                                       // away from the walker, quick
       const d = Math.hypot(one.x - play.me.x, one.y - play.me.y) || 1;
       one.tx = one.x + (one.x - play.me.x) / d * 4; one.ty = one.y + (one.y - play.me.y) / d * 4;
     } else if (Math.hypot(one.tx - one.x, one.ty - one.y) < 0.1 && Math.random() < 0.02) {
-      one.tx = one.x + (Math.random() - 0.5) * 5; one.ty = one.y + (Math.random() - 0.5) * 4;
+      const [hx, hy] = one.home || [one.x, one.y];           // a land's own keeps near where it was laid
+      one.tx = (one.home ? hx : one.x) + (Math.random() - 0.5) * 5; one.ty = (one.home ? hy : one.y) + (Math.random() - 0.5) * 4;
     }
     const dx = one.tx - one.x, dy = one.ty - one.y, d = Math.hypot(dx, dy);
-    if (d > 0.05) {
+    const was = one.moving;
+    one.moving = d > 0.05;
+    if (one.moving) {
       const step = Math.min(d, (fear ? 3.2 : 0.9) * seconds);
       const nx = one.x + dx / d * step, ny = one.y + dy / d * step;
       if (one.swim || playActFree(Math.floor(nx), Math.floor(ny - 0.5))) { one.x = nx; one.y = ny; one.left = dx < 0; one.hop += seconds * (fear ? 14 : 7); }
-      else { one.tx = one.x; one.ty = one.y; }
+      else { one.tx = one.x; one.ty = one.y; one.moving = false; }
     }
+    // STOPPED: on its feet again, and drawn once so - not left in the air of its last hop.
+    if (was && !one.moving) { one.hop = 0; play.critterLanded = true; }
   }
   // Birds: now and then a few across the sky.
   play.birds = (play.birds || []).filter((one) => now - one.at < one.ms);
   const region = play.region;
   if (play.birds.length === 0 && Math.random() < 0.004 && region && !["underwater", "space", "cavern"].includes(region.biome)) {
-    const fromLeft = Math.random() < 0.5, count = 3 + Math.floor(Math.random() * 4);
+    const fromLeft = Math.random() < 0.5, count = 2 + Math.floor(Math.random() * 2);
     play.birds.push({ at: now, ms: 9000, fromLeft, y: Math.random() * 0.6 + 0.1, count });
   }
 }
@@ -629,8 +1130,8 @@ function playActDraw(size) {
   if (fish) {
     const [bx, by] = playActScreen(fish.x, fish.y);
     const [mx, my] = playActScreen(play.me.x, play.me.y - 0.9);
-    const biting = now >= fish.bite && now < fish.bite + 1100;
-    if (now > fish.bite + 1100) { play.fish = null; playActSay(playWords("It got away!")); }
+    const biting = now >= fish.bite && now < fish.bite + PLAY_BITE_MS;
+    if (now > fish.bite + PLAY_BITE_MS) { play.fish = null; playActSay(playWords("It got away!")); }
     const dip = biting ? size * 0.18 * Math.abs(Math.sin(now / 60)) : Math.sin(now / 400) * size * 0.05;
     play.ctx.strokeStyle = "rgba(255, 255, 255, 0.8)"; play.ctx.lineWidth = 1;
     play.ctx.beginPath(); play.ctx.moveTo(mx + size * 0.3, my); play.ctx.quadraticCurveTo((mx + bx) / 2, Math.min(my, by) - size, bx, by + dip); play.ctx.stroke();
@@ -656,13 +1157,23 @@ function playActOver(size) {
   if (play.caught && now - play.caught.at < 1800) {
     const spec = PLAY_SCENERY[play.caught.name], sheet = spec && play.sheets[spec[0]];
     const [sx, sy] = playActScreen(play.me.x, play.me.y - 1.9);
-    if (sheet) ctx.drawImage(sheet, spec[1] * 17, spec[2] * 17, 16, 16, sx - size * 0.45, sy - size * 0.45 - Math.sin((now - play.caught.at) / 200) * size * 0.08, size * 0.9, size * 0.9);
+    // Whole, as wide and tall as it is drawn (a koi two tiles long), at most a tile and a half across.
+    const k = Math.min(0.9, 1.4 / Math.max(spec ? spec[3] : 1, spec ? spec[4] : 1));
+    const w = (spec ? spec[3] : 1) * size * k, h = (spec ? spec[4] : 1) * size * k;
+    const bob = Math.sin((now - play.caught.at) / 200) * size * 0.08;
+    if (sheet) ctx.drawImage(sheet, spec[1] * 17, spec[2] * 17, spec[3] * 17 - 1, spec[4] * 17 - 1, sx - w / 2, sy - h / 2 - bob, w, h);
   }
   // Riding: the vehicle with the walker on it.
-  if (play.ride) {
-    const at = playLineAt(play.ride.line, play.ride.start + play.ride.along * Math.min(1, (now - play.ride.at) / 1000 / play.ride.seconds));
-    playVehicleDraw(play.ride.line.kind, play.me.x, play.me.y, at[2], size, true);
+  if (play.ride && play.ride.line) {                         // (a great piece's ride: drawn with it, play.js)
+    const ride = play.ride, line = ride.line, u = ride.u === undefined ? ride.start : ride.u, dir = ride.along < 0 ? -1 : 1;
+    if (line.kind === "train") {                             // the walker in its engine, the cars behind on the rails
+      playTrainDraw(line, Array.from({ length: PLAY_CARS }, (_x, k) => ({ u: u - dir * k * PLAY_CAR_GAP, dir,
+        engine: k === 0 || (!line.loop && k === PLAY_CARS - 1) })), size);
+      const [sx, sy] = playActScreen(play.me.x, play.me.y);
+      playActMeOn(sx, sy - size * 0.3, size);
+    } else playVehicleDraw(line.kind, play.me.x, play.me.y, playLineHeading(line, u, dir), size, true, line.look);
   }
+  playActHintDraw(size);
   // A portal gone through: the screen white a moment.
   if (play.flash && now - play.flash < 450) {
     ctx.fillStyle = `rgba(255, 255, 255, ${(0.85 * (1 - (now - play.flash) / 450)).toFixed(2)})`;
@@ -693,10 +1204,17 @@ setInterval(() => {
   // vehicle, an animal, a coaster in view; a flock passing; a line cast, a swim, a puff, a fish held up, a seat slid
   // onto. Nothing in sight moving: no frame at all.
   const moving = playPortals().some((one) => playActInView(one.x, one.y, 2))
-    || playLines().some((line) => { const at = playLineAt(line, (now / 1000) * PLAY_LINE_SPEED[line.kind] * 0.35 + line.length * 0.37); return playActInView(at[0], at[1], 6); })
-    || (play.critters || []).some((one) => playActInView(one.x, one.y, 1))
+    || playLines().some((line) => {
+      const d = (now / 1000) * PLAY_LINE_SPEED[line.kind] * 0.35 + line.length * 0.37;
+      if (line.kind !== "train") { const at = playLineAt(line, d); return playActInView(at[0], at[1], 6); }
+      return playTrainCars(line, d).some((car) => { const [x, y] = playLinePoint(line, car.u); return playActInView(x, y, 3); });
+    })
+    || (play.critters || []).some((one) => one.moving && playActInView(one.x, one.y, 1)) || play.critterLanded
     || (play.birds || []).length || play.fish || play.swimming || (play.puffs || []).length
     || (play.caught && now - play.caught.at < 1800) || (play.sit && now - play.sit.at < 300)
-    || play.world.zones.some((zone) => zone.kind === "roller_coaster" && playCoasterInView(zone));
+    || play.world.zones.some((zone) => zone.kind === "roller_coaster" && playCoasterInView(zone))
+    || (play.ride && play.ride.piece)
+    || (play.world.items || []).some((one) => one.kind === "piece" && playPieceMoves(one) && playPieceInView(one));
+  play.critterLanded = false;
   if (moving) playDraw();
 }, 70);

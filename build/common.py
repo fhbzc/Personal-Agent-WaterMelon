@@ -323,9 +323,10 @@ def hidden_import_arguments(target: str) -> List[str]:
 _VIDEO = ["av", "faster_whisper", "ctranslate2"]
 # pywebview's WebView2 window needs its .NET assemblies and pythonnet's loader as files (the side panel,
 # platform_layer/panel_host.py): bundled whole - without them the panel opens in the browser, as before.
-COLLECT_ALL_PACKAGES = {"windows": ["winpty", "comtypes", "pystray", "tzdata", "webview", "clr_loader",
+# (pystray is shipped as its own source - LGPL, replaceable: lgpl_source_arguments.)
+COLLECT_ALL_PACKAGES = {"windows": ["winpty", "comtypes", "tzdata", "webview", "clr_loader",
                                     "pythonnet", *_VIDEO],
-                        "macos": ["pystray", *_VIDEO], "linux": ["tkinterdnd2", "pystray", *_VIDEO]}
+                        "macos": [*_VIDEO], "linux": ["tkinterdnd2", *_VIDEO]}
 
 
 def collect_arguments(target: str) -> List[str]:
@@ -392,6 +393,65 @@ def warn_about_bundle_weight() -> None:
     return None
 
 
+def lgpl_source_arguments(target: str, separator: str) -> List[str]:
+    """THE LGPL LIBRARIES KEPT REPLACEABLE (build/third_party_notices.py; the user, 2026-11-19: "确认打包方式符合 LGPL"):
+    each pure-Python one left out of the program's archive and shipped as its own source folder beside it - what it
+    imports told to the build, as it is not analysed."""
+    from build.third_party_notices import LGPL_IMPORTS, LGPL_SOURCE
+    args: List[str] = []
+    for package in LGPL_SOURCE:
+        try:
+            folder = Path(__import__(package).__file__).parent
+        except Exception:
+            print(f"note: optional package {package!r} is not installed; the features that need it will report "
+                  f"themselves unavailable")
+            continue
+        args += ["--exclude-module", package, "--add-data", f"{folder}{separator}{package}"]
+        # WHAT IT IMPORTS, READ OFF ITS OWN SOURCE (a side agent, 2026-11-19: a list kept by hand would leave a platform's
+        # backend out, the tray gone without a word): every module its files import that this machine has - its Mac,
+        # Linux or Windows backend alike - and those listed besides.
+        wanted = _imports_of(folder, package) | set(LGPL_IMPORTS.get(package, {}).get("", [])) \
+            | set(LGPL_IMPORTS.get(package, {}).get(target, []))
+        for module in sorted(wanted):
+            if _importable(module):
+                args += ["--hidden-import", module]
+    return args
+
+
+def _imports_of(folder: Path, package: str) -> set:
+    """Every module the source files of `folder` import (absolute imports, not the package's own)."""
+    import ast
+    found: set = set()
+    for path in folder.rglob("*.py"):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                found |= {alias.name for alias in node.names}
+            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                found.add(node.module)
+    return {name for name in found if name.split(".")[0] != package}
+
+
+def _importable(module: str) -> bool:
+    """Whether this machine has `module` (found, not run)."""
+    import importlib.util
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError, AttributeError):
+        return False
+
+
+def notices_arguments(target: str, separator: str) -> List[str]:
+    """THIRD_PARTY_NOTICES.txt written for this build and carried beside the program (build/third_party_notices.py)."""
+    from build.third_party_notices import NOTICES_NAME, write_notices
+    out = work_dir(target) / NOTICES_NAME
+    write_notices(REPO_ROOT / "requirements.txt", out)
+    return ["--add-data", f"{out}{separator}."]
+
+
 def exclude_arguments(target: str) -> List[str]:
     excluded = [module for platform, module in PLATFORM_MODULES.items() if platform != target]
     excluded += UNUSED_HEAVY_PACKAGES
@@ -437,6 +497,8 @@ def pyinstaller_command(
         *hidden_import_arguments(target),
         *collect_arguments(target),
         *exclude_arguments(target),
+        *lgpl_source_arguments(target, separator),
+        *notices_arguments(target, separator),
         "--collect-submodules", "personalized_agent",
     ]
     if icon and icon.exists():
