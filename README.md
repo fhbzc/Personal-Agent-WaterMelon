@@ -28,6 +28,11 @@ way you would want it done. All on your own computer.
 <a href="DESIGN.md">How it works</a>
 </p>
 
+<p align="center">
+  <img src="docs/images/play-world.png" width="100%" alt="Play: a world your agent grows from your days - a land with a railway, a project's great ground with its tower, and signposts along the roads"><br>
+  <sub><b>Play</b> (new in v0.3.10): a world your agent grows from your days, to walk in - <a href="#play">more below</a>.</sub>
+</p>
+
 ---
 
 ## The idea
@@ -225,7 +230,7 @@ made stay.
   <sub>Ask about your work, or ask it to do something; select words in a reply to ask about them in the margin.</sub>
 </p>
 
-**Play.** A small world your agent grows from your days, to walk in, in the
+<a id="play"></a>**Play.** A small world your agent grows from your days, to walk in, in the
 side panel. Each stretch of time becomes a land of the scene it felt like -
 a river journey, a glasshouse, a launch site, windy highlands, under the sea,
 in the sky, in space or in a city. Each project is a place built from its own
