@@ -19,6 +19,8 @@ const PLAY_MORE_GROUND = {
   // A toy town's (Kenney's Tiny Town): bright grass, a sandy path, a cobbled street.
   // The void of a land beyond its edge: the deep sea, the open sky, space (its stars drawn by play.js).
   voidSea: ["#0b2a4a"], voidSky: ["#a9dcf7"], voidSpace: ["#06070d"],
+  // A glass dome's wall between two lands (agent/playmuse.py JOINS "glass"): under the sea, in space.
+  glassDome: ["#cfeaf5", "#b7dcee"],
   // Snow, lava, cloud: made of colour.
   snow: ["#eef3f8"], snow2: ["#e3eaf2"], lava: ["#e8590c"], lava2: ["#f59f00"], cloud: ["#eef5fc"], cloud2: ["#e2eef9"],
   cracked: ["rpg", 16, 19], cracked2: ["rpg", 17, 20],
@@ -32,6 +34,9 @@ const PLAY_MORE_GROUND = {
   sand: ["rpg", 8, 0], sand2: ["rpg", 8, 1], dirt: ["rpg", 6, 0], dirt2: ["rpg", 6, 1], rock: ["rpg", 7, 0],
   rock2: ["rpg", 7, 1], cobble: ["rpg", 9, 0], cobble2: ["rpg", 9, 1], autumn: ["rpg", 0, 18], autumn2: ["rpg", 1, 19],
   magic: ["rpg", 0, 21], magic2: ["rpg", 1, 22], water: ["rpg", 0, 0], water2: ["rpg", 1, 0], bridge: ["rpg", 5, 2],
+  // FRESH WATER, NOT THE SEA'S (the user, 2026-11-20: "你的内陆湖的河流颜色和海水可以不一样 ... 不然区分不出来"): a river, a
+  // lake, a pond - the same water, washed green and clear (play.js playTile).
+  waterFresh: ["rpg", 0, 0], waterFresh2: ["rpg", 1, 0],
   paving: ["rpg", 7, 2], cityGrass: ["city", 0, 24], cityGrass2: ["city", 1, 24], pavement: ["city", 2, 24],
   pavement2: ["city", 3, 24], asphalt: ["#3f4046"], caveFloor: ["cave", 16, 12], caveFloor2: ["cave", 17, 13],
   caveGrey: ["cave", 16, 10], caveSand: ["cave", 16, 14], field: ["city", 4, 24],
@@ -761,11 +766,22 @@ function playLay(world, area) {
     const p = byId[one.from], q = byId[one.to];
     if (typeof p === "number" && typeof q === "number") joined.add(`${Math.min(p, q)},${Math.max(p, q)}`);
   }
+  // HOW EACH TWO LANDS MEET, AS THE AGENT JUDGED THEIR SCENES (agent/playmuse.py JOINS; the user, 2026-11-20: "不同主题
+  // 之间的交通连接和衔接隔断也要model根据场景适配性判断"): one shore, or what lies between - water, the void, cloud, a
+  // cliff, a wall, glass. What it did not say: as their days joined them.
+  const meet = new Map();
+  for (const one of (world.transport && world.transport.joins) || []) {
+    const p = byId[one.from], q = byId[one.to];
+    if (typeof p !== "number" || typeof q !== "number") continue;
+    const key = `${Math.min(p, q)},${Math.max(p, q)}`;
+    if (one.how === "one_shore") joined.add(key);
+    else { joined.delete(key); meet.set(key, one.how); }
+  }
   // ONLY THE HOUSE, TILL THE WORLD OUTSIDE IS MADE (the user, 2026-11-19: "不要从起始村，从一个起始房子，是看不到外面的那种"):
   // the first land closed (agent/playworld.py) - nothing laid round the house till the feeling of their days opens it.
   const closed = regions.length === 1 && Boolean(regions[0].closed);
   return { regions, byId, zones, landmarks: closed ? [] : landmarks, items: world.items, laid: new Map(), paths, pathBlocks,
-           doorways, hearts, life, blocked, joined, closed };
+           doorways, hearts, life, blocked, joined, meet, closed };
 }
 
 /* THE ORDER OF THEIR LIFE - the same rule as agent/playplaces.py life_road: each place on the road by when it began,
@@ -806,11 +822,13 @@ function playLifeOf(world, zones) {
 /* The road laid between them, wide, and its signposts: one a little way along each stretch and one every
    PLAY_POST_EVERY tiles, beside the road, its arrow the way the road goes on, naming the place it goes to; the first
    ("Start of your story") where it begins. */
-const PLAY_POST_EVERY = 22;
+// DENSER, AND ON EVERY ROAD HOWEVER SHORT (the user, 2026-11-20: "交通的动线箭头/路牌设计不需要等地图够大，没有更新限制"): a
+// signpost every PLAY_POST_EVERY tiles, one by each place it leads to (its number in time), arrows all along (play.js).
+const PLAY_POST_EVERY = 10, PLAY_POST_APART = 5;
 function playLifeRoad(world, zones, regions, byId, hearts, blocked, paths, doorways, lay) {
   const { order, follows } = playLifeOf(world, zones);
-  const posts = [], byId2 = new Map(order.map((one) => [one.zone.id, one]));
-  if (order.length < 2) return { order, follows, posts };
+  const posts = [], routes = [], byId2 = new Map(order.map((one) => [one.zone.id, one]));
+  if (order.length < 2) return { order, follows, posts, routes };
   const taken = new Set();
   const postBeside = (route, k, to, from) => {
     const [x, y] = route[k], ahead = route[Math.min(route.length - 1, k + 3)];
@@ -818,7 +836,7 @@ function playLifeRoad(world, zones, regions, byId, hearts, blocked, paths, doorw
     for (const [px, py] of [[x - dy, y + dx], [x + dy, y - dx], [x - dy * 2, y + dx * 2]]) {
       const key = `${px},${py}`;
       if (blocked.has(key) || paths.has(key) || doorways.has(key) || taken.has(key)) continue;
-      if ([...taken].some((one) => { const [qx, qy] = one.split(",").map(Number); return Math.abs(qx - px) + Math.abs(qy - py) < 7; })) return;
+      if ([...taken].some((one) => { const [qx, qy] = one.split(",").map(Number); return Math.abs(qx - px) + Math.abs(qy - py) < PLAY_POST_APART; })) return;
       taken.add(key);
       posts.push({ x: px, y: py, dx: dx || 0, dy: dx ? 0 : dy, to, from });
       return;
@@ -832,7 +850,9 @@ function playLifeRoad(world, zones, regions, byId, hearts, blocked, paths, doorw
     if (one.region.apart) continue;                                // a land apart: reached by its portal alone
     const route = playRoute(blocked, start, one.out, 1, 131, paths);
     lay(route, regionN(one), true);
-    if (route.length > 6) postBeside(route, 2, one, null);
+    routes.push(route);
+    if (route.length > 2) postBeside(route, Math.min(2, route.length - 1), one, null);
+    if (route.length > 4) postBeside(route, route.length - 3, one, null);         // by the place it leads to
   }
   posts.push({ x: start[0] + 2, y: start[1], dx: 0, dy: 0, start: true, to: roots[0], from: null });
   taken.add(`${start[0] + 2},${start[1]}`);
@@ -844,14 +864,24 @@ function playLifeRoad(world, zones, regions, byId, hearts, blocked, paths, doorw
       route.slice(0, 3).forEach(([x, y]) => doorways.add(`${x},${y}`));
       route.slice(-3).forEach(([x, y]) => doorways.add(`${x},${y}`));
       lay(route, regionN(one), true);
-      if (route.length < 8) { if (route.length > 3) postBeside(route, Math.floor(route.length / 2), one, from); continue; }
+      routes.push(route);
+      if (route.length < 8) { if (route.length > 1) postBeside(route, Math.floor(route.length / 2), one, from); continue; }
       for (let k = 4; k < route.length - 4; k += PLAY_POST_EVERY) postBeside(route, k, one, from);
+      postBeside(route, route.length - 3, one, from);                              // by the place it leads to
     }
   }
-  return { order, follows, posts };
+  return { order, follows, posts, routes };
 }
 
 /* Whose ground a tile is - the nearest region, the second nearest, how far into the band between. */
+/* A WINDING BORDER BETWEEN TWO LANDS (the user, 2026-11-20: "两个地块的衔接很生硬，不应该有这种竖直的切割"): whose a tile is,
+   asked at a point pushed about by noise at two sizes - the line between two lands bends and wanders, never ruled. */
+const PLAY_BORDER_WANDER = 7;
+function playWhoseWinding(index, x, y) {
+  const wx = (playNoise(x, y, 81, 14) - 0.5) * 2 * PLAY_BORDER_WANDER + (playNoise(x, y, 83, 5) - 0.5) * 3;
+  const wy = (playNoise(x, y, 82, 14) - 0.5) * 2 * PLAY_BORDER_WANDER + (playNoise(x, y, 84, 5) - 0.5) * 3;
+  return playWhose(index, x + wx, y + wy);
+}
 function playWhose(index, x, y) {
   const regions = index.regions;
   let a = 0, da = Infinity, b = -1, db = Infinity;
@@ -907,6 +937,11 @@ const PLAY_EDGES = {
   lanterns: { ground: ["paving", "cobble"], grows: ["lantern", "lanternString", "plumTree"], thick: 0.25 },
   hearts: { ground: ["grass", "grass2"], grows: ["rose", "roseVine", "redHeart", "plumTree"], thick: 0.45 },
   reeds: { ground: ["grass2", "dirt2"], grows: ["fern", "tallFern", "bush", "mossRock"], thick: 0.5 },
+  // Under the sea, in the sky, in space (the user, 2026-11-20: "区块和特色装饰").
+  coralreef: { ground: ["sand2", "seaRockGround"], grows: ["coral", "anemone", "seaweed", "bubbles", "clownfish"], thick: 0.55 },
+  kelp: { ground: ["sand", "sand2"], grows: ["seaweed", "seaweed", "bubbles", "jellyfish", "seaweed"], thick: 0.65 },
+  cloudbank: { ground: ["cloud", "cloud2"], grows: ["sparkle", "pennant", "whiteFlower", "blueFlower"], thick: 0.22 },
+  starfield: { ground: ["caveGrey", "rock2"], grows: ["crystal", "sparkle", "ore", "greyRock", "greyRock2"], thick: 0.35 },
 };
 /* OUTLINES OF ANY SHAPE (agent/playshapes.py - the same points and sums; the user, 2026-11-19: "每个区域都可以选其他形状，
    比如五角星，三角形，圆形等"): each a polygon filling the box from -1 to 1, y down; "circle" the round one. */
@@ -954,6 +989,9 @@ function playShapeReach(kind, angle) {
    nought or less inside. null for a land without one (its coast by what stands there, playLandReach). */
 const PLAY_CHOSEN_REACH = 1.08;
 function playLandShapeOut(region, x, y) {
+  // A LAND IS NEVER A RULED FIGURE (the user, 2026-11-20: "你的主题地块一定是不规则的，正六边形都是建筑什么用的"): its coast
+  // its own, natural - a land given an outline before keeps its natural one now; the outlines are for buildings.
+  if (region && region.shape) return null;
   const reach0 = region && region.shape ? playShapeReach(String(region.shape), 0) : null;
   if (reach0 === null) return null;
   const r = region.rect, b = [r[0] + 1, r[1] + 1, r[2] - 1, r[3] - 1];   // agent/playplaces.py bounds
@@ -1205,7 +1243,7 @@ function playNatural(zone) {
       if (dx * dx + dy * dy > 1) continue;
       if (islet) out.set(`${x},${y}`, [x === Math.floor(cx) && y === Math.floor(cy) ? "grass" : "grass2", false]);
       else if (bridge) out.set(`${x},${y}`, ["bridge", false]);
-      else out.set(`${x},${y}`, [playHash(x, y, 5) < 0.5 ? "water" : "water2", true]);
+      else out.set(`${x},${y}`, [playHash(x, y, 5) < 0.5 ? "waterFresh" : "waterFresh2", true]);
     }
   } else if (zone.kind === "waterfall") {
     const cx = left + Math.floor(w / 2);
@@ -1218,7 +1256,7 @@ function playNatural(zone) {
         const part = y === top ? `waterFallT${col}` : y === top + h - 4 ? `waterFallB${col}` : `waterFall${col || "M"}`;
         out.set(`${x},${y}`, [part === "waterFallT" ? "waterFallT" : part, true]);
       } else if (cliff) out.set(`${x},${y}`, [y === top ? "faceHi~stone" : "faceLo~stone", true]);
-      else if (pool) out.set(`${x},${y}`, [playHash(x, y, 5) < 0.5 ? "water" : "water2", true]);
+      else if (pool) out.set(`${x},${y}`, [playHash(x, y, 5) < 0.5 ? "waterFresh" : "waterFresh2", true]);
     }
   } else if (zone.kind === "sea_tunnel") {
     // A glass way through the sea: water on both sides (fish about it, as its things), the way across its middle.
@@ -1288,7 +1326,7 @@ function playLayBlock(index, cx, cy) {
   const reach = playReach(index, x0, y0, W);
   for (let y = y0; y < y1; y += 1) {
     for (let x = x0; x < x1; x += 1) {
-      const { a, b, toB, gap } = playWhose(index, x, y);
+      const { a, b, toB, gap } = playWhoseWinding(index, x, y);
       const i = at(x, y);
       const mine = playHash(x, y, 7) < toB ? b : a;
       owner[i] = mine;
@@ -1327,7 +1365,18 @@ function playLayBlock(index, cx, cy) {
       const strait = d - landReach <= PLAY_SEA_MOST && gap / 2 < straitHalf
         && !index.joined.has(`${Math.min(a, b)},${Math.max(a, b)}`);
       far[i] = Math.min(255, d);
-      if (d > landReach || strait) {
+      // WHAT LIES BETWEEN, AS THE AGENT SAID (meet): the void, a bank of cloud, a cliff, a wall, glass - else water.
+      const between = strait && b >= 0 && index.meet ? index.meet.get(`${Math.min(a, b)},${Math.max(a, b)}`) : "";
+      const betweenEdge = { clouds: "cloudbank", cliff: "cliffs", wall: "citywall" }[between];
+      if (strait && between === "void") {
+        none[i] = 1; ground[i] = under[i] = regions[a].land.void || "voidSky"; solid[i] = 1;
+      } else if (strait && between === "glass") {
+        ground[i] = under[i] = "glassDome"; solid[i] = 1; rim[i] = 1;
+      } else if (strait && betweenEdge && PLAY_EDGES[betweenEdge]) {
+        const edge = PLAY_EDGES[betweenEdge];
+        ground[i] = under[i] = edge.ground[Math.floor(playHash(x, y, 33) * edge.ground.length)];
+        rim[i] = 1;
+      } else if (d > landReach || strait) {
         const out = strait ? Math.max(1, Math.min(d - landReach, PLAY_SEA_MOST), straitHalf - gap / 2) : d - landReach;
         if (regions[a].land.void || out > PLAY_SEA_MOST) {
           none[i] = 1; ground[i] = under[i] = regions[a].land.void || "none"; solid[i] = 1;
@@ -1373,7 +1422,7 @@ function playLayBlock(index, cx, cy) {
   for (let y = y0; y < y1; y += 1) {
     for (let x = x0; x < x1; x += 1) {
       const i = at(x, y), land = regions[owner[i]].land;
-      if (!none[i] && !solid[i] && land.water && playNoise(x, y, 11) < land.water * 0.9) put(x, y, playHash(x, y, 5) < 0.5 ? "water" : "water2", true);
+      if (!none[i] && !solid[i] && land.water && playNoise(x, y, 11) < land.water * 0.9) put(x, y, playHash(x, y, 5) < 0.5 ? "waterFresh" : "waterFresh2", true);
     }
   }
   // The rooms' footprints first known (the islands' water stays off them).
@@ -1384,14 +1433,20 @@ function playLayBlock(index, cx, cy) {
     const [rx0, ry0, rx1, ry1] = one.garden ? one.rect : [one.zone.x, one.zone.y, one.zone.x + one.zone.w + 2, one.zone.y + one.zone.h + 6];
     for (let y = Math.max(ry0, y0); y < Math.min(ry1, y1); y += 1) for (let x = Math.max(rx0, x0); x < Math.min(rx1, x1); x += 1) kept[at(x, y)] = 1;
   }
-  // 3. A river through a river region's row below its middle (on its land).
+  // 3. A river through a river region's row below its middle - ON ITS LAND ONLY, WINDING (the user, 2026-11-20: "为啥这里
+  //    地形会有一条矩形" - a straight band six tiles wide was laid from eight tiles past the land on each side, over the
+  //    sea and its shore too, a rectangle of light water across the deep): it bends and narrows by noise, and stops where
+  //    the land does - never over the sea, the shore, the land's own edge or the dark.
   for (const region of regions) {
     if ((region.layout || "") !== "river") continue;
     const r = region.rect, ry = region.oy + PLAY_CELL[1] + 4;
-    for (let x = Math.max(r[0] - 8, x0); x < Math.min(r[2] + 8, x1); x += 1) {
-      for (let dy = 0; dy < 6; dy += 1) {
-        const i = at(x, ry + dy);
-        if (i >= 0 && !kept[i] && !none[i]) put(x, ry + dy, playHash(x, ry + dy, 5) < 0.5 ? "water" : "water2", true);
+    for (let x = Math.max(r[0], x0); x < Math.min(r[2], x1); x += 1) {
+      const bend = Math.round((playNoise(x, ry, 61, 18) - 0.5) * 10), wide = 3 + Math.round(playNoise(x, ry, 67, 9) * 3);
+      for (let dy = 0; dy < wide; dy += 1) {
+        const y = ry + bend + dy, i = at(x, y);
+        if (i >= 0 && !kept[i] && !none[i] && !sea[i] && !shore[i] && !rim[i]) {
+          put(x, y, playHash(x, y, 5) < 0.5 ? "waterFresh" : "waterFresh2", true);
+        }
       }
     }
   }
@@ -1448,7 +1503,7 @@ function playLayBlock(index, cx, cy) {
             const i1 = at(x, y);
             if (made[1] && i1 >= 0) seen[i1] = 1;               // a mountain's rock, under a coaster's track: its own
           }
-          else put(x, y, wet ? (playHash(x, y, 5) < 0.5 ? "water" : "water2") : ring ? "dirt" : ground2, wet, 1);
+          else put(x, y, wet ? (playHash(x, y, 5) < 0.5 ? "waterFresh" : "waterFresh2") : ring ? "dirt" : ground2, wet, 1);
           const i = at(x, y);
           if (i >= 0) none[i] = 0;
         }
@@ -1606,6 +1661,39 @@ function playLayBlock(index, cx, cy) {
     if (!intersects([sx0 - 3, sy0 - 3, sx1 + 3, sy1 + 3], x0, y0, x1, y1)) continue;
     for (let y = sy0; y < sy1; y += 1) for (let x = sx0; x < sx1; x += 1) { put(x, y, mark.paving, false, 3); const i = at(x, y); if (i >= 0) none[i] = 0; }
     for (const [name, dx, dy] of PLAY_LANDMARKS[mark.landmark]) place(name, mark.cx + dx, mark.cy + dy, mark.region);
+  }
+  // 6b. BESIDE THE ROADS, AS THE ART DIRECTOR SAID (agent/playworld.py _aesthetics; the user, 2026-11-20: "所有道路，应该有路沿
+  //     把它和空地区分开 ... 让agent决定要加什么路沿，弄好形状之后代码加（另外要注意处理比如宽路和窄路的区别，多个黏在一起的视觉
+  //     效果）"): each road tile's free side - never another road's tile, so where roads run together or a road is wide
+  //     nothing stands between them - its edge (stones, a hedge, flowers, posts), now and then a thing (a bench, a bin,
+  //     a lamp, a planter, a hydrant, a sign), and the land's street lights as far apart as its night says.
+  const looks = (play.world && play.world.road_looks) || {};
+  const EDGE_SPRITES = { stones: ["greyRock2", 0.28], hedge: ["bush", 0.55], flowers: ["redFlower", 0.4], posts: ["", 0.12] };
+  const THING_SPRITES = { bench: "bench", bin: "bin", planter: "planter", hydrant: "hydrant", signpost: "signpost" };
+  for (let y = y0; y < y1; y += 1) {
+    for (let x = x0; x < x1; x += 1) {
+      const road = index.paths.get(`${x},${y}`);
+      if (!road) continue;
+      const region = regions[road.region] || regions[0];
+      const look = looks[road.material || (region.road || {}).material || "dirt"] || null;
+      const night = region.night || {};
+      for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+        const sx = x + dx, sy = y + dy, j = at(sx, sy);
+        if (j < 0 || index.paths.has(`${sx},${sy}`) || kept[j] || solid[j] || none[j] || doorway[j] || sea[j]) continue;
+        const every = Math.max(3, (look && look.every) || 99), lampsEvery = Math.max(4, night.lamps_every || 0);
+        if (night.lamps_every && (sx * 7 + sy * 13) % lampsEvery === 0) { place(playLightOf(region), sx, sy, region); break; }
+        if (look && look.things && look.things.length && (sx * 5 + sy * 11) % every === 0 && playHash(sx, sy, 91) < 0.7) {
+          const thing = look.things[Math.floor(playHash(sx, sy, 92) * look.things.length)];
+          place(thing === "lamp" ? playLightOf(region) : THING_SPRITES[thing], sx, sy, region);
+          break;
+        }
+        const edge = look && EDGE_SPRITES[look.edge];
+        if (edge && playHash(sx, sy, 93) < edge[1] * (road.wide ? 1.3 : 1)) {
+          place(edge[0] || playLightOf(region), sx, sy, region);
+          break;
+        }
+      }
+    }
   }
   // 7. WHAT GROWS, decided tile by tile from where it is: a tile may hold something if it is free and a step from every
   //    room, door's way and solid thing; by a road, the theme's, else the land's; a solid one only where no neighbour

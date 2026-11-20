@@ -50,8 +50,33 @@ def json_of(text: str) -> Optional[Dict[str, Any]]:
     try:
         parsed = json.loads(candidate)
     except ValueError:
-        return None
+        # MORE AFTER IT, OR TWO OF THEM: the whole one that begins at its first { - never one inside an answer cut off
+        # (a cut answer's inner object read as the answer, 2026-11-20 - it is a cut answer, said so by the caller).
+        try:
+            parsed, _end = json.JSONDecoder().raw_decode(text, text.find("{"))
+        except ValueError:
+            return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def json_objects(text: str) -> List[Dict[str, Any]]:
+    """EVERY WHOLE JSON OBJECT IN AN ANSWER, IN ORDER (2026-11-20: an answer of two objects, or of one with words
+    after it, read from its first { to its last } as one, failed whole - "Extra data"): each read from where it
+    begins to where it ends, what is between them passed over."""
+    decoder, found, at = json.JSONDecoder(), [], 0
+    text = text or ""
+    while True:
+        start = text.find("{", at)
+        if start == -1:
+            return found
+        try:
+            value, end = decoder.raw_decode(text, start)
+        except ValueError:
+            at = start + 1
+            continue
+        if isinstance(value, dict):
+            found.append(value)
+        at = end
 
 
 def _opens_and_does_not_close(text: str) -> bool:
@@ -131,4 +156,4 @@ def in_parts(items: Sequence[Any], ask: Callable[[Sequence[Any]], Answer],
     return in_parts(items[:half], ask, least) + in_parts(items[half:], ask, least)
 
 
-__all__ = ["Answer", "CUT_OFF", "was_cut", "json_of", "read", "read_text", "in_parts"]
+__all__ = ["Answer", "CUT_OFF", "was_cut", "json_of", "json_objects", "read", "read_text", "in_parts"]

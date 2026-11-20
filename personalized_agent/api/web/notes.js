@@ -120,7 +120,7 @@ function notesCard(row, kind) {
     ${row.learning ? sideLearningHtml(row) : ""}
     ${sideExtras([{ key: "rules", label: "Rules used", html: sideRulesList(row.rules) },
                   { key: "details", label: "More details", html: said ? details : (row.note ? `<p>${linkify(escapeHtml(row.note))}</p>` : "") }])}
-    ${typeof sideReactHtml === "function" ? sideReactHtml(row.reactions || [], row.bad) : ""}`;
+    ${typeof sideReactHtml === "function" ? sideReactHtml(row.reactions || [], row.bad, row.good) : ""}`;
 }
 
 /* THE REPORT, EVERY EVENT OF IT IN THE CHAT (the user, 2026-11-19: "这个report, 我觉得是不是应该在chat里就显示所有need
@@ -147,7 +147,7 @@ function sideReportCard(row, kind) {
     ${row.title ? `<div class="side-note-title chat-message">${escapeHtml(row.title)}</div>` : ""}
     <div class="side-report">${groups}</div>
     ${sideOpenThePage("", row.goes ? row.id : "")}
-    ${typeof sideReactHtml === "function" ? sideReactHtml(row.reactions || [], row.bad) : ""}`;
+    ${typeof sideReactHtml === "function" ? sideReactHtml(row.reactions || [], row.bad, row.good) : ""}`;
 }
 
 /* A LEARNING QUESTION'S OPTIONS (the user, 2026-11-17: "learning的question 要求必须给option (让用户可以点，同时有一个chat
@@ -307,6 +307,22 @@ async function sidePinned(pinned) {
   if (pin && said) pin.setAttribute("aria-pressed", String(Boolean(said.pinned)));
 }
 
+/* THE WHOLE SCREEN, OR BACK (the user, 2026-11-20: "加一个全屏图标，是可以让整个sidebar最大化，再点一下恢复"): asked when it
+   is drawn - shown only where the desktop can - and `full` given, made so. Never kept as where it is attached. */
+async function sideFull(full) {
+  let said = null;
+  try { said = await api.post("/api/notifications/panel_full", full === undefined ? {} : { full }); }
+  catch (_err) { said = null; }
+  const button = $("#side-full");
+  if (!button || !said) return;
+  button.hidden = !said.can;
+  const on = Boolean(said.full);
+  button.setAttribute("aria-pressed", String(on));
+  const words = on ? "Restore" : "Full screen";
+  button.title = words;
+  button.setAttribute("aria-label", words);
+}
+
 /* A line put in the chat by when it was said: before the first that was said after it. */
 function sideInsert(line, at) {
   if (!SIDE_LOG) return;
@@ -354,6 +370,12 @@ function renderNotes(force = false) {
             aria-label="${escapeHtml("Search")}" title="${escapeHtml("Search")}"><svg viewBox="0 0 24 24" width="18"
             height="18" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor"
             stroke-width="1.8"/><path d="M16 16l5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+          <button type="button" class="side-collapse" id="side-full" aria-pressed="false" hidden
+            aria-label="${escapeHtml("Full screen")}" title="${escapeHtml("Full screen")}"><svg viewBox="0 0 24 24"
+            width="18" height="18" aria-hidden="true"><path class="side-full-out" d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"
+            fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path
+            class="side-full-in" d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5" fill="none" stroke="currentColor"
+            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           <button type="button" class="side-collapse side-pin" id="side-pin" aria-pressed="false"
             aria-label="${escapeHtml("Pin to the right")}" title="${escapeHtml("Pin to the right")}"><svg viewBox="0 0 24 24"
             width="18" height="18" aria-hidden="true"><path d="M14 3l7 7-3 1-4 4 1 5-2 1-4-4-5 5-1-1 5-5-4-4 1-2 5 1 4-4z"
@@ -375,6 +397,8 @@ function renderNotes(force = false) {
     $("#side-search-open").onclick = () => sideSearchOpen($("#side-search").hidden);
     // THE PLAY VIEW (play.js): the agent's world of the user's days - a view of its own, over the chat.
     $("#side-play-open").onclick = () => { if (typeof playToggle === "function") playToggle(); };
+    $("#side-full").onclick = () => sideFull($("#side-full").getAttribute("aria-pressed") !== "true");
+    sideFull();
     $("#side-search-input").addEventListener("input", sideSearchTyped);
     $("#side-search-input").addEventListener("keydown", (event) => { if (event.key === "Escape") sideSearchOpen(false); });
     $("#side-search-hits").addEventListener("click", (event) => {
@@ -406,6 +430,7 @@ function renderNotes(force = false) {
     line.innerHTML = notesCard(row, kind);
     line._reactions = [...(row.reactions || [])];
     line._bad = Boolean(row.bad);
+    line._good = Boolean(row.good);
     if (node) { line.dataset.at = node.dataset.at; node.replaceWith(line); }
     else {
       sideInsert(line, row.at);
@@ -536,6 +561,28 @@ if (SIDE_LOG) {
   SIDE_LOG.addEventListener("click", (event) => {
     const option = event.target.closest && event.target.closest(".side-learn-option");
     if (option) { event.stopPropagation(); sideLearningPressed(option); return; }
+    const reply = event.target.closest && event.target.closest(".side-quick-reply");
+    if (reply) {
+      event.stopPropagation();
+      const line = reply.closest(".side-msg:not(.side-thread-msg)") || reply.closest(".side-msg");
+      if (line) sideReplyOnly(line, reply.dataset.reply || reply.textContent || "");
+      return;
+    }
+    const opener = event.target.closest && event.target.closest(".side-reply-open");
+    if (opener) {
+      event.stopPropagation();
+      const line = opener.closest(".side-msg");
+      if (line) sideReplyBox(line);
+      return;
+    }
+    if (event.target.closest && event.target.closest(".side-reply-box")) { event.stopPropagation(); return; }
+    const good = event.target.closest && event.target.closest(".side-good");
+    if (good) {
+      event.stopPropagation();
+      const line = good.closest(".side-msg");
+      if (line) sideGood(line, good.getAttribute("aria-pressed") !== "true");
+      return;
+    }
     const bad = event.target.closest && event.target.closest(".side-bad");
     if (bad) {
       event.stopPropagation();
@@ -608,6 +655,65 @@ function sideStickToEnd() {
   keep.observe(scroll);                            // the chat's own box grown or shrunk (its input dragged taller)
 }
 
+/* QUICK REPLIES AND A REPLY TO THIS ONE ONLY (the user, 2026-11-20: "agent的每个话都自带几个快速回复选项（我也可以点）和chat
+   bar, 可以不带context的给agent回复（就只针对这个信息）也没有图片input什么的"): the replies its answer ended with as buttons,
+   and a box under it - what is sent from either goes to this message alone (/api/chat/reply_only), answered under it. */
+function sideRepliesOf(words) {
+  const text = String(words || "");
+  const found = text.match(/\n?[ \t]*(?:quick replies|快速回复)[ \t]*[:：][ \t]*([^\n]+)[ \t]*$/i);
+  if (!found) return { words: text, replies: [] };
+  const replies = found[1].split(/[|｜]/).map((one) => one.trim()).filter(Boolean).slice(0, 4);
+  return { words: text.slice(0, found.index).trimEnd(), replies };
+}
+function sideReplyHtml(replies) {
+  return `<div class="side-reply-only">${(replies || []).map((one) => `<button type="button" class="side-quick-reply"
+      data-reply="${escapeHtml(one)}">${escapeHtml(one)}</button>`).join("")}<button type="button" class="side-reply-open"
+      title="${escapeHtml("Reply to this message only")}" aria-label="${escapeHtml("Reply to this message only")}">↩</button></div>`;
+}
+async function sideReplyOnly(line, text) {
+  const id = line.dataset.message || line.dataset.id || "";
+  if (!id || !text) return;
+  let thread = line.querySelector(":scope > .side-thread");
+  if (!thread) { thread = document.createElement("div"); thread.className = "side-thread"; line.appendChild(thread); }
+  const mine = document.createElement("div");
+  mine.className = "side-msg you chat-message side-thread-msg";
+  mine.dataset.who = "you";
+  mine.textContent = text;
+  const answer = document.createElement("div");
+  answer.className = "side-msg agent working side-thread-msg";
+  answer.dataset.who = "agent";
+  answer.textContent = "Thinking…";
+  thread.append(mine, answer);
+  let said = null;
+  try { said = await api.post("/api/chat/reply_only", { message_id: id, message: text }); }
+  catch (err) { answer.textContent = String((err && err.message) || "It could not be sent."); return; }
+  if (said.answer) { sideWrite(answer, said.answer, "quick"); answer.dataset.message = said.message_id || ""; }
+  if (said.turn) {
+    const full = said.answer ? (() => { const one = document.createElement("div"); one.dataset.who = "agent";
+      one.className = "side-msg agent working side-thread-msg"; one.textContent = "Looking into it…"; thread.appendChild(one); return one; })() : answer;
+    if (said.answer) full.dataset.afterQuick = "1";
+    sideChat.turns.set(said.turn, full);
+    sideTurn(said.turn);
+  }
+}
+function sideReplyBox(line) {
+  if (line.querySelector(":scope > .side-reply-box")) return;
+  const box = document.createElement("form");
+  box.className = "side-reply-box";
+  box.innerHTML = `<input type="text" class="side-reply-input" placeholder="${escapeHtml("Reply to this message only")}">
+    <button type="submit" class="small">${escapeHtml("Send")}</button>`;
+  box.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const input = box.querySelector("input");
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    sideReplyOnly(line, text);
+  });
+  line.appendChild(box);
+  box.querySelector("input").focus();
+}
+
 /* One line said: by "you" or the "agent"; its words the user's or the model's - never looked up to be translated
    (.chat-message, i18n.js) - unless it is the panel's own "Thinking…" while it waits. */
 function sideWrite(line, words, kind = "", fresh = true) {
@@ -617,9 +723,11 @@ function sideWrite(line, words, kind = "", fresh = true) {
   // answer is new, on a press of its mark when it is from before.
   const { words: said, view } = line.dataset.who === "agent" && typeof sideViewOf === "function"
     ? sideViewOf(words) : { words, view: null };
-  const { words: told, rules } = line.dataset.who === "agent" ? sideRulesOf(said) : { words: said, rules: [] };
+  const { words: ruled, rules } = line.dataset.who === "agent" ? sideRulesOf(said) : { words: said, rules: [] };
+  // ITS QUICK REPLIES, AS BUTTONS (agent/two_speed.py REPLIES_NOTE; the user, 2026-11-20): taken off its last line.
+  const { words: told, replies } = line.dataset.who === "agent" && kind !== "working" ? sideRepliesOf(ruled) : { words: ruled, replies: [] };
   line.innerHTML = linkify(escapeHtml(told)) + sideExtras([{ key: "rules", label: "Rules used", html: sideRulesList(rules) }])
-    + (line.dataset.who === "agent" ? sideReactHtml(line._reactions || [], line._bad) : "");
+    + (line.dataset.who === "agent" ? sideReplyHtml(replies) + sideReactHtml(line._reactions || [], line._bad, line._good) : "");
   line._view = view;
   if (view) {
     // Beside the line, not in it: its word is the panel's, translated (the line's are not).
@@ -1037,8 +1145,8 @@ function sideShowPast(said) {
     const line = sideSay(one.role === "user" ? "you" : "agent", one.content, "", false, one.created_at, false);
     if (!line) continue;
     line.dataset.id = one.id;
-    if (one.role === "assistant" && ((meta.reactions || []).length || meta.bad_content)) {
-      sideReactDraw(line, meta.reactions || [], Boolean(meta.bad_content));
+    if (one.role === "assistant" && ((meta.reactions || []).length || meta.bad_content || meta.good_content)) {
+      sideReactDraw(line, meta.reactions || [], Boolean(meta.bad_content), Boolean(meta.good_content));
     }
     if (one.role === "assistant") line.dataset.message = one.id;
     if (one.role === "user") sideFilesShown(line, meta.attachments || []);
@@ -1154,26 +1262,34 @@ function sideTypeOut(line) {
 
 /* QUICK REACTIONS, AS SLACK HAS THEM (the user, 2026-11-17: "agent的每个回复，有一个快速emoji功能，代表用户对这个的反应（里面有
    emoji代表good content和bad content)"): under each thing the agent said, those given, and a face to add one. */
-// Expressions only ("emoji 只是用户的expression"); whether it was bad content is its own button beside them.
-const SIDE_REACTIONS = [["\u{1F44D}", "Thumbs up"], ["\u2764\uFE0F", "Heart"], ["\u{1F602}", "Laughing"],
+// Expressions only ("emoji 只是用户的expression"); whether it was good or bad content is its own pair of thumbs beside
+// them (the user, 2026-11-20: "所有content, good 和bad 都放在快速栏，(大拇指和倒拇指)， 其它的是emoji").
+const SIDE_REACTIONS = [["\u2764\uFE0F", "Heart"], ["\u{1F602}", "Laughing"],
   ["\u{1F62E}", "Surprised"], ["\u{1F622}", "Sad"], ["\u{1F914}", "Thinking"], ["\u{1F389}", "Celebrating"]];
 const SIDE_REACT_FACE = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.4 9.4c.7 1 1.6 1.5 2.6 1.5s1.9-.5 2.6-1.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="6" cy="6.6" r=".8" fill="currentColor"/><circle cx="10" cy="6.6" r=".8" fill="currentColor"/></svg>`;
 /* BAD CONTENT AS A MARK, NOT WORDS (the user, 2026-11-17: "bad content也用一个logo"): a thumb down, said by its title. */
 const SIDE_BAD_MARK = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6.2 9.6H3.4a1.2 1.2 0 0 1-1.2-1.4l.8-4.3A1.3 1.3 0 0 1 4.3 2.8h5.5v6.6L7.6 13.4a1 1 0 0 1-1.8-.5zM9.8 2.8h2.6a1 1 0 0 1 1 1v4.6a1 1 0 0 1-1 1H9.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>`;
-function sideReactHtml(given, bad = false) {
+/* GOOD CONTENT, ITS THUMB UP (the user, 2026-11-20: "good 和bad是代表好推送和坏推送"). */
+const SIDE_GOOD_MARK = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M9.8 6.4h2.8a1.2 1.2 0 0 1 1.2 1.4l-.8 4.3a1.3 1.3 0 0 1-1.3 1.1H6.2V6.6l2.2-4a1 1 0 0 1 1.8.5zM6.2 13.2H3.6a1 1 0 0 1-1-1V7.6a1 1 0 0 1 1-1h2.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>`;
+function sideReactHtml(given, bad = false, good = false) {
   const named = new Map(SIDE_REACTIONS);
+  // A thumbs up given before the thumbs had their own buttons: good content.
+  good = good || (given || []).includes("\u{1F44D}");
   return `<div class="side-react-row">${(given || []).filter((one) => named.has(one)).map((one) => `<button type="button"
       class="side-react-chip" data-react="${escapeHtml(one)}" aria-pressed="true" title="${escapeHtml(named.get(one))}">${one}</button>`).join("")}
     <span class="side-react-tools"><button type="button" class="side-react-add" aria-label="${escapeHtml("React")}"
-      title="${escapeHtml("React")}">${SIDE_REACT_FACE}</button><button type="button" class="side-bad"
+      title="${escapeHtml("React")}">${SIDE_REACT_FACE}</button><button type="button" class="side-good"
+      aria-pressed="${good && !bad ? "true" : "false"}" title="${escapeHtml("Good content")}"
+      aria-label="${escapeHtml("Good content")}">${SIDE_GOOD_MARK}</button><button type="button" class="side-bad"
       aria-pressed="${bad ? "true" : "false"}" title="${escapeHtml("Bad content")}" aria-label="${escapeHtml("Bad content")}">${SIDE_BAD_MARK}</button></span></div>`;
 }
-function sideReactDraw(line, given, bad = line._bad) {
+function sideReactDraw(line, given, bad = line._bad, good = line._good) {
   line._reactions = [...(given || [])];
   line._bad = Boolean(bad);
+  line._good = Boolean(good) && !line._bad;
   const row = line.querySelector(":scope > .side-react-row");
-  if (row) row.outerHTML = sideReactHtml(line._reactions, line._bad);
-  else line.insertAdjacentHTML("beforeend", sideReactHtml(line._reactions, line._bad));
+  if (row) row.outerHTML = sideReactHtml(line._reactions, line._bad, line._good);
+  else line.insertAdjacentHTML("beforeend", sideReactHtml(line._reactions, line._bad, line._good));
 }
 function sideReactPick(button) {
   document.querySelector(".side-react-pick")?.remove();
@@ -1194,10 +1310,22 @@ function sideReactPick(button) {
 }
 /* BAD CONTENT, A PRESS (the user, 2026-11-17: "要在emoji旁边加一个快速的bad content"): learned from, as the emoji are. */
 async function sideBad(line, on) {
-  sideReactDraw(line, line._reactions || [], on);
+  sideReactDraw(line, line._reactions || [], on, on ? false : line._good);
   try {
     await api.post("/api/side/react", { id: line.dataset.id || line.dataset.message || "", note: line.dataset.note || "",
       bad: true, on });
+  } catch (_err) { /* shown; kept the next time */ }
+}
+/* GOOD CONTENT, A PRESS (2026-11-20): the thumb up - the thumb down taken off, as the desktop keeps them. */
+async function sideGood(line, on) {
+  sideReactDraw(line, (line._reactions || []).filter((one) => one !== "\u{1F44D}"), on ? false : line._bad, on);
+  try {
+    await api.post("/api/side/react", { id: line.dataset.id || line.dataset.message || "", note: line.dataset.note || "",
+      good: true, on });
+    if (!on && (line._reactions || []).length !== (line._reactions || []).filter((one) => one !== "\u{1F44D}").length) {
+      await api.post("/api/side/react", { id: line.dataset.id || line.dataset.message || "", note: line.dataset.note || "",
+        emoji: "\u{1F44D}", on: false });
+    }
   } catch (_err) { /* shown; kept the next time */ }
 }
 async function sideReact(line, emoji, on) {
@@ -1255,10 +1383,12 @@ function sidePastNote(one) {
   line.innerHTML = notesCard({ id: meta.notification_id, at: one.created_at, why: meta.why || "",
     title: meta.title || "", detail: meta.words || "", url: meta.url || "", said: meta.said || spoken,
     rules: meta.rules || [], reactions: meta.reactions || [], bad: Boolean(meta.bad_content),
+    good: Boolean(meta.good_content),
     report: Array.isArray(meta.report_groups) ? meta.report_groups : null },
     meta.category || "");
   line._reactions = [...(meta.reactions || [])];
   line._bad = Boolean(meta.bad_content);
+  line._good = Boolean(meta.good_content);
   sideInsert(line, one.created_at);
 }
 
@@ -1314,6 +1444,8 @@ ${board.words}` : board.words;
       const full = said.answer ? sideSay("agent", "Looking into it…", "working") : waiting;
       if (said.answer) full.dataset.afterQuick = "1";
       sideChat.turns.set(said.turn, full);
+      sideChat.mine = sideChat.mine || new Map();   // the user's own line, for a picture the full agent looks at later
+      sideChat.mine.set(said.turn, mine);
       sideTurn(said.turn);                         // done already, it may be
       if (typeof EventSource === "undefined") sideAskAgain(said.turn);
     } else if (!said.answer) {
@@ -1334,6 +1466,10 @@ async function sideTurn(turn) {
   let state;
   try { state = await api.get(`/api/chat/turn?id=${encodeURIComponent(turn)}`); } catch (_err) { return; }
   if (!sideChat.turns.has(turn)) return;
+  // THE SCREEN, ONCE THE FULL AGENT LOOKED AT IT (agent/two_speed.py look_at_screen; the user, 2026-11-20: "agent如果看了，
+  // 我的input会显示有截图给他，没看就不显示"): shown with the user's line then, once.
+  const mine = sideChat.mine && sideChat.mine.get(turn);
+  if (state.picture && mine && !mine.querySelector(".side-shot")) sideShot(mine, state.picture);
   if (state.state === "running") {
     // ITS FIRST WORDS ONCE THEY MAKE SENSE (2026-11-18: a reply shown as its first letter alone, "I", under its
     // buttons): "Looking into it…" until a few words have come, then the reply as it is written.
@@ -2073,7 +2209,9 @@ if (NOTES_SOLO) {
   window.addEventListener("focus", () => setTimeout(() => {
     if (Date.now() - sidePressedAt < 400) return;
     const now = document.activeElement;
-    if (!now || now === document.body || now.id === "side-search-open") sideKeysHome();
+    // ANY OF THE HEAD'S BUTTONS (the user, 2026-11-20: "打开sidebar之后焦点自动回到Play上（显示play这个字)" - the first button
+    // is Play's now, and the keys went to it): the box has them, or the world while Play is open.
+    if (!now || now === document.body || now.id === "side-search-open" || (now.closest && now.closest(".side-head-buttons"))) sideKeysHome();
   }, 30));
   // SLID BACK IN: what waits now, at once.
   // UNCOVERED AGAIN (another window over it, then not - WebView2 calls that hidden): what waits looked at, nothing drawn

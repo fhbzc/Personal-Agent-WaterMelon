@@ -212,7 +212,7 @@ const PLAY_FLOORS = { home: "wood", study: "stone", library: "wood", screening: 
                       apartment: "wood", lecture_hall: "wood", estate: "grass", sea_tunnel: "water", roller_coaster: "grass",
                       cemetery: "grass2", greenhouse: "grass", funfair: "paving" };
 /* OPEN PLACES, no walls (agent/playplaces.py OUTDOOR): their edge, and a pool's water in its middle. */
-const PLAY_OUTDOOR = { garden: "flowers", park: "grass2", pool: "paving", courtyard: "paving", terrace: "paving",
+const PLAY_OUTDOOR = { terminal: "paving", civic: "paving", garden: "flowers", park: "grass2", pool: "paving", courtyard: "paving", terrace: "paving",
                        lake: "grass2", waterfall: "rock2", plaza: "cobble", grove: "grass", meadow: "grass2", mountain: "grass2",
                        volcano: "rock2", peak: "grass2", sea_tunnel: "water", roller_coaster: "grass2", cemetery: "dirt2", estate: "grass2",
                        funfair: "cobble" };
@@ -265,15 +265,17 @@ function playEl() {
     <canvas class="side-play-mini" width="336" height="256" data-play-label="Map of your world" aria-label="${escapeHtml(playWords("Map of your world"))}"
       data-play-title="Map of your world - press or drag to look there, an arrow key to come back; press twice to make it larger or smaller" title="${escapeHtml(playWords("Map of your world - press or drag to look there, an arrow key to come back; press twice to make it larger or smaller"))}"></canvas></div>
     <div class="side-play-card" hidden></div>
-    <div class="side-play-zoom"><button type="button" data-play-zoom="-1" data-play-label="Zoom out" aria-label="${escapeHtml(playWords("Zoom out"))}"
-      title="${escapeHtml(playWords("Zoom out"))}">−</button><button type="button" data-play-zoom="1" data-play-label="Zoom in" aria-label="${escapeHtml(playWords("Zoom in"))}"
-      title="${escapeHtml(playWords("Zoom in"))}">+</button><button type="button" data-play-map data-play-label="Map (M)" aria-label="${escapeHtml(playWords("Map (M)"))}"
+    <div class="side-play-zoom"><button type="button" data-play-map data-play-label="Map (M)" aria-label="${escapeHtml(playWords("Map (M)"))}"
       title="${escapeHtml(playWords("Map (M)"))}">▦</button><button type="button" data-play-unstuck data-play-label="Go to the middle of the view" aria-label="${escapeHtml(playWords("Go to the middle of the view"))}"
       title="${escapeHtml(playWords("Go to the middle of the view"))}">⤨</button><button type="button" data-play-sound data-play-label="Sound" aria-label="${escapeHtml(playWords("Sound"))}"
-      title="${escapeHtml(playWords("Sound"))}">♪</button><button type="button" data-play-language data-play-label="Language of the world" aria-label="${escapeHtml(playWords("Language of the world"))}"
+      title="${escapeHtml(playWords("Sound"))}">♪</button><button type="button" data-play-mute data-play-label="Mute" aria-label="${escapeHtml(playWords("Mute"))}"
+      aria-pressed="false" title="${escapeHtml(playWords("Mute"))}">🔊</button><button type="button" data-play-pause hidden data-play-label="Pause drawing"
+      aria-pressed="false" aria-label="${escapeHtml(playWords("Pause drawing"))}" title="${escapeHtml(playWords("Pause drawing"))}">⏸</button><button type="button" data-play-language data-play-label="Language of the world" aria-label="${escapeHtml(playWords("Language of the world"))}"
       title="${escapeHtml(playWords("Language of the world"))}">${escapeHtml((PLAY_LANGUAGES.find(([code]) => code === playLanguage()) || PLAY_LANGUAGES[0])[1])}</button></div>`;
   document.body.appendChild(box);
   play.el = box;
+  if (typeof playSoundMuteShown === "function") playSoundMuteShown();
+  playPaused();                                // the debugger's pause: shown only where there is one
   play.canvas = box.querySelector("canvas");
   play.ctx = play.canvas.getContext("2d");
   play.mini = box.querySelector(".side-play-mini");
@@ -304,6 +306,9 @@ function playEl() {
     const step = event.target.closest && event.target.closest("[data-play-zoom]");
     if (step) playZoom(Number(step.dataset.playZoom));
     if (event.target.closest && event.target.closest("[data-play-sound]")) playSoundPanel(box);
+    if (event.target.closest && event.target.closest("[data-play-mute]") && typeof playSoundMute === "function") playSoundMute();
+    const pause = event.target.closest && event.target.closest("[data-play-pause]");
+    if (pause) playPaused(pause.getAttribute("aria-pressed") !== "true");
     if (event.target.closest && event.target.closest("[data-play-language]")) playLanguagePanel(box);
     if (event.target.closest && event.target.closest("[data-play-unstuck]")) playUnstuck(true);
     if (event.target.closest && event.target.closest("[data-play-map]")) playMiniToggle();
@@ -368,6 +373,7 @@ async function playOpen() {
   playPlace();
   box.hidden = false;
   play.on = true;
+  if (!play.motionTimer) play.motionTimer = setTimeout(playMotionTick, 1000 / PLAY_MOTION_FPS);   // the land moving
   document.body.classList.add("side-playing");
   if (typeof sideBoard !== "undefined" && sideBoard.open && typeof sideBoardClose === "function") sideBoardClose();   // no small screen in play
   playPressed();
@@ -376,9 +382,11 @@ async function playOpen() {
   play.canvas.focus({ preventScroll: true });  // the keys the world's at once, not the button's while it loads
   await playLoadSheets();
   await playLoadWorld();
-  // A CLOSE LOOK ON COMING IN (the user, 2026-11-17: "每次刚进入play mode的时候，不要给全景，要给一个把avatar放中间的比较narrow的
-  // view"): the walker in the middle, a step nearer than the usual - however far it was zoomed out before.
-  play.zoom = PLAY_ZOOM_ON_OPEN;
+  // AS IT WAS LEFT (the user, 2026-11-20: "你每次切换到play的时候，要保存上一次退出的view size"): the zoom it was closed
+  // at, the walker in the middle; the first time ever, a close look (2026-11-17: "比较narrow的view").
+  let kept = null;
+  try { kept = localStorage.getItem(PLAY_ZOOM_KEY); } catch (_err) { kept = null; }
+  play.zoom = kept !== null && kept !== "" && Number.isFinite(Number(kept)) ? Number(kept) : PLAY_ZOOM_ON_OPEN;
   playFit();
   playWhere();
   // NEVER OPENED BOXED IN (the user, 2026-11-18: "还是刚刚的问题，一开始不能移动"): a place grown full since it was left
@@ -706,7 +714,7 @@ function playLoadSheets() {
    agent/playworld.py _translate); the world shown in the one chosen - what has no words of that language yet, as it
    was written. Chosen again in settings: the world shown again in it. */
 const PLAY_WORDS = ["name", "why", "room_idea", "grounds_name", "summary", "floor_text", "card_title", "news_text",
-                    "feeling", "to_them", "look"];      // a land's feeling and its words to them too (agent/playworld.py _words_of)
+                    "feeling", "to_them", "look", "task_note", "fun_fact"];   // a land's feeling and its words to them; a card's lines (agent/playworld.py _words_of)
 /* Whether words hold another language than the one shown (agent/playworld.py _not_in - the same test). */
 function playNotIn(text, language) {
   return language === "zh" ? /[A-Za-z]{2,}/.test(String(text || "")) : /[\u3400-\u9fff]/.test(String(text || ""));
@@ -907,6 +915,10 @@ function playTile(context, piece, x, y) {
   const sheet = spec && play.sheets[spec[0]];
   if (!sheet) return;
   context.drawImage(sheet, spec[1] * 17, spec[2] * 17, 16, 16, x, y, 16, 16);
+  if (piece.startsWith("waterFresh")) {                    // fresh water: a river's, a lake's - greener and clearer
+    context.fillStyle = "rgba(70, 190, 150, 0.42)";
+    context.fillRect(x, y, 16, 16);
+  }
 }
 
 function playChunk(cx, cy) {
@@ -1361,8 +1373,10 @@ function playDraw() {
     }
     ctx.restore();
   };
+  layer("motion", () => playMotionDraw(size, c0, c1, r0, r1));    // water flowing, clouds drifting, stars, bubbles...
   layer("bushes", () => playBushesDraw(size, c0, c1, r0, r1, false));
   layer("coasters", () => playCoastersDraw(size));
+  layer("routes", () => playRoutesDraw(size));                 // the way through, as it was lived: arrows, numbered signs
   layer("pieces", () => playPiecesDraw(size));                 // great pieces (playPiecePicture), over the ground
   layer("fine things", () => playFineThingsDraw(size));        // the user's pictures and the agent's paintings, in fine pixels
   layer("facades", () => playFacadesDraw(size));
@@ -1455,6 +1469,141 @@ function playPeriod(days) {
   return `${a} – ${a.slice(0, 4) === b.slice(0, 4) ? b.slice(5) : b}`;
 }
 
+/* THE WAY THROUGH, AS IT WAS LIVED (agent/playworld.py routes; the user, 2026-11-20: "agent要在室内和室外都有动线的概念，有
+   箭头之类的标志，整体来说，跟着箭头/路牌走能够带user重走user在时序上对这些project的经历"; "包括一个项目内部发生的progress"):
+   in each place, arrows on the floor from its door to the things of its work in the order it happened, a numbered
+   sign by each; on a project's great ground, arrows from part to part as they began. Between places the road of their
+   life and its signposts (play-regions.js playLifeRoad) go on in time. Worked out once for the map, kept. */
+function playRouteMarks() {
+  const map = play.map;
+  if (!map || !play.world) return { arrows: [], stops: [] };
+  if (map.routeMarks) return map.routeMarks;
+  const marks = { arrows: [], stops: [] };
+  map.routeMarks = marks;
+  const routes = play.world.routes || {};
+  const items = new Map((play.world.items || []).map((one) => [one.id, one]));
+  const zones = new Map((map.zones || []).map((z) => [z.zone.id, z]));
+  const along = (path) => {                                    // an arrow on every second step, the way it goes
+    for (let k = 1; k < path.length - 1; k += 2) {
+      const [x, y] = path[k], [nx, ny] = path[k + 1];
+      marks.arrows.push({ x, y, dx: Math.sign(nx - x), dy: Math.sign(ny - y) });
+    }
+  };
+  for (const [zoneId, stops] of Object.entries(routes.rooms || {})) {
+    const z = zones.get(zoneId);
+    if (!z) continue;
+    const [fx, fy, fw, fh] = playFloorOf(z.zone);
+    const solid = new Set();
+    for (const one of play.world.items || []) {
+      if (one.zone !== zoneId || one.hang || one.on || PLAY_UNDER_KINDS.has(one.kind)) continue;
+      const [w, h] = playItemSize(one);
+      for (let dx = 0; dx < w; dx += 1) for (let dy = 0; dy < h; dy += 1) solid.add(`${one.x + dx},${one.y + dy}`);
+    }
+    const free = (x, y) => x >= fx && y >= fy && x < fx + fw && y < fy + fh && !solid.has(`${x},${y}`);
+    const beside = (one) => {                                   // where one stands to look at it: below it first
+      const [w, h] = playItemSize(one);
+      const ring = [];
+      for (let dx = 0; dx < w; dx += 1) ring.push([one.x + dx, one.y + h], [one.x + dx, one.y - 1]);
+      for (let dy = 0; dy < h; dy += 1) ring.push([one.x - 1, one.y + dy], [one.x + w, one.y + dy]);
+      return ring.find(([x, y]) => free(x, y)) || null;
+    };
+    const walk = (from, to) => {                                // the shortest way on the free floor
+      const key = (x, y) => `${x},${y}`, came = new Map([[key(...from), null]]), queue = [from];
+      while (queue.length) {
+        const [x, y] = queue.shift();
+        if (x === to[0] && y === to[1]) break;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx, ny = y + dy;
+          if (!free(nx, ny) || came.has(key(nx, ny))) continue;
+          came.set(key(nx, ny), [x, y]);
+          queue.push([nx, ny]);
+        }
+      }
+      if (!came.has(key(...to))) return null;
+      const path = [];
+      for (let at = to; at; at = came.get(key(...at))) path.unshift(at);
+      return path;
+    };
+    let here = PLAY_OUTDOOR[z.zone.kind] ? [fx + Math.floor(fw / 2), fy + fh - 1] : [z.door, fy + fh - 1];
+    if (!free(...here)) here = null;
+    stops.forEach((id, n) => {
+      const one = items.get(id);
+      const spot = one && beside(one);
+      if (!spot) return;
+      marks.stops.push({ x: one.x, y: one.y, n: n + 1, of: stops.length, item: one });
+      if (here) {
+        const path = walk(here, spot);
+        if (path) along(path);
+      }
+      here = spot;
+    });
+  }
+  // OUTSIDE, THE ROAD OF THEIR LIFE (play-regions.js playLifeRoad): arrows all along it, the way time went - on every
+  // road however short (the user, 2026-11-20: "不需要等地图够大").
+  for (const path of (map.life && map.life.routes) || []) {
+    for (let k = 2; k < path.length - 2; k += 3) {
+      const [x, y] = path[k], [nx, ny] = path[k + 1];
+      marks.arrows.push({ x, y, dx: Math.sign(nx - x), dy: Math.sign(ny - y) });
+    }
+  }
+  for (const [groundId, parts] of Object.entries(routes.grounds || {})) {
+    if (!map.blocked || !zones.get(groundId)) continue;
+    const outs = parts.map((id) => zones.get(id)).filter(Boolean);
+    outs.forEach((z, n) => {
+      marks.stops.push({ x: z.out[0], y: z.out[1] - 1, n: n + 1, of: outs.length, zone: z.zone });
+      if (n === 0) return;
+      let path = null;
+      try { path = playRoute(map.blocked, outs[n - 1].out, z.out, 0, 307 + n, new Map()); } catch (_err) { path = null; }
+      if (path) along(path);
+    });
+  }
+  return marks;
+}
+function playRoutesDraw(size) {
+  const { arrows, stops } = playRouteMarks();
+  if (!arrows.length && !stops.length) return;
+  const { ctx, canvas } = play;
+  const seen = (x, y) => !(x < -size || y < -size || x > canvas.width + size || y > canvas.height + size);
+  ctx.save();
+  ctx.fillStyle = "rgba(255, 236, 170, 0.82)";
+  ctx.strokeStyle = "rgba(90, 60, 20, 0.55)";
+  ctx.lineWidth = Math.max(1, size / 16);
+  for (const one of arrows) {                                  // a chevron on the floor, the way to go
+    const cx = one.x * size - play.camera.x + size / 2, cy = one.y * size - play.camera.y + size / 2;
+    if (!seen(cx, cy)) continue;
+    const r = size * 0.28, ang = Math.atan2(one.dy, one.dx);
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(ang) * r, cy + Math.sin(ang) * r);
+    ctx.lineTo(cx + Math.cos(ang + 2.4) * r, cy + Math.sin(ang + 2.4) * r);
+    ctx.lineTo(cx + Math.cos(ang + Math.PI) * r * 0.25, cy + Math.sin(ang + Math.PI) * r * 0.25);
+    ctx.lineTo(cx + Math.cos(ang - 2.4) * r, cy + Math.sin(ang - 2.4) * r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  const fontPx = Math.max(10, Math.round(size * 0.36));
+  ctx.font = `bold ${fontPx}px "Microsoft YaHei", "PingFang SC", system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (const one of stops) {                                   // a small numbered sign by each stop: its place in time
+    const cx = one.x * size - play.camera.x + size * 0.15, cy = one.y * size - play.camera.y - size * 0.15;
+    if (!seen(cx, cy)) continue;
+    const r = fontPx * 0.78;
+    ctx.fillStyle = "#7a4e22";
+    ctx.fillRect(cx - 1, cy, 2, r * 1.6);                      // its little pole
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = one.n === 1 ? "#f2c94c" : "#fff4d6";
+    ctx.fill();
+    ctx.strokeStyle = "#7a4e22";
+    ctx.lineWidth = Math.max(1.5, fontPx / 8);
+    ctx.stroke();
+    ctx.fillStyle = "#4a2e10";
+    ctx.fillText(String(one.n), cx, cy + 0.5);
+  }
+  ctx.restore();
+}
+
 function playSigns() {
   const index = play.map;
   if (!index || !index.zones) return [];
@@ -1473,8 +1622,15 @@ function playSigns() {
   const life = index.life || { posts: [], order: [] };
   for (const post of life.posts) {
     const to = post.to.zone, n = life.order.indexOf(post.to) + 1;
+    // TO ANOTHER LAND, BY WHICH LINE AND WHERE TO GET OFF (the user, 2026-11-20: "动线里可以包括交通工具的规划";
+    // "指向车站/飞机/轮船要说明去哪下车"): the line that stops in both lands, and its stop by the place.
+    const ride = !post.start && post.from && typeof playRideBetween === "function"
+      ? playRideBetween(post.from.region, post.to.region) : null;
+    const by = ride ? playWords("Take the {0}, get off at {1}").replace("{0}", playWords(playLineWords(ride.line) || ""))
+      .replace("{1}", ride.off.name || "") : "";
     signs.push({ at: [post.x + 0.5, post.y + 0.9], post, zone: to, name: post.start ? playWords("Start of your story") : to.name || to.kind,
-                 under: post.start ? playPeriod(playLived(to)) : `${n} / ${life.order.length} · ${playPeriod(playLived(to))}` });
+                 under: post.start ? playPeriod(playLived(to))
+                   : [by, `${n} / ${life.order.length} · ${playPeriod(playLived(to))}`].filter(Boolean).join(" · ") });
   }
   for (const mark of index.landmarks || []) {
     signs.push({ at: [mark.cx + 0.5, mark.square[3] - 0.2], name: playWords(PLAY_LANDMARK_NAMES[mark.landmark] || mark.landmark),
@@ -2681,6 +2837,8 @@ function playCard() {
       ${item.kind === "widget" ? `<p class="side-play-card-from chat-message"><b>${escapeHtml(playWords("How far it has come"))}:</b> ${playWidgetStage(item) < 0 ? escapeHtml(playWords("Set aside")) : `${playWidgetStage(item) + 1}/${PLAY_WIDGETS[item.widget] || 4} · ${Math.round(100 * playWidgetProgress(item).share)}%`}</p>` : ""}
       ${item.card_title ? `<p class="side-play-card-from chat-message"><b>${escapeHtml(playWords("Its work"))}:</b> ${escapeHtml(item.card_title)}
         · ${escapeHtml(playWords(PLAY_CARD_STATUS[item.card_status] || "Open"))}${item.card_statement ? `<br>${escapeHtml(playWords("Done when"))}: ${escapeHtml(item.card_statement)}` : ""}</p>` : ""}
+      ${item.task_note ? `<p class="side-play-card-from chat-message"><b>${escapeHtml(playWords("Its task"))}:</b> ${escapeHtml(item.task_note)}</p>` : ""}
+      ${item.fun_fact ? `<p class="side-play-card-from chat-message"><b>${escapeHtml(playWords("Fun fact"))}:</b> ${escapeHtml(item.fun_fact)}</p>` : ""}
       ${item.from ? `<p class="side-play-card-from chat-message">${escapeHtml(item.from)}</p>` : ""}
       <p class="side-play-card-from chat-message">${escapeHtml(`${playWords("Built")} ${made}`)}</p>
     </div>`;
@@ -3172,8 +3330,13 @@ function playSvgPiece(item) {
     one.remove();
   }
   let unbuilt = false;
+  const ghosts = [];                                          // what is still to come, drawn alone for its scaffold
   for (const one of Array.from(root.querySelectorAll("[data-stage]"))) {
-    if (Number(one.getAttribute("data-stage")) > shown) { one.setAttribute("opacity", "0.22"); unbuilt = true; }
+    if (Number(one.getAttribute("data-stage")) > shown) {
+      ghosts.push(new XMLSerializer().serializeToString(one));
+      one.setAttribute("opacity", "0.22");
+      unbuilt = true;
+    }
   }
   // Its track: the points along it, in tiles of the world - sampled where the page can measure a path.
   let track = null;
@@ -3196,12 +3359,40 @@ function playSvgPiece(item) {
   playSvgImage(text, (image) => {
     if (!image) return;
     made.canvas = playFinePixel(image, W * PLAY_FINE, H * PLAY_FINE);
-    if (unbuilt) {                                           // what is still to come, under scaffolding
-      const c = made.canvas.getContext("2d"), s = PLAY_FINE * 16;
-      c.strokeStyle = "rgba(160, 122, 69, 0.85)"; c.lineWidth = PLAY_FINE;
-      const top = Math.round(made.canvas.height * (1 - built) * 0.8);
-      for (let x = s / 2; x < made.canvas.width; x += s / 2) { c.beginPath(); c.moveTo(x, top); c.lineTo(x, made.canvas.height - s * item.h / 2); c.stroke(); }
-      for (let y = top; y < made.canvas.height - s * item.h / 2; y += s / 2) { c.beginPath(); c.moveTo(0, y); c.lineTo(made.canvas.width, y); c.stroke(); }
+    // WHAT IS STILL TO COME, UNDER ITS OWN SCAFFOLD (the user, 2026-11-20: "这个控件为什么有这种栅栏" - a net was laid over
+    // the whole picture and the air above it): poles and boards only where the unbuilt parts are, each band of the
+    // picture from the top of what is to come there down to its foot.
+    if (unbuilt && ghosts.length) {
+      const alone = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${ghosts.join("")}</svg>`;
+      playSvgImage(alone, (ghost) => {
+        if (!ghost || !made.canvas) return;
+        const cw = made.canvas.width, ch = made.canvas.height, s = PLAY_FINE * 16;
+        const look = document.createElement("canvas");
+        look.width = cw; look.height = ch;
+        const lc = look.getContext("2d");
+        lc.drawImage(ghost, 0, 0, cw, ch);
+        let pixels = null;
+        try { pixels = lc.getImageData(0, 0, cw, ch).data; } catch (_err) { pixels = null; }
+        if (!pixels) return;
+        const c = made.canvas.getContext("2d");
+        c.strokeStyle = "rgba(160, 122, 69, 0.9)"; c.lineWidth = PLAY_FINE;
+        const band = Math.max(1, Math.round(s / 2));
+        for (let x0 = 0; x0 < cw; x0 += band) {
+          let top = -1, bottom = -1;
+          for (let y = 0; y < ch; y += 2) {
+            for (let x = x0; x < Math.min(cw, x0 + band); x += 2) {
+              if (pixels[(y * cw + x) * 4 + 3] > 24) { if (top < 0) top = y; bottom = y; break; }
+            }
+          }
+          if (top < 0 || bottom - top < band / 2) continue;
+          const px = x0 + band / 2;
+          c.beginPath(); c.moveTo(px, top); c.lineTo(px, bottom); c.stroke();          // a pole
+          for (let y = top + band / 2; y < bottom; y += band) {                         // its boards across this band
+            c.beginPath(); c.moveTo(x0, y); c.lineTo(Math.min(cw, x0 + band), y); c.stroke();
+          }
+        }
+        if (play.on) playDraw();
+      });
     }
     if (play.on) playDraw();
   });
@@ -3310,7 +3501,77 @@ function playSvgPieceDraw(item, size, now) {
   ctx.restore();
   void k;
 }
+/* BOATS ON A PIECE'S WATER (agent/playpieces.py boats_of; the user, 2026-11-20: "另外有天鹅游船之类的控件"): its boats -
+   swans, ducks, rowing boats, pedalos, gondolas, sails, lotus boats, a dragon boat - round an oval on its water, one
+   behind another; ridden (E), the walker in the first, one round, then off at the bank. */
+function playBoatsDraw(item, size, now) {
+  const spec = item.spec || {}, count = Math.max(0, Math.min(6, spec.boats || 0));
+  if (!count) return;
+  const { ctx } = play;
+  const cx = (item.x + item.w / 2) * size - play.camera.x, cy = (item.y + item.h * 0.62) * size - play.camera.y;
+  const rx = item.w * size * 0.3, ry = item.h * size * 0.2;
+  const riding = playRidingPiece(item) && play.ride && play.ride.boat;
+  const lap = riding ? Math.min(0.999, (now - play.ride.at) / 1000 / PLAY_PIECE_LAP_S) : (now / 1000 / (PLAY_PIECE_LAP_S * 1.6)) % 1;
+  for (let b = 0; b < count; b += 1) {
+    const a = (lap - b / count) * Math.PI * 2;
+    const x = cx + Math.cos(a) * rx, y = cy + Math.sin(a) * ry, facing = -Math.sin(a) >= 0 ? 1 : -1;
+    playBoatDraw(ctx, spec.boat || "rowboat", x, y, size, facing);
+    if (riding && b === 0) {
+      play.me.x = x / size + play.camera.x / size; play.me.y = y / size + play.camera.y / size;
+      if (typeof playActMeOn === "function") playActMeOn(x, y - size * 0.25, size);
+    }
+  }
+  if (riding && now - play.ride.at > PLAY_PIECE_LAP_S * 1000) {          // round once: off at the bank
+    play.ride = null;
+    const spot = playActSpotNear(Math.round(item.x + item.w / 2), Math.round(item.y + item.h));
+    if (spot) { play.me.x = spot[0] + 0.5; play.me.y = spot[1] + 0.6; }
+    playWhere();
+  }
+}
+function playBoatDraw(ctx, look, x, y, size, facing) {
+  const s = size / 16;
+  ctx.save(); ctx.translate(Math.round(x), Math.round(y)); ctx.scale(facing * s, s);
+  const blob = (colour, cx, cy, rx, ry) => { ctx.fillStyle = colour; ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); ctx.fill(); };
+  if (look === "swan" || look === "duck") {
+    const body = look === "swan" ? "#f7f6f2" : "#f2c94c", beak = "#f08a24";
+    blob("rgba(40,90,140,0.35)", 0, 3, 10, 2.5);                                  // its ripple
+    blob(body, -1, 0, 9, 4.5);
+    ctx.fillStyle = body; ctx.fillRect(5, -9, 2.6, 9);                             // its neck
+    blob(body, 6.5, -9, 3, 2.4);                                                   // its head
+    ctx.fillStyle = beak; ctx.fillRect(9, -9.6, 3, 1.6);
+    ctx.fillStyle = "#222"; ctx.fillRect(7, -10, 1, 1);
+    ctx.fillStyle = look === "swan" ? "#d9d6cc" : "#e0a82e"; ctx.fillRect(-8, -3, 8, 2);   // its wing
+  } else if (look === "lotus") {
+    blob("rgba(40,90,140,0.35)", 0, 3, 10, 2.5);
+    for (let i = -3; i <= 3; i += 1) blob(i % 2 ? "#f4a7c0" : "#e86f9a", i * 2.4, -1 - (3 - Math.abs(i)), 2.4, 4);
+    blob("#7cc46a", 0, 2, 9, 2);
+  } else if (look === "dragon") {
+    blob("rgba(40,90,140,0.35)", 0, 3, 12, 2.5);
+    ctx.fillStyle = "#c0392b"; ctx.fillRect(-11, -2, 20, 4);
+    ctx.fillStyle = "#f2c94c"; ctx.fillRect(-11, -2, 20, 1);
+    ctx.fillStyle = "#c0392b"; ctx.fillRect(8, -8, 3, 7);                          // its dragon head
+    ctx.fillStyle = "#f2c94c"; ctx.fillRect(10, -8, 3, 2); ctx.fillRect(-12, -5, 2, 4);   // its tail
+  } else if (look === "gondola") {
+    blob("rgba(40,90,140,0.35)", 0, 3, 11, 2.5);
+    ctx.fillStyle = "#1f1f24"; ctx.beginPath(); ctx.moveTo(-11, -4); ctx.quadraticCurveTo(0, 4, 11, -4); ctx.lineTo(9, 1); ctx.lineTo(-9, 1); ctx.fill();
+    ctx.fillStyle = "#c9a227"; ctx.fillRect(9, -6, 2, 3);
+    ctx.fillStyle = "#8b5a2b"; ctx.fillRect(-6, -14, 1, 15);                       // its oar
+  } else {
+    blob("rgba(40,90,140,0.35)", 0, 3, 10, 2.5);
+    const hull = look === "pedalo" ? "#3e8fc9" : look === "sailboat" ? "#f7f4ec" : "#8b5a2b";
+    ctx.fillStyle = hull; ctx.beginPath(); ctx.moveTo(-9, -2); ctx.lineTo(9, -2); ctx.lineTo(6, 2); ctx.lineTo(-6, 2); ctx.fill();
+    if (look === "sailboat") {
+      ctx.fillStyle = "#8b5a2b"; ctx.fillRect(0, -14, 1, 12);
+      ctx.fillStyle = "#f7f4ec"; ctx.beginPath(); ctx.moveTo(1, -14); ctx.lineTo(8, -3); ctx.lineTo(1, -3); ctx.fill();
+    } else if (look === "pedalo") {
+      ctx.fillStyle = "#f7f4ec"; ctx.fillRect(-4, -6, 7, 4);                       // its little canopy
+      blob("#f2c94c", 6, -1, 2.5, 2.5);                                            // its paddle wheel
+    }
+  }
+  ctx.restore();
+}
 function playPieceMoves(item) {
+  if ((item.spec || {}).boats) return true;                                       // its boats always go round
   if (item.spec && item.spec.svg) return Boolean(item.spec.moving) || (item.spec.track && playPieceBuilt(item) >= 1);
   return (item.kit === "track" && playPieceBuilt(item) >= 1)
     || (item.kit === "composite" && ((item.spec || {}).shapes || []).some((one) => one.moves && one.moves !== "none"))
@@ -3330,7 +3591,7 @@ function playPiecesDraw(size) {
       ctx.moveTo(x + size - k, y - size * 0.5); ctx.lineTo(x + k, y + size - k); ctx.stroke();
       continue;
     }
-    if (item.spec && item.spec.svg) { playSvgPieceDraw(item, size, now); continue; }   // drawn first, built after its picture
+    if (item.spec && item.spec.svg) { playSvgPieceDraw(item, size, now); playBoatsDraw(item, size, now); continue; }   // drawn first, built after its picture
     const made = playPiecePicture(item);
     const sx = made.x0 * size - play.camera.x, sy = made.y0 * size - play.camera.y;
     ctx.drawImage(made.canvas, Math.round(sx), Math.round(sy), made.canvas.width * k, made.canvas.height * k);
@@ -3380,18 +3641,18 @@ function playPiecesDraw(size) {
         ctx.restore();
       }
     }
-    if (item.kit === "water") {
-      for (let b = 0; b < ((item.spec || {}).boats || 0); b += 1) {
-        const u = ((now / 9000) + b / ((item.spec || {}).boats || 1)) % 1;
-        const [x, y] = at(item.x + item.w * (0.2 + 0.6 * u), item.y + item.h * (0.3 + 0.4 * ((b % 2))));
-        ctx.fillStyle = "#f7f4ec"; ctx.beginPath(); ctx.moveTo(x, y - size * 0.6); ctx.lineTo(x + size * 0.4, y); ctx.lineTo(x, y); ctx.fill();
-        ctx.fillStyle = "#8b5a2b"; ctx.fillRect(x - size * 0.35, y, size * 0.8, size * 0.18);
-      }
-    }
+    if (item.kit === "water") playBoatsDraw(item, size, now);
   }
 }
 /* PRESSED E BY ONE: a track ridden round once from its station, a stack climbed - the view from its top a moment. */
 function playPieceAct(item) {
+  // ON ITS BOATS (2026-11-20: "天鹅游船"): round its water once.
+  if ((item.spec || {}).boats && !play.ride) {
+    play.ride = { piece: item, at: performance.now(), boat: true };
+    playSfx("door-close", 0.2);
+    playRun();
+    return true;
+  }
   // An SVG piece is ridden only along a track its picture has (nothing else carries the walker round).
   const rides = item.spec && item.spec.svg ? item.interact === "ride" && Boolean((playSvgPiece(item) || {}).track) : item.kit === "track";
   const climbs = item.spec && item.spec.svg ? item.interact === "climb" : item.kit === "stack";
@@ -3439,7 +3700,149 @@ function playCoastersDraw(size) {
 }
 
 /* THE FRAMES RUN ONLY WHILE SOMETHING MOVES - a key held, a sign showing; still, nothing is drawn. */
+/* THE WORLD'S DRAWING PAUSED, IN THE DEBUGGER'S BUILD (the user, 2026-11-20: "debugger 版的代码，play加一个暂停框，是暂停
+   drawing"): asked when the view is made - shown only where the desktop says it can - and `paused` given, made so. */
+async function playPaused(paused) {
+  let said = null;
+  try { said = await api.post("/api/play/pause", paused === undefined ? {} : { paused }); } catch (_err) { said = null; }
+  const button = play.el && play.el.querySelector("[data-play-pause]");
+  if (!button || !said) return;
+  button.hidden = !said.can;
+  const on = Boolean(said.paused);
+  button.setAttribute("aria-pressed", String(on));
+  button.textContent = on ? "▶" : "⏸";
+  const words = playWords(on ? "Resume drawing" : "Pause drawing");
+  button.title = words;
+  button.setAttribute("aria-label", words);
+}
 let playRunning = false;
+
+/* THE LAND MOVING (the user, 2026-11-20: "你那个水，包括河流和海水，能不能用动画做出流动感"; "天空的场景，云也会飘动（争取每个
+   场景都有一些地形运动的元素）"; "低帧率就行"; "所有动画都是只在play打开"; "只有视野内的才画流动"): ONLY WHAT IS IN SIGHT -
+   light running down a river, waves glinting on the sea, clouds drifting over a land in the sky, stars twinkling in
+   space, bubbles rising under the sea, and each other land its own drift (leaves, snow, sand, fireflies, pollen,
+   steam). While nothing else moves it is drawn PLAY_MOTION_FPS times a second, and only while Play is open. */
+const PLAY_MOTION_FPS = 6;
+const PLAY_MOTES = {
+  autumn: { colour: "#d9822b", fall: 1, size: 0.12 }, halloween: { colour: "#c0621d", fall: 1, size: 0.12 },
+  snow: { colour: "#ffffff", fall: 1, size: 0.09 }, christmas: { colour: "#ffffff", fall: 1, size: 0.09 },
+  desert: { colour: "#e9d2a0", fall: 0, size: 0.07, wind: 1 }, primeval: { colour: "#c7e86a", fall: -0.2, size: 0.06 },
+  enchanted: { colour: "#fff6a0", fall: -0.3, size: 0.07, glow: true }, graveyard: { colour: "#b8ffcf", fall: -0.3, size: 0.06, glow: true },
+  meadow: { colour: "#fff2b0", fall: -0.1, size: 0.05 }, botanical: { colour: "#ffd1e8", fall: 0.3, size: 0.07 },
+  valentine: { colour: "#ff9ec0", fall: 0.4, size: 0.08 }, forest: { colour: "#b6e388", fall: 0.4, size: 0.07 },
+  farmland: { colour: "#f4dd8a", fall: 0, size: 0.05, wind: 1 }, city: { colour: "rgba(235,235,240,0.7)", fall: -0.6, size: 0.12 },
+  scifi: { colour: "#8fe9ff", fall: -0.4, size: 0.05, glow: true }, ruins: { colour: "rgba(220,220,220,0.6)", fall: 0, size: 0.1, wind: 1 },
+  highland: { colour: "rgba(240,240,245,0.7)", fall: 0, size: 0.1, wind: 1 }, cavern: { colour: "#9fd8ff", fall: 0.6, size: 0.05 },
+  funfair: { colour: "#ff6fae", fall: 0.5, size: 0.07 }, newyear: { colour: "#ffd34d", fall: 0.5, size: 0.07, glow: true },
+};
+function playMotionDraw(size, c0, c1, r0, r1) {
+  const map = play.map;
+  if (!map || !play.on) return;
+  const { ctx, canvas } = play;
+  const now = performance.now() / 1000;
+  const x0 = Math.floor(play.camera.x / size), y0 = Math.floor(play.camera.y / size);
+  const x1 = Math.ceil((play.camera.x + canvas.width) / size), y1 = Math.ceil((play.camera.y + canvas.height) / size);
+  const sx = (x) => x * size - play.camera.x, sy = (y) => y * size - play.camera.y;
+  play.motionSeen = false;
+  ctx.save();
+  // The water and the dark, tile by tile in sight.
+  for (let y = y0; y < y1; y += 1) {
+    for (let x = x0; x < x1; x += 1) {
+      let piece = "";
+      try { const [block, i] = playCell(map, x, y); piece = String(block.ground[i] || ""); } catch (_err) { continue; }
+      const h = playHash(x, y, 71);
+      // WATER THAT MOVES, NOT BLINKS (the user, 2026-11-20: "你现在水的效果太不好了，要不改成时不时出现的浪花 ... 这个横向移动
+      // 的效果还行（但是不够明显）时隐时现的完全不行"): on a river or a lake, streaks of light running on, steady and
+      // plain; on the sea, now and then a crest of foam that rises, drifts along and sinks over seconds; at the shore,
+      // foam lapping in and out.
+      const wet = piece.startsWith("water") && !piece.startsWith("waterFall") || piece.startsWith("seaDeep");
+      if (piece.startsWith("waterFresh")) {
+        play.motionSeen = true;
+        if (h < 0.4) {
+          const u = (now * 0.55 + h * 7) % 1;                        // across the tile, then on to the next
+          ctx.fillStyle = "rgba(235, 255, 248, 0.75)";
+          ctx.fillRect(sx(x) + (u - 0.2) * size, sy(y) + size * (0.2 + 0.6 * playHash(x, y, 72)), size * 0.45, Math.max(2, size * 0.09));
+        }
+      } else if (wet) {
+        play.motionSeen = true;
+        // a crest now and then: each tile its own slow cycle, out for its first part, drifting the length of it
+        const period = 7 + 6 * playHash(x, y, 76), phase = ((now + h * 40) % period) / period;
+        if (h < 0.3 && phase < 0.45) {
+          const life = phase / 0.45, rise = Math.sin(life * Math.PI);
+          const fx = sx(x) + (life * 1.4 - 0.2) * size, fy = sy(y) + size * (0.25 + 0.5 * playHash(x, y, 73));
+          ctx.fillStyle = `rgba(255, 255, 255, ${(0.85 * rise).toFixed(2)})`;
+          ctx.fillRect(fx, fy, size * (0.35 + 0.35 * rise), Math.max(2, size * 0.1));
+          ctx.fillRect(fx + size * 0.12, fy - Math.max(1, size * 0.07), size * 0.22 * rise, Math.max(1, size * 0.07));
+        }
+        // at the shore: foam lapping where the water meets the land
+        let shoreSide = null;
+        for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+          let next = "";
+          try { const [b2, i2] = playCell(map, x + dx, y + dy); next = String(b2.ground[i2] || ""); } catch (_err) { next = ""; }
+          if (next && !next.startsWith("water") && !next.startsWith("seaDeep") && !next.startsWith("void") && next !== "none") { shoreSide = [dx, dy]; break; }
+        }
+        if (shoreSide) {
+          const lap = 0.5 + 0.5 * Math.sin(now * 1.3 + h * 6);
+          ctx.fillStyle = `rgba(255, 255, 255, ${(0.45 + 0.35 * lap).toFixed(2)})`;
+          const reach = size * (0.12 + 0.18 * lap), thick = Math.max(2, size * 0.1);
+          if (shoreSide[1] === -1) ctx.fillRect(sx(x), sy(y) + reach - thick, size, thick);
+          else if (shoreSide[1] === 1) ctx.fillRect(sx(x), sy(y) + size - reach, size, thick);
+          else if (shoreSide[0] === -1) ctx.fillRect(sx(x) + reach - thick, sy(y), thick, size);
+          else ctx.fillRect(sx(x) + size - reach, sy(y), thick, size);
+        }
+      } else if (piece === "voidSpace") {                        // space: its stars twinkling
+        play.motionSeen = true;
+        if (h < 0.06) {
+          const a = 0.35 + 0.65 * Math.abs(Math.sin(now * (1 + h * 10) + h * 20));
+          ctx.fillStyle = `rgba(255, 255, 230, ${a.toFixed(2)})`;
+          ctx.fillRect(sx(x) + size * playHash(x, y, 74), sy(y) + size * playHash(x, y, 75), Math.max(1, size * 0.08), Math.max(1, size * 0.08));
+        }
+      }
+    }
+  }
+  // The land in sight: its own drift.
+  const middle = [Math.floor((x0 + x1) / 2), Math.floor((y0 + y1) / 2)];
+  let biome = "";
+  try { biome = map.regions[playWhose(map, middle[0], middle[1]).a].biome || ""; } catch (_err) { biome = ""; }
+  const w = x1 - x0, hgt = y1 - y0;
+  if (biome === "skycity") {                                       // clouds drifting over it
+    play.motionSeen = true;
+    for (let k = 0; k < 7; k += 1) {
+      const span = w + 12, cx = x0 - 6 + ((k * 13.7 + now * (0.25 + 0.05 * k)) % span), cy = y0 + (k * 7.3) % hgt;
+      ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
+      for (const [dx, dy, r] of [[0, 0, 1.1], [0.9, -0.3, 0.9], [1.8, 0, 1.0], [0.9, 0.35, 0.8]]) {
+        ctx.beginPath(); ctx.ellipse(sx(cx + dx), sy(cy + dy), size * r, size * r * 0.55, 0, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  } else if (biome === "underwater") {                             // bubbles rising
+    play.motionSeen = true;
+    for (let k = 0; k < 26; k += 1) {
+      const bx = x0 + (k * 7.31) % w, rise = (now * (0.6 + (k % 5) * 0.12) + k * 1.7) % hgt;
+      ctx.strokeStyle = "rgba(220, 245, 255, 0.7)"; ctx.lineWidth = Math.max(1, size / 20);
+      ctx.beginPath(); ctx.arc(sx(bx + Math.sin(now * 2 + k) * 0.3), sy(y1 - rise), size * (0.08 + (k % 3) * 0.04), 0, Math.PI * 2); ctx.stroke();
+    }
+  } else if (PLAY_MOTES[biome]) {                                   // each other land its own drift
+    play.motionSeen = true;
+    const m = PLAY_MOTES[biome];
+    for (let k = 0; k < 30; k += 1) {
+      const speed = 0.4 + (k % 7) * 0.08;
+      const mx = x0 + ((k * 5.13 + (m.wind ? now * 1.2 * speed : Math.sin(now * 0.7 + k) * 0.6)) % w + w) % w;
+      const my = y0 + ((k * 3.71 + now * m.fall * speed) % hgt + hgt) % hgt;
+      ctx.fillStyle = m.colour;
+      if (m.glow) ctx.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(now * 2 + k));
+      ctx.fillRect(sx(mx), sy(my), Math.max(1, size * m.size), Math.max(1, size * m.size));
+      ctx.globalAlpha = 1;
+    }
+  }
+  ctx.restore();
+}
+/* While nothing else moves, the land still moves - a few frames a second, only with Play open and something moving in
+   sight (playMotionDraw says so). */
+function playMotionTick() {
+  if (!play.on) { play.motionTimer = null; return; }
+  if (!playRunning && play.motionSeen !== false && document.visibilityState !== "hidden") playDraw();
+  play.motionTimer = setTimeout(playMotionTick, 1000 / PLAY_MOTION_FPS);
+}
 function playRun() {
   if (playRunning || !play.on) return;
   playRunning = true;
@@ -3453,7 +3856,14 @@ function playRun() {
       const seconds = (now - play.last) / 1000;
       play.last = now;
       const moved = playStep(seconds);
-      const busy = play.banner || playJumpHeight() > 0 || (play.said && performance.now() < play.said.until) || play.dust.length
+      if (play.spaceHeld && playJumpHeight() === 0) playJump();      // held: landed, up again
+      if (play.pan && play.pan.size && play.lookAt) {                 // W A S D held: the view moves on
+        for (const way of play.pan) {
+          play.lookAt[0] += PLAY_PAN[way][0] * PLAY_PAN_SPEED * seconds;
+          play.lookAt[1] += PLAY_PAN[way][1] * PLAY_PAN_SPEED * seconds;
+        }
+      }
+      const busy = play.banner || play.spaceHeld || (play.pan && play.pan.size) || playJumpHeight() > 0 || (play.said && performance.now() < play.said.until) || play.dust.length
         || play.leaves.length || (play.touched && performance.now() - play.touched.touchedAt < PLAY_SWAY_MS);
       const drawing = performance.now();
       if (moved || busy) playDraw();
@@ -3470,8 +3880,12 @@ function playRun() {
   requestAnimationFrame(tick);
 }
 
-const PLAY_KEYS = { ArrowLeft: "left", a: "left", A: "left", ArrowRight: "right", d: "right", D: "right",
-                    ArrowUp: "up", w: "up", W: "up", ArrowDown: "down", s: "down", S: "down" };
+// THE ARROWS WALK, WASD LOOKS ROUND (the user, 2026-11-20: "wasd改成控制view框移动，上下左右改成agent移动"): the view moved
+// away from the walker while W A S D are held; a step with the arrows brings it back.
+const PLAY_KEYS = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
+const PLAY_PAN_KEYS = { a: "left", A: "left", d: "right", D: "right", w: "up", W: "up", s: "down", S: "down" };
+const PLAY_PAN_SPEED = 14;                   // tiles a second
+const PLAY_PAN = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] };
 window.addEventListener("keydown", (event) => {
   if (!play.on || event.altKey || event.metaKey) return;
   play.running = event.shiftKey;
@@ -3490,10 +3904,10 @@ window.addEventListener("keydown", (event) => {
   if (event.ctrlKey) return;
   if (!typing && event.key === " ") {
     event.preventDefault();
-    // ONE JUMP A PRESS (the user, 2026-11-19: "按住空格会一直跳跃"): held, it jumps once - the key's own repeat is not
-    // always said so where the panel is hosted; let go, and it may jump again.
-    if (!event.repeat && !play.spaceHeld) playJump();
+    // HELD, IT JUMPS AGAIN AND AGAIN (the user, 2026-11-20: "我要的就是按住就连跳，你一直没实现" - walking or standing): a
+    // jump now, and each time it lands while the key is still down, another (playRun's frames).
     play.spaceHeld = true;
+    playJump();
     return;
   }
   if (!typing && ["m", "M"].includes(event.key)) {
@@ -3504,6 +3918,15 @@ window.addEventListener("keydown", (event) => {
   if (!typing && ["e", "E", "Enter"].includes(event.key)) {
     event.preventDefault();
     if (!event.repeat) playLook();
+    return;
+  }
+  const pan = PLAY_PAN_KEYS[event.key];
+  if (pan && !typing && !event.ctrlKey) {
+    event.preventDefault();
+    play.pan = play.pan || new Set();
+    if (!play.lookAt) play.lookAt = [play.me.x, play.me.y];
+    play.pan.add(pan);
+    playRun();
     return;
   }
   const way = PLAY_KEYS[event.key];
@@ -3518,8 +3941,10 @@ window.addEventListener("keyup", (event) => {
   play.running = event.shiftKey;
   const way = PLAY_KEYS[event.key];
   if (way) play.keys.delete(way);
+  const pan = PLAY_PAN_KEYS[event.key];
+  if (pan && play.pan) play.pan.delete(pan);
 });
-window.addEventListener("blur", () => { play.keys.clear(); play.running = false; play.spaceHeld = false; });
+window.addEventListener("blur", () => { play.keys.clear(); if (play.pan) play.pan.clear(); play.running = false; play.spaceHeld = false; });
 window.addEventListener("pagehide", () => { if (play.on) playKeepWhere(); });
 document.addEventListener("visibilitychange", () => { if (document.hidden) play.keys.clear(); });
 window.addEventListener("resize", () => { if (play.on) { playPlace(); playFit(); } });

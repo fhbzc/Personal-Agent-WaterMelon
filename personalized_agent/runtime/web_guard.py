@@ -57,25 +57,12 @@ MOST_QUERY = 300
 SECRET_LIKE = re.compile(
     r"(?:[A-Za-z0-9+/_\-]{40,}={0,2})|(?:\b[0-9a-fA-F]{32,}\b)"
     r"|(?:\b(?:sk-|ghp_|gho_|github_pat_|xox[abpr]-|AKIA|AIza|ya29\.)[\w\-]{8,})")
-#: HELD IN A SEARCH: this many words in a row of what is held, or characters of a language written
-#: without spaces, are a phrase copied out; a number of this many digits is somebody's.
-HELD_WORDS, HELD_CHARACTERS, HELD_DIGITS = 4, 6, 4
-_HELD_TOKENS = re.compile(r"[a-z0-9\u00c0-\u024f\u0400-\u04ff]+|[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]")
-_WHOLE_NAME = re.compile(r"\b[A-Z][a-z]+(?:[ -][A-Z][a-z]+)+")
+#: HELD IN A SEARCH - ONLY WHAT IS SECRET (the user, 2026-11-20: "搜索检查只查密码邮箱之类，项目名人名都不拦";
+#: "所有的搜索检查都是这样"): a mail address, always; a number of this many digits read in what is theirs (a phone,
+#: a card, an account); keys and tokens (SECRET_LIKE). Names - of people, of projects - and their words are let through.
+HELD_DIGITS = 4
 _MAIL_ADDRESS = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 _A_YEAR = re.compile(r"(?:19|20)\d\d")
-
-
-def _held_runs(text: str) -> Set[tuple]:
-    """The runs of words, and of characters written without spaces, in a text."""
-    tokens = _HELD_TOKENS.findall(text.lower())
-    runs: Set[tuple] = set()
-    for size, joined in ((HELD_WORDS, False), (HELD_CHARACTERS, True)):
-        for at in range(len(tokens) - size + 1):
-            run = tuple(tokens[at:at + size])
-            if all((len(one) == 1 and ord(one) > 0x3000) == joined for one in run):
-                runs.add(run)
-    return runs
 
 
 #: In an address, a piece between its separators that could be a key or
@@ -210,36 +197,24 @@ class WebGuard:
         #: by the app's tools or a client's own, through its hooks - for
         #: the record of a turn (Chat keeps it with its reply).
         self.looked: List[Dict[str, str]] = []
-        #: What no search may carry (`hold`).
-        self.held_runs: Set[tuple] = set()
+        #: The numbers no search may carry (`hold`).
         self.held_numbers: Set[str] = set()
-        self.held_names: Set[str] = set()
 
     # -- what is known --------------------------------------------------------------
     def hold(self, text: Any, names: Iterable[str] = ()) -> None:
-        """What was read of the user's mail or chats (the user, 2026-11-06: "让模型的搜索词不要暴露
-        sensitive info"): no search may carry a phrase of it, a long number of it, a person's whole
-        name in it or `names` (their contacts in it, in any script), nor any mail address."""
+        """What was read of the user's (mail, chats, their days): no search may carry a long number of it
+        (the user, 2026-11-06: "让模型的搜索词不要暴露sensitive info"). Its names and words are not held
+        (2026-11-20: "搜索检查只查密码邮箱之类，项目名人名都不拦") - `names` kept for the callers, unused."""
         text = str(text or "")
         with self._lock:
-            self.held_runs |= _held_runs(text)
             self.held_numbers |= {one for one in re.findall(r"\d{%d,}" % HELD_DIGITS, text)
                                   if not _A_YEAR.fullmatch(one)}
-            # By each two together: "Dear Ada Marlow" holds "ada marlow".
-            for found in _WHOLE_NAME.findall(text):
-                parts = re.split(r"[ -]", found.lower())
-                self.held_names |= {" ".join(pair) for pair in zip(parts, parts[1:])}
-            self.held_names |= {str(one).strip().lower() for one in names if len(str(one).strip()) >= 2}
 
     def _holds(self, query: str) -> bool:
+        """A mail address - any, always - or a number held."""
         with self._lock:
-            if not (self.held_runs or self.held_numbers or self.held_names):
-                return False
-            said = query.lower()
             return bool(_MAIL_ADDRESS.search(query)
-                        or any(name in said for name in self.held_names)
-                        or set(re.findall(r"\d{%d,}" % HELD_DIGITS, query)) & self.held_numbers
-                        or _held_runs(query) & self.held_runs)
+                        or set(re.findall(r"\d{%d,}" % HELD_DIGITS, query)) & self.held_numbers)
 
     def know(self, text: Any, source: str = "user", where: str = "") -> None:
         """What was read: the addresses in it exist, and its words are the
@@ -273,9 +248,8 @@ class WebGuard:
             return ("the search carries something that looks like a key, a "
                     "token or encoded data - searches are words, not data")
         if self._holds(query or ""):
-            return ("the search carries what is private in the user's mail or chats - a name, a "
-                    "number, an address or their words. Search the public subject in general "
-                    "words, or do without")
+            return ("the search carries what is secret - a mail address or a number of the user's "
+                    "(a phone, a card, an account). Search without it")
         return None
 
     def check_address(self, url: str) -> Optional[str]:

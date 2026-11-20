@@ -26,12 +26,20 @@ const PLAY_TUNES = {
              melody: "D5 F5 A5 - G5 F5 E5 - D5 - A4 - C5 D5 - -", bass: "D3 A2 Bb2 A2" },
   screening: { tempo: 84, instrument: "strings", accompaniment: "pad", style: "pad", mode: "major",
                melody: "G4 B4 D5 G5 F#5 D5 B4 - C5 E5 G5 - F#5 - D5 -", bass: "G2 E2 C3 D3" },
-  cafe: { tempo: 100, instrument: "marimba", accompaniment: "guitar", style: "waltz", mode: "major",
-          melody: "F5 A5 C6 A5 G5 E5 C5 - D5 F5 A5 - G5 - E5 -", bass: "F2 D3 Bb2 C3" },
+  // A cafe at ease, a tea house's quiet (the user, 2026-11-20: "场景是等候茶馆，但是音乐很紧凑"): slow, soft, a bossa on
+  // the vibraphone - no longer a quick marimba waltz.
+  cafe: { tempo: 72, instrument: "vibraphone", accompaniment: "guitar", style: "bossa", mode: "major",
+          melody: "F5 - A5 - C6 A5 G5 - E5 - D5 - F5 - - -", bass: "F2 D3 Bb2 C3" },
   studio: { tempo: 96, instrument: "piano", accompaniment: "strings", style: "pad", mode: "major",
             melody: "C5 D5 E5 G5 A5 G5 E5 D5 C5 - E5 - G5 - - -", bass: "C3 A2 D3 G2" },
   station: { tempo: 116, instrument: "marimba", accompaniment: "piano", style: "march", mode: "major",
              melody: "E5 E5 G5 - E5 D5 C5 - D5 D5 E5 - D5 - C5 -", bass: "C3 G2 F2 G2" },
+  // A city's own building's ground (agent/playworld.py _civic): the street's busy cheer.
+  civic: { tempo: 108, instrument: "piano", accompaniment: "bass", style: "bounce", mode: "major",
+           melody: "C5 E5 G5 E5 F5 A5 G5 - E5 G5 C6 - B5 G5 E5 -", bass: "C3 A2 F2 G2" },
+  // A line's station ground (agent/playworld.py _stations): the chime before an announcement, people coming and going.
+  terminal: { tempo: 100, instrument: "vibraphone", accompaniment: "piano", style: "bossa", mode: "major",
+              melody: "C5 E5 G5 - C6 - - - A5 G5 E5 - F5 E5 D5 -", bass: "C3 A2 F2 G2" },
   garden: { tempo: 80, instrument: "flute", accompaniment: "harp", style: "arpeggio", mode: "major",
             melody: "G5 E5 C5 E5 G5 A5 G5 - E5 G5 A5 - C6 - A5 -", bass: "C3 E3 F2 G2" },
   snow: { tempo: 70, instrument: "celesta", accompaniment: "pad", style: "pad", mode: "major",
@@ -142,6 +150,37 @@ const PLAY_SCENE_TUNES = {
                   melody: "E5 - B5 - - A5 G#5 - E5 - - C#6 B5 - - -", bass: "E2 A2 B2 E2" },
   deep_sea_calm: { tempo: 54, instrument: "pad", accompaniment: "harp", style: "pad", mode: "major",
                    melody: "D5 - - F#5 - E5 - D5 A4 - - B4 - A4 - -", bass: "D2 G2 A2 D2" },
+  // UNDER THE SEA, IN THE SKY, IN SPACE - each scene its own (the user, 2026-11-20: "加上专属音乐").
+  coral_reef: { tempo: 96, instrument: "steeldrum", accompaniment: "marimba", style: "bossa", mode: "major",
+                melody: "G5 B5 D6 B5 A5 - G5 E5 - G5 A5 B5 - A5 G5 -", bass: "G2 E2 C3 D3" },
+  kelp_forest: { tempo: 62, instrument: "harp", accompaniment: "pad", style: "arpeggio", mode: "minor",
+                 melody: "E5 - G5 - B5 - A5 G5 - E5 - D5 E5 - - -", bass: "E2 C3 A2 B2" },
+  sunken_city: { tempo: 58, instrument: "choir", accompaniment: "harp", style: "pad", mode: "minor",
+                 melody: "D5 - F5 - A5 - G5 F5 E5 - - D5 - - - -", bass: "D2 Bb2 F2 A2" },
+  cloud_kingdom: { tempo: 84, instrument: "celesta", accompaniment: "harp", style: "waltz", mode: "major",
+                   melody: "C6 - G5 E5 - G5 A5 - G5 - E5 D5 E5 - - -", bass: "C3 F2 G2 C3" },
+  floating_isles: { tempo: 92, instrument: "flute", accompaniment: "harp", style: "arpeggio", mode: "major",
+                    melody: "D5 F#5 A5 - B5 A5 F#5 - E5 F#5 A5 - D6 - - -", bass: "D3 G2 A2 D3" },
+  sunset_sky: { tempo: 66, instrument: "violin", accompaniment: "piano", style: "ballad", mode: "major",
+                melody: "A4 - C#5 E5 - D5 C#5 - B4 - A4 - E5 - - -", bass: "A2 F#2 D3 E3" },
+  storm_clouds: { tempo: 108, instrument: "strings", accompaniment: "organ", style: "march", mode: "minor",
+                  melody: "E5 E5 G5 - F#5 E5 D#5 - E5 - B4 - E5 G5 B5 -", bass: "E2 C3 A2 B2" },
+  moon_base: { tempo: 76, instrument: "chiptune", accompaniment: "pad", style: "arpeggio", mode: "minor",
+               melody: "A4 C5 E5 A5 - G5 E5 - F5 - E5 C5 D5 - - -", bass: "A2 F2 G2 E2" },
+  nebula_garden: { tempo: 60, instrument: "vibraphone", accompaniment: "choir", style: "ambient", mode: "major",
+                   melody: "F5 - A5 - C6 - - B5 A5 - G5 - F5 - - -", bass: "F2 D2 Bb2 C3" },
+  ringed_planet: { tempo: 52, instrument: "organ", accompaniment: "bells", style: "ambient", mode: "major",
+                   melody: "C5 - - G5 - - E5 - F5 - - C6 - - - -", bass: "C2 F2 G2 C2" },
+  downtown: { tempo: 116, instrument: "piano", accompaniment: "bass", style: "stride", mode: "major",
+              melody: "E5 G5 A5 C6 - B5 A5 G5 - E5 D5 E5 G5 - - -", bass: "C3 A2 D3 G2" },
+  harbour_city: { tempo: 98, instrument: "accordion", accompaniment: "guitar", style: "waltz", mode: "major",
+                  melody: "G5 - B5 D6 - C6 B5 A5 - G5 - E5 F#5 G5 - -", bass: "G2 C3 D3 G2" },
+  quiet_suburbs: { tempo: 80, instrument: "guitar", accompaniment: "piano", style: "folk", mode: "major",
+                   melody: "D5 E5 F#5 - A5 - F#5 E5 D5 - B4 - D5 - - -", bass: "D3 G2 A2 D3" },
+  neon_metropolis: { tempo: 112, instrument: "chiptune", accompaniment: "bass", style: "bounce", mode: "minor",
+                     melody: "A5 - C6 A5 G5 - E5 - G5 A5 - E5 D5 - C5 -", bass: "A2 F2 G2 E2" },
+  orbital_station: { tempo: 104, instrument: "kalimba", accompaniment: "pad", style: "bounce", mode: "major",
+                     melody: "E5 G5 B5 G5 E5 - D5 - E5 G5 A5 - G5 - E5 -", bass: "E2 C3 D3 B2" },
   windy_highlands: { tempo: 88, instrument: "flute", accompaniment: "strings", style: "pad", mode: "minor",
                      melody: "D5 E5 F5 A5 - G5 F5 E5 D5 - A4 - C5 D5 - -", bass: "D3 C3 Bb2 A2" },
   snowy_peaks: { tempo: 66, instrument: "strings", accompaniment: "celesta", style: "pad", mode: "minor",
@@ -896,6 +935,26 @@ function playSnap(at, near = 1) {
   source.start(at, Math.random() * 1.8, length + 0.01);
 }
 
+/* ONE PRESS, ALL QUIET (the user, 2026-11-20: "专门的静音按钮，就是按一下就全部静音"): the same switch as the panel's
+   Quiet box - pressed again, as it was. */
+function playSoundMute() {
+  playSound.volumes.quiet = !playSound.volumes.quiet;
+  playSoundLevels();
+  playSoundMuteShown();
+  const box = document.querySelector("[data-play-quiet]");
+  if (box) box.checked = playSound.volumes.quiet;
+}
+function playSoundMuteShown() {
+  const button = document.querySelector("[data-play-mute]");
+  if (!button) return;
+  const quiet = Boolean(playSound.volumes.quiet);
+  button.textContent = quiet ? "🔇" : "🔊";
+  button.setAttribute("aria-pressed", String(quiet));
+  const words = typeof playWords === "function" ? playWords(quiet ? "Unmute" : "Mute") : (quiet ? "Unmute" : "Mute");
+  button.title = words;
+  button.setAttribute("aria-label", words);
+}
+
 /* -- THE SOUND'S SETTINGS, in the world's corner -------------------------------------------------------------------- */
 function playSoundPanel(box) {
   const open = box.querySelector(".side-play-sound");
@@ -906,13 +965,14 @@ function playSoundPanel(box) {
   const said = (text) => (typeof playWords === "function" ? playWords(text) : text);     // in Play's own language
   const slider = (key, label) => `<label><span>${escapeHtml(said(label))}</span><input type="range" min="0" max="100"
     value="${Math.round(v[key] * 100)}" data-play-volume="${key}"></label>`;
-  panel.innerHTML = `${slider("all", "All")}${slider("music", "Music")}${slider("effects", "Sounds")}
-    <label class="side-play-quiet"><input type="checkbox" data-play-quiet${v.quiet ? " checked" : ""}><span>${escapeHtml(said("Quiet"))}</span></label>`;
+  // NO QUIET BOX HERE (the user, 2026-11-20: "静音这个按钮可以取消（已经在外面了)"): the mute button beside it.
+  panel.innerHTML = `${slider("all", "All")}${slider("music", "Music")}${slider("effects", "Sounds")}`;
   panel.addEventListener("input", (event) => {
     const key = event.target.dataset.playVolume;
     if (key) v[key] = Number(event.target.value) / 100;
     if (event.target.matches("[data-play-quiet]")) v.quiet = event.target.checked;
     playSoundLevels();
+    playSoundMuteShown();
   });
   box.appendChild(panel);
 }
@@ -939,6 +999,10 @@ const PLAY_PASSING = {
   taxi: { rumble: ["lowpass", 320, 0.8, 0.45], tone: ["sawtooth", 62, 0.18, 300], horn: [523], far: 22 },
   helicopter: { rumble: ["lowpass", 260, 0.7, 0.6], tone: ["sawtooth", 55, 0.3, 500], beat: [11, 0.75], far: 50 },
   spaceship: { rumble: ["lowpass", 700, 0.5, 1.0], tone: ["sine", 140, 0.2, 2000], far: 70 },
+  submarine: { rumble: ["lowpass", 160, 0.9, 0.5], tone: ["sine", 440, 0.08, 900], beat: [0.6, 0.4], far: 30 },
+  balloon: { rumble: ["bandpass", 900, 0.5, 0.25], beat: [0.25, 0.6], far: 26 },
+  rocket: { rumble: ["lowpass", 500, 0.6, 1.0], tone: ["sawtooth", 90, 0.25, 1600], far: 70 },
+  ufo: { rumble: ["highpass", 1800, 0.5, 0.2], tone: ["sine", 980, 0.15, 3000], beat: [6, 0.5], far: 40 },
 };
 const PLAY_PASSING_LEVEL = 0.22, PLAY_SOUND_SPEED = 22;   // the sound's speed, in tiles a second: what bends its pitch
 function playPassingSpec(line) {

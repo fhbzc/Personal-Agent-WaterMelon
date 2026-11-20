@@ -426,6 +426,7 @@ class DesktopAgent:
         self.app.widen_notes_panel = self.widen_notes_panel
         self.app.size_notes_panel = self.size_notes_panel
         self.app.pin_notes_panel = self.pin_notes_panel
+        self.app.full_notes_panel = self.full_notes_panel
         self.app.grab_notes_panel = lambda wide=False: DesktopAgent.grab_notes_panel(self, wide)
         self.app.toggle_notes_panel = lambda: DesktopAgent.toggle_notes_panel(self)
         # WHAT IS IN FRONT OF THE USER, WITH A MESSAGE FROM THE SIDE PANEL as with one from the bubble before it
@@ -3380,7 +3381,8 @@ class DesktopAgent:
         app = getattr(self, "app", None)
         if quiet and float(getattr(app, "side_touched_at", 0.0) or 0.0) >= quiet:
             self._quiet_opened_at = None
-        if sys.platform != "win32" or getattr(self, "_quiet_opened_at", None) or getattr(self, "_over_film", False):
+        if sys.platform != "win32" or getattr(self, "_quiet_opened_at", None) or getattr(self, "_over_film", False) \
+                or getattr(self, "_notes_full", None):     # over the whole screen: never docked meanwhile
             return
         dock = DesktopAgent._side_dock(self)
         if dock is None or dock.docked or getattr(dock, "stepped_aside", False):
@@ -3439,6 +3441,40 @@ class DesktopAgent:
         self._off_this_thread(change, "side-panel-pin")
         return bool(pinned)
 
+    def full_notes_panel(self, full: Optional[bool]) -> bool:
+        """THE SIDE PANEL OVER THE WHOLE SCREEN, OR BACK (the user, 2026-11-20: "加一个全屏图标，是可以让整个sidebar最大化，
+        再点一下恢复（全屏不作为attach的位置记录，只是单纯的全屏，很多时候是玩游戏用的）"): its strip of the screen given
+        back while it is full - nothing docks it again meanwhile, and no width of it is kept; back, where it was, and
+        pinned again as it was. `full` None: only asked. Whether it is full now."""
+        if full is None:
+            return bool(getattr(self, "_notes_full", None))
+        if sys.platform != "win32":
+            return False
+        from ..platform_layer import app_window
+        titles = self._notes_titles()
+        if full:
+            if getattr(self, "_notes_full", None):
+                return True
+            self._notes_full = ("pending",)          # the re-dock watch keeps off from now
+            DesktopAgent._give_the_room_back(self)
+            before = app_window.fill_screen_titled(titles)
+            self._notes_full = before
+            if before is None:
+                return False
+            log.info("the side panel fills the screen")
+            return True
+        before = getattr(self, "_notes_full", None)
+        self._notes_full = None
+        if before and before != ("pending",):
+            app_window.put_titled(titles, before)
+        if self.config.get("side_panel_pinned", False):
+            dock = DesktopAgent._side_dock(self)
+            if dock is not None:
+                self._off_this_thread(lambda: app_window.dock_titled(titles, DesktopAgent._notes_width(self), dock),
+                                      "side-panel-unfull")
+        log.info("the side panel is back from the whole screen")
+        return False
+
     def grab_notes_panel(self, wide: bool = False) -> bool:
         """THE SIDE PANEL'S LEFT EDGE PRESSED, ON WINDOWS: followed from here, where the pointer really is, till it
         is let go (app_window.drag_left_edge_titled) - then its width kept, and the other windows moved for it when
@@ -3458,6 +3494,8 @@ class DesktopAgent:
         picture beside it (`wide`); while dragged, only itself - the other windows moved once, when it is let
         go - and that width kept for the next time. False where it cannot be."""
         from ..platform_layer import app_window
+        if getattr(self, "_notes_full", None):            # over the whole screen: no width of it kept
+            return False
         chat = max(self.NOTES_NARROWEST, min(self.NOTES_WIDEST, int(width)))
         if final:
             self.config.set("side_panel_width", chat, internal=True)

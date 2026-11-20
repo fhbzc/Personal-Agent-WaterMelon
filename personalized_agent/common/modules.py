@@ -171,6 +171,7 @@ TASK_MODULE = {
     "heads_up_assistant": "heads_up",
     "heads_up_message": "heads_up",
     "heads_up_document": "heads_up",
+    "heads_up_missed": "heads_up",          # what they may have missed (heartbeat/monitor/missed_things.py)
     # The times it was silent and help was wanted, looked back over (agent/missed_chances.py) - what it learns is
     # when the heads-up should speak.
     "missed_chances": "heads_up",
@@ -195,6 +196,8 @@ TASK_MODULE = {
     "play_world_piece_look": "play_world",
     # A picture found for a thing on the web (agent/playfind.py).
     "play_world_find": "play_world",
+    "play_world_find_look": "play_world",   # a found picture looked at before it is hung (2026-11-20)
+    "play_world_aesthetics": "play_world",  # the world's looks as a whole: joins, road edges, the night (2026-11-20)
     "play_world_make": "play_world",
     "recommendation_prepare": "recommendation",
     "recommendation_judge": "recommendation",

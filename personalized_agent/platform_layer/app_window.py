@@ -545,6 +545,49 @@ def slide_in_titled(titles: set, width: Optional[int] = None, dock: Any = None, 
     return False
 
 
+def fill_screen_titled(titles: set) -> Optional[Tuple[int, int, int, int]]:
+    """THE SIDE PANEL OVER THE WHOLE SCREEN (the user, 2026-11-20: "加一个全屏图标，是可以让整个sidebar最大化，再点一下恢复"):
+    the agent's window titled one of `titles` made as large as the screen it is on, taskbar and all - for a game.
+    Where it was before ((left, top, right, bottom)), to put it back (`put_titled`); None when none is shown."""
+    if _no_windows_here() or sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        _per_monitor()
+        user32 = ctypes.windll.user32
+        handle = _windows_page(set(titles))
+        if handle is None:
+            return None
+        rect = wintypes.RECT()
+        user32.GetWindowRect(handle, ctypes.byref(rect))
+        before = (rect.left, rect.top, rect.right, rect.bottom)
+        left, top, right, bottom = _monitor_box(handle)
+        user32.SetWindowPos(handle, 0, left, top, right - left, bottom - top, 0x0004 | 0x0010 | 0x0040)
+        return before
+    except Exception:
+        log.info("the side panel could not fill the screen", exc_info=True)
+        return None
+
+
+def put_titled(titles: set, box: Tuple[int, int, int, int]) -> bool:
+    """The agent's window titled one of `titles` put back where it was (`box`: left, top, right, bottom)."""
+    if _no_windows_here() or sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        _per_monitor()
+        handle = _windows_page(set(titles))
+        if handle is None:
+            return False
+        left, top, right, bottom = box
+        ctypes.windll.user32.SetWindowPos(handle, 0, left, top, right - left, bottom - top, 0x0004 | 0x0010 | 0x0040)
+        return True
+    except Exception:
+        log.info("the side panel could not be put back", exc_info=True)
+        return False
+
+
 def resize_titled(titles: set, width: int, dock: Any = None) -> bool:
     """THE SIDE PANEL WIDER, OR BACK (2026-11-16: its picture's column opens beside the chat only when there
     is a picture): the agent's window titled one of `titles`, shown, made `width` wide at the screen's

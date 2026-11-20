@@ -205,10 +205,26 @@ const PLAY_VEHICLES = {
   taxi: { kind: "road", runs: "road", body: "taxi", words: "Taxi" },
   helicopter: { kind: "plane", runs: "air", body: "helicopter", words: "Helicopter" },
   spaceship: { kind: "plane", runs: "air", body: "spaceship", words: "Spaceship" },
+  // Under the sea, in the sky, in space (the user, 2026-11-20: "交通工具").
+  submarine: { kind: "ferry", runs: "water", body: "submarine", words: "Submarine" },
+  balloon: { kind: "airship", runs: "sky", body: "balloon", words: "Hot-air balloon" },
+  rocket: { kind: "plane", runs: "air", body: "spaceship", words: "Rocket" },
+  ufo: { kind: "plane", runs: "air", body: "ufo", words: "Flying saucer" },
 };
 /* A line's own name for itself: its vehicle's words, or its kind's. */
 function playLineWords(line) {
   return (PLAY_VEHICLES[line.look] || {}).words || PLAY_LINE_WORDS[line.kind];
+}
+/* WHICH LINE TAKES ONE FROM A LAND TO ANOTHER, AND WHERE TO GET OFF (the user, 2026-11-20: "指向车站/飞机/轮船要说明去哪
+   下车"): the first line that stops in both - {line, on, off} - or null. */
+function playRideBetween(fromRegion, toRegion) {
+  if (!fromRegion || !toRegion || fromRegion.id === toRegion.id) return null;
+  for (const line of playLines()) {
+    const on = line.stops.find((s) => s.region && s.region.id === fromRegion.id);
+    const off = line.stops.find((s) => s.region && s.region.id === toRegion.id);
+    if (on && off) return { line, on, off };
+  }
+  return null;
 }
 function playLines() {
   const map = play.map;
@@ -227,11 +243,20 @@ function playLines() {
   // the sky - a ring where it was made one. Without a design, the lines as before.
   const design = play.world.transport;
   const designed = Boolean(design && Array.isArray(design.lines));
+  // AT ITS STATION (agent/playworld.py _stations; the user, 2026-11-20: "大的火车站，地铁站，飞机场之类"): a line stops at
+  // its kind's station in the land - at its door - where there is one; a boat at the shore, an airship at the sky's edge.
+  const terminal = (land, runs) => {
+    const z = map.zones.find((one) => one.zone.terminal_of === `${land.region.id}:${runs}`);
+    return z && { x: z.out[0], y: z.out[1] - 1, name: z.zone.name || playWords(land.region.name || ""), region: land.region,
+                  station: z.zone };
+  };
   for (const one of designed ? design.lines : []) {
     const look = PLAY_VEHICLES[one.vehicle] || PLAY_VEHICLES.train;
+    const runs = one.vehicle === "metro" ? "metro" : look.runs;
     const mine = (one.stops || []).map((id) => lands.find((l) => l.region.id === id)).filter(Boolean);
     const stops = mine.map((l) => (look.runs === "water" ? playShoreNear(l.heart[0], l.heart[1], l.region)
-      : look.runs === "sky" ? playSkyNear(l.heart[0], l.heart[1], l.region, 1) : stop(l, look.kind))).filter(Boolean);
+      : look.runs === "sky" ? playSkyNear(l.heart[0], l.heart[1], l.region, 1)
+      : terminal(l, runs) || stop(l, look.kind))).filter(Boolean);
     if (stops.length >= 2) lines.push({ kind: look.kind, look: one.vehicle, name: one.name || "", stops, loop: Boolean(one.ring) && stops.length >= 3 });
   }
   // A PROJECT'S FAR PLACES (agent/playmuse.py local_lines; the user, 2026-11-19: "project内相隔超过一段距离一定有一个交通
@@ -531,6 +556,8 @@ function playVehicleDraw(kind, x, y, heading, size, riding, look = "") {
     ctx.beginPath(); ctx.ellipse(sx, sy, size * 1.1, size * 0.35, 0, 0, Math.PI * 2); ctx.fill();
     const body = (PLAY_VEHICLES[look] || {}).body || "";
     if (body === "helicopter") playHelicopterDraw(sx, sy - lift, heading, size);
+    else if (body === "balloon") playBalloonDraw(sx, sy - lift + Math.sin(performance.now() / 700) * size * 0.15, size);
+    else if (body === "ufo") playUfoDraw(sx, sy - lift + Math.sin(performance.now() / 300) * size * 0.08, size);
     else if (body === "spaceship") {
       ctx.save(); ctx.translate(sx, sy - lift * 1.3); ctx.rotate(heading + Math.PI / 2);
       const spec = PLAY_SCENERY.rocket, sheet = spec && play.sheets[spec[0]];
@@ -546,11 +573,55 @@ function playVehicleDraw(kind, x, y, heading, size, riding, look = "") {
     } else draw("airship", 0, -lift + Math.sin(performance.now() / 600) * size * 0.1, size * 3, size * 2, !left);
   } else if (kind === "road") {
     playRoadVehicleDraw(sx, sy, heading, size, (PLAY_VEHICLES[look] || {}).body || "bus");
+  } else if (kind === "ferry" && (PLAY_VEHICLES[look] || {}).body === "submarine") {
+    playSubmarineDraw(sx, sy - size * 0.3 + Math.sin(performance.now() / 600) * size * 0.05, heading, size);
   } else if (kind === "ferry") {
     const body = (PLAY_VEHICLES[look] || {}).body || "ferry";   // a ferry, a sailing boat
     draw(body, 0, -size * 0.6 + Math.sin(performance.now() / 500) * size * 0.06, body === "ship" ? size * 2 : size * 3, size * 2, left);
   }                                                          // the train: playTrainDraw, car by car on its rails
   if (riding) playActMeOn(sx, sy - (kind === "plane" || kind === "airship" ? size * 2.6 : kind === "train" ? size * 0.3 : size * 0.9), size);
+}
+/* A SUBMARINE, A HOT-AIR BALLOON, A FLYING SAUCER - drawn here (2026-11-20: under the sea, in the sky, in space). */
+function playSubmarineDraw(sx, sy, heading, size) {
+  const { ctx } = play;
+  ctx.save(); ctx.translate(sx, sy); if (Math.cos(heading) < 0) ctx.scale(-1, 1);
+  ctx.fillStyle = "#f2c230"; ctx.beginPath(); ctx.ellipse(0, 0, size * 1.2, size * 0.45, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillRect(-size * 0.25, -size * 0.75, size * 0.5, size * 0.4);                  // its tower
+  ctx.fillStyle = "#555"; ctx.fillRect(size * 0.05, -size * 1.05, size * 0.06, size * 0.32);   // its periscope
+  ctx.fillStyle = "#9fd8f0";
+  for (const at of [-0.55, 0, 0.55]) { ctx.beginPath(); ctx.arc(at * size, 0, size * 0.14, 0, Math.PI * 2); ctx.fill(); }
+  ctx.fillStyle = "#c9961f"; ctx.fillRect(-size * 1.35, -size * 0.25, size * 0.2, size * 0.5);   // its propeller
+  ctx.fillStyle = "rgba(255,255,255,0.6)";
+  for (let k = 0; k < 3; k += 1) { ctx.beginPath(); ctx.arc(-size * (1.5 + k * 0.25), -size * (0.2 + k * 0.25), size * 0.06, 0, Math.PI * 2); ctx.fill(); }
+  ctx.restore();
+}
+function playBalloonDraw(sx, sy, size) {
+  const { ctx } = play;
+  ctx.save(); ctx.translate(sx, sy - size * 0.6);
+  const stripes = ["#e74c3c", "#f2c94c", "#3e8fc9", "#f2c94c", "#e74c3c"];
+  stripes.forEach((colour, k) => {
+    ctx.fillStyle = colour; ctx.beginPath();
+    ctx.ellipse(0, 0, size * (0.9 - k * 0.18), size * 1.05, 0, 0, Math.PI * 2); ctx.fill();
+  });
+  ctx.strokeStyle = "#6b4a2b"; ctx.lineWidth = Math.max(1, size / 16);
+  ctx.beginPath(); ctx.moveTo(-size * 0.5, size * 0.85); ctx.lineTo(-size * 0.25, size * 1.45);
+  ctx.moveTo(size * 0.5, size * 0.85); ctx.lineTo(size * 0.25, size * 1.45); ctx.stroke();
+  ctx.fillStyle = "#8b5a2b"; ctx.fillRect(-size * 0.3, size * 1.45, size * 0.6, size * 0.4);   // its basket
+  ctx.restore();
+}
+function playUfoDraw(sx, sy, size) {
+  const { ctx } = play;
+  ctx.save(); ctx.translate(sx, sy);
+  ctx.fillStyle = "rgba(160, 255, 200, 0.22)";                                       // its beam
+  ctx.beginPath(); ctx.moveTo(-size * 0.35, size * 0.2); ctx.lineTo(size * 0.35, size * 0.2); ctx.lineTo(size * 0.8, size * 2.0); ctx.lineTo(-size * 0.8, size * 2.0); ctx.fill();
+  ctx.fillStyle = "#9fe3ff"; ctx.beginPath(); ctx.ellipse(0, -size * 0.25, size * 0.45, size * 0.38, 0, Math.PI, 0); ctx.fill();
+  ctx.fillStyle = "#9aa3ad"; ctx.beginPath(); ctx.ellipse(0, 0, size * 1.2, size * 0.32, 0, 0, Math.PI * 2); ctx.fill();
+  const t = performance.now() / 200;
+  for (let k = 0; k < 5; k += 1) {
+    ctx.fillStyle = (Math.floor(t) + k) % 2 ? "#f2c94c" : "#6fe39a";
+    ctx.beginPath(); ctx.arc((k - 2) * size * 0.45, size * 0.06, size * 0.08, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
 }
 /* A BUS, A TAXI - drawn here (no picture of one among the packs): its body the way it runs, windows, wheels. */
 function playRoadVehicleDraw(sx, sy, heading, size, body) {
@@ -664,7 +735,7 @@ function playLinesDraw(size, now) {
   for (const line of playLines()) {
     if (line.kind === "train") playTrackDraw(line, size);
     for (const one of line.stops) {
-      if (!playActInView(one.x, one.y, 4)) continue;
+      if (one.station || !playActInView(one.x, one.y, 4)) continue;   // a station stands there: drawn as its own piece
       const spec = PLAY_SCENERY[PLAY_LINE_LOOK[line.kind]], sheet = spec && play.sheets[spec[0]];
       if (!sheet) continue;
       const [sx, sy] = playActScreen(one.x + 0.5, one.y + 1);

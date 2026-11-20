@@ -102,7 +102,9 @@ class CallHistory:
                 "messages": messages, "cut": cut,
                 "tools": [str(getattr(one, "name", one)) for one in
                           list(getattr(request, "tools", None) or [])],
-                "answer": str(getattr(response, "content", "") or ""),
+                # ITS WORDS (2026-11-20: read from "content", which answers do not have - every answer was kept
+                # empty, and a failed one could not be read afterwards): "text", as answers carry them.
+                "answer": str(getattr(response, "text", "") or getattr(response, "content", "") or ""),
                 "stop_reason": getattr(response, "stop_reason", None),
                 "usage": ({key: value for key, value in vars(usage).items()
                            if isinstance(value, (int, float, str, type(None)))}

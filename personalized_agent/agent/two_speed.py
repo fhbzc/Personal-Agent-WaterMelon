@@ -169,6 +169,22 @@ def _parsed(text: str) -> Optional[Dict[str, Any]]:
     return said if isinstance(said, dict) else None
 
 
+#: THE SCREEN OFFERED, NOT SENT (the user, 2026-11-20: "每个Input都会给图片（截图），我在想应该让agent自己决定要不要看（不用说
+#: 内容，就说当前截图可以看）"; "这个对快速和full 都生效"): what each is told of the picture of the screen taken when the user
+#: wrote - only that it is there to look at.
+QUICK_SCREEN_NOTE = ("\n\n[A picture of the user's screen as it was when they wrote this can be looked at. Look only "
+                     "when the answer needs what is on their screen: then answer with JSON alone, {\"look\": true}, "
+                     "and you are shown it.]")
+FULL_SCREEN_NOTE = ("\n\n[A picture of the user's screen as it was when they wrote this can be looked at: look_at_screen "
+                    "shows it. Look only when the answer needs what is on their screen.]")
+
+
+#: EVERY ANSWER IN THE SIDE PANEL WITH ITS QUICK REPLIES (the user, 2026-11-20: "agent的每个话都自带几个快速回复选项（我也
+#: 可以点）"): written with the answer itself - no call of their own - on its last line; the panel shows them as buttons.
+REPLIES_NOTE = ("\n\n[END YOUR ANSWER WITH ONE LINE: \"Quick replies: <2 to 4 short replies the user might send next, "
+                "in their language, separated by |>\" - nothing after it.]")
+
+
 def _with_pictures(text: str, pictures: Optional[List[Dict[str, str]]]) -> Any:
     """A message's content: its words, and the pictures that go with it as pictures."""
     pictures = [one for one in pictures or [] if one.get("data") and one.get("media_type")]
@@ -206,6 +222,49 @@ class TwoSpeed:
         self.on_tell: Optional[Callable[[str, str], Any]] = None
         #: The picture of the screen that went with a message kept and described (chat_pictures `keep(id, seen, text)`).
         self.on_picture: Optional[Callable[[str, List[Dict[str, str]], str], Any]] = None
+        #: The picture offered with the message the full agent answers now (look_at_screen), and each turn's.
+        self._offer_now: Optional[Dict[str, Any]] = None
+        self._add_screen_tool()
+
+    def _add_screen_tool(self) -> None:
+        """LOOK_AT_SCREEN, the full agent's: the picture of the screen offered with the message it answers - shown when
+        it asks, kept with the message then (and told to the panel, which shows it with it)."""
+        tools = getattr(self.agent, "tools", None)
+        if tools is None or not hasattr(tools, "add"):
+            return
+        try:
+            if any(getattr(one, "name", "") == "look_at_screen" for one in getattr(tools, "specs", []) or []):
+                return
+            from ..models.base import ToolSpec
+            tools.add(ToolSpec("look_at_screen", "See the picture of the user's screen taken when they wrote their message "
+                               "- only when the answer needs what is on their screen.",
+                               {"type": "object", "properties": {}}, read_only=True), lambda args: self._look_now())
+        except Exception:
+            log.info("the screen could not be offered to the full agent", exc_info=True)
+
+    def _look_now(self) -> Dict[str, Any]:
+        offer = self._offer_now
+        if not offer or not offer.get("pictures"):
+            return {"error": "no picture of the screen went with this message"}
+        self._looked(offer)
+        return {"what": "the user's screen when they wrote", "_pictures": offer["pictures"]}
+
+    def _looked(self, offer: Dict[str, Any]) -> None:
+        """The picture looked at: kept with the user's message (chat_pictures), and the turn told so the panel shows it."""
+        if offer.get("looked"):
+            return
+        offer["looked"] = True
+        if callable(self.on_picture):
+            try:
+                self.on_picture(offer["message_id"], offer["pictures"], offer.get("text", ""))
+            except Exception:
+                log.debug("the picture looked at could not be kept", exc_info=True)
+        turn = offer.get("turn")
+        if turn:
+            with self._lock:
+                if turn in self._turns:
+                    self._turns[turn]["picture"] = offer.get("shown") or {}
+            self._changed(turn)
 
     def working(self, conversation_id: str) -> bool:
         """Whether the full agent is answering in that conversation now."""
@@ -235,7 +294,7 @@ class TwoSpeed:
              attachments: Optional[Sequence[str]] = None, mentions: Optional[Sequence[str]] = None,
              on_done: Optional[Callable[[Dict[str, Any]], None]] = None,
              front: str = "", seen: Optional[List[Dict[str, str]]] = None,
-             visual: bool = False, quick: bool = True) -> Dict[str, Any]:
+             visual: bool = False, quick: bool = True, offered: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """The quick reply, at once: "answer", "message_id", "conversation_id"
         and "turn", the full agent's - "" when it was stopped. Raises
         ValueError for a file no longer there. `front`: what is in front of
@@ -252,6 +311,9 @@ class TwoSpeed:
         if described:
             metadata["attachments"] = described
         user = self.conversations.add_message(conversation_id, "user", text, metadata=metadata)
+        # OFFERED, NOT SENT (QUICK_SCREEN_NOTE): the picture kept aside - looked at only when asked for.
+        offer = {**offered, "message_id": user["id"], "text": text, "looked": False} \
+            if offered and offered.get("pictures") else None
         if seen and callable(self.on_picture):
             try:
                 self.on_picture(user["id"], seen, text)
@@ -262,7 +324,15 @@ class TwoSpeed:
                 front = front + (self.style_note() or "")
             except Exception:
                 log.debug("how the user talks could not be read", exc_info=True)
-        quick = self._quick(text, earlier, described, front, seen) if quick else {"reply": "", "run": True}
+        if visual:
+            front = front + REPLIES_NOTE                # the quick voice and the full agent both end with them
+        if quick and offer:
+            quick = self._quick(text, earlier, described, front + QUICK_SCREEN_NOTE, seen)
+            if quick.get("look"):                       # it asked to see it: asked again, shown it
+                self._looked(offer)
+                quick = self._quick(text, earlier, described, front, offer["pictures"])
+        else:
+            quick = self._quick(text, earlier, described, front, seen) if quick else {"reply": "", "run": True}
         # WHAT IS HELD TO BE TOLD, for the full agent only (never the small model): it answers whenever there is.
         held = ""
         if visual and callable(self.held_note):
@@ -282,12 +352,17 @@ class TwoSpeed:
         turn = ""
         if run:
             turn = new_id("turn")
+            if offer is not None:
+                offer["turn"] = turn
             self._begin(conversation_id, {
                 "turn": turn, "text": text, "ids": ids, "reply": quick["reply"],
                 "attachments": attachments, "mentions": mentions, "on_done": on_done,
-                "front": front + (VISUAL_NOTE if visual else "") + held, "seen": seen})
+                "front": front + (VISUAL_NOTE if visual else "") + held
+                + (FULL_SCREEN_NOTE if offer is not None and not offer.get("looked") else ""),
+                "seen": offer["pictures"] if offer is not None and offer.get("looked") else seen, "offer": offer})
         return {"conversation_id": conversation_id, "answer": quick["reply"], "layer": "fast",
-                "message_id": said["id"] if said else "", "turn": turn}
+                "message_id": said["id"] if said else "", "turn": turn,
+                "picture": (offer.get("shown") or {}) if offer is not None and offer.get("looked") else {}}
 
     def _described(self, ids: List[str]) -> List[Dict[str, Any]]:
         if not ids or self.files is None:
@@ -346,6 +421,8 @@ class TwoSpeed:
             log.info("the quick reply was not used: %s", read.why_not)
             return {"reply": "", "run": True}
         parsed = read.data
+        if parsed.get("look") is True and not seen:
+            return {"reply": "", "run": True, "look": True}
         return {"reply": str(parsed.get("reply") or "").strip(),
                 "run": str(parsed.get("full_agent") or "run").strip().lower() != "stop"}
 
@@ -423,6 +500,7 @@ class TwoSpeed:
                 if last in self._turns:
                     self._turns[last]["text"] = text
             self._changed(last, words=True)
+        self._offer_now = jobs[-1].get("offer")
         try:
             result = self.agent.handle_message(
                 "\n\n".join(one["text"] for one in jobs), conversation_id,

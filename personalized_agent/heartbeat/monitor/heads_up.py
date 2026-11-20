@@ -34,7 +34,8 @@ from ...models.base import ModelRequest
 log = logging.getLogger(__name__)
 
 #: Each trigger's model task (common/modules.py) - its tokens counted apart.
-TASKS = {"assistant": "heads_up_assistant", "message": "heads_up_message", "document": "heads_up_document"}
+TASKS = {"assistant": "heads_up_assistant", "message": "heads_up_message", "document": "heads_up_document",
+         "missed": "heads_up_missed"}       # what they may have missed (missed_things.py), on the main model
 #: How often code looks for a moment; the least between two looks; the most a day unless set.
 POLL_SECONDS, LEAST_GAP_SECONDS = 15.0, 180.0     # no cap a day (2026-11-17: "去掉"); its looks still counted
 #: An assistant's turn: done when quiet so long; a session looked at once in so long.
@@ -48,6 +49,8 @@ DOCUMENT_LEAST_SECONDS, DOCUMENT_EVERY_SECONDS = 300.0, 900.0
 ROLE = "fast_reply"
 #: How sure it must be to speak.
 LEAST_SURE = 0.7
+#: Something they missed, told once in so many days at most.
+MISSED_AGAIN_DAYS = 3
 #: How much of what was done is shown; of each assistant message.
 MOST_SHOWN, MOST_A_MESSAGE = 9000, 1200
 #: Where what was looked at is kept (kv).
@@ -132,12 +135,12 @@ class HeadsUp:
             if last and (now - last).total_seconds() < LEAST_GAP_SECONDS:
                 return None
             for kind, find in (("assistant", self._assistant), ("message", self._message),
-                               ("document", self._document)):
+                               ("document", self._document), ("missed", self._missed)):
                 found = find(now, state)
                 if found:
                     state["last"], state["count"] = now.isoformat(), int(state.get("count") or 0) + 1
                     self._keep(state)
-                    return self.look(kind, found)
+                    return self.look_missed(found, state) if kind == "missed" else self.look(kind, found)
             self._keep(state)
             return None
         finally:
@@ -248,6 +251,87 @@ class HeadsUp:
                     + "\n\nAS IT STANDS NOW:\n" + last[-3000:]}
         return None
 
+    def _missed(self, now: datetime, state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """WHAT THEY MAY HAVE MISSED (missed_things.py; the user, 2026-11-20): at a moment they have stopped, every
+        candidate the code finds - only when they have changed since the last look (no cap on how often)."""
+        from . import missed_things
+        if not missed_things.stopped(self.db, now):
+            return None
+        found = missed_things.candidates(self.db, now)
+        # ONLY WHEN SOMETHING NEW CAME (one gone, or one judged before, is no reason to ask again): a candidate never
+        # judged - a new message, a promise, an event come within a day (its key carries its time).
+        seen = set(state.get("missed_seen") or [])
+        new = [one for one in found if str(one["key"]) not in seen]
+        if not new:
+            return None
+        state["missed_seen"] = sorted(seen | {str(one["key"]) for one in found})[-2000:]
+        for one in found:
+            one["new"] = str(one["key"]) not in seen
+        return {"where": "their messages, to-dos, calendar and what they read", "items": found}
+
+    def look_missed(self, found: Dict[str, Any], state: Dict[str, Any]) -> Optional[str]:
+        """ONE CALL OF THE SMALL MODEL (the user, 2026-11-20: "这个还是都用小模型判断"): which candidates are
+        truly missed - each told as a heads-up, the most urgent first, every one of them (no cap); one told before
+        not told again for MISSED_AGAIN_DAYS. The first told's id."""
+        from . import missed_things
+        from ...common.languages import in_display, in_english
+        from ...models.answers import json_objects, read_text
+        given: Dict[str, Any] = {"now": datetime.now(timezone.utc).isoformat(), "candidates": found["items"],
+                                 "their_todos": missed_things.their_todos(self.db), "heads_up_lately": self._lately()}
+        if callable(self.context):
+            try:
+                given["what_they_mean_to_do"] = self.context()
+            except Exception:
+                log.debug("what the user means to do could not be read", exc_info=True)
+        try:
+            response = self.models.invoke(ModelRequest(
+                system=missed_things.SYSTEM, task="heads_up_missed", max_tokens=3000, builtin_web=False,  # its TASK
+                messages=[{"role": "user", "content": json.dumps(given, ensure_ascii=False)}],
+                language=in_display('"title" and "say"') + in_english('"evidence" keeps the words as they are')),
+                # THE SMALL MODEL, as the other looks (the user, 2026-11-20: "这个还是都用小模型判断" - asked whenever
+                # something new comes, it may be asked often).
+                role=ROLE)
+            text, _cut = read_text(response)
+            said = next(iter(json_objects(text or "")), {})
+        except Exception:
+            log.info("a look for what was missed could not be had", exc_info=True)
+            return None
+        keys = {str(one["key"]): one for one in found["items"]}
+        told = state.setdefault("missed_told", {})
+        now = datetime.now(timezone.utc)
+        lately = {one.get("title") for one in self._lately()}
+        first = None
+        for one in [x for x in said.get("missed") or [] if isinstance(x, dict)]:
+            key, title = str(one.get("key") or ""), " ".join(str(one.get("title") or "").split())[:120]
+            words = str(one.get("say") or "").strip()[:1200]
+            try:
+                sure = float(one.get("sure") or 0)
+            except (TypeError, ValueError):
+                sure = 0.0
+            then = _when(told.get(key))
+            if key not in keys or not title or not words or sure < LEAST_SURE or title in lately \
+                    or (then and (now - then).total_seconds() < MISSED_AGAIN_DAYS * 86400) or not callable(self.tell):
+                continue
+            made = self.tell(
+                title, words, kind="proactive",
+                metadata={"heads_up": {"kind": "missed", "where": keys[key].get("where", ""), "sure": sure,
+                                       "evidence": str(one.get("evidence") or "")[:600],
+                                       "urgent": bool(one.get("urgent")), "missed": keys[key]["kind"]},
+                          "reason": str(one.get("why") or "").strip()[:300]
+                          or f"Heads up: they may have missed {keys[key]['kind']}",
+                          "related_to": str(one.get("related_to") or "").strip()[:300] or keys[key].get("where", ""),
+                          "made_by": "agent", "created_by": "heads_up"})
+            told[key] = now.isoformat()
+            ident = str(getattr(made, "id", "") or "")
+            first = first or ident or None
+            log.info("a heads-up told (missed: %s, %s)", keys[key]["kind"], ident)
+        if len(told) > 300:
+            state["missed_told"] = dict(sorted(told.items(), key=lambda kv: kv[1])[-300:])
+        self._keep(state)
+        if first is None:
+            log.info("a look for what was missed (%d candidates): nothing to say", len(found["items"]))
+        return first
+
     # -- the look -------------------------------------------------------------------------------------
     def look(self, kind: str, found: Dict[str, Any]) -> Optional[str]:
         """One model call: whether there is something they missed; told when it is sure."""
@@ -311,7 +395,8 @@ class HeadsUp:
             except ValueError:
                 meta = {}
             out.append({"title": row.get("title"), "reactions": meta.get("reactions") or [],
-                        "bad_content": bool(meta.get("bad_content"))})
+                        "bad_content": bool(meta.get("bad_content")),
+                        "good_content": bool(meta.get("good_content"))})
         return out
 
     # -- kept -----------------------------------------------------------------------------------------

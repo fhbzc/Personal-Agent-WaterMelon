@@ -8,6 +8,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+import support
 from support import TemporaryAgent
 
 from personalized_agent.api.routes import build_routes
@@ -96,17 +97,28 @@ class ReactionTests(unittest.TestCase):
         side = app.side_conversation()
         said = app.conversations.add_message(side, "assistant", "The seed club is at 3:30.")
         react = routes[("POST", "/api/side/react")]
-        self.assertTrue(react(_asked(id=said["id"], emoji="\U0001F44D", on=True))["ok"])
-        self.assertEqual(app.conversations.message(said["id"])["metadata"]["reactions"], ["\U0001F44D"])
+        self.assertTrue(react(_asked(id=said["id"], emoji="❤️", on=True))["ok"])
+        self.assertEqual(app.conversations.message(said["id"])["metadata"]["reactions"], ["❤️"])
         from personalized_agent.agent.chat_pictures import told
-        self.assertIn("The user reacted to this with: \U0001F44D (thumbs up)",
+        self.assertIn("The user reacted to this with: ❤️ (heart - they loved it",
                       told(app.conversations.message(said["id"])))
-        react(_asked(id=said["id"], emoji="\U0001F44D", on=False))
+        react(_asked(id=said["id"], emoji="❤️", on=False))
         self.assertEqual(app.conversations.message(said["id"])["metadata"]["reactions"], [])
         self.assertIn("error", react(_asked(id=said["id"], emoji="x", on=True)))
         # Bad content, its own press beside the emoji (2026-11-17: "要在emoji旁边加一个快速的bad content").
         react(_asked(id=said["id"], bad=True, on=True))
         self.assertIn("The user marked this: bad content", told(app.conversations.message(said["id"])))
+        # GOOD CONTENT, THE THUMB UP (2026-11-20: "good 和bad是代表好推送和坏推送"): one of the two at most.
+        react(_asked(id=said["id"], good=True, on=True))
+        kept = app.conversations.message(said["id"])["metadata"]
+        self.assertEqual((kept["good_content"], kept["bad_content"]), (True, False))
+        self.assertIn("The user marked this: good content", told(app.conversations.message(said["id"])))
+        react(_asked(id=said["id"], bad=True, on=True))
+        kept = app.conversations.message(said["id"])["metadata"]
+        self.assertEqual((kept["good_content"], kept["bad_content"]), (False, True))
+        notes = (support.ROOT / "personalized_agent" / "api" / "web" / "notes.js").read_text(encoding="utf-8")
+        self.assertIn('class="side-good"', notes)
+        self.assertNotIn('["\\u{1F44D}", "Thumbs up"]', notes, "the thumb is not among the emoji")
 
     def test_on_a_chat_reply_learned_from_at_once(self) -> None:
         """2026-11-17: "这个一点反应就立刻学习" - not left to the quiet summary."""

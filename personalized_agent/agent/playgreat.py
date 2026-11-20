@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from . import playshapes as shapes
 
 #: A project's places, gathered, at least this large (tiles) or this many, and it is one great ground.
-GREAT_AREA_LEAST, GREAT_PLACES_LEAST = 900, 3
+GREAT_AREA_LEAST, GREAT_PLACES_LEAST = 900, 2   # 2 places (the user, 2026-11-20: "还是改成2个好了")
 #: Designed again when grown this much since, or when its tasks changed (one joined, one split off).
 GREAT_REDO_GROWN = 1.4
 #: The plan's coarse grid: a cell this many tiles each way.
@@ -168,7 +168,10 @@ EACH TASK ITS PART ("parts"): where it lies in the grid ("cell": [column, row, c
 its kind ({open_kinds} in the open; {indoor_kinds} under a roof - a hall of the one building, never a house apart; \
 "mode" open: none under a roof; indoor: all), its outline ({part_shapes}), why there. EACH PART AS LARGE AS ITS \
 WORK, never crowded: about 36 tiles to begin with and 9 more for each of its task's cards. Parts may touch but not \
-overlap. THE HALLS UNDER A ROOF ARE THE ROOMS OF ONE BUILDING, side by side in a row in the order given: each says \
+overlap. ITS PARTS ALONG ONE WAY, AS THEY WERE LIVED (the user, 2026-11-20: "跟着箭头/路牌走能够带user重走user在时序上 \
+对这些project的经历"): the task begun first at the ground's way in, each next one further along its main way, the one \
+worked on now at its end - arrows and numbered signs are laid along it. \
+THE HALLS UNDER A ROOF ARE THE ROOMS OF ONE BUILDING, side by side in a row in the order given: each says \
 "open_to_next": true (a door through the wall it shares with the next room) or false (the wall closed - a room of \
 its own) - some joined, some not, as the rooms of a real building are.
 Answer with only JSON: {{"idea": "<the ground's one idea, at most 2 sentences>", "parts": [{{"task": "<the task's \

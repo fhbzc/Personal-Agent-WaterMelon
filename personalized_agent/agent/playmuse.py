@@ -85,6 +85,39 @@ MOOD_SCENES: Dict[str, Dict[str, str]] = {
                        "what": "an enchanted wood at dusk - dreamy, curious, inspired"},
     "starry_space": {"biome": "space", "weather": "eternal_night", "palette": "night", "layout": "islands",
                      "what": "islands among the stars - wonder, ambition, far from everything"},
+    # UNDER THE SEA, IN THE SKY, IN SPACE - themes of their own (the user, 2026-11-20: "另外你现在要加水下/海底类的主题场景，
+    # 和天空/云端的主题场景，还有太空/宇宙的主题场景，加上专属音乐，房子，区块和特色装饰，交通工具").
+    "coral_reef": {"biome": "underwater", "weather": "fair", "palette": "day", "layout": "scattered",
+                   "what": "a bright coral reef - lively, colourful, among friends"},
+    "kelp_forest": {"biome": "underwater", "weather": "changing", "palette": "misty", "layout": "scattered",
+                    "what": "a swaying kelp forest - drifting, thoughtful, sheltered"},
+    "sunken_city": {"biome": "underwater", "weather": "foggy", "palette": "sepia", "layout": "plaza",
+                    "what": "a sunken city of old - memories, something lost and found again"},
+    "cloud_kingdom": {"biome": "skycity", "weather": "fair", "palette": "pastel", "layout": "islands",
+                      "what": "castles on the clouds - light, dreamy, free"},
+    "floating_isles": {"biome": "skycity", "weather": "changing", "palette": "dawn", "layout": "scattered",
+                       "what": "floating islands at dawn - hopeful, a beginning, lifted up"},
+    "sunset_sky": {"biome": "skycity", "weather": "eternal_dusk", "palette": "dusk", "layout": "islands",
+                   "what": "a sky at sunset - tender, winding down, grateful"},
+    "storm_clouds": {"biome": "skycity", "weather": "rainy", "palette": "misty", "layout": "scattered",
+                     "what": "among storm clouds - restless, charged, pushing through"},
+    "moon_base": {"biome": "space", "weather": "eternal_night", "palette": "night", "layout": "grid",
+                  "what": "a base on the moon - focused, far away, building something new"},
+    "nebula_garden": {"biome": "space", "weather": "eternal_night", "palette": "pastel", "layout": "scattered",
+                      "what": "a garden in a nebula - wonder, creative, dreamy"},
+    "ringed_planet": {"biome": "space", "weather": "eternal_night", "palette": "dusk", "layout": "islands",
+                      "what": "a ringed planet - big plans, awe, a long way to go"},
+    "orbital_station": {"biome": "space", "weather": "eternal_night", "palette": "night", "layout": "grid",
+                        "what": "a station in orbit - busy, connected, working as a team"},
+    # A CITY OF TODAY (the user, 2026-11-20: "还要加城市主题，里面有常见建筑，包括商场，公寓，摩天大楼，医院，警察局，消防局等等").
+    "downtown": {"biome": "city", "weather": "fair", "palette": "day", "layout": "grid",
+                 "what": "a busy downtown - ambitious, full days, things moving"},
+    "harbour_city": {"biome": "city", "weather": "changing", "palette": "summer", "layout": "river",
+                     "what": "a city by the harbour - open, ideas coming and going"},
+    "quiet_suburbs": {"biome": "city", "weather": "fair", "palette": "spring", "layout": "grid",
+                      "what": "quiet suburbs - settled, at home, steady routines"},
+    "neon_metropolis": {"biome": "city", "weather": "eternal_night", "palette": "night", "layout": "grid",
+                        "what": "a metropolis at night - electric, restless, working late"},
     "deep_sea_calm": {"biome": "underwater", "weather": "changing", "palette": "misty", "layout": "scattered",
                       "what": "the calm sea floor - deeply calm, unhurried, alone in a good way"},
     # driven, striving, under pressure
@@ -139,14 +172,16 @@ MOOD_SCENES: Dict[str, Dict[str, str]] = {
 #: A scene with water round it ("sea") is its own: islands, a coast, a lake's shore.
 EDGE_KINDS = ("sea", "thicket", "jungle", "snowdrift", "icecliff", "dunes", "mesa", "lava", "ashrock", "cliffs", "moor",
               "rubble", "graves", "hedges", "orchard", "fields", "autumnwood", "mushroomwood", "citywall", "industrial",
-              "caverock", "toyland", "winterwood", "lanterns", "hearts", "reeds")
+              "caverock", "toyland", "winterwood", "lanterns", "hearts", "reeds",
+              # under the sea, in the sky, in space (2026-11-20)
+              "coralreef", "kelp", "cloudbank", "starfield")
 SCENE_LIFE: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "spring_meadow": (("hedges", "orchard", "moor"), ("rabbit", "sheep", "chicken", "squirrel", "deer")),
     "sunny_islands": (("sea",), ("turtle", "dolphin", "chicken", "cat", "fish1")),
     "summer_coast": (("sea", "cliffs"), ("cat", "dog", "turtle", "chicken", "dolphin")),
     "blossom_garden": (("orchard", "hedges", "hearts"), ("rabbit", "squirrel", "cat", "deer", "owl")),
     "golden_farmland": (("fields", "orchard", "hedges"), ("cow", "sheep", "chicken", "goat", "dog")),
-    "sky_city": (("cliffs", "hedges"), ("eagle", "owl", "robot1", "cat", "rabbit")),
+    "sky_city": (("cloudbank", "cliffs", "hedges"), ("eagle", "owl", "robot1", "cat", "rabbit")),
     "festival": (("lanterns", "hedges", "toyland"), ("dog", "cat", "monkey", "rabbit", "chicken")),
     "toy_town": (("toyland", "hedges"), ("cat", "dog", "rabbit", "robot2", "monkey")),
     "new_year_lanterns": (("lanterns", "citywall", "orchard"), ("cat", "dog", "chicken", "tiger", "rabbit")),
@@ -161,8 +196,23 @@ SCENE_LIFE: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "botanic_glasshouse": (("hedges", "jungle", "orchard"), ("monkey", "turtle", "rabbit", "squirrel", "owl")),
     "autumn_valley": (("autumnwood", "fields", "moor"), ("squirrel", "deer", "rabbit", "owl", "sheep")),
     "enchanted_dusk": (("mushroomwood", "thicket", "hearts"), ("wisp", "owl", "deer", "rabbit", "cat")),
-    "starry_space": (("caverock", "rubble"), ("robot1", "robot2", "robot3", "wisp", "eagle")),
-    "deep_sea_calm": (("sea", "reeds"), ("turtle", "dolphin", "fish1", "fish4", "orca")),
+    "starry_space": (("starfield", "caverock", "rubble"), ("robot1", "robot2", "robot3", "wisp", "eagle")),
+    "deep_sea_calm": (("sea", "kelp", "reeds"), ("turtle", "dolphin", "fish1", "fish4", "orca")),
+    "downtown": (("citywall", "industrial"), ("cat", "dog", "owl", "rabbit", "squirrel")),
+    "harbour_city": (("sea", "citywall", "industrial"), ("cat", "dog", "dolphin", "owl", "squirrel")),
+    "quiet_suburbs": (("hedges", "citywall"), ("dog", "cat", "rabbit", "squirrel", "owl")),
+    "neon_metropolis": (("citywall", "industrial"), ("cat", "dog", "owl", "robot1", "rabbit")),
+    "coral_reef": (("sea", "coralreef", "kelp"), ("fish1", "turtle", "dolphin", "fish4", "shark")),
+    "kelp_forest": (("sea", "kelp", "reeds"), ("turtle", "fish1", "fish2", "orca", "dolphin")),
+    "sunken_city": (("sea", "coralreef", "rubble"), ("turtle", "shark", "fish2", "fish4", "wisp")),
+    "cloud_kingdom": (("cloudbank", "cliffs"), ("eagle", "owl", "rabbit", "cat", "deer")),
+    "floating_isles": (("cloudbank", "cliffs", "hedges"), ("eagle", "goat", "rabbit", "deer", "owl")),
+    "sunset_sky": (("cloudbank", "hedges"), ("eagle", "owl", "cat", "rabbit", "squirrel")),
+    "storm_clouds": (("cloudbank", "cliffs", "rubble"), ("eagle", "owl", "goat", "wisp", "robot1")),
+    "moon_base": (("starfield", "caverock"), ("robot1", "robot2", "robot3", "wisp", "cat")),
+    "nebula_garden": (("starfield", "mushroomwood"), ("wisp", "robot1", "owl", "rabbit", "deer")),
+    "ringed_planet": (("starfield", "caverock", "rubble"), ("robot1", "robot2", "robot3", "wisp", "eagle")),
+    "orbital_station": (("starfield", "industrial"), ("robot1", "robot2", "robot3", "cat", "dog")),
     "windy_highlands": (("cliffs", "moor", "icecliff"), ("goat", "eagle", "sheep", "deer", "bear")),
     "snowy_peaks": (("icecliff", "snowdrift", "winterwood"), ("polarBear", "goat", "eagle", "owl", "deer")),
     "volcanoes": (("lava", "ashrock", "cliffs"), ("croc", "eagle", "rhino", "goat", "turtle")),
@@ -220,8 +270,9 @@ def life_of(scene: str, said: Any) -> Dict[str, List[str]]:
 
 #: The world outside opens on a feeling read from this much at least - their words and their days, counted together.
 FIRST_LAND_EVIDENCE = 8
-#: A new land for a new feeling only after the last has stood this many days - not one each growth.
-MOOD_LAND_DAYS = 5
+#: A new land for a new feeling only after the last has stood this many days - not one each growth (the user,
+#: 2026-11-20: "这个改成3天就行"; then "每隔1天就允许变化").
+MOOD_LAND_DAYS = 1                  # 2026-11-20: "那个心情，每隔1天就允许变化（而不是3天）"
 #: How many of their words, and of the feelings read before, the call is told.
 MOOD_WORDS_MOST, MOODS_KEPT, MOODS_TOLD = 60, 60, 6
 
@@ -230,17 +281,30 @@ MOOD_WORDS_MOST, MOODS_KEPT, MOODS_TOLD = 60, 60, 6
 TASK_MOOD_SCENE = "play_world_mood_scene"
 MOOD_SYSTEM = """You keep a small world that pictures the user's life. Each stretch of their days becomes a land, and \
 the land is how those days FELT - not what they did. Read, gently, their own words in their chats ("their_words") \
-and the rhythm of their days ("their_rhythm": how long, how late, how scattered). Then WRITE HOW THESE DAYS FELT to \
-them: a paragraph of three to six sentences, in your own warm words - their mood and how it moved through the days, \
-its weather, its light, what it was like to be them now. Not a label, not a list of words: the paragraph is all that \
-will be passed on, so let it hold everything. Never a diagnosis; never name another person.
-Answer with only JSON: {{"mood": "<the paragraph>"}}"""
+and the rhythm of their days ("their_rhythm": how long, how late, how scattered).
+THEIR FIELD'S WEATHER TOO (the user, 2026-11-20: "因为user的心情可能是比较稳定的，找当时user主要activity的领域（比如AI, \
+篮球之类）在那个时候的大事件，infer整体的心情"): from their work then ("their_work") and their words, name the one to \
+three FIELDS their days were spent in - broad public fields (AI, economics research, basketball, a game), never \
+their own projects - and SEARCH THE WEB for the big events in each of those fields in exactly these days \
+("these_days"): what happened, and how the field felt - in a boom, in turmoil, in mourning, celebrating, anxious, \
+quiet. Search only with the field's public name and the dates; nothing of theirs ever goes into a search.
+Then WRITE HOW THESE DAYS FELT: a paragraph of three to six sentences, in your own warm words - their mood and how it \
+moved through the days, AND the mood of their field around them and how the two met (they were well while their \
+field was in a storm; their field was celebrating while they were tired) - its weather, its light, what it was like \
+to be them now. Not a label, not a list of words: the paragraph is all that will be passed on, so let it hold \
+everything. Never a diagnosis; never name another person.
+Answer with only JSON: {{"mood": "<the paragraph>", "fields": [{{"field": "<a public field>", "events": "<its big \
+events of these days, at most 2 sentences>", "feeling": "<how the field felt, a few words>"}}, ...up to 3]}}"""
 MOOD_SCENE_SYSTEM = """You keep a small world that pictures the user's life. Each stretch of their days becomes a land, \
 and the land is how those days felt. Here is how these days felt, as written ("mood"), and how the stretches before \
-felt and what lands they became ("before"). IMAGINE ITS LAND, IN TWO STEPS: first THE THEME this paragraph belongs \
-to, then, of that theme's scenes, the one it would be if it were a place (the lie of the land - islands, a valley, a \
-city - its weather and its light come with it). Only the scenes open now are listed - one used rests till the rest \
-of its theme have been, so the world keeps finding new lands:
+felt and what lands they became ("before"). The paragraph holds THEIR feeling and their FIELD's (the big events of \
+the field they worked in, and how it felt): choose the land from both and how they met - a warm lit house in a \
+storm, a quiet valley while the city beyond celebrates (the user: "结合user和领域的心情（比如user很好，领域很糟）进行主题选择和 \
+设计"). IMAGINE ITS LAND, IN TWO STEPS: first THE THEME this paragraph belongs to, then, of that theme's scenes, the \
+one it would be if it were a place (the lie of the land - islands, a valley, a city - its weather and its light come \
+with it). Only the scenes open now are listed - one used rests till the rest of its theme have been. EACH THEME AND \
+SCENE SAYS HOW MANY LANDS HAVE BEEN IT ALREADY (the user: "主题的选择也尽可能选没用过的主题"): where the feeling allows, \
+choose a theme used least - one never used best - so the world keeps finding new lands:
 {scenes}
 Answer with only JSON: {{"theme": "<the theme's name>", "scene": "<one of that theme's scenes>", "land_name": "<the land's own name, a few words, a \
 poet's not a label>", "why": "<to them, in the first person, at most 2 sentences: what in the paragraph made you see \
@@ -248,9 +312,8 @@ this land - kind, never a diagnosis>", "feeling": "<how these days felt, in a fe
 (the user: "每个区域的title, 要加上用户心情，和agent说的话，比如安慰什么的")>", "to_them": "<what you say to them now, as \
 a friend who knows these days - comfort when they were hard, a hand on the shoulder when tired, gladness with them \
 when they were good; at most 2 sentences>", "look": "<what this land is built of and in what style - its walls, \
-floors and things, outside and in: at most 2 sentences; every room in it follows it>", "shape": "<THE LAND'S OWN \
-OUTLINE, one of {outlines} - or "blob", a free natural one>", "changed": true or false (truly unlike the stretch before; a small swing is not \
-a change), "music": the land's music, as the paragraph sounds (the user: "音乐也根据心情选") - {{"track": one of \
+floors and things, outside and in: at most 2 sentences; every room in it follows it>", "changed": true or false (unlike the stretch before - A SMALL SWING COUNTS TOO, the \
+user: "心情小起伏也行，变的更频繁一点挺好的"; false only when it felt the same), "music": the land's music, as the paragraph sounds (the user: "音乐也根据心情选") - {{"track": one of \
 {tracks}}} only where a recorded piece truly is that feeling, else your own tune: {{"tempo": 50-160 (slow for a low or \
 calm feeling, quick for a bright or driven one), "instrument": one of {instruments}, "accompaniment": one of \
 {instruments}, "style": one of {arrangements}, "mode": "major" or "minor", "melody": "<8-32 eighth notes, C5 F#4 Bb5 or \
@@ -315,11 +378,21 @@ SCENE_THEMES: Dict[str, Tuple[str, Tuple[str, ...]]] = {
                 ("windy_highlands", "snowy_peaks", "waterfall_valley", "snowfield", "long_winter_village",
                  "christmas_village")),
     "town": ("among people - towns and cities, by day and by night",
-             ("library_town_rain", "night_city", "busy_market_plaza", "grey_rain_town", "sky_city", "future_city")),
+             ("library_town_rain", "night_city", "busy_market_plaza", "grey_rain_town", "future_city")),
     "celebration": ("celebration and play - fairs, toys, lanterns, a haunted town",
                     ("festival", "toy_town", "new_year_lanterns", "haunted_autumn")),
-    "far": ("far and deep - space, the sea floor, caverns, a launch",
-            ("starry_space", "deep_sea_calm", "dark_sea_floor", "cavern_depths", "launch_site")),
+    "far": ("far and deep - caverns, a launch",
+            ("cavern_depths", "launch_site")),
+    # A CITY OF TODAY (the user, 2026-11-20): its malls, flats, towers, hospital, police and fire stations.
+    "city": ("a city of today - downtown, the harbour, the suburbs, the city at night",
+             ("downtown", "harbour_city", "quiet_suburbs", "neon_metropolis")),
+    # THEMES OF THEIR OWN (the user, 2026-11-20): under the sea, in the sky, in space.
+    "undersea": ("under the sea - reefs, kelp, a sunken city, the deep",
+                 ("coral_reef", "kelp_forest", "sunken_city", "deep_sea_calm", "dark_sea_floor")),
+    "sky": ("in the sky - clouds, floating islands, sunsets, storms",
+            ("cloud_kingdom", "sky_city", "floating_isles", "sunset_sky", "storm_clouds")),
+    "cosmos": ("in space - stars, the moon, a nebula, a ringed planet, a station in orbit",
+               ("starry_space", "moon_base", "nebula_garden", "ringed_planet", "orbital_station")),
     "harsh": ("hard ground - volcanoes, desert, ruins, a graveyard",
               ("volcanoes", "desert", "desert_oasis", "foggy_ruins", "graveyard_mist")),
 }
@@ -345,14 +418,48 @@ def scenes_open(used: List[str], keep: str = "") -> Dict[str, List[str]]:
             for name, (_what, scenes) in SCENE_THEMES.items()}
 
 
+#: EACH OF THESE THEMES' OWN HOUSES, GROUNDS AND THINGS (the user, 2026-11-20: "加上专属音乐，房子，区块和特色装饰，交通工具"):
+#: told with its scene, kept with its land ("own"), read by every design there.
+SCENE_OWN: Dict[str, str] = {
+    "downtown": "skyscrapers, a shopping mall, a hospital, a police station, a fire station, offices, crossings, bus stops",
+    "harbour_city": "apartment blocks by the water, a shopping mall, a hospital, a fire station by the docks, cranes, a "
+                    "fish market, a ferry pier",
+    "quiet_suburbs": "houses with gardens, apartment blocks, a school, a clinic, a small police station, a fire station, "
+                     "a supermarket, a park",
+    "neon_metropolis": "glowing skyscrapers, a night mall, a hospital lit all night, police and fire stations, neon signs, "
+                       "food stalls",
+    "coral_reef": "houses of coral and shell; coral arches, giant clams, treasure chests, bubbling vents; a submarine dock",
+    "kelp_forest": "houses in kelp, lantern fish, sea glass windows; swaying kelp groves, sunken boats; a submarine dock",
+    "sunken_city": "domes of an old city under the sea, broken columns, mosaics, statues with fish; glass tunnels",
+    "deep_sea_calm": "pearl houses on the sand, sea anemone gardens, shells, glowing jellyfish lamps",
+    "dark_sea_floor": "glowing deep-sea houses, anglerfish lights, black smokers, a lone research sub",
+    "cloud_kingdom": "castles of cloud and marble, rainbow bridges, wind chimes, hot-air balloons tied up",
+    "sky_city": "towers on the clouds, sky gardens, flags, airship docks",
+    "floating_isles": "houses on floating rocks with waterfalls falling off them, rope bridges, kites",
+    "sunset_sky": "pavilions on pink clouds, lanterns, birds, a balloon going home",
+    "storm_clouds": "lightning towers, wind mills, storm-glass lamps, rain catchers",
+    "starry_space": "domes among the stars, telescopes, comets, crystals",
+    "moon_base": "white domes and modules, solar panels, rovers, a landing pad, craters",
+    "nebula_garden": "glass greenhouses in coloured gas, star flowers, crystal trees, floating orbs",
+    "ringed_planet": "rings in the sky, observatory towers, rock spires, a spaceport",
+    "orbital_station": "modules joined by tubes, docking arms, windows on the stars, satellites",
+}
+
+
 def mood_scene_system(tracks: str = "", instruments: str = "", arrangements: str = "",
-                      open_now: Optional[Dict[str, List[str]]] = None) -> str:
+                      open_now: Optional[Dict[str, List[str]]] = None, used: Optional[List[str]] = None) -> str:
+    """The land's prompt: the scenes open now by theme - each theme and scene with how many lands have been it
+    (`used`: the lands' scenes; not forced, told - the user, 2026-11-20: "尽管不用代码强制，但是要列出每个主题已经使用的次数")."""
     open_now = open_now or scenes_open([])
+    used = list(used or [])
     life = lambda name: (f"(edges: {', '.join(SCENE_LIFE.get(name, ((), ()))[0])}; animals: "   # noqa: E731
                          f"{', '.join(SCENE_LIFE.get(name, ((), ()))[1])})")
+    times = lambda n: "never used" if not n else f"used {n} time{'s' if n > 1 else ''}"   # noqa: E731
     listed = "\n".join(
-        f"THEME {theme} - {SCENE_THEMES[theme][0]}:\n" + "\n".join(
-            f"  - {name}: {MOOD_SCENES[name]['what']} {life(name)}" for name in scenes)
+        f"THEME {theme} - {SCENE_THEMES[theme][0]} [{times(sum(1 for s in used if theme_of(s) == theme))}]:\n"
+        + "\n".join(f"  - {name} [{times(used.count(name))}]: {MOOD_SCENES[name]['what']} {life(name)}"
+                     + (f" - its own: {SCENE_OWN[name]}" if name in SCENE_OWN else "")
+                     for name in scenes)
         for theme, scenes in open_now.items() if scenes)
     return MOOD_SCENE_SYSTEM.format(scenes=listed, roads=", ".join(ROAD_MATERIALS),
                                     tracks=tracks, instruments=instruments, arrangements=arrangements,
@@ -376,7 +483,7 @@ def read_mood(found: Any, mood: str = "", open_now: Optional[Dict[str, List[str]
             "land_name": short(found.get("land_name"), 60), "why": short(found.get("why"), 300),
             **{k: short(found.get(k), n) for k, n in (("feeling", 80), ("to_them", 300), ("look", 300))
                if short(found.get(k), n)},
-            **({"shape": str(found["shape"])} if found.get("shape") in OUTLINES else {}),
+            # no outline: a land is never a ruled figure (2026-11-20: "主题地块一定是不规则的")
             "changed": bool(found.get("changed")),
             **({"music": found["music"]} if isinstance(found.get("music"), dict) else {}),
             **life_of(str(found["scene"]), found),
@@ -777,13 +884,18 @@ VEHICLES: Dict[str, Dict[str, Any]] = {
                   "what": "mine carts on a narrow track"},
     "ferry": {"runs": "water", "suits": "wet", "what": "a ferry between shores"},
     "sailboat": {"runs": "water", "suits": "wet", "what": "a sailing boat"},
-    "airship": {"runs": "sky", "suits": {"skycity", "space"}, "what": "an airship between sky docks"},
-    "plane": {"runs": "air", "suits": "*any", "what": "a plane over everything, for the far"},
+    "airship": {"runs": "sky", "suits": {"skycity", "space", "ordinary"}, "what": "an airship between sky docks"},
+    "plane": {"runs": "air", "suits": "*", "what": "a plane over the ground, for the far"},
     "metro": {"runs": "rails", "suits": "*", "what": "an underground metro, quick and many-stopped - a network"},
     "bus": {"runs": "road", "suits": "*", "what": "a bus along the roads"},
     "taxi": {"runs": "road", "suits": {"city", "scifi", "newyear", "toytown", "funfair", "skycity"}, "what": "a taxi"},
-    "helicopter": {"runs": "air", "suits": "*any", "what": "a helicopter, hopping between near lands"},
-    "spaceship": {"runs": "air", "suits": "*any", "what": "a spaceship - to the stars, the sky, the far"},
+    "helicopter": {"runs": "air", "suits": "*", "what": "a helicopter, hopping between near lands"},
+    "spaceship": {"runs": "air", "suits": {"space", "scifi", "ordinary"}, "what": "a spaceship - to the stars and back"},
+    # Under the sea, in the sky, in space (2026-11-20).
+    "submarine": {"runs": "water", "suits": {"underwater", "ordinary"}, "what": "a submarine under the waves"},
+    "balloon": {"runs": "sky", "suits": {"skycity", "ordinary"}, "what": "a hot-air balloon drifting between clouds"},
+    "rocket": {"runs": "air", "suits": {"space", "scifi", "ordinary"}, "what": "a rocket between worlds"},
+    "ufo": {"runs": "air", "suits": {"space", "scifi"}, "what": "a flying saucer, quick and quiet"},
 }
 #: NO PORTALS (the user, 2026-11-19: "传送门取消，必须是飞机轮船，宇宙飞船，火车，地铁，出租车，公交车，直升机之类"): every way
 #: between places is a vehicle. A pair of lands tied this closely has this many lines at least ("联系紧密的project之间交通工具多").
@@ -812,29 +924,121 @@ THE WAYS GROW WITH THE WORLD: it is drawn a stretch of time at a time, and you a
 or their ties change. The ways there already are ("ways_now": lines and roads, each with its id) STAY - answer only \
 what to ADD for the lands and ties that are new. Only when the world has changed a lot may you take a few away \
 ("drop": [their ids]) and design those again among what you add.
+HOW EACH TWO LANDS MEET ("joins"; the user, 2026-11-20: "不同主题之间的交通连接和衔接隔断也要model根据场景适配性判断"): \
+for each two lands side by side or on one line, how the one passes into the other, as their scenes would - one of \
+{joins}: "one_shore" one land running into the next; "strait" water between (a bridge or a boat over it); "void" \
+nothing between (the sky's or space's edge - only a vehicle crosses); "clouds" a bank of cloud; "cliff" a cliff edge; \
+"wall" a city's wall with its gate; "glass" a glass dome's wall (under the sea, in space). A land in the sky meets the \
+ground by clouds, a cliff or the void; one under the sea by the shore, a strait or glass; space by the void or glass.
+EVERY VEHICLE TO ITS SCENE (the user: "天空要用天空之船，海底用潜艇，轮船，太空用宇宙飞船"): in the sky an airship or a \
+balloon, under the sea a submarine or a ferry, in space a spaceship, a rocket or a flying saucer - each also what \
+takes one between its realm and the ground; on the ground trains, metros, buses, planes. A line stops only in lands \
+its vehicle suits.
 The vehicles: {vehicles}. Road materials: {roads}.
 Answer with only JSON: {{"drop": ["<an id of ways_now>", ...or none], "lines": [{{"vehicle": "<one of the vehicles>", "stops": ["<land id>", ...], "ring": true or \
 false, "name": "<its name, a few words>", "why": "<at most 2 sentences>"}}, ...], \
 "roads": [{{"from": "<land id>", "to": "<land id>", "material": "<one of the materials>", "width": 1 to 3, "curve": 0 \
-to 1, "why": "<one sentence>"}}, ...]}}"""
+to 1, "why": "<one sentence>"}}, ...], "joins": [{{"from": "<land id>", "to": "<land id>", "how": "<one of the ways \
+lands meet>", "why": "<one sentence>"}}, ...]}}"""
+
+
+#: EVERY VEHICLE TO ITS SCENE (the user, 2026-11-20: "所有交通工具设置的时候要考虑场景适配性，比如天空要用天空之船，海底用潜艇，
+#: 轮船，太空用宇宙飞船等"): the ground's own (trains, metros, buses, planes) only on the ground; each realm - the sky, the
+#: sea floor, space - its own, which also takes one down to the ground ("ordinary" among what it suits). Each realm's,
+#: the first that may join it to the ground.
+REALM_VEHICLES = {"skycity": ("airship", "balloon"), "underwater": ("submarine", "ferry"), "space": ("spaceship", "rocket")}
 
 
 def land_is(land: Dict[str, Any], suits: Any) -> bool:
-    """Whether a vehicle that suits these may stop in this land."""
+    """Whether a vehicle that suits these may stop in this land: "*" the ground only (not the sky, the sea floor or
+    space); "wet" by the water; a set its lands - "ordinary" in it, any land of the ground too."""
     wet = "sea" in (land.get("edges") or []) or land.get("layout") == "islands" or land.get("biome") in {"seaside", "lakeside", "underwater"}
+    biome = land.get("biome")
     if suits == "*any":
         return True
     if suits == "*":
-        return land.get("biome") not in DRY_LANDS_NOT
+        return biome not in DRY_LANDS_NOT
     if suits == "wet":
         return wet
-    return land.get("biome") in suits
+    return biome in suits or ("ordinary" in suits and biome not in DRY_LANDS_NOT)
+
+
+# -- THE WORLD'S LOOKS AS A WHOLE, AFTER ITS WAYS (the user, 2026-11-20: "在交通规划之后加一个stage, 是整体美学规划 ... i) 看一下
+# 地块衔接段的设计，根据地形性质选择合适且美观的图 ii) 做夜景的设置，看各个灯光的位置让整体夜景好看"; "路沿 ... 让agent决定要加什么
+# 路沿，弄好形状之后代码加") -------------------------------------------------------------------------------------------------
+TASK_AESTHETICS = "play_world_aesthetics"
+#: What may edge a road, what may stand beside it now and then, and how a land's night may be lit.
+ROAD_EDGES = ("none", "stones", "hedge", "flowers", "posts")
+STREET_THINGS = ("bench", "bin", "lamp", "planter", "hydrant", "signpost")
+NIGHT_LIGHTS = ("lamp", "gaslamp", "torch", "brazier")
+AESTHETICS_SYSTEM = """You are the art director of a small world that pictures the user's life - its lands, its \
+places and its ways laid. Now design how it LOOKS AS A WHOLE, three things:
+1. WHERE TWO LANDS MEET ("joins"): for each pair given, how the one passes into the other as their grounds would - one \
+of {joins} - and how wide the passing is ("width": 1 to 8 tiles). Beautiful and fitting: a meadow into a forest by \
+one shore, the sky over the ground by clouds or a cliff, the sea floor behind glass.
+2. THE ROADS' EDGES ("roads"): for each kind of road (its material) what edges it - one of {edges} - and what stands \
+beside it now and then ("things": up to 3 of {things}; "every": 3 to 14 tiles between them): a gravel path edged with \
+stones, a bench and a bin now and then; a paved street with lamps and hydrants; a forest track with nothing but \
+stones. Wide roads more, narrow paths less.
+3. THE NIGHT ("night"): for each land, its lights - "light": one of {lights}; "colour": "#rrggbb" (warm gold in a \
+village, cool white in a city, sea-green under the sea, violet in space); "brightness": 0.2 to 1; "reach": 2 to 9 \
+tiles; "windows": 0 to 1 (how many windows glow); "lamps_every": 4 to 16 tiles of road between street lights - so \
+the whole night reads well: pools of light along the ways, the places glowing, dark between.
+Answer with only JSON: {{"joins": [{{"from": "<land id>", "to": "<land id>", "how": "<one of the ways>", "width": <1-8>, \
+"why": "<one sentence>"}}, ...], "roads": [{{"material": "<a road material given>", "edge": "<one of the edges>", \
+"things": ["<...>"], "every": <3-14>}}, ...], "night": [{{"land": "<land id>", "light": "<one of the lights>", \
+"colour": "#rrggbb", "brightness": <0.2-1>, "reach": <2-9>, "windows": <0-1>, "lamps_every": <4-16>}}, ...]}}"""
+
+
+def aesthetics_system() -> str:
+    return AESTHETICS_SYSTEM.format(joins=", ".join(JOINS), edges=", ".join(ROAD_EDGES), things=", ".join(STREET_THINGS),
+                                    lights=", ".join(NIGHT_LIGHTS))
+
+
+def read_aesthetics(found: Any, lands: List[Dict[str, Any]], materials: List[str]) -> Dict[str, Any]:
+    """The art director's design, kept to what can be: joins of lands there are, roads of materials there are, nights
+    of lands there are - every number in its range."""
+    found = found if isinstance(found, dict) else {}
+    ids = {str(one["id"]) for one in lands}
+
+    def number(value: Any, least: float, most: float, fallback: float) -> float:
+        try:
+            return max(least, min(most, float(value)))
+        except (TypeError, ValueError):
+            return fallback
+    colour = lambda value, fallback: value if re.fullmatch(r"#[0-9a-fA-F]{6}", str(value or "")) else fallback   # noqa: E731
+    joins = []
+    for one in found.get("joins") or []:
+        if isinstance(one, dict) and str(one.get("from")) in ids and str(one.get("to")) in ids and one.get("from") != one.get("to") \
+                and one.get("how") in JOINS:
+            joins.append({"from": str(one["from"]), "to": str(one["to"]), "how": one["how"],
+                          "width": int(number(one.get("width"), 1, 8, 3)), "why": " ".join(str(one.get("why") or "").split())[:200]})
+    roads = {}
+    for one in found.get("roads") or []:
+        if isinstance(one, dict) and str(one.get("material")) in materials:
+            roads[str(one["material"])] = {"edge": one.get("edge") if one.get("edge") in ROAD_EDGES else "none",
+                                           "things": [t for t in (one.get("things") or []) if t in STREET_THINGS][:3],
+                                           "every": int(number(one.get("every"), 3, 14, 8))}
+    night = {}
+    for one in found.get("night") or []:
+        if isinstance(one, dict) and str(one.get("land")) in ids:
+            night[str(one["land"])] = {"light": one.get("light") if one.get("light") in NIGHT_LIGHTS else "lamp",
+                                       "colour": colour(one.get("colour"), "#ffbe6e"),
+                                       "brightness": round(number(one.get("brightness"), 0.2, 1, 0.6), 2),
+                                       "reach": round(number(one.get("reach"), 2, 9, 5), 1),
+                                       "windows": round(number(one.get("windows"), 0, 1, 0.5), 2),
+                                       "lamps_every": int(number(one.get("lamps_every"), 4, 16, 9))}
+    return {"joins": joins, "roads": roads, "night": night}
+
+
+#: How two lands may meet (TRANSPORT_SYSTEM "joins"; play-regions.js lays each).
+JOINS = ("one_shore", "strait", "void", "clouds", "cliff", "wall", "glass")
 
 
 def transport_system() -> str:
     return TRANSPORT_SYSTEM.format(
         vehicles="; ".join(f"{k} ({v['what']})" for k, v in VEHICLES.items()),
-        roads=", ".join(ROAD_MATERIALS))
+        roads=", ".join(ROAD_MATERIALS), joins=", ".join(JOINS))
 
 
 def ways_now(now: Optional[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
@@ -854,7 +1058,7 @@ def read_transport(found: Any, lands: List[Dict[str, Any]], ties: List[Dict[str,
     tied all to one another and on no ring together, a ring of the vehicle that suits them all; a pair tied closely
     given more lines; every two lands joined by something."""
     by_id = {str(one["id"]): one for one in lands}
-    out: Dict[str, List[Dict[str, Any]]] = {"lines": [], "portals": [], "roads": []}   # "portals" kept empty
+    out: Dict[str, List[Dict[str, Any]]] = {"lines": [], "portals": [], "roads": [], "joins": []}   # "portals" kept empty
     found = found if isinstance(found, dict) else {}
     short = lambda text, n: " ".join(str(text or "").split())[:n]       # noqa: E731
     dropped = {str(one) for one in found.get("drop") or [] if isinstance(one, (str, int))}
@@ -874,6 +1078,14 @@ def read_transport(found: Any, lands: List[Dict[str, Any]], ties: List[Dict[str,
         out["lines"].append({"vehicle": one["vehicle"], "stops": stops, "ring": bool(one.get("ring")) and len(stops) >= 3,
                              "name": short(one.get("name"), 40), "why": short(one.get("why"), 240)})
 
+    # HOW EACH TWO LANDS MEET, AS THE MODEL JUDGED THEIR SCENES (2026-11-20): kept from before unless said again.
+    for one in list(found.get("joins") or []) + list((now or {}).get("joins") or []):
+        if not isinstance(one, dict):
+            continue
+        a, b, how = str(one.get("from") or ""), str(one.get("to") or ""), str(one.get("how") or "")
+        if a in by_id and b in by_id and a != b and how in JOINS and \
+                not any({j["from"], j["to"]} == {a, b} for j in out["joins"]):
+            out["joins"].append({"from": a, "to": b, "how": how, "why": short(one.get("why"), 200)})
     for one in found.get("roads") or []:                         # the roads between lands, as planned
         if not isinstance(one, dict):
             continue
@@ -929,8 +1141,26 @@ def read_transport(found: Any, lands: List[Dict[str, Any]], ties: List[Dict[str,
                                  "why": "Every land reached."})
         left = sorted({x for i, a in enumerate(ids) for b in ids[i + 1:] if not joined(a, b) for x in (a, b)})
         if left:
-            out["lines"].append({"vehicle": "plane", "stops": left, "ring": len(left) >= 3, "name": "",
-                                 "why": "Every land reached."})
+            vehicle = suiting(left, ("plane", "helicopter", "airship", "spaceship", "submarine"))
+            if vehicle:
+                out["lines"].append({"vehicle": vehicle, "stops": left, "ring": len(left) >= 3, "name": "",
+                                     "why": "Every land reached."})
+            else:
+                # NONE GOES TO THEM ALL (a land in the sky, one under the sea): each land of a realm joined to the ground
+                # by its realm's own (REALM_VEHICLES), the ground's by plane.
+                ground_ids = [s for s in ids if by_id[s].get("biome") not in DRY_LANDS_NOT]
+                for s in [x for x in left if by_id[x].get("biome") in REALM_VEHICLES]:
+                    to = next((g for g in ground_ids if g != s), None)
+                    others = [x for x in ids if x != s]
+                    pair = [s, to] if to else [s, others[0]] if others else []
+                    own = suiting(pair, REALM_VEHICLES[by_id[s]["biome"]]) if pair else None
+                    if own:
+                        out["lines"].append({"vehicle": own, "stops": pair, "ring": False, "name": "",
+                                             "why": "Every land reached, each by its own."})
+                flat = [x for x in left if x in ground_ids]
+                if len(flat) >= 2:
+                    out["lines"].append({"vehicle": "plane", "stops": flat, "ring": len(flat) >= 3, "name": "",
+                                         "why": "Every land reached."})
     return out
 
 
@@ -946,8 +1176,8 @@ def local_lines(zones: List[Dict[str, Any]], land: Dict[str, Any]) -> List[Dict[
         return []
     biome = str(land.get("biome") or "")
     vehicle = "tram" if biome in VEHICLES["tram"]["suits"] else "sleigh" if biome in VEHICLES["sleigh"]["suits"] \
-        else "caravan" if biome in VEHICLES["caravan"]["suits"] else "ferry" if biome == "underwater" else \
-        "helicopter" if biome in DRY_LANDS_NOT else "bus"
+        else "caravan" if biome in VEHICLES["caravan"]["suits"] else "submarine" if biome == "underwater" else \
+        "balloon" if biome == "skycity" else "ufo" if biome == "space" else "bus"
     order = [zones[0]]
     rest = zones[1:]
     while rest:
@@ -970,6 +1200,11 @@ is done, its status, how deep it sits): EVERY CARD IS SHOWN BY AT LEAST ONE THIN
 card's id>" - and a card with parts by its parts round it. Show what it is, not its name: a release a crate being \
 packed, a test a lab bench, a design a drafting table; done, it stands finished; working, half made; open, waiting \
 its turn; set aside, covered and put by.
+ITS WAY THROUGH, AS IT WAS LIVED (the user, 2026-11-20: "跟着箭头/路牌走能够带user重走user在时序上对这些project的经历"; \
+"包括一个项目内部发生的progress"): lay the cards' things along ONE WALKING WAY from the way in ("D"), in the order the \
+work happened ("first": the day each was first worked on) - the earliest nearest the door, what is being worked on \
+now at its end - with floor kept free between each and the next. Arrows on the floor and a numbered sign by each \
+are laid along it for them; they walk the work again, step by step.
 THE ROOM: "grid" - its floor, row by row from the top: "." floor, "#" a wall inside it, "D" the way in (kept clear), \
 "X" what stands there and stays. Its back wall above the floor is "wall_width" tiles across ("wall_taken": the \
 columns where something already hangs).
@@ -984,9 +1219,12 @@ shows, when) go IN THE CARD of the thing that stands for them - "picture": "<its
 AFTER ITS PICTURE as a great piece, in the world's pixel style ("pieces", its "picture": the id).
 A PICTURE IN EACH THING'S CARD (the user, 2026-11-19: "程序不一定要看已有截图，而是要去找自己觉得合适的"; "模型主要rely on \
 自己搜，只是用户截图也是搜的一个source"): any thing - the lamp for an invitation, the desk for a paper - may ask for one, \
-"find_picture": "<what it should show and the public words to look for it by: the paper's title, the product, the \
-place - nothing private>". It is drawn as itself; the picture is LOOKED FOR ON THE WEB, their own screenshots and \
-files one source among the others, and kept in its card for when they look closely. Ask WHEREVER YOU THINK A \
+"find_picture": "<THE THING ITSELF, as exactly as you can say it - their own work (their paper, their code, their \
+release, their draft, their data) said to be theirs and named as its card names it; a public thing (a journal, a \
+product, a place, an event) by its public name - never an example or a template of something like it>" (the user, \
+2026-11-20: "这个材料包的照片明显不是我的"). It is drawn as itself; the picture is LOOKED FOR - in their own files, \
+screenshots and pages for what is theirs, on the web for what is public - and kept in its card for when they look \
+closely. Ask WHEREVER YOU THINK A \
 PICTURE FITS (the user: "觉得可以配图的就配图"). On the map only cartoon things; the real pictures are in the cards. What they achieved - a card \
 done, a result, a release - is shown as an achievement, proudly: its picture framed, a trophy, a certificate.
 THE WORLD THEN ("the_world_then": what happened in the world while this work was done): show it as ONE thing of the \
@@ -1003,8 +1241,11 @@ Answer with only JSON: {{"idea": "<the moment someone walking in should feel, at
 "floor" or "wall", "name": "...", "description": "...", "w": 1, "h": 1}}, ...only what the library has not],
  "legend": {{"<a letter A-Z or a-z>": {{"kind": "<a kind of thing>", "name": "<short>", "why": "<at most 2 \
 sentences, to them>", "card": "<the card it stands for, if one>", "news": true (the one that shows the world then), \
-"picture": "<one of their_pictures' ids, for its card>", "find_picture": "<what its card's picture should \
-show>"}}, ...}},
+"picture": "<one of their_pictures' ids, for its card>", "find_picture": "<the thing itself its card's picture \
+should show - theirs said to be theirs, a public one by its name, never an example>", "task_note": "<how it ties to \
+their work, one short sentence>", "fun_fact": "<a fun fact about the thing or its subject, one or two sentences, no \
+links>"}}, ...}} - "picture", "find_picture", "task_note" and "fun_fact" each only where it adds something (the user, \
+2026-11-20: "每个做好的item可以描述一下相关的task, 和fun fact ... 每个不需要全加满"),
  "floor": ["<the grid again, row by row, each thing's letter on every tile it covers (a 2 x 2 bed is 2 rows of 2 of \
 its letter); '.' '#' 'D' 'X' kept as they were>", ...],
  "under": [{{"kind": "<rug, paint>", "x": <column>, "y": <row>, "name": "...", "why": "..."}}],
@@ -1082,6 +1323,11 @@ def read_room(said: Any, rows: List[str], left: int, top: int, sizes: Callable[[
                          .split())[:200]
         if found:
             said["find_picture"] = found                 # looked for, on the web first (agent/playfind.py)
+        # ITS CARD'S OWN LINES (2026-11-20): how it ties to their work, a fun fact - no links.
+        for key, most in (("task_note", 240), ("fun_fact", 400)):
+            text = re.sub(r"https?://\S+|www\.\S+", "", " ".join(str(one.get(key) or "").split())).strip()[:most]
+            if text:
+                said[key] = text
         return said
     for y, row in enumerate(drawn):
         for x, ch in enumerate(row):

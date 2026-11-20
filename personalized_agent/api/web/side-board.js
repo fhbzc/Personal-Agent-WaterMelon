@@ -101,7 +101,8 @@ function sideBoardEl() {
   board.innerHTML = `<div class="side-board-bar"><div class="side-board-tools">
       ${button("pages", "Keep recent images shown", ' aria-pressed="true"')}
       ${button("new", "New page")}
-      ${button("snip", "Screenshot: the whole screen, or a part of it", ' aria-haspopup="true"')}
+      ${button("screen", "Screenshot of the whole screen")}
+      ${button("snip", "Screenshot of part of the screen")}
       ${button("clear", "Clear this picture's drawing")}
       <span class="side-board-line" aria-hidden="true"></span>
       ${tool("shape", "Shapes", "box")}
@@ -749,12 +750,9 @@ function sideBoardPressed(event) {
   sideBoardMenuAway();
   if (what === "pages") sideBoardStripShown(button.getAttribute("aria-pressed") !== "true");
   else if (what === "clear") sideBoardClear();
-  else if (what === "snip") {
-    // TWO WAYS (the user, 2026-11-18: "screen shot有两个选项，一个是截取整个屏幕，一个是截取一个部分的").
-    sideBoardMenu(button, sideBoardMenuItem('data-board-snip="whole"', "screen", "The whole screen")
-      + sideBoardMenuItem('data-board-snip="part"', "snip", "Part of the screen"));
-    return;
-  }
+  // TWO BUTTONS, NOT A MENU (the user, 2026-11-20: "两个按钮，一个是完整screen, 一个是part of, 分成2个不同的按钮").
+  else if (what === "screen") sideBoardScreen();
+  else if (what === "snip") sideBoardSnip();
   else if (what === "rotate") sideBoardRotate();
   else if (what === "close") sideBoardClose();
 }

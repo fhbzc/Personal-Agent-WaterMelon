@@ -138,12 +138,20 @@ function playNightDraw(ctx, canvas, night) {
   const lights = [[play.me.x, play.me.y - 0.4, 2.6]];
   const view = [play.camera.x / size - 8, play.camera.y / size - 8, (play.camera.x + canvas.width) / size + 8, (play.camera.y + canvas.height) / size + 8];
   const inView = (x, y) => x > view[0] && x < view[2] && y > view[1] && y < view[3];
+  // EACH LAND'S NIGHT, AS ITS ART DIRECTOR SAID (agent/playworld.py _aesthetics; the user, 2026-11-20: "不同地形的灯/照明的
+  // 样子，照明的亮度，扩散范围，也不一样。晚上要形成比较好的夜景"): its lights' colour, brightness and reach; how many of
+  // its windows glow.
+  const nightOf = (regionId) => ((play.world.regions || []).find((r) => r.id === regionId) || {}).night || null;
+  const zoneRegion = new Map((play.world.zones || []).map((z) => [z.id, z.region]));
   for (const item of play.world.items) {
-    const reach = PLAY_ITEM_LIGHTS[item.kind];
+    let reach = PLAY_ITEM_LIGHTS[item.kind];
     if (!reach || !inView(item.x, item.y)) continue;
     if (play.lightsOff && play.lightsOff.has(`i:${item.id}`)) continue;          // put out (play-act.js)
+    const own = nightOf(zoneRegion.get(item.zone));
+    if (own && item.kind === "window" && playHash(item.x, item.y, 95) > (own.windows ?? 1)) continue;
+    if (own && own.reach) reach *= own.reach / 5;
     const [iw, ih] = playItemSize(item);
-    lights.push([item.x + iw / 2, item.y + (item.kind === "window" ? 1.6 : ih / 2), reach * Math.max(1, Number(item.scale) || 1)]);
+    lights.push([item.x + iw / 2, item.y + (item.kind === "window" ? 1.6 : ih / 2), reach * Math.max(1, Number(item.scale) || 1), own]);
   }
   for (const zone of play.world.zones) {
     if (zone.kind === "volcano" && inView(zone.x + zone.w / 2, zone.y + zone.h / 2)) lights.push([zone.x + zone.w / 2, zone.y + 1 + zone.h / 2, 7]);
@@ -155,18 +163,20 @@ function playNightDraw(ctx, canvas, night) {
         const reach = PLAY_DECO_LIGHTS[one.name];
         if (reach && inView(one.x, one.y) && Math.floor(one.x / chunkTiles) === cx && Math.floor(one.y / chunkTiles) === cy
             && !(play.lightsOff && play.lightsOff.has(`d:${one.x},${one.y}`))) {
-          lights.push([one.x + 0.5, one.y + 0.3, reach]);
+          const own = (one.region && one.region.night) || null;
+          lights.push([one.x + 0.5, one.y + 0.3, own && own.reach ? own.reach : reach, own]);
         }
       }
     }
   }
   // Each light a hole in the dark, soft at its edge.
   c.globalCompositeOperation = "destination-out";
-  for (const [x, y, reach] of lights) {
+  for (const [x, y, reach, own] of lights) {
     const px = x * size - play.camera.x, py = y * size - play.camera.y, r = reach * size;
     const g = c.createRadialGradient(px, py, 0, px, py, r);
-    g.addColorStop(0, "rgba(0, 0, 0, 1)");
-    g.addColorStop(0.55, "rgba(0, 0, 0, 0.7)");
+    const strength = own && own.brightness ? 0.55 + 0.45 * own.brightness : 1;
+    g.addColorStop(0, `rgba(0, 0, 0, ${strength.toFixed(2)})`);
+    g.addColorStop(0.55, `rgba(0, 0, 0, ${(0.7 * strength).toFixed(2)})`);
     g.addColorStop(1, "rgba(0, 0, 0, 0)");
     c.fillStyle = g;
     c.fillRect(px - r, py - r, 2 * r, 2 * r);
@@ -174,11 +184,14 @@ function playNightDraw(ctx, canvas, night) {
   ctx.drawImage(off, 0, 0);
   // And a warm glow where it is lit (not round the walker).
   ctx.globalCompositeOperation = "lighter";
-  for (const [x, y, reach] of lights.slice(1)) {
+  for (const [x, y, reach, own] of lights.slice(1)) {
     const px = x * size - play.camera.x, py = y * size - play.camera.y, r = reach * size * 0.8;
     const g = ctx.createRadialGradient(px, py, 0, px, py, r);
-    g.addColorStop(0, `rgba(255, 190, 110, ${(0.12 * night).toFixed(3)})`);
-    g.addColorStop(1, "rgba(255, 190, 110, 0)");
+    const hex = own && /^#[0-9a-f]{6}$/i.test(own.colour || "") ? own.colour : "#ffbe6e";
+    const [cr, cg, cb] = [1, 3, 5].map((k) => parseInt(hex.slice(k, k + 2), 16));
+    const glow = 0.12 * night * (own && own.brightness ? 0.6 + own.brightness : 1);
+    g.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, ${glow.toFixed(3)})`);
+    g.addColorStop(1, `rgba(${cr}, ${cg}, ${cb}, 0)`);
     ctx.fillStyle = g;
     ctx.fillRect(px - r, py - r, 2 * r, 2 * r);
   }

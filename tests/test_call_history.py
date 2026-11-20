@@ -27,7 +27,7 @@ def _request(task="heartbeat:step_people"):
 def _response():
     usage = SimpleNamespace(input_tokens=12, output_tokens=30, cached_input_tokens=0,
                             cache_written_tokens=900)
-    return SimpleNamespace(content='{"people": []}', stop_reason="end_turn", usage=usage,
+    return SimpleNamespace(text='{"people": []}', stop_reason="end_turn", usage=usage,
                            model="claude-opus-5-5")
 
 

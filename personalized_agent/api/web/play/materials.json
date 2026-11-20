@@ -84,6 +84,22 @@
   "cloud": {
    "description": "soft cloud underfoot",
    "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#eef4fb'/><circle cx='4' cy='5' r='3' fill='#ffffff'/><circle cx='11' cy='11' r='3.5' fill='#ffffff'/><circle cx='13' cy='3' r='1.5' fill='#dfe9f5'/></svg>"
+  },
+  "coral_sand": {
+   "description": "pale sand under the sea, bits of coral and shell",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#e9d8a6'/><rect x='2' y='3' width='2' height='1' fill='#f28b82'/><rect x='10' y='5' width='1' height='2' fill='#f6b26b'/><rect x='6' y='11' width='2' height='1' fill='#ffffff'/><rect x='13' y='12' width='1' height='1' fill='#c27ba0'/><rect x='4' y='8' width='1' height='1' fill='#d5bf86'/></svg>"
+  },
+  "pearl_shell": {
+   "description": "tiles of mother-of-pearl, shimmering pink and blue",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#f3e9f2'/><path d='M0 8h16M8 0v16' stroke='#d7c4dd' stroke-width='1'/><rect x='2' y='2' width='4' height='2' fill='#e1f1f7'/><rect x='10' y='10' width='4' height='2' fill='#f7dfe9'/></svg>"
+  },
+  "moon_dust": {
+   "description": "grey moon dust with small craters",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#a9aab1'/><circle cx='4' cy='5' r='2' fill='#8e8f97'/><circle cx='4' cy='4.6' r='1.4' fill='#b8b9c0'/><circle cx='12' cy='11' r='1.5' fill='#8e8f97'/><rect x='9' y='3' width='1' height='1' fill='#c9cad0'/><rect x='2' y='12' width='1' height='1' fill='#c9cad0'/></svg>"
+  },
+  "star_glass": {
+   "description": "a glass floor over the stars",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#141a3a'/><rect x='3' y='4' width='1' height='1' fill='#ffffff'/><rect x='11' y='2' width='1' height='1' fill='#ffe08a'/><rect x='7' y='10' width='1' height='1' fill='#a8d8ff'/><rect x='13' y='13' width='1' height='1' fill='#ffffff'/><path d='M0 0h16v16H0z' fill='none' stroke='#3a4a8a' stroke-width='1'/></svg>"
   }
  },
  "walls": {
@@ -221,6 +237,21 @@
    "description": "dark wooden boards",
    "set": "timber",
    "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#4a2e1a'/><rect x='0' y='0' width='1' height='16' fill='#2e1b0f'/><rect x='4' y='0' width='1' height='16' fill='#2e1b0f'/><rect x='8' y='0' width='1' height='16' fill='#2e1b0f'/><rect x='12' y='0' width='1' height='16' fill='#2e1b0f'/><rect x='2' y='5' width='1' height='2' fill='#5b3a22'/><rect x='10' y='11' width='1' height='2' fill='#5b3a22'/></svg>"
+  },
+  "cloud_puff": {
+   "description": "soft walls of cloud",
+   "set": "marble",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#f5f8fc'/><circle cx='4' cy='5' r='3' fill='#ffffff'/><circle cx='11' cy='4' r='3.5' fill='#ffffff'/><circle cx='8' cy='12' r='3.5' fill='#e8eef7'/></svg>"
+  },
+  "hull_plate": {
+   "description": "riveted metal plates of a ship in space",
+   "set": "stone",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#9aa3ad'/><path d='M0 8h16M8 0v8M4 8v8M12 8v8' stroke='#6f7882' stroke-width='1'/><rect x='1' y='1' width='1' height='1' fill='#c9d0d6'/><rect x='14' y='1' width='1' height='1' fill='#c9d0d6'/><rect x='1' y='10' width='1' height='1' fill='#c9d0d6'/><rect x='14' y='10' width='1' height='1' fill='#c9d0d6'/></svg>"
+  },
+  "shell": {
+   "description": "walls of white shell, curving in ridges",
+   "set": "marble",
+   "svg": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='#fbf3e9'/><path d='M0 4q8 -4 16 0M0 9q8 -4 16 0M0 14q8 -4 16 0' stroke='#e8d5bd' stroke-width='1' fill='none'/></svg>"
   }
  }
 }

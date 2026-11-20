@@ -63,7 +63,8 @@ WALL_SETS = ("sandstone", "stone", "marble", "timber")
 
 
 def things_told(library: Dict[str, Any]) -> str:
-    return "; ".join(f"{k} {v['size'][0]}x{v['size'][1]} ({v.get('description', '')})"
+    return "; ".join(f"{k} {v['size'][0]}x{v['size'][1]} ({v.get('description', '')}"
+                     + (f" - built on {v['based_on']}" if v.get("based_on") else "") + ")"
                      for k, v in (library.get("items") or {}).items())
 
 
@@ -75,7 +76,9 @@ roof): one of {walls}.
 MADE BY YOU, KEPT FOR AGAIN: things made for rooms before, each with what it is: {things}. When nothing there is \
 what this room needs, ask for it to be made ("make": up to {most}, each "kind": "thing", "floor" or "wall", "name": a \
 few words, "description": what it is and looks like, for a thing "w" x "h" - {size} at most) - and use it already, by \
-its name, in this design: it is drawn after and kept for every room to come."""
+its name, in this design: it is drawn after and kept for every room to come. BUILD ON ONE MADE BEFORE (the user, \
+2026-11-20: "以一个为基础进行修改这样"): "base": "<the name of a thing, floor or wall above>", "change": "<what to make \
+different>" with a name of its own - drawn from it, kept beside it."""
 
 MAKE_SYSTEM = """You are the maker of things for a small world that pictures the user's life - a 2D pixel world seen \
 from the front and a little above, as a classic adventure game. Draw each thing and floor asked for ("make") AS AN \
@@ -85,6 +88,8 @@ A THING: viewBox "0 0 <w * 16> <h * 16>" - 16 units a tile - standing on the bot
 "0 0 16 16", one tile that repeats seamlessly. A WALL: the same - its face, one tile that repeats seamlessly (its \
 blocks, planks, panes or courses), and "set": the wall it is laid over, one of sandstone, stone, marble, timber. Only shapes, paths, groups and gradients: no text, no images, no \
 scripts, no filters.
+ONE BUILT ON ANOTHER ("base", its picture given in "bases"): start from that picture - the same hand - and change \
+only what its "change" says.
 Answer with only JSON: {"made": [{"name": "<the name asked>", "svg": "<svg ...>...</svg>", "description": "<what \
 it is, one sentence>", "set": "<a wall's>"}, ...]}"""
 
@@ -107,8 +112,12 @@ def read_asked(said: Any, library: Dict[str, Any], known: Any) -> List[Dict[str,
         if kind not in ("thing", "floor", "wall") or not name or known(name) or any(o["name"] == name for o in out):
             continue
         description = " ".join(str(one.get("description") or "").split())[:300]
+        base = name_of(one.get("base"))
+        shelf = {"thing": "items", "floor": "floors", "wall": "walls"}[kind]
+        built_on = ({"base": base, "change": " ".join(str(one.get("change") or "").split())[:300]}
+                    if base and base in (library.get(shelf) or {}) else {})
         if kind in ("floor", "wall"):
-            out.append({"kind": kind, "name": name, "description": description})
+            out.append({"kind": kind, "name": name, "description": description, **built_on})
             continue
         try:
             w, h = int(one.get("w") or 1), int(one.get("h") or 1)
@@ -117,7 +126,18 @@ def read_asked(said: Any, library: Dict[str, Any], known: Any) -> List[Dict[str,
         if not (1 <= min(w, h) and ((w <= MADE_SIZE_MOST[0] and h <= MADE_SIZE_MOST[1]) or
                                     (w <= MADE_SIZE_MOST[1] and h <= MADE_SIZE_MOST[0]))):
             continue
-        out.append({"kind": "thing", "name": name, "description": description, "w": w, "h": h})
+        out.append({"kind": "thing", "name": name, "description": description, "w": w, "h": h, **built_on})
+    return out
+
+
+def bases_of(asked: List[Dict[str, Any]], library: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    """The pictures of what the asked are built on: {base name: {"description", "svg"}}."""
+    shelf = {"thing": "items", "floor": "floors", "wall": "walls"}
+    out: Dict[str, Dict[str, str]] = {}
+    for one in asked:
+        kept = (library.get(shelf[one["kind"]]) or {}).get(one.get("base") or "")
+        if kept and kept.get("svg"):
+            out[one["base"]] = {"description": str(kept.get("description") or ""), "svg": str(kept["svg"])}
     return out
 
 
@@ -140,6 +160,7 @@ def read_made(said: Any, asked: List[Dict[str, Any]], at: str) -> Dict[str, Dict
         out[want["name"]] = {"kind": want["kind"], "description": " ".join(str(one.get("description") or
                                                                               want["description"]).split())[:300],
                              "svg": svg, "made": at, **({"size": [want["w"], want["h"]]} if want["kind"] == "thing" else {}),
+                             **({"based_on": want["base"]} if want.get("base") else {}),
                              **({"set": one.get("set") if one.get("set") in WALL_SETS else "stone"}
                                 if want["kind"] == "wall" else {})}
     return out
@@ -149,13 +170,13 @@ def load_library(folder: Path) -> Dict[str, Any]:
     try:
         said = json.loads((folder / MADE_FILE).read_text(encoding="utf-8"))
         return {"items": dict(said.get("items") or {}), "floors": dict(said.get("floors") or {}),
-                "walls": dict(said.get("walls") or {})}
+                "walls": dict(said.get("walls") or {}), "pieces": dict(said.get("pieces") or {})}
     except (OSError, ValueError):
-        return {"items": {}, "floors": {}, "walls": {}}
+        return {"items": {}, "floors": {}, "walls": {}, "pieces": {}}
 
 
 def keep_library(folder: Path, library: Dict[str, Any]) -> None:
-    for key in ("items", "floors", "walls"):
+    for key in ("items", "floors", "walls", "pieces"):
         ones = library.get(key) or {}
         while len(ones) > LIBRARY_MOST:
             ones.pop(next(iter(ones)))
@@ -166,4 +187,5 @@ def keep_library(folder: Path, library: Dict[str, Any]) -> None:
 
 
 __all__ = ["TASK_MAKE", "MADE_FILE", "MAKE_MOST", "materials", "name_of", "room_made_note", "MAKE_SYSTEM",
-           "read_asked", "read_made", "load_library", "keep_library", "floors_told", "walls_told", "things_told"]
+           "read_asked", "read_made", "load_library", "keep_library", "floors_told", "walls_told", "things_told",
+           "bases_of"]

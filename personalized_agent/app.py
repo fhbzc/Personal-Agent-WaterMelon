@@ -682,7 +682,9 @@ class AgentApplication:
             # 2026-11-18: "聊天里的话, 任务和工作节奏").
             feelings=lambda since, until: feelings_between(self.db, since, until),
             # Each task's work as the Work panel keeps it, read only - every card a thing in the world (2026-11-19).
-            cards=lambda task_ids: work_cards(self.db, task_ids))
+            cards=lambda task_ids: work_cards(self.db, task_ids),
+            # Their files now, by a card's words, for its thing's picture (the user, 2026-11-20: "让他支持找文件").
+            files=lambda words: self.local_index.search(words, limit=8) if self.local_index.enabled() else [])
         self.chat_digest.tidy = self.chat_pictures.tidy
         _chat_picture_tools(self.agent.tools, self.chat_pictures, self.memory_files)
         # THE AGENT ON THE SCREEN (agent/screen_control.py; the user, 2026-11-18): taken when the user says so in the
@@ -1876,6 +1878,7 @@ line starting with "- ", each in a few words. Leave the block out when no learne
                 "why": shown("Why: {0}", self.config).replace("{0}", why) if why else "",
                 "reactions": list(meta.get("reactions") or []),     # the user's quick reactions to it
                 "bad": bool(meta.get("bad_content")),               # and whether they said it was bad content
+                "good": bool(meta.get("good_content")),             # or good (the thumbs, 2026-11-20)
                 # A learning question's options, to be pressed - and the one pressed (heartbeat/lessons/questions.py).
                 "learning": ({"options": [str(one.get("label") or "") for one in
                                           (meta["learning_question"].get("options") or [])],

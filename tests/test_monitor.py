@@ -1932,17 +1932,19 @@ class WhatASearchMayCarryTests(unittest.TestCase):
             decider.recommend(self.app.monitor, one, one["then"][0], context, "f1")
         return kept[0]
 
-    def test_of_mail_a_name_and_a_number_are_refused(self) -> None:
+    def test_of_mail_a_number_is_refused_a_name_is_not(self) -> None:
+        # 2026-11-20: "搜索检查只查密码邮箱之类，项目名人名都不拦"; "所有的搜索检查都是这样".
         guard = self._guard_for("email")
-        self.assertIn("private", guard.check_query("ada marlow invoice"))
-        self.assertIn("private", guard.check_query("what is 7741902"))
+        self.assertIsNone(guard.check_query("ada marlow invoice"))
+        self.assertIn("secret", guard.check_query("what is 7741902"))
         self.assertIsNone(guard.check_query("how invoices fall due"))
 
     def test_of_a_page_its_own_words_may_be_searched(self) -> None:
         self.assertIsNone(self._guard_for("page").check_query("Ada Marlow invoice 7741902"))
 
-    def test_with_no_window_a_contact_is_still_held_and_the_project_is_not(self) -> None:
-        """The user, 2026-11-07: new work searched with no guard; its name may go, a person's not."""
+    def test_with_no_window_neither_a_contact_nor_the_project_is_held(self) -> None:
+        """The user, 2026-11-07: new work searched with no guard; 2026-11-20: names are not held at all ("项目名人名都
+        不拦")."""
         decider, kept, looked_in = self.app.monitor_decider, [], []
 
         def asked(*_args, guard=None, **_more):
@@ -1962,9 +1964,10 @@ class WhatASearchMayCarryTests(unittest.TestCase):
             decider.recommend(self.app.monitor, one, one["then"][0], context, "f1")
         guard = kept[0]
         self.assertTrue(any("Tidewell domain name" in text for text in looked_in))
-        self.assertIn("private", guard.check_query("Ada Marlow tidewell"))
-        self.assertIn("private", guard.check_query("阿达 域名"))
+        self.assertIsNone(guard.check_query("Ada Marlow tidewell"))
+        self.assertIsNone(guard.check_query("阿达 域名"))
         self.assertIsNone(guard.check_query("Tidewell domain name taken"))
+        self.assertIsNotNone(guard.check_query("write to ada@example.org"), "a mail address always stopped")
 
     def test_the_model_is_told(self) -> None:
         from personalized_agent.heartbeat.monitor.decide import RECOMMEND_SYSTEM

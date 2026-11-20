@@ -47,6 +47,10 @@ SHAPES = ("rect", "circle", "triangle", "cylinder")
 MOVES = ("none", "spin", "blink", "smoke")
 WATER_OUTLINES = ("ellipse", "blob", "band", "rect", "ring")
 INTERACT = {"track": "ride", "stack": "climb"}
+#: BOATS ON ITS WATER (the user, 2026-11-20: "另外有天鹅游船之类的控件"): how they look - they go round the water, and
+#: are ridden, one round.
+BOATS = ("swan", "duck", "rowboat", "pedalo", "gondola", "sailboat", "lotus", "dragon")
+BOATS_MOST = 6
 
 
 def pieces_allowed(floor_tiles: int) -> int:
@@ -63,7 +67,12 @@ THEIR PICTURES MAY BE ONE (the user, 2026-11-19: "对图片的处理是可以直
 hung as it is (a frame, a poster), or BUILT AFTER IT as a great piece - "picture": "<its id>" - its shapes and colours \
 rebuilt in the world's pixel style, a monument of it. A ROOM \
 MAY HAVE ONE TOO, AS LARGE AS ITS FLOOR ALLOWS: the size limit of the things above is for things, not for great \
-pieces. A great piece is only ever asked for here, never laid as a thing. None when nothing calls for one."""
+pieces. A great piece is only ever asked for here, never laid as a thing. None when nothing calls for one.
+GREAT PIECES MADE BEFORE, KEPT TO BE USED AGAIN (the user, 2026-11-20: "画过的大型控件也添加描述，作为一个之后可以复用的东西"; \
+"所有的大型，小型控件，都应该可以build on top of"): {made}. USE ONE AGAIN - "use": "<its name>" (as it was, at its \
+size) - or BUILD ON ONE - "base": "<its name>", "change": "<what to make different: a storey more, another material, \
+its own colours, boats on its lake>" - the new one kept beside it. Make one new only when none is near what this \
+place needs."""
 
 PIECE_SYSTEM = """You are the builder of ONE GREAT PIECE in a small world that pictures the user's life - built of \
 parts the way a roller coaster is built of its track: "what" says what it is and what it means; its ground is "w" x \
@@ -82,7 +91,8 @@ KIT_FORMS = {
              '(of its ground\'s width), "colour": "#rrggbb"}, ... from the ground up, 2 to 14], "door": true or false',
     "field": '"widget": "<a widget name: field_<crop>, orchard, apiary, vineyard, greenhouse, chicken_farm, '
              'fish_pond>", "rows": 1 to 6, "cols": 1 to 6, "path": true or false, "fence": "#rrggbb" or ""',
-    "water": '"outline": "<' + "|".join(WATER_OUTLINES) + '>", "bridges": 0 to 3, "boats": 0 to 4, "fountain": true or '
+    "water": '"outline": "<' + "|".join(WATER_OUTLINES) + '>", "bridges": 0 to 3, "boats": 0 to ' + str(BOATS_MOST)
+             + ', "boat": "<' + "|".join(BOATS) + '>" (how they look - swan boats, a dragon boat...), "fountain": true or '
              'false, "colour": "#rrggbb"',
     "composite": '"shapes": [{"kind": "<' + "|".join(SHAPES) + '>", "x": <tiles from its left>, "y": <tiles from its '
                  'top>, "w": <tiles>, "h": <tiles>, "up": <how high off the ground, tiles>, "colour": "#rrggbb", '
@@ -98,9 +108,30 @@ def piece_system(kit: str) -> str:
     return PIECE_SYSTEM.format(kit=kit, kit_what=KITS[kit], form=KIT_FORMS[kit])
 
 
-def room_pieces_note() -> str:
+def room_pieces_note(library: Optional[Dict[str, Any]] = None) -> str:
     return ROOM_PIECES_NOTE.format(kits="; ".join(f"{k}: {v}" for k, v in KITS.items()),
-                                   least=f"{PIECE_LEAST[0]} x {PIECE_LEAST[1]}")
+                                   least=f"{PIECE_LEAST[0]} x {PIECE_LEAST[1]}", made=pieces_told(library) or "none yet")
+
+
+def pieces_told(library: Optional[Dict[str, Any]]) -> str:
+    """The great pieces kept in the library, each its name, kit, size and what it is."""
+    return "; ".join(f"{name} ({one.get('kit')}, {one.get('w')}x{one.get('h')}: {one.get('description', '')}"
+                     + (f" - built on {one['based_on']}" if one.get("based_on") else "") + ")"
+                     for name, one in ((library or {}).get("pieces") or {}).items())
+
+
+def boats_of(found: Any, least: int) -> Dict[str, Any]:
+    """The boats on a piece's water, as said: how many (BOATS_MOST at most) and how they look; {} when none."""
+    if not isinstance(found, dict):
+        return {}
+    count = int(_number(found.get("boats"), 0, BOATS_MOST, least))
+    look = str(found.get("boat") or "")
+    return {"boats": count, "boat": look if look in BOATS else "rowboat"} if count else {}
+
+
+#: What one built on a base is told (2026-11-20: "以一个为基础进行修改这样").
+BUILD_ON_NOTE = """\nBUILT ON ONE MADE BEFORE ("build_on": its name, what it is, its picture or its parts): START FROM IT - \
+keep what it is and how it is drawn, the same hand - and change only what "change" says; at this ground's size."""
 
 
 def _colour(value: Any, fallback: str) -> str:
@@ -140,7 +171,11 @@ def read_asked(said: Any, rows: List[str], left: int, top: int, claimed: set, mo
         out.append({"kit": one["kit"], "what": short(one.get("what"), 600), "x": left + x, "y": top + y, "w": w, "h": h,
                     **({"picture": short(one.get("picture"), 120)} if str(one.get("picture") or "").strip() else {}),
                     **({"card": short(one.get("card"), 80)} if str(one.get("card") or "").strip() else {}),
-                    **({"stage": one["stage"]} if isinstance(one.get("stage"), int) else {})})
+                    **({"stage": one["stage"]} if isinstance(one.get("stage"), int) else {}),
+                    # FROM THE LIBRARY (2026-11-20): one made before used again, or built on.
+                    **({"use": short(one.get("use"), 60)} if str(one.get("use") or "").strip() else {}),
+                    **({"base": short(one.get("base"), 60), "change": short(one.get("change"), 400)}
+                       if str(one.get("base") or "").strip() else {})})
     return out
 
 
@@ -212,8 +247,9 @@ def read_piece(found: Any, kit: str, w: int, h: int) -> Optional[Dict[str, Any]]
     elif kit == "water":
         outline = str(found.get("outline") or "")
         out.update(outline=outline if outline in WATER_OUTLINES else "blob",
-                   bridges=int(_number(found.get("bridges"), 0, 3, 1)), boats=int(_number(found.get("boats"), 0, 4, 1)),
+                   bridges=int(_number(found.get("bridges"), 0, 3, 1)),
                    fountain=bool(found.get("fountain")), colour=_colour(found.get("colour"), "#3e8fc9"))
+        out.update(boats_of(found, 1))
     elif kit == "composite":
         shapes = []
         for one in (found.get("shapes") or [])[:24]:
@@ -311,8 +347,12 @@ WHAT THE BUILDING READS FROM THE PICTURE (give each where it applies):
 - class="spin" (with data-cx, data-cy: the point it turns round), class="blink", class="smoke": its moving parts.
 - data-stage="1" ... "{stages}" on its groups, IN THE ORDER IT IS BUILT - the code shows as much as the work has come, \
 the rest under scaffolding.
+- BOATS ON ITS WATER (a lake, a pond, a canal, a harbour): say "boats": how many go round on it (0 to {boats_most}) and \
+"boat": how they look ({boats}) - swan boats on a park lake, a dragon boat on a festival river; drawn by the code, \
+going round the water, and ridden. Leave the water clear for them.
 Only shapes, paths, groups and gradients: no text, no images, no scripts, no filters, nothing from outside.
-Answer with only JSON: {{"svg": "<svg ...>...</svg>", "name": "<a few words>", "why": "<to them, at most 2 sentences>"}}"""
+Answer with only JSON: {{"svg": "<svg ...>...</svg>", "name": "<a few words>", "why": "<to them, at most 2 sentences>", \
+"boats": <0 to {boats_most}>, "boat": "<how they look>"}}"""
 
 PIECE_SVG_LOOK_SYSTEM = """You drew this great piece (your picture is given, and here it is as it is drawn). Look at it \
 once as its artist would: does it read as what was meant from afar and reward a close look, is it too plain or too \
@@ -323,7 +363,7 @@ JSON, and "looked": "<what you changed, at most 2 sentences>"."""
 def piece_svg_system(w: int, h: int) -> str:
     width, height = w * UNIT, (h + UP_TILES) * UNIT
     return PIECE_SVG_SYSTEM.format(width=width, height=height, unit=UNIT, h=h, ground=UP_TILES * UNIT, up=UP_TILES,
-                                   stages=SVG_STAGES_MOST)
+                                   stages=SVG_STAGES_MOST, boats_most=BOATS_MOST, boats=", ".join(BOATS))
 
 
 def clean_svg(text: Any, width: int, height: int) -> Optional[Any]:
@@ -401,7 +441,7 @@ def read_svg(found: Any, w: Any, h: Any, tree_only: bool = False) -> Optional[An
         return None                                       # nothing drawn
     short = lambda value, n: " ".join(str(value or "").split())[:n]     # noqa: E731
     return {"svg": svg, "stages": len(stages), "entrance": entrance, "track": track, "moving": moving,
-            "name": short(found.get("name"), 60), "why": short(found.get("why"), 400)}
+            "name": short(found.get("name"), 60), "why": short(found.get("why"), 400), **boats_of(found, 0)}
 
 
 def render_svg(svg: str, w: int, h: int, scale: float = 2.0) -> Optional[Dict[str, str]]:
@@ -429,6 +469,6 @@ def render_svg(svg: str, w: int, h: int, scale: float = 2.0) -> Optional[Dict[st
     return {"media_type": "image/png", "data": base64.b64encode(buffer.getvalue()).decode("ascii")}
 
 
-__all__ = ["clean_svg", "PIECE_SVG_SYSTEM", "PIECE_SVG_LOOK_SYSTEM", "piece_svg_system", "read_svg", "render_svg", "UNIT", "UP_TILES",
+__all__ = ["BOATS", "boats_of", "pieces_told", "BUILD_ON_NOTE", "clean_svg", "PIECE_SVG_SYSTEM", "PIECE_SVG_LOOK_SYSTEM", "piece_svg_system", "read_svg", "render_svg", "UNIT", "UP_TILES",
            "TASK_PIECE", "TASK_PIECE_LOOK", "KITS", "pieces_allowed", "room_pieces_note", "piece_system",
            "PIECE_LOOK_SYSTEM", "read_asked", "read_piece", "draw_piece", "INTERACT", "HEIGHT_MOST"]

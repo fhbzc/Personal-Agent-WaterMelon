@@ -5771,5 +5771,18 @@
 "Screen control starts in {0}…": "{0} 秒后开始操控屏幕…",
 "I've given you the screen back: {0}": "屏幕已经还给你：{0}",
 "I've given you the screen back.": "屏幕已经还给你了。",
-"The agent is using your screen - move the mouse or press any one key on your keyboard to take it back": "agent 正在操控你的屏幕 - 动一下鼠标，或按键盘上任何一个键，就能收回"
+"The agent is using your screen - move the mouse or press any one key on your keyboard to take it back": "agent 正在操控你的屏幕 - 动一下鼠标，或按键盘上任何一个键，就能收回",
+"Take the {0}, get off at {1}": "乘{0}，在{1}下车",
+"Metro Station": "地铁站",
+"Ferry Terminal": "轮渡码头",
+"Sky Port": "云端港",
+"Airport": "机场",
+"Bus Station": "公交站",
+"Mute": "静音",
+"Unmute": "取消静音",
+"Pause drawing": "暂停绘制",
+"Resume drawing": "继续绘制",
+"Its task": "相关任务",
+"Fun fact": "趣闻",
+"Reply to this message only": "只回复这条"
 }

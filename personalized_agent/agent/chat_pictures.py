@@ -42,10 +42,19 @@ addresses and titles as they are written."""
 #: THE USER'S QUICK REACTIONS TO WHAT THE AGENT SAID, AS SLACK HAS THEM (the user, 2026-11-17: "agent的每个回复，有一个快速
 #: emoji功能" - "emoji 只是用户的expression"): each emoji and the expression it is. Whether the content was bad is apart
 #: (BAD_CONTENT): "good/bad 是用户觉得这个新闻怎么样，要在emoji旁边加一个快速的bad content". Both are learned from.
-REACTIONS = {"\U0001F44D": "thumbs up", "\u2764\ufe0f": "heart", "\U0001F602": "laughing", "\U0001F62E": "surprised",
-             "\U0001F622": "sad", "\U0001F914": "thinking", "\U0001F389": "celebrating"}
-#: The user's own word that the content was bad.
+#: THE EMOJI ARE FEELINGS, EACH ITS OWN (the user, 2026-11-20: "good 和bad是代表好推送和坏推送。其它表情有不同的
+#: interpretation"): what the user felt on reading it - never whether it was worth telling (that is GOOD_CONTENT or
+#: BAD_CONTENT). A thumbs up given before the thumbs moved to their own buttons is read as good content.
+REACTIONS = {"\U0001F44D": "thumbs up (from before: good content)",
+             "\u2764\ufe0f": "heart - they loved it, it touched them",
+             "\U0001F602": "laughing - they found it funny",
+             "\U0001F62E": "surprised - it was new or unexpected to them",
+             "\U0001F622": "sad - it saddened them",
+             "\U0001F914": "thinking - it made them think, or they are unsure of it",
+             "\U0001F389": "celebrating - they were glad of the news"}
+#: The user's own word that the content was bad - or good (the thumbs down and up under every message).
 BAD_CONTENT = "bad content - the user did not find it worth telling"
+GOOD_CONTENT = "good content - the user found it worth telling"
 
 
 def _safe(message_id: str) -> str:
@@ -63,6 +72,8 @@ def told(one: Dict[str, Any]) -> str:
         words += "\n[The user reacted to this with: " + ", ".join(f"{e} ({REACTIONS[e]})" for e in reacted) + "]"
     if meta.get("bad_content"):
         words += f"\n[The user marked this: {BAD_CONTENT}]"
+    elif meta.get("good_content"):
+        words += f"\n[The user marked this: {GOOD_CONTENT}]"
     picture = (one.get("metadata") or {}).get("picture") or {}
     if not (picture.get("file") or picture.get("summary")):
         return words

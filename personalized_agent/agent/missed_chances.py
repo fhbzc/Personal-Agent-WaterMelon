@@ -198,7 +198,7 @@ class MissedChances:
                 meta = json.loads(row.get("metadata") or "{}")
             except ValueError:
                 meta = {}
-            took = ", ".join(str(r) for r in meta.get("reactions") or []) or ("found useless" if meta.get("bad_content")
+            took = ", ".join(str(r) for r in meta.get("reactions") or []) or ("found useless" if meta.get("bad_content") else "found worth telling" if meta.get("good_content")
                                                                               else "no reaction")
             lines.append({"at": str(row.get("created_at") or ""),
                           "line": f"AGENT SAID: {short(row.get('title'), MOST_TITLE)} ({took})"})

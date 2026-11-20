@@ -228,7 +228,8 @@ class CoPlay:
             except ValueError:
                 meta = {}
             out.append({"title": row.get("title"), "kind": (meta.get("co_play") or {}).get("kind"),
-                        "reactions": meta.get("reactions") or [], "bad_content": bool(meta.get("bad_content"))})
+                        "reactions": meta.get("reactions") or [], "bad_content": bool(meta.get("bad_content")),
+                        "good_content": bool(meta.get("good_content"))})
         return out
 
     def _state(self) -> Dict[str, Any]:

@@ -21,7 +21,7 @@ STYLES = ("cottage", "classic", "modern", "rustic", "zen", "industrial", "mansio
 #: How large: cells across x down.
 SCALES = {"small": (1, 1), "large": (2, 1), "tall": (1, 2), "estate": (2, 2)}
 #: Open places, without walls - each drawn its own way.
-OUTDOOR = ("garden", "park", "pool", "courtyard", "terrace", "lake", "waterfall", "plaza", "grove", "meadow", "mountain",
+OUTDOOR = ("terminal", "civic", "garden", "park", "pool", "courtyard", "terrace", "lake", "waterfall", "plaza", "grove", "meadow", "mountain",
            "volcano", "peak", "sea_tunnel", "roller_coaster", "cemetery", "funfair", "estate")
 #: Of those, nature's (the user, 2026-11-17: "你也要加自然景观，喷泉，小岛，瀑布之类的").
 NATURAL = ("lake", "waterfall", "plaza", "grove", "meadow", "mountain", "volcano", "peak")

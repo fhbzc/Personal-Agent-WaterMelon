@@ -5222,7 +5222,11 @@ body.side-stacked #side-visual { flex: 0 0 auto; max-height: 48vh; overflow-y: a
 .side-note-done { font-size: 12px; color: var(--muted); }
 .side-head-buttons { display: flex; gap: 2px; align-items: center; }
 .side-pin svg { display: block; }
-.side-pin[aria-pressed="true"], #side-play-open[aria-pressed="true"] { color: var(--accent);
+/* The full-screen button: corners out to fill, corners in to come back. */
+#side-full .side-full-in { display: none; }
+#side-full[aria-pressed="true"] .side-full-in { display: inline; }
+#side-full[aria-pressed="true"] .side-full-out { display: none; }
+.side-pin[aria-pressed="true"], #side-play-open[aria-pressed="true"], #side-full[aria-pressed="true"] { color: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, transparent); }   /* Play on: as Pin on (the user, 2026-11-17) */
 .side-compose { flex-wrap: wrap; }
 .side-quick { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 6px; }
@@ -5241,7 +5245,10 @@ body.side-stacked #side-visual { flex: 0 0 auto; max-height: 48vh; overflow-y: a
 .side-replying[hidden] { display: none; }
 .side-replying-title { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
 /* DRAGGED BY ITS LEFT EDGE (2026-11-16: "那个side bar 要允许我鼠标拖动size"). */
-.side-grip { position: fixed; left: 0; top: 0; bottom: 0; width: 8px; cursor: ew-resize; z-index: 20; }
+/* TAKEN WHERE IT IS SEEN (the user, 2026-11-20: "正常我是以为鼠标放到线上就会有，但是其实现在是放到线上左边一点的位置才有"): it was
+   8 px of a page zoomed out (--side-zoom) - a few pixels on the screen, thinner than the line one aims at. Now 12 px on the
+   screen whatever the zoom, from the very edge. */
+.side-grip { position: fixed; left: 0; top: 0; bottom: 0; width: calc(12px / var(--side-zoom, 1)); cursor: ew-resize; z-index: 20; }
 /* Over the Play view too (the user, 2026-11-18: "在play mode的时候也要可以拉动sidebar 边框(resize)"): it lies at the same
    height and came later, over the grip. */
 body.side-playing .side-grip { z-index: 30; }
@@ -5338,7 +5345,7 @@ body.side-playing .side-grip { z-index: 30; }
 .side-followup .side-fu-head { display: flex; gap: 6px; align-items: baseline; font-size: 12px; color: var(--muted); }
 .side-followup .side-fu-head button { margin-left: auto; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
 mark.side-fu-anchor { background: color-mix(in srgb, var(--accent) 25%, transparent); color: inherit; }
-.side-grip:hover, .side-grip.dragging { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.side-grip:hover, .side-grip.dragging { background: color-mix(in srgb, var(--accent) 35%, transparent); }  /* the whole of it, where it is taken */
 /* MARKED BY THE USER (side-visual.js sideMarking): rings drawn over the picture while "Mark" is on. */
 .side-viz-card { position: relative; }
 .side-viz-tools { display: flex; gap: 6px; justify-content: flex-end; position: relative; z-index: 2; }
@@ -5810,7 +5817,7 @@ button.report-deliverable-title:focus-visible { outline: 2px solid var(--accent)
 .side-react-tools { display: inline-flex; align-items: stretch; border: 1px solid var(--line); border-radius: 12px;
   overflow: hidden; }
 .side-react-tools .side-react-add { border-radius: 0; width: 28px; }
-.side-react-tools .side-bad { border: 0; border-left: 1px solid var(--line); border-radius: 0; width: 28px;
+.side-react-tools .side-bad, .side-react-tools .side-good { border: 0; border-left: 1px solid var(--line); border-radius: 0; width: 28px;
   padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 /* ON THE TIME'S LINE (the user, 2026-11-17: "bad content那个和时间放在同一行好了"): the reactions on their own line, on
    the right, and the time drawn up into it, on the left - as tall as the box, never over it (nor in the way of a
@@ -5834,9 +5841,12 @@ button.report-deliverable-title:focus-visible { outline: 2px solid var(--accent)
   cursor: pointer; }
 .side-react-pick button:hover, .side-react-pick button:focus-visible { background: var(--line); }
 /* Bad content, its own press beside the emoji (notes.js sideBad). */
-.side-bad { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 10px;
+.side-bad, .side-good { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 10px;
   padding: 0 8px; font: inherit; font-size: 11.5px; line-height: 20px; cursor: pointer; }
-.side-bad:hover, .side-bad:focus-visible { color: var(--ink); border-color: var(--muted); }
+.side-bad:hover, .side-bad:focus-visible, .side-good:hover, .side-good:focus-visible { color: var(--ink); border-color: var(--muted); }
+/* Good content pressed: the good colour, as bad content wears the error's (2026-11-20). */
+.side-good[aria-pressed="true"] { color: var(--ok, #2e9e83); border-color: color-mix(in srgb, var(--ok, #2e9e83) 60%, var(--line));
+  background: color-mix(in srgb, var(--ok, #2e9e83) 12%, transparent); }
 .side-bad[aria-pressed="true"] { color: var(--err); border-color: color-mix(in srgb, var(--err) 60%, var(--line));
   background: color-mix(in srgb, var(--err) 12%, transparent); }
 /* A learning question's options, and an answer in words (notes.js sideLearningHtml). */
@@ -6120,3 +6130,15 @@ body.side-controlling::after {
 .side-control-steps time { color: var(--control-red); opacity: 0.75; font-size: 11px; margin-right: 4px;
   font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) { .side-control-run summary::before { transition: none; } }
+
+/* QUICK REPLIES AND A REPLY TO ONE MESSAGE ONLY (notes.js sideReplyHtml; the user, 2026-11-20). */
+.side-reply-only { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.side-quick-reply { border: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 12px;
+  padding: 2px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.side-quick-reply:hover, .side-quick-reply:focus-visible { border-color: var(--accent); color: var(--accent); }
+.side-reply-open { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0 4px; }
+.side-reply-open:hover, .side-reply-open:focus-visible { color: var(--ink); }
+.side-reply-box { display: flex; gap: 6px; margin-top: 6px; }
+.side-reply-box input { flex: 1 1 auto; min-width: 0; }
+.side-thread { margin: 6px 0 0 12px; padding-left: 8px; border-left: 2px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
+.side-thread-msg { font-size: 12.5px; }

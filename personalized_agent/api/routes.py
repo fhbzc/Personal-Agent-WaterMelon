@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import sys
 import logging
 import time
 from typing import Any, Callable, Dict, List, Tuple
@@ -2044,9 +2045,14 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                 talk = getattr(app, "talk_style", None)
                 if talk is not None:
                     talk.maybe_read()                        # how they talk, read again when it is due
+                # THE SCREEN OFFERED, NOT SENT (the user, 2026-11-20: "让agent自己决定要不要看 ... 没看就不显示，就当没发"):
+                # the picture kept aside for the quick reply and the full agent to look at if they choose; shown with
+                # the message only once looked at (the turn tells the panel).
+                shown = _side_picture(told)
                 said = app.two_speed.send(message, conversation, attachments, mentions, front=front,
-                                          seen=seen, visual=True, quick=quick)
-                return {**said, "picture": _side_picture(told)}
+                                          seen=None, visual=True, quick=quick,
+                                          offered={"pictures": seen, "shown": shown} if seen else None)
+                return {**said, "picture": said.get("picture") or {}}
             if app.two_speed.on:
                 return app.two_speed.send(message, request.get("conversation_id"), attachments,
                                           mentions, front=front, seen=seen)
@@ -2056,6 +2062,30 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         except ValueError as exc:
             raise ApiError(str(exc), 400)
         return {**said, "layer": "", "turn": ""}
+
+    @route("POST", "/api/chat/reply_only")
+    def chat_reply_only(request: Any) -> Any:
+        """A REPLY TO ONE OF THE AGENT'S MESSAGES, AND ONLY TO IT (the user, 2026-11-20: "可以不带context的给agent回复（就
+        只针对这个信息）也没有图片input什么的"): answered in a thread of its own - that message, then the reply - without
+        the chat round it, a picture of the screen or a file. "message_id", "message"."""
+        ident, message = str(request.require("message_id")), str(request.get("message") or "").strip()
+        if not message:
+            raise ApiError("a reply needs words")
+        target = app.conversations.message(ident)
+        if target is None or target.get("role") != "assistant":
+            raise ApiError("that message is not here", 404)
+        thread = str((target.get("metadata") or {}).get("thread") or "")
+        if not thread or app.conversations.ensure(thread) != thread:
+            thread = app.conversations.create(title="Reply to one message")
+            app.conversations.add_message(thread, "assistant", str(target.get("content") or ""),
+                                          metadata={"origin": "thread_of", "of": ident})
+            app.conversations.set_metadata(ident, {"thread": thread})
+        quick = app.two_speed.on and str(request.get("mode") or "quick") != "slow"
+        try:
+            said = app.two_speed.send(message, thread, [], [], front="", seen=None, visual=True, quick=quick)
+        except ValueError as exc:
+            raise ApiError(str(exc), 400)
+        return {**said, "thread": thread}
 
     @route("GET", "/api/chat/turn")
     def chat_turn_state(request: Any) -> Any:
@@ -4662,6 +4692,10 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                 one.pop(hidden, None)                    # where it is on their disk stays here
         for one in world.get("zones", []):
             one["floor_picture_url"] = f"/api/play/picture?id=floor-{one['id']}" if one.get("floor_picture") else ""
+        try:                                           # the ways through, in the order it was lived (arrows, signs)
+            world["routes"] = world_keeper.routes(world)
+        except Exception:
+            world["routes"] = {"rooms": {}, "grounds": {}}
         try:
             made = world_keeper.made()                  # the things and floors the agent made, kept to be used again
         except Exception:
@@ -4704,6 +4738,19 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         if world is None or not key:
             return {"language": "", "words": {}}
         return world.translate_one(key)
+
+    @route("POST", "/api/play/pause")
+    def play_pause(request: Any) -> Any:
+        """THE WORLD'S DRAWING PAUSED OR RESUMED (the user, 2026-11-20: "debugger 版的代码，play加一个暂停框，是暂停drawing") -
+        "paused" true or false; none, only asked. Only in a build that carries the Debugger, its collecting on ("can")."""
+        from ..build_flags import debugger_available
+        world_keeper = getattr(app, "play_world", None)
+        can = bool(world_keeper is not None and debugger_available() and app.config.get("debugger_enabled", True))
+        if not can:
+            return {"paused": False, "can": False}
+        said = request.get("paused")
+        paused = world_keeper.paused() if said is None else world_keeper.pause(bool(said))
+        return {"paused": bool(paused), "can": True}
 
     @route("POST", "/api/play/note")
     def play_note(request: Any) -> Any:
@@ -4855,12 +4902,20 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         emoji, or `bad` (the content was bad: "要在emoji旁边加一个快速的bad content"): put on (`on`) or taken off - kept
         with the message (and with the notification it told), told to the turns after; on a notification, an answer to
         learn from, as every other ("bad content, emoji都是要被作为学习的对象")."""
-        from ..agent.chat_pictures import BAD_CONTENT, REACTIONS
-        bad = bool(request.get("bad", False))
-        emoji = "" if bad else str(request.get("emoji") or "")
-        if not bad and emoji not in REACTIONS:
+        from ..agent.chat_pictures import BAD_CONTENT, GOOD_CONTENT, REACTIONS
+        # GOOD OR BAD CONTENT, THE THUMBS (the user, 2026-11-20: "所有content, good 和bad 都放在快速栏，(大拇指和倒拇指)
+        # ... good 和bad是代表好推送和坏推送"): one of them at most - pressing one takes the other off.
+        good = bool(request.get("good", False))
+        bad = bool(request.get("bad", False)) and not good
+        judged = good or bad
+        emoji = "" if judged else str(request.get("emoji") or "")
+        if not judged and emoji not in REACTIONS:
             return {"error": "not a reaction"}
         on = bool(request.get("on", True))
+        judgement = ({"good_content": on, **({"bad_content": False} if on else {})} if good else
+                     {"bad_content": on, **({"good_content": False} if on else {})} if bad else {})
+        meaning = GOOD_CONTENT if good else BAD_CONTENT if bad else f"reacted with {emoji} ({REACTIONS.get(emoji, '')})"
+        action = "good_content" if good else "bad_content" if bad else "reaction"
 
         def flip(kept: Any) -> List[str]:
             now = [one for one in (kept or []) if one != emoji]
@@ -4874,25 +4929,23 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                            and (one.get("metadata") or {}).get("notification_id") == note), None)
         if target is not None:
             kept = target.get("metadata") or {}
-            app.conversations.set_metadata(target["id"], {"bad_content": on} if bad
+            app.conversations.set_metadata(target["id"], judgement if judged
                                            else {"reactions": flip(kept.get("reactions"))})
             if on and not note and not kept.get("notification_id"):
                 # A CHAT REPLY'S, LEARNED FROM AT ONCE (the user, 2026-11-17: "这个一点反应就立刻学习"): not left to the
                 # quiet summary - a reply already summarised would never be learned from.
-                _learn_reaction(target, BAD_CONTENT if bad else f"reacted with {emoji} ({REACTIONS[emoji]})",
-                                "bad_content" if bad else "reaction")
+                _learn_reaction(target, meaning, action)
         told = app.notifications.get(note) if note else None
         if told is not None:
             meta = dict(told.get("metadata") or {})
-            if bad:
-                meta["bad_content"] = on
+            if judged:
+                meta.update(judgement)
             else:
                 meta["reactions"] = flip(meta.get("reactions"))
             app.notifications.set_metadata(note, meta)
             if on:
                 try:
-                    app.learn_answer(told, "bad_content" if bad else "reaction",
-                                     meaning=BAD_CONTENT if bad else f"reacted with {emoji} ({REACTIONS[emoji]})")
+                    app.learn_answer(told, action, meaning=meaning)
                 except Exception:
                     log.info("a reaction could not be learned from", exc_info=True)
         return {"ok": target is not None or told is not None}
@@ -5007,6 +5060,19 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             return {"pinned": bool(pin(None if said is None else bool(said))) if callable(pin) else False}
         except Exception:
             return {"pinned": False}
+
+    @route("POST", "/api/notifications/panel_full")
+    def notifications_panel_full(request: Any) -> Any:
+        """THE SIDE PANEL OVER THE WHOLE SCREEN, OR BACK (the user, 2026-11-20: "加一个全屏图标") - "full" true or
+        false; none, only asked. Whether it is full; "can" False where the desktop cannot make it so."""
+        full = getattr(app, "full_notes_panel", None)
+        said = request.get("full")
+        if not callable(full):
+            return {"full": False, "can": False}
+        try:
+            return {"full": bool(full(None if said is None else bool(said))), "can": sys.platform == "win32"}
+        except Exception:
+            return {"full": False, "can": False}
 
     @route("POST", "/api/notifications/bad")
     def notifications_bad(request: Any) -> Any:

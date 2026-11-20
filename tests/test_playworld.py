@@ -440,7 +440,8 @@ class DrawnFromWhatTheAgentKnowsTests(unittest.TestCase):
             tasks = [one.task for one in keeper.models.asked]
             # 2026-11-18: then its words put in both languages ("让他做双语翻译").
             # The home's room designed once (2026-11-19); written in the language shown, nothing translated.
-            self.assertEqual(tasks, [pw.TASK_LOOK, pw.TASK_THEMES, pw.TASK, pw.muse.TASK_ROOM])
+            # 2026-11-20: then the world's looks as a whole ("在交通规划之后加一个stage, 是整体美学规划").
+            self.assertEqual(tasks, [pw.TASK_LOOK, pw.TASK_THEMES, pw.TASK, pw.muse.TASK_ROOM, pw.muse.TASK_AESTHETICS])
             self.assertIn("looked_up", [a for a in keeper.models.asked if a.task == pw.TASK][-1].messages[0]["content"])
         from personalized_agent.common import modules
         self.assertEqual(modules.module_of(pw.TASK_LOOK), "play_world", "its tokens the world's")

@@ -116,7 +116,8 @@ class OneButtonAndTheModelToldTests(unittest.TestCase):
         self.assertIn("focus=not quietly", inspect.getsource(DesktopAgent.open_notifications))
         notes = (WEB / "notes.js").read_text(encoding="utf-8")
         # The keys to the chat's box - or, the Play view open, to the world (sideKeysHome, 2026-11-18).
-        self.assertIn('now.id === "side-search-open") sideKeysHome();', notes)
+        # 2026-11-20: "打开sidebar之后焦点自动回到Play上" - any of the head's buttons, not the search's only.
+        self.assertIn('now.id === "side-search-open" || (now.closest && now.closest(".side-head-buttons"))) sideKeysHome();', notes)
         home = notes[notes.index("function sideKeysHome()"):notes.index("function sideKept()")]
         self.assertIn('(world || $("#side-input"))?.focus', home)
 
@@ -279,7 +280,7 @@ const g = c.getContext('2d'); g.fillStyle = '#d9dee8'; g.fillRect(0, 0, 800, 450
         self.assertEqual(paint["afterClear"], 0)
         self.assertEqual(paint["back"], paint["strokes"] + 1, "Clear undone; and the ellipse added")
         self.assertEqual(paint["turned"], [10, 0], "a quarter turn right about the middle")
-        self.assertEqual(paint["bar"], ["pages", "new", "snip", "clear", "shape", "pen", "eraser", "text", "rotate", "colour"],
+        self.assertEqual(paint["bar"], ["pages", "new", "screen", "snip", "clear", "shape", "pen", "eraser", "text", "rotate", "colour"],
                          "as Paint's: the strip, New, Clear; Shapes, the pen, the eraser, words, Rotate; the colour")
         self.assertEqual(said["firstBlank"], "blank", "a whiteboard by default")
         self.assertEqual(said["blankUntouched"], 0, "nothing drawn: nothing sent")
@@ -328,12 +329,14 @@ class AScreenshotButtonTests(unittest.TestCase):
     def test_the_bar_has_it_and_it_runs_the_shortcuts_cut_out(self) -> None:
         import inspect
         source = (WEB / "side-board.js").read_text(encoding="utf-8")
-        self.assertIn("""button("snip", "Screenshot: the whole screen, or a part of it", ' aria-haspopup="true"')""", source)
         self.assertIn('api.post("/api/side/board_snip"', source)
-        # 2026-11-18: "screen shot有两个选项，一个是截取整个屏幕，一个是截取一个部分的".
-        self.assertIn('data-board-snip="whole"', source)
-        self.assertIn('data-board-snip="part"', source)
-        self.assertIn('if (cut.dataset.boardSnip === "whole") sideBoardScreen();', source)
+        # 2026-11-18: "screen shot有两个选项，一个是截取整个屏幕，一个是截取一个部分的"; 2026-11-20: "两个按钮，一个是完整screen,
+        # 一个是part of, 分成2个不同的按钮" - two buttons, no menu.
+        self.assertIn('button("screen", "Screenshot of the whole screen")', source)
+        self.assertIn('button("snip", "Screenshot of part of the screen")', source)
+        self.assertIn('else if (what === "screen") sideBoardScreen();', source)
+        self.assertIn('else if (what === "snip") sideBoardSnip();', source)
+        self.assertNotIn("Screenshot: the whole screen, or a part of it", source)
         # 2026-11-18: "你的new就是单独创建一个新的" - a blank page at once, no menu; the screen is the screenshot's.
         self.assertIn('button("new", "New page")', source)
         self.assertNotIn('data-board-new="screen"', source)

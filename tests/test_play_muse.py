@@ -107,7 +107,7 @@ class TheFeelingChoosesTheSceneTests(unittest.TestCase):
             world["regions"][-1].update(starter=False, made="2026-10-20", biome="seaside", scene="sunny_islands")
             self.assertTrue(keeper._mood_opens_land(world, mood, "2026-11-08"))
             self.assertFalse(keeper._mood_opens_land(world, {**mood, "changed": False}, "2026-11-08"), "a small swing")
-            self.assertFalse(keeper._mood_opens_land(world, mood, "2026-10-22"), "a land stands its days first")
+            self.assertFalse(keeper._mood_opens_land(world, mood, "2026-10-20"), "a land stands its day first")
             keeper._mood_now, keeper._mood_opens = mood, True
             region = keeper._open_region(world, {"biome": "desert", "weather": "fair", "theme": "quiet",
                                                  "architecture": "stone", "landmark": "fountain"}, "2026-11-08", None)
@@ -624,7 +624,8 @@ class TheWaysBetweenTheLandsTests(unittest.TestCase):
         said = {"lines": [{"vehicle": "sleigh", "stops": ["r1", "r3"]},            # a sleigh in a forest: no
                           {"vehicle": "sleigh", "stops": ["r1", "r2"], "name": "Snow line"},
                           {"vehicle": "sailboat", "stops": ["r5", "r6"]},
-                          {"vehicle": "airship", "stops": ["r4", "r3"]}],         # an airship off the clouds: no
+                          {"vehicle": "airship", "stops": ["r4", "r3"]},          # the sky's own, to the ground: yes
+                          {"vehicle": "train", "stops": ["r4", "r1"]}],           # a train in the sky: no
                 "portals": [{"from": "r3", "to": "r4", "look": "fairy"}, {"from": "r9", "to": "r1"}],
                 "roads": [{"from": "r1", "to": "r2", "material": "stone", "width": 3, "curve": 0.2},
                           {"from": "r2", "to": "r1", "material": "dirt"},                  # the same two again: no
@@ -635,7 +636,12 @@ class TheWaysBetweenTheLandsTests(unittest.TestCase):
         lines = [(one["vehicle"], one["stops"], one["ring"]) for one in ways["lines"]]
         self.assertIn(("sleigh", ["r1", "r2"], False), lines)
         self.assertIn(("sailboat", ["r5", "r6"], False), lines)
-        self.assertNotIn("airship", [one[0] for one in lines])
+        # 2026-11-20: "所有交通工具设置的时候要考虑场景适配性，比如天空要用天空之船，海底用潜艇，轮船，太空用宇宙飞船等" - the sky's
+        # own takes one to the ground; the ground's never goes up into the sky.
+        self.assertIn(("airship", ["r4", "r3"], False), lines)
+        ground = ("train", "tram", "metro", "bus", "taxi", "plane", "helicopter")
+        sky = [one["id"] for one in self.LANDS if one.get("biome") == "skycity"]
+        self.assertFalse([one for one in ways["lines"] if one["vehicle"] in ground and set(one["stops"]) & set(sky)])
         self.assertIn(("metro", ["r1", "r2", "r3"], True), lines, "all three overlapping: a ring that suits them all")
         # 2026-11-19: "传送门取消"; "每两个大project(区域）之间至少有一个交通工具"; "联系紧密的project之间交通工具多".
         self.assertEqual(ways["portals"], [], "no portals: every way a vehicle")
@@ -790,7 +796,7 @@ class InBothLanguagesTests(unittest.TestCase):
             self.assertEqual(list(asked), [f"zones:{home['id']}"], "that one only")
         page = (support.ROOT / "personalized_agent" / "api" / "web" / "play.js").read_text(encoding="utf-8")
         self.assertIn('api.post("/api/play/translate", { key })', page)
-        self.assertIn('"feeling", "to_them", "look"]', page, "a land's feeling and words swapped too")
+        self.assertIn('"feeling", "to_them", "look", "task_note", "fun_fact"]', page, "a land's feeling and words, a card's lines")
         routes = (support.ROOT / "personalized_agent" / "api" / "routes.py").read_text(encoding="utf-8")
         self.assertIn('@route("POST", "/api/play/translate")', routes)
 
@@ -918,6 +924,11 @@ class InBothLanguagesTests(unittest.TestCase):
             self.assertTrue(asked[great.TASK_GREAT_SURVEY].builtin_web, "the site surveyed, the web searched")
             here = asked[great.TASK_GREAT_SURVEY].messages[0]["content"]
             self.assertNotIn("Valley Farm", here, "nothing of the project in the survey")
+            guard = asked[great.TASK_GREAT_SURVEY].web_guard          # 2026-11-20: "这一步没有加搜索检查...这个改就行"
+            self.assertIsNotNone(guard, "the search's guard on the survey")
+            # 2026-11-20: "搜索检查只查密码邮箱之类，项目名人名都不拦".
+            self.assertIsNone(guard.check_query("Valley Farm site plan"), "a project's name let through")
+            self.assertIsNotNone(guard.check_query("ask farmer@example.org"), "a mail address stopped")
             sent = json.loads(asked[great.TASK_GREAT_PLAN].messages[0]["content"])
             self.assertNotIn("feeling", sent, "the feeling only chooses the scene")
             self.assertEqual(sent["work"]["t2"][0]["minutes"], 900)
@@ -1091,8 +1102,9 @@ class InBothLanguagesTests(unittest.TestCase):
         self.assertFalse(great.shape_has({"kind": "triangle"}, (0, 0, 10, 10), 0, 0))
         land = {"id": "r1", "ox": 0, "oy": 0, "shape": "star"}
         self.assertAlmostEqual(places.shape_limit(land, -1.5708), places.CHOSEN_REACH * shapes.reach("star", -1.5708), 6)
-        self.assertEqual(muse.read_mood({"scene": next(iter(muse.MOOD_SCENES)), "shape": "heart"})["shape"], "heart")
-        self.assertIn("THE LAND'S OWN OUTLINE", muse.mood_scene_system())
+        # 2026-11-20: "你的主题地块一定是不规则的" - a land never takes a ruled outline.
+        self.assertNotIn("shape", muse.read_mood({"scene": next(iter(muse.MOOD_SCENES)), "shape": "heart"}))
+        self.assertNotIn("THE LAND'S OWN OUTLINE", muse.mood_scene_system(), "no outline asked for a land")
         room = {"kind": "study", "x": 3, "y": 5, "w": 21, "h": 13, "door": 14, "shape": {"kind": "star", "seed": 0}}
         floor = pw.PlayWorld.shaped_room(room, *pw.PlayWorld.floor_of(room))
         self.assertIn((14, 8 + 13 - 1), floor, "the way in from its door")
@@ -1134,8 +1146,8 @@ class InBothLanguagesTests(unittest.TestCase):
         # 2026-11-19: "你很多门牌都互相遮挡，要用代码防止这个"; "又加载play卡住了" (watched longer); "狗的叫声 ... 不够清脆".
         page = (support.ROOT / "personalized_agent" / "api" / "web" / "play.js").read_text(encoding="utf-8")
         self.assertIn("const box = playSignBox(one.sign, one.x, one.y, size, fontPx);", page)
-        # 2026-11-19: "按住空格会一直跳跃" - one jump a press.
-        self.assertIn("if (!event.repeat && !play.spaceHeld) playJump();", page)
+        # 2026-11-20: "我要的就是按住就连跳" - held, it jumps again each time it lands, walking or standing.
+        self.assertIn("if (play.spaceHeld && playJumpHeight() === 0) playJump();", page)
         self.assertIn('if (event.key === " ") play.spaceHeld = false;', page)
         self.assertIn("function playPostDraw(sign, x, y, size, fontPx, lift = 0) {", page)
         self.assertIn("const PLAY_WATCH_MS = 60000", page)
@@ -1221,7 +1233,7 @@ class InBothLanguagesTests(unittest.TestCase):
             self.assertTrue(piece["spec"]["svg"].startswith("<svg"))
             self.assertEqual(piece["interact"], "ride", "its picture has a track: ridden")
         page = (support.ROOT / "personalized_agent" / "api" / "web" / "play.js").read_text(encoding="utf-8")
-        self.assertIn("if (item.spec && item.spec.svg) { playSvgPieceDraw(item, size, now); continue; }", page)
+        self.assertIn("if (item.spec && item.spec.svg) { playSvgPieceDraw(item, size, now); playBoatsDraw(item, size, now); continue; }", page)
         self.assertIn("const PLAY_FINE = 4, PLAY_FINE_COLOURS = 24;", page)
         self.assertIn("const step = Math.max(1, Math.floor(n / PLAY_FINE_SAMPLES));", page, "its palette from a sample")
         # "这套'把图转成精细像素'的流程 ... 也用到用户的图片、像素画和雕像上": pictures, statues and the agent's paintings.
@@ -1326,9 +1338,11 @@ class InBothLanguagesTests(unittest.TestCase):
         from unittest import mock
         from PIL import Image
         from personalized_agent.agent import playfind
-        self.assertIn("SEARCH THE WEB FOR IT FIRST", playfind.FIND_SYSTEM)
-        self.assertIn("ONE SOURCE AMONG THE OTHERS", playfind.FIND_SYSTEM)
-        self.assertIn('"find_picture": "<what it should show', muse.ROOM_SYSTEM)
+        # 2026-11-20: "这个材料包的照片明显不是我的"; "让他支持找文件"; "不一定要一个途径".
+        self.assertIn("THE THING ITSELF, NEVER ONE LIKE IT", playfind.FIND_SYSTEM)
+        self.assertIn("SEARCH THE WEB, with several searches", playfind.FIND_SYSTEM)
+        self.assertIn("GIVE UP TO 4 CHOICES", playfind.FIND_SYSTEM)
+        self.assertIn('"find_picture": "<THE THING ITSELF', muse.ROOM_SYSTEM)
         self.assertEqual(muse.read_room({"legend": {"A": {"kind": "lamp", "find_picture": "the paper's first page"}},
                                          "floor": ["A.."]}, ["..."], 0, 0, lambda k: (1, 1), set(), 0)["floor"][0]
                          ["find_picture"], "the paper's first page")
@@ -1348,13 +1362,27 @@ class InBothLanguagesTests(unittest.TestCase):
             keeper.save(world)
 
             def from_web(url, out, config=None, allowed=None):
-                Image.new("RGB", (200, 260), "#ffffff").save(out)
+                page = Image.new("RGB", (200, 260), "#ffffff")         # a page with its lines: unlike their flat one
+                from PIL import ImageDraw
+                for row in range(20, 240, 24):
+                    ImageDraw.Draw(page).rectangle((16, row, 120 + row % 60, row + 8), fill="#222222")
+                page.save(out)
                 return True
-            answers = iter([{"theirs": "p1"}, {"url": "https://example.org/paper.pdf", "what": "its first page",
-                                               "allowed": lambda address: True}, {}])
+            refused = lambda url, out, config=None, allowed=None: False          # noqa: E731
+            answers = iter([[{"theirs": "p1"}],
+                            [{"url": "https://refuses.example/cover.jpg", "what": "a cover", "allowed": lambda a: True},
+                             {"url": "https://example.org/paper.pdf", "what": "its first page",
+                              "allowed": lambda address: True}], []])
+            tried = []
+
+            def from_web_or_not(url, out, config=None, allowed=None):          # the first site refuses: the next
+                tried.append(url)
+                return refused(url, out) if "refuses" in url else from_web(url, out)
             with mock.patch.object(playfind, "find", side_effect=lambda *a, **k: next(answers)) as asked, \
-                    mock.patch.object(playfind, "from_url", side_effect=from_web):
+                    mock.patch.object(playfind, "from_url", side_effect=from_web_or_not):
                 self.assertEqual(keeper._find_pictures("2026-11-19"), 2)
+            self.assertEqual(tried, ["https://refuses.example/cover.jpg", "https://example.org/paper.pdf"],
+                             "each choice tried in turn till one is read")
             self.assertEqual(asked.call_args_list[0].args[3][0]["id"], "p1", "theirs given to the finder, among the web")
             items = {one["id"]: one for one in keeper.world()["items"]}
             self.assertEqual(items[lamp["id"]]["shot_of"], "p1", "theirs, chosen")
@@ -1362,7 +1390,7 @@ class InBothLanguagesTests(unittest.TestCase):
             self.assertTrue(Path(items[bed["id"]]["shot_source"]).is_file(), "kept whole: its original")
             self.assertEqual(items[window["id"]].get("find_tries"), 1, "kept on the thing, tried again later")
             self.assertFalse(hasattr(pw.PlayWorld, "FIND_MOST"), "no limit: as many as are asked for")
-            with mock.patch.object(playfind, "find", return_value={}):
+            with mock.patch.object(playfind, "find", return_value=[]):
                 for _ in range(5):
                     keeper._find_pictures("2026-11-19")
             self.assertEqual(keeper.world()["items"][2]["find_tries"], pw.PlayWorld.FIND_TRIES_MOST)
@@ -1574,11 +1602,17 @@ class InBothLanguagesTests(unittest.TestCase):
         every = [s for _what, scenes in muse.SCENE_THEMES.values() for s in scenes]
         self.assertEqual(sorted(every), sorted(muse.MOOD_SCENES), "every scene in exactly one theme")
         self.assertEqual(len(every), len(set(every)))
-        far = list(muse.SCENE_THEMES["far"][1])
-        self.assertNotIn("starry_space", muse.scenes_open(["starry_space"])["far"])
-        self.assertIn("starry_space", muse.scenes_open(["starry_space"], keep="starry_space")["far"], "the land it is in")
-        self.assertEqual(muse.scenes_open(far)["far"], far, "all used: the theme comes round again")
-        self.assertEqual(muse.scenes_open(far + ["deep_sea_calm"])["far"], [s for s in far if s != "deep_sea_calm"])
+        # 2026-11-20: space, the sea and the sky are themes of their own ("要加水下/海底类的主题场景，和天空/云端的主题场景，
+        # 还有太空/宇宙的主题场景").
+        far = list(muse.SCENE_THEMES["cosmos"][1])
+        self.assertNotIn("starry_space", muse.scenes_open(["starry_space"])["cosmos"])
+        self.assertIn("starry_space", muse.scenes_open(["starry_space"], keep="starry_space")["cosmos"], "the land it is in")
+        self.assertEqual(muse.scenes_open(far)["cosmos"], far, "all used: the theme comes round again")
+        self.assertEqual(muse.scenes_open(far + ["moon_base"])["cosmos"], [s for s in far if s != "moon_base"])
+        for theme in ("undersea", "sky", "cosmos"):
+            self.assertGreaterEqual(len(muse.SCENE_THEMES[theme][1]), 5, theme)
+            for scene in muse.SCENE_THEMES[theme][1]:
+                self.assertIn(scene, muse.SCENE_OWN, f"{scene}: its own houses and things")
         open_now = muse.scenes_open(["quiet_grove"])
         system = muse.mood_scene_system(open_now=open_now)
         self.assertIn("THEME woods", system)
