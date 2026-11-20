@@ -225,6 +225,31 @@ made stay.
   <sub>Ask about your work, or ask it to do something; select words in a reply to ask about them in the margin.</sub>
 </p>
 
+**Play.** A small world your agent grows from your days, to walk in, in the
+side panel. Each stretch of time becomes a land of the scene it felt like -
+a river journey, a glasshouse, a launch site, windy highlands, under the sea,
+in the sky, in space or in a city. Each project is a place built from its own
+work: a long one a great ground with a landmark, every room designed card by
+card, and arrows and signs walking you through it in the order you lived it.
+Trains, metros, buses and planes - or submarines, balloons and rockets, as
+the land suits - stop at great stations between the lands. Arrow keys walk,
+WASD moves the view, Space jumps (hold it to keep jumping), E looks at a
+thing - its card says what it is, a task it belongs to and, now and then, a
+fun fact.
+
+<p align="center">
+  <img src="docs/images/play-world.png" width="100%" alt="Play: a land with a railway curving through it, a project's great ground with its tower, rooms and signposts along the roads"><br>
+  <sub>A land from a stretch of your days: the railway, a project's great ground and the signs on the way.</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/play-estate.png" width="49%" alt="A project's estate: a great piece in the middle, numbered things in the order the work went, melon rows and a clock tower">
+  <img src="docs/images/play-launch.png" width="49%" alt="A launch site land: a rocket on its tower, rooms with their things, and the desert round it"><br>
+  <img src="docs/images/play-station.png" width="49%" alt="A great station: a glasshouse railway station with its platform and the line leaving it">
+  <img src="docs/images/play-night.png" width="49%" alt="The same land at night: an airport with its lamps lit"><br>
+  <sub>A project's estate, numbered in the order you worked; a land of its own scene; a great station; and the night, each land lit its own way.</sub>
+</p>
+
 **The Watermelon.** A small avatar on your desktop. It shows notifications in
 a speech bubble, looks at your pointer, and turns to face the middle of the
 screen. Left at the side of the screen it tiptoes in and hides, its leaves
@@ -470,6 +495,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.3.10](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.10) | 2026-11-20 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.10) |
 | [v0.3.9](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.9) | 2026-11-18 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.9) |
 | [v0.3.8](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.8) | 2026-11-18 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.8) |
 | [v0.3.7.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7.1) | 2026-11-16 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7.1) |
@@ -744,6 +770,41 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.3.10](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.10) (2026-11-20, a pre-release)
+
+The Play world now grows from how your days felt, shows your work as a story you can walk through, and draws every room and project by its own design; your agent learns from the times it should have spoken up, points out what you may have missed, and can take the mouse when you ask.
+
+**Play**
+- **Lands from how your days felt.** Each stretch of time is read for your mood and the mood of the field you worked in - the big events there in those days - and becomes a land of its own scene, with your agent's words to you on its title. A new land can open after a day when the feeling changes, even a little. How two lands meet - one shore, a strait, cloud, a cliff, a wall, glass or the void - is chosen to suit them.
+- **New worlds to live in.** Lands under the sea (coral reefs, kelp forests, a sunken city), in the sky (cloud castles, floating islands, sunsets, storm clouds), in space (a moon base, a nebula garden, a ringed planet, a station in orbit) and in a city of today (downtown, the harbour, the suburbs, the city at night) - each with its own music, houses, grounds and decorations. A city has its malls, apartments, skyscrapers, hospital, police and fire stations.
+- **Travel that fits.** Every vehicle suits its land: airships and balloons in the sky, submarines and ferries under the sea, spaceships and rockets in space, trains, metros, buses and planes on the ground. Lines stop at great stations - a railway station, a metro, an airport, a ferry terminal, a sky port - and signposts say which line to take and where to get off.
+- **The way through.** Arrows and numbered signs walk you through your projects in the order you lived them - outside along the road of your days, inside each room through its work - however small the map.
+- **Projects as great grounds.** A project spread over several tasks is designed as one place - open fields, a campus or one building of halls - in any outline (a circle, a star, a triangle, a heart...), on free ground of its own, its work shown as a tree, its stages and hardest steps standing out. Great pieces - a roller coaster, a tower, a lake with swan boats - are drawn first, then built after their drawing, and can be ridden or climbed.
+- **Every room designed, card by card.** Each card of your work is shown by a thing that is it - a clipboard for an application, a stack of pages for a paper - with progress widgets that change as the work goes on. Rooms choose their own walls and floors, their own outline, and how open they are. A room too small for its work moves to free ground, or to a new land of the same theme.
+- **Made once, used again.** The things, materials and great pieces your agent makes are kept with a description and used again, and any of them can be the start of a new one.
+- **Pictures in the cards.** The map shows cartoon things; the real picture is in the thing's card and opens at full size. For your own work your agent looks in your own files first - a paper's page, a folder drawn as its tree, a note's first lines - and for public things searches the web in more than one way. A picture is never hung twice, and screenshots of mail, social sites, chats or job applications are never hung.
+- **A living land.** Rivers and lakes are fresh water of their own colour; water flows and glints, clouds drift over the sky, stars twinkle in space, bubbles rise under the sea, and each land has its own drift of leaves, snow, sand or fireflies - only what is in sight, a few frames a second, only while Play is open.
+- **Music and sound.** Each scene and place has its own music: 20 recorded tracks (CC0), each described as it really sounds, and tunes your agent writes for 23 instruments, from violin and cello to koto and steel drum. Footsteps by the ground, animals and vehicles with their own sounds.
+- **Your language.** Play has its own language setting; switching translates the world, and anything you look at is translated at once.
+- The minimap shows the whole land; signs never overlap; the stuck button takes you to the middle of the view.
+- **An art director's pass.** After the roads and lines are laid, your agent looks at the whole land once more: how the lands meet, the edges of the roads and what stands along them, and how each land is lit at night.
+- Scaffolding only beside what is still being built; water foams at the shore instead of blinking; lands have irregular outlines and winding borders.
+- **Keys**: arrow keys walk, WASD moves the view, hold Space to keep jumping; one press mutes all sound; Play opens at the size you left it.
+- Every thing's card can tell a task it belongs to and a fun fact.
+
+**Your agent**
+- **What you may have missed.** Heads-ups now also point out what is behind you: a message not answered, a promise not kept, work due and not touched, the calendar ahead, a deadline you read.
+- **Missed chances.** While you are away it looks back over your activity for times you needed help and it stayed silent, and learns to offer that help next time.
+- **Good and bad.** Every message has a thumbs up and a thumbs down for a good or a bad message; the other emoji say how it made you feel.
+- **Screen control.** Say so in chat and your agent drives the mouse and keyboard for you, a red edge round the screen while it does; touch the mouse or keyboard and it stops at once.
+- The side panel's report is now part of the chat; the panel can be dragged to the full width of the screen, has a full-screen button (for games), and stays at the right edge when you change monitors. The small screen has two screenshot buttons: the whole screen, or a part of it.
+- **Quick replies.** Your agent's message can end with a few one-tap answers, and every message has its own reply box - a reply to that one message only.
+- **Your screen, offered not sent.** Quick and full replies are offered your screen and look at it only when they need it; your message shows the picture only if it was looked at.
+- Web searches keep out only what is secret: mail addresses, your numbers and keys.
+
+**Building**
+- Every build carries THIRD_PARTY_NOTICES.txt with each bundled library's license; the LGPL libraries are shipped as their own replaceable source folders.
 
 ### [v0.3.9](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.9) (2026-11-18, a pre-release)
 
