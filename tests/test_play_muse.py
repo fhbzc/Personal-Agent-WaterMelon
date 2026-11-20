@@ -1380,6 +1380,13 @@ class InBothLanguagesTests(unittest.TestCase):
         for style in pw.ARRANGEMENTS[5:]:
             self.assertIn(f'"{style}"', sound.split("function playSoundAhead", 1)[1], f"{style} is played")
 
+    def test_the_world_is_laid_again_once_when_the_materials_tiles_are_all_in(self) -> None:
+        # 2026-11-19: "刚刚又卡了" - laid again for each of 47 tiles as it came, ~300 ms each, the first seconds held.
+        page = (support.ROOT / "personalized_agent" / "api" / "web" / "play.js").read_text(encoding="utf-8")
+        body = page.split("function playMaterialTiles(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertNotIn("play.chunks.clear()", body, "not laid again tile by tile")
+        self.assertIn("if (!play.tilesLoading) playTilesLaidAgain();", body)
+
     def test_every_track_is_on_the_page_and_on_disk_credited(self) -> None:
         # 2026-11-19: "你找些别的cc0音乐吧"; "你怎么没有弦乐，小提琴那种".
         web = support.ROOT / "personalized_agent" / "api" / "web"

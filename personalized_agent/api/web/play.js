@@ -646,14 +646,24 @@ function playMaterialTiles(floors, store = "materialTiles") {
   for (const [name, one] of Object.entries(floors || {})) {
     if (!one || !one.svg || tiles[name]) continue;
     tiles[name] = "loading";
+    play.tilesLoading = (play.tilesLoading || 0) + 1;
     playSvgImage(one.svg, (image) => {
-      if (!image) { delete tiles[name]; return; }
-      tiles[name] = playFinePixel(image, 16, 16, { outline: false, colours: 12 });
-      if (play.wallTiles) play.wallTiles.clear();
-      if (play.chunks) play.chunks.clear();
-      if (play.on) playDraw();
+      if (image) tiles[name] = playFinePixel(image, 16, 16, { outline: false, colours: 12 });
+      else delete tiles[name];
+      play.tilesLoading = Math.max(0, (play.tilesLoading || 1) - 1);
+      if (!play.tilesLoading) playTilesLaidAgain();
     });
   }
+  // (one that never answers: laid again all the same, a moment later)
+  clearTimeout(play.tilesFallback);
+  play.tilesFallback = setTimeout(() => { if (play.tilesLoading) { play.tilesLoading = 0; playTilesLaidAgain(); } }, 4000);
+}
+/* THE WORLD LAID AGAIN ONCE, WHEN THE MATERIALS' TILES ARE ALL IN (the user, 2026-11-19: "刚刚又卡了" - laid again for each
+   of the 47 tiles as it came, about 300 ms each, the first seconds held again and again). */
+function playTilesLaidAgain() {
+  if (play.wallTiles) play.wallTiles.clear();
+  if (play.chunks) play.chunks.clear();
+  if (play.on) playDraw();
 }
 /* A room's floor as a piece of ground: a built-in one by its own name, any other "mat:" and its name. */
 function playFloorPiece(name) {
