@@ -42,6 +42,22 @@ class TheMacsTests(unittest.TestCase):
         self.assertEqual(sp.the_window_meant(windows, "Tides")["id"], 13)
         self.assertEqual(sp.the_window_meant(windows, "")["id"], 12, "else the front one")
 
+    def test_the_overview_and_the_box_are_in_it_the_side_panel_not(self) -> None:
+        # 2026-11-21: "你现在是不是我的overview panel (不是sidebar) 截屏也看不到，这个应该可以看到"
+        def own(number, title):
+            return {"kCGWindowNumber": number, "kCGWindowOwnerPID": 4242, "kCGWindowOwnerName": "Python",
+                    "kCGWindowName": title, "kCGWindowLayer": 0,
+                    "kCGWindowBounds": {"X": 100, "Y": 100, "Width": 900, "Height": 700}}
+        infos = [own(21, "Waiting notifications - Personal Agent WaterMelon"), own(22, "WaterMelon"),
+                 own(23, "Delegate work - Personal Agent WaterMelon"), own(24, "")] + self.INFOS[2:]
+        windows = sp.mac_windows(infos, 4242)
+        kept = sp.kept_in_picture(windows)
+        self.assertNotIn(21, kept, "the side panel left out")
+        self.assertIn(22, kept, "the Overview in it")
+        self.assertIn(23, kept, "the Delegate work box in it")
+        self.assertNotIn(24, kept, "the avatar and its small windows left out")
+        self.assertEqual(sp.the_window_meant(windows, "")["id"], 22, "the Overview in front: its screen")
+
     def test_the_display_its_window_is_on(self) -> None:
         displays = [(0, 0, 1920, 1080), (1920, 0, 4480, 1440)]
         self.assertEqual(sp.display_of((2000, 100, 2800, 900), displays), displays[1])

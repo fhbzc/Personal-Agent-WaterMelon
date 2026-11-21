@@ -126,11 +126,19 @@ def mac_windows(infos: Any, pid: int) -> List[Dict[str, Any]]:
     return out
 
 
+#: THIS APPLICATION'S WINDOWS THAT ARE IN THE PICTURE (the user, 2026-11-21: "你现在是不是我的overview panel (不是sidebar)
+#: 截屏也看不到，这个应该可以看到"): the page's window (the Overview) and the Delegate work box - on Windows a browser's
+#: windows, in the picture as any - by their titles (ui/mac_panel.py PAGE_TITLE, TITLE). The side panel, the avatar, its
+#: tab and the chat bubble stay out.
+OWN_IN_PICTURE = ("WaterMelon", "Delegate work - Personal Agent WaterMelon")
+
+
 def kept_in_picture(windows: List[Dict[str, Any]], hidden: Optional[Any] = None) -> List[int]:
-    """The windows a Mac's picture is made of, from the front: every one but this application's
-    and those never read - left out, not painted over: what is behind them shows."""
-    return [one["id"] for one in windows if not one.get("ours") and not (
-        hidden and hidden(str(one.get("application") or ""), str(one.get("title") or "")))]
+    """The windows a Mac's picture is made of, from the front: every one but this application's own (but the page's
+    and the box's, OWN_IN_PICTURE) and those never read - left out, not painted over: what is behind them shows."""
+    return [one["id"] for one in windows
+            if (not one.get("ours") or str(one.get("title") or "") in OWN_IN_PICTURE) and not (
+                hidden and hidden(str(one.get("application") or ""), str(one.get("title") or "")))]
 
 
 def display_of(box: Optional[Tuple[int, int, int, int]], displays: List[Tuple[int, int, int, int]]
@@ -148,7 +156,8 @@ def display_of(box: Optional[Tuple[int, int, int, int]], displays: List[Tuple[in
 
 def the_window_meant(windows: List[Dict[str, Any]], title: str) -> Optional[Dict[str, Any]]:
     """Of the user's windows on the screen, from the front: the one of that title, else the front."""
-    users = [one for one in windows if not one.get("ours") and int(one.get("layer") or 0) == 0
+    users = [one for one in windows if (not one.get("ours") or str(one.get("title") or "") in OWN_IN_PICTURE)
+             and int(one.get("layer") or 0) == 0
              and one["box"][2] - one["box"][0] >= 120 and one["box"][3] - one["box"][1] >= 90]
     return next((one for one in users if title and one.get("title") == title),
                 users[0] if users else None)
