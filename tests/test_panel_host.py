@@ -163,6 +163,12 @@ class TheHostTests(unittest.TestCase):
         with mock.patch.object(sys, "frozen", True, create=True):
             self.assertIsNone(ph.host_folder(), "the packaged application starts itself, wherever it is")
 
+    def test_no_limit_to_the_pages_memory(self) -> None:
+        # 2026-11-21: "Out of Memory" - a 512 MB limit took the side panel down twice in its first 20 s
+        self.assertNotIn("max-old-space-size", ph.BROWSER_ARGUMENTS)
+        self.assertNotIn("renderer-process-limit", ph.BROWSER_ARGUMENTS)
+        self.assertIn("msOverlayScrollbarWinStyle", ph.BROWSER_ARGUMENTS)
+
 
 class TheSharedWindowsFunctionsTests(unittest.TestCase):
     """THE AVATAR TUCKED, THE PANEL STILL COMES (the user, 2026-11-15: "我现在logo是在侧边，是这个的原因吗"): the

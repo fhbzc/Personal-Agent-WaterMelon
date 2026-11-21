@@ -745,5 +745,41 @@ def pieces_task():
     return playpieces.TASK_PIECE
 
 
+class AWayFromNowhereEndsTests(unittest.TestCase):
+    """2026-11-21, v0.3.11's first day: "This page is having a problem - Out of Memory". A project's hot-air balloon
+    (runs in the sky) had stops on the ground with no sky tile kept; its way was looked for from undefined, and the
+    way back from the goal went round for ever - gigabytes in seconds."""
+
+    def test_a_projects_boat_or_balloon_stops_where_it_floats(self) -> None:
+        act = (WEB / "play-act.js").read_text(encoding="utf-8")
+        self.assertIn('if (look.runs === "water") return playShoreNear(z.out[0], z.out[1], z.region);', act)
+        self.assertIn('if (look.runs === "sky") return playSkyNear(z.out[0], z.out[1], z.region, 1);', act)
+
+    def test_the_way_from_nowhere_is_none_and_never_longer_than_its_box(self) -> None:
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not here")
+        act = (WEB / "play-act.js").read_text(encoding="utf-8")
+        start = act.index("function playWaterRoute(")
+        body = act[start:act.index("\n}\n", start) + 3]
+        script = body + """
+const open = () => true;
+const out = [
+  playWaterRoute([undefined, undefined], [10, 10], open),
+  playWaterRoute([NaN, 3], [10, 10], open),
+  playWaterRoute([2.5, 3], [10, 10], open),
+];
+const fine = playWaterRoute([0, 0], [3, 0], open);
+console.log(JSON.stringify({ out, fine }));
+"""
+        done = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        said = json.loads(done.stdout)
+        self.assertEqual(said["out"], [None, None, None])
+        self.assertEqual(said["fine"], [[0, 0], [1, 0], [2, 0], [3, 0]])
+
+
 if __name__ == "__main__":
     unittest.main()

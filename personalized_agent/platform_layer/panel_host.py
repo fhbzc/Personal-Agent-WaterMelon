@@ -50,10 +50,11 @@ UNSEEN_SECONDS = 0.4
 #: The WebView2 runtime's key, where the installer registers it (machine-wide, or for the user).
 RUNTIME_KEY = r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 #: Thin scrollbars that come and go, as Windows' own (measured: the classic one, with arrows, otherwise).
-# AND LESS MEMORY (the user, 2026-11-20: memory - "这个可以的"): one page process for the panel's pages, and a limit to
-# the scripts' own memory (Play's world uses well under it).
-BROWSER_ARGUMENTS = ("--enable-features=msOverlayScrollbarWinStyle,msOverlayScrollbarWinStyleAnimation "
-                     "--renderer-process-limit=1 --js-flags=--max-old-space-size=512")
+# NO LIMIT TO THE PAGES' MEMORY (2026-11-21, v0.3.11's first start: "This page is having a problem - Out of Memory"):
+# a limit of 512 MB to the scripts' memory, with one page process for every panel, took the side panel down twice in
+# its first 20 s ("Ineffective mark-compacts near heap limit", 510.9 of 511.8 MB, in the renderer's dump). A page
+# that needs more is to be found and mended, not ended.
+BROWSER_ARGUMENTS = "--enable-features=msOverlayScrollbarWinStyle,msOverlayScrollbarWinStyleAnimation"
 
 
 # -- the host: run in its own process ----------------------------------------------------------------

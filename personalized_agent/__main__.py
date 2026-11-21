@@ -638,6 +638,18 @@ def _watch_the_start(root: Any) -> Any:
 
 #: Kept open for the whole run: what faulthandler writes into if the process itself goes down.
 _CRASH_FILE: Any = None
+#: The last line of a run that ended as it should; the first line's mark that a crash file has one when it did.
+CLEAN_END, CRASH_FILE_MARK = "ended cleanly", "(its clean end written last)"
+
+
+def _ended_cleanly() -> None:
+    """The run ended as it should: said last in crash.txt (whatever handled errors were written before it)."""
+    try:
+        if _CRASH_FILE is not None and not _CRASH_FILE.closed:
+            _CRASH_FILE.write(f"{CLEAN_END} {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            _CRASH_FILE.flush()
+    except Exception:
+        pass
 
 
 def _record_crashes(root: Any) -> None:
@@ -645,13 +657,20 @@ def _record_crashes(root: Any) -> None:
     application this month, the log not one: a crash of the process itself writes no log line). In a build with
     the Debugger only, as the start's watch: faulthandler's handler for a fatal error or a fault - the Python
     error's words and where every thread was - into the logs' crash.txt; the last run's, if it crashed, kept as
-    crash-<when>.txt and said in the log. The handler runs only as the process ends - unlike the start watch's
-    timed dump (`_watch_the_start`), it never reads a running thread."""
+    crash-<when>.txt and said in the log.
+
+    A CRASH IS A RUN THAT DID NOT END (2026-11-21, the first day it ran): on Windows faulthandler's handler is called
+    for every error exception, a handled one too - UI Automation's COM calls raise 0x8001010d (a call out refused
+    during an input call) and go on - so what it wrote never said by itself that the process went down, and each
+    start called the last run a crash. Now a run that ends as it should writes CLEAN_END last (atexit); the last run
+    crashed only when its file has not got it. On Windows only the failing thread's own place is written (the others
+    run on - reading them was what brought a slow start down, `_watch_the_start`)."""
     global _CRASH_FILE
     try:
         from .build_flags import debugger_available
         if not debugger_available():
             return
+        import atexit
         import faulthandler
         from .common.paths import AppPaths, resolve_root
         folder = AppPaths(resolve_root(root)).logs_dir
@@ -659,15 +678,16 @@ def _record_crashes(root: Any) -> None:
         path = folder / "crash.txt"
         if path.exists():
             said = path.read_text(encoding="utf-8", errors="replace")
-            if said.count("\n") > 1:                         # more than its first line: the last run crashed
+            if CRASH_FILE_MARK in said.split("\n", 1)[0] and CLEAN_END not in said:   # (a file of before: not judged)
                 kept = folder / f"crash-{time.strftime('%Y%m%d-%H%M%S', time.localtime(path.stat().st_mtime))}.txt"
                 path.replace(kept)
-                log.warning("the last run ended in a crash - what it said is in %s", kept)
+                log.warning("the last run did not end as it should (a crash) - what it said is in %s", kept)
         _CRASH_FILE = open(path, "w", encoding="utf-8")
         _CRASH_FILE.write(f"{APP_NAME} {__version__}, started {time.strftime('%Y-%m-%d %H:%M:%S')}, "
-                          f"process {os.getpid()}\n")
+                          f"process {os.getpid()} {CRASH_FILE_MARK}\n")
         _CRASH_FILE.flush()
-        faulthandler.enable(file=_CRASH_FILE, all_threads=True)
+        faulthandler.enable(file=_CRASH_FILE, all_threads=sys.platform != "win32")
+        atexit.register(_ended_cleanly)
     except Exception:                        # never in the way of starting
         log.debug("crashes could not be recorded", exc_info=True)
 

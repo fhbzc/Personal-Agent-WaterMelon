@@ -312,8 +312,13 @@ function playLines() {
   // 工具"): its line through them, a stop by each one's door.
   for (const one of (design && design.local) || []) {
     const look = PLAY_VEHICLES[one.vehicle] || PLAY_VEHICLES.bus;
+    // AFLOAT, ITS STOPS WHERE IT FLOATS (2026-11-21: a project's hot-air balloon - "airship", in the sky - had stops on
+    // the ground with no sky tile kept, its way looked for from nowhere, and the page held on until it ran out of
+    // memory): a boat's at the shore, a balloon's at the sky's edge, as the designed lines' - none, no line.
     const stops = (one.places || []).map((id) => map.zones.find((z) => z.zone.id === id)).filter(Boolean).map((z) => {
-      const at = look.runs === "water" ? null : playActSpotNear(z.out[0] + 2, z.out[1] + 1);
+      if (look.runs === "water") return playShoreNear(z.out[0], z.out[1], z.region);
+      if (look.runs === "sky") return playSkyNear(z.out[0], z.out[1], z.region, 1);
+      const at = playActSpotNear(z.out[0] + 2, z.out[1] + 1);
       return at && { x: at[0], y: at[1], name: z.zone.name || z.zone.kind, region: z.region };
     }).filter(Boolean);
     if (stops.length >= 2) lines.push({ kind: look.kind, look: one.vehicle, name: "", stops, loop: false, local: true });
@@ -545,6 +550,10 @@ function playSkyNear(hx, hy, region, side) {
 /* The way on the water - or, given `wet`, in the sky - from one tile to another (four ways, in a box round them; none
    if they do not join). */
 function playWaterRoute(from, to, wet) {
+  // Only from a tile to a tile: an end not a whole number (undefined, NaN) gave no start in the box, and the way back
+  // from the goal went round for ever (2026-11-21, the page out of memory) - none; the way back never longer than
+  // the box.
+  if (![from[0], from[1], to[0], to[1]].every(Number.isInteger)) return null;
   const open = wet || playIsWater;
   const pad = 30, minX = Math.min(from[0], to[0]) - pad, minY = Math.min(from[1], to[1]) - pad;
   const W = Math.abs(from[0] - to[0]) + 2 * pad + 1, H = Math.abs(from[1] - to[1]) + 2 * pad + 1;
@@ -566,7 +575,10 @@ function playWaterRoute(from, to, wet) {
   }
   if (came[goal] === -2) return null;
   const route = [];
-  for (let i = goal; i !== -1; i = came[i]) route.push([(i % W) + minX, ((i / W) | 0) + minY]);
+  for (let i = goal; i !== -1; i = came[i]) {
+    route.push([(i % W) + minX, ((i / W) | 0) + minY]);
+    if (route.length > W * H) return null;
+  }
   return route.reverse();
 }
 /* A straight run is clear when it and a little to each side of it pass only where the line may go. */
