@@ -952,7 +952,8 @@ class TheSidePanelTests(unittest.TestCase):
         calls.clear()
         with mock.patch.object(mac_panel, "has_side_panel", return_value=True),                 mock.patch.object(mac_panel, "hide_side_panel") as hid:
             self.assertTrue(DesktopAgent.hide_notes_panel(desk))
-            [(kind, put_away)] = calls
+            # put away first; then its tab at the edge again (2026-11-21, on a Mac as on Windows)
+            (kind, put_away), *after = calls
             put_away()
         hid.assert_called_once_with(DesktopAgent.NOTES_TITLE)
         with mock.patch.object(mac_panel, "has_side_panel", return_value=False):

@@ -119,8 +119,10 @@ def needed(config: Any) -> Dict[str, bool]:
     def on(key: str) -> bool:
         return bool(config.get(key, True))
     front = on("listener_application_enabled")
+    # ACCESSIBILITY ALWAYS (the user, 2026-11-21: "要让其它窗口让开，作为一个required permission(会提醒user的那种)"): the
+    # side panel moves the windows it would cover over by it (dock_mac.py) - whatever the listener's switches.
     return {"full_disk": on("listener_filesystem_enabled") or on("listener_browser_enabled"),
-            "accessibility": front,
+            "accessibility": True,
             "automation": front,
             "screen": front and on("listener_screenshots_enabled")}
 

@@ -120,7 +120,7 @@ const PLAY_SCENE_TUNES = {
               melody: "E5 G#5 B5 E6 - D#6 B5 - C#6 B5 G#5 - F#5 - E5 -", bass: "E3 A2 B2 E3" },
   festival: { tempo: 132, instrument: "organ", accompaniment: "marimba", style: "march", mode: "major",
               melody: "C5 C5 E5 G5 E5 G5 C6 - A5 G5 F5 E5 D5 - C5 -", bass: "C3 G2 F2 G2" },
-  toy_town: { tempo: 120, instrument: "chiptune", accompaniment: "marimba", style: "bounce", mode: "major",
+  toy_town: { tempo: 120, instrument: "musicbox", accompaniment: "marimba", style: "bounce", mode: "major",   // pink and white (2026-11-21): a music box
               melody: "G5 E5 C5 E5 G5 - G5 - A5 F5 D5 F5 A5 - G5 -", bass: "C3 G2 F2 G2" },
   new_year_lanterns: { tempo: 84, instrument: "koto", accompaniment: "harp", style: "folk", mode: "major",
                        melody: "D5 E5 G5 A5 - G5 E5 - D5 - C5 D5 E5 - D5 -", bass: "D3 A2 G2 A2" },
@@ -223,6 +223,22 @@ const PLAY_SCENE_TUNES = {
               melody: "F5 A5 C6 A5 G5 E5 C5 - D5 E5 F5 G5 A5 - F5 -", bass: "F2 C3 Bb2 C3" },
   river_journey: { tempo: 96, instrument: "guitar", accompaniment: "harp", style: "arpeggio", mode: "major",
                    melody: "A4 C#5 E5 A5 - G#5 E5 - F#5 E5 C#5 - B4 - A4 -", bass: "A2 D3 E3 A2" },
+  // THREE THEMES MORE (the user, 2026-11-21): a castle's lute and horn, a toy town's music box, old China's koto and
+  // flute on five notes.
+  castle_keep: { tempo: 92, instrument: "harp", accompaniment: "strings", style: "march", mode: "minor",
+                 melody: "D5 - F5 G5 A5 - G5 F5 E5 - C5 - D5 - - -", bass: "D2 C3 Bb2 A2" },
+  tower_watch: { tempo: 60, instrument: "flute", accompaniment: "pad", style: "pad", mode: "minor",
+                 melody: "A4 - - C5 D5 - E5 - D5 - C5 - A4 - - -", bass: "A2 G2 F2 E2" },
+  medieval_market: { tempo: 112, instrument: "guitar", accompaniment: "accordion", style: "folk", mode: "major",
+                     melody: "G5 A5 B5 - A5 G5 E5 - D5 E5 G5 - A5 - G5 -", bass: "G2 D3 C3 D3" },
+  candy_town: { tempo: 104, instrument: "celesta", accompaniment: "kalimba", style: "waltz", mode: "major",
+                melody: "C6 - G5 - E5 G5 C6 - D6 C6 A5 - G5 - - -", bass: "C3 F2 G2 C3" },
+  bamboo_grove: { tempo: 58, instrument: "koto", accompaniment: "flute", style: "ambient", mode: "major",
+                  melody: "D5 - E5 - G5 - - A5 G5 - E5 - D5 - - -", bass: "D2 A2 G2 A2" },
+  chinese_courtyard: { tempo: 76, instrument: "koto", accompaniment: "harp", style: "folk", mode: "major",
+                       melody: "G5 A5 C6 - A5 G5 E5 - D5 E5 G5 - E5 - D5 -", bass: "G2 D3 C3 D3" },
+  water_town: { tempo: 68, instrument: "flute", accompaniment: "koto", style: "arpeggio", mode: "major",
+                melody: "E5 - G5 A5 - G5 E5 - D5 - C5 D5 E5 - - -", bass: "C3 G2 A2 G2" },
 };
 /* RECORDED MUSIC (the user, 2026-11-17: "你的音乐也可以自己去网上搜索"; CC0 tracks, play/ASSETS.txt): a place has one
    only where the agent chose it as the right fit (agent/playworld.py TRACKS) - else its own written tune; looped,
@@ -1168,6 +1184,8 @@ const PLAY_CRIES = {
   tiger: [{ wave: "sawtooth", f: [115, 150, 80], len: 1.1, band: 320, q: 0.8, vib: [22, 16], level: 1.3 }],
   lion: [{ wave: "sawtooth", f: [100, 140, 70], len: 1.3, band: 300, q: 0.8, vib: [18, 14], level: 1.4 }],
   bear: [{ wave: "sawtooth", f: [88, 98, 70], len: 0.9, band: 260, q: 0.9, vib: [28, 10], level: 1.3 }],
+  // old China's panda (2026-11-21): a soft bleat, high for its size.
+  panda: [{ wave: "sawtooth", f: [240, 290, 210], len: 0.45, band: 800, q: 1.3, vib: [9, 14] }],
   polarBear: [{ wave: "sawtooth", f: [80, 92, 66], len: 1.0, band: 240, q: 0.9, vib: [26, 10], level: 1.3 }],
   gorilla: [0, 0.11, 0.22, 0.33, 0.44, 0.55].map((at) => ({ at, wave: "sine", f: [95, 60], len: 0.09, level: 1.4 }))
     .concat([{ at: 0.7, wave: "sawtooth", f: [135, 100], len: 0.3, band: 380, q: 1 }]),

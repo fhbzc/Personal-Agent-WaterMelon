@@ -458,10 +458,10 @@ class StationsAndPlacesTests(unittest.TestCase):
 
     def test_arrows_dense_each_way_its_own_colour(self) -> None:
         # 2026-11-20: "道路地上的箭头可以密集一点，并且不同path用不同颜色，我刚刚说的不密只是说牌子不密".
+        # (the rooms' every-second-step arrows gone 2026-11-21: "屋内的就不要箭头好了" - the road's kept)
         play = (WEB / "play.js").read_text(encoding="utf-8")
-        self.assertIn("for (let k = 1; k < path.length - 1; k += 2) {", play)
         self.assertIn("for (let k = 2; k < path.length - 2; k += 3) {", play)
-        self.assertIn("ctx.fillStyle = PLAY_ARROW_COLOURS[(one.c || 0) % PLAY_ARROW_COLOURS.length];", play)
+        self.assertIn("PLAY_ARROW_COLOURS[(one.c || 0) % PLAY_ARROW_COLOURS.length];", play)
         self.assertIn("if (taken.has(`${x},${y}`)) return;", play)
 
     def test_outside_the_road_of_their_life_has_arrows_and_sparser_signs(self) -> None:
@@ -743,6 +743,169 @@ class TheWayToTheNextMapTests(unittest.TestCase):
 def pieces_task():
     from personalized_agent.agent import playpieces
     return playpieces.TASK_PIECE
+
+
+class EveryPartOfARoomWalkedToTests(unittest.TestCase):
+    """The user, 2026-11-21: "这里面很多item被路堵住了，进不去" - rooms moved onto a great ground kept their doors where
+    they had stood; walls grown inside a room had things standing in their doorways; made things stood larger on the
+    page than the world thought."""
+
+    def room(self, **more):
+        return {"id": "z1", "kind": "library", "x": 0, "y": 0, "w": 20, "h": 12, "door": 11, "region": "r1", **more}
+
+    def walked(self, keeper, world, zone):
+        left, top, w, h = keeper.floor_of(zone)
+        walls = pw.places.inner_walls(zone)
+        covered = set()
+        for one in world["items"]:
+            if one["zone"] == zone["id"]:
+                covered |= keeper._tiles_of(one)
+        free = {(x, y) for x in range(left, left + w) for y in range(top, top + h)} - walls - covered
+        seen, todo = set(), [(zone["door"] + d, top + h - 1) for d in range(pw.DOOR_W)]
+        while todo:
+            at = todo.pop()
+            if at in seen or at not in free:
+                continue
+            seen.add(at)
+            todo += [(at[0] + 1, at[1]), (at[0] - 1, at[1]), (at[0], at[1] + 1), (at[0], at[1] - 1)]
+        return free, seen
+
+    def test_a_door_off_its_rooms_wall_is_put_back_on_it(self) -> None:
+        world = {"zones": [self.room(door=458), self.room(id="z2", door=5)]}
+        self.assertEqual(pw.PlayWorld._doors_on_walls(world), 1)
+        self.assertEqual(world["zones"][0]["door"], 0 + 1 + 20 // 2)
+        self.assertEqual(world["zones"][1]["door"], 5, "a door on its wall stays where it is")
+        self.assertEqual(pw.PlayWorld._doors_on_walls(world), 0)
+
+    def test_what_stands_in_an_inner_doorway_is_moved_and_nothing_let_go(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            keeper = keeper_in(folder)
+            zone = self.room()
+            left, top, w, h = keeper.floor_of(zone)
+            vx = left + w // 3
+            gaps = [y for y in range(top, top + h) if (vx, y) not in pw.places.inner_walls(zone)]
+            self.assertTrue(gaps)
+            plant = next(k for k, v in pw.ITEM_KINDS.items() if tuple(v.get("size") or ()) == (1, 1)
+                         and not v.get("wall") and not v.get("under") and not v.get("hangs"))
+            world = {"zones": [zone], "items": [{"id": f"i{n}", "zone": "z1", "kind": plant, "x": vx + 1, "y": y}
+                                                for n, y in enumerate(gaps)]}
+            free, seen = self.walked(keeper, world, zone)
+            self.assertTrue(free - seen, "the room's left part closed off to begin with")
+            moved, _marked = keeper._ways_open(world)
+            self.assertGreater(moved, 0)
+            free, seen = self.walked(keeper, world, zone)
+            self.assertEqual(free - seen, set(), "every part of the room walked to")
+            self.assertEqual(len(world["items"]), len(gaps), "nothing let go")
+            world.pop("ways_mark")                       # walked afresh, not skipped by its mark
+            self.assertEqual(keeper._ways_open(world)[0], 0, "and nothing moved the next time")
+
+    def test_a_room_of_its_own_outline_is_walked_as_the_page_lays_it(self) -> None:
+        # 2026-11-21: a pentagon walked as a square - its wings shut off, a thing moved into its outline's wall
+        with tempfile.TemporaryDirectory() as folder:
+            keeper = keeper_in(folder)
+            zone = self.room(w=13, h=7, door=7, shape={"kind": "pentagon", "seed": 0})
+            floor = keeper._floor_tiles(zone)
+            left, top, w, h = keeper.floor_of(zone)
+            square = {(x, y) for x in range(left, left + w) for y in range(top, top + h)}
+            off = sorted(square - floor)
+            self.assertTrue(off, "a pentagon's floor is less than its box")
+            plant = next(k for k, v in pw.ITEM_KINDS.items() if tuple(v.get("size") or ()) == (1, 1)
+                         and not v.get("wall") and not v.get("under") and not v.get("hangs"))
+            world = {"zones": [zone], "items": [{"id": "i1", "zone": "z1", "kind": plant, "x": off[0][0], "y": off[0][1]}]}
+            self.assertEqual(keeper._ways_open(world)[0], 1)
+            self.assertLessEqual(keeper._tiles_of(world["items"][0]), floor, "moved onto the room's own floor")
+            world.pop("ways_mark")
+            self.assertEqual(keeper._ways_open(world)[0], 0)
+
+    def test_a_made_thing_is_as_large_as_the_page_draws_it(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            name = "test_made_long_bench_20261121"
+            self.addCleanup(lambda: pw.ITEM_KINDS.pop(name, None))
+            (Path(folder) / "made.json").write_text(json.dumps({"items": {name: {"size": [3, 1], "svg": ""}}}),
+                                                    encoding="utf-8")
+            keeper = keeper_in(folder)
+            keeper._made_kinds_known()
+            self.assertEqual(pw.item_size({"kind": name}), (3, 1))
+        play = (WEB / "play.js").read_text(encoding="utf-8")
+        self.assertIn("for (const [name, one] of Object.entries(play.made.items || {})) if (Array.isArray(one.size)) "
+                      "PLAY_SIZES[name] = one.size;", play)
+
+    def test_nothing_on_another_without_sense_and_unseen(self) -> None:
+        # 2026-11-21: "为什么你这两个东西会overlap?"; "你这些叠的没有逻辑，而且看不出来"
+        with tempfile.TemporaryDirectory() as folder:
+            keeper = keeper_in(folder)
+            zone = self.room(w=12, h=8, door=6)
+            left, top, w, h = keeper.floor_of(zone)
+            kinds = pw.ITEM_KINDS
+            stand = next(k for k, v in kinds.items() if tuple(v.get("size") or ()) == (1, 1) and not v.get("wall")
+                         and not v.get("under") and not v.get("hangs"))
+            laid = next(k for k, v in kinds.items() if v.get("under") and tuple(v.get("size") or ()) == (1, 1))
+            hung = next(k for k, v in kinds.items() if v.get("hangs"))
+            at = (left + 2, top + 2)
+            world = {"zones": [zone], "items": [
+                {"id": "i1", "zone": "z1", "kind": stand, "x": at[0], "y": at[1], "made": "1"},
+                {"id": "i2", "zone": "z1", "kind": stand, "x": at[0], "y": at[1], "made": "2"},      # on the first
+                {"id": "i3", "zone": "z1", "kind": laid, "x": at[0], "y": at[1], "made": "3"},       # covered whole
+                {"id": "i4", "zone": "z1", "kind": hung, "x": at[0], "y": at[1], "hang": True, "made": "4"},
+                {"id": "i5", "zone": "z1", "kind": stand, "x": at[0], "y": at[1], "on": "i2", "made": "5"}]}
+            keeper._ways_open(world)
+            spot = {one["id"]: (one["x"], one["y"]) for one in world["items"]}
+            self.assertEqual(spot["i1"], at, "the first stays")
+            self.assertNotEqual(spot["i2"], at, "the second moved off it")
+            self.assertEqual(spot["i5"], spot["i2"], "what was set on it, with it")
+            self.assertNotIn(spot["i3"], {spot["i1"], spot["i2"]}, "a thing laid on the floor not covered whole")
+            self.assertNotIn(spot["i4"], {spot["i1"], spot["i2"]}, "nothing hung over what stands")
+            world.pop("ways_mark")
+            self.assertEqual(keeper._ways_open(world)[0], 0, "and nothing moved the next time")
+
+    def test_a_world_walked_once_is_not_walked_again_till_it_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            keeper = keeper_in(folder)
+            world = {"zones": [self.room()], "items": []}
+            self.assertEqual(keeper._ways_open(world), (0, True), "walked, and marked")
+            self.assertEqual(keeper._ways_open(world), (0, False), "nothing changed: not walked again")
+            world["zones"][0]["w"] = 22
+            self.assertEqual(keeper._ways_open(world)[1], True, "a room changed: walked again")
+
+    def test_q_takes_the_next_thing_within_reach(self) -> None:
+        # 2026-11-21: "钢琴下面的椅子，我好像是访问不到的" - within reach, never the nearest
+        play = (WEB / "play.js").read_text(encoding="utf-8")
+        act = (WEB / "play-act.js").read_text(encoding="utf-8")
+        self.assertIn("if (reach.length) near = reach[(play.nearTurn || 0) % reach.length][1];", play)
+        self.assertIn('if (!typing && ["q", "Q", "Tab"].includes(event.key) && play.reach && play.reach.length > 1) {', play)
+        self.assertIn("if (reachIds !== play.reachIds) { play.reachIds = reachIds; play.nearTurn = 0; }", play)
+        self.assertIn('return ` · Q ${playWords("Next")}', act)
+
+    def test_every_lines_rails_first_every_vehicle_on_top(self) -> None:
+        # 2026-11-21: "这个火车放在铁轨下了，应该是在铁轨上的"
+        act = (WEB / "play-act.js").read_text(encoding="utf-8")
+        draw = act[act.index("function playLinesDraw(size, now) {"):]
+        rails = draw.index('for (const line of playLines()) if (line.kind === "train") playTrackDraw(line, size);')
+        self.assertLess(rails, draw.index("playTrainDraw(line, cars, size)"), "the rails all drawn before any train")
+        self.assertEqual(draw[:draw.index("/* -- THE MENU")].count("playTrackDraw("), 1)
+
+    def test_the_thing_e_would_take_is_marked(self) -> None:
+        # 2026-11-21: "按 Q 换选 这个能不能高亮当前选中的item"
+        act = (WEB / "play-act.js").read_text(encoding="utf-8")
+        self.assertIn("function playNearMarkDraw(size) {", act)
+        self.assertIn("if (!near || near.at || near.zone === undefined || near.x === undefined || play.ride || play.sit) return;", act)
+        self.assertLess(act.index("  playNearMarkDraw(size);"), act.index("  playActHintDraw(size);\n  // A portal gone through"))
+
+    def test_where_ways_meet_one_arrow_of_its_own_colour(self) -> None:
+        # 2026-11-21: "这种小块地里有好多道路标记的看着很杂乱，能合并成一个新颜色的（表示总体的方向）"
+        play = (WEB / "play.js").read_text(encoding="utf-8")
+        self.assertIn('const PLAY_ARROW_MERGED = "rgba(255, 255, 255, 0.95)";', play)
+        self.assertIn("const PLAY_ARROW_APART = 2;", play)
+        self.assertIn("by.sx += dx; by.sy += dy; by.last = [dx, dy]; by.ways.add(c);", play)
+        self.assertIn("ctx.fillStyle = one.merged ? PLAY_ARROW_MERGED :", play)
+
+    def test_arrows_on_the_roads_only(self) -> None:
+        # 2026-11-21: "屋内的就不要箭头好了"; "花园、广场 的箭头也不要，就保留道路上的箭头就行"
+        play = (WEB / "play.js").read_text(encoding="utf-8")
+        marks = play[play.index("function playRouteMarks()"):play.index("const PLAY_ARROW_COLOURS")]
+        self.assertNotIn("along(", marks, "no arrows in rooms, gardens, squares or on a great ground")
+        self.assertIn("for (const path of (map.life && map.life.routes) || [])", marks)
+        self.assertIn("marks.stops.push({ x: one.x, y: one.y, n: n + 1", marks, "the numbered signs kept")
 
 
 class AWayFromNowhereEndsTests(unittest.TestCase):

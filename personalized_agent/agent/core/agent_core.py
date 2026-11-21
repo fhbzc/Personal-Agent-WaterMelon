@@ -796,7 +796,7 @@ class AgentCore:
                 answer = (
                     "I cannot reason about this right now: the configured model is "
                     f"unavailable ({exc.availability.reason or exc.availability.state.value}). "
-                    "Open Settings > Models to fix the configuration."
+                    "Open Settings > General > Models to fix the configuration."
                 )
                 # A lost sign-in is asked for by the application itself
                 # ("Sign in to ... again"): one problem, one message (88.1).
@@ -807,7 +807,7 @@ class AgentCore:
                         "Model unavailable", answer, kind="warning",
                         dedupe_key="agent.model_unavailable",
                         signature=exc.availability.state.value,
-                        action_hint="Open Settings > Models.",
+                        action_hint="Open Settings > General > Models.",
                     )
                 break
 

@@ -179,6 +179,26 @@ class ApiTests(unittest.TestCase):
         with urllib.request.urlopen(keyed(self.app, request), timeout=20) as response:
             return json.loads(response.read().decode("utf-8"))
 
+    def test_the_claude_sign_in_opens_a_terminal_and_the_attention_is_said(self) -> None:
+        """The user, 2026-11-21: "你的sign in 超链接没用，没有打开网站" - the route itself called, not its words read."""
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from personalized_agent.platform_layer import terminal
+        claude = SimpleNamespace(executable=lambda: "/opt/bin/claude",
+                                 get_auth_status=lambda: SimpleNamespace(to_dict=lambda: {"state": "authentication_required"}))
+        opened = []
+        real = self.app.models.provider
+        with mock.patch.object(self.app.models, "provider",
+                               side_effect=lambda one: claude if one == "claude_code" else real(one)), \
+                mock.patch.object(terminal, "open_in_terminal",
+                                  side_effect=lambda command, title, folder, said_after="": opened.append((command, folder)) or True):
+            said = self.post("/api/models/claude/sign_in", {"provider": "claude_code"})
+            self.assertEqual(said, {"opened": True})
+            self.assertEqual(opened[0][0], ["/opt/bin/claude", "auth", "login"])
+            attention = self.get("/api/models/attention")
+        self.assertEqual(set(attention), {"offline", "first", "claude_installed", "claude_signed_in"})
+
     def test_the_monitor_panel_edits_and_names_one(self) -> None:
         """The user, 2026-11-07: the user edits a Monitor and gives it a display name."""
         built_in = next(one for one in self.get("/api/monitor")["activators"]

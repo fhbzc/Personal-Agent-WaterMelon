@@ -48,7 +48,11 @@ drawn.png     - made for the app (scripts/play_drawn_sprites.py; shapes lit and 
                 plum tree; a fair's ticket booth, ice cream, hot dog and candy stands, balloons, bunting, queue rails, a
                 carousel, a ferris wheel, a drop tower, a swing ship, a circus tent, a coaster station, track and car;
                 fish tanks (with the CC0 fish of sea.png), a jellyfish, coral, an anemone, seaweed, bubbles, tunnel glass;
-                a heart arch; a star.
+                a heart arch; a star; (2026-11-21) castles and towers - a tower, a wall, a gate, a banner, a knight, a
+                well, a training dummy, a weapon rack, hay, a horse, a carriage; a toy town in pink and white - its
+                grounds, a pink tree, sweets, toys, a white fence, a toy train; old China - flagstones, bamboo, a pagoda,
+                a pavilion, a moon gate, a stone lantern, a scholar's rock, a willow, an archway, a bonsai, a dragon
+                boat, a rickshaw.
 sea.png       - fish of "Fish (DB32)" (pixel fishes, CC0, opengameart.org/content/fish-db32), 2026-11-17.
 love.png      - "Valentine & Anti Valentine sprite Sheet" (CC0, opengameart.org/content/valentine-anti-valentine-sprite-
                 sheet) and "Jack o lantern pumpkin" (CC0, opengameart.org/content/jack-o-lantern-pumpkin, made 16 px from

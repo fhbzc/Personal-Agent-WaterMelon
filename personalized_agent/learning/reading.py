@@ -935,7 +935,7 @@ class UnitReader:
                     self.model_wrong = (
                         f"{len(self.unreadable)} parts in a row were answered with nothing that "
                         f"could be read ({self.unreadable[-1][3]}): the model looks wrong, not "
-                        f"what it was asked - check Settings > Models. Nothing was marked; it is "
+                        f"what it was asked - check Settings > General > Models. Nothing was marked; it is "
                         f"read again next time.")
                     log.warning("learning stopped: %s", self.model_wrong)
                     self.unreadable = []

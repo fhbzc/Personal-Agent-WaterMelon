@@ -18,6 +18,37 @@ POINTER_SHAPE = ((0, 0), (0, 17), (4, 13), (7, 20), (10, 19), (7, 12), (12, 12))
 POINTER_FOR_HEIGHT = 1080
 
 
+#: THE PINNED SIDE PANEL'S STRIP ON A MAC (the user, 2026-11-21: "你mac侧边screenshot of the whole screen 只是把sidebar抹
+#: 去，那个空位还是在的"): each says the strip (left, top, right, bottom; top-left origin) while the panel is pinned and
+#: shown, else None - set by the desktop; Windows has its own (windows.py SIDE_STRIP).
+MAC_SIDE_STRIP: List[Any] = []
+
+
+def strip_left_off(screen: Tuple[int, int, int, int], strip: Optional[Tuple[int, int, int, int]]
+                   ) -> Tuple[int, int, int, int]:
+    """The screen to the left of a side panel's strip down its right edge - what is under a pinned panel is not the
+    user's (the room the windows were moved out of) - else the whole screen (windows.py without_the_strip, the same)."""
+    if not strip:
+        return screen
+    left, top, right, bottom = strip
+    if screen[0] < left < screen[2] and right >= screen[2] - 2 and top < screen[3] and bottom > screen[1]:
+        return (screen[0], screen[1], left, screen[3])
+    return screen
+
+
+def mac_strip_left_off(screen: Tuple[int, int, int, int]) -> Tuple[int, int, int, int]:
+    """`strip_left_off` with the strip the desktop says now (MAC_SIDE_STRIP)."""
+    for said in list(MAC_SIDE_STRIP):
+        try:
+            strip = said()
+        except Exception:
+            strip = None
+        cut = strip_left_off(screen, strip)
+        if cut != screen:
+            return cut
+    return screen
+
+
 def draw_pointer(image: Any, screen: Any, pointer: Optional[Tuple[int, int]]) -> Any:
     """`image` of `screen` (left, top, right, bottom) with the mouse pointer drawn where `pointer` is -
     and kept with it (`info["pointer"]`: where, out of its width and height); as it was when the pointer

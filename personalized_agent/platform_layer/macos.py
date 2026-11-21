@@ -255,6 +255,10 @@ class MacActivityProvider(PlatformActivityProvider):
             screen = display_of(meant["box"] if meant else None, displays)
             if screen is None:
                 return None
+            # PINNED, ITS STRIP LEFT OFF (2026-11-21: "只是把sidebar抹去，那个空位还是在的"): the screen to its left, as
+            # on Windows; not pinned, the whole screen - the windows under the panel are in it.
+            from .screen_picture import mac_strip_left_off
+            screen = mac_strip_left_off(tuple(screen))
             keep = kept_in_picture(windows, hidden)
             if not keep:
                 return None

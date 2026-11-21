@@ -12,7 +12,12 @@
 "farmland": "farms, fields, crops, animals",
 "cavern": "caves, crystals, ore",
 "lakeside": "lakes and reeds",
-"toytown": "a toy town in bright colours",
+"toytown": "a toy town in pink and white: pink trees, sweets, toys, a white fence",
+"castle": "castles and towers of old: banners, knights, a well, hay, the training yard",
+"chinese": "old China: bamboo, willows, pagodas, pavilions, moon gates, stone lanterns, scholars' rocks",
+"castle_keep": "a castle keep: its gate between towers, banners, knights",
+"candy_garden": "a candy garden: pink trees, lollipops, candy canes, toys",
+"chinese_garden": "a Chinese garden: a pagoda, a moon gate, a pavilion, a willow",
 "underwater": "the sea floor: fish, sharks, turtles, coral",
 "skycity": "a city in the clouds",
 "space": "space: moon rock, robots, ships",
@@ -3175,6 +3180,7 @@
 "pine": {
 "what": "pine",
 "themes": [
+"chinese",
 "christmas",
 "forest",
 "primeval",
@@ -3204,6 +3210,7 @@
 "darkPine": {
 "what": "dark pine",
 "themes": [
+"castle",
 "christmas",
 "enchanted",
 "forest",
@@ -3238,6 +3245,7 @@
 "what": "bush",
 "themes": [
 "apartment",
+"castle",
 "forest",
 "home",
 "library",
@@ -3452,6 +3460,7 @@
 "pond",
 "sky",
 "skycity",
+"toytown",
 "valentine"
 ],
 "spec": [
@@ -3523,6 +3532,7 @@
 "what": "grey rock",
 "themes": [
 "ancient_ruins",
+"castle",
 "highland",
 "ruins",
 "ruins_yard",
@@ -4813,6 +4823,7 @@ true
 "lantern": {
 "what": "a red Chinese lantern",
 "themes": [
+"chinese",
 "newyear"
 ],
 "spec": [
@@ -4871,6 +4882,7 @@ true
 "fair",
 "funfair",
 "giant_heart",
+"toytown",
 "valentine"
 ],
 "spec": [
@@ -5084,6 +5096,7 @@ true
 "plumTree": {
 "what": "a plum tree in blossom",
 "themes": [
+"chinese",
 "lantern_gate",
 "newyear"
 ],
@@ -5475,6 +5488,7 @@ true
 "pinkHeart": {
 "what": "a pink heart",
 "themes": [
+"toytown",
 "valentine"
 ],
 "spec": [
@@ -6394,6 +6408,449 @@ true
 6
 ]
 },
+"castleTower": {
+"what": "a stone castle tower with battlements and a flag (large)",
+"themes": [
+"castle_keep"
+],
+"spec": [
+"drawn",
+121,
+0,
+2,
+4
+]
+},
+"castleWall": {
+"what": "a crenellated castle wall",
+"themes": [
+"castle_keep"
+],
+"spec": [
+"drawn",
+123,
+0,
+2,
+2
+]
+},
+"castleGate": {
+"what": "a castle gate between two towers, its portcullis down (large)",
+"themes": [
+"castle_keep"
+],
+"spec": [
+"drawn",
+125,
+0,
+3,
+3
+]
+},
+"bannerPole": {
+"what": "a red and gold banner on a pole",
+"themes": [
+"castle",
+"castle_keep"
+],
+"spec": [
+"drawn",
+128,
+0,
+1,
+2
+]
+},
+"knightStatue": {
+"what": "a knight in armour on a plinth",
+"themes": [
+"castle",
+"castle_keep"
+],
+"spec": [
+"drawn",
+129,
+0,
+1,
+2
+]
+},
+"stoneWell": {
+"what": "a stone well with a little roof",
+"themes": [
+"castle"
+],
+"spec": [
+"drawn",
+130,
+0,
+1,
+2
+]
+},
+"trainingDummy": {
+"what": "a straw training dummy",
+"themes": [
+"castle"
+],
+"spec": [
+"drawn",
+131,
+0,
+1,
+2
+]
+},
+"weaponRack": {
+"what": "a rack of spears and swords",
+"themes": [
+"castle"
+],
+"spec": [
+"drawn",
+132,
+0,
+1,
+1
+]
+},
+"haystack": {
+"what": "a haystack",
+"themes": [
+"castle"
+],
+"spec": [
+"drawn",
+133,
+0,
+1,
+1
+]
+},
+"horse": {
+"what": "a brown horse",
+"themes": [
+"castle"
+],
+"spec": [
+"drawn",
+134,
+0,
+1,
+1
+]
+},
+"carriage": {
+"what": "a red and gold carriage",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+135,
+0,
+2,
+1
+]
+},
+"pinkTree": {
+"what": "a round pink tree on a white trunk",
+"themes": [
+"candy_garden",
+"toytown"
+],
+"spec": [
+"drawn",
+137,
+0,
+2,
+2
+]
+},
+"candyCane": {
+"what": "a giant candy cane",
+"themes": [
+"candy_garden",
+"toytown"
+],
+"spec": [
+"drawn",
+139,
+0,
+1,
+2
+]
+},
+"lollipop": {
+"what": "a giant pink lollipop",
+"themes": [
+"candy_garden",
+"toytown"
+],
+"spec": [
+"drawn",
+140,
+0,
+1,
+2
+]
+},
+"toyBlocks": {
+"what": "toy building blocks",
+"themes": [
+"candy_garden",
+"toytown"
+],
+"spec": [
+"drawn",
+141,
+0,
+1,
+1
+]
+},
+"teddyBear": {
+"what": "a teddy bear with a pink bow",
+"themes": [
+"candy_garden",
+"toytown"
+],
+"spec": [
+"drawn",
+142,
+0,
+1,
+1
+]
+},
+"toySoldier": {
+"what": "a pink and white toy soldier",
+"themes": [
+"toytown"
+],
+"spec": [
+"drawn",
+143,
+0,
+1,
+2
+]
+},
+"cupcake": {
+"what": "a giant pink cupcake",
+"themes": [
+"candy_garden",
+"toytown"
+],
+"spec": [
+"drawn",
+144,
+0,
+1,
+1
+]
+},
+"whiteFence": {
+"what": "a white picket fence",
+"themes": [
+"candy_garden",
+"toytown"
+],
+"spec": [
+"drawn",
+145,
+0,
+1,
+1
+]
+},
+"toyEngine": {
+"what": "a pink toy train engine",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+146,
+0,
+1,
+1
+]
+},
+"toyCar": {
+"what": "a white toy train car",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+147,
+0,
+1,
+1
+]
+},
+"bamboo": {
+"what": "a few bamboo stems",
+"themes": [
+"chinese"
+],
+"spec": [
+"drawn",
+148,
+0,
+1,
+2
+]
+},
+"bambooGrove": {
+"what": "a thicket of bamboo",
+"themes": [
+"chinese",
+"chinese_garden"
+],
+"spec": [
+"drawn",
+149,
+0,
+2,
+2
+]
+},
+"pagoda": {
+"what": "a red pagoda of four roofs (large)",
+"themes": [
+"chinese_garden"
+],
+"spec": [
+"drawn",
+151,
+0,
+2,
+4
+]
+},
+"pavilion": {
+"what": "a Chinese pavilion with a green tiled roof (large)",
+"themes": [
+"chinese_garden"
+],
+"spec": [
+"drawn",
+153,
+0,
+3,
+3
+]
+},
+"moonGate": {
+"what": "a round moon gate in a white wall (large)",
+"themes": [
+"chinese_garden"
+],
+"spec": [
+"drawn",
+156,
+0,
+3,
+3
+]
+},
+"stoneLantern": {
+"what": "a stone lantern",
+"themes": [
+"chinese",
+"chinese_garden"
+],
+"spec": [
+"drawn",
+159,
+0,
+1,
+2
+]
+},
+"scholarRock": {
+"what": "a scholar's rock, full of holes",
+"themes": [
+"chinese",
+"chinese_garden"
+],
+"spec": [
+"drawn",
+160,
+0,
+1,
+2
+]
+},
+"willow": {
+"what": "a weeping willow (tall)",
+"themes": [
+"chinese",
+"chinese_garden"
+],
+"spec": [
+"drawn",
+161,
+0,
+2,
+3
+]
+},
+"paifang": {
+"what": "a red Chinese archway, its plaque gold (large)",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+163,
+0,
+3,
+3
+]
+},
+"bonsai": {
+"what": "a pine bonsai in a blue pot",
+"themes": [
+"chinese",
+"chinese_garden"
+],
+"spec": [
+"drawn",
+166,
+0,
+1,
+1
+]
+},
+"dragonBoat": {
+"what": "a red dragon boat with rowers",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+167,
+0,
+2,
+1
+]
+},
+"rickshaw": {
+"what": "a red rickshaw",
+"themes": [
+"general"
+],
+"spec": [
+"drawn",
+169,
+0,
+1,
+1
+]
+},
 "trainEngine": {
 "what": "a steam train engine",
 "themes": [
@@ -6978,6 +7435,7 @@ true
 "blossom": {
 "what": "a plum blossom",
 "themes": [
+"chinese",
 "newyear"
 ],
 "spec": [
@@ -6991,6 +7449,7 @@ true
 "panda": {
 "what": "a panda",
 "themes": [
+"chinese",
 "newyear"
 ],
 "spec": [
@@ -7215,8 +7674,7 @@ true
 "what": "town pine",
 "themes": [
 "christmas",
-"forest",
-"toytown"
+"forest"
 ],
 "spec": [
 "town",
@@ -7242,8 +7700,7 @@ true
 "townBush": {
 "what": "town bush",
 "themes": [
-"meadow",
-"toytown"
+"meadow"
 ],
 "spec": [
 "town",
@@ -7256,11 +7713,11 @@ true
 "townTree": {
 "what": "town tree",
 "themes": [
+"castle",
 "forest",
 "meadow",
 "newyear",
 "skycity",
-"toytown",
 "valentine",
 "zoo"
 ],
@@ -7276,8 +7733,7 @@ true
 "what": "town autumn tree",
 "themes": [
 "autumn",
-"halloween",
-"toytown"
+"halloween"
 ],
 "spec": [
 "town",
@@ -7307,8 +7763,7 @@ true
 "magic",
 "meadow",
 "primeval",
-"toy",
-"toytown"
+"toy"
 ],
 "spec": [
 "town",
@@ -7324,8 +7779,7 @@ true
 "farmland",
 "home",
 "meadow",
-"toy",
-"toytown"
+"toy"
 ],
 "spec": [
 "town",
@@ -7339,8 +7793,7 @@ true
 "what": "beehive",
 "themes": [
 "farmland",
-"toy",
-"toytown"
+"toy"
 ],
 "spec": [
 "town",
@@ -7366,6 +7819,7 @@ true
 "log": {
 "what": "log",
 "themes": [
+"castle",
 "farmland",
 "studio"
 ],
@@ -7382,8 +7836,7 @@ true
 "themes": [
 "botanical",
 "farmland",
-"home",
-"toytown"
+"home"
 ],
 "spec": [
 "town",
@@ -7396,8 +7849,7 @@ true
 "target": {
 "what": "target",
 "themes": [
-"toy",
-"toytown"
+"toy"
 ],
 "spec": [
 "town",
@@ -7510,8 +7962,7 @@ true
 "scifi",
 "skyline",
 "skyscraper",
-"toy",
-"toytown"
+"toy"
 ],
 "spec": [
 "urban",
@@ -7525,8 +7976,7 @@ true
 "what": "planter 2",
 "themes": [
 "cafe",
-"toy",
-"toytown"
+"toy"
 ],
 "spec": [
 "urban",

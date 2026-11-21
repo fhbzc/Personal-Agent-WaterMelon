@@ -1523,14 +1523,14 @@ class AnInterruptionCanBeAnsweredTests(unittest.TestCase):
 
     def test_a_system_warning_carries_no_question(self) -> None:
         notification = self.app.notifications.notify(
-            "Model unavailable", "Open Settings > Models.", kind="warning")
+            "Model unavailable", "Open Settings > General > Models.", kind="warning")
         self.assertNotIn("question_id", notification.metadata)
 
     def test_a_system_warning_is_not_dressed_as_a_question(self) -> None:
         # Only what the agent chose to raise is judged. A model being
         # unavailable is not a decision the user is asked to weigh in on.
         self.app.notifications.notify(
-            "Model unavailable", "Open Settings > Models.", kind="warning")
+            "Model unavailable", "Open Settings > General > Models.", kind="warning")
         self.assertEqual(self._questions(), [])
 
     def test_the_notice_still_arrives_when_nothing_can_ask(self) -> None:

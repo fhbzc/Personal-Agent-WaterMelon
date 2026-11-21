@@ -49,9 +49,11 @@ GROUPS = {
                "botanical", "farmland", "harvest", "primeval", "great_tree", "pond", "stones", "crystals"),
     "seasons and festivals": ("christmas", "christmas_tree", "newyear", "lantern_gate", "halloween", "valentine",
                               "giant_heart"),
-    "town, city and future": ("city", "skyline", "toytown", "scifi", "robots", "space", "rocket", "skycity", "station", "market", "fountain",
+    "town, city and future": ("city", "skyline", "toytown", "candy_garden", "scifi", "robots", "space", "rocket", "skycity", "station", "market", "fountain",
                               "statue", "cafe", "library", "screening", "studio", "study"),
     "fantasy and the spooky": ("enchanted", "ruins", "ancient_ruins", "graveyard", "mausoleum", "camp"),
+    # Three themes more (the user, 2026-11-21): castles and towers, old China; the toy town pink and white.
+    "castles and old China": ("castle", "castle_keep", "chinese", "chinese_garden"),
     "fun and animals": ("zoo", "funfair", "fair", "giant_pet", "greenhouse"),
     "a building's yard, by its style": ("home", "haunted", "futuristic", "magic", "toy", "ruins_yard", "sky", "skyscraper",
                                         "office", "apartment", "school", "laboratory"),

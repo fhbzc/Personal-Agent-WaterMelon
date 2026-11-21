@@ -107,7 +107,7 @@ class OfflineProvider(ModelProvider):
                 break
         return (
             "[offline provider] No language model is configured, so I cannot reason about "
-            "this request. Open Settings > Models to select a provider and sign in.\n\n"
+            "this request. Open Settings > General > Models to select a provider and sign in.\n\n"
             f"Received: {last_user.strip()[:400]}"
         )
 

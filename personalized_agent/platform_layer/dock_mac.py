@@ -27,6 +27,18 @@ def usable() -> bool:
     return sys.platform == "darwin"
 
 
+def fit_at_once(window: Rect, strip: Rect, screen: Rect) -> Optional[Rect]:
+    """Where a window come over the pinned panel's `strip` goes at once - beside it (dock.room_for) - None when it is
+    not over it, or is as large as the whole screen and more (a film: it covers the panel till it is over), or a sliver
+    smaller than a window."""
+    if window[2] - window[0] < 50 or window[3] - window[1] < 50:
+        return None
+    if window[0] < screen[0] and window[1] < screen[1] and window[2] > screen[2] and window[3] > screen[3]:
+        return None
+    where = room_for(window, strip, screen)
+    return where if where is not None and where != window else None
+
+
 def trusted(ask: bool = False) -> bool:
     """Whether this program may move other windows (Accessibility); `ask`: the system's request shown when not."""
     try:
@@ -135,6 +147,86 @@ class MacDock:
             moved, self.moved = dict(self.moved), {}
         if moved:
             threading.Thread(target=self._put_back, args=(moved,), name="side-panel-room-back", daemon=True).start()
+
+    # -- AT ONCE, AS ON WINDOWS ---------------------------------------------------------------------------------------
+    # (the user, 2026-11-21: "为什么mac不能像windows一样，想想办法？" - "你看windows我现在怎么拖动都不能把屏幕放到sidebar上面")
+    # A Mac has no strip of the screen a program may take - its "fill" and its zoom fit the screen less the menu bar
+    # and the Dock only - so every program's windows are WATCHED instead (an Accessibility observer for each running
+    # program, on the main run loop): one moved, made larger, opened or brought to the front over the strip is fitted
+    # beside it at once - in the same moment, the panel above it (mac_panel.keep_side_panel_above) - so none is ever
+    # seen over the pinned panel, however it is dragged or filled. `guard` sets the strip and adds what is new; `unguard`
+    # stops it all.
+    NOTICES = ("AXMoved", "AXResized", "AXWindowCreated", "AXFocusedWindowChanged", "AXWindowMoved", "AXWindowResized")
+
+    def guard(self, strip: Rect, screen: Rect) -> int:
+        """Watch every program's windows and fit at once any come over `strip` on `screen` (top-left origin); the
+        programs started since the last call added, those ended let go. On the main thread. How many are watched."""
+        if not usable() or not trusted():
+            return 0
+        self._strip, self._screen = strip, screen
+        observers = self.__dict__.setdefault("_observers", {})
+        try:
+            from AppKit import NSApplicationActivationPolicyRegular, NSWorkspace
+            from ApplicationServices import (AXObserverAddNotification, AXObserverCreate, AXObserverGetRunLoopSource,
+                                             AXUIElementCreateApplication)
+            from CoreFoundation import CFRunLoopAddSource, CFRunLoopGetMain, kCFRunLoopDefaultMode
+        except Exception:                                  # pragma: no cover - no framework
+            log.debug("the windows could not be watched for the side panel", exc_info=True)
+            return 0
+        running = {int(app.processIdentifier()) for app in NSWorkspace.sharedWorkspace().runningApplications()
+                   if app.activationPolicy() == NSApplicationActivationPolicyRegular} - {os.getpid()}
+        for pid in list(observers):
+            if pid not in running:
+                observers.pop(pid, None)                   # ended: its observer let go
+        for pid in running - set(observers):
+            err, observer = AXObserverCreate(pid, self._noticed, None)
+            if err or observer is None:
+                continue
+            application = AXUIElementCreateApplication(pid)
+            for notice in self.NOTICES:
+                AXObserverAddNotification(observer, application, notice, None)
+            CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), kCFRunLoopDefaultMode)
+            observers[pid] = (observer, application)       # kept: let go, it stops
+        return len(observers)
+
+    def unguard(self) -> None:
+        """No window watched any more (unpinned, put away, over the whole screen)."""
+        observers = self.__dict__.get("_observers") or {}
+        try:
+            from ApplicationServices import AXObserverGetRunLoopSource
+            from CoreFoundation import CFRunLoopGetMain, CFRunLoopRemoveSource, kCFRunLoopDefaultMode
+            for observer, _application in observers.values():
+                CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), kCFRunLoopDefaultMode)
+        except Exception:                                  # pragma: no cover
+            log.debug("the windows' watch could not be stopped", exc_info=True)
+        observers.clear()
+        self._strip = None
+
+    def _noticed(self, _observer: Any, element: Any, _notice: Any, _refcon: Any) -> None:
+        """A window moved, sized, opened or brought to the front: fitted beside the strip at once if it is over it."""
+        strip, screen = getattr(self, "_strip", None), getattr(self, "_screen", None)
+        if not strip or not screen:
+            return
+        try:
+            window = element
+            rect = _ax_rect(window)
+            if rect is None:                               # the program itself: its window in front
+                from ApplicationServices import AXUIElementCopyAttributeValue
+                err, window = AXUIElementCopyAttributeValue(element, "AXFocusedWindow", None)
+                if err or window is None:
+                    return
+                rect = _ax_rect(window)
+            if rect is None:
+                return
+            where = fit_at_once(rect, strip, screen)
+            if where is None:
+                return
+            _ax_put(window, where)
+            before = next((key for key, entry in self.moved.items() if entry[0] == window), None)
+            was = self.moved.pop(before)[1] if before is not None else rect
+            self.moved[id(window)] = (window, was, where)
+        except Exception:                                  # one program's window: never the watch
+            log.debug("a window could not be fitted beside the side panel", exc_info=True)
 
     @staticmethod
     def _put_back(moved: Dict[int, Tuple[Any, Rect, Rect]]) -> None:

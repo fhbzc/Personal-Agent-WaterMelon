@@ -622,7 +622,9 @@ class ClaudeCodeProvider(ModelProvider):
         return self.client
 
     #: What to do when it is not signed in.
-    SIGN_IN = f"Claude Code is not signed in. Run `{CLI_NAME} auth login`."
+    # A BUTTON, NOT A COMMAND (the user, 2026-11-21: "你提示的Other message里也可以加上登录链接，而不是让我去claude auth
+    # login"): wherever this is shown the page puts "Sign in to Claude Code" beside it (api/web/sign-in-link.js).
+    SIGN_IN = "Claude Code is not signed in."            # (the link once per message: "写了两遍", 2026-11-21)
 
     def _chosen_path(self) -> str:
         getter = getattr(self, "settings", None)
@@ -797,8 +799,10 @@ class ClaudeCodeProvider(ModelProvider):
                 CredentialState.ERROR, AuthMethod.NONE,
                 detail=f"could not ask {name} whether it is signed in: {unreachable}. "
                        f"It will still be tried.")
+        # Which client is not signed in, named (as the reports name it): "Claude Code (command line) is not signed in."
+        name = CLIENTS.get(client, {}).get("display_name", "")
         return AuthStatus(CredentialState.AUTHENTICATION_REQUIRED, AuthMethod.NONE,
-                          detail=self.SIGN_IN)
+                          detail=f"{name} is not signed in." if name else self.SIGN_IN)
 
     def authenticate(self, config: Dict[str, Any]) -> AuthStatus:
         # There is nothing to authenticate here: the tool owns its sign-in.
@@ -832,7 +836,7 @@ class ClaudeCodeProvider(ModelProvider):
         if not status.get("loggedIn"):
             return ModelAvailability(
                 available=False, state=AvailabilityState.AUTHENTICATION_REQUIRED,
-                reason=f"Claude Code is not signed in. Run `{CLI_NAME} auth login`.",
+                reason=self.SIGN_IN,
                 checked_at=now, failure_class=FailureClass.USER_ACTION_REQUIRED)
         return ModelAvailability(available=True, state=AvailabilityState.AVAILABLE,
                                  authentication_valid=True, checked_at=now,

@@ -44,7 +44,8 @@ REGEX_BEFORE = set("(,=:[!&|?{};+-*%<>~^")
 ATTRS = ("title", "placeholder", "aria-label", "label", "alt")
 # What the server sends that is not the interface's words: names of
 # products and models, and anything of the user's.
-DATA = re.compile(r"[A-Za-z]:\\|^https?://\S*$|[\w.+-]+@[\w-]+\.\w+|claude-[a-z]+-\d|"
+# (a path on this machine, Windows' or a Mac's / Linux's home too: "found at /Users/.../.claude" on the lab Mac, 2026-11-21)
+DATA = re.compile(r"[A-Za-z]:\\|(?:^|\s)/(?:Users|home|opt|usr|Applications|Library)/|^https?://\S*$|[\w.+-]+@[\w-]+\.\w+|claude-[a-z]+-\d|"
                   r"^\S*\d{1,2}:\d\d\S*$|^\d{4}-\d\d-\d\d|^v\d|\(UTC|^\d+ px$")
 BRANDS = {"Anthropic", "OpenRouter", "OpenAI", "Google Gemini", "DeepSeek", "Moonshot (Kimi)",
           "Alibaba Qwen (DashScope)", "Zhipu GLM", "xAI (Grok)", "Mistral", "Groq", "SiliconFlow",

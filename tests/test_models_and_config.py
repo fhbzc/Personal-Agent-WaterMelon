@@ -1428,7 +1428,8 @@ class LocalClientProviderTests(unittest.TestCase):
         self.provider._auth_status = lambda: {"loggedIn": False}
         verdict = self.provider.check_availability("opus")
         self.assertEqual(verdict.state.value, "authentication_required")
-        self.assertIn("auth login", verdict.reason)
+        self.assertIn("not signed in", verdict.reason)
+        self.assertNotIn("auth login", verdict.reason, "a link beside it, not a command (2026-11-21)")
 
     def test_the_client_is_asked_to_answer_not_to_act(self) -> None:
         """Its own tools stay off: the agent's sandbox decides what may happen."""

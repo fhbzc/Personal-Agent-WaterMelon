@@ -49,7 +49,7 @@ function playActScreen(x, y) {
 
 /* -- PORTALS -------------------------------------------------------------------------------------------------------- */
 const PLAY_PORTAL_LOOKS = { scifi: "pad", space: "pad", city: "pad", underwater: "pad", enchanted: "ring", skycity: "ring",
-                            valentine: "ring", toytown: "ring", newyear: "ring", ruins: "arch", graveyard: "arch",
+                            valentine: "ring", toytown: "ring", castle: "arch", chinese: "ring", newyear: "ring", ruins: "arch", graveyard: "arch",
                             halloween: "arch", cavern: "arch", highland: "arch", desert: "arch", forest: "fairy",
                             primeval: "fairy", meadow: "fairy", botanical: "fairy", lakeside: "fairy", autumn: "fairy" };
 const PLAY_PORTAL_FAR = 40;                    // the world this many tiles across, or a land apart: portals
@@ -259,6 +259,11 @@ const PLAY_VEHICLES = {
   balloon: { kind: "airship", runs: "sky", body: "balloon", words: "Hot-air balloon" },
   rocket: { kind: "plane", runs: "air", body: "spaceship", words: "Rocket" },
   ufo: { kind: "plane", runs: "air", body: "ufo", words: "Flying saucer" },
+  // Three themes more (the user, 2026-11-21): a carriage by the castle, a toy train, old China's dragon boat and rickshaw.
+  carriage: { kind: "road", runs: "road", body: "carriage", words: "Carriage" },
+  toy_train: { kind: "train", runs: "rails", engine: "toyEngine", car: "toyCar", words: "Toy train" },
+  dragon_boat: { kind: "ferry", runs: "water", body: "dragonBoat", words: "Dragon boat" },
+  rickshaw: { kind: "road", runs: "road", body: "rickshaw", words: "Rickshaw" },
 };
 /* A line's own name for itself: its vehicle's words, or its kind's. */
 function playLineWords(line) {
@@ -886,8 +891,10 @@ function playTrackDraw(line, size) {
 }
 function playLinesDraw(size, now) {
   const { ctx } = play;
+  // EVERY LINE'S RAILS FIRST, EVERY VEHICLE ON TOP (the user, 2026-11-21: "这个火车放在铁轨下了，应该是在铁轨上的" - a line
+  // laid beside another, the later one's rails drawn over the train of the first).
+  for (const line of playLines()) if (line.kind === "train") playTrackDraw(line, size);
   for (const line of playLines()) {
-    if (line.kind === "train") playTrackDraw(line, size);
     for (const one of line.stops) {
       if (one.station || !playActInView(one.x, one.y, 4)) continue;   // a station stands there: drawn as its own piece
       const spec = PLAY_SCENERY[PLAY_LINE_LOOK[line.kind]], sheet = spec && play.sheets[spec[0]];
@@ -1045,7 +1052,8 @@ const PLAY_CATCH_WATERS = {
 const PLAY_CATCH_ODD = { sea: ["jellyfish", "seaweed", "shark", "coral"], pond: ["seaweed", "goldIngot"], falls: ["runeStone"] };
 const PLAY_CATCH_LANDS = {
   graveyard: ["graveCandle", "runeStone2"], halloween: ["jackOLantern", "pumpkin"], christmas: ["present", "present2"],
-  newyear: ["redEnvelope", "goldIngot"], valentine: ["loveLetter", "redHeart", "lovePotion"], underwater: ["coral", "anemone"],
+  newyear: ["redEnvelope", "goldIngot"], chinese: ["goldIngot", "scroll"], castle: ["goldIngot", "shield"],
+  toytown: ["candyCane", "teddyBear", "cupcake"], valentine: ["loveLetter", "redHeart", "lovePotion"], underwater: ["coral", "anemone"],
   scifi: ["metalBot5", "metalBot11"], space: ["metalBot17"], farmland: ["turnipRoot", "tomatoFruit"],
   botanical: ["cherries"], enchanted: ["sparkle", "wisp"], ruins: ["runeStone3", "goldIngot"], funfair: ["balloons"],
 };
@@ -1192,9 +1200,44 @@ function playActHint() {
   })();
   if (lightKey) return playWords(playLightsOff().has(lightKey) ? "Light it" : "Put the light out");
   if (!play.swimming && playFishAhead()) return playWords("Fish");
-  if (near && near.picture_url) return playWords("See the picture");
-  if (near) return playWords("Look");
+  if (near && near.picture_url) return playWords("See the picture") + playActWhich(near) + playActMore();
+  if (near) return playWords("Look") + playActWhich(near) + playActMore();
   return null;
+}
+/* WHICH THING (the user, 2026-11-21: "这个椅子看起来只有一格，怎么显示的是2格" - the lantern hung over a seat was taken,
+   the seat looked taken): with more than one within reach, the name of the one E takes - short. */
+function playActWhich(near) {
+  if ((play.reach || []).length < 2 || near.zone === undefined) return "";
+  const name = String(near.name || playWords(near.kind || "") || "").trim();
+  return name ? ` ${name.length > 10 ? `${name.slice(0, 10)}…` : name}` : "";
+}
+/* "· Q next (1/3)" when more than one thing is within reach (play.js playWhere) - else nothing. */
+function playActMore() {
+  const all = play.reach || [];
+  if (all.length < 2) return "";
+  return ` · Q ${playWords("Next")} (${(play.nearTurn || 0) % all.length + 1}/${all.length})`;
+}
+/* THE THING E WOULD TAKE, MARKED (the user, 2026-11-21: "按 Q 换选 这个能不能高亮当前选中的item"): a soft gold outline round
+   its box - where Q moves, the outline goes. A thing only (not a portal, a stop or a sign); not while riding or sitting. */
+function playNearMarkDraw(size) {
+  const near = play.near;
+  if (!near || near.at || near.zone === undefined || near.x === undefined || play.ride || play.sit) return;
+  const [w, h] = playItemSize(near);
+  const [x0, y0] = playActScreen(near.x, near.y);
+  const pad = Math.max(2, size * 0.08), r = Math.max(3, size * 0.18);
+  const { ctx } = play;
+  ctx.save();
+  ctx.shadowColor = "rgba(255, 214, 102, 0.9)";
+  ctx.shadowBlur = Math.max(4, size * 0.35);
+  ctx.strokeStyle = "rgba(255, 226, 128, 0.95)";
+  ctx.lineWidth = Math.max(2, size * 0.09);
+  ctx.beginPath();
+  ctx.roundRect(x0 - pad, y0 - pad, w * size + 2 * pad, h * size + 2 * pad, r);
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "rgba(255, 226, 128, 0.12)";
+  ctx.fill();
+  ctx.restore();
 }
 /* The hint over the walker's head: a key cap "E" and what it does - not while something is being said. */
 function playActHintDraw(size) {
@@ -1241,7 +1284,8 @@ function playActCard(near) {
 /* -- LIFE ABOUT: birds over, small animals that run --------------------------------------------------------------- */
 const PLAY_CRITTERS = { meadow: ["rabbit", "squirrel", "chicken"], farmland: ["chicken", "cow", "sheep", "goat"],
                         forest: ["squirrel", "rabbit", "deer"], primeval: ["deer", "squirrel", "rabbit"], autumn: ["squirrel", "rabbit"],
-                        city: ["cat", "dog"], toytown: ["cat", "dog", "rabbit"], zoo: ["monkey", "zebra", "giraffe"],
+                        city: ["cat", "dog"], toytown: ["cat", "dog", "rabbit"], castle: ["sheep", "chicken", "goat", "dog"],
+                        chinese: ["panda", "cat", "chicken", "rabbit"], zoo: ["monkey", "zebra", "giraffe"],
                         underwater: ["clownfish", "yellowTang", "blueTang", "moorishIdol"], lakeside: ["rabbit", "chicken"],
                         botanical: ["rabbit", "squirrel"], seaside: ["chicken"], valentine: ["rabbit", "cat"] };
 // FEW (the user, 2026-11-18: "小动物可以不要加这么多，减少对资源的消耗"; "你限制动物的数量就行 ... 动作还是正常速率"): two at
@@ -1415,6 +1459,7 @@ function playActOver(size) {
       playActMeOn(sx, sy - size * 0.3, size);
     } else playVehicleDraw(line.kind, play.me.x, play.me.y, playLineHeading(line, u, dir), size, true, line.look);
   }
+  playNearMarkDraw(size);
   playActHintDraw(size);
   // A portal gone through: the screen white a moment.
   if (play.flash && now - play.flash < 450) {

@@ -43,7 +43,7 @@ def as_json(text: str) -> Dict[str, Any]:
 #: The provider that stands in when no model is set up - never one to learn with.
 OFFLINE = "offline"
 OFFLINE_NOTE = ("the model chosen is the offline stand-in, which cannot learn: "
-                "choose a model in Settings > Models")
+                "choose a model in Settings > General > Models")
 
 
 class Asker:

@@ -612,9 +612,213 @@ class PlayWorld:
                 self.save(world)                     # once: kept so
             parted = self._ids_apart(world)
             down = self._private_taken_down(world)
-            if self._repeated_shots_down(world) or down or parted:
+            doors = self._doors_on_walls(world)
+            ways, marked = self._ways_open(world)
+            if self._repeated_shots_down(world) or down or parted or doors or ways or marked:
                 self.save(world)
             return world
+
+    #: How many things are moved out of the way in one room, at most, each time the world is read.
+    WAYS_MOVES_MOST = 16
+    #: How many times a room is walked again while things are still being moved in it.
+    WAYS_ROUNDS = 4
+    #: The rooms' rules' own mark, in the world's mark (_ways_mark): changed when they are, so every room is walked again.
+    WAYS_RULES = 3                                   # 2: nothing hung over what stands; 3: nothing on another without sense (2026-11-21)
+    #: How many free tiles are tried for each thing moved (against a wall first).
+    WAYS_SPOTS_TRIED = 60
+
+    def _ways_open(self, world: Dict[str, Any]) -> int:
+        """EVERY PART OF A ROOM WALKED TO (the user, 2026-11-21: "这里面很多item被路堵住了，进不去"): a room grown larger
+        than a cell has walls inside it (playplaces.inner_walls) - and what stood there before them stayed, in their
+        doorways and in the ways between them, a part of the room with no way in. In each room, what stands between
+        the floor walked to from its door and the floor not walked to is moved - against a wall of the part walked to,
+        off the doorways - while that opens more of the room and closes none of it; what was set on it goes with it.
+        Nothing let go. How many things were moved."""
+        self._made_kinds_known()                         # each thing as large as the page draws it
+        mark = self._ways_mark(world)
+        if world.get("ways_mark") == mark:               # walked already, nothing moved since: not again
+            return 0, False
+        moved = 0
+        for zone in world.get("zones") or []:
+            if indoors(zone) and not zone.get("plot"):
+                for _ in range(self.WAYS_ROUNDS):        # a thing moved may make room for one not movable before
+                    once = self._open_the_way(world, zone)
+                    moved += once
+                    if not once:
+                        break
+        if moved:
+            log.info("things moved out of the way in rooms (every part walked to): %d", moved)
+        world["ways_mark"] = self._ways_mark(world)
+        return moved, True
+
+    @staticmethod
+    def _ways_mark(world: Dict[str, Any]) -> str:
+        """A print of what the rooms' ways depend on - each room's box, door and outline, each thing's place, size and
+        what it stands on - so a world walked once is not walked again till one of them changes."""
+        rooms = [(z.get("id"), z.get("kind"), z.get("x"), z.get("y"), z.get("w"), z.get("h"), z.get("door"),
+                  json.dumps(z.get("shape"), sort_keys=True), z.get("plot"), z.get("form"))
+                 for z in world.get("zones") or []]
+        things = [(o.get("id"), o.get("zone"), o.get("kind"), o.get("x"), o.get("y"), item_size(o), o.get("on"),
+                   o.get("hang"), bool(o.get("why") or o.get("name") or o.get("shot")))
+                  for o in world.get("items") or []]
+        return hashlib.sha1(json.dumps([PlayWorld.WAYS_RULES, rooms, things], default=str).encode("utf-8")).hexdigest()[:16]
+
+    def _open_the_way(self, world: Dict[str, Any], zone: Dict[str, Any]) -> int:
+        """One room's ways opened (_ways_open): how many things were moved."""
+        left, top, w, h = self.floor_of(zone)
+        # its floor as the page lays it: its own outline, a pentagon, a star (2026-11-21: a pentagon walked as a
+        # square - its wings shut off by what stood in them), less the walls inside it
+        floor = self._floor_tiles(zone)
+        kinds = lambda one: ITEM_KINDS.get(one.get("kind") or "") or {}               # noqa: E731
+        items = [one for one in world.get("items") or [] if one.get("zone") == zone["id"]]
+        standing = [one for one in items if not kinds(one).get("wall") and not kinds(one).get("under")
+                    and not one.get("on") and not one.get("hang")]
+        if not standing:
+            return 0
+        door = zone.get("door") if self._has_door(zone) else None
+        starts = [(int(door) + d, top + h - 1) for d in range(DOOR_W)] if door is not None else \
+            [(x, top + h - 1) for x in range(left, left + w)]
+        keep_clear = places.inner_doorways(zone) | set(starts) | (
+            {(int(door) + d, top + h - 2) for d in range(DOOR_W)} if door is not None else set())
+        near = lambda at: ((at[0] + 1, at[1]), (at[0] - 1, at[1]), (at[0], at[1] + 1), (at[0], at[1] - 1))  # noqa: E731
+
+        def walked() -> Tuple[set, set]:
+            covered = set()
+            for one in standing:
+                covered |= self._tiles_of(one)
+            free = floor - covered
+            seen, todo = set(), [one for one in starts if one in free]
+            while todo:
+                at = todo.pop()
+                if at in seen or at not in free:
+                    continue
+                seen.add(at)
+                todo += near(at)
+            return free, seen
+
+        against = lambda at: any(q not in floor for q in near(at))                      # noqa: E731
+
+        def move(one: Dict[str, Any], seen: set, more: bool) -> bool:
+            """`one` to a free tile walked to - against a wall first, off the doorways - where every tile walked to
+            before still is (and, `more`, more of the room now is); what was set on it with it. Whether it was."""
+            sw, sh = item_size(one)
+            was, mine = (one["x"], one["y"]), self._tiles_of(one)
+            spots = sorted((at for at in seen if at not in keep_clear),
+                           key=lambda at: (not against(at), -abs(at[0] - (door if door is not None else at[0]))
+                                           - abs(at[1] - (top + h - 1)), at))
+            tried = 0
+            for sx, sy in spots:
+                tiles = {(sx + dx, sy + dy) for dx in range(sw) for dy in range(sh)}
+                if not tiles <= (seen | (mine & floor)) or tiles & keep_clear:
+                    continue
+                tried += 1
+                if tried > self.WAYS_SPOTS_TRIED:
+                    break
+                one["x"], one["y"] = sx, sy
+                _free2, seen2 = walked()
+                if (seen - tiles) <= seen2 and (not more or len(seen2) > len(seen)):
+                    for other in items:                  # what was set on it, with it
+                        if other.get("on") == one.get("id"):
+                            other["x"] += sx - was[0]
+                            other["y"] += sy - was[1]
+                    return True
+                one["x"], one["y"] = was
+            return False
+
+        moved = 0
+        # Standing where the room has no floor (in its outline's wall, past it - laid before its outline was): moved in.
+        for one in [o for o in standing if not self._tiles_of(o) <= floor][:self.WAYS_MOVES_MOST]:
+            _free, seen = walked()
+            if seen and move(one, seen, more=False):
+                moved += 1
+        for _ in range(self.WAYS_MOVES_MOST):
+            free, seen = walked()
+            if not seen or not free - seen:
+                break
+            lost = free - seen
+            between = [one for one in standing
+                       if any(q in seen for at in self._tiles_of(one) for q in near(at))
+                       and any(q in lost for at in self._tiles_of(one) for q in near(at))]
+            # (none between - a part closed by the walls alone, or reached by no free tile: nothing to move)
+            if not any(move(one, seen, more=True) for one in sorted(between, key=lambda o: len(self._tiles_of(o)))):
+                break
+            moved += 1
+        # NOTHING HUNG OVER WHAT STANDS (the user, 2026-11-21: "为什么你这两个东西会overlap?" - a lantern hung over a seat,
+        # its light falling to the floor, looked one with it): a thing hung over a thing standing moved over free floor
+        # one can walk to - off the doorways, over nothing else hung; it stands in no one's way, so the ways stay.
+        _free, seen = walked()
+        under = set()
+        for one in standing:
+            under |= self._tiles_of(one)
+        for one in [o for o in items if o.get("hang") and self._tiles_of(o) & under]:
+            sw, sh = item_size(one)
+            hung = set()
+            for other in items:
+                if other.get("hang") and other is not one:
+                    hung |= self._tiles_of(other)
+            was = (one["x"], one["y"])                   # the free floor nearest where it hung
+            spot = next(((sx, sy) for sx, sy in sorted(seen - keep_clear, key=lambda at: (abs(at[0] - was[0]) + abs(at[1] - was[1]), at))
+                         if {(sx + dx, sy + dy) for dx in range(sw) for dy in range(sh)} <= (seen - hung - keep_clear)), None)
+            if spot is not None:
+                one["x"], one["y"] = spot
+                moved += 1
+        # ONE ON ANOTHER ONLY WHERE IT MAKES SENSE, AND SEEN (the user, 2026-11-21: "你这里叠了多少东西。不是不能叠，比如东西放在
+        # 毯子上是可以的，你这些叠的没有逻辑，而且看不出来"): two things standing never on one tile - the later moved to free
+        # floor one can walk to, the ways kept; a thing laid on the floor (a rug, a painting on it) under furniture, yes, but
+        # never covered whole - moved to free floor; what was set on a thing goes with it (move).
+        taken: set = set()
+        for one in sorted(standing, key=lambda o: str(o.get("made") or "")):
+            mine = self._tiles_of(one)
+            if mine & taken:
+                _free, seen = walked()
+                sw, sh = item_size(one)
+                was = (one["x"], one["y"])
+                for sx, sy in sorted(seen - keep_clear, key=lambda at: (abs(at[0] - was[0]) + abs(at[1] - was[1]), at)):
+                    tiles = {(sx + dx, sy + dy) for dx in range(sw) for dy in range(sh)}
+                    if not tiles <= seen or tiles & keep_clear or tiles & taken:
+                        continue
+                    one["x"], one["y"] = sx, sy
+                    _free2, seen2 = walked()
+                    if (seen - tiles) <= seen2:
+                        for other in items:              # what was set on it, with it
+                            if other.get("on") == one.get("id"):
+                                other["x"] += sx - was[0]
+                                other["y"] += sy - was[1]
+                        moved += 1
+                        break
+                    one["x"], one["y"] = was
+                mine = self._tiles_of(one)
+            taken |= mine
+        laid = [o for o in items if (ITEM_KINDS.get(o.get("kind") or "") or {}).get("under") and not o.get("on")
+                and not o.get("hang")]
+        for one in laid:
+            if not self._tiles_of(one) <= taken:
+                continue                                 # some of it shows: left as laid
+            _free, seen = walked()
+            sw, sh = item_size(one)
+            was = (one["x"], one["y"])
+            spot = next(((sx, sy) for sx, sy in sorted(seen, key=lambda at: (abs(at[0] - was[0]) + abs(at[1] - was[1]), at))
+                         if {(sx + dx, sy + dy) for dx in range(sw) for dy in range(sh)} <= seen), None)
+            if spot is not None:
+                one["x"], one["y"] = spot
+                moved += 1
+        return moved
+
+    @staticmethod
+    def _doors_on_walls(world: Dict[str, Any]) -> int:
+        """A ROOM ONE CAN GO INTO (the user, 2026-11-21: "这里面很多item被路堵住了，进不去"): a room moved onto a great ground
+        or into a row of its halls (_lay_great, _join_halls) kept its door where it had stood - off its own wall, the
+        room with no way in. Each such door put back in the middle of its room's front wall. How many were."""
+        moved = 0
+        for zone in world.get("zones") or []:
+            if not indoors(zone) or zone.get("plot") or not isinstance(zone.get("door"), (int, float)):
+                continue
+            if not zone["x"] + 1 <= zone["door"] <= zone["x"] + zone["w"] + 1 - DOOR_W:
+                zone["door"] = zone["x"] + 1 + zone["w"] // 2
+                moved += 1
+        if moved:
+            log.info("doors off their rooms' walls put back on them: %d", moved)
+        return moved
 
     @staticmethod
     def _repeated_shots_down(world: Dict[str, Any]) -> int:
@@ -1273,9 +1477,24 @@ class PlayWorld:
                 system=system, task=TASK, max_tokens=12000, builtin_web=False,
                 messages=[{"role": "user", "content": json.dumps(ask, ensure_ascii=False)}],
                 language=in_language(self._play_code(), '"name", "why" and "from"')), role="primary")
+            # NO MODEL, NO GROWTH (2026-11-21, a Mac with none signed in: the offline stand-in's answer, the request
+            # echoed in it, was read as the design - "Expecting ',' delimiter"): said so, nothing read.
+            if str(getattr(response, "provider", "") or "") == "offline":
+                log.info("the world did not grow: no language model is configured (Settings > General > Models)")
+                return {"error": "no language model is configured"}
             text, _cut = read_text(response)
+            # READ AS IT WAS MEANT (the user, 2026-11-21: "如果你解析不成功，是不是说明有的design会失效"): from its first {
+            # to its last } as before; failing that, each whole object in it (json_objects) - the design the largest.
             match = re.search(r"\{.*\}", text or "", re.DOTALL)
-            said = json.loads(match.group(0)) if match else {}
+            try:
+                said = json.loads(match.group(0)) if match else {}
+            except ValueError:
+                from ..models.answers import json_objects
+                found = json_objects(text or "")
+                if not found:
+                    raise
+                said = max(found, key=lambda one: len(json.dumps(one, ensure_ascii=False)))
+                log.info("the world's design read from the whole objects in its answer (%d)", len(found))
         except Exception as exc:
             log.info("the world could not grow", exc_info=True)
             return {"error": str(exc)[:200]}
@@ -2350,6 +2569,7 @@ class PlayWorld:
             zone["kind"] = part["kind"]
             if part["indoor"]:
                 zone.update(x=tx, y=ty, w=max(6, tw - 2), h=max(4, th - 6))
+                zone["door"] = zone["x"] + 1 + zone["w"] // 2      # its door on its new wall (_doors_on_walls)
                 zone.pop("shape", None)
                 zone.pop("designed", None)
             else:
@@ -2403,6 +2623,7 @@ class PlayWorld:
                 x, y, before = left, y + depth + 7, None
             moved = (x - zone["x"], y - zone["y"])
             zone.update(x=x, y=y, h=depth)
+            zone["door"] = zone["x"] + 1 + zone["w"] // 2          # its door on its new wall (_doors_on_walls)
             for item in world["items"]:
                 if item.get("zone") == zone["id"]:
                     item["x"] += moved[0]
@@ -2665,12 +2886,26 @@ class PlayWorld:
 
     # -- WHAT ROOMS ARE MADE OF, AND WHAT THE AGENT MAKES FOR THEM (agent/playmade.py) -------------------------------
     def _made_library(self) -> Dict[str, Any]:
-        """The library of things and floors made before (made.json beside the world), each made thing a kind."""
+        """The library of things and floors made before (made.json beside the world), each made thing a kind - AT ITS
+        MADE SIZE, as the page draws it and stands it in the way (play.js: play.made.items' size over all), a kind of
+        the catalogue made again too (2026-11-21: a made gasLamp one tile here, two there - the floor thought free
+        where the walker could not pass)."""
         library = made_lib.load_library(self.folder)
         for name, one in (library.get("items") or {}).items():
-            if name not in ITEM_KINDS and isinstance(one.get("size"), list):
-                ITEM_KINDS[name] = {"size": tuple(one["size"]), "made": True}
+            if isinstance(one.get("size"), list) and len(one["size"]) == 2:
+                ITEM_KINDS[name] = {**(ITEM_KINDS.get(name) or {}), "size": tuple(one["size"]), "made": True}
         return library
+
+    def _made_kinds_known(self) -> None:
+        """The made things' kinds and sizes known before a room is walked (_ways_open) - read again only when made.json
+        has changed."""
+        try:
+            stamp = (self.folder / "made.json").stat().st_mtime_ns
+        except OSError:
+            return
+        if getattr(self, "_made_stamp", None) != stamp:
+            self._made_library()
+            self._made_stamp = stamp
 
     def made(self) -> Dict[str, Any]:
         """The library, for the page."""

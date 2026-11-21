@@ -1778,5 +1778,46 @@ class OnTheTableAndHungFromAboveTests(unittest.TestCase):
         self.assertIn("PLAY_UNDER_KINDS.has(item.kind) || item.on || item.hang) continue;", regions_js)
 
 
+class ThreeThemesMoreTests(unittest.TestCase):
+    """The user, 2026-11-21: "你的主题增加 城堡/塔楼（中世纪风）； 玩具城（粉色，白色主题）； 中国风（木质建筑/中式庭院/竹林)"."""
+
+    WEB = support.ROOT / "personalized_agent" / "api" / "web"
+
+    def test_each_is_a_theme_of_scenes_the_model_may_choose(self) -> None:
+        self.assertIn("castle", regions.BIOMES)
+        self.assertIn("chinese", regions.BIOMES)
+        themes = {name: scenes for name, (_what, scenes) in muse.SCENE_THEMES.items()}
+        self.assertEqual(themes["castles"], ("castle_keep", "tower_watch", "medieval_market"))
+        self.assertEqual(themes["old_china"], ("bamboo_grove", "chinese_courtyard", "water_town"))
+        self.assertEqual(themes["toys"], ("toy_town", "candy_town"))
+        for scene in (*themes["castles"], *themes["old_china"], *themes["toys"]):
+            self.assertIn(muse.MOOD_SCENES[scene]["biome"], regions.BIOMES, scene)
+        self.assertIn("pink and white", muse.MOOD_SCENES["toy_town"]["what"])
+
+    def test_the_page_draws_each_land_with_its_own_things_and_music(self) -> None:
+        lands = (self.WEB / "play-regions.js").read_text(encoding="utf-8")
+        sound = (self.WEB / "play-sound.js").read_text(encoding="utf-8")
+        self.assertIn('toytown: { square: "toyWhite", ground: ["toyPink", "toyPink2", "toyWhite", "toyPink"]', lands)
+        self.assertIn('castle: { square: "cobble2", ground:', lands)
+        self.assertIn('chinese: { square: "flagstone", ground:', lands)
+        for name in ("castleTower", "castleGate", "pinkTree", "lollipop", "bamboo", "pagoda", "moonGate", "pavilion"):
+            self.assertRegex(lands, rf'\b{name}: \["drawn", \d+, 0, \d, \d\]', name)
+        for scene in ("castle_keep", "tower_watch", "medieval_market", "candy_town", "bamboo_grove", "chinese_courtyard",
+                      "water_town"):
+            self.assertIn(f"  {scene}: {{ tempo:", sound, scene)
+        self.assertEqual(sound.count("  toy_town: { tempo:"), 1, "one tune for the toy town")
+
+    def test_its_pictures_are_on_the_sheet_after_all_before(self) -> None:
+        from PIL import Image
+        with Image.open(self.WEB / "play" / "drawn.png") as sheet:
+            self.assertGreaterEqual(sheet.width, 170 * 17 - 1, "the rickshaw, the last, on the sheet")
+
+    def test_each_has_its_vehicles(self) -> None:
+        for name, suits in (("carriage", "castle"), ("toy_train", "toytown"), ("rickshaw", "chinese"), ("dragon_boat", "chinese")):
+            self.assertIn(suits, muse.VEHICLES[name]["suits"], name)
+        act = (self.WEB / "play-act.js").read_text(encoding="utf-8")
+        self.assertIn('dragon_boat: { kind: "ferry", runs: "water", body: "dragonBoat", words: "Dragon boat" },', act)
+
+
 if __name__ == "__main__":
     unittest.main()

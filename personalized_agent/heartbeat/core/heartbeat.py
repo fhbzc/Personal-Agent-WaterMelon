@@ -2601,7 +2601,7 @@ class AgentHeartbeat:
                             kind="warning",
                             dedupe_key="heartbeat.model_unavailable",
                             signature=exc.availability.state.value,
-                            action_hint="Open Settings > Models.",
+                            action_hint="Open Settings > General > Models.",
                         )
                     # A model that is away is away for the steps after this
                     # one too, and asking three more times is three more

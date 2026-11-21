@@ -25,6 +25,10 @@ const PLAY_MORE_GROUND = {
   snow: ["#eef3f8"], snow2: ["#e3eaf2"], lava: ["#e8590c"], lava2: ["#f59f00"], cloud: ["#eef5fc"], cloud2: ["#e2eef9"],
   cracked: ["rpg", 16, 19], cracked2: ["rpg", 17, 20],
   toyGrass: ["town", 0, 0], toyGrass2: ["town", 1, 0], toyGrass3: ["town", 2, 0], toyPath: ["town", 1, 2], toyStone: ["town", 7, 3],
+  // A toy town in pink and white (2026-11-21): pink ground with white flowers, white ground, white and pink paving; old
+  // China's flagstones, grey and mossy.
+  toyPink: ["drawn", 114, 0], toyPink2: ["drawn", 115, 0], toyWhite: ["drawn", 116, 0], toyWhitePath: ["drawn", 117, 0],
+  toyWhiteStone: ["drawn", 118, 0], flagstone: ["drawn", 119, 0], flagstone2: ["drawn", 120, 0],
   // A waterfall (Kenney's cave set): its lip, its falling water and its foam, three wide.
   seaRockGround: ["rpg", 7, 1],
   tunnelGlass: ["drawn", 10, 0], coasterTrack: ["drawn", 11, 0], coasterTrackV: ["drawn", 12, 0],
@@ -240,6 +244,22 @@ const PLAY_SCENERY = {
   towerGlass: ["drawn", 107, 0, 2, 5],
   towerBrick: ["drawn", 109, 0, 2, 4],
   towerTall: ["drawn", 111, 0, 3, 6],
+  // THREE THEMES MORE (the user, 2026-11-21: "城堡/塔楼（中世纪风）； 玩具城（粉色，白色主题）； 中国风（木质建筑/中式庭院/竹林)"):
+  // castles and towers,
+  castleTower: ["drawn", 121, 0, 2, 4], castleWall: ["drawn", 123, 0, 2, 2], castleGate: ["drawn", 125, 0, 3, 3],
+  bannerPole: ["drawn", 128, 0, 1, 2], knightStatue: ["drawn", 129, 0, 1, 2], stoneWell: ["drawn", 130, 0, 1, 2],
+  trainingDummy: ["drawn", 131, 0, 1, 2], weaponRack: ["drawn", 132, 0, 1, 1], haystack: ["drawn", 133, 0, 1, 1],
+  horse: ["drawn", 134, 0, 1, 1], carriage: ["drawn", 135, 0, 2, 1],
+  // a toy town in pink and white,
+  pinkTree: ["drawn", 137, 0, 2, 2], candyCane: ["drawn", 139, 0, 1, 2], lollipop: ["drawn", 140, 0, 1, 2],
+  toyBlocks: ["drawn", 141, 0, 1, 1], teddyBear: ["drawn", 142, 0, 1, 1], toySoldier: ["drawn", 143, 0, 1, 2],
+  cupcake: ["drawn", 144, 0, 1, 1], whiteFence: ["drawn", 145, 0, 1, 1], toyEngine: ["drawn", 146, 0, 1, 1],
+  toyCar: ["drawn", 147, 0, 1, 1],
+  // old China: bamboo, a courtyard's wood and tile.
+  bamboo: ["drawn", 148, 0, 1, 2], bambooGrove: ["drawn", 149, 0, 2, 2], pagoda: ["drawn", 151, 0, 2, 4],
+  pavilion: ["drawn", 153, 0, 3, 3], moonGate: ["drawn", 156, 0, 3, 3], stoneLantern: ["drawn", 159, 0, 1, 2],
+  scholarRock: ["drawn", 160, 0, 1, 2], willow: ["drawn", 161, 0, 2, 3], paifang: ["drawn", 163, 0, 3, 3],
+  bonsai: ["drawn", 166, 0, 1, 1], dragonBoat: ["drawn", 167, 0, 2, 1], rickshaw: ["drawn", 169, 0, 1, 1],
   // Travel (play-act.js): its vehicles and stops.
   trainEngine: ["drawn", 67, 0, 2, 1],
   trainCarriage: ["drawn", 69, 0, 2, 1],
@@ -361,9 +381,20 @@ const PLAY_BIOMES = {
   cavern: { ground: ["caveFloor", "caveFloor2", "caveGrey", "caveGrey"], path: ["caveSand"], street: "caveSand",
             grows: ["caveRock", "caveRock2", "caveRock3", "ore", "ore2", "ore3", "caveShroom"], thick: 0.1, water: 0.05,
             tune: "cavern", ambience: "water" },
-  toytown: { ground: ["toyGrass", "toyGrass2", "toyGrass3", "toyGrass2"], path: ["toyPath"], street: "toyStone",
-             grows: ["townTree", "townPine", "townBush", "townMushrooms", "townSprout", "beehive", "target", "planter", "planter2",
-                     "townAutumnTree", "pot"], thick: 0.1, water: 0.03, tune: "garden", ambience: "birds" },
+  // PINK AND WHITE (the user, 2026-11-21: "玩具城（粉色，白色主题）"): pink ground and white, white paving, pink trees,
+  // sweets, toys, a white fence.
+  toytown: { square: "toyWhite", ground: ["toyPink", "toyPink2", "toyWhite", "toyPink"], path: ["toyWhitePath"], street: "toyWhiteStone",
+             grows: ["pinkTree", "pinkTree", "lollipop", "candyCane", "cupcake", "toyBlocks", "teddyBear", "toySoldier",
+                     "whiteFence", "balloons", "pinkHeart", "whiteFlower"], thick: 0.1, water: 0.02,
+             wash: [255, 200, 225, 0.06], tune: "garden", ambience: "birds" },
+  // CASTLES AND TOWERS (2026-11-21, "中世纪风"): green ground and cobbles, banners, a well, hay, the training yard.
+  castle: { square: "cobble2", ground: ["grass2", "grass", "cobble2", "grass2"], path: ["cobble", "cobble2"], street: "cobble",
+            grows: ["bannerPole", "haystack", "stoneWell", "trainingDummy", "weaponRack", "knightStatue", "greyRock",
+                    "darkPine", "townTree", "bush", "log", "horse"], thick: 0.08, water: 0.03, tune: "library", ambience: "wind" },
+  // OLD CHINA (2026-11-21, "木质建筑/中式庭院/竹林"): grass and flagstones, bamboo, willows, stone lanterns, scholars' rocks.
+  chinese: { square: "flagstone", ground: ["grass2", "grass", "flagstone2", "grass2"], path: ["flagstone"], street: "flagstone",
+             grows: ["bamboo", "bamboo", "bambooGrove", "willow", "plumTree", "stoneLantern", "scholarRock", "bonsai",
+                     "blossom", "pine", "panda", "lantern"], thick: 0.14, water: 0.06, tune: "garden", ambience: "birds" },
   underwater: { ground: ["sand", "sand2", "sand2", "seaRockGround"], path: ["paving"], street: "paving",
                 grows: ["clownfish", "butterflyfish2", "yellowTang", "blueTang", "moorishIdol", "angelfish", "parrotfish",
                         "wrasse", "koi", "shark", "dolphin", "turtle", "coral", "anemone", "seaweed", "jellyfish", "bubbles",
@@ -476,6 +507,13 @@ const PLAY_LANDMARKS = {
   rocket: [["ship2", -1, -2], ["barrier", -3, 1], ["barrier", 2, 1], ["streetLamp", -3, -1], ["streetLamp", 3, -1]],
   ancient_ruins: [["pillar", -4, -3], ["brokenPillar", -2, -3], ["pillar", 2, -3], ["brokenPillar", 4, -3], ["statue", 0, -2],
                   ["greyRock", -3, 1], ["mossRock", 3, 1]],
+  // Three themes more (2026-11-21): a castle's gate between its towers; a candy garden; a Chinese garden.
+  castle_keep: [["castleTower", -7, -5], ["castleWall", -5, -3], ["castleGate", -2, -4], ["castleWall", 1, -3],
+                ["castleTower", 3, -5], ["bannerPole", -3, 0], ["bannerPole", 2, 0], ["knightStatue", -6, 0], ["knightStatue", 5, 0]],
+  candy_garden: [["pinkTree", -6, -3], ["lollipop", -3, -2], ["candyCane", -1, -2], ["lollipop", 1, -2], ["pinkTree", 3, -3],
+                 ["teddyBear", -2, 0], ["toyBlocks", 0, 0], ["cupcake", 2, 0], ["whiteFence", -4, 1], ["whiteFence", 4, 1]],
+  chinese_garden: [["pagoda", -7, -5], ["moonGate", -3, -3], ["pavilion", 2, -3], ["willow", 6, -4], ["scholarRock", -4, 0],
+                   ["stoneLantern", 1, 0], ["bambooGrove", 5, 0], ["bonsai", -1, 1]],
 };
 const PLAY_SPAN = 5, PLAY_BAND = 14, PLAY_BLEND = 20;
 /* A DOOR TWO TILES WIDE (the user, 2026-11-17: "你现在房间的门都太小了，弄大点") - agent/playworld.py DOOR_W the same. */
@@ -645,7 +683,8 @@ function playRouteFind(blocked, from, to, wobble, salt, paths) {
    does not fit its land stands as a fountain. */
 const PLAY_LANDMARK_LANDS = { skyline: ["city", "scifi", "space", "skycity"], rocket: ["space", "scifi", "city"],
                               mausoleum: ["graveyard", "halloween", "ruins"], christmas_tree: ["christmas", "snow"],
-                              lantern_gate: ["newyear"], giant_heart: ["valentine"], fair: ["funfair", "toytown", "city"] };
+                              lantern_gate: ["newyear"], giant_heart: ["valentine"], fair: ["funfair", "toytown", "city"],
+                              castle_keep: ["castle"], candy_garden: ["toytown"], chinese_garden: ["chinese", "newyear"] };
 function playLandmarkOf(region) {
   const lands = PLAY_LANDMARK_LANDS[region.landmark];
   return !lands || lands.includes(region.biome) ? region.landmark : "fountain";
@@ -690,7 +729,7 @@ function playLay(world, area) {
   const landmarks = regions.filter((region) => !region.starter && PLAY_LANDMARKS[region.landmark]).map((region) => {
     const cx = region.ox + Math.floor(PLAY_CELL[0] / 2) - 1, cy = region.oy + Math.floor(PLAY_CELL[1] / 2) - 1;
     return { region, cx, cy, landmark: playLandmarkOf(region), square: [cx - 6, cy - 4, cx + 7, region.oy + PLAY_CELL[1] - 1],
-             paving: region.land.street === "asphalt" ? "pavement" : "paving" };
+             paving: region.land.square || (region.land.street === "asphalt" ? "pavement" : "paving") };
   });
   // Each region's heart: its landmark's square (just below it), or its first place's door.
   const hearts = regions.map((region) => {
@@ -966,7 +1005,10 @@ const PLAY_EDGES = {
   citywall: { ground: ["paving", "pavement2"], grows: ["townPine", "uTreeSmall2", "hydrant", "uTrash", "planter"], thick: 0.35 },
   industrial: { ground: ["pavement2", "paving", "cracked"], grows: ["crate", "uTrash", "hydrant"], thick: 0.3 },   // not flat asphalt
   caverock: { ground: ["caveGrey", "caveSand"], grows: ["caveRock", "ore", "greyRock"], thick: 0.55 },
-  toyland: { ground: ["toyGrass", "toyStone"], grows: ["balloons", "present", "bush"], thick: 0.3 },
+  toyland: { ground: ["toyPink", "toyWhite"], grows: ["balloons", "pinkTree", "lollipop", "whiteFence"], thick: 0.3 },
+  // Three themes more (2026-11-21): a castle's ramparts, a bamboo thicket.
+  ramparts: { ground: ["cobble", "grass2"], grows: ["castleWall", "bannerPole", "greyRock"], thick: 0.3 },
+  bamboo: { ground: ["grass2", "flagstone2"], grows: ["bamboo", "bambooGrove", "bamboo"], thick: 0.6 },
   winterwood: { ground: ["snow", "snow2"], grows: ["xmasTree", "pine", "darkPine"], thick: 0.55 },
   lanterns: { ground: ["paving", "cobble"], grows: ["lantern", "lanternString", "plumTree"], thick: 0.25 },
   hearts: { ground: ["grass", "grass2"], grows: ["rose", "roseVine", "redHeart", "plumTree"], thick: 0.45 },
@@ -1332,8 +1374,8 @@ function playNatural(zone) {
 
 /* A REGION'S STREET LIGHTS (the user, 2026-11-17: "路灯除了灯之外还有火把什么可以选"): the agent's choice for the region
    (agent/playregions.py LIGHTS), else its land's. */
-const PLAY_LIGHT_SPRITES = { lamp: "streetLamp", gaslamp: "gasLamp", torch: "torchPost", brazier: "brazier" };
-const PLAY_LAND_LIGHTS = { primeval: "torch", graveyard: "torch", christmas: "gaslamp", newyear: "lamp", halloween: "torch",
+const PLAY_LIGHT_SPRITES = { lamp: "streetLamp", gaslamp: "gasLamp", torch: "torchPost", brazier: "brazier", stone: "stoneLantern" };
+const PLAY_LAND_LIGHTS = { castle: "brazier", chinese: "stone", primeval: "torch", graveyard: "torch", christmas: "gaslamp", newyear: "lamp", halloween: "torch",
                            valentine: "gaslamp", funfair: "lamp", botanical: "gaslamp", underwater: "torch", skycity: "lamp", space: "lamp", scifi: "lamp", zoo: "gaslamp",
                            ruins: "brazier", toytown: "gaslamp", city: "lamp", meadow: "gaslamp", farmland: "gaslamp", lakeside: "gaslamp", autumn: "torch",
                            forest: "torch", enchanted: "torch", desert: "torch", seaside: "torch", cavern: "torch",
@@ -1651,11 +1693,14 @@ function playLayBlock(index, cx, cy) {
     if (PLAY_WALL_KINDS.has(item.kind) || PLAY_UNDER_KINDS.has(item.kind) || item.on || item.hang) continue;
     if (item.kind === "piece") {
       // A GREAT PIECE stands in the way on its ground - but for its way in, two tiles at the middle of its foot.
-      // its way in where its picture put it (agent/playpieces.py read_svg "entrance"), else the middle of its foot
-      const way = (item.spec && item.spec.entrance) || [Math.floor((item.w - 1) / 2), Math.floor((item.w - 1) / 2) + 1];
+      // its way in where its picture put it (agent/playpieces.py read_svg "entrance") - and ONLY there (the user,
+      // 2026-11-21: "有的地方block有的地方没有，看不清区别" - a picture with no door had a gap at the middle of its foot):
+      // no entrance drawn, its whole ground stands in the way. Its ground and its way in are drawn (play.js
+      // playPieceGroundDraw), so what stops the walker is seen.
+      const way = (item.spec && item.spec.entrance) || null;
       for (let dy = 0; dy < item.h; dy += 1) for (let dx = 0; dx < item.w; dx += 1) {
         const x = item.x + dx, y = item.y + dy;
-        if (dy === item.h - 1 && dx >= way[0] && dx <= way[way.length - 1]) continue;
+        if (way && dy === item.h - 1 && dx >= way[0] && dx <= way[way.length - 1]) continue;
         const i = at(x, y);
         if (i >= 0) { solid[i] = 1; seen[i] = 1; }
       }

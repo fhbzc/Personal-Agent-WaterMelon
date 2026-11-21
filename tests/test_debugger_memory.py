@@ -62,8 +62,10 @@ class LessMemoryTests(unittest.TestCase):
         import os
         import subprocess
         import sys
+        # (its private memory on Windows; a Mac's and Linux's psutil has none - its resident memory there, 2026-11-21)
         code = ("import os, sys, psutil; import personalized_agent.__main__ as m; m._blas_one_thread(); "
-                "print(round(psutil.Process().memory_info().private / 2**20), os.environ.get('OPENBLAS_NUM_THREADS'))")
+                "info = psutil.Process().memory_info(); "
+                "print(round(getattr(info, 'private', info.rss) / 2**20), os.environ.get('OPENBLAS_NUM_THREADS'))")
         env = {k: v for k, v in os.environ.items() if k not in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")}
         said = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=120,
                               cwd=str(Path(__file__).resolve().parents[1])).stdout.split()

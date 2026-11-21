@@ -66,6 +66,11 @@
     "toytown": [["candy_garland", "ball", "#f2a7c3", ""], ["toy_balloon", "ball", "#5ad1ff", ""]],
     "underwater": [["jellyfish_lamp", "drop", "#f0a7ff", "#ffe0ff"], ["fish_mobile", "fish", "#f2a71b", ""]],
     "valentine": [["heart_string", "heart", "#e0457b", ""], ["cupid_charm", "feather", "#f7f4ec", ""]],
-    "zoo": [["bird_swing", "cage", "#c9a227", ""], ["leaf_canopy", "leaf", "#4f8a2f", ""]]
+    "zoo": [["bird_swing", "cage", "#c9a227", ""], ["leaf_canopy", "leaf", "#4f8a2f", ""]],
+    "castle": [["heraldic_banner", "banner", "#a8202a", "#e8b83a"], ["iron_chandelier", "lantern", "#3a3a40", "#ffcf70"]],
+    "castle_keep": [["crest_shield_banner", "banner", "#2a4a8a", "#e8c050"], ["sconce_lantern", "lantern", "#5a4030", "#ffb050"]],
+    "chinese": [["hall_gate_lantern", "lantern", "#c8282a", "#ffd060"], ["jade_wind_chime", "bell", "#5fa88a", ""]],
+    "chinese_garden": [["silk_lantern", "lantern", "#e85a4a", "#ffe08a"], ["bamboo_wind_chime", "bell", "#8ab060", ""]],
+    "candy_garden": [["sugar_bead_garland", "ball", "#ff9cc8", ""], ["pink_paper_lantern", "lantern", "#ffb6d5", "#fff0f6"]]
   }
 }

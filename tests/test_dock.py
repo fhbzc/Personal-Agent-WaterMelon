@@ -276,7 +276,7 @@ class TheDesktopUsesItTests(unittest.TestCase):
         from personalized_agent.ui.desktop import DesktopAgent
         self.assertIn("_side_tab_at_start", inspect.getsource(DesktopAgent.run))
         shown = []
-        desk = SimpleNamespace(_notes_open_now=lambda: False)
+        desk = SimpleNamespace(_notes_open_now=lambda: False, _notes_on_a_mac=lambda: True)   # (a Mac's panel too)
         with mock.patch.dict(os.environ, {"PA_NO_DIALOGS": ""}), \
                 mock.patch.object(DesktopAgent, "_show_side_tab", lambda self: shown.append(self._side_tab_on)):
             DesktopAgent._side_tab_at_start(desk)
@@ -284,6 +284,133 @@ class TheDesktopUsesItTests(unittest.TestCase):
             desk._notes_open_now = lambda: True
             DesktopAgent._side_tab_at_start(desk)
             self.assertEqual(shown, [True], "the panel open already: no tab")
+
+    def test_on_a_mac_too_its_tab_at_the_edge_and_back_when_put_away(self) -> None:
+        """2026-11-21: "为什么还是跳出来一个西瓜，而不是侧边框" - "肯定要做啊"."""
+        import inspect
+
+        from personalized_agent.ui.desktop import DesktopAgent
+        run = inspect.getsource(DesktopAgent.run)
+        self.assertIn('elif sys.platform == "darwin":', run)
+        self.assertGreater(run.count("DesktopAgent._side_tab_at_start(self)"), 1, "scheduled on a Mac as on Windows")
+        shown = inspect.getsource(DesktopAgent._show_side_tab)
+        self.assertIn('clear = "systemTransparent"', shown)
+        self.assertIn("return DesktopAgent._side_tab_edge_on_a_mac(self)", inspect.getsource(DesktopAgent._side_tab_edge))
+        opened = inspect.getsource(DesktopAgent._open_notes_on_a_mac)
+        self.assertIn("DesktopAgent._hide_side_tab(self)", opened)
+        put_away = inspect.getsource(DesktopAgent.hide_notes_panel)
+        self.assertIn("self.queue.put((\"call\", lambda: DesktopAgent._show_side_tab(self)))", put_away)
+
+    def test_on_a_mac_the_panel_fills_the_screen_and_comes_back(self) -> None:
+        """2026-11-21: "你mac side panel怎么没有全屏这个"."""
+        import inspect
+        import queue
+        from types import SimpleNamespace
+
+        from personalized_agent.ui import mac_panel
+        from personalized_agent.ui.desktop import DesktopAgent
+        undocked, calls = [], queue.Queue()
+        desk = SimpleNamespace(NOTES_TITLE="t", queue=calls, _mac_dock=SimpleNamespace(undock=lambda: undocked.append(1)),
+                               _notes_on_a_mac=lambda: True, config={})
+        frame = ((0.0, 0.0), (420.0, 900.0))
+        with mock.patch.object(mac_panel, "fill_side_panel", return_value=frame) as filled, \
+                mock.patch.object(mac_panel, "put_side_panel", return_value=True) as put:
+            self.assertTrue(DesktopAgent.full_notes_panel(desk, True))
+            self.assertEqual(undocked, [1], "the windows moved for it given back first")
+            calls.get_nowait()[1]()
+            filled.assert_called_once_with("t")
+            self.assertEqual(desk._notes_full, frame)
+            self.assertTrue(DesktopAgent.full_notes_panel(desk, None))
+            self.assertFalse(DesktopAgent.full_notes_panel(desk, False))
+            calls.get_nowait()[1]()
+            put.assert_called_once_with("t", frame)
+        routes = (Path(__file__).resolve().parents[1] / "personalized_agent" / "api" / "routes.py").read_text(encoding="utf-8")
+        self.assertIn('"can": sys.platform in ("win32", "darwin")', routes)
+        self.assertIn("def fill_side_panel(title: str)", inspect.getsource(mac_panel))
+
+    def test_pinned_on_a_mac_above_the_others_and_watched(self) -> None:
+        """2026-11-21: "mac上的pin好像没用，其它页面还是会放到pin的上面（比如最大化之后）"."""
+        import inspect
+        import queue
+        from types import SimpleNamespace
+
+        from personalized_agent.ui import mac_panel
+        from personalized_agent.ui.desktop import DesktopAgent
+        self.assertIn("AppKit.NSFloatingWindowLevel if above else AppKit.NSNormalWindowLevel",
+                      inspect.getsource(mac_panel.keep_side_panel_above))
+        calls, later = queue.Queue(), []
+        config = {"side_panel_pinned": True}
+        desk = SimpleNamespace(NOTES_TITLE="t", queue=calls, config=SimpleNamespace(get=lambda k, d=None: config.get(k, d)),
+                               _notes_on_a_mac=lambda: True, _mac_pin_watching=False,
+                               root=SimpleNamespace(after=lambda ms, fn: later.append((ms, fn))))
+        made_room, kept = [], []
+        with mock.patch.object(mac_panel, "side_panel_shown", return_value=True), \
+                mock.patch.object(mac_panel, "keep_side_panel_above", side_effect=lambda t, a: kept.append(a)), \
+                mock.patch.object(DesktopAgent, "_make_room_on_a_mac", lambda self: made_room.append(1)):
+            DesktopAgent._watch_mac_pin(desk)
+            DesktopAgent._watch_mac_pin(desk)
+            self.assertEqual(len(later), 1, "one watch")
+            later.pop()[1]()
+            self.assertEqual((made_room, kept), ([1], [True]), "a window come over its strip moved, the panel above")
+            self.assertEqual(later[-1][0], DesktopAgent.MAC_PIN_EVERY_MS)
+            config["side_panel_pinned"] = False
+            later.pop()[1]()
+            self.assertFalse(desk._mac_pin_watching, "unpinned: it stops")
+            self.assertEqual(later, [])
+
+    def test_on_a_mac_a_window_over_the_pinned_strip_is_fitted_at_once(self) -> None:
+        """2026-11-21: "为什么mac不能像windows一样，想想办法？" - watched, fitted the moment it comes over."""
+        from personalized_agent.platform_layer import dock_mac
+        screen, strip = (0, 30, 1500, 995), (1500, 30, 1920, 995)
+        self.assertEqual(dock_mac.fit_at_once((0, 30, 1920, 995), strip, screen), (0, 30, 1500, 995), "filled: beside it")
+        self.assertIsNone(dock_mac.fit_at_once((100, 100, 900, 700), strip, screen), "not over it: left alone")
+        self.assertIsNone(dock_mac.fit_at_once((-10, 0, 1930, 1090), strip, screen), "a film: covers it till it ends")
+        self.assertIn("AXResized", dock_mac.MacDock.NOTICES)
+        self.assertIn("AXWindowCreated", dock_mac.MacDock.NOTICES)
+
+    def test_on_a_mac_the_screens_picture_leaves_the_pinned_strip_off(self) -> None:
+        """2026-11-21: "你mac侧边screenshot of the whole screen 只是把sidebar抹去，那个空位还是在的"."""
+        from personalized_agent.platform_layer import screen_picture as sp
+        screen = (0, 0, 1920, 1080)
+        self.assertEqual(sp.strip_left_off(screen, (1500, 30, 1920, 995)), (0, 0, 1500, 1080))
+        self.assertEqual(sp.strip_left_off(screen, None), screen, "not pinned: the whole screen")
+        self.assertEqual(sp.strip_left_off(screen, (2000, 0, 2400, 1080)), screen, "another screen's strip")
+        saved = list(sp.MAC_SIDE_STRIP)
+        try:
+            sp.MAC_SIDE_STRIP[:] = [lambda: (1500, 30, 1920, 995)]
+            self.assertEqual(sp.mac_strip_left_off(screen), (0, 0, 1500, 1080))
+        finally:
+            sp.MAC_SIDE_STRIP[:] = saved
+        macos = (Path(__file__).resolve().parents[1] / "personalized_agent" / "platform_layer" / "macos.py").read_text(encoding="utf-8")
+        self.assertIn("screen = mac_strip_left_off(tuple(screen))", macos)
+
+    def test_the_panel_says_a_macs_missing_permission(self) -> None:
+        """2026-11-21: "你现在mac setting没有让我打开权限的地方呀"."""
+        web = Path(__file__).resolve().parents[1] / "personalized_agent" / "api" / "web"
+        self.assertIn('<div id="side-macperm" class="side-macperm" hidden></div>', (web / "notes.html").read_text(encoding="utf-8"))
+        notes = (web / "notes.js").read_text(encoding="utf-8")
+        self.assertIn('said = await api.get("/api/permissions/macos")', notes)
+        self.assertIn('await api.post("/api/permissions/macos/open", { key: button.dataset.macperm })', notes)
+        self.assertIn('const key = missing.includes("accessibility") ? "accessibility" : missing[0];', notes)
+
+    def test_on_a_mac_the_systems_own_pointers(self) -> None:
+        """2026-11-21: "你在mac上，那个手型鼠标为什么这么奇怪"."""
+        from personalized_agent.ui import mac_cursors
+        self.assertEqual(mac_cursors.mac_pointer("hand2"), "pointinghand")
+        self.assertEqual(mac_cursors.mac_pointer("fleur"), "openhand")
+        self.assertEqual(mac_cursors.mac_pointer("xterm"), "xterm")
+        self.assertFalse(mac_cursors.use_the_macs_pointers("win32"), "nothing changed elsewhere")
+        import tkinter as tk
+        original = tk.Misc._options
+        try:
+            self.assertTrue(mac_cursors.use_the_macs_pointers("darwin"))
+            said = tk.Misc._options(object(), {"cursor": "hand2", "bg": "red"})
+            self.assertIn("pointinghand", said)
+            self.assertNotIn("hand2", said)
+        finally:
+            tk.Misc._options = original
+            if hasattr(tk.Misc, "_mac_pointers"):
+                del tk.Misc._mac_pointers
 
     def test_it_takes_room_only_when_the_user_pinned_it(self) -> None:
         """2026-11-16: "所有notification弹出现在都是不缩放，只有user主动选择固定在右边，才是缩放的view"."""

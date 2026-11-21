@@ -1334,6 +1334,46 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
                 "auth_status": provider.get_auth_status().to_dict(),
                 "models": [model.to_dict() for model in provider.list_models()]}
 
+    @route("POST", "/api/models/claude/sign_in")
+    def sign_in_claude(request: Any) -> Any:
+        """A PLACE TO SIGN IN (the user, 2026-11-21: "你那个mac, claude cli 没有登录，你要给一个登录的位置"): the Claude
+        client's own `auth login` run in a terminal window the user sees (platform_layer/terminal.py) - it opens its
+        browser page and asks its own questions; "Check again" reads the result."""
+        from pathlib import Path
+
+        from ..platform_layer.terminal import open_in_terminal
+        provider = app.models.provider(str(request.get("provider") or "claude_code"))
+        if provider is None or not hasattr(provider, "executable"):
+            raise ApiError("not a Claude client", 404)
+        path = provider.executable()
+        if not path:
+            raise ApiError("Claude Code is not installed on this computer: https://claude.com/claude-code", 400)
+        opened = open_in_terminal([path, "auth", "login"], "Sign in to Claude Code",
+                                  Path(app.data_dir) / "sign_in",
+                                  said_after="Done? Go back to Personal Agent WaterMelon and press Check again.")
+        return {"opened": opened}
+
+    @route("GET", "/api/models/attention")
+    def models_attention(_request: Any) -> Any:
+        """WHETHER A MODEL WANTS THE USER (2026-11-21): none that can answer - the stand-in "offline" first on the
+        list - or the Claude client on it not signed in; for the side panel's line at its top."""
+        try:
+            chain = app.models.chain() if hasattr(app.models, "chain") else []
+        except Exception:
+            chain = []
+        providers = [str(getattr(one, "provider_id", "") or "") for one in chain or []]
+        first = providers[0] if providers else "offline"
+        claude = app.models.provider("claude_code")
+        signed_in = None
+        if claude is not None and "claude_code" in providers[:1]:
+            try:
+                signed_in = claude.get_auth_status().to_dict().get("state") == "authenticated"
+            except Exception:
+                signed_in = None
+        return {"offline": first in ("", "offline"), "first": first,
+                "claude_installed": bool(claude is not None and getattr(claude, "executable", lambda: None)()),
+                "claude_signed_in": signed_in}
+
     @route("POST", "/api/models/codex/refresh")
     def refresh_codex_models(_request: Any) -> Any:
         """Ask the installed Codex for its model list, now.
@@ -5221,7 +5261,8 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
         if not callable(full):
             return {"full": False, "can": False}
         try:
-            return {"full": bool(full(None if said is None else bool(said))), "can": sys.platform == "win32"}
+            # On a Mac too (2026-11-21: "你mac side panel怎么没有全屏这个" - ui/mac_panel.py fill_side_panel).
+            return {"full": bool(full(None if said is None else bool(said))), "can": sys.platform in ("win32", "darwin")}
         except Exception:
             return {"full": False, "can": False}
 

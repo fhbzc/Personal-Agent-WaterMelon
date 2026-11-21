@@ -10482,6 +10482,9 @@ function renderModelChain(models) {
         }">${one.sees_images ? "Sees pictures" : "Text only"}</button>
       ${one.provider === "codex" ? `<button type="button" class="small secondary"
         data-chain-refresh title="Ask Codex for its models now">Refresh models</button>` : ""}
+      ${one.provider === "claude_code" && !ready ? `<button type="button" class="small"
+        data-chain-signin="${escapeHtml(one.provider)}"
+        title="Opens a terminal running claude auth login: sign in in the browser page it opens, then press Check again">Sign in</button>` : ""}
       ${one.provider === "claude_code" || one.provider === "claude_desktop" ? `<button
         type="button" class="small secondary" data-chain-recheck="${escapeHtml(one.provider)}"
         title="Look for it again, ask whether it is signed in, and ask which model each of its names means">Check again</button>` : ""}
@@ -10578,6 +10581,19 @@ document.addEventListener("click", async (event) => {
   if (remove) {
     chain.splice(Number(remove.getAttribute("data-chain-remove")), 1);
     await saveModelChain(chain, "Removed from the list");
+    return;
+  }
+  // A PLACE TO SIGN IN (the user, 2026-11-21: "claude cli 没有登录，你要给一个登录的位置"): the client's own sign-in in a
+  // terminal window; "Check again" after.
+  const signIn = at("data-chain-signin");
+  if (signIn) {
+    try {
+      const said = await api.post("/api/models/claude/sign_in", { provider: signIn.dataset.chainSignin });
+      toast(said.opened ? "A terminal opened: sign in in the browser page it opens, then press Check again."
+        : "No terminal could be opened: run claude auth login yourself, then press Check again.");
+    } catch (err) {
+      toast(err.message, "error");
+    }
     return;
   }
   const recheck = at("data-chain-recheck");
@@ -12310,7 +12326,7 @@ const MAC_PERMISSIONS = {
       + "Allowed first, it spares the questions macOS would ask about each folder.",
     how: "Click +, choose Personal Agent WaterMelon in Applications, and switch it on." },
   accessibility: { name: "Accessibility",
-    why: "The titles of the windows you work in.",
+    why: "Needed: the side panel moves the windows it would cover out of its way. Also the titles of the windows you work in.",
     how: "Switch on Personal Agent WaterMelon." },
   automation: { name: "Automation: System Events",
     why: "Which application is in front.",

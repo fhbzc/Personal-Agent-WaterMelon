@@ -23,19 +23,21 @@ from typing import Any, Dict, List, Optional, Tuple
 #: The settings, each the agent's to choose (the page knows how to draw each - api/web/play-regions.js).
 BIOMES = ("meadow", "autumn", "enchanted", "desert", "seaside", "forest", "highland", "snow", "city", "farmland",
           "cavern", "lakeside", "toytown", "underwater", "skycity", "space", "scifi", "zoo", "ruins", "graveyard", "christmas", "newyear", "halloween",
-          "valentine", "funfair", "botanical", "primeval")
+          "valentine", "funfair", "botanical", "primeval",
+          "castle", "chinese")             # castles and towers, old China (the user, 2026-11-21)
 LAYOUTS = ("village", "grid", "plaza", "river", "islands", "scattered")
 PALETTES = ("day", "dawn", "dusk", "night", "spring", "summer", "autumn", "winter", "pastel", "sepia", "misty")
 ARCHITECTURES = ("sandstone", "stone", "marble", "timber")
 THEMES = ("scholar", "maker", "traveller", "carer", "performer", "athlete", "dreamer", "explorer", "merchant",
           "quiet")
 LANDMARKS = ("fountain", "statue", "great_tree", "camp", "station", "stones", "pond", "market", "crystals", "giant_pet",
-             "rocket", "ancient_ruins", "mausoleum", "fair", "greenhouse", "christmas_tree", "lantern_gate", "giant_heart", "skyline")
+             "rocket", "ancient_ruins", "mausoleum", "fair", "greenhouse", "christmas_tree", "lantern_gate", "giant_heart", "skyline",
+             "castle_keep", "candy_garden", "chinese_garden")
 #: Its sky (api/web/play-sky.js): changing by its land's chances, always one weather, or an eternal season or hour.
 WEATHERS = ("changing", "fair", "rainy", "snowy", "foggy", "eternal_night", "eternal_winter", "eternal_dusk",
             "eternal_spring")
 #: Its street lights (api/web/play-regions.js): a lamp, a gas lamp, a torch, a brazier - else its land's own.
-LIGHTS = ("lamp", "gaslamp", "torch", "brazier")
+LIGHTS = ("lamp", "gaslamp", "torch", "brazier", "stone")          # "stone": a stone lantern
 SETTINGS = {"biome": BIOMES, "layout": LAYOUTS, "palette": PALETTES, "architecture": ARCHITECTURES,
             "theme": THEMES, "landmark": LANDMARKS}
 
@@ -118,7 +120,8 @@ def room_order(region: Dict[str, Any]) -> List[Tuple[int, int]]:
 #: that fit only some lands, and what stands instead elsewhere.
 LANDMARK_LANDS = {"skyline": ("city", "scifi", "space", "skycity"), "rocket": ("space", "scifi", "city"),
                   "mausoleum": ("graveyard", "halloween", "ruins"), "christmas_tree": ("christmas", "snow"),
-                  "lantern_gate": ("newyear",), "giant_heart": ("valentine",), "fair": ("funfair", "toytown", "city")}
+                  "lantern_gate": ("newyear",), "giant_heart": ("valentine",), "fair": ("funfair", "toytown", "city"),
+                  "castle_keep": ("castle",), "candy_garden": ("toytown",), "chinese_garden": ("chinese", "newyear")}
 
 
 def fitting_landmark(landmark: str, biome: str) -> str:

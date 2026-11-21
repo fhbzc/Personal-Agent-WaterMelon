@@ -45,6 +45,16 @@ class LookedAtWithoutAskingTests(unittest.TestCase):
         self.assertEqual(said["missing"], ["full_disk"])
         self.assertFalse(said["items"][3]["needed"])
 
+    def test_accessibility_is_always_needed_for_the_side_panel(self) -> None:
+        # 2026-11-21: "要让其它窗口让开，作为一个required permission(会提醒user的那种)"
+        off = _Config(listener_application_enabled=False, listener_filesystem_enabled=False,
+                      listener_browser_enabled=False)
+        self.assertTrue(mp.needed(off)["accessibility"])
+        checks = {key: (lambda: False) for key in mp.ORDER}
+        with mock.patch.object(mp.sys, "platform", "darwin"), mock.patch.dict(mp._CHECKS, checks):
+            said = mp.status(off)
+        self.assertIn("accessibility", said["missing"], "missing - so the page's banner reminds the user")
+
     def test_only_what_is_needed_is_looked_at(self) -> None:
         looked = []
         checks = {key: (lambda key=key: looked.append(key) or True) for key in mp.ORDER}

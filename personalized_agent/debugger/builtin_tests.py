@@ -389,7 +389,7 @@ def _test_model_authentication(app: Any) -> Dict[str, Any]:
     return {"status": mapping.get(status.state.value, "failed"),
             "summary": f"{resolved.provider_id}: {status.state.value}",
             "details": status.to_dict(),
-            "recommendations": ["Open Settings > Models to sign in."]
+            "recommendations": ["Open Settings > General > Models to sign in."]
             if status.state.value != "authenticated" else []}
 
 
@@ -448,7 +448,7 @@ def _test_lightweight_request(app: Any) -> Dict[str, Any]:
     except ModelUnavailable as exc:
         return {"status": "failed", "summary": f"model unavailable: {exc}",
                 "details": exc.availability.to_dict(),
-                "recommendations": ["Open Settings > Models."]}
+                "recommendations": ["Open Settings > General > Models."]}
     return {"status": "passed",
             "summary": f"{response.provider}/{response.model} responded "
                        f"({response.usage.total_tokens} tokens)",

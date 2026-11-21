@@ -782,7 +782,7 @@ class CodexProvider(ModelProvider):
             # before starting costs nothing.
             if effort not in self.reasoning_options(model)["efforts"]:
                 raise ValueError(f"The Codex model {model!r} does not take the reasoning "
-                                 f"effort {effort!r}. Choose another in Settings > Models.")
+                                 f"effort {effort!r}. Choose another in Settings > General > Models.")
             command.extend(["-c", f"model_reasoning_effort={json.dumps(effort)}"])
         elif self._configured("model_reasoning_effort") in REASONING_EFFORTS:
             command.extend(["-c", "model_reasoning_effort="

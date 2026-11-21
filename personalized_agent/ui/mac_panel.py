@@ -177,6 +177,26 @@ def open_panel(url: str, size: Tuple[int, int] = (780, 900), title: str = TITLE,
 _side: dict = {}
 
 
+def _no_title_bar(window: Any, view: Any) -> None:
+    """THE SIDE PANEL WITHOUT A WINDOW'S BUTTONS (the user, 2026-11-21: "mac的sidebar还有自己的最大化，最小化，叉叉，这个能不能
+    取消"): no close, minimise or zoom button and no title shown - the page has its own (put away, full screen) - its page
+    up to the top edge; the title kept, by which the agent's own windows are known. Its edge still drags its width."""
+    import AppKit
+    try:
+        for button in (AppKit.NSWindowCloseButton, AppKit.NSWindowMiniaturizeButton, AppKit.NSWindowZoomButton):
+            found = window.standardWindowButton_(button)
+            if found is not None:
+                found.setHidden_(True)
+        window.setTitleVisibility_(AppKit.NSWindowTitleHidden)
+        window.setTitlebarAppearsTransparent_(True)
+        window.setStyleMask_(window.styleMask() | AppKit.NSWindowStyleMaskFullSizeContentView)
+        window.setMovableByWindowBackground_(False)
+        if view is not None:
+            view.setFrame_(window.contentView().bounds())
+    except Exception:
+        log.debug("the side panel's title bar could not be taken off", exc_info=True)
+
+
 def _side_frames(window: Any, width: float) -> Tuple[Any, Any]:
     """(off the right edge, in place) for a side panel `width` wide, on the screen it is on."""
     import AppKit
@@ -218,6 +238,7 @@ def side_panel(url: str, width: float, title: str, activate: bool = True) -> boo
             if found is None:
                 return False
             _side[title] = found
+            _no_title_bar(found[0], found[1])
             # SEEN THROUGH IN THE AGENT'S PICTURE ONLY (the user, 2026-11-16: "chat现在截图的时候，忽视/穿透 sidebar" -
             # "只是自己截图看不到，其它是可以的"): that picture is made of the other programs' windows alone
             # (macos.py user_screen_image), this one of this process's; the user's own screenshots have it.
@@ -300,6 +321,55 @@ def resize_side_panel(title: str, width: float) -> bool:
         return True
     except Exception:
         log.warning("the side panel could not be made wider or narrower", exc_info=True)
+        return False
+
+
+def keep_side_panel_above(title: str, above: bool) -> bool:
+    """PINNED, ABOVE THE OTHERS (the user, 2026-11-21: "mac上的pin好像没用，其它页面还是会放到pin的上面（比如最大化之后）"):
+    the side panel titled `title` kept at the floating level - no other program's window, maximized or brought to the
+    front, goes over it - or back at the normal level. On the main thread."""
+    import AppKit
+    found = _side.get(title)
+    if found is None:
+        return False
+    try:
+        found[0].setLevel_(AppKit.NSFloatingWindowLevel if above else AppKit.NSNormalWindowLevel)
+        return True
+    except Exception:
+        log.warning("the side panel's level could not be set", exc_info=True)
+        return False
+
+
+def fill_side_panel(title: str) -> Optional[Tuple[Tuple[float, float], Tuple[float, float]]]:
+    """THE SIDE PANEL OVER THE WHOLE SCREEN ON A MAC (the user, 2026-11-21: "你mac side panel怎么没有全屏这个"): the panel
+    titled `title`, shown, made as large as its screen's room for windows (under the menu bar, beside the Dock). Its
+    frame before - for `put_side_panel` - or None where it is not shown. On the main thread."""
+    import AppKit
+    found = _side.get(title)
+    if found is None or not found[0].isVisible():
+        return None
+    try:
+        window = found[0]
+        frame = window.frame()
+        before = ((float(frame.origin.x), float(frame.origin.y)), (float(frame.size.width), float(frame.size.height)))
+        seen = (window.screen() or AppKit.NSScreen.mainScreen()).visibleFrame()
+        window.setFrame_display_(((seen.origin.x, seen.origin.y), (seen.size.width, seen.size.height)), True)
+        return before
+    except Exception:
+        log.warning("the side panel could not be made to fill the screen", exc_info=True)
+        return None
+
+
+def put_side_panel(title: str, frame: Any) -> bool:
+    """The side panel titled `title` put back at `frame` (from `fill_side_panel`). On the main thread."""
+    found = _side.get(title)
+    if found is None or not frame:
+        return False
+    try:
+        found[0].setFrame_display_((tuple(frame[0]), tuple(frame[1])), True)
+        return True
+    except Exception:
+        log.warning("the side panel could not be put back from the whole screen", exc_info=True)
         return False
 
 

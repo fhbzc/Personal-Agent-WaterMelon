@@ -1619,6 +1619,75 @@ function notesListen() {
 function sideWords(words) {
   try { return (window.interfaceLanguage && window.interfaceLanguage.lookUp(words)) || words; } catch (_err) { return words; }
 }
+/* A MAC'S PERMISSION MISSING, SAID AT THE PANEL'S TOP (the user, 2026-11-21: "要让其它窗口让开，作为一个required
+   permission(会提醒user的那种)"; "你现在mac setting没有让我打开权限的地方呀"): what is missing and why, a button to the very
+   pane of System Settings (platform_layer/macos_permissions.py) - Accessibility first, which moves the windows out of the
+   panel's way. Looked at again whenever the panel comes back (back from System Settings). Nothing off a Mac. */
+const SIDE_MAC_PERMISSIONS = {
+  accessibility: "Accessibility - needed: the side panel moves the windows it would cover out of its way",
+  full_disk: "Full Disk Access - your Desktop, Documents and Downloads folders",
+  automation: "Automation: System Events - which application is in front",
+  screen: "Screen Recording - pictures of the window in front",
+};
+async function sideMacPermissions() {
+  const bar = $("#side-macperm");
+  if (!bar) return;
+  let said = null;
+  try { said = await api.get("/api/permissions/macos"); } catch (_err) { return; }
+  const missing = (said && said.applies && said.missing) || [];
+  if (!missing.length) { bar.hidden = true; bar.innerHTML = ""; return; }
+  const key = missing.includes("accessibility") ? "accessibility" : missing[0];
+  bar.innerHTML = `<span class="side-macperm-words"><strong>${escapeHtml(sideWords("macOS permission needed"))}</strong>
+    ${escapeHtml(sideWords(SIDE_MAC_PERMISSIONS[key] || key))}${missing.length > 1 ? ` (+${missing.length - 1})` : ""}</span>
+    <button type="button" class="side-macperm-open" data-macperm="${escapeHtml(key)}">${escapeHtml(sideWords("Open System Settings"))}</button>`;
+  bar.hidden = false;
+}
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest && event.target.closest("[data-macperm]");
+  if (!button) return;
+  button.disabled = true;
+  try { await api.post("/api/permissions/macos/open", { key: button.dataset.macperm }); } catch (_err) { /* looked at again below */ }
+  button.disabled = false;
+  sideMacPermissions();
+});
+/* NO MODEL THAT CAN ANSWER, SAID AT THE TOP TOO (the user, 2026-11-21: "你那个mac, claude cli 没有登录，你要给一个登录的位
+   置"): the Claude client first on the list and not signed in - a button that opens its own sign-in in a terminal
+   (api/routes.py /api/models/claude/sign_in); none at all - where to choose one. Looked at again as the panel comes back. */
+async function sideModelAttention() {
+  const bar = $("#side-model");
+  if (!bar) return;
+  let said = null;
+  try { said = await api.get("/api/models/attention"); } catch (_err) { return; }
+  const claudeOut = said && said.first === "claude_code" && said.claude_signed_in === false;
+  if (!said || (!said.offline && !claudeOut)) { bar.hidden = true; bar.innerHTML = ""; return; }
+  const words = claudeOut ? "Claude Code is not signed in - nothing that needs a model runs till it is"
+    : "No language model is set - nothing that needs one runs till it is";
+  const button = said.claude_installed
+    ? `<button type="button" class="side-macperm-open" data-model-signin="1">${escapeHtml(sideWords("Sign in to Claude Code"))}</button>`
+    : `<span class="muted">${escapeHtml(sideWords("Settings > General > Models"))}</span>`;
+  bar.innerHTML = `<span class="side-macperm-words"><strong>${escapeHtml(sideWords("Model not signed in"))}</strong>
+    ${escapeHtml(sideWords(words))}</span>${button}`;
+  bar.hidden = false;
+}
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest && event.target.closest("[data-model-signin]");
+  if (!button) return;
+  button.disabled = true;
+  try { await api.post("/api/models/claude/sign_in", { provider: "claude_code" }); } catch (_err) { /* said below */ }
+  button.disabled = false;
+  button.textContent = sideWords("Signed in? Check again");
+  button.removeAttribute("data-model-signin");
+  button.dataset.modelRecheck = "1";
+});
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest && event.target.closest("[data-model-recheck]");
+  if (!button) return;
+  button.disabled = true;
+  try { await api.post("/api/models/claude/recheck", { provider: "claude_code" }); } catch (_err) { /* looked at again */ }
+  sideModelAttention();
+});
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { sideMacPermissions(); sideModelAttention(); } });
+window.addEventListener("load", () => { sideMacPermissions(); sideModelAttention(); });
 function sideControlRun(at, open) {
   const line = document.createElement("div");
   line.dataset.who = "agent";

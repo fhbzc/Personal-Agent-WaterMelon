@@ -23,6 +23,7 @@ const PLAY_SKY_CHANCES = {
   highland: [0.4, 0.3, 0.1, 0.1, 0.1], snow: [0.3, 0.2, 0, 0.45, 0.05], city: [0.5, 0.3, 0.15, 0, 0.05],
   farmland: [0.6, 0.2, 0.15, 0, 0.05], cavern: [1, 0, 0, 0, 0], lakeside: [0.45, 0.2, 0.15, 0, 0.2],
   toytown: [0.8, 0.12, 0.08, 0, 0], underwater: [1, 0, 0, 0, 0], skycity: [0.85, 0.15, 0, 0, 0],
+  castle: [0.45, 0.3, 0.15, 0, 0.1], chinese: [0.45, 0.15, 0.25, 0, 0.15],
   space: [1, 0, 0, 0, 0], scifi: [0.6, 0.2, 0.15, 0, 0.05], graveyard: [0.3, 0.5, 0.2, 0, 0],
   christmas: [0.4, 0.2, 0, 0.4, 0], newyear: [0.8, 0.15, 0.05, 0, 0], halloween: [0.35, 0.45, 0.2, 0, 0],
   valentine: [0.85, 0.1, 0.05, 0, 0], funfair: [0.8, 0.15, 0.05, 0, 0], botanical: [0.65, 0.15, 0.2, 0, 0],
@@ -125,7 +126,7 @@ function playSkyDraw(ctx, canvas) {
 /* WHAT GIVES LIGHT AT NIGHT, and how far: things in the rooms, what stands about, windows (a warm glow below them). */
 const PLAY_ITEM_LIGHTS = { lamp: 4.5, lamp_post: 5.5, wall_torch: 4, candelabra: 3.5, candle: 2.2, fireplace: 4.5, stove: 2.5,
                            window: 2.5 };
-const PLAY_DECO_LIGHTS = { lamp: 5.5, torch: 4.5, campfire: 5.5, streetLamp: 6, gasLamp: 5.5, torchPost: 4.5, brazier: 5 };
+const PLAY_DECO_LIGHTS = { lamp: 5.5, torch: 4.5, campfire: 5.5, streetLamp: 6, gasLamp: 5.5, torchPost: 4.5, brazier: 5, stoneLantern: 4.5 };
 function playNightDraw(ctx, canvas, night) {
   const size = PLAY_TILE * play.scale;
   const off = playSky.night || (playSky.night = document.createElement("canvas"));

@@ -6155,3 +6155,12 @@ body.side-controlling::after {
 .side-reply-box input { flex: 1 1 auto; min-width: 0; }
 .side-thread { margin: 6px 0 0 12px; padding-left: 8px; border-left: 2px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
 .side-thread-msg { font-size: 12.5px; }
+/* A Mac's permission missing, at the side panel's top (notes.js sideMacPermissions, 2026-11-21). */
+.side-macperm { display: flex; align-items: center; gap: 8px; margin: 6px 8px; padding: 8px 10px; border-radius: 8px;
+  background: rgba(255, 196, 0, 0.14); border: 1px solid rgba(255, 196, 0, 0.55); font-size: 12.5px; }
+.side-macperm[hidden] { display: none; }
+.side-macperm-words { flex: 1 1 auto; min-width: 0; }
+.side-macperm-words strong { display: block; }
+.side-macperm-open { flex: 0 0 auto; }
+/* The sign-in link in any line that says the Claude client is not signed in (sign-in-link.js, 2026-11-21). */
+a.sign-in-link { color: var(--accent, #4b91ff); text-decoration: underline; cursor: pointer; font-weight: 600; }

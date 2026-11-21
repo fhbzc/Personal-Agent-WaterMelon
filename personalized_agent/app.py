@@ -872,7 +872,7 @@ class AgentApplication:
             kind="warning",
             dedupe_key=self.REAUTH_DEDUPE_KEY,
             signature=f"{provider_id}:{payload.get('state')}",
-            action_hint="Open Settings > Models and sign in again.",
+            action_hint="Open Settings > General > Models and sign in again.",
             metadata={"provider": provider_id},
         )
 

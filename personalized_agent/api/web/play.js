@@ -285,7 +285,7 @@ function playEl() {
   box.hidden = true;
   box.setAttribute("aria-label", "Play");
   box.innerHTML = `<canvas class="side-play-canvas" tabindex="0" data-play-label="Your world - walk with the arrow keys" aria-label="${escapeHtml(playWords("Your world - walk with the arrow keys"))}"></canvas>
-    <p class="side-play-hint" data-play-say="Arrow keys to walk, WASD to look around, Shift to run, Space to jump, E to look, M for the map">${escapeHtml(playWords("Arrow keys to walk, WASD to look around, Shift to run, Space to jump, E to look, M for the map"))}</p>
+    <p class="side-play-hint" data-play-say="Arrow keys to walk, WASD to look around, Shift to run, Space to jump, E to look, Q for the next thing, M for the map">${escapeHtml(playWords("Arrow keys to walk, WASD to look around, Shift to run, Space to jump, E to look, Q for the next thing, M for the map"))}</p>
     <p class="side-play-off" hidden data-play-say="Your world is not growing - switched off in Settings > Modules > Play world.">${escapeHtml(playWords("Your world is not growing - switched off in Settings > Modules > Play world."))}</p>
     <div class="side-play-corner"><p class="side-play-growing" hidden></p>
     <canvas class="side-play-mini" width="336" height="256" data-play-label="Map of your world" aria-label="${escapeHtml(playWords("Map of your world"))}"
@@ -1908,7 +1908,8 @@ const PLAY_LANDMARK_NAMES = { fountain: "Fountain", statue: "Statue", great_tree
                               stones: "Standing Stones", pond: "Pond", market: "Market", crystals: "Crystals", giant_pet: "Giant Pet",
                               rocket: "Rocket", ancient_ruins: "Ancient Ruins", mausoleum: "Mausoleum", fair: "Fairground",
                               greenhouse: "Greenhouse", christmas_tree: "Christmas Tree", lantern_gate: "Lantern Gate",
-                              giant_heart: "Giant Heart", skyline: "Skyline" };
+                              giant_heart: "Giant Heart", skyline: "Skyline", castle_keep: "Castle Keep",
+                              candy_garden: "Candy Garden", chinese_garden: "Chinese Garden" };
 /* WHEN A PLACE WAS LIVED (the user, 2026-11-17: "日期是这个project是什么时候的"): its own days - a task's, or the days
    drawn - else the days of the growth that made it; its building date apart, in its details only. */
 function playLived(zone) {
@@ -1953,7 +1954,7 @@ function playRouteMarks() {
   const zones = new Map((map.zones || []).map((z) => [z.zone.id, z]));
   // DENSE AGAIN, EACH WAY ITS OWN COLOUR (the user, 2026-11-20: "道路地上的箭头可以密集一点，并且不同path用不同颜色，
   // 我刚刚说的不密只是说牌子不密"): an arrow every second step, one to a tile - the way that came first keeps it - and
-  // each way (a room's, a ground's, a stretch of the road of their life) its colour of PLAY_ARROW_COLOURS.
+  // each stretch of the road of their life its colour of PLAY_ARROW_COLOURS.
   const taken = new Set();
   let colour = 0;
   const arrow = (x, y, dx, dy, c) => {
@@ -1961,12 +1962,9 @@ function playRouteMarks() {
     taken.add(`${x},${y}`);
     marks.arrows.push({ x, y, dx, dy, c });
   };
-  const along = (path, c) => {                                 // an arrow on every second step, the way it goes
-    for (let k = 1; k < path.length - 1; k += 2) {
-      const [x, y] = path[k], [nx, ny] = path[k + 1];
-      arrow(x, y, Math.sign(nx - x), Math.sign(ny - y), c);
-    }
-  };
+  // ARROWS ON THE ROADS ONLY (the user, 2026-11-21: "屋内的地上的箭头太密了，屋内的就不要箭头好了"; "花园、广场 的箭头
+  // 也不要，就保留道路上的箭头就行"): in a room, a garden, a square, on a great ground, the numbered signs alone tell
+  // the order - each by the thing (or the part) it numbers.
   for (const [zoneId, stops] of Object.entries(routes.rooms || {})) {
     const z = zones.get(zoneId);
     if (!z) continue;
@@ -1978,68 +1976,63 @@ function playRouteMarks() {
       for (let dx = 0; dx < w; dx += 1) for (let dy = 0; dy < h; dy += 1) solid.add(`${one.x + dx},${one.y + dy}`);
     }
     const free = (x, y) => x >= fx && y >= fy && x < fx + fw && y < fy + fh && !solid.has(`${x},${y}`);
-    const beside = (one) => {                                   // where one stands to look at it: below it first
+    const beside = (one) => {                                   // where one stands to look at it: a sign only where one can
       const [w, h] = playItemSize(one);
       const ring = [];
       for (let dx = 0; dx < w; dx += 1) ring.push([one.x + dx, one.y + h], [one.x + dx, one.y - 1]);
       for (let dy = 0; dy < h; dy += 1) ring.push([one.x - 1, one.y + dy], [one.x + w, one.y + dy]);
       return ring.find(([x, y]) => free(x, y)) || null;
     };
-    const walk = (from, to) => {                                // the shortest way on the free floor
-      const key = (x, y) => `${x},${y}`, came = new Map([[key(...from), null]]), queue = [from];
-      while (queue.length) {
-        const [x, y] = queue.shift();
-        if (x === to[0] && y === to[1]) break;
-        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-          const nx = x + dx, ny = y + dy;
-          if (!free(nx, ny) || came.has(key(nx, ny))) continue;
-          came.set(key(nx, ny), [x, y]);
-          queue.push([nx, ny]);
-        }
-      }
-      if (!came.has(key(...to))) return null;
-      const path = [];
-      for (let at = to; at; at = came.get(key(...at))) path.unshift(at);
-      return path;
-    };
-    let here = PLAY_OUTDOOR[z.zone.kind] ? [fx + Math.floor(fw / 2), fy + fh - 1] : [z.door, fy + fh - 1];
-    if (!free(...here)) here = null;
-    const c = colour++;                                         // this room's way, its own colour
     stops.forEach((id, n) => {
       const one = items.get(id);
-      const spot = one && beside(one);
-      if (!spot) return;
-      marks.stops.push({ x: one.x, y: one.y, n: n + 1, of: stops.length, item: one });
-      if (here) {
-        const path = walk(here, spot);
-        if (path) along(path, c);
-      }
-      here = spot;
+      if (one && beside(one)) marks.stops.push({ x: one.x, y: one.y, n: n + 1, of: stops.length, item: one });
     });
   }
   // OUTSIDE, THE ROAD OF THEIR LIFE (play-regions.js playLifeRoad): arrows all along it, the way time went - on every
   // road however short (the user, 2026-11-20: "不需要等地图够大").
+  // ONE ARROW WHERE WAYS MEET (the user, 2026-11-21: "这种小块地里有好多道路标记的看着很杂乱，能合并成一个新颜色的（表示
+  // 总体的方向）"): an arrow at most every PLAY_ARROW_APART tiles each way - the roads side by side share it; where
+  // more than one stretch passes, one arrow of its own colour (PLAY_ARROW_MERGED) pointing the way they go together
+  // (their steps summed; going both ways alike, the later stretch's way).
+  const near = [], grid = new Map();
   for (const path of (map.life && map.life.routes) || []) {
     const c = colour++;                                         // each stretch of it its own colour
     for (let k = 2; k < path.length - 2; k += 3) {
       const [x, y] = path[k], [nx, ny] = path[k + 1];
-      arrow(x, y, Math.sign(nx - x), Math.sign(ny - y), c);
+      const dx = Math.sign(nx - x), dy = Math.sign(ny - y);
+      const gx = Math.floor(x / 3), gy = Math.floor(y / 3);
+      let by = null;
+      for (let ox = -1; ox <= 1 && !by; ox += 1) for (let oy = -1; oy <= 1 && !by; oy += 1) {
+        by = (grid.get(`${gx + ox},${gy + oy}`) || []).find((one) => Math.max(Math.abs(one.x - x), Math.abs(one.y - y)) <= PLAY_ARROW_APART) || null;
+      }
+      if (!by) {
+        const one = { x, y, dx, dy, c, sx: dx, sy: dy, last: [dx, dy], ways: new Set([c]) };
+        near.push(one);
+        if (!grid.has(`${gx},${gy}`)) grid.set(`${gx},${gy}`, []);
+        grid.get(`${gx},${gy}`).push(one);
+        continue;
+      }
+      by.sx += dx; by.sy += dy; by.last = [dx, dy]; by.ways.add(c);
     }
+  }
+  for (const one of near) {
+    if (one.ways.size > 1) {
+      const [dx, dy] = one.sx || one.sy
+        ? (Math.abs(one.sx) >= Math.abs(one.sy) ? [Math.sign(one.sx), 0] : [0, Math.sign(one.sy)]) : one.last;
+      if (!taken.has(`${one.x},${one.y}`)) { taken.add(`${one.x},${one.y}`); marks.arrows.push({ x: one.x, y: one.y, dx, dy, merged: true }); }
+    } else arrow(one.x, one.y, one.dx, one.dy, one.c);
   }
   for (const [groundId, parts] of Object.entries(routes.grounds || {})) {
     if (!map.blocked || !zones.get(groundId)) continue;
     const outs = parts.map((id) => zones.get(id)).filter(Boolean);
-    const c = colour++;                                         // this ground's way, its own colour
-    outs.forEach((z, n) => {
-      marks.stops.push({ x: z.out[0], y: z.out[1] - 1, n: n + 1, of: outs.length, zone: z.zone });
-      if (n === 0) return;
-      let path = null;
-      try { path = playRoute(map.blocked, outs[n - 1].out, z.out, 0, 307 + n, new Map()); } catch (_err) { path = null; }
-      if (path) along(path, c);
-    });
+    outs.forEach((z, n) => marks.stops.push({ x: z.out[0], y: z.out[1] - 1, n: n + 1, of: outs.length, zone: z.zone }));
   }
   return marks;
 }
+/* Where more than one way passes: one arrow, white (none of the ways' own colours), the way they go together; no two
+   arrows nearer than this many tiles across or down. */
+const PLAY_ARROW_MERGED = "rgba(255, 255, 255, 0.95)";
+const PLAY_ARROW_APART = 2;
 /* The colours of the ways on the ground, one after another - light enough to read on grass, stone and wood. */
 const PLAY_ARROW_COLOURS = ["rgba(255, 236, 170, 0.88)", "rgba(140, 210, 255, 0.88)", "rgba(255, 160, 150, 0.88)",
                             "rgba(170, 240, 170, 0.88)", "rgba(215, 180, 255, 0.88)", "rgba(255, 200, 120, 0.88)",
@@ -2057,7 +2050,7 @@ function playRoutesDraw(size) {
     const cx = one.x * size - play.camera.x + size / 2, cy = one.y * size - play.camera.y + size / 2;
     if (!seen(cx, cy)) continue;
     const r = size * 0.28, ang = Math.atan2(one.dy, one.dx);
-    ctx.fillStyle = PLAY_ARROW_COLOURS[(one.c || 0) % PLAY_ARROW_COLOURS.length];
+    ctx.fillStyle = one.merged ? PLAY_ARROW_MERGED : PLAY_ARROW_COLOURS[(one.c || 0) % PLAY_ARROW_COLOURS.length];
     ctx.beginPath();
     ctx.moveTo(cx + Math.cos(ang) * r, cy + Math.sin(ang) * r);
     ctx.lineTo(cx + Math.cos(ang + 2.4) * r, cy + Math.sin(ang + 2.4) * r);
@@ -2204,7 +2197,7 @@ const PLAY_SIGN_BY_STYLE = { mansion: "gold", classic: "gold", futuristic: "meta
                              magic: "scroll", zen: "scroll", ruins: "stone", haunted: "stone", toy: "neon", sky: "pink" };
 const PLAY_SIGN_BY_LAND = { newyear: "red", valentine: "pink", funfair: "neon", city: "metal", scifi: "metal", space: "metal",
                             ruins: "stone", graveyard: "stone", halloween: "stone", enchanted: "scroll", skycity: "gold",
-                            underwater: "metal" };
+                            underwater: "metal", castle: "stone", chinese: "red", toytown: "pink" };
 function playSignStyle(sign) {
   const zone = sign.zone, region = (zone && play.map && play.map.byId && play.map.regions[play.map.byId[zone.region]]) || sign.region;
   return (zone && zone.sign) || (zone && PLAY_SIGN_BY_STYLE[zone.style]) || (region && PLAY_SIGN_BY_LAND[region.biome]) || "wood";
@@ -2479,7 +2472,7 @@ setInterval(() => { if (play.on) playStatus(); }, 5000);           // the game's
    white frame. Its picture made once a world; each frame only the dot and the frame. M, or a press, hides it. */
 const PLAY_MINI_LAND = { meadow: "#6aa84f", autumn: "#c9733a", enchanted: "#9b5de5", desert: "#d9bb72", seaside: "#e2d29c",
                          forest: "#3f7d3a", highland: "#9aa0a6", snow: "#e8eef5", city: "#9aa3ad", farmland: "#8fbf4f",
-                         cavern: "#7a6046", lakeside: "#5fa86b", toytown: "#8fd16a", underwater: "#2f6f9f", skycity: "#dfeefb",
+                         cavern: "#7a6046", lakeside: "#5fa86b", toytown: "#f6c6d8", castle: "#7f9a5a", chinese: "#5f9a62", underwater: "#2f6f9f", skycity: "#dfeefb",
                          space: "#4a4d5c", scifi: "#7f8ea3", zoo: "#7cb85a", ruins: "#c9b48a", graveyard: "#4c5a46",
                          christmas: "#eef3f8", newyear: "#7fbf5a", halloween: "#7a6a3a", valentine: "#9fd36a", funfair: "#c8c0b0",
                          botanical: "#5fb04a", primeval: "#2f5a2c" };
@@ -3263,13 +3256,22 @@ function playWhere() {
   // known from inside its room; from outside, only its windows. An open place has no walls.
   const here = play.zone ? play.zone.id : "";
   const kinds = play.zoneKinds || (play.zoneKinds = Object.fromEntries(play.world.zones.map((one) => [one.id, one.kind])));
+  // EACH THING WITHIN REACH, Q FOR THE NEXT (the user, 2026-11-21: "钢琴下面的椅子，我好像是访问不到的" - a candle on a
+  // desk, a seat walled in by the next row: within reach, never the nearest): the nearest first; Q (or Tab) the next of
+  // them, round again - till the walker steps where others are within reach.
+  const reach = [];
   for (const item of play.world.items) {
     if (item.zone !== here && item.kind !== "window" && !PLAY_OUTDOOR[kinds[item.zone]]) continue;
     const [iw, ih] = playItemSize(item);
     const cx = Math.max(item.x, Math.min(tx, item.x + iw)), cy = Math.max(item.y, Math.min(ty, item.y + ih));
     const d = Math.hypot(tx - cx, ty - cy);
-    if (d < best && (item.why || item.name || item.picture_url)) { best = d; near = item; }
+    if (d < best && (item.why || item.name || item.picture_url)) reach.push([d, item]);
   }
+  reach.sort((a, b) => a[0] - b[0]);
+  const reachIds = reach.map(([, one]) => one.id).sort().join(",");
+  if (reachIds !== play.reachIds) { play.reachIds = reachIds; play.nearTurn = 0; }
+  play.reach = reach.map(([, one]) => one);
+  if (reach.length) near = reach[(play.nearTurn || 0) % reach.length][1];
   // A SIGN NEAR (the user: "每个房间或者外景的标牌都要有交互"): its place told, if no thing is nearer.
   if (!near && typeof playActNear === "function") near = playActNear(tx, ty);   // a portal, a stop
   if (!near) {
@@ -4310,6 +4312,34 @@ function playPieceMoves(item) {
     || (item.kit === "composite" && ((item.spec || {}).shapes || []).some((one) => one.moves && one.moves !== "none"))
     || (item.kit === "water" && (item.spec || {}).boats);
 }
+/* A GREAT PIECE'S GROUND, SEEN (the user, 2026-11-21: "有的地方block有的地方没有，看不清区别"): the tiles it stands in the
+   way on, a shadow under it with an edge - the same as play-regions.js lays them; its way in, if its picture drew one,
+   a light mat with a step up. A piece half built (its picture faint) shows its ground all the same. */
+function playPieceGroundDraw(item, size) {
+  if (!(item.w > 0 && item.h > 0)) return;
+  const { ctx } = play;
+  const x = item.x * size - play.camera.x, y = item.y * size - play.camera.y;
+  const way = (item.spec && item.spec.entrance) || null;
+  ctx.save();
+  ctx.fillStyle = "rgba(40, 30, 20, 0.16)";
+  ctx.fillRect(Math.round(x), Math.round(y), item.w * size, item.h * size);
+  ctx.strokeStyle = "rgba(40, 30, 20, 0.38)";
+  ctx.lineWidth = Math.max(1, size / 16);
+  ctx.setLineDash([Math.max(2, size / 6), Math.max(2, size / 8)]);
+  ctx.strokeRect(Math.round(x) + 0.5, Math.round(y) + 0.5, item.w * size - 1, item.h * size - 1);
+  if (way) {
+    const wx = x + way[0] * size, wy = y + (item.h - 1) * size, ww = (way[way.length - 1] - way[0] + 1) * size;
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(255, 236, 170, 0.55)";
+    ctx.fillRect(Math.round(wx), Math.round(wy), ww, size);
+    ctx.strokeStyle = "rgba(150, 110, 40, 0.7)";
+    ctx.strokeRect(Math.round(wx) + 0.5, Math.round(wy) + 0.5, ww - 1, size - 1);
+    ctx.fillStyle = "rgba(150, 110, 40, 0.85)";             // a step up: the way in
+    const cx = wx + ww / 2, cy = wy + size / 2, r = size * 0.22;
+    ctx.beginPath(); ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy + r * 0.6); ctx.lineTo(cx - r, cy + r * 0.6); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
 function playPiecesDraw(size) {
   const { ctx } = play;
   const k = size / PLAY_TILE, now = performance.now();
@@ -4326,6 +4356,7 @@ function playPiecesDraw(size) {
       ctx.moveTo(x + size - k, y - size * 0.5); ctx.lineTo(x + k, y + size - k); ctx.stroke();
       continue;
     }
+    playPieceGroundDraw(item, size);                           // under it: the ground it stands on, its way in
     if (item.spec && item.spec.svg) { playSvgPieceDraw(item, size, now); playBoatsDraw(item, size, now); continue; }   // drawn first, built after its picture
     const made = playPiecePicture(item);
     const sx = made.x0 * size - play.camera.x, sy = made.y0 * size - play.camera.y;
@@ -4471,6 +4502,9 @@ const PLAY_MOTES = {
   scifi: { colour: "#8fe9ff", fall: -0.4, size: 0.05, glow: true }, ruins: { colour: "rgba(220,220,220,0.6)", fall: 0, size: 0.1, wind: 1 },
   highland: { colour: "rgba(240,240,245,0.7)", fall: 0, size: 0.1, wind: 1 }, cavern: { colour: "#9fd8ff", fall: 0.6, size: 0.05 },
   funfair: { colour: "#ff6fae", fall: 0.5, size: 0.07 }, newyear: { colour: "#ffd34d", fall: 0.5, size: 0.07, glow: true },
+  // Three themes more (2026-11-21): petals over old China, sweets' sparkle over the toy town, dust on the castle's wind.
+  chinese: { colour: "#ffc8d8", fall: 0.4, size: 0.08, wind: 1 }, toytown: { colour: "#ffffff", fall: 0.3, size: 0.06 },
+  castle: { colour: "rgba(230,225,210,0.6)", fall: 0, size: 0.08, wind: 1 },
 };
 function playMotionDraw(size, c0, c1, r0, r1) {
   const map = play.map;
@@ -4673,6 +4707,11 @@ window.addEventListener("keydown", (event) => {
   if (!typing && ["e", "E", "Enter"].includes(event.key)) {
     event.preventDefault();
     if (!event.repeat) playLook();
+    return;
+  }
+  if (!typing && ["q", "Q", "Tab"].includes(event.key) && play.reach && play.reach.length > 1) {
+    event.preventDefault();                    // the next thing within reach (playWhere)
+    if (!event.repeat) { play.nearTurn = (play.nearTurn || 0) + 1; playWhere(); playDraw(); }
     return;
   }
   const pan = PLAY_PAN_KEYS[event.key];

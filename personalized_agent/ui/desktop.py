@@ -382,6 +382,9 @@ class DesktopAgent:
         # then cannot be typed into (section 7.1). So the root stays a normal,
         # hidden window, and the character is a child of it.
         self.root = tk.Tk()
+        # On a Mac the system's own pointers, not X's old bitmaps (ui/mac_cursors.py, 2026-11-21).
+        from .mac_cursors import use_the_macs_pointers
+        use_the_macs_pointers()
         # What Python lets go of cleaned up by Tk's thread in its own time - never from within a window
         # procedure, where a Tkinter call aborts Python (2026-11-17, ui/tk_finalizers.py).
         from . import tk_finalizers
@@ -1933,11 +1936,8 @@ class DesktopAgent:
                 self.character_hidden = True
         except Exception:        # pragma: no cover - the window has gone
             log.debug("could not show or hide the character", exc_info=True)
-        if remember:                               # the user's own choice, kept for the next start
-            try:
-                self.config.set("avatar_on_screen", not self.character_hidden, internal=True)
-            except Exception:
-                log.debug("whether the avatar is on the screen could not be kept", exc_info=True)
+        # NOT KEPT FOR THE NEXT START (the user, 2026-11-21: "以后这个开机就是不显示的，用户可以把它调出来，但是第二次开机又是
+        # 不显示，不会记住。这个在windows也是这样"): shown or hidden for this run only - every start begins without it.
         tray = getattr(self, "tray", None)
         if tray is not None:
             tray.refresh_menu()
@@ -3119,8 +3119,21 @@ class DesktopAgent:
         if dock is not None and dock.docked:
             dock.undock()
         on_a_mac = getattr(self, "_mac_dock", None)
-        if on_a_mac is not None and on_a_mac.docked:
-            on_a_mac.undock()
+        if on_a_mac is not None:
+            DesktopAgent._stop_mac_guard(self)
+            if on_a_mac.docked:
+                on_a_mac.undock()
+
+    def _stop_mac_guard(self) -> None:
+        """No window watched for the panel's strip any more (dock_mac.MacDock.unguard) - on the main thread."""
+        self._mac_strip = None                           # not pinned and shown: the whole screen in its picture
+        on_a_mac = getattr(self, "_mac_dock", None)
+        if on_a_mac is None or not hasattr(on_a_mac, "unguard"):
+            return
+        if threading.current_thread() is threading.main_thread() or getattr(self, "queue", None) is None:
+            on_a_mac.unguard()
+        else:
+            self.queue.put(("call", on_a_mac.unguard))
 
     def _notes_on_a_mac(self) -> bool:
         if sys.platform != "darwin":
@@ -3228,7 +3241,13 @@ class DesktopAgent:
         if not mac_panel.side_panel(url, DesktopAgent._notes_width(self), self.NOTES_TITLE, activate=not quietly):
             webbrowser.open(url)
             return
+        self._side_tab_on = False                        # opened: its tab away (as on Windows)
+        DesktopAgent._hide_side_tab(self)
         DesktopAgent._make_room_on_a_mac(self)
+        config = getattr(self, "config", None)
+        if config is not None and config.get("side_panel_pinned", False):   # pinned: above the others, and kept so
+            mac_panel.keep_side_panel_above(self.NOTES_TITLE, True)
+            DesktopAgent._watch_mac_pin(self)
 
     def _make_room_on_a_mac(self) -> None:
         """THE OTHER WINDOWS MOVE OVER ON A MAC TOO (the user, 2026-11-16; platform_layer/dock_mac.py): those the
@@ -3241,6 +3260,7 @@ class DesktopAgent:
             from . import mac_panel
             from ..platform_layer.dock_mac import MacDock
             placed = mac_panel.side_panel_strip(self.NOTES_TITLE)
+            self._mac_strip = placed[0] if placed is not None else None     # the screen's picture leaves it off
             if placed is None:
                 return
             dock = getattr(self, "_mac_dock", None)
@@ -3440,8 +3460,12 @@ class DesktopAgent:
             return bool(config.get("side_panel_pinned", False))
         config.set("side_panel_pinned", bool(pinned), internal=True)
         if self._notes_on_a_mac():
+            from . import mac_panel
+            # Pinned: above the others, and watched (_watch_mac_pin); not: at the normal level, the windows put back.
+            self.queue.put(("call", lambda: mac_panel.keep_side_panel_above(self.NOTES_TITLE, bool(pinned))))
             if pinned:
                 self.queue.put(("call", lambda: DesktopAgent._make_room_on_a_mac(self)))
+                self.queue.put(("call", lambda: DesktopAgent._watch_mac_pin(self)))     # Tk's thread
             else:
                 DesktopAgent._give_the_room_back(self)
             return bool(pinned)
@@ -3466,6 +3490,8 @@ class DesktopAgent:
         pinned again as it was. `full` None: only asked. Whether it is full now."""
         if full is None:
             return bool(getattr(self, "_notes_full", None))
+        if self._notes_on_a_mac():
+            return DesktopAgent._full_notes_on_a_mac(self, full)
         if sys.platform != "win32":
             return False
         from ..platform_layer import app_window
@@ -3491,6 +3517,73 @@ class DesktopAgent:
                 self._off_this_thread(lambda: app_window.dock_titled(titles, DesktopAgent._notes_width(self), dock),
                                       "side-panel-unfull")
         log.info("the side panel is back from the whole screen")
+        return False
+
+    #: How often a pinned panel on a Mac looks for a window come over its strip (ms).
+    MAC_PIN_EVERY_MS = 1500
+
+    def _watch_mac_pin(self) -> None:
+        """PINNED ON A MAC, KEPT SO (the user, 2026-11-21: "mac上的pin好像没用，其它页面还是会放到pin的上面（比如最大化之
+        后）"): a Mac has no strip of the screen to take, so while the panel is pinned and shown - not over the whole
+        screen - it is kept above the others, and every MAC_PIN_EVERY_MS a window come over its strip since (maximized,
+        opened) is moved beside it (dock_mac.py, the Accessibility permission). Once; it stops when unpinned."""
+        if getattr(self, "_mac_pin_watching", False):
+            return
+        self._mac_pin_watching = True
+
+        def look() -> None:
+            config = getattr(self, "config", None)
+            if config is None or not config.get("side_panel_pinned", False) or not self._notes_on_a_mac():
+                self._mac_pin_watching = False
+                DesktopAgent._stop_mac_guard(self)
+                return
+            try:
+                from . import mac_panel
+                if mac_panel.side_panel_shown(self.NOTES_TITLE) and not getattr(self, "_notes_full", None):
+                    mac_panel.keep_side_panel_above(self.NOTES_TITLE, True)
+                    DesktopAgent._make_room_on_a_mac(self)
+                    # AND AT ONCE (dock_mac.MacDock.guard): every program's windows watched, one come over the strip
+                    # fitted beside it in the same moment - the strip as it is now, the programs started since added.
+                    placed = mac_panel.side_panel_strip(self.NOTES_TITLE)
+                    on_a_mac = getattr(self, "_mac_dock", None)
+                    if placed is not None and on_a_mac is not None and hasattr(on_a_mac, "guard"):
+                        on_a_mac.guard(*placed)
+                else:
+                    DesktopAgent._stop_mac_guard(self)
+            except Exception:
+                log.debug("the pinned panel could not be kept", exc_info=True)
+            self.root.after(DesktopAgent.MAC_PIN_EVERY_MS, look)
+        self.root.after(DesktopAgent.MAC_PIN_EVERY_MS, look)
+
+    def _full_notes_on_a_mac(self, full: bool) -> bool:
+        """THE WHOLE SCREEN ON A MAC TOO (the user, 2026-11-21: "你mac side panel怎么没有全屏这个"): the windows moved for
+        the panel given back, then the panel made as large as the screen's room (ui/mac_panel.py fill_side_panel); back,
+        where it was, and the windows moved over again if it is pinned. Done on the main thread; whether it is full."""
+        from . import mac_panel
+        if full:
+            if getattr(self, "_notes_full", None):
+                return True
+            self._notes_full = ("pending",)
+            on_a_mac = getattr(self, "_mac_dock", None)
+            if on_a_mac is not None:
+                on_a_mac.undock()                        # the windows moved for it, back
+
+            def fill() -> None:
+                before = mac_panel.fill_side_panel(self.NOTES_TITLE)
+                self._notes_full = before
+                if before is not None:
+                    log.info("the side panel fills the screen")
+            self.queue.put(("call", fill))
+            return True
+        before = getattr(self, "_notes_full", None)
+        self._notes_full = None
+
+        def back() -> None:
+            if before and before != ("pending",):
+                mac_panel.put_side_panel(self.NOTES_TITLE, before)
+            DesktopAgent._make_room_on_a_mac(self)
+            log.info("the side panel is back from the whole screen")
+        self.queue.put(("call", back))
         return False
 
     def grab_notes_panel(self, wide: bool = False) -> bool:
@@ -3629,7 +3722,11 @@ class DesktopAgent:
             self.queue.put(("call", lambda: mac_panel.hide_side_panel(self.NOTES_TITLE)))   # main thread
             on_a_mac = getattr(self, "_mac_dock", None)
             if on_a_mac is not None:
+                DesktopAgent._stop_mac_guard(self)       # nothing watched for it, the whole screen in pictures
                 on_a_mac.undock()                        # the windows moved for it, back
+            # Put away, its tab at the edge again (2026-11-21: on a Mac as on Windows).
+            self._side_tab_on = True
+            self.queue.put(("call", lambda: DesktopAgent._show_side_tab(self)))
             return True
         # PUT AWAY, ITS TAB ALONE LEFT AT THE SCREEN'S EDGE (the user, 2026-11-16: "collapse的时候这个凸起还是在边框外（这样我
         # 可以点击展开)" - "还是一整个bar, 不能就留一个按钮吗"): the panel hidden at once, kept as large as it is (never
@@ -3670,14 +3767,24 @@ class DesktopAgent:
             tab.withdraw()
             tab.overrideredirect(True)                 # no frame, no taskbar button
             tab.attributes("-topmost", True)
-            tab.configure(bg=look["key"])
-            try:
-                tab.attributes("-transparentcolor", look["key"])   # its rounded edge, nothing round it
-            except tk.TclError:
-                pass
+            # Nothing round its rounded edge: a colour made clear on Windows; on a Mac the window itself clear
+            # ("systemTransparent" - Tk there has no -transparentcolor).
+            clear = look["key"]
+            if sys.platform == "darwin":
+                clear = "systemTransparent"
+                try:
+                    tab.attributes("-transparent", True)
+                except tk.TclError:
+                    pass
+            tab.configure(bg=clear)
+            if sys.platform == "win32":
+                try:
+                    tab.attributes("-transparentcolor", look["key"])
+                except tk.TclError:
+                    pass
             self._side_tab_scale_built = scale
             wide, tall = (round(one * scale) for one in self.SIDE_TAB_SIZE)
-            canvas = tk.Canvas(tab, width=wide, height=tall, bg=look["key"], highlightthickness=0, bd=0,
+            canvas = tk.Canvas(tab, width=wide, height=tall, bg=clear, highlightthickness=0, bd=0,
                                cursor="hand2")
             canvas.pack()
             r, e = round(10 * scale), max(1, round(1.5 * scale))
@@ -3702,8 +3809,15 @@ class DesktopAgent:
     def _side_tab_scale(self) -> float:
         """The dpi of the screen the pointer is on, over 96 - the screen the tab goes on - times Windows' text size
         (Settings > Accessibility > Text size): the panel's page, WebView2, is drawn that much larger too (2026-11-17:
-        at 179 % its tab was 43 x 115 pixels, this one 24 x 64 - "collapse和expand还是不一样大小")."""
+        at 179 % its tab was 43 x 115 pixels, this one 24 x 64 - "collapse和expand还是不一样大小"). On a Mac, where Tk
+        counts in points and the screen's scale is always 1 to it, MAC_TAB_SCALE (the user, 2026-11-21: "mac屏幕的凸起标志
+        是不是太小了点（你和windows比较下）" - as large as Windows' at 150 %)."""
+        if sys.platform == "darwin":
+            return self.MAC_TAB_SCALE
         return DesktopAgent._screen_scale(self) * DesktopAgent._text_scale()
+
+    #: The tab on a Mac, times SIDE_TAB_SIZE (points).
+    MAC_TAB_SCALE = 1.5
 
     @staticmethod
     def _text_scale() -> float:
@@ -3741,6 +3855,8 @@ class DesktopAgent:
 
     def _side_tab_edge(self) -> tuple:
         """The right edge of the screen the panel was on - its top and bottom (the pointer's screen, else the first)."""
+        if sys.platform == "darwin":
+            return DesktopAgent._side_tab_edge_on_a_mac(self)
         # Read in this thread's own units - Tk's - never changing how this thread is told the screen's size.
         try:
             import ctypes
@@ -3760,6 +3876,24 @@ class DesktopAgent:
         except Exception:
             log.debug("the screen the tab goes on could not be read", exc_info=True)
         return self.root.winfo_screenwidth(), 0, self.root.winfo_screenheight()
+
+    def _side_tab_edge_on_a_mac(self) -> tuple:
+        """On a Mac: the right edge of the main screen's room for windows - under the menu bar, beside a Dock on
+        the right, above one at the bottom (NSScreen's visibleFrame, turned to Tk's top-left points)."""
+        try:
+            from AppKit import NSScreen
+            screens = NSScreen.screens()
+            whole = screens[0].frame()                   # the menu bar's screen: Tk's (0, 0) at its top left
+            room = (NSScreen.mainScreen() or screens[0]).visibleFrame()
+            tall = whole.size.height
+            right = int(room.origin.x + room.size.width)
+            top = int(tall - (room.origin.y + room.size.height))
+            bottom = int(tall - room.origin.y)
+            if right > 0 and bottom > top:
+                return right, top, bottom
+        except Exception:
+            log.debug("the Mac's screen could not be read for the tab", exc_info=True)
+        return self.root.winfo_screenwidth(), 25, self.root.winfo_screenheight()
 
     def _side_tab_unread(self) -> None:
         """Its dot: something told and not yet seen in the panel."""
@@ -4757,11 +4891,19 @@ class DesktopAgent:
             self.root.after(self.SIDE_TAB_AT_START_MS, lambda: DesktopAgent._side_tab_at_start(self))
             if not os.environ.get("PA_NO_DIALOGS"):
                 self.root.after(self.SIDE_TAB_AT_START_MS + 500, lambda: DesktopAgent._side_edge_follow(self))
+        elif sys.platform == "darwin":
+            # THE TAB ON A MAC TOO (the user, 2026-11-21: "为什么还是跳出来一个西瓜，而不是侧边框" - "肯定要做啊"): at the
+            # right edge from the start, pressed to slide the side panel in (ui/mac_panel.py); back when it is put away.
+            self.root.after(self.SIDE_TAB_AT_START_MS, lambda: DesktopAgent._side_tab_at_start(self))
+            # The picture of the screen beside the pinned panel's strip, not with its empty room (screen_picture.py).
+            from ..platform_layer import screen_picture
+            screen_picture.MAC_SIDE_STRIP.append(
+                lambda: getattr(self, "_mac_strip", None) if self.config.get("side_panel_pinned", False) else None)
         # NOT ON THE SCREEN BY DEFAULT (the user, 2026-11-17: "已经不需要logo在屏幕上了"): the side panel's tab, its
         # shortcuts and the tray reach everything; the watermelon walks in the Play view. Shown again from the tray's
-        # menu - and kept so.
-        if not self.config.get("avatar_on_screen", False):
-            self.root.after(0, lambda: DesktopAgent.toggle_character(self, remember=False) if not self.character_hidden else None)
+        # menu for this run - EVERY START WITHOUT IT, on a Mac too, whatever was kept before (the user, 2026-11-21:
+        # "mac上也default改成不显示 ... 第二次开机又是不显示，不会记住").
+        self.root.after(0, lambda: DesktopAgent.toggle_character(self, remember=False) if not self.character_hidden else None)
         self.root.mainloop()
 
     #: How long after the start the side panel's tab is put at the screen's edge.
@@ -4770,7 +4912,7 @@ class DesktopAgent:
     def _side_tab_at_start(self) -> None:
         """ITS TAB FROM THE START (the user, 2026-11-17: "agent启动之后就要有凸起的按钮让我可以expand, 而不是我第一次展开
         之后才有"): at the screen's edge, pressed to open the panel - unless it is open already."""
-        if sys.platform != "win32" or os.environ.get("PA_NO_DIALOGS"):
+        if os.environ.get("PA_NO_DIALOGS") or not (sys.platform == "win32" or self._notes_on_a_mac()):
             return
         try:
             if self._notes_open_now():
