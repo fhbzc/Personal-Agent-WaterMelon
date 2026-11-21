@@ -500,6 +500,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.4.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.4.0) | 2026-11-21 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.4.0) |
 | [v0.3.12](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.12) | 2026-11-21 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.12) |
 | [v0.3.11](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.11) | 2026-11-21 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.11) |
 | [v0.3.10](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.10) | 2026-11-20 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.10) |
@@ -777,6 +778,32 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.4.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.4.0) (2026-11-21, a pre-release)
+
+The side panel on a Mac as on Windows - its tab at the edge, pinned so nothing covers it, full screen, no window buttons - and a place to sign in to Claude Code; three new themes in Play; rooms you can walk all through, with every thing in reach.
+
+**On a Mac**
+- **The side panel's tab** waits at the right edge from the start, as on Windows; pressed, the panel slides in, and put away the tab comes back.
+- **Pinned, nothing goes over it.** The pinned panel stays above every window, and a window moved, filled or opened over it is fitted beside it at once - as on Windows. This uses the Accessibility permission, now a required one: the panel says so at its top, with a button to the very page of System Settings.
+- **Full screen** for the side panel, and back.
+- **No window buttons** on the side panel: it has its own.
+- **The Mac's own pointers** - the pointing hand, the open hand - instead of an old black and white hand.
+- **A picture of the screen** taken while the panel is pinned is of the screen beside it, not with an empty space where the panel was.
+- **The Overview and the Delegate work box are in the picture of the screen**, as on Windows; the side panel, the watermelon and the chat bubble stay out.
+
+**Everywhere**
+- **Sign in to Claude Code from the app.** Wherever it says Claude Code is not signed in - the side panel, Settings > General > Models, a notification - a link opens its sign-in in a terminal; then "Check again". The side panel also says when no model can answer.
+- **The watermelon is not on the screen at the start.** Show it from the menu for as long as the app runs; the next start is without it again.
+
+**Play**
+- **Three new themes:** castles and towers (a keep, a watchtower, a walled market town), a toy town in pink and white (pink trees, sweets, toys), and old China (a bamboo grove, a courtyard house of wood and tile, a water town) - each with its own grounds, things, landmark, music, vehicles and animals.
+- **Every room walked all through.** A door put back on its room's wall where a room had moved without it; what stood in a doorway or between the parts of a room moved aside; rooms of their own shape walked as they are drawn; nothing hung over a seat, nothing laid on the floor covered whole.
+- **Q (or Tab) takes the next thing within reach**, and the thing E would take is outlined, its name in the hint - a candle on a desk, a seat by the piano, all reachable.
+- **Arrows on the roads only**, one where ways meet, in a colour of its own showing the way they go together; none in rooms, gardens or squares.
+- **A great piece shows the ground it stands on**, and its way in when it has one; one without a door is not walked into.
+- **Trains run on top of the rails**, wherever lines meet.
+- **No model, no growth** - said plainly, and an answer a little off is still read.
 
 ### [v0.3.12](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.12) (2026-11-21, a pre-release)
 
