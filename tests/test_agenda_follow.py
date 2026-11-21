@@ -138,7 +138,8 @@ class StuckIsNotGoingTests(_Base):
                   {"id": "d_fresh", "work": {"versions": [{"state": "ongoing"}]}},
                   {"id": "d_live", "work": {"versions": [{"state": "ongoing", "alive": True}]}},
                   {"id": "d_other", "work": {"versions": [{"state": "ongoing"}]}}]
-        self.app.drafts.assigned = lambda most=200: listed
+        # The plan's own only (2026-11-20: every piece of work was built each half minute to look at a few).
+        self.app.drafts.assigned_of = lambda ids: [one for one in listed if one["id"] in ids]
         self.app.drafts.get = lambda ident: {"updated_at": moved[ident].isoformat()}
         self.assertEqual(self.app._agenda_going(["d_ready", "d_collect"]), 0, "stuck: not going")
         self.assertEqual(self.app._agenda_going(["d_ready", "d_collect", "d_fresh", "d_live"]), 2,

@@ -163,3 +163,39 @@ class TheWorkersCodeIsToldTests(_Home):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EachInstallationItsOwnGrantTests(_Home):
+    """2026-11-20: a test copy and the installed one undid each other's grants over the home at each start (896 s) -
+    "测试版改用自己的隔离身份，不和正式版互相覆盖"; and "权限没变就跳过"."""
+
+    def tearDown(self) -> None:
+        isolation.set_identity("")
+        isolation._AppContainer._granted = set()
+        super().tearDown()
+
+    def test_another_data_folder_names_its_own_capabilities(self) -> None:
+        default = isolation.capability_name("Read", self.home)
+        isolation.set_identity(str(self.home / "test-data"))
+        own = isolation.capability_name("Read", self.home)
+        isolation.set_identity("")
+        self.assertNotEqual(default, own)
+        self.assertEqual(isolation.capability_name("Read", self.home), default, "the default keeps its names")
+
+    def test_the_same_grant_as_last_time_is_not_walked_again(self) -> None:
+        api = mock.Mock()
+        api.capability_sid.return_value = b"sid"
+        api.has_access.return_value = True
+        api.has_inheritable.return_value = False
+        isolation.set_identity("", self.home / "grants.json")
+        with mock.patch.object(isolation._AppContainer, "api", return_value=api), \
+                mock.patch.object(isolation, "grant_plan", return_value=[(self.home, True)]) as plan:
+            isolation._AppContainer.grant("Read", self.home, [])
+            self.assertEqual(plan.call_count, 1)
+            isolation._AppContainer._granted = set()            # the next start
+            isolation._AppContainer.grant("Read", self.home, [])
+            self.assertEqual(plan.call_count, 1, "noted and still standing: not walked again")
+            api.has_access.return_value = False                 # taken off meanwhile: walked again
+            isolation._AppContainer._granted = set()
+            isolation._AppContainer.grant("Read", self.home, [])
+            self.assertEqual(plan.call_count, 2)

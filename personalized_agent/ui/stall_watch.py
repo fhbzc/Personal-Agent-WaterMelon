@@ -38,14 +38,24 @@ TIME_SAID_MOST = 6
 _HERE = os.path.normcase(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) + os.sep
 
 
+def stack_of(frame: Any) -> Any:
+    """A stack's frames, outermost first, as traceback.extract_stack gives them - WITHOUT THEIR LINES READ (2026-11-20,
+    the memory looked at: each look read every source file on the stack into Python's line cache, 15 MB of the
+    application's own code kept for good; a file, a line number and a function are all that is said)."""
+    summary = traceback.StackSummary.extract(traceback.walk_stack(frame), lookup_lines=False)
+    summary.reverse()
+    return summary
+
+
 def where(frame: Any, deepest: int = 8) -> str:
     """The project's own frames of a stack, innermost first: "file.py:12 function < ..." ("" for none)."""
     if frame is None:
         return ""
-    frames = [one for one in traceback.extract_stack(frame)
+    stack = stack_of(frame)
+    frames = [one for one in stack
               if os.path.normcase(os.path.abspath(one.filename)).startswith(_HERE)
               and "site-packages" not in one.filename]
-    outermost = traceback.extract_stack(frame)[-1:] if not frames else []
+    outermost = stack[-1:] if not frames else []
     return " < ".join(f"{os.path.basename(one.filename)}:{one.lineno} {one.name}"
                       for one in reversed((frames or outermost)[-deepest:]))
 

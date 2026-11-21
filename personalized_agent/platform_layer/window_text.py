@@ -329,6 +329,9 @@ class WindowTextReader:
         threading.Thread(target=self._be_a_client, name="uia-client",
                          daemon=True).start()
 
+    #: How often UI Automation is made again, letting go of what it kept (seconds).
+    FRESH_EVERY = 1800
+
     def _be_a_client(self) -> None:
         """Hold the client open on this thread for as long as the agent runs.
 
@@ -354,9 +357,21 @@ class WindowTextReader:
             log.info("window text reading is not available: %s", exc)
         finally:
             self._ready.set()
-        # The object lives as long as this thread's apartment does.
+        # The object lives as long as this thread's apartment does - MADE AGAIN NOW AND THEN (the user, 2026-11-20:
+        # memory outside Python - "这3个要改"): UI Automation keeps what it learned of every window and program it has
+        # talked to, for good; a fresh one every FRESH_EVERY seconds lets that go (the first reading after it a little
+        # slower, as at the start).
         while True:
-            time.sleep(3600)
+            time.sleep(self.FRESH_EVERY)
+            if self._automation is None:
+                continue
+            try:
+                fresh = comtypes.client.CreateObject(uia.CUIAutomation, interface=uia.IUIAutomation)
+                self._automation, self._cache = fresh, None
+                import gc
+                gc.collect()                         # the old one's elements and proxies let go of now
+            except Exception:
+                log.debug("UI Automation could not be made again; the one there is kept", exc_info=True)
 
     # -- reading ------------------------------------------------------------
     def read(self, handle: int, program: str = "") -> Optional[WindowText]:

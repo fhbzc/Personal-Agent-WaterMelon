@@ -293,6 +293,64 @@ while time.time() < end and not os.path.exists({str(self.result)!r}):
         time.sleep(0.5)
         self.assertIsNotNone(closing.poll(), "ended")
 
+    def test_a_helper_started_by_the_agent_ends_the_agent_not_itself(self) -> None:
+        """2026-11-20 (0.3.7.1 to 0.3.10): the helper is the agent's child; "taskkill /T" on the agent ended the
+        helper too, and the update stopped at "the agent is still closing - ended"."""
+        go = self.work / "go.txt"
+        agent = subprocess.Popen([sys.executable, "-c", "\n".join([
+            "import os, subprocess, sys, time",
+            f"go = {str(go)!r}",
+            "while not os.path.exists(go): time.sleep(0.1)",
+            "subprocess.Popen(['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',"
+            " open(go, encoding='utf-8').read()], creationflags=0x08000000 | 0x00000200)",
+            "time.sleep(300)"])])
+        self.addCleanup(lambda: agent.poll() is None and agent.kill())
+        port = _free_port()
+        script = self.work / "program.py"
+        script.write_text(f"""
+import os, socket, time
+s = socket.socket(); s.bind(("127.0.0.1", {port})); s.listen(1)
+end = time.time() + 280
+while time.time() < end and not os.path.exists({str(self.result)!r}):
+    time.sleep(0.2)
+""", encoding="utf-8")
+        pairs = [[str(self.live / "_internal"), str(self.ready / "_internal"),
+                  str(self.live / ".update" / "previous" / "_internal")]]
+        with mock.patch.multiple(quiet, AGENT_GONE_WITHIN=2, LEFT_WAIT_SECONDS=1, HEALTHY_WITHIN=60):
+            text = quiet.windows_helper(agent.pid, pairs, [sys.executable, str(script)], port,
+                                        self.result, self.ready_file, "v9.0.0", self.live)
+        helper = self.work / "take-up.ps1"
+        helper.write_text(text.replace(quiet.UNINSTALL_KEY, "HKCU:\\NoSuchKeyForThisTest"), encoding="utf-8-sig")
+        go.write_text(str(helper), encoding="utf-8")
+        until = time.time() + 240
+        while time.time() < until and not self.result.exists():
+            time.sleep(0.5)
+        steps = Path(str(self.result) + ".log").read_text(encoding="utf-8-sig")
+        self.assertTrue(self.result.exists(), "the helper went on after ending the agent:\n" + steps)
+        self.assertIn("the agent is still closing - ended", steps)
+        self.assertTrue(json.loads(self.result.read_text(encoding="utf-8-sig"))["ok"], steps)
+        self.assertEqual((self.live / "_internal" / "version.txt").read_text(encoding="utf-8"), "new")
+
+    def test_an_agent_that_stopped_waiting_and_stayed_is_left_alone(self) -> None:
+        """2026-11-20: the agent gave up on a late helper and stayed - the helper, late, ended it two minutes on.
+        Told so (ABORTED), it does nothing."""
+        staying = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
+        self.addCleanup(lambda: staying.poll() is None and staying.kill())
+        self.pid = staying.pid
+        (self.ready_file.parent / quiet.ABORTED).write_text("stayed", encoding="utf-8")
+        pairs = [[str(self.live / "_internal"), str(self.ready / "_internal"),
+                  str(self.live / ".update" / "previous" / "_internal")]]
+        helper = self.work / "take-up.ps1"
+        helper.write_text(quiet.windows_helper(self.pid, pairs, [sys.executable, "-c", "pass"], 0, self.result,
+                                               self.ready_file, "v9.0.0", self.live)
+                          .replace(quiet.UNINSTALL_KEY, "HKCU:\\NoSuchKeyForThisTest"), encoding="utf-8-sig")
+        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+                        str(helper)], timeout=120, capture_output=True)
+        steps = Path(str(self.result) + ".log").read_text(encoding="utf-8-sig")
+        self.assertIn("stopped waiting for this helper and stayed - nothing done", steps)
+        self.assertIsNone(staying.poll(), "the agent that stayed is not ended")
+        self.assertEqual((self.live / "_internal" / "version.txt").read_text(encoding="utf-8"), "old", "untouched")
+
     def test_a_second_helper_leaves_it_to_the_one_at_work(self) -> None:
         """2026-11-16: taken up twice while the old copy was slow to close, a second helper undid the first's work."""
         Path(str(self.result) + ".helper").write_text(str(os.getpid()), encoding="utf-8")

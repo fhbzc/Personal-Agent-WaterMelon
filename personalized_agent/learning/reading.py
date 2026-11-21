@@ -546,7 +546,9 @@ class UnitReader:
             suffix = path.suffix.lower()
             keepable = info.st_size <= COPY_AT_MOST and suffix not in DATA_SUFFIXES
             if not keepable:
-                seen[key] = state
+                # NOT READ, NOT MARKED (2026-11-20): what is never read - data, what is too large - is told by its
+                # name and size at once each time; marked, it filled the table with thousands of files.
+                seen.pop(key, None)
                 continue
             text = extract_text(path)
             if not text:
@@ -647,7 +649,13 @@ class UnitReader:
                 older: bool = False) -> Tuple[List[Piece], Dict[str, Any]]:
         """What there is to read in a unit, in order, and the marks it would
         leave. `older`: the part before the recent window of a first read."""
-        marks = json.loads(json.dumps(unit.get("marks") or {}))
+        # A COPY OF ITS MARKS - the files' table copied, not read again (2026-11-20, the memory looked at: a unit of
+        # 36,644 files had its table turned to text and back each look, two of it at once). Its entries are put
+        # anew, never changed where they stand, so the copy shares them.
+        kept = unit.get("marks") or {}
+        marks = json.loads(json.dumps({key: one for key, one in kept.items() if key != "files"}))
+        if isinstance(kept.get("files"), dict):
+            marks["files"] = dict(kept["files"])
         if unit.get("kind") == "item":
             return self._item_pending(unit, marks, cutoff, all_sessions)
         from .activity import EARLIER_KIND, KIND

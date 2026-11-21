@@ -106,6 +106,7 @@ function showConversation(conversation) {
   $("#chat-log").replaceChildren();
   $("#chat-meta").textContent = "";
   $("#chat-input").value = "";
+  chatInputFit();
   chatFiles.clear();
   chatMentions.length = 0;
   hideMentions();
@@ -394,6 +395,23 @@ function pickMention(one) {
 }
 
 $("#chat-input").addEventListener("input", watchMentions);
+// ENTER SENDS, SHIFT+ENTER IS A NEW LINE (the user, 2026-11-20): a box of lines now (it was a single line, where
+// Shift+Enter could do nothing) - sent as the line was, by Enter; never while a word is being made in Chinese, never
+// while the @ list is open (its own Enter picks); as tall as what is written.
+function chatInputFit() {
+  const box = $("#chat-input");
+  if (!box || box.tagName !== "TEXTAREA") return;
+  box.style.height = "auto";
+  box.style.height = `${box.scrollHeight}px`;
+}
+$("#chat-input").addEventListener("input", chatInputFit);
+$("#chat-input").addEventListener("keydown", (event) => {
+  // A word being chosen in an input method (Chinese, Japanese): not sent - on a Mac, Safari's engine says so by key code
+  // 229 rather than isComposing (the user, 2026-11-20: "对mac也要支持").
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229 || chatMentionAt) return;
+  event.preventDefault();
+  $("#chat-form").requestSubmit();
+});
 $("#chat-input").addEventListener("blur", hideMentions);
 $("#chat-input").addEventListener("keydown", (event) => {
   if (!chatMentionAt) return;

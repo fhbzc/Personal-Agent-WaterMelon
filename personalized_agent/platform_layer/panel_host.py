@@ -50,7 +50,10 @@ UNSEEN_SECONDS = 0.4
 #: The WebView2 runtime's key, where the installer registers it (machine-wide, or for the user).
 RUNTIME_KEY = r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 #: Thin scrollbars that come and go, as Windows' own (measured: the classic one, with arrows, otherwise).
-BROWSER_ARGUMENTS = "--enable-features=msOverlayScrollbarWinStyle,msOverlayScrollbarWinStyleAnimation"
+# AND LESS MEMORY (the user, 2026-11-20: memory - "这个可以的"): one page process for the panel's pages, and a limit to
+# the scripts' own memory (Play's world uses well under it).
+BROWSER_ARGUMENTS = ("--enable-features=msOverlayScrollbarWinStyle,msOverlayScrollbarWinStyleAnimation "
+                     "--renderer-process-limit=1 --js-flags=--max-old-space-size=512")
 
 
 # -- the host: run in its own process ----------------------------------------------------------------

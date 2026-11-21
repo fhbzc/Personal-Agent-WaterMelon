@@ -490,3 +490,21 @@ class ChatNavigationUiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShiftEnterIsANewLineTests(unittest.TestCase):
+    """2026-11-20: "现在的chat框, shift + enter 要能够换行"; "对mac也要支持"."""
+
+    def test_the_chat_box_is_a_box_of_lines_enter_sends_shift_enter_does_not(self) -> None:
+        web = Path(__file__).resolve().parents[1] / "personalized_agent" / "api" / "web"
+        for page in ("index.html", "chat.html"):
+            html = (web / page).read_text(encoding="utf-8")
+            self.assertIn('<textarea id="chat-input" rows="1"', html, page)
+            self.assertNotIn('<input id="chat-input"', html, page)
+        chat = (web / "chat.js").read_text(encoding="utf-8")
+        self.assertIn('if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229 || chatMentionAt) return;', chat)
+        self.assertIn('$("#chat-form").requestSubmit();', chat)
+        notes = (web / "notes.js").read_text(encoding="utf-8")
+        self.assertIn('event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229', notes)
+        # "sidebar的chat ... 只是mac不行": the line put in by the page itself on Shift+Enter.
+        self.assertIn('box.setRangeText("\\n", box.selectionStart, box.selectionEnd, "end");', notes)

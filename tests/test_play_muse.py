@@ -315,6 +315,65 @@ class EachRoomDesignedTests(unittest.TestCase):
             self.assertIn("piano", {one["kind"] for one in world["items"] if one["zone"] == zone_id})
             self.assertEqual(zone["room_looked"], "A piano, for its music.")
 
+    def test_a_places_card_shows_no_muses_and_no_summary_of_the_agents(self) -> None:
+        # 2026-11-20: "这里这串英文是什么。 另外你那些诗,音乐之类的素材不要显示，这些放在后台就行".
+        page = (support.ROOT / "personalized_agent" / "api" / "web" / "play.js").read_text(encoding="utf-8")
+        self.assertNotIn("    ${playMuseCard(zone)}\n", page)
+        self.assertNotIn('${zone.task_summary ? `<p class="side-play-card-from chat-message">${escapeHtml(zone.task_summary)}</p>` : ""}', page)
+        self.assertIn("task_title", pw.PlayWorld._words_of({"task_title": "Keep up a chat", "name": "x"}))
+
+    def test_the_maps_pictures_kept_beside_the_world(self) -> None:
+        # 2026-11-20: "小地图为什么不是一个存好后面都不update呢，小地图除非是修改了画的内容，不然都不变呀".
+        with tempfile.TemporaryDirectory() as folder:
+            keeper = pw.PlayWorld(Path(folder), ByTask({}), CONFIG)
+            self.assertEqual(keeper.minimap(), {"v": "", "blocks": {}})
+            self.assertEqual(keeper.keep_minimap("6", [["0,0", "s1", "data:image/png;base64,AAA"],
+                                                       ["0,1", "s2", "not a picture"]]), 1)
+            self.assertEqual(keeper.keep_minimap("6", [["1,0", "s3", "data:image/png;base64,BBB"]]), 1)
+            said = keeper.minimap()
+            self.assertEqual(said["v"], "6")
+            self.assertEqual(sorted(said["blocks"]), ["0,0", "1,0"], "added to, the bad one left out")
+            keeper.keep_minimap("7", [["2,2", "s4", "data:image/png;base64,CCC"]])
+            self.assertEqual(sorted(keeper.minimap()["blocks"]), ["2,2"], "another drawing: the old let go")
+        page = (support.ROOT / "personalized_agent" / "api" / "web" / "play.js").read_text(encoding="utf-8")
+        self.assertIn('api.get("/api/play/minimap")', page)
+        self.assertIn('api.post("/api/play/minimap", { v: playMiniKeptVersion(), blocks, ...(whole ? { whole } : {}) })', page)
+        self.assertIn("mine.sigs = new Map(todo.map(([cx, cy]) => [`${cx},${cy}`, playMiniSig(index, cx, cy)]));", page)
+        self.assertIn("if (!index.miniOwn) {", page, "the world sorted into blocks once, not looked through for each")
+        self.assertNotIn("typeof playLayBlock === \"function\" ? playLayBlock", page, "no code hash in the version")
+        routes = (support.ROOT / "personalized_agent" / "api" / "routes.py").read_text(encoding="utf-8")
+        self.assertIn('@route("GET", "/api/play/minimap")', routes)
+        self.assertIn('@route("POST", "/api/play/minimap")', routes)
+
+    def test_a_room_the_same_when_the_world_is_drawn_again_takes_its_design_with_no_call(self) -> None:
+        # 2026-11-20: "重画不从零开始 ... 那你改吧".
+        with tempfile.TemporaryDirectory() as folder:
+            keeper, zone_id = self._keeper(folder, {muse.TASK_ROOM: self.ROOM, muse.TASK_ROOM_LOOK: {}})
+            before = keeper.world()
+            keeper._design_rooms("2026-11-08")
+            self.assertIn(muse.TASK_ROOM, [one.task for one in keeper.models.asked])
+            self.assertTrue((Path(folder) / pw.ROOM_DESIGNS_FILE).exists())
+            kinds = sorted(one["kind"] for one in keeper.world()["items"] if one["zone"] == zone_id)
+            keeper.save(before)                          # drawn again: the room as it was before it was designed
+            keeper.models.asked.clear()
+            keeper._design_rooms("2026-11-08")
+            self.assertEqual([one.task for one in keeper.models.asked
+                              if one.task in (muse.TASK_ROOM, muse.TASK_ROOM_LOOK)], [], "no call: its design used again")
+            self.assertEqual(sorted(one["kind"] for one in keeper.world()["items"] if one["zone"] == zone_id), kinds)
+
+    def test_the_rooms_instructions_the_same_each_time_for_the_cache(self) -> None:
+        # 2026-11-20: cache hits - the library told with each room, the look on the design's own instructions.
+        with tempfile.TemporaryDirectory() as folder:
+            keeper, _zone_id = self._keeper(folder, {muse.TASK_ROOM: self.ROOM, muse.TASK_ROOM_LOOK: {}})
+            keeper._design_rooms("2026-11-08")
+            room, look = keeper.models.asked[0], keeper.models.asked[1]
+            self.assertEqual(room.system, look.system, "the design and its look share one cache")
+            self.assertNotIn("none yet", room.system.split("THE LIBRARY")[0] if "THE LIBRARY" in room.system else "")
+            self.assertIn("library_now", json.loads(room.messages[0]["content"]))
+            self.assertIn("now_look_at_it", json.loads(look.messages[0]["content"][0]["text"]))
+        source = Path(pw.__file__).read_text(encoding="utf-8")
+        self.assertIn("chosen = sorted(rooms[:muse.ROOMS_MOST], key=lambda z: not indoors(z))", source)
+
     def test_a_place_of_no_task_is_designed_too(self) -> None:
         """2026-11-19: "你查一下为什么" - four rooms of a stretch before any task were left undesigned."""
         with tempfile.TemporaryDirectory() as folder:
@@ -766,6 +825,43 @@ class InBothLanguagesTests(unittest.TestCase):
             keeper._translate()
             self.assertEqual(keeper.models.asked, [], "back to English: its own words were kept")
 
+    def test_words_put_into_it_once_are_remembered_for_a_world_drawn_again(self) -> None:
+        # 2026-11-20: "为什么会有这么多翻译，我一开始就是中文呀" - the same titles asked again in each new world.
+        with tempfile.TemporaryDirectory() as folder:
+            keeper, shown = self._keeper(folder, "en")
+            world = keeper.world()
+            home = world["zones"][0]
+            shown["display_language"] = "zh-CN"
+            keeper.models.said[pw.TASK_TRANSLATE] = {f"zones:{home['id']}": {"name": "家", "why": "你开始和结束每一天的地方。"}}
+            keeper._translate(only={f"zones:{home['id']}"})
+            self.assertIn("Home", json.loads((Path(folder) / pw.TRANSLATED_FILE).read_text(encoding="utf-8"))["zh"])
+            world = keeper.world()                       # drawn again: its words as first written
+            world["zones"][0].pop("words", None)
+            keeper.save(world)
+            keeper.models.asked.clear()
+            self.assertEqual(keeper._translate(only={f"zones:{home['id']}"}), 1)
+            self.assertEqual(keeper.models.asked, [], "remembered: nothing asked")
+            self.assertEqual(keeper.world()["zones"][0]["words"]["zh"]["name"], "家")
+
+    def test_mostly_chinese_with_a_proper_noun_is_chinese(self) -> None:
+        self.assertFalse(pw.PlayWorld._not_in("这是 WaterMelon 的第一个界面", "zh"))
+        self.assertFalse(pw.PlayWorld._not_in("用 GitHub 和 Python 写的个性化智能体", "zh"))
+        self.assertTrue(pw.PlayWorld._not_in("Personalized Agent (WaterMelon)", "zh"))
+        self.assertTrue(pw.PlayWorld._not_in("读 Reading Club notes 的笔记", "zh"), "three Latin words in a row")
+
+    def test_the_short_judging_calls_on_the_small_model(self) -> None:
+        # 2026-11-20: "适合换：翻译、找图、看图、选主题、心情、事件、看一眼 ... 你可以试试".
+        for task in ("play_world_translate", "play_world_find", "play_world_find_look", "play_world_themes",
+                     "play_world_mood", "play_world_mood_scene", "play_world_events", "play_world_look"):
+            self.assertEqual(pw.role_of(task), "fast_reply", task)
+        for task in ("play_world_room", "play_world_room_look", "play_world_piece", "play_world_make", "play_world_muse",
+                     "play_world_grow"):
+            self.assertEqual(pw.role_of(task), "primary", task)
+        source = Path(pw.__file__).read_text(encoding="utf-8")
+        self.assertIn('role=role_of(task))', source)
+        find = (support.ROOT / "personalized_agent" / "agent" / "playfind.py").read_text(encoding="utf-8")
+        self.assertIn('role="fast_reply")', find)
+
     def test_a_world_just_begun_is_in_both_languages_from_the_first_moment(self) -> None:
         # 2026-11-19: "你初始的item中英翻译可以做好，这样一开始就可以切换".
         with tempfile.TemporaryDirectory() as folder:
@@ -796,7 +892,7 @@ class InBothLanguagesTests(unittest.TestCase):
             self.assertEqual(list(asked), [f"zones:{home['id']}"], "that one only")
         page = (support.ROOT / "personalized_agent" / "api" / "web" / "play.js").read_text(encoding="utf-8")
         self.assertIn('api.post("/api/play/translate", { key })', page)
-        self.assertIn('"feeling", "to_them", "look", "task_note", "fun_fact"]', page, "a land's feeling and words, a card's lines")
+        self.assertIn('"feeling", "to_them", "look", "task_note", "fun_fact", "task_title"]', page, "a land's feeling and words, a card's lines, a place's task")
         routes = (support.ROOT / "personalized_agent" / "api" / "routes.py").read_text(encoding="utf-8")
         self.assertIn('@route("POST", "/api/play/translate")', routes)
 
@@ -1234,7 +1330,7 @@ class InBothLanguagesTests(unittest.TestCase):
             self.assertEqual(piece["interact"], "ride", "its picture has a track: ridden")
         page = (support.ROOT / "personalized_agent" / "api" / "web" / "play.js").read_text(encoding="utf-8")
         self.assertIn("if (item.spec && item.spec.svg) { playSvgPieceDraw(item, size, now); playBoatsDraw(item, size, now); continue; }", page)
-        self.assertIn("const PLAY_FINE = 4, PLAY_FINE_COLOURS = 24;", page)
+        self.assertIn("const PLAY_FINE = 2, PLAY_FINE_COLOURS = 24;", page)   # 2026-11-20: two, for memory
         self.assertIn("const step = Math.max(1, Math.floor(n / PLAY_FINE_SAMPLES));", page, "its palette from a sample")
         # "这套'把图转成精细像素'的流程 ... 也用到用户的图片、像素画和雕像上": pictures, statues and the agent's paintings.
         self.assertIn("layer(\"fine things\", () => playFineThingsDraw(size));", page)
@@ -1328,7 +1424,7 @@ class InBothLanguagesTests(unittest.TestCase):
             self.assertIsNone(keeper.original("shot-i99999"))
         page = (support.ROOT / "personalized_agent" / "api" / "web" / "play.js").read_text(encoding="utf-8")
         self.assertIn('shown.addEventListener("click", () => sideLarger(item.original_url || real));', page)
-        self.assertIn("const small = playFinePixel(image,", page, "a floor's picture in pixels too")
+        self.assertIn("const small = play.floorPixels.get(pixelKey) || playFinePixel(image,", page, "a floor's picture in pixels too (kept once made)")
         routes = (support.ROOT / "personalized_agent" / "api" / "routes.py").read_text(encoding="utf-8")
         self.assertIn('one.pop(hidden, None)', routes, "where it is on their disk never sent")
 
@@ -1649,7 +1745,8 @@ class InBothLanguagesTests(unittest.TestCase):
         regions = (support.ROOT / "personalized_agent" / "api" / "web" / "play-regions.js").read_text(encoding="utf-8")
         self.assertIn("const strait = d - landReach <= PLAY_SEA_MOST && gap / 2 < straitHalf", regions)
         self.assertIn("const pad = PLAY_LAND_MOST + 2, R = PLAY_MINI_PX;", page)
-        self.assertIn("if (said && said.v === playMiniKeptVersion()) for", page, "kept pictures of the code that drew them")
+        # 2026-11-20: kept beside the world, its version raised by hand only - never the code's hash.
+        self.assertIn('if (said && String(said.v) === playMiniKeptVersion()) {', page, "kept pictures of the drawing that made them")
         # 2026-11-19: "stuck那个改成在view的中心（或者附近，如果中心不能站）刷新"
         self.assertIn('closest("[data-play-unstuck]")) playUnstuck(true);', page)
         self.assertIn("const middle = toView && play.lookAt ? play.lookAt : [play.me.x, play.me.y];", page)

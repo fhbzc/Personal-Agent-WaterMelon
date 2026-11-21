@@ -12,6 +12,28 @@
    holds one. */
 
 const PLAY_TILE = 16;
+// EVERY PICTURE MADE OFF THE PAGE IN THE PAGE'S OWN MEMORY (the user, 2026-11-20: "现在web还是占用2000MB呀"; "我现在都已经把
+// play关了"): the blocks, the map's pictures, the pixel pictures, the tiles - canvases the GPU process held 1.5 GB of
+// a minute after Play opened, 2 GB after a walk across the world, and gave back nothing when Play was shut or switched
+// off. Kept as software canvases (willReadFrequently) they cost the GPU process ~200 MB and draw as fast; let go,
+// they are gone. Only the view itself and the map on the page are the GPU's.
+const PLAY_OFF_PAGE = { willReadFrequently: true };
+/* A CANVAS LET GO OF AT ONCE (the user, 2026-11-20: switched off, "mem还是很高" - 2 GB held by the GPU process): its
+   pixels freed by making it nothing - not left for the scripts' garbage collector, which runs only when the scripts'
+   own memory is short and never counts a canvas's pixels. Canvases, and those inside a map, a set, a list or an
+   object, two levels down. */
+function playFree(held, depth = 0) {
+  if (!held || depth > 3) return;
+  if (typeof ImageBitmap !== "undefined" && held instanceof ImageBitmap) { held.close(); return; }
+  if (typeof HTMLCanvasElement !== "undefined" && held instanceof HTMLCanvasElement) {
+    if (held === play.canvas || held === play.mini) return;    // the view's own, and the map's on the page
+    held.width = 0; held.height = 0;
+    return;
+  }
+  const values = held instanceof Map || held instanceof Set ? [...held.values()] : Array.isArray(held) ? held
+    : typeof held === "object" && !(held instanceof Node) ? Object.values(held) : [];
+  for (const one of values) if (one && typeof one === "object") playFree(one, depth + 1);
+}
 const PLAY_CHUNK = 32;
 const PLAY_SPEED = 4.6;                 // tiles a second
 const PLAY_SHEETS = { rpg: "/play/rpg.png", indoor: "/play/indoor.png", me: "/play/watermelon.png", city: "/play/city.png",
@@ -238,6 +260,10 @@ const play = {
    whole steps of its pixels (crisp at each); the panel's own zoom untouched. Kept for the next time. */
 const PLAY_ZOOM_KEY = "playZoom";
 const PLAY_ZOOM_MOST = 4;
+// FARTHER OUT (the user, 2026-11-20: "视野最大值调大 ... 可以很方便的看更大的景"): past a tile's own 16 pixels, three steps
+// more - a half, a quarter, an eighth; from a quarter out the land drawn from the map's own picture of the world
+// (PLAY_MINI_PX a tile), not block by block.
+const PLAY_ZOOM_FAR = 3;
 const PLAY_ZOOM_ON_OPEN = 1;
 const PLAY_WHERE_KEY = "playWhere";
 
@@ -259,7 +285,7 @@ function playEl() {
   box.hidden = true;
   box.setAttribute("aria-label", "Play");
   box.innerHTML = `<canvas class="side-play-canvas" tabindex="0" data-play-label="Your world - walk with the arrow keys" aria-label="${escapeHtml(playWords("Your world - walk with the arrow keys"))}"></canvas>
-    <p class="side-play-hint" data-play-say="Arrow keys or WASD to walk, Shift to run, Space to jump, E to look, M for the map">${escapeHtml(playWords("Arrow keys or WASD to walk, Shift to run, Space to jump, E to look, M for the map"))}</p>
+    <p class="side-play-hint" data-play-say="Arrow keys to walk, WASD to look around, Shift to run, Space to jump, E to look, M for the map">${escapeHtml(playWords("Arrow keys to walk, WASD to look around, Shift to run, Space to jump, E to look, M for the map"))}</p>
     <p class="side-play-off" hidden data-play-say="Your world is not growing - switched off in Settings > Modules > Play world.">${escapeHtml(playWords("Your world is not growing - switched off in Settings > Modules > Play world."))}</p>
     <div class="side-play-corner"><p class="side-play-growing" hidden></p>
     <canvas class="side-play-mini" width="336" height="256" data-play-label="Map of your world" aria-label="${escapeHtml(playWords("Map of your world"))}"
@@ -271,7 +297,8 @@ function playEl() {
       title="${escapeHtml(playWords("Sound"))}">♪</button><button type="button" data-play-mute data-play-label="Mute" aria-label="${escapeHtml(playWords("Mute"))}"
       aria-pressed="false" title="${escapeHtml(playWords("Mute"))}">🔊</button><button type="button" data-play-pause hidden data-play-label="Pause drawing"
       aria-pressed="false" aria-label="${escapeHtml(playWords("Pause drawing"))}" title="${escapeHtml(playWords("Pause drawing"))}">⏸</button><button type="button" data-play-language data-play-label="Language of the world" aria-label="${escapeHtml(playWords("Language of the world"))}"
-      title="${escapeHtml(playWords("Language of the world"))}">${escapeHtml((PLAY_LANGUAGES.find(([code]) => code === playLanguage()) || PLAY_LANGUAGES[0])[1])}</button></div>`;
+      title="${escapeHtml(playWords("Language of the world"))}">${escapeHtml((PLAY_LANGUAGES.find(([code]) => code === playLanguage()) || PLAY_LANGUAGES[0])[1])}</button><button type="button" data-play-power data-play-label="Turn Play off - nothing loaded, nothing drawn"
+      aria-label="${escapeHtml(playWords("Turn Play off - nothing loaded, nothing drawn"))}" title="${escapeHtml(playWords("Turn Play off - nothing loaded, nothing drawn"))}">⏻</button></div>`;
   document.body.appendChild(box);
   play.el = box;
   if (typeof playSoundMuteShown === "function") playSoundMuteShown();
@@ -312,6 +339,7 @@ function playEl() {
     if (event.target.closest && event.target.closest("[data-play-language]")) playLanguagePanel(box);
     if (event.target.closest && event.target.closest("[data-play-unstuck]")) playUnstuck(true);
     if (event.target.closest && event.target.closest("[data-play-map]")) playMiniToggle();
+    if (event.target.closest && event.target.closest("[data-play-power]")) playPowerSet(!playPowered());
   });
   play.canvas.addEventListener("wheel", (event) => {
     event.preventDefault();
@@ -372,7 +400,20 @@ async function playOpen() {
   const box = playEl();
   playPlace();
   box.hidden = false;
+  clearTimeout(play.letGoTimer);                    // opened again in time: kept as it was
   play.on = true;
+  // SWITCHED OFF (the user, 2026-11-20: "play要有一个开关 ... 我可以把这个关掉，这样play就不加载，不占资源，我切换play panel就是
+  // 全黑的"): the view dark - no world, no pictures, no sound, nothing drawn or moving - and its one button to turn it on.
+  play.off = !playPowered();
+  box.classList.toggle("off", play.off);
+  // THE SAME BUTTON, IN ITS PLACE (the user, 2026-11-20: "你这个按钮和原来关机的放在一个位置不就行了"): off, the one thing
+  // left on the dark is the switch where it always is - pressed, Play is on again.
+  const power = box.querySelector("[data-play-power]");
+  const said = playWords(play.off ? "Turn Play on" : "Turn Play off - nothing loaded, nothing drawn");
+  power.title = said; power.setAttribute("aria-label", said); power.setAttribute("aria-pressed", String(!play.off));
+  document.body.classList.add("side-playing");
+  playPressed();
+  if (play.off) { playNote("opened switched off: nothing loaded"); return; }
   if (!play.motionTimer) play.motionTimer = setTimeout(playMotionTick, 1000 / PLAY_MOTION_FPS);   // the land moving
   document.body.classList.add("side-playing");
   if (typeof sideBoard !== "undefined" && sideBoard.open && typeof sideBoardClose === "function") sideBoardClose();   // no small screen in play
@@ -400,6 +441,55 @@ async function playOpen() {
   playRun();
 }
 
+const PLAY_POWER_KEY = "playPower";
+function playPowered() {
+  try { return localStorage.getItem(PLAY_POWER_KEY) !== "off"; } catch (_err) { return true; }
+}
+function playPowerSet(on) {
+  try { localStorage.setItem(PLAY_POWER_KEY, on ? "on" : "off"); } catch (_err) { /* this time only */ }
+  playPressed();
+  const open = play.on;
+  if (open) playClose();
+  if (!on) playUnload();
+  if (open) playOpen();
+}
+/* EVERYTHING PLAY HOLDS, LET GO (switched off): its world and map, the blocks laid and drawn, the map's pictures, the
+   tiles and pictures made, its timers and sound - the page keeps nothing of it; turned on, all is loaded again. */
+function playUnload() {
+  for (const held of [play.chunks, play.wallTiles, play.pictures, play.materialTiles, play.madeTiles, play.wallFaces,
+                      play.fineThings, play.svgPieces, play.floorPixels, play.miniBase, play.miniBuilding,
+                      typeof playSky === "object" && playSky ? playSky.night : null]) {
+    try { playFree(held); } catch (_err) { /* let go all the same */ }
+  }
+  if (playKeepWorker) { try { playKeepWorker.terminate(); } catch (_err) { /* gone */ } }
+  playKeepWorker = undefined;                              // started again when Play is
+  playRouteMemo = null;
+  play.svgPiecesWaiting = null; play.svgPieceIdle = false;
+  playSoundStop();
+  if (play.motionTimer) { clearTimeout(play.motionTimer); play.motionTimer = null; }
+  play.keys.clear();
+  play.map = null;
+  play.world = null;
+  play.lookAt = null;
+  if (play.chunks) playChunksClear();
+  if (play.wallTiles) play.wallTiles.clear();
+  if (play.pictures && play.pictures.clear) play.pictures.clear();
+  play.miniBase = null; play.miniBuilding = null; play.miniKept = null; play.miniKeptDirty = null;
+  play.materialTiles = {}; play.madeTiles = {};
+  // AND THE PICTURES MADE FOR IT (2026-11-20: after switching off, 98 pixel pictures, 34 great pieces and 31 wall faces
+  // were still held - their pixels in the page's memory and the GPU's, never in the scripts' own count).
+  for (const name of ["fineThings", "svgPieces", "wallFaces"]) {
+    const kept = play[name];
+    if (kept instanceof Map) kept.clear(); else play[name] = {};
+  }
+  play.miniWhole = null; play.signLifts = null; play.region = null; play.zone = null; play.near = null;
+  if (play.floorPixels) play.floorPixels.clear();
+  if (typeof playSky === "object" && playSky) playSky.night = null;   // the night's own canvas, as large as the view
+  play.birds = []; play.critters = []; play.dust = [];
+  if (play.canvas) { play.canvas.width = 1; play.canvas.height = 1; }
+  if (play.mini) { play.mini.getContext("2d").clearRect(0, 0, play.mini.width, play.mini.height); }
+}
+
 function playClose() {
   playKeepWhere();
   playAvatarOff(false);
@@ -409,7 +499,12 @@ function playClose() {
   playPressed();
   if (play.el) play.el.hidden = true;
   document.body.classList.remove("side-playing");
+  // SHUT, LET GO OF SOON (the user, 2026-11-20: "我现在把play关掉了，mem还是很高"): back within PLAY_KEPT_SHUT_MS, it is
+  // as it was left; later, all it holds is let go (playUnload) - opened again, loaded again (a few seconds).
+  clearTimeout(play.letGoTimer);
+  play.letGoTimer = setTimeout(() => { if (!play.on) playUnload(); }, PLAY_KEPT_SHUT_MS);
 }
+const PLAY_KEPT_SHUT_MS = 60000;
 
 /* The avatar off the screen while it walks here; back when the view shuts, or the panel is put away. */
 function playAvatarOff(on) {
@@ -427,8 +522,15 @@ document.addEventListener("visibilitychange", () => {
 /* ITS BUTTON BLUE WHILE IT IS OPEN, as Pin's while pinned (the user, 2026-11-17: "你选择play的时候，你要和pin的按钮一样，
    显示蓝色"): however it was opened or shut. */
 function playPressed() {
-  document.getElementById("side-play-open")?.setAttribute("aria-pressed", String(play.on));
+  const button = document.getElementById("side-play-open");
+  button?.setAttribute("aria-pressed", String(play.on));
+  // ON OR OFF AT A GLANCE (the user, 2026-11-20: "这个play 的按钮要根据是否on /off 变色，让别人一看就知道是否on"): its
+  // colour says whether Play is switched on (playPowerSet), whether or not it is open now.
+  button?.setAttribute("data-power", playPowered() ? "on" : "off");
 }
+// Shown as the page opens - the page may be loaded already when this script is read.
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => { try { playPressed(); } catch (_err) { /* as before */ } });
+else setTimeout(() => { try { playPressed(); } catch (_err) { /* as before */ } }, 0);
 
 /* -- JUMPING AND LOOKING (the user, 2026-11-17: "你那个游戏空格是跳跃吧，增加点交互") ---------------------------------- */
 const PLAY_JUMP_MS = 420;
@@ -638,8 +740,9 @@ function playFit() {
   play.canvas.height = Math.max(1, Math.round(box.height * ratio));
   // About fourteen tiles across at first, whole pixels each: crisp - then as zoomed.
   const base = Math.max(1, Math.round(play.canvas.width / (14 * PLAY_TILE)));
-  play.zoom = Math.max(1 - base, Math.min(PLAY_ZOOM_MOST, play.zoom));
-  play.scale = base + play.zoom;
+  play.zoom = Math.max(1 - base - PLAY_ZOOM_FAR, Math.min(PLAY_ZOOM_MOST, play.zoom));
+  const whole = base + play.zoom;
+  play.scale = whole >= 1 ? whole : Math.pow(2, whole - 1);
   play.ctx.imageSmoothingEnabled = false;
   playDraw();
 }
@@ -670,7 +773,7 @@ function playMaterialTiles(floors, store = "materialTiles") {
    of the 47 tiles as it came, about 300 ms each, the first seconds held again and again). */
 function playTilesLaidAgain() {
   if (play.wallTiles) play.wallTiles.clear();
-  if (play.chunks) play.chunks.clear();
+  if (play.chunks) playChunksClear();
   if (play.on) playDraw();
 }
 /* A room's floor as a piece of ground: a built-in one by its own name, any other "mat:" and its name. */
@@ -697,7 +800,7 @@ function playLoadSheets() {
           PLAY_SIZES[name] = ["lantern", "banner", "net"].includes(shape) ? [1, 2] : [1, 1];
         }
       }
-      if (play.chunks) play.chunks.clear();
+      if (play.chunks) playChunksClear();
       if (play.on) playDraw();
     }).catch(() => {});
   }
@@ -714,10 +817,15 @@ function playLoadSheets() {
    agent/playworld.py _translate); the world shown in the one chosen - what has no words of that language yet, as it
    was written. Chosen again in settings: the world shown again in it. */
 const PLAY_WORDS = ["name", "why", "room_idea", "grounds_name", "summary", "floor_text", "card_title", "news_text",
-                    "feeling", "to_them", "look", "task_note", "fun_fact"];   // a land's feeling and its words to them; a card's lines (agent/playworld.py _words_of)
+                    "feeling", "to_them", "look", "task_note", "fun_fact", "task_title"];   // a land's feeling and its words to them; a card's lines (agent/playworld.py _words_of)
 /* Whether words hold another language than the one shown (agent/playworld.py _not_in - the same test). */
 function playNotIn(text, language) {
-  return language === "zh" ? /[A-Za-z]{2,}/.test(String(text || "")) : /[\u3400-\u9fff]/.test(String(text || ""));
+  const words = String(text || "");
+  if (language !== "zh") return /[\u3400-\u9fff]/.test(words);
+  // Mostly Chinese, a proper noun or two in it, is Chinese (as agent/playworld.py _not_in, 2026-11-20).
+  if (!/[A-Za-z]{2,}/.test(words)) return false;
+  const latin = (words.match(/[A-Za-z]+/g) || []).length, han = (words.match(/[\u4e00-\u9fff]/g) || []).length;
+  return latin >= han || /[A-Za-z]+(?:[\s-]+[A-Za-z]+){2,}/.test(words);
 }
 function playLanguage() {
   // PLAY'S OWN (the user, 2026-11-19: "选语言的setting, 要放在play panel里（这个setting是只对play panel内生效的，即使display
@@ -840,13 +948,17 @@ async function playLoadWorld() {
     } catch (_err) { /* the first area */ }
   }
   if (!playAreas(play.world).includes(play.area)) play.area = playAreaOf((play.world.regions || [])[0]);
+  await playRouteMemoReady(play.area);                  // the ways found the last time this world was laid
+  setTimeout(playChunkStorePrune, 20000);                 // the store of blocks kept within its most
   play.map = playLay(play.world, play.area);
+  setTimeout(playRouteMemoKeep, 4000);                    // kept once laid (and its lines found)
+  setTimeout(playRouteMemoKeep, 30000);
   // The minimap drawn again for this world - out of sight, the one shown kept till the new one is whole; the first
   // time, as it comes.
   if (play.miniBase && play.mini && !play.mini.hidden) playMiniBase(true);
   else play.miniBase = null;
   play.zoneKinds = null;
-  play.chunks.clear();
+  playChunksClear();
   if (first) {
     const home = play.map.zones.length ? play.map.zones[0].zone : play.world.zones[0];
     const at = playDoor(home);
@@ -887,7 +999,7 @@ function playWallTile(piece) {
   if (!sheet) return null;
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = 16;
-  const c = canvas.getContext("2d");
+  const c = canvas.getContext("2d", PLAY_OFF_PAGE);
   const set = () => c.drawImage(sheet, spec[1] * 17, spec[2] * 17, 16, 16, 0, 0, 16, 16);
   set();
   const tex = (play.wallFaces || {})[face];
@@ -921,14 +1033,255 @@ function playTile(context, piece, x, y) {
   }
 }
 
-function playChunk(cx, cy) {
-  const key = `${cx},${cy}`;
-  if (play.chunks.has(key)) return play.chunks.get(key);
-  const block = playBlock(play.map, cx, cy);            // laid now, if it was not
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = PLAY_CHUNK * PLAY_TILE;
-  const context = canvas.getContext("2d");
-  context.imageSmoothingEnabled = false;
+/* KEPT BY DISTANCE, NOT BY COUNT (the user, 2026-11-20: "4个都做"): when the view comes over another block, what lies
+   more than PLAY_KEEP_RING blocks from it is let go of - its block pictures (freed at once), its laid blocks, and the
+   great pieces' pictures not drawn for PLAY_PIECE_UNSEEN_MS. However large the world, Play holds what is about the
+   view, and a block drawn at the other size than the view's now is let go of too. */
+// a great piece's picture is small now (all of a world's 183, 8 MB): kept two minutes unseen, not made again and again
+const PLAY_KEEP_RING = 2, PLAY_PIECE_UNSEEN_MS = 120000;
+function playLetGoFar(c0, c1, r0, r1, half) {
+  const bounds = `${c0},${c1},${r0},${r1},${half}`;
+  if (play.keptBounds === bounds) return;
+  play.keptBounds = bounds;
+  const R = PLAY_KEEP_RING, out = (cx, cy, ring) => cx < c0 - ring || cx > c1 + ring || cy < r0 - ring || cy > r1 + ring;
+  for (const key of [...play.chunks.keys()]) {
+    const isHalf = key.endsWith("h"), [cx, cy] = key.replace("h", "").split(",").map(Number);
+    if (isHalf !== half || out(cx, cy, R)) {
+      playFree(play.chunks.get(key)); play.chunks.delete(key);
+      if (play.chunkAsked) play.chunkAsked.delete(key);      // asked again from the store when it comes back
+    }
+  }
+  if (play.map && play.map.laid) {
+    const wx = Math.floor(play.me.x / PLAY_CHUNK), wy = Math.floor(play.me.y / PLAY_CHUNK);
+    for (const key of [...play.map.laid.keys()]) {
+      const [cx, cy] = key.split(",").map(Number);
+      if (out(cx, cy, R + 1) && (Math.abs(cx - wx) > 1 || Math.abs(cy - wy) > 1)) play.map.laid.delete(key);   // the walker's kept
+    }
+  }
+  if (play.svgPieces) {
+    const now = performance.now();
+    for (const [key, made] of [...play.svgPieces]) {
+      if (made && now - (made.seenAt || 0) > PLAY_PIECE_UNSEEN_MS) { playFree(made); play.svgPieces.delete(key); }
+    }
+  }
+}
+/* WHETHER THEY ARE MOVING: a key held, the view moving, a ride. */
+function playMoving() {
+  return Boolean((play.keys && play.keys.size) || (play.pan && play.pan.size) || play.ride || playRunning);
+}
+/* THE BLOCKS ROUND THE VIEW, MADE READY WHILE NOTHING HAPPENS (2026-11-20, "复用"): a ring a block wide about what is in
+   sight, laid and drawn one at a time when the page is idle - walked into, they are there. */
+function playPrepareSoon() {
+  if (play.preparing || typeof requestIdleCallback !== "function") return;
+  play.preparing = true;
+  requestIdleCallback((deadline) => {
+    play.preparing = false;
+    if (!play.on || play.off || !play.map || playMoving() || deadline.timeRemaining() < 8) return;
+    const size = PLAY_TILE * play.scale, chunkSize = PLAY_CHUNK * size, canvas = play.canvas;
+    if (play.scale < 0.5) return;
+    const c0 = Math.floor(play.camera.x / chunkSize) - 1, c1 = Math.floor((play.camera.x + canvas.width) / chunkSize) + 1;
+    const r0 = Math.floor(play.camera.y / chunkSize) - 1, r1 = Math.floor((play.camera.y + canvas.height) / chunkSize) + 1;
+    play.chunksWanted = Math.max(play.chunksWanted || 0, (c1 - c0 + 1) * (r1 - r0 + 1) + 4);
+    for (let cy = r0; cy <= r1; cy += 1) {
+      for (let cx = c0; cx <= c1; cx += 1) {
+        const half = play.scale < 1, key = playChunkKey(cx, cy, half);
+        if (!play.chunks.has(key)) {
+          // FROM THE STORE FIRST (playChunkFromStore): drawn anew only when it has none; asked, it draws when read
+          const state = playChunkFromStore(cx, cy, half);
+          if (state === "asking") continue;
+          if (state === "missing") {
+            playChunk(cx, cy, half);                           // one, then the next idle moment
+            playPrepareSoon();
+            return;
+          }
+        }
+        // drawn: its block laid too, for what moves on it - while idle, one at a time
+        if (play.scale >= 1 && !play.map.laid.has(`${cx},${cy}`) && cx > c0 && cx < c1 && cy > r0 && cy < r1) {
+          playBlock(play.map, cx, cy);
+          playPrepareSoon();
+          return;
+        }
+      }
+    }
+  }, { timeout: 2000 });
+}
+function playChunkKey(cx, cy, half) { return half ? `${cx},${cy}h` : `${cx},${cy}`; }
+/* The ways found the last time this world was laid in this area (play-regions.js playRoute), read before it is laid. */
+const PLAY_ROUTES_VERSION = 1;
+async function playRouteMemoReady(area) {
+  const text = play.worldText || "";
+  const key = `routes|${area}|${PLAY_ROUTES_VERSION}|${text.length}|${playMiniHash(text).toString(36)}`;
+  if (playRouteMemo && playRouteMemo.key === key) return;
+  playRouteMemo = { key, routes: new Map(), added: 0 };
+  try {
+    const db = await playChunkDb();
+    if (!db) return;
+    const said = await new Promise((done) => {
+      const read = db.transaction("blocks").objectStore("blocks").get(key);
+      read.onsuccess = () => done(read.result);
+      read.onerror = () => done(null);
+    });
+    if (said && Array.isArray(said.routes) && playRouteMemo && playRouteMemo.key === key) playRouteMemo.routes = new Map(said.routes);
+  } catch (_err) { /* searched again */ }
+}
+function playRouteMemoKeep() {
+  const memo = playRouteMemo;
+  if (!memo || !memo.added) return;
+  memo.added = 0;
+  playChunkDb().then((db) => {
+    if (!db) return;
+    try { db.transaction("blocks", "readwrite").objectStore("blocks").put({ routes: [...memo.routes] }, memo.key); } catch (_err) { /* not kept */ }
+  });
+}
+/* All the blocks' pictures let go of - freed at once (a new world, new tiles, a picture come in). */
+function playChunksClear() {
+  if (!play.chunks) return;
+  for (const one of play.chunks.values()) playFree(one);
+  play.chunks.clear();
+  if (play.chunkAsked) play.chunkAsked.clear();
+}
+/* BLOCKS DRAWN ONCE, KEPT (the user, 2026-11-20: "4个都做" - what was drawn reused): each block's picture, as drawn,
+   kept in the page's own store (IndexedDB, in the panel's folder) with the mark of what made it (playMiniSig) - drawn
+   again from it, read off the page's thread (createImageBitmap), not laid and drawn again; a block whose things
+   changed has another mark and is drawn anew. THE DRAWING IN THE MARK TOO (2026-11-20, a note on it: a change to how
+   blocks are drawn - a road's edge, a colour - kept the old pictures unless a number was raised by hand): the mark
+   carries a print of the drawing's own code and grounds (playChunkDrawing), so a block drawn another way is drawn
+   anew by itself; PLAY_CHUNK_KEPT_VERSION is left for what that print cannot see (a tile sheet's picture). At most
+   PLAY_CHUNKS_STORED_MOST kept, the oldest kept let go. */
+const PLAY_CHUNK_KEPT_VERSION = 1, PLAY_CHUNK_DB = "play-blocks", PLAY_CHUNKS_STORED_MOST = 1500;
+let playChunkDrawingPrint = null;
+function playChunkDrawing() {
+  if (playChunkDrawingPrint) return playChunkDrawingPrint;
+  let text = "";
+  for (const one of [playChunk, playChunkPaint, playTile, playWallTile, playLight, playThing, playFloorArt, playLayBlock,
+                     typeof playFinePixel === "function" ? playFinePixel : null]) {
+    if (typeof one === "function") text += one.toString();
+  }
+  try { text += JSON.stringify(PLAY_GROUND) + JSON.stringify(typeof PLAY_MORE_GROUND === "object" ? PLAY_MORE_GROUND : null); } catch (_err) { /* the code alone */ }
+  playChunkDrawingPrint = `${text.length.toString(36)}${playMiniHash(text).toString(36)}`;
+  return playChunkDrawingPrint;
+}
+/* The store kept within PLAY_CHUNKS_STORED_MOST: once a Play opening, the oldest kept let go of. */
+function playChunkStorePrune() {
+  playChunkDb().then((db) => {
+    if (!db) return;
+    const kept = [];
+    const store = db.transaction("blocks").objectStore("blocks");
+    const walk = store.openCursor();
+    walk.onsuccess = () => {
+      const at = walk.result;
+      if (at) { if (at.value && at.value.mark) kept.push([at.key, at.value.at || 0]); at.continue(); return; }
+      if (kept.length <= PLAY_CHUNKS_STORED_MOST) return;
+      kept.sort((a, b) => a[1] - b[1]);
+      const out = db.transaction("blocks", "readwrite").objectStore("blocks");
+      for (const [key] of kept.slice(0, kept.length - PLAY_CHUNKS_STORED_MOST)) out.delete(key);
+    };
+  }).catch(() => {});
+}
+let playChunkDbOpen = null;
+function playChunkDb() {
+  if (playChunkDbOpen) return playChunkDbOpen;
+  playChunkDbOpen = new Promise((done) => {
+    try {
+      const asked = indexedDB.open(PLAY_CHUNK_DB, 1);
+      asked.onupgradeneeded = () => asked.result.createObjectStore("blocks");
+      asked.onsuccess = () => done(asked.result);
+      asked.onerror = () => done(null);
+    } catch (_err) { done(null); }
+  });
+  return playChunkDbOpen;
+}
+function playChunkStoreKey(cx, cy, half) { return `${play.area || "a1"}|${half ? "h" : "f"}|${cx},${cy}`; }
+function playChunkMark(cx, cy) {
+  return `${PLAY_CHUNK_KEPT_VERSION}|${playChunkDrawing()}|${play.language || ""}|${playMiniSig(play.map, cx, cy)}`;
+}
+/* Asked for once: from the store into the blocks kept, then drawn - or, not there, laid as before. */
+function playChunkFromStore(cx, cy, half) {
+  play.chunkAsked = play.chunkAsked || new Map();
+  const key = playChunkKey(cx, cy, half);
+  if (play.chunkAsked.has(key)) return play.chunkAsked.get(key);
+  play.chunkAsked.set(key, "asking");
+  const map = play.map, mark = playChunkMark(cx, cy);
+  playChunkDb().then((db) => {
+    if (!db) { play.chunkAsked.set(key, "missing"); return null; }
+    return new Promise((done) => {
+      const read = db.transaction("blocks").objectStore("blocks").get(playChunkStoreKey(cx, cy, half));
+      read.onsuccess = () => done(read.result && read.result.mark === mark ? read.result.blob : null);
+      read.onerror = () => done(null);
+    });
+  }).then((blob) => (blob ? createImageBitmap(blob) : null)).then((bitmap) => {
+    if (!bitmap || play.map !== map || !play.on) { if (bitmap) bitmap.close(); play.chunkAsked.set(key, "missing"); if (play.on) playDraw(); return; }
+    play.chunkAsked.set(key, "kept");
+    play.chunks.set(key, bitmap);
+    playDraw();
+  }).catch(() => { play.chunkAsked.set(key, "missing"); });
+  return "asking";
+}
+/* KEPT OFF THE PAGE'S THREAD (the user, 2026-11-20: "4个都做" - the drawing work in the background): a block's
+   picture made a file was the GPU's pixels read back, ~10 ms of the page's thread a block - more than drawing it. Now
+   the page takes a copy of it (createImageBitmap, ~0.1 ms) and hands it to a worker of its own, which makes the file and
+   keeps it; the worker's code is here (started from it, not from a file of its own). Without workers: while idle. */
+const PLAY_KEEP_WORKER_SOURCE = `
+const opening = new Promise((done) => {
+  try {
+    const asked = indexedDB.open(${JSON.stringify(PLAY_CHUNK_DB)}, 1);
+    asked.onupgradeneeded = () => asked.result.createObjectStore("blocks");
+    asked.onsuccess = () => done(asked.result);
+    asked.onerror = () => done(null);
+  } catch (_err) { done(null); }
+});
+const fileOf = async (bitmap) => {
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  canvas.getContext("2d").drawImage(bitmap, 0, 0);
+  bitmap.close();
+  const blob = await canvas.convertToBlob({ type: "image/png" });
+  canvas.width = canvas.height = 0;
+  return blob;
+};
+onmessage = async (event) => {
+  const { key, mark, bitmap, bitmaps, meta } = event.data;
+  try {
+    const kept = { mark, at: Date.now() };
+    if (bitmap) kept.blob = await fileOf(bitmap);
+    if (bitmaps) { kept.blobs = []; for (const one of bitmaps) kept.blobs.push(await fileOf(one)); kept.meta = meta; }
+    const db = await opening;
+    if (db) db.transaction("blocks", "readwrite").objectStore("blocks").put(kept, key);
+  } catch (_err) { /* not kept: drawn again the next time */ }
+};`;
+let playKeepWorker;
+function playKeeper() {
+  if (playKeepWorker !== undefined) return playKeepWorker;
+  playKeepWorker = null;
+  try {
+    if (typeof Worker !== "undefined" && typeof OffscreenCanvas !== "undefined" && typeof createImageBitmap !== "undefined") {
+      const url = URL.createObjectURL(new Blob([PLAY_KEEP_WORKER_SOURCE], { type: "text/javascript" }));
+      playKeepWorker = new Worker(url);
+    }
+  } catch (_err) { playKeepWorker = null; }
+  return playKeepWorker;
+}
+/* A block just drawn, kept for the next time - unless something in it was still to come (a picture, the tiles). */
+function playChunkKeep(cx, cy, half, canvas) {
+  if (play.chunkIncomplete || (play.tilesLoading || 0) > 0) return;
+  const mark = playChunkMark(cx, cy), key = playChunkStoreKey(cx, cy, half);
+  const worker = playKeeper();
+  if (worker) {
+    createImageBitmap(canvas).then((bitmap) => worker.postMessage({ key, mark, bitmap }, [bitmap])).catch(() => {});
+    return;
+  }
+  if (!canvas.toBlob) return;
+  const later = window.requestIdleCallback || ((fn) => setTimeout(fn, 200));
+  later(() => canvas.toBlob((blob) => {
+    if (!blob) return;
+    playChunkDb().then((db) => {
+      if (!db) return;
+      try { db.transaction("blocks", "readwrite").objectStore("blocks").put({ mark, blob, at: Date.now() }, key); } catch (_err) { /* not kept */ }
+    });
+  }, "image/png"));
+}
+/* A block's ground, roads, floors, what stands about, its light and its things - painted into `context` (at whatever
+   scale it is set to: the screen's block, or the map's, playChunk). */
+function playChunkPaint(context, block, cx, cy, mini) {
   const x0 = cx * PLAY_CHUNK, y0 = cy * PLAY_CHUNK, M = PLAY_LAY_MARGIN;
   for (let ty = 0; ty < PLAY_CHUNK; ty += 1) {
     for (let tx = 0; tx < PLAY_CHUNK; tx += 1) {
@@ -944,6 +1297,25 @@ function playChunk(cx, cy) {
             context.fillRect(tx * 16 + Math.floor(playHash(wx, wy, 320 + s) * 15), ty * 16 + Math.floor(playHash(wx, wy, 330 + s) * 15), 1, 1);
           }
         }
+      }
+    }
+  }
+  // EACH ROAD ITS EDGE (the user, 2026-11-20: "路都黏在一块了 ... 还是一团"): where a road meets what is not road, a
+  // darker line - a road told from the paved ground of a city, and two roads side by side from each other.
+  const paths = play.map && play.map.paths;
+  if (paths) {
+    context.fillStyle = "rgba(20, 22, 28, 0.42)";
+    for (let ty = 0; ty < PLAY_CHUNK; ty += 1) {
+      for (let tx = 0; tx < PLAY_CHUNK; tx += 1) {
+        const wx = x0 + tx, wy = y0 + ty;
+        const here = paths.get(`${wx},${wy}`);
+        if (!here) continue;
+        // where it meets what is not road - or another road, of another stuff
+        const apart = (nx, ny) => { const there = paths.get(`${nx},${ny}`); return !there || (there.material || "") !== (here.material || ""); };
+        if (apart(wx, wy - 1)) context.fillRect(tx * 16, ty * 16, 16, 2);
+        if (apart(wx, wy + 1)) context.fillRect(tx * 16, ty * 16 + 14, 16, 2);
+        if (apart(wx - 1, wy)) context.fillRect(tx * 16, ty * 16, 2, 16);
+        if (apart(wx + 1, wy)) context.fillRect(tx * 16 + 14, ty * 16, 2, 16);
       }
     }
   }
@@ -985,9 +1357,43 @@ function playChunk(cx, cy) {
       }
     }
   }
+}
+function playChunk(cx, cy, half = false, mini = false) {
+  const key = playChunkKey(cx, cy, half);
+  if (!mini && play.chunks.has(key)) return play.chunks.get(key);
+  const block = playBlock(play.map, cx, cy);            // laid now, if it was not
+  const canvas = document.createElement("canvas");
+  // FOR THE MAP (`mini`, the user, 2026-11-20: "音乐在view最大的时候一卡一卡的"): drawn at the map's own size, in the page's
+  // memory - a block drawn whole on the GPU and shrunk had to be read back from it, the page held for it; not kept.
+  if (mini) {
+    canvas.width = canvas.height = PLAY_CHUNK * PLAY_MINI_PX;
+    const small = canvas.getContext("2d", PLAY_OFF_PAGE);
+    small.scale(PLAY_MINI_PX / PLAY_TILE, PLAY_MINI_PX / PLAY_TILE);
+    small.imageSmoothingEnabled = true;
+    small.imageSmoothingQuality = "high";
+    playChunkPaint(small, block, cx, cy, true);
+    small.setTransform(1, 0, 0, 1, 0, 0);
+    return canvas;
+  }
+  // HALF ITS SIZE FAR OUT (the user, 2026-11-20: "4个都做" - drawn as it is shown): out at a half or more, a block
+  // is drawn at half its pixels - a quarter of the memory and of the drawing; close up, whole.
+  canvas.width = canvas.height = PLAY_CHUNK * PLAY_TILE * (half ? 0.5 : 1);
+  play.chunkIncomplete = false;                          // set while drawing when a picture in it is still to come
+  // THE GPU'S (2026-11-20, "移动会卡"): put on the screen every frame - a software one was sent to the GPU again each
+  // time; at most `chunksWanted` of them kept, let go when Play is switched off (playUnload).
+  const context = canvas.getContext("2d");
+  if (half) context.scale(0.5, 0.5);
+  context.imageSmoothingEnabled = false;
+  playChunkPaint(context, block, cx, cy, false);
   play.chunks.set(key, canvas);
+  playChunkKeep(cx, cy, half, canvas);
   // Kept within reason: the blocks longest out of sight let go of.
-  if (play.chunks.size > 48) play.chunks.delete(play.chunks.keys().next().value);
+  if (play.chunks.size > Math.max(48, play.chunksWanted || 0)) {
+    const oldest = play.chunks.keys().next().value;
+    playFree(play.chunks.get(oldest));                  // its pixels freed now, not when the scripts collect
+    play.chunks.delete(oldest);
+    if (play.chunkAsked) play.chunkAsked.delete(oldest);
+  }
   return canvas;
 }
 
@@ -1341,7 +1747,7 @@ function playRidingPiece(item) {
   return Boolean(one) && (one === item || (one.x === item.x && one.y === item.y && one.w === item.w && one.h === item.h));
 }
 function playDraw() {
-  if (!play.on || !play.map || !play.ctx) return;
+  if (!play.on || play.off || !play.map || !play.ctx) return;
   playRideOverdue();
   const { ctx, canvas, scale } = play;
   const size = PLAY_TILE * scale;
@@ -1355,11 +1761,59 @@ function playDraw() {
   const chunkSize = PLAY_CHUNK * size;
   const c0 = Math.floor(play.camera.x / chunkSize), c1 = Math.floor((play.camera.x + canvas.width) / chunkSize);
   const r0 = Math.floor(play.camera.y / chunkSize), r1 = Math.floor((play.camera.y + canvas.height) / chunkSize);
-  for (let cy = r0; cy <= r1; cy += 1) {
-    for (let cx = c0; cx <= c1; cx += 1) {
-      ctx.drawImage(playChunk(cx, cy), Math.round(cx * chunkSize - play.camera.x), Math.round(cy * chunkSize - play.camera.y),
-                    chunkSize, chunkSize);
+  if (scale < 0.5 && !play.miniBase && play.mini) playMiniBase();   // the map put away: its picture made all the same
+  const far = scale < 0.5, half = scale < 1, map = play.miniBase;
+  playLetGoFar(c0, c1, r0, r1, half);                      // what is far from the view, let go of
+  play.chunksWanted = (c1 - c0 + 3) * (r1 - r0 + 3) + 4;       // as many kept as are in sight and the ring round it
+  if (far && map && map.tiles) {
+    // FAR OUT: the map's own picture of the world, at this size - every block of it drawn once already, kept.
+    const k = size / PLAY_MINI_PX;
+    ctx.imageSmoothingEnabled = k < 1;
+    ctx.drawImage(map.shownTiles || map.tiles, Math.round(map.left * size - play.camera.x), Math.round(map.top * size - play.camera.y),
+                  map.tiles.width * k, map.tiles.height * k);
+    ctx.imageSmoothingEnabled = false;
+  } else {
+    // ONE NEW BLOCK A FRAME, THE REST STOOD IN FOR (the user, 2026-11-20: "移动会卡 ... 复用"): a block not yet laid is
+    // tens of milliseconds - all those coming into sight laid in one frame held it; one now (the nearest the walker),
+    // the others meanwhile drawn from the map's own picture of them, and laid the frames after.
+    const waiting = [];
+    for (let cy = r0; cy <= r1; cy += 1) {
+      for (let cx = c0; cx <= c1; cx += 1) {
+        const key = playChunkKey(cx, cy, half), x = Math.round(cx * chunkSize - play.camera.x), y = Math.round(cy * chunkSize - play.camera.y);
+        if (play.chunks.has(key)) { ctx.drawImage(play.chunks.get(key), x, y, chunkSize, chunkSize); continue; }
+        if (far) continue;                                     // far out with no map yet: none laid now
+        const stored = playChunkFromStore(cx, cy, half);       // kept from before: read, not laid (async)
+        waiting.push([cx, cy, x, y, stored === "missing"]);
+      }
     }
+    if (waiting.length) {
+      const mx = play.me.x / PLAY_CHUNK, my = play.me.y / PLAY_CHUNK;
+      waiting.sort((p, q) => Math.hypot(p[0] + 0.5 - mx, p[1] + 0.5 - my) - Math.hypot(q[0] + 0.5 - mx, q[1] + 0.5 - my));
+      // MOVING, NONE LAID (the user, 2026-11-20: "view很大的时候（比如1/2的时候)，拖动还是卡"): while the view is
+      // dragged or walked, every block not yet laid stands in from the map's picture; laid one a frame once it stops.
+      const moving = playMoving() || (play.lastLook && performance.now() - play.lastLook < 400);
+      const toLay = waiting.findIndex((one) => one[4]);        // one the store does not have
+      if (!moving && toLay >= 0 && !play.map.laid.has(`${waiting[toLay][0]},${waiting[toLay][1]}`)) {
+        // LAID THIS FRAME, DRAWN THE NEXT (2026-11-20, "流畅"): laying a block and drawing it were one frame's ~17 ms
+        playBlock(play.map, waiting[toLay][0], waiting[toLay][1]);
+      } else if (!moving && toLay >= 0) {
+        const [cx, cy, x, y] = waiting.splice(toLay, 1)[0];
+        ctx.drawImage(playChunk(cx, cy, half), x, y, chunkSize, chunkSize);
+      } else if (!play.layLater) {
+        play.layLater = setTimeout(() => { play.layLater = null; playDraw(); }, 450);    // after it stops
+      }
+      const shown = play.miniBase && (play.miniBase.shownTiles || play.miniBase.tiles);
+      for (const [wx, wy, x2, y2] of waiting) {
+        if (shown) {
+          const R = PLAY_MINI_PX, side = PLAY_CHUNK * R;
+          ctx.imageSmoothingEnabled = true;
+          ctx.drawImage(shown, (wx * PLAY_CHUNK - play.miniBase.left) * R, (wy * PLAY_CHUNK - play.miniBase.top) * R, side, side,
+                        x2, y2, chunkSize, chunkSize);
+          ctx.imageSmoothingEnabled = false;
+        }
+      }
+      if (waiting.some((one) => one[4]) && !moving) requestAnimationFrame(() => playDraw());     // the next to lay, the next frame
+    } else playPrepareSoon();                                  // all in sight laid: those round it, while idle
   }
   // EACH LAYER ON ITS OWN (2026-11-19: one great piece the page could not draw stopped the frame, and the walker was
   // never drawn - "agent 在play上的形象消失了"): a layer that fails is told once and the frame goes on.
@@ -1373,15 +1827,29 @@ function playDraw() {
     }
     ctx.restore();
   };
-  layer("motion", () => playMotionDraw(size, c0, c1, r0, r1));    // water flowing, clouds drifting, stars, bubbles...
-  layer("bushes", () => playBushesDraw(size, c0, c1, r0, r1, false));
-  layer("coasters", () => playCoastersDraw(size));
-  layer("routes", () => playRoutesDraw(size));                 // the way through, as it was lived: arrows, numbered signs
+  // Far out, what is too small to be seen is not drawn: the land, its great pieces and buildings, what moves on it.
+  if (!far) {
+    // ZOOMED OUT, STILL (the user, 2026-11-20: "view很大的时候 ... 整个地图很卡"): the land's motion - water, clouds, motes -
+    // looked for tile by tile in sight, 43 of a frame's 55 ms at a half; drawn from a tile's own size up only, and nothing
+    // then redrawn a few times a second for it.
+    if (scale >= 1) layer("motion", () => playMotionDraw(size, c0, c1, r0, r1));   // water flowing, clouds drifting, stars, bubbles...
+    else play.motionSeen = false;
+    layer("bushes", () => playBushesDraw(size, c0, c1, r0, r1, false));
+    layer("coasters", () => playCoastersDraw(size));
+    layer("routes", () => playRoutesDraw(size));                 // the way through, as it was lived: arrows, numbered signs
+  }
   layer("pieces", () => playPiecesDraw(size));                 // great pieces (playPiecePicture), over the ground
-  layer("fine things", () => playFineThingsDraw(size));        // the user's pictures and the agent's paintings, in fine pixels
+  if (!far) layer("fine things", () => playFineThingsDraw(size));   // the user's pictures and the agent's paintings
   layer("facades", () => playFacadesDraw(size));
   if (typeof playActDraw === "function") layer("acts", () => playActDraw(size));
-  layer("signs", () => playSignsDraw(size));
+  if (!far) layer("signs", () => playSignsDraw(size));
+  if (scale < 1) {                                             // zoomed out: where the walker is, a mark that can be seen
+    const mx = play.me.x * size - play.camera.x, my = play.me.y * size - play.camera.y - size / 2;
+    const r = Math.max(5, Math.round(7 * (window.devicePixelRatio || 1)));
+    ctx.beginPath(); ctx.arc(mx, my, r, 0, Math.PI * 2);
+    ctx.fillStyle = "#e5484d"; ctx.fill();
+    ctx.lineWidth = Math.max(2, r / 3); ctx.strokeStyle = "#ffffff"; ctx.stroke();
+  }
   // The watermelon, the way it goes; a step's frames while it walks, standing when not.
   const sheet = play.sheets.me;
   if (sheet && !play.ride) {
@@ -1483,10 +1951,20 @@ function playRouteMarks() {
   const routes = play.world.routes || {};
   const items = new Map((play.world.items || []).map((one) => [one.id, one]));
   const zones = new Map((map.zones || []).map((z) => [z.zone.id, z]));
-  const along = (path) => {                                    // an arrow on every second step, the way it goes
+  // DENSE AGAIN, EACH WAY ITS OWN COLOUR (the user, 2026-11-20: "道路地上的箭头可以密集一点，并且不同path用不同颜色，
+  // 我刚刚说的不密只是说牌子不密"): an arrow every second step, one to a tile - the way that came first keeps it - and
+  // each way (a room's, a ground's, a stretch of the road of their life) its colour of PLAY_ARROW_COLOURS.
+  const taken = new Set();
+  let colour = 0;
+  const arrow = (x, y, dx, dy, c) => {
+    if (taken.has(`${x},${y}`)) return;
+    taken.add(`${x},${y}`);
+    marks.arrows.push({ x, y, dx, dy, c });
+  };
+  const along = (path, c) => {                                 // an arrow on every second step, the way it goes
     for (let k = 1; k < path.length - 1; k += 2) {
       const [x, y] = path[k], [nx, ny] = path[k + 1];
-      marks.arrows.push({ x, y, dx: Math.sign(nx - x), dy: Math.sign(ny - y) });
+      arrow(x, y, Math.sign(nx - x), Math.sign(ny - y), c);
     }
   };
   for (const [zoneId, stops] of Object.entries(routes.rooms || {})) {
@@ -1526,6 +2004,7 @@ function playRouteMarks() {
     };
     let here = PLAY_OUTDOOR[z.zone.kind] ? [fx + Math.floor(fw / 2), fy + fh - 1] : [z.door, fy + fh - 1];
     if (!free(...here)) here = null;
+    const c = colour++;                                         // this room's way, its own colour
     stops.forEach((id, n) => {
       const one = items.get(id);
       const spot = one && beside(one);
@@ -1533,7 +2012,7 @@ function playRouteMarks() {
       marks.stops.push({ x: one.x, y: one.y, n: n + 1, of: stops.length, item: one });
       if (here) {
         const path = walk(here, spot);
-        if (path) along(path);
+        if (path) along(path, c);
       }
       here = spot;
     });
@@ -1541,24 +2020,30 @@ function playRouteMarks() {
   // OUTSIDE, THE ROAD OF THEIR LIFE (play-regions.js playLifeRoad): arrows all along it, the way time went - on every
   // road however short (the user, 2026-11-20: "不需要等地图够大").
   for (const path of (map.life && map.life.routes) || []) {
+    const c = colour++;                                         // each stretch of it its own colour
     for (let k = 2; k < path.length - 2; k += 3) {
       const [x, y] = path[k], [nx, ny] = path[k + 1];
-      marks.arrows.push({ x, y, dx: Math.sign(nx - x), dy: Math.sign(ny - y) });
+      arrow(x, y, Math.sign(nx - x), Math.sign(ny - y), c);
     }
   }
   for (const [groundId, parts] of Object.entries(routes.grounds || {})) {
     if (!map.blocked || !zones.get(groundId)) continue;
     const outs = parts.map((id) => zones.get(id)).filter(Boolean);
+    const c = colour++;                                         // this ground's way, its own colour
     outs.forEach((z, n) => {
       marks.stops.push({ x: z.out[0], y: z.out[1] - 1, n: n + 1, of: outs.length, zone: z.zone });
       if (n === 0) return;
       let path = null;
       try { path = playRoute(map.blocked, outs[n - 1].out, z.out, 0, 307 + n, new Map()); } catch (_err) { path = null; }
-      if (path) along(path);
+      if (path) along(path, c);
     });
   }
   return marks;
 }
+/* The colours of the ways on the ground, one after another - light enough to read on grass, stone and wood. */
+const PLAY_ARROW_COLOURS = ["rgba(255, 236, 170, 0.88)", "rgba(140, 210, 255, 0.88)", "rgba(255, 160, 150, 0.88)",
+                            "rgba(170, 240, 170, 0.88)", "rgba(215, 180, 255, 0.88)", "rgba(255, 200, 120, 0.88)",
+                            "rgba(255, 170, 220, 0.88)", "rgba(120, 230, 220, 0.88)"];
 function playRoutesDraw(size) {
   const { arrows, stops } = playRouteMarks();
   if (!arrows.length && !stops.length) return;
@@ -1572,6 +2057,7 @@ function playRoutesDraw(size) {
     const cx = one.x * size - play.camera.x + size / 2, cy = one.y * size - play.camera.y + size / 2;
     if (!seen(cx, cy)) continue;
     const r = size * 0.28, ang = Math.atan2(one.dy, one.dx);
+    ctx.fillStyle = PLAY_ARROW_COLOURS[(one.c || 0) % PLAY_ARROW_COLOURS.length];
     ctx.beginPath();
     ctx.moveTo(cx + Math.cos(ang) * r, cy + Math.sin(ang) * r);
     ctx.lineTo(cx + Math.cos(ang + 2.4) * r, cy + Math.sin(ang + 2.4) * r);
@@ -1754,21 +2240,32 @@ function playSignsDraw(size) {
   // NONE OVER ANOTHER (the user, 2026-11-19: "你很多门牌都互相遮挡，要用代码防止这个"): each sign's board where it would be
   // drawn, the places' boards first, the nearer first; one that would cover a board already placed raised over it - a
   // post's pole made as much longer - till it is clear.
-  const placed = [], lifts = new Map();
+  // STILL WHILE THE VIEW MOVES (the user, 2026-11-20: "这里四个牌子我移动view的时候会不停闪"): worked out once for the
+  // whole world at this size - where each board stands in the world, not on the screen - and kept till the size or the
+  // signs change; worked out each frame from the screen, a pixel of rounding or a board coming into sight lifted one
+  // and dropped it again, frame after frame.
+  const sizeKey = `${size}|${fontPx}`;
+  if (!play.signLifts || play.signLifts.key !== sizeKey || play.signLifts.signs !== signs) {
+    const placed = [], kept = new Map();
+    const all = signs.map((sign) => ({ sign, x: Math.round(sign.at[0] * size), y: Math.round(sign.at[1] * size) }))
+      .sort((a, b) => (Boolean(a.sign.post) - Boolean(b.sign.post)) || b.y - a.y);
+    for (const one of all) {
+      const box = playSignBox(one.sign, one.x, one.y, size, fontPx);
+      let lift = 0;
+      for (let tries = 0; tries < 12; tries += 1) {
+        const hit = placed.find((b) => box.left < b.right + 3 && box.right + 3 > b.left && box.top - lift < b.bottom + 3 && box.bottom - lift + 3 > b.top);
+        if (!hit) break;
+        lift = Math.ceil(box.bottom - hit.top + 4);
+      }
+      placed.push({ left: box.left, right: box.right, top: box.top - lift, bottom: box.bottom - lift });
+      kept.set(one.sign, lift);
+    }
+    play.signLifts = { key: sizeKey, signs, lifts: kept };
+  }
+  const lifts = play.signLifts.lifts;
   const order = signs.map((sign) => ({ sign, x: Math.round(sign.at[0] * size - play.camera.x), y: Math.round(sign.at[1] * size - play.camera.y) }))
     .filter(({ x, y }) => !(x < -200 || x > canvas.width + 200 || y < -60 || y > canvas.height + 60))
     .sort((a, b) => (Boolean(a.sign.post) - Boolean(b.sign.post)) || b.y - a.y);
-  for (const one of order) {
-    const box = playSignBox(one.sign, one.x, one.y, size, fontPx);
-    let lift = 0;
-    for (let tries = 0; tries < 12; tries += 1) {
-      const hit = placed.find((b) => box.left < b.right + 3 && box.right + 3 > b.left && box.top - lift < b.bottom + 3 && box.bottom - lift + 3 > b.top);
-      if (!hit) break;
-      lift = Math.ceil(box.bottom - hit.top + 4);
-    }
-    placed.push({ left: box.left, right: box.right, top: box.top - lift, bottom: box.bottom - lift });
-    lifts.set(one.sign, lift);
-  }
   for (let { sign, x, y } of order.slice().reverse()) {
     const lift = lifts.get(sign) || 0;
     if (sign.post) { playPostDraw(sign, x, y, size, fontPx, lift); continue; }
@@ -1821,7 +2318,7 @@ function playBannerDraw() {
   const unit = Math.max(2, Math.round(play.scale * 0.8));
   if (!banner.words) {
     const small = document.createElement("canvas");
-    const write = small.getContext("2d");
+    const write = small.getContext("2d", PLAY_OFF_PAGE);
     const font = `bold 13px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif`;
     write.font = font;
     const wide = Math.ceil(write.measureText(banner.name).width) + 2;
@@ -1995,6 +2492,7 @@ function playMiniToggle() {
 /* The view where the map is pressed: its point, as the canvas is drawn whatever its size on the page. */
 function playMiniLook(event) {
   if (!play.miniBase || !play.miniBase.back) return;
+  play.lastLook = performance.now();                 // looked about on the map: no block laid till it settles (playDraw)
   const box = play.mini.getBoundingClientRect();
   const mx = (event.clientX - box.left) * (play.mini.width / Math.max(1, box.width));
   const my = (event.clientY - box.top) * (play.mini.height / Math.max(1, box.height));
@@ -2014,77 +2512,97 @@ function playMiniLarger() {
    as a small picture a block with what made it - the regions, the places, landmarks and roads that reach it - and
    drawn again only when that changed. */
 const PLAY_MINI_DARK = "#15161a", PLAY_MINI_PX = 4;
-const PLAY_MINI_KEPT_VERSION = 5, PLAY_MINI_KEPT_MOST = 300, PLAY_MINI_KEPT_KEY = "playMiniPictures";
-/* THE KEPT PICTURES OF THE CODE THAT DREW THEM (the user, 2026-11-19: "你现在绘画的小地图暗的问题改好了吗"): a block's
-   kept picture is the world's and the drawing's - the code laying and drawing the blocks changed, every one drawn again,
-   not an old one shown for a world drawn otherwise now. */
-function playMiniKeptVersion() {
-  if (play.miniKeptVersion) return play.miniKeptVersion;
-  const code = [typeof playLayBlock === "function" ? playLayBlock : "", typeof playChunk === "function" ? playChunk : "",
-    typeof playMiniShrink === "function" ? playMiniShrink : "", typeof playLight === "function" ? playLight : "",
-    JSON.stringify(typeof PLAY_EDGES === "object" ? PLAY_EDGES : {})].map(String).join("|");
-  let h = 2166136261;
-  for (let i = 0; i < code.length; i += 1) { h ^= code.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
-  play.miniKeptVersion = `${PLAY_MINI_KEPT_VERSION}:${h.toString(36)}`;
-  return play.miniKeptVersion;
-}
+// KEPT AS A FILE BESIDE THE WORLD (the user, 2026-11-20: "小地图为什么不是一个存好后面都不update呢，小地图除非是修改了画
+// 的内容，不然都不变呀"): each block's picture with what made it, in the world's folder (/api/play/minimap) - no
+// browser's few megabytes, where half was let go each time; drawn again only for a block whose own things changed, or
+// when its drawing is changed on purpose (PLAY_MINI_KEPT_VERSION, raised by hand) - never because the code was touched.
+const PLAY_MINI_KEPT_VERSION = 7, PLAY_MINI_KEPT_KEY = "playMiniPictures";
+function playMiniKeptVersion() { return String(PLAY_MINI_KEPT_VERSION); }
 function playMiniKept() {
   if (play.miniKept) return play.miniKept;
   play.miniKept = new Map();
-  try {
-    localStorage.removeItem("playMiniKept");                                // the colour-only one before
-    const said = JSON.parse(localStorage.getItem(PLAY_MINI_KEPT_KEY) || "null");
-    if (said && said.v === playMiniKeptVersion()) for (const [key, sig, url] of said.blocks) play.miniKept.set(key, { sig, url });
-  } catch (_err) { /* drawn anew */ }
+  play.miniKeptDirty = new Set();
+  try { localStorage.removeItem(PLAY_MINI_KEPT_KEY); localStorage.removeItem("playMiniKept"); } catch (_err) { /* gone */ }
+  // Read once from the world's folder; the map's drawing waits for it (playMiniBase).
+  play.miniKeptReady = (typeof api === "object" && api.get ? api.get("/api/play/minimap") : Promise.resolve(null))
+    .then((said) => {
+      if (said && String(said.v) === playMiniKeptVersion()) {
+        for (const [key, one] of Object.entries(said.blocks || {})) {
+          if (!play.miniKept.has(key) && Array.isArray(one)) play.miniKept.set(key, { sig: one[0], url: one[1] });
+        }
+        if (said.whole && said.whole.url) play.miniWhole = said.whole;
+      }
+    }).catch(() => {});
   return play.miniKept;
 }
-function playMiniKeep() {
-  const kept = playMiniKept();
-  while (kept.size > PLAY_MINI_KEPT_MOST) kept.delete(kept.keys().next().value);
-  let blocks = [...kept].map(([key, one]) => [key, one.sig, one.url]);
-  for (let tries = 0; tries < 3 && blocks.length; tries += 1) {
-    try { localStorage.setItem(PLAY_MINI_KEPT_KEY, JSON.stringify({ v: playMiniKeptVersion(), blocks })); return; }
-    catch (_err) { blocks = blocks.slice(Math.floor(blocks.length / 2)); }    // too much: the newest half
-  }
+function playMiniKeep(mine) {
+  const kept = playMiniKept(), dirty = play.miniKeptDirty || new Set();
+  const blocks = [...dirty].filter((key) => kept.has(key)).map((key) => [key, kept.get(key).sig, kept.get(key).url]);
+  if (!blocks.length || typeof api !== "object" || !api.post) return;
+  play.miniKeptDirty = new Set();
+  // And the whole map as one picture, with the mark of each block in it - made a file beside the page's thread (toBlob;
+  // a 2000-pixel map's PNG on it held the page, 2026-11-20).
+  const send = (whole) => api.post("/api/play/minimap", { v: playMiniKeptVersion(), blocks, ...(whole ? { whole } : {}) })
+    .catch(() => { for (const [key] of blocks) play.miniKeptDirty.add(key); });   // the next time
+  if (!(mine && mine.tiles && mine.sigs && mine.tiles.toBlob)) { send(null); return; }
+  const sigs = Object.fromEntries(mine.sigs), box = { left: mine.left, top: mine.top, w: mine.tiles.width, h: mine.tiles.height };
+  try {
+    mine.tiles.toBlob((blob) => {
+      if (!blob) { send(null); return; }
+      const reader = new FileReader();
+      reader.onload = () => { const whole = { ...box, sigs, url: String(reader.result || "") }; play.miniWhole = whole; send(whole); };
+      reader.onerror = () => send(null);
+      reader.readAsDataURL(blob);
+    }, "image/png");
+  } catch (_err) { send(null); }
+}
+/* WHAT MADE A BLOCK'S PICTURE, FOR ALL OF THEM AT ONCE (2026-11-20: worked out block by block - every thing, road tile
+   and place of the world looked through again for each - 400 ms a block, the map's seventeen seconds when Play opened):
+   the world's things sorted into blocks once; a block's mark the marks of the blocks round it (as far as the land
+   reaches, PLAY_LAND_MOST and the margin) and the lands'. Kept with the map's index. */
+function playMiniHash(text, h = 2166136261) {
+  for (let i = 0; i < text.length; i += 1) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h;
 }
 function playMiniSig(index, cx, cy) {
-  const P = PLAY_LAND_MOST + PLAY_LAY_MARGIN + 2;
-  const x0 = cx * PLAY_CHUNK - P, y0 = cy * PLAY_CHUNK - P, x1 = (cx + 1) * PLAY_CHUNK + P, y1 = (cy + 1) * PLAY_CHUNK + P;
-  const meets = (r) => r[0] < x1 && r[2] > x0 && r[1] < y1 && r[3] > y0;
-  const parts = [JSON.stringify(play.world.regions || [])];
-  for (const one of index.zones) {
-    if (!meets(one.rect)) continue;
-    const z = one.zone;
-    parts.push(`${z.id}:${one.rect.join(",")}:${z.kind}:${z.style || ""}:${z.name || ""}:${z.floor_text || ""}:${z.floor_color || ""}:${(z.days || []).join("")}`);
+  if (!index.miniOwn) {
+    const own = new Map(), C = PLAY_CHUNK;
+    const put = (bx, by, part) => { const key = `${bx},${by}`; if (!own.has(key)) own.set(key, []); own.get(key).push(part); };
+    const over = (r, part) => {
+      for (let by = Math.floor(r[1] / C); by <= Math.floor((r[3] - 1) / C); by += 1) {
+        for (let bx = Math.floor(r[0] / C); bx <= Math.floor((r[2] - 1) / C); bx += 1) put(bx, by, part);
+      }
+    };
+    for (const one of index.zones) {
+      const z = one.zone;
+      over(one.rect, `${z.id}:${one.rect.join(",")}:${z.kind}:${z.style || ""}:${z.name || ""}:${z.floor_text || ""}:${z.floor_color || ""}:${(z.days || []).join("")}`);
+    }
+    for (const one of index.landmarks) over(one.square, `L${one.square.join(",")}`);
+    for (const one of play.world.items) put(Math.floor(one.x / C), Math.floor(one.y / C), `i${one.id || ""}${one.kind}${one.x},${one.y}`);
+    for (const key of index.paths.keys()) {
+      const comma = key.indexOf(",");
+      put(Math.floor(+key.slice(0, comma) / C), Math.floor(+key.slice(comma + 1) / C), key);
+    }
+    for (const post of (index.life && index.life.posts) || []) put(Math.floor(post.x / C), Math.floor(post.y / C), `p${post.x},${post.y}`);
+    index.miniOwn = new Map([...own].map(([key, parts]) => [key, playMiniHash(parts.sort().join("|")).toString(36)]));
+    index.miniLands = playMiniHash(JSON.stringify(play.world.regions || [])).toString(36);
   }
-  for (const one of index.landmarks) if (meets(one.square)) parts.push(`L${one.square.join(",")}`);
-  for (const one of play.world.items) {
-    if (one.x >= x0 && one.x < x1 && one.y >= y0 && one.y < y1) parts.push(`i${one.id || ""}${one.kind}${one.x},${one.y}`);
+  const R = Math.ceil((PLAY_LAND_MOST + PLAY_LAY_MARGIN + 2) / PLAY_CHUNK);
+  const parts = [index.miniLands];
+  for (let by = cy - R; by <= cy + R; by += 1) {
+    for (let bx = cx - R; bx <= cx + R; bx += 1) parts.push(index.miniOwn.get(`${bx},${by}`) || "-");
   }
-  const near = [];
-  for (const key of index.paths.keys()) {
-    const comma = key.indexOf(","), x = +key.slice(0, comma), y = +key.slice(comma + 1);
-    if (x >= x0 && x < x1 && y >= y0 && y < y1) near.push(key);
-  }
-  parts.push(near.sort().join(";"));
-  for (const post of (index.life && index.life.posts) || []) if (post.x >= x0 && post.x < x1 && post.y >= y0 && post.y < y1) parts.push(`p${post.x},${post.y}`);
-  let h = 2166136261;                                              // FNV-1a, of all of it
-  const text = parts.join("|");
-  for (let i = 0; i < text.length; i += 1) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
-  return `${text.length}:${h.toString(36)}`;
+  return playMiniHash(parts.join("|")).toString(36);
 }
 /* One block, shrunk: the walk's own picture of it (playChunk) and its bushes over it - not kept among the walk's
    blocks once drawn, so the walk's own stay. */
 function playMiniShrink(cx, cy) {
   const key = `${cx},${cy}`, R = PLAY_MINI_PX, side = PLAY_CHUNK * R;
-  const hadChunk = play.chunks.has(key), hadBlock = play.map.laid.has(key);
-  const chunk = playChunk(cx, cy);
-  const small = document.createElement("canvas");
-  small.width = small.height = side;
-  const c = small.getContext("2d");
-  c.imageSmoothingEnabled = true;
-  c.imageSmoothingQuality = "high";
-  c.drawImage(chunk, 0, 0, side, side);
+  const hadBlock = play.map.laid.has(key);
+  // drawn at the map's size in the page's memory (playChunk `mini`): no block drawn whole and read back from the GPU
+  const small = playChunk(cx, cy, false, true);
+  void side;
+  const c = small.getContext("2d", PLAY_OFF_PAGE);
   const block = playBlock(play.map, cx, cy);
   const x0 = cx * PLAY_CHUNK, y0 = cy * PLAY_CHUNK;
   for (const one of block.deco) {                                         // the bushes, drawn each frame on the walk
@@ -2097,13 +2615,13 @@ function playMiniShrink(cx, cy) {
     c.fillStyle = post.start ? "#f2c94c" : "#8a5a2b";
     c.fillRect((post.x - x0) * R, (post.y - y0) * R - R, R, R * 2);
   }
-  if (!hadChunk) play.chunks.delete(key);
   if (!hadBlock) play.map.laid.delete(key);
   return small;
 }
 function playMiniBlock(tiles, left, top, cx, cy, done) {
-  const key = `${cx},${cy}`, sig = playMiniSig(play.map, cx, cy), kept = playMiniKept(), R = PLAY_MINI_PX;
-  const c = tiles.getContext("2d");
+  const key = `${cx},${cy}`, sig = (play.miniBuilding || play.miniBase || {}).sigs?.get(key) || playMiniSig(play.map, cx, cy);
+  const kept = playMiniKept(), R = PLAY_MINI_PX;
+  const c = tiles.getContext("2d", PLAY_OFF_PAGE);
   const at = [(cx * PLAY_CHUNK - left) * R, (cy * PLAY_CHUNK - top) * R];
   const was = kept.get(key);
   if (was && was.sig === sig && was.url) {                                // as it was: its kept picture
@@ -2115,10 +2633,20 @@ function playMiniBlock(tiles, left, top, cx, cy, done) {
   }
   const small = playMiniShrink(cx, cy);
   c.drawImage(small, at[0], at[1]);
-  let url = "";
-  try { url = small.toDataURL("image/png"); } catch (_err) { url = ""; }
   kept.delete(key);
-  if (url) kept.set(key, { sig, url });
+  // MADE A FILE OFF THE PAGE'S THREAD (the user, 2026-11-20: "音乐在view最大的时候一卡一卡的"): toDataURL made the PNG on
+  // the page's thread, block after block while the map was drawn far out - toBlob makes it beside, and it is kept
+  // when ready (playMiniKeep sends what is ready).
+  const keep = (url) => { if (url) { kept.set(key, { sig, url }); (play.miniKeptDirty = play.miniKeptDirty || new Set()).add(key); } };
+  try {
+    small.toBlob((blob) => {
+      playFree(small);                                 // drawn into the map and made a file: freed now
+      if (!blob) return;
+      const reader = new FileReader();
+      reader.onload = () => keep(String(reader.result || ""));
+      reader.readAsDataURL(blob);
+    }, "image/png");
+  } catch (_err) { playFree(small); }
   done();
   return true;
 }
@@ -2141,15 +2669,16 @@ function playMiniBase(behind = false) {
   const at = (x, y) => [ox + (x - left) * k, oy + (y - top) * k];
   const tiles = document.createElement("canvas");                          // the world, PLAY_MINI_PX a tile
   tiles.width = (right - left) * R; tiles.height = (bottom - top) * R;
-  const tc = tiles.getContext("2d");
+  const tc = tiles.getContext("2d", PLAY_OFF_PAGE);
   tc.fillStyle = PLAY_MINI_DARK;
   tc.fillRect(0, 0, tiles.width, tiles.height);
   const base = document.createElement("canvas");
   base.width = W; base.height = H;
   // `back`: a point of the map to the world's tiles (a press on it, playMiniLook).
-  const mine = { canvas: base, at, k, back: (mx, my) => [left + (mx - ox) / k, top + (my - oy) / k] };
+  const mine = { canvas: base, at, k, back: (mx, my) => [left + (mx - ox) / k, top + (my - oy) / k],
+                 tiles, left, top };                            // the world's picture, for the view far out (playDraw)
   const compose = () => {
-    const c = base.getContext("2d");
+    const c = base.getContext("2d", PLAY_OFF_PAGE);
     c.fillStyle = PLAY_MINI_DARK;
     c.fillRect(0, 0, W, H);
     c.imageSmoothingEnabled = true;
@@ -2169,9 +2698,20 @@ function playMiniBase(behind = false) {
   }
   const mx = play.me.x / PLAY_CHUNK, my = play.me.y / PLAY_CHUNK;
   todo.sort((p, q) => Math.hypot(p[0] + 0.5 - mx, p[1] + 0.5 - my) - Math.hypot(q[0] + 0.5 - mx, q[1] + 0.5 - my));
+  mine.sigs = new Map(todo.map(([cx, cy]) => [`${cx},${cy}`, playMiniSig(index, cx, cy)]));
   let drawn = 0, waiting = 0, finished = false;
   const shown = () => {
     compose();
+    // WHOLE, A COPY OF IT THE GPU'S (2026-11-20, memory with Play open): put on the screen far out and for the blocks
+    // not yet laid, the software picture was sent to the GPU again each time it changed; once whole, one copy there.
+    if (finished && !mine.shownTiles) {
+      try {
+        const copy = document.createElement("canvas");
+        copy.width = tiles.width; copy.height = tiles.height;
+        copy.getContext("2d").drawImage(tiles, 0, 0);
+        mine.shownTiles = copy;
+      } catch (_err) { /* the software one used */ }
+    }
     if (behind && !finished) return;                                       // out of sight till it is whole
     if (behind) {
       if (play.miniBuilding !== mine || play.map !== index) return;
@@ -2182,11 +2722,14 @@ function playMiniBase(behind = false) {
   const step = () => {
     // Another world or another area since: stop - never put in place over the map now walked.
     if ((behind ? play.miniBuilding : play.miniBase) !== mine || play.map !== index) return;
+    // NOT WHILE THEY MOVE (the user, 2026-11-20: "移动会卡"): a block of the map is a tenth of a second or more of
+    // work - waited on while a key is held, the view moves or a ride runs; a second after, on again.
+    if (playMoving()) { setTimeout(step, 1000); return; }
     const until = performance.now() + 14;
     while (todo.length && performance.now() < until) {
       const [cx, cy] = todo.shift();
       waiting += 1;
-      if (playMiniBlock(tiles, left, top, cx, cy, () => { waiting -= 1; if (!todo.length && !waiting && !finished) { finished = true; shown(); if (drawn) playMiniKeep(); } })) drawn += 1;
+      if (playMiniBlock(tiles, left, top, cx, cy, () => { waiting -= 1; if (!todo.length && !waiting && !finished) { finished = true; shown(); if (drawn) setTimeout(() => playMiniKeep(mine), 2000); } })) drawn += 1;   // its last files made beside, then sent
     }
     shown();
     if (todo.length) setTimeout(step, 40);
@@ -2195,7 +2738,28 @@ function playMiniBase(behind = false) {
   else { play.miniBase = mine; play.miniBuilding = null; }
   // AFTER THE VIEW (the user, 2026-11-18: "world先加载用户旁边的 ... 小地图是一次性画好的"): the walker's own blocks drawn
   // first; the map begun when the page is idle, made once and kept (playMiniKept).
-  const begin = () => setTimeout(step, 0);
+  playMiniKept();
+  // THE WHOLE MAP AT ONCE (the user, 2026-11-20: "小地图加载好像还是一块块的，不是一整个load进行吗"): kept as one picture
+  // with each block's mark - put in place whole; only the blocks whose marks changed drawn again after.
+  const whole = () => {
+    const was = play.miniWhole;
+    if (!was || !was.url || was.left !== left || was.top !== top || was.w !== tiles.width || was.h !== tiles.height) return Promise.resolve();
+    return new Promise((done) => {
+      const image = new Image();
+      image.onload = () => {
+        tiles.getContext("2d", PLAY_OFF_PAGE).drawImage(image, 0, 0);
+        for (let k = todo.length - 1; k >= 0; k -= 1) {
+          const key = `${todo[k][0]},${todo[k][1]}`;
+          if (was.sigs && was.sigs[key] === mine.sigs.get(key)) todo.splice(k, 1);    // as it was: in the picture
+        }
+        if (!todo.length) { finished = true; shown(); }
+        done();
+      };
+      image.onerror = () => done();
+      image.src = was.url;
+    });
+  };
+  const begin = () => Promise.resolve(play.miniKeptReady).then(whole).then(() => { if (todo.length) setTimeout(step, 0); });
   if (typeof requestIdleCallback === "function") setTimeout(() => requestIdleCallback(begin, { timeout: 3000 }), 1200);
   else setTimeout(begin, 1500);
 }
@@ -2211,7 +2775,7 @@ function playMiniColour(item) {
     const [w, h] = PLAY_SIZES[item.kind] || [1, 1];
     const one = document.createElement("canvas");
     one.width = w * 16; one.height = h * 16;
-    const c = one.getContext("2d");
+    const c = one.getContext("2d", PLAY_OFF_PAGE);
     playThing(c, { ...item, x: 0, y: 0 }, 0, 0);
     const data = c.getImageData(0, 0, one.width, one.height).data;
     let r = 0, g = 0, b = 0, n = 0;
@@ -2461,15 +3025,19 @@ function playFloorArt(context, zone, x0, y0) {
         const dw = Math.round(image.naturalWidth * s), dh = Math.round(image.naturalHeight * s);
         // IN PIXELS, AS EVERY PICTURE ON THE MAP (the user, 2026-11-19: "在地图上所有图片尽可能是像素风"): its own
         // palette (playFinePixel), not a picture merely made small.
-        const small = playFinePixel(image, Math.max(1, Math.round(dw / 4)), Math.max(1, Math.round(dh / 4)),
+        // ONCE (2026-11-20, "复用"): made again for every block drawn - 98 times on a short walk, 40 ms each.
+        play.floorPixels = play.floorPixels || new Map();
+        const pixelKey = `${zone.floor_picture_url}|${dw}x${dh}`;
+        const small = play.floorPixels.get(pixelKey) || playFinePixel(image, Math.max(1, Math.round(dw / 4)), Math.max(1, Math.round(dh / 4)),
                                     { outline: false, colours: 16 });
+        play.floorPixels.set(pixelKey, small);
         context.globalAlpha = 0.85;
         context.drawImage(small, Math.round(bx + (bw - dw) / 2), Math.round(by + (bh - dh) / 2), dw, dh);
         context.globalAlpha = 1;
-      } else if (!play.pictures.has(zone.floor_picture_url)) {
+      } else if ((play.chunkIncomplete = true) && !play.pictures.has(zone.floor_picture_url)) {
         const one = new Image();
         play.pictures.set(zone.floor_picture_url, one);
-        one.onload = () => { play.chunks.clear(); playDraw(); };
+        one.onload = () => { playChunksClear(); playDraw(); };
         one.src = zone.floor_picture_url;
       }
     } else if (part === "mural") {
@@ -2488,7 +3056,7 @@ function playFloorArt(context, zone, x0, y0) {
     } else {
       // Its name in pixel letters: written small, hardened, laid large.
       const small = document.createElement("canvas");
-      const write = small.getContext("2d");
+      const write = small.getContext("2d", PLAY_OFF_PAGE);
       write.font = "bold 12px Consolas, 'Courier New', monospace";
       const tw = Math.ceil(write.measureText(zone.floor_text).width) + 2;
       small.width = tw; small.height = 14;
@@ -2653,10 +3221,14 @@ function playMusicHeard(x = play.me.x, y = play.me.y) {
 }
 function playWhere() {
   const tx = play.me.x, ty = play.me.y;
-  const zone = play.world.zones.find((one) => {
+  // THE INNERMOST PLACE (the user, 2026-11-20: "这个房间里的东西好像没法交互" - a hall standing on a project's great
+  // ground was taken for the ground, the first place found, and only the ground's own things could be looked at): of
+  // the places this tile is in, the smallest.
+  let zone = null, zoneArea = Infinity;
+  for (const one of play.world.zones) {
     const [fx, fy, fw, fh] = playFloorOf(one);
-    return tx >= fx && tx < fx + fw && ty >= fy && ty < fy + fh;
-  }) || null;
+    if (tx >= fx && tx < fx + fw && ty >= fy && ty < fy + fh && fw * fh < zoneArea) { zone = one; zoneArea = fw * fh; }
+  }
   // THE REGION ENTERED (play-regions.js): its name on the sign, a chime - not where the walk began.
   const region = playRegionAt(play.map, tx, ty);
   if (region && (!play.region || region.id !== play.region.id)) {
@@ -2748,9 +3320,11 @@ function playSignCard(sign) {
   return `<div class="side-play-card-words"><strong class="chat-message">${escapeHtml(zone.name || zone.kind)}</strong>
     ${lines.filter(Boolean).map((one) => `<span class="side-play-card-when">${escapeHtml(one)}</span>`).join("")}
     ${zone.why ? `<p class="chat-message">${escapeHtml(zone.why)}</p>` : ""}
-    ${playMuseCard(zone)}
+    ${""/* ITS MUSES IN THE BACK (the user, 2026-11-20: "那些诗,音乐之类的素材不要显示，这些放在后台就行"): what its place was
+         designed from stays with it, not on its card (playMuseCard). */}
     ${playGreatCard(zone)}
-    ${zone.task_summary ? `<p class="side-play-card-from chat-message">${escapeHtml(zone.task_summary)}</p>` : ""}
+    ${""/* NOT THE AGENT'S OWN NOTE OF THE TASK (the user, 2026-11-20: "这里这串英文是什么"): its summary is the agent's, in
+         English and cut short - the place's own words (its why) say it. */}
     <p class="side-play-card-from chat-message">${escapeHtml(built)}${grown.length ? escapeHtml(` · ${playWords("Grown")}: ${grown.join("; ")}`) : ""}</p></div>`;
 }
 
@@ -2891,7 +3465,7 @@ function playCoasterPicture(zone) {
   const [fx, fy, fw, fh] = route.floor, up = Math.ceil(route.top + route.loopR * 2 + 1.5);
   const canvas = document.createElement("canvas");
   canvas.width = (fw + 2) * T; canvas.height = (fh + 2 + up) * T;
-  const c = canvas.getContext("2d");
+  const c = canvas.getContext("2d", PLAY_OFF_PAGE);
   const ox = (1 - fx) * T, oy = (up + 1 - fy) * T;            // world tile -> this picture's pixel
   const at = (p, lift = 0) => [p.x * T + ox, (p.y - p.h - lift) * T + oy];
   const path = route.path, n = path.length;
@@ -3087,7 +3661,7 @@ function playPiecePicture(item) {
   const x0 = item.x - 1, y0 = item.y - 1 - PLAY_PIECE_UP;
   const canvas = document.createElement("canvas");
   canvas.width = (w + 2) * T; canvas.height = (h + 2 + PLAY_PIECE_UP) * T;
-  const c = canvas.getContext("2d");
+  const c = canvas.getContext("2d", PLAY_OFF_PAGE);
   const px = (x) => (x - x0) * T, py = (y, up = 0) => (y - up - y0) * T;
   c.fillStyle = "rgba(0, 0, 0, 0.16)";                                   // its shadow on its ground
   c.beginPath(); c.ellipse(px(item.x + w / 2), py(item.y + h * 0.6), w * T * 0.5, h * T * 0.42, 0, 0, Math.PI * 2); c.fill();
@@ -3226,7 +3800,12 @@ function playPieceInView(item) {
    finer than the world's (each tile 64 x 64): drawn at that size, its colours brought to a palette of its own (median
    cut, PLAY_FINE_COLOURS), its edges given a dark outline one pixel wide - pixel art still, the world's own look, with
    sixteen times the detail. Drawn over the world at the screen's own size, never through a tile of 16. */
-const PLAY_FINE = 4, PLAY_FINE_COLOURS = 24;
+// TWO FINE PIXELS A WORLD PIXEL (the user, 2026-11-20: 2 GB with Play open - the great pieces' pictures, 183 of them,
+// 277 MB at four): pixel pictures still, a quarter of the memory.
+const PLAY_FINE = 2, PLAY_FINE_COLOURS = 24;
+// great pieces' pictures kept made (each with its moving parts) - a world's 183 are ~8 MB: far out every one is in
+// sight, and 24 made them again and again (2026-11-20); let go of by time unseen (playLetGoFar), this the most
+const PLAY_PIECES_KEPT = 400;
 /* THE FINE PIXELS' OWN SUMS, on a picture's pixels (RGBA, W x H) in place: its palette from a sample of its pixels
    (PLAY_FINE_SAMPLES at most - never all of them sorted, which held the page), or the one given; each pixel its
    nearest; a stone's grey; the dark outline. Its palette. */
@@ -3289,7 +3868,7 @@ function playFineQuantize(px, W, H, options = {}) {
 function playFinePixel(source, width, height, options = {}) {
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(width)); canvas.height = Math.max(1, Math.round(height));
-  const c = canvas.getContext("2d");
+  const c = canvas.getContext("2d", PLAY_OFF_PAGE);
   c.imageSmoothingEnabled = true; c.imageSmoothingQuality = "high";
   if (options.fit) {                                         // a picture of the user's: its middle, filling the frame
     const sw = source.naturalWidth || source.width, sh = source.naturalHeight || source.height;
@@ -3300,24 +3879,106 @@ function playFinePixel(source, width, height, options = {}) {
   try { data = c.getImageData(0, 0, canvas.width, canvas.height); } catch (_err) { return canvas; }
   canvas.palette = playFineQuantize(data.data, canvas.width, canvas.height, options);
   c.putImageData(data, 0, 0);
-  return canvas;
+  // DRAWN EVERY FRAME FROM THE GPU (2026-11-20): its colours worked out here, in software; then copied once to a
+  // canvas of the GPU's - a software one is sent to it again at each frame it is drawn.
+  // CROPPED TO WHAT IT HOLDS, WHEN ASKED (a great piece's moving part: the whole piece's size, nearly all of it clear -
+  // 2026-11-20, memory): its box of pixels kept, where it sits said (ox, oy, in fine pixels).
+  let bx = 0, by = 0, bw = canvas.width, bh = canvas.height;
+  if (options.crop) {
+    let x0 = canvas.width, y0 = canvas.height, x1 = -1, y1 = -1;
+    const px = data.data;
+    for (let y = 0; y < canvas.height; y += 1) {
+      for (let x = 0; x < canvas.width; x += 1) {
+        if (px[(y * canvas.width + x) * 4 + 3] > 8) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      }
+    }
+    if (x1 < 0) { bw = 1; bh = 1; } else { bx = x0; by = y0; bw = x1 - x0 + 1; bh = y1 - y0 + 1; }
+  }
+  const shown = document.createElement("canvas");
+  shown.width = bw; shown.height = bh;
+  shown.getContext("2d").drawImage(canvas, bx, by, bw, bh, 0, 0, bw, bh);
+  shown.ox = bx; shown.oy = by;
+  shown.palette = canvas.palette;
+  canvas.width = 0; canvas.height = 0;                 // the working copy freed now
+  return shown;
 }
 /* A PICTURE (SVG) INTO AN IMAGE: when it is ready, `done(image)`. */
+/* ONE HEAVY PICTURE AT A TIME (the user, 2026-11-20: "音乐在view最大的时候一卡一卡的"): what a drawing does once it is
+   in - turned to fine pixels, ~100 ms - waits its turn, one in each idle moment (at most half a second late): several
+   come in together far out, and run back to back they held the page long enough for the music to stumble. */
+const playImageJobs = [];
+let playImageJobAsked = false;
+function playOneAtATime(job) {
+  playImageJobs.push(job);
+  if (playImageJobAsked) return;
+  playImageJobAsked = true;
+  const run = () => {
+    playImageJobAsked = false;
+    const next = playImageJobs.shift();
+    if (next) { try { next(); } catch (err) { console.error("play picture", err); } }
+    if (playImageJobs.length) {
+      playImageJobAsked = true;
+      if (typeof requestIdleCallback === "function") requestIdleCallback(run, { timeout: 500 }); else setTimeout(run, 16);
+    }
+  };
+  if (typeof requestIdleCallback === "function") requestIdleCallback(run, { timeout: 500 }); else setTimeout(run, 16);
+}
 function playSvgImage(svg, done) {
   const image = new Image();
-  image.onload = () => done(image);
+  image.onload = () => playOneAtATime(() => done(image));
   image.onerror = () => done(null);
   image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 /* A DRAWN PIECE (agent/playpieces.py read_svg): its picture as far as its work has come - the groups of the stages to
    come faint, scaffolding over them - its moving parts apart, each its own fine picture; its track's points. Made once
    for each stage it reaches, kept; null while it is being made. */
+let playSvgPieceNow = false;
+function playSvgPieceLater(item) {
+  play.svgPiecesWaiting = play.svgPiecesWaiting || new Map();
+  play.svgPiecesWaiting.set(item.id, item);
+  if (play.svgPieceIdle || typeof requestIdleCallback !== "function") return;
+  play.svgPieceIdle = true;
+  const next = (deadline) => {
+    play.svgPieceIdle = false;
+    const waiting = play.svgPiecesWaiting;
+    if (!play.on || play.off || !waiting || !waiting.size) return;
+    // NONE MADE WHILE THE VIEW MOVES (2026-11-20, "拖动wasd还是很卡"): a picture made is ~100 ms of the page when
+    // it comes in - made once it stands still, and drawn from then
+    if (playMoving() || (play.lastLook && performance.now() - play.lastLook < 400)) {
+      play.svgPieceIdle = true;
+      setTimeout(() => requestIdleCallback(next, { timeout: 1500 }), 400);
+      return;
+    }
+    // as many as the idle moment holds, at least one; those no longer in sight dropped (asked again when they are)
+    do {
+      const [id, one] = waiting.entries().next().value;
+      waiting.delete(id);
+      if (!playPieceInView(one)) continue;
+      playSvgPieceNow = true;
+      try { playSvgPiece(one); } catch (_err) { /* not drawn */ } finally { playSvgPieceNow = false; }
+    } while (waiting.size && deadline.timeRemaining() > 12);
+    if (waiting.size) { play.svgPieceIdle = true; requestIdleCallback(next, { timeout: 1500 }); }
+  };
+  requestIdleCallback(next, { timeout: 1500 });
+}
 function playSvgPiece(item) {
   play.svgPieces = play.svgPieces || new Map();
   const spec = item.spec || {}, built = playPieceBuilt(item);
   const shown = spec.stages ? Math.max(1, Math.ceil(spec.stages * built - 1e-6)) : 99;
   const key = `${item.id}:${shown}:${spec.svg.length}`;
-  if (play.svgPieces.has(key)) return play.svgPieces.get(key);
+  if (play.svgPieces.has(key)) {
+    const made = play.svgPieces.get(key);
+    if (made) made.seenAt = performance.now();        // drawn now: kept (playLetGoFar)
+    return made;
+  }
+  // ZOOMED OUT, MADE WHILE IDLE, ONE AT A TIME (the user, 2026-11-20: "你把view放到最广，拖动wasd还是很卡"): out there
+  // every great piece of the world comes into sight at once, and each was made in the frame that first saw it - all
+  // of them read from their drawings and turned to pixels together held the page for minutes. Out at less than
+  // a tile's size, one not made yet is not drawn; it is made the next idle moment, and drawn from then.
+  if (play.scale < 1 && !playSvgPieceNow) {
+    playSvgPieceLater(item);
+    return null;
+  }
   play.svgPieces.set(key, null);
   const W = item.w * 16, H = (item.h + (PLAY_PIECE_UP_SVG)) * 16;
   let doc;
@@ -3356,6 +4017,65 @@ function playSvgPiece(item) {
   }
   const text = new XMLSerializer().serializeToString(root);
   const made = { canvas: null, moving: [], track, unbuilt };
+  play.svgPieces.set(key, made);
+  // MADE ONCE, KEPT AS A PICTURE (the user, 2026-11-20: "他们生成一次之后就保存成素材不就好了吗"): a piece's pictures - itself,
+  // its scaffold, its moving parts - kept in the page's store as they were made, by what made them (its drawing, how
+  // far built, the code that turns a drawing to pixels); read back the next time, not made again.
+  const storeKey = `piece|${item.id}|${shown}`, mark = playPieceMark(spec, shown);
+  playPieceFromStore(storeKey, mark, made).then((found) => {
+    if (found) { if (play.on) playDraw(); return; }
+    playSvgPieceMake(item, made, text, ghosts, moving, W, H, unbuilt, () => playPieceKeep(storeKey, mark, made));
+  });
+  if (play.svgPieces.size > PLAY_PIECES_KEPT) {         // the longest unseen let go of - its pictures freed now
+    const oldest = play.svgPieces.keys().next().value;
+    playFree(play.svgPieces.get(oldest));
+    play.svgPieces.delete(oldest);
+  }
+  return made;
+}
+/* A piece's mark in the store: its drawing, how far it is built, and the code that makes its pixels. */
+let playPieceCodePrint = null;
+function playPieceMark(spec, shown) {
+  if (!playPieceCodePrint) {
+    const code = [playSvgPiece, playSvgPieceMake, playFinePixel, typeof playFineQuantize === "function" ? playFineQuantize : null]
+      .filter(Boolean).map((one) => one.toString()).join("");
+    playPieceCodePrint = `${PLAY_FINE}.${PLAY_FINE_COLOURS}.${playMiniHash(code).toString(36)}`;
+  }
+  return `${PLAY_CHUNK_KEPT_VERSION}|${playPieceCodePrint}|${shown}|${spec.svg.length}.${playMiniHash(spec.svg).toString(36)}`;
+}
+/* Its pictures read from the store into `made` - true when they were there. */
+function playPieceFromStore(storeKey, mark, made) {
+  return playChunkDb().then((db) => {
+    if (!db) return null;
+    return new Promise((done) => {
+      const read = db.transaction("blocks").objectStore("blocks").get(storeKey);
+      read.onsuccess = () => done(read.result && read.result.mark === mark && read.result.blobs ? read.result : null);
+      read.onerror = () => done(null);
+    });
+  }).then(async (kept) => {
+    if (!kept) return false;
+    const pictures = await Promise.all(kept.blobs.map((blob) => createImageBitmap(blob)));
+    made.canvas = pictures[0];
+    const parts = (kept.meta && kept.meta.moving) || [];
+    made.moving = parts.map((one, i) => ({ ...one, canvas: pictures[i + 1] })).filter((one) => one.canvas);
+    made.fromStore = true;
+    return true;
+  }).catch(() => false);
+}
+/* All its pictures made: kept, off the page's thread (the keeping worker). */
+function playPieceKeep(storeKey, mark, made) {
+  const worker = playKeeper();
+  if (!worker || !made.canvas) return;
+  const pictures = [made.canvas, ...made.moving.map((one) => one.canvas)];
+  Promise.all(pictures.map((one) => createImageBitmap(one))).then((bitmaps) => {
+    const meta = { moving: made.moving.map((one) => ({ kind: one.kind, cx: one.cx, cy: one.cy, ox: one.canvas.ox || 0, oy: one.canvas.oy || 0 })) };
+    worker.postMessage({ key: storeKey, mark, bitmaps, meta }, bitmaps);
+  }).catch(() => {});
+}
+/* A piece's pictures made from its drawing: itself, its scaffold, its moving parts; `done` once all are made. */
+function playSvgPieceMake(item, made, text, ghosts, moving, W, H, unbuilt, done) {
+  let waiting = 1 + (unbuilt && ghosts.length ? 1 : 0) + moving.length;
+  const one_done = () => { waiting -= 1; if (waiting === 0 && done) done(); };
   playSvgImage(text, (image) => {
     if (!image) return;
     made.canvas = playFinePixel(image, W * PLAY_FINE, H * PLAY_FINE);
@@ -3369,14 +4089,16 @@ function playSvgPiece(item) {
         const cw = made.canvas.width, ch = made.canvas.height, s = PLAY_FINE * 16;
         const look = document.createElement("canvas");
         look.width = cw; look.height = ch;
-        const lc = look.getContext("2d");
+        const lc = look.getContext("2d", PLAY_OFF_PAGE);
         lc.drawImage(ghost, 0, 0, cw, ch);
         let pixels = null;
         try { pixels = lc.getImageData(0, 0, cw, ch).data; } catch (_err) { pixels = null; }
         if (!pixels) return;
-        const c = made.canvas.getContext("2d");
-        c.strokeStyle = "rgba(160, 122, 69, 0.9)"; c.lineWidth = PLAY_FINE;
-        const band = Math.max(1, Math.round(s / 2));
+        const c = made.canvas.getContext("2d", PLAY_OFF_PAGE);
+        // LIGHT, NOT A NET (the user, 2026-11-20: "这个控件为什么有这种栅栏"): a pole a tile apart, a board every two tiles,
+        // half seen - the piece shows through.
+        c.strokeStyle = "rgba(160, 122, 69, 0.5)"; c.lineWidth = PLAY_FINE;
+        const band = Math.max(1, Math.round(s));
         for (let x0 = 0; x0 < cw; x0 += band) {
           let top = -1, bottom = -1;
           for (let y = 0; y < ch; y += 2) {
@@ -3387,22 +4109,25 @@ function playSvgPiece(item) {
           if (top < 0 || bottom - top < band / 2) continue;
           const px = x0 + band / 2;
           c.beginPath(); c.moveTo(px, top); c.lineTo(px, bottom); c.stroke();          // a pole
-          for (let y = top + band / 2; y < bottom; y += band) {                         // its boards across this band
+          for (let y = top + band; y < bottom; y += band * 2) {                         // its boards across this band
             c.beginPath(); c.moveTo(x0, y); c.lineTo(Math.min(cw, x0 + band), y); c.stroke();
           }
         }
         if (play.on) playDraw();
+        one_done();
       });
     }
     if (play.on) playDraw();
+    // its moving parts after it: they take its colours (palette)
+    for (const one of moving) {
+      const alone = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${one.xml}</svg>`;
+      playSvgImage(alone, (part) => {
+        if (part) made.moving.push({ kind: one.kind, cx: one.cx, cy: one.cy, canvas: playFinePixel(part, W * PLAY_FINE, H * PLAY_FINE, { palette: made.canvas && made.canvas.palette, crop: true }) });
+        one_done();
+      });
+    }
+    one_done();
   });
-  for (const one of moving) {
-    const alone = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${one.xml}</svg>`;
-    playSvgImage(alone, (image) => { if (image) made.moving.push({ ...one, canvas: playFinePixel(image, W * PLAY_FINE, H * PLAY_FINE, { palette: made.canvas && made.canvas.palette }) }); });
-  }
-  play.svgPieces.set(key, made);
-  if (play.svgPieces.size > 60) play.svgPieces.delete(play.svgPieces.keys().next().value);
-  return made;
 }
 /* FINE THINGS OVER THE WORLD (the user, 2026-11-19: "用户的图片也可以放大变成一个Item"): a picture of the user's in its
    frame, on a statue, a banner or a poster, and a painting the agent drew (its "svg") - each copied into fine pixels
@@ -3467,7 +4192,10 @@ function playSvgPieceDraw(item, size, now) {
       const cx = sx + one.cx / 16 * size, cy = sy + one.cy / 16 * size;
       ctx.translate(cx, cy); ctx.rotate(now / 700); ctx.translate(-cx, -cy);
     } else if (one.kind === "blink") ctx.globalAlpha = Math.sin(now / 300) > 0 ? 1 : 0.25;
-    ctx.drawImage(one.canvas, Math.round(sx), Math.round(sy), w, h);
+    // its own box only, where it sits in the piece (playFinePixel crop)
+    const part = one.canvas;
+    const ox = part.ox || one.ox || 0, oy = part.oy || one.oy || 0;     // a canvas says it; a picture from the store, its entry
+    ctx.drawImage(part, Math.round(sx + ox * k), Math.round(sy + oy * k), part.width * k, part.height * k);
     ctx.restore();
     if (one.kind === "smoke") {
       for (let s = 0; s < 4; s += 1) {
@@ -3488,7 +4216,12 @@ function playSvgPieceDraw(item, size, now) {
       ctx.fillStyle = "#d9382f"; ctx.fillRect(-size * 0.32, -size * 0.28, size * 0.64, size * 0.36);
       ctx.fillStyle = "#222"; ctx.fillRect(-size * 0.28, size * 0.06, size * 0.56, size * 0.07);
       ctx.restore();
-      if (riding && j === 0 && typeof playActMeOn === "function") playActMeOn(px, py - size * 0.2, size);
+      if (riding && j === 0) {
+        // WHERE IT IS, THE VIEW WITH IT (the user, 2026-11-20: "有些交通工具，agent坐上去了之后，没有自动追踪agent的位置"):
+        // the walker is in the first car - the view follows it round, as on the boats and the lines.
+        play.me.x = p.x; play.me.y = p.y;
+        if (typeof playActMeOn === "function") playActMeOn(px, py - size * 0.2, size);
+      }
     }
     if (riding && now - play.ride.at > PLAY_PIECE_LAP_S * 1000) {
       play.ride = null;
@@ -3580,6 +4313,8 @@ function playPieceMoves(item) {
 function playPiecesDraw(size) {
   const { ctx } = play;
   const k = size / PLAY_TILE, now = performance.now();
+  // THE WAYS TO THE OTHER MAPS (play-act.js playCrossings): drawn as great pieces are, kept as they are
+  if (typeof playCrossings === "function") for (const one of playCrossings()) if (playPieceInView(one)) playSvgPieceDraw(one, size, now);
   for (const item of (play.world && play.world.items) || []) {
     if (item.kind !== "piece" || !playPieceInView(item)) continue;
     if (!item.spec || !(item.w > 0 && item.h > 0)) {
@@ -3648,6 +4383,7 @@ function playPiecesDraw(size) {
 function playPieceAct(item) {
   // ON ITS BOATS (2026-11-20: "天鹅游船"): round its water once.
   if ((item.spec || {}).boats && !play.ride) {
+    play.lookAt = null;                        // the view on the walker again: it follows the ride (2026-11-20)
     play.ride = { piece: item, at: performance.now(), boat: true };
     playSfx("door-close", 0.2);
     playRun();
@@ -3657,6 +4393,7 @@ function playPieceAct(item) {
   const rides = item.spec && item.spec.svg ? item.interact === "ride" && Boolean((playSvgPiece(item) || {}).track) : item.kit === "track";
   const climbs = item.spec && item.spec.svg ? item.interact === "climb" : item.kit === "stack";
   if (rides && playPieceBuilt(item) >= 1) {
+    play.lookAt = null;                        // the view on the walker again: it follows the ride (2026-11-20)
     play.ride = { piece: item, at: performance.now() };
     playSfx("door-close", 0.3);
     playRun();
@@ -3749,7 +4486,9 @@ function playMotionDraw(size, c0, c1, r0, r1) {
   for (let y = y0; y < y1; y += 1) {
     for (let x = x0; x < x1; x += 1) {
       let piece = "";
-      try { const [block, i] = playCell(map, x, y); piece = String(block.ground[i] || ""); } catch (_err) { continue; }
+      // only where its block is laid (playCellIfLaid): the motion lays nothing - a block read from the store is laid
+      // while the page is idle (playPrepareSoon), and its water moves from then
+      try { const cell = playCellIfLaid(map, x, y); if (!cell) continue; piece = String(cell[0].ground[cell[1]] || ""); } catch (_err) { continue; }
       const h = playHash(x, y, 71);
       // WATER THAT MOVES, NOT BLINKS (the user, 2026-11-20: "你现在水的效果太不好了，要不改成时不时出现的浪花 ... 这个横向移动
       // 的效果还行（但是不够明显）时隐时现的完全不行"): on a river or a lake, streaks of light running on, steady and
@@ -3778,7 +4517,7 @@ function playMotionDraw(size, c0, c1, r0, r1) {
         let shoreSide = null;
         for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
           let next = "";
-          try { const [b2, i2] = playCell(map, x + dx, y + dy); next = String(b2.ground[i2] || ""); } catch (_err) { next = ""; }
+          try { const cell = playCellIfLaid(map, x + dx, y + dy); next = cell ? String(cell[0].ground[cell[1]] || "") : ""; } catch (_err) { next = ""; }
           if (next && !next.startsWith("water") && !next.startsWith("seaDeep") && !next.startsWith("void") && next !== "none") { shoreSide = [dx, dy]; break; }
         }
         if (shoreSide) {
@@ -3800,40 +4539,52 @@ function playMotionDraw(size, c0, c1, r0, r1) {
       }
     }
   }
-  // The land in sight: its own drift.
-  const middle = [Math.floor((x0 + x1) / 2), Math.floor((y0 + y1) / 2)];
-  let biome = "";
-  try { biome = map.regions[playWhose(map, middle[0], middle[1]).a].biome || ""; } catch (_err) { biome = ""; }
-  const w = x1 - x0, hgt = y1 - y0;
-  if (biome === "skycity") {                                       // clouds drifting over it
-    play.motionSeen = true;
-    for (let k = 0; k < 7; k += 1) {
-      const span = w + 12, cx = x0 - 6 + ((k * 13.7 + now * (0.25 + 0.05 * k)) % span), cy = y0 + (k * 7.3) % hgt;
-      ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
-      for (const [dx, dy, r] of [[0, 0, 1.1], [0.9, -0.3, 0.9], [1.8, 0, 1.0], [0.9, 0.35, 0.8]]) {
-        ctx.beginPath(); ctx.ellipse(sx(cx + dx), sy(cy + dy), size * r, size * r * 0.55, 0, 0, Math.PI * 2); ctx.fill();
+  // EACH DRIFT WHERE IT IS IN THE WORLD (the user, 2026-11-20: "你这些云是根据view算的（包括飞鸟也是）我移动view 云也会跟着
+  // 移"): the world in squares, a few things in each at a place of their own, drifting within it - over the land it is
+  // over, in that land's way (clouds over a city in the sky, bubbles under the sea, each other land its motes); the
+  // view moving never carries them with it.
+  const biomeAt = (x, y) => {
+    try { return map.regions[playWhose(map, Math.floor(x), Math.floor(y)).a].biome || ""; } catch (_err) { return ""; }
+  };
+  const wrap = (v, P) => ((v % P) + P) % P;
+  const squares = (P, count, each) => {
+    for (let gy = Math.floor(y0 / P) - 1; gy <= Math.floor(y1 / P); gy += 1) {
+      for (let gx = Math.floor(x0 / P) - 1; gx <= Math.floor(x1 / P); gx += 1) {
+        for (let k = 0; k < count; k += 1) {
+          const ax = playHash(gx, gy, 500 + k) * P, ay = playHash(gx, gy, 600 + k) * P;   // its own place, still
+          each(gx * P, gy * P, ax, ay, k, biomeAt(gx * P + ax, gy * P + ay));
+        }
       }
     }
-  } else if (biome === "underwater") {                             // bubbles rising
+  };
+  squares(36, 3, (X, Y, ax, ay, k, biome) => {                     // clouds drifting over a city in the sky
+    if (biome !== "skycity") return;
     play.motionSeen = true;
-    for (let k = 0; k < 26; k += 1) {
-      const bx = x0 + (k * 7.31) % w, rise = (now * (0.6 + (k % 5) * 0.12) + k * 1.7) % hgt;
-      ctx.strokeStyle = "rgba(220, 245, 255, 0.7)"; ctx.lineWidth = Math.max(1, size / 20);
-      ctx.beginPath(); ctx.arc(sx(bx + Math.sin(now * 2 + k) * 0.3), sy(y1 - rise), size * (0.08 + (k % 3) * 0.04), 0, Math.PI * 2); ctx.stroke();
+    const cx = X + wrap(ax + now * (0.25 + 0.05 * k), 36), cy = Y + ay;
+    ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
+    for (const [dx, dy, r] of [[0, 0, 1.1], [0.9, -0.3, 0.9], [1.8, 0, 1.0], [0.9, 0.35, 0.8]]) {
+      ctx.beginPath(); ctx.ellipse(sx(cx + dx), sy(cy + dy), size * r, size * r * 0.55, 0, 0, Math.PI * 2); ctx.fill();
     }
-  } else if (PLAY_MOTES[biome]) {                                   // each other land its own drift
+  });
+  squares(14, 5, (X, Y, ax, ay, k, biome) => {                     // bubbles rising under the sea
+    if (biome !== "underwater") return;
     play.motionSeen = true;
+    const bx = X + ax + Math.sin(now * 2 + k) * 0.3, by = Y + wrap(ay - now * (0.6 + (k % 5) * 0.12), 14);
+    ctx.strokeStyle = "rgba(220, 245, 255, 0.7)"; ctx.lineWidth = Math.max(1, size / 20);
+    ctx.beginPath(); ctx.arc(sx(bx), sy(by), size * (0.08 + (k % 3) * 0.04), 0, Math.PI * 2); ctx.stroke();
+  });
+  squares(20, 12, (X, Y, ax, ay, k, biome) => {                    // each other land its own drift
     const m = PLAY_MOTES[biome];
-    for (let k = 0; k < 30; k += 1) {
-      const speed = 0.4 + (k % 7) * 0.08;
-      const mx = x0 + ((k * 5.13 + (m.wind ? now * 1.2 * speed : Math.sin(now * 0.7 + k) * 0.6)) % w + w) % w;
-      const my = y0 + ((k * 3.71 + now * m.fall * speed) % hgt + hgt) % hgt;
-      ctx.fillStyle = m.colour;
-      if (m.glow) ctx.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(now * 2 + k));
-      ctx.fillRect(sx(mx), sy(my), Math.max(1, size * m.size), Math.max(1, size * m.size));
-      ctx.globalAlpha = 1;
-    }
-  }
+    if (!m) return;
+    play.motionSeen = true;
+    const speed = 0.4 + (k % 7) * 0.08;
+    const mx = X + wrap(ax + (m.wind ? now * 1.2 * speed : Math.sin(now * 0.7 + k) * 0.6), 20);
+    const my = Y + wrap(ay + now * m.fall * speed, 20);
+    ctx.fillStyle = m.colour;
+    if (m.glow) ctx.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(now * 2 + k));
+    ctx.fillRect(sx(mx), sy(my), Math.max(1, size * m.size), Math.max(1, size * m.size));
+    ctx.globalAlpha = 1;
+  });
   ctx.restore();
 }
 /* While nothing else moves, the land still moves - a few frames a second, only with Play open and something moving in
@@ -3858,9 +4609,12 @@ function playRun() {
       const moved = playStep(seconds);
       if (play.spaceHeld && playJumpHeight() === 0) playJump();      // held: landed, up again
       if (play.pan && play.pan.size && play.lookAt) {                 // W A S D held: the view moves on
+        // FASTER WITH SHIFT (the user, 2026-11-20: "wasd 移动view的时候按住shift也可以加速"), as walking runs with it; and
+        // zoomed out, as fast across the screen as close up.
+        const speed = PLAY_PAN_SPEED * (play.running ? PLAY_PAN_FAST : 1) * (play.scale < 1 ? 1 / play.scale : 1);
         for (const way of play.pan) {
-          play.lookAt[0] += PLAY_PAN[way][0] * PLAY_PAN_SPEED * seconds;
-          play.lookAt[1] += PLAY_PAN[way][1] * PLAY_PAN_SPEED * seconds;
+          play.lookAt[0] += PLAY_PAN[way][0] * speed * seconds;
+          play.lookAt[1] += PLAY_PAN[way][1] * speed * seconds;
         }
       }
       const busy = play.banner || play.spaceHeld || (play.pan && play.pan.size) || playJumpHeight() > 0 || (play.said && performance.now() < play.said.until) || play.dust.length
@@ -3885,9 +4639,10 @@ function playRun() {
 const PLAY_KEYS = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
 const PLAY_PAN_KEYS = { a: "left", A: "left", d: "right", D: "right", w: "up", W: "up", s: "down", S: "down" };
 const PLAY_PAN_SPEED = 14;                   // tiles a second
+const PLAY_PAN_FAST = 3;                     // as many times faster, Shift held
 const PLAY_PAN = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] };
 window.addEventListener("keydown", (event) => {
-  if (!play.on || event.altKey || event.metaKey) return;
+  if (!play.on || play.off || event.altKey || event.metaKey) return;
   play.running = event.shiftKey;
   const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
   if (!event.repeat && !playFirst.sent) {

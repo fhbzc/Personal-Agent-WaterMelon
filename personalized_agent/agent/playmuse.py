@@ -963,6 +963,52 @@ def land_is(land: Dict[str, Any], suits: Any) -> bool:
     return biome in suits or ("ordinary" in suits and biome not in DRY_LANDS_NOT)
 
 
+# -- 2d. the way from one map to the next ---------------------------------------------------------------------------
+# A MAP KEPT TO A SIZE, THE NEXT ONE REACHED BY A WAY DESIGNED FOR IT (the user, 2026-11-20: "一个地图差不多我现在的量多一点
+# 之后就要设计next 图（是下一个小地图），这样防止一个图过大。然后出现这个的时候，要有一个transition设计stage, 让模型设计一个美观的，
+# 酷炫的，意想不到的到其它地图的入口（在另一个地图也有对应的入口）"): a map holds playregions.AREA_REGIONS lands' cells; the next
+# land begins a new map. Then one call designs the pair of entrances between them - each end drawn as a great piece is
+# (playpieces), the page sets each by its land's heart and goes through from one to the other.
+TASK_CROSSING = "play_world_crossing"
+#: An end's size in tiles, wide and high (its picture rises above it as a great piece's does).
+CROSSING_W, CROSSING_H = (3, 6), (2, 5)
+
+CROSSING_SYSTEM = """You keep a small world that pictures the user's life. It grew too large for one map, so it goes on in a NEW MAP: "map_b" begins where "map_a" was full. Design THE WAY BETWEEN THE TWO MAPS: a PAIR OF ENTRANCES, one standing in each map, that belong together - going in at one, the walker comes out of the other. Make it BEAUTIFUL, STRIKING and UNEXPECTED - what nobody would think of first, yet right for both maps' scenes and for what the user's days there were (each land's "places"). For instance a whale whose open mouth is a harbour on one shore and whose spout lands the walker on the other; a giant beanstalk's lift; a library shelf that swings round into an observatory - invent your own, never one of these. NOT a plain glowing ring, an arch of light or a door of mist (the user wants no generic portals): something one goes into, climbs or rides through. EACH END FITS ITS OWN MAP - its land's scene and colours - and THE TWO ANSWER EACH OTHER: two halves of one thing, its outside and its inside, one creature at both ends. For each end choose the land of its map it stands in (the two maps' lands most tied - "ties" - if any) and its size in tiles: w {w0} to {w1}, h {h0} to {h1}.
+Answer with only JSON: {{"name": "<the way's name, a few words>", "why": "<at most 2 sentences: why this way between these two maps>", "ends": [{{"map": "a", "land": "<a land id of map_a>", "name": "<this end's name, a few words>", "what": "<what it looks like, for its painter: its shape, its colours, what is striking about it - 2 to 4 sentences>", "going": "<what one sees and feels going through it, one sentence>", "w": {w0} to {w1}, "h": {h0} to {h1}}}, {{"map": "b", "land": "<a land id of map_b>", "name": "...", "what": "...", "going": "...", "w": ..., "h": ...}}]}}"""
+
+
+def crossing_system() -> str:
+    return CROSSING_SYSTEM.format(w0=CROSSING_W[0], w1=CROSSING_W[1], h0=CROSSING_H[0], h1=CROSSING_H[1])
+
+
+def read_crossing(found: Any, lands_a: List[Dict[str, Any]], lands_b: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """THE WAY AS DESIGNED, KEPT TO WHAT CAN BE (the code's): one end in each map, each in a land of its own map (else
+    the map's first), its size within CROSSING_W x CROSSING_H, its words short. None when there is no pair."""
+    if not isinstance(found, dict) or not lands_a or not lands_b:
+        return None
+    short = lambda text, n: " ".join(str(text or "").split())[:n]       # noqa: E731
+    ends = [one for one in found.get("ends") or [] if isinstance(one, dict)]
+    out = []
+    for side, lands in (("a", lands_a), ("b", lands_b)):
+        one = next((e for e in ends if str(e.get("map") or "").lower() == side), None)
+        if one is None:
+            one = ends[len(out)] if len(ends) > len(out) else None
+        if one is None or not short(one.get("what"), 10):
+            return None
+        ids = [str(land["id"]) for land in lands]
+        land = str(one.get("land") or "")
+
+        def size(value: Any, bounds: Tuple[int, int]) -> int:
+            try:
+                return max(bounds[0], min(bounds[1], int(round(float(value)))))
+            except (TypeError, ValueError):
+                return bounds[0] + 1
+        out.append({"map": side, "land": land if land in ids else ids[0], "name": short(one.get("name"), 60) or "",
+                    "what": short(one.get("what"), 700), "going": short(one.get("going"), 240),
+                    "w": size(one.get("w"), CROSSING_W), "h": size(one.get("h"), CROSSING_H)})
+    return {"name": short(found.get("name"), 60), "why": short(found.get("why"), 400), "ends": out}
+
+
 # -- THE WORLD'S LOOKS AS A WHOLE, AFTER ITS WAYS (the user, 2026-11-20: "在交通规划之后加一个stage, 是整体美学规划 ... i) 看一下
 # 地块衔接段的设计，根据地形性质选择合适且美观的图 ii) 做夜景的设置，看各个灯光的位置让整体夜景好看"; "路沿 ... 让agent决定要加什么
 # 路沿，弄好形状之后代码加") -------------------------------------------------------------------------------------------------

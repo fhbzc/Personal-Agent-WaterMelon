@@ -79,7 +79,8 @@ class TheModelIsStartedOnlyForWhatIsMissingTests(unittest.TestCase):
             kept = again.read_states(self.states)
         self.assertEqual(again.starts, 0)
         self.assertEqual(again.read, [])
-        self.assertEqual(list(kept.items()), list(read.items()))
+        # Compact rows since 2026-11-20 (four bytes a number): the same numbers, in the same order.
+        self.assertEqual([(k, list(v)) for k, v in kept.items()], [(k, list(v)) for k, v in read.items()])
 
     def test_one_new_state_starts_it_once_and_reads_only_that_one(self):
         first = _Counted(self.db)
@@ -132,7 +133,7 @@ class TheModelIsStartedOnlyForWhatIsMissingTests(unittest.TestCase):
             kept = reader._kept(wanted)
         finally:
             Embedder.LOOKUP = old_lookup
-        self.assertEqual(list(kept.items()), list(whole.items()))
+        self.assertEqual([(k, list(v)) for k, v in kept.items()], list(whole.items()))
 
     def test_what_is_read_is_kept_in_one_go(self):
         writes = []

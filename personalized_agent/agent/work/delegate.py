@@ -815,38 +815,57 @@ class Drafts:
                 "SELECT * FROM work_drafts WHERE status IN (?, ?, ?, ?, ?, ?) "
                 "ORDER BY created_at DESC LIMIT ?",
                 (STARTED, STARTING, COLLECTING, DRAFTING, READY, FAILED, int(most) * 3)):
-            draft = self.get(row["id"])
-            if not draft:
+            one = self._assigned_one(row)
+            if one is None:
                 continue
-            options = draft.get("options") or {}
-            if options.get("removed"):
-                continue
-            # By what was asked of it (the row): a start the application's
-            # closing cut off is listed too, its plan to start again.
-            failed = options.get("start_failed") or {}
-            if row["status"] in (COLLECTING, DRAFTING, READY, FAILED) \
-                    and not options.get("start_when_ready") and not failed:
-                if not options.get("saved"):
-                    continue                 # being written in the box: not one of the list yet
-            said: Dict[str, Any] = {"draft": draft["id"], "version": 1,
-                                    "state": "ongoing" if draft["status"] == STARTING
-                                    or options.get("start_when_ready") else "drafting"}
-            if draft["status"] == READY and draft.get("error"):
-                said["held"] = draft["error"]
-            if failed and draft["status"] != STARTED:
-                # IT DID NOT START - said, never left silent: its plan to
-                # open, change and start again.
-                said.update(state="drafting", failed=str(failed.get("error") or ""))
-            if draft["status"] == STARTED and draft.get("unit_id"):
-                said.update(self._came_of(draft["unit_id"], str(draft.get("run_id") or "")))
-            elif (options.get("start_when_ready") or {}).get("held"):
-                said["held"] = options["start_when_ready"]["held"]
-            out.append({"id": draft["id"], "text": self._title_of(draft),
-                        "detail": self._from_where(draft), "at": draft["created_at"],
-                        "source": draft["source"], "work": {"versions": [said], "next": 2}})
+            out.append(one)
             if len(out) >= most:
                 break
         return out
+
+    def assigned_of(self, ids: List[str]) -> List[Dict[str, Any]]:
+        """THESE PIECES OF WORK ONLY, as `assigned` lists them (2026-11-20: the plan's check asked for every piece of
+        work, 600 built each half minute, to look at its few - about a sixth of a core all the time)."""
+        ids = [str(one) for one in ids if one]
+        if not ids:
+            return []
+        marks = ", ".join("?" for _ in ids)
+        rows = self.db.query(
+            f"SELECT * FROM work_drafts WHERE id IN ({marks}) AND status IN (?, ?, ?, ?, ?, ?)",
+            (*ids, STARTED, STARTING, COLLECTING, DRAFTING, READY, FAILED))
+        return [one for one in (self._assigned_one(row) for row in rows) if one is not None]
+
+    def _assigned_one(self, row: Any) -> Optional[Dict[str, Any]]:
+        """One row of `assigned`: the piece of work as listed - None when it is not one of the list."""
+        draft = self.get(row["id"])
+        if not draft:
+            return None
+        options = draft.get("options") or {}
+        if options.get("removed"):
+            return None
+        # By what was asked of it (the row): a start the application's
+        # closing cut off is listed too, its plan to start again.
+        failed = options.get("start_failed") or {}
+        if row["status"] in (COLLECTING, DRAFTING, READY, FAILED) \
+                and not options.get("start_when_ready") and not failed:
+            if not options.get("saved"):
+                return None                 # being written in the box: not one of the list yet
+        said: Dict[str, Any] = {"draft": draft["id"], "version": 1,
+                                "state": "ongoing" if draft["status"] == STARTING
+                                or options.get("start_when_ready") else "drafting"}
+        if draft["status"] == READY and draft.get("error"):
+            said["held"] = draft["error"]
+        if failed and draft["status"] != STARTED:
+            # IT DID NOT START - said, never left silent: its plan to
+            # open, change and start again.
+            said.update(state="drafting", failed=str(failed.get("error") or ""))
+        if draft["status"] == STARTED and draft.get("unit_id"):
+            said.update(self._came_of(draft["unit_id"], str(draft.get("run_id") or "")))
+        elif (options.get("start_when_ready") or {}).get("held"):
+            said["held"] = options["start_when_ready"]["held"]
+        return {"id": draft["id"], "text": self._title_of(draft),
+                "detail": self._from_where(draft), "at": draft["created_at"],
+                "source": draft["source"], "work": {"versions": [said], "next": 2}}
 
     @staticmethod
     def _title_of(draft: Dict[str, Any]) -> str:

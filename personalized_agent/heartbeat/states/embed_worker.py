@@ -112,6 +112,16 @@ def load(model_name: str, root=None):
     from huggingface_hub import hf_hub_download
 
     revision = REVISIONS.get(model_name)
+    # THE COPY ALREADY HERE, NOT ASKED FOR AGAIN (2026-11-20: each load asked the Hugging Face site whether its files
+    # had changed - seconds, 23 s once, of a load done every few minutes - though the revision is pinned): read from
+    # the cache when both files are in it; asked for only when they are not.
+    try:
+        from huggingface_hub import try_to_load_from_cache
+        found = [try_to_load_from_cache(model_name, one, revision=revision) for one in (TOKENISER_FILE, ONNX_FILE)]
+        if all(isinstance(one, str) and os.path.isfile(one) for one in found):
+            return _open(found[0], found[1])
+    except Exception:            # an older huggingface_hub, a damaged cache: downloaded as before
+        pass
     return _open(hf_hub_download(model_name, TOKENISER_FILE, revision=revision),
                  hf_hub_download(model_name, ONNX_FILE, revision=revision))
 
@@ -152,7 +162,17 @@ def step_aside() -> None:
         os.environ.setdefault(name, str(threads()))
 
 
+def _blas_one_thread() -> None:
+    """NUMPY'S SUMS ON ONE THREAD HERE (the user, 2026-11-20: "难道我现在用的不是更轻的那个吗" - it was: the model on ONNX,
+    and still 450 MB): numpy, loaded with onnxruntime, set up its linear algebra's buffers for all 14 cores - 452 MB
+    measured, 34 MB with one - for the little it does here (a mean, a length). The model's own work runs on
+    onnxruntime's threads (`threads`), untouched. Before anything loads numpy."""
+    for name in ("OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):     # not OMP's: onnxruntime's own pool is set apart
+        os.environ[name] = "1"
+
+
 def serve(model_name: str) -> int:
+    _blas_one_thread()
     step_aside()
     # The answers are the only thing on stdout: anything a library prints
     # while loading goes to stderr instead.

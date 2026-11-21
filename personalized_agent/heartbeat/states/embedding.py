@@ -386,7 +386,9 @@ class Embedder:
             text = wanted.get(state_id)
             if text is None or row["fingerprint"] != _fingerprint(text):
                 continue
-            kept[state_id] = list(array.array("f", row["vector"]))
+            # COMPACT (2026-11-20, the memory looked at: 25 MB of vectors as Python numbers): four bytes a number, as
+            # kept - a list of floats was thirty-two.
+            kept[state_id] = array.array("f", row["vector"])
         return kept
 
     def _keep(self, read: Sequence[Tuple[str, str, Sequence[float]]]) -> None:
@@ -518,7 +520,7 @@ def _vectors_of(said: Dict[str, Any]) -> List[List[float]]:
         return []
     flat = array.array("f")
     flat.frombytes(base64.b64decode(said["vectors"]))
-    return [list(flat[row * dims:(row + 1) * dims]) for row in range(count)]
+    return [flat[row * dims:(row + 1) * dims] for row in range(count)]      # compact rows (see _kept)
 
 
 def _end(child: Any) -> None:

@@ -5784,5 +5784,8 @@
 "Resume drawing": "继续绘制",
 "Its task": "相关任务",
 "Fun fact": "趣闻",
-"Reply to this message only": "只回复这条"
+"Reply to this message only": "只回复这条",
+"Arrow keys to walk, WASD to look around, Shift to run, Space to jump, E to look, M for the map": "方向键走动，WASD 移动视野，Shift 跑步，空格跳跃，E 查看，M 地图",
+  "Turn Play off - nothing loaded, nothing drawn": "关闭 Play：不加载、不绘制，不占资源",
+  "Turn Play on": "打开 Play"
 }

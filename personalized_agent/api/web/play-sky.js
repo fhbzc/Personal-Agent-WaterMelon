@@ -130,7 +130,7 @@ function playNightDraw(ctx, canvas, night) {
   const size = PLAY_TILE * play.scale;
   const off = playSky.night || (playSky.night = document.createElement("canvas"));
   if (off.width !== canvas.width || off.height !== canvas.height) { off.width = canvas.width; off.height = canvas.height; }
-  const c = off.getContext("2d");
+  const c = off.getContext("2d", PLAY_OFF_PAGE);
   c.globalCompositeOperation = "source-over";
   c.clearRect(0, 0, off.width, off.height);
   c.fillStyle = `rgba(8, 12, 36, ${night.toFixed(3)})`;
@@ -156,10 +156,15 @@ function playNightDraw(ctx, canvas, night) {
   for (const zone of play.world.zones) {
     if (zone.kind === "volcano" && inView(zone.x + zone.w / 2, zone.y + zone.h / 2)) lights.push([zone.x + zone.w / 2, zone.y + 1 + zone.h / 2, 7]);
   }
-  const chunkTiles = PLAY_CHUNK;
+  // ONLY WHAT IS LAID ALREADY (the user, 2026-11-20: "音乐在view最大的时候一卡一卡的"): the lamps standing about were read
+  // from every block in sight, each laid for it - far out, the whole world's, 3 to 4 s at a time, again and again as
+  // the night was drawn. Those laid (close up, every block in sight is) give their lamps; far out, a lamp is a speck.
+  const chunkTiles = PLAY_CHUNK, laid = (play.map && play.map.laid) || new Map();
   for (let cy = Math.floor(view[1] / chunkTiles); cy <= Math.floor(view[3] / chunkTiles); cy += 1) {
     for (let cx = Math.floor(view[0] / chunkTiles); cx <= Math.floor(view[2] / chunkTiles); cx += 1) {
-      for (const one of playBlock(play.map, cx, cy).deco) {
+      const block = laid.get(`${cx},${cy}`);
+      if (!block) continue;
+      for (const one of block.deco) {
         const reach = PLAY_DECO_LIGHTS[one.name];
         if (reach && inView(one.x, one.y) && Math.floor(one.x / chunkTiles) === cx && Math.floor(one.y / chunkTiles) === cy
             && !(play.lightsOff && play.lightsOff.has(`d:${one.x},${one.y}`))) {

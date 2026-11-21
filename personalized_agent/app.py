@@ -2834,9 +2834,7 @@ WHAT I WOULD DO ON MY OWN where that applies. Their words:
         stuck_before = _dt.now(_tz.utc) - _td(minutes=self.AGENDA_STUCK_MIN)
         mine = set(draft_ids)
         going = 0
-        for one in self.drafts.assigned(most=200):
-            if one["id"] not in mine:
-                continue
+        for one in self.drafts.assigned_of(sorted(mine)):      # the plan's own only (2026-11-20)
             versions = (one.get("work") or {}).get("versions") or [{}]
             latest = versions[-1]
             if latest.get("alive"):
@@ -3185,7 +3183,15 @@ WHAT I WOULD DO ON MY OWN where that applies. Their words:
                 self.work.settle_code()
             # What the agents' code may read - the home - made readable once,
             # here in the background, never inside a run (isolation.py).
-            from .runtime.isolation import prepare_reading
+            from .runtime.isolation import prepare_reading, set_identity
+            # ITS OWN IDENTITY when run from another data folder than the default (a test installation), and what was
+            # granted noted, so the same grant is not made again at each start (isolation.set_identity).
+            try:
+                from .common.paths import default_root
+                own = "" if Path(self.paths.root).resolve() == default_root().resolve() else str(Path(self.paths.root).resolve())
+            except Exception:
+                own = ""
+            set_identity(own, Path(self.paths.data_dir) / "isolation_grants.json")
             threading.Thread(target=prepare_reading,
                              args=(list(self.policy.readable_paths),
                                    list(self.policy.protected_paths)),

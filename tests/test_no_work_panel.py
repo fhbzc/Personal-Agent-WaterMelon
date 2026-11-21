@@ -183,6 +183,10 @@ class DraftsKeptTests(unittest.TestCase):
         listed = drafts.assigned()
         self.assertEqual([one["id"] for one in listed], [kept["id"]])
         self.assertEqual(listed[0]["work"]["versions"][0]["state"], "drafting")
+        # THE PLAN'S OWN ONLY (2026-11-20): the same as the list says, for the ones asked - none built besides.
+        self.assertEqual(drafts.assigned_of([kept["id"], other["id"]]), listed)
+        self.assertEqual(drafts.assigned_of([other["id"]]), [], "being written: not one of them")
+        self.assertEqual(drafts.assigned_of([]), [])
 
 
 if __name__ == "__main__":

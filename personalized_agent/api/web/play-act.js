@@ -104,6 +104,55 @@ function playPortals() {
   }
   return map.portals;
 }
+/* THE WAYS TO THE OTHER MAPS, AS DESIGNED (agent/playworld.py _design_crossings; the user, 2026-11-20: "让模型设计一个美观的，
+   酷炫的，意想不到的到其它地图的入口（在另一个地图也有对应的入口）"): each end standing in this map, by its land's heart on
+   ground clear for all of it - drawn as a great piece is (play.js playSvgPieceDraw), gone through with E. Found once a map. */
+function playCrossings() {
+  const map = play.map;
+  if (!map) return [];
+  if (map.crossings) return map.crossings;
+  map.crossings = [];
+  for (const crossing of (play.world && play.world.crossings) || []) {
+    (crossing.ends || []).forEach((end, i) => {
+      if (end.area !== play.area || !end.spec || !end.spec.svg) return;
+      const n = map.regions.findIndex((region) => region.id === end.region);
+      const heart = map.hearts[Math.max(0, n)];
+      if (!heart) return;
+      const at = playCrossingSpot(heart, end.w, end.h, map.crossings);
+      if (!at) return;
+      map.crossings.push({ id: `cross-${crossing.id}-${i}`, kind: "piece", crossing, end: i, x: at[0], y: at[1],
+                           w: end.w, h: end.h, spec: end.spec, name: end.name });
+    });
+  }
+  return map.crossings;
+}
+/* Ground clear for an end of `w` by `h` tiles and the tile before its middle, nearest the heart (south and east first). */
+function playCrossingSpot(heart, w, h, taken) {
+  const free = (x, y) => { try { return playActFree(x, y); } catch (_err) { return false; } };
+  const clear = (x0, y0) => {
+    if (taken.some((one) => x0 < one.x + one.w + 2 && x0 + w + 2 > one.x && y0 < one.y + one.h + 2 && y0 + h + 2 > one.y)) return false;
+    for (let y = y0; y < y0 + h; y += 1) for (let x = x0; x < x0 + w; x += 1) if (!free(x, y)) return false;
+    return free(x0 + Math.floor(w / 2), y0 + h);
+  };
+  const cx = Math.round(heart[0]) + 4, cy = Math.round(heart[1]) + 3;
+  for (let r = 0; r <= 24; r += 1) {
+    for (let dy = -r; dy <= r; dy += 1) {
+      for (let dx = -r; dx <= r; dx += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        if (clear(cx + dx, cy + dy)) return [cx + dx, cy + dy];
+      }
+    }
+  }
+  return null;
+}
+/* Through an end: to the other map, out in front of its other end - what one sees going through said there. */
+function playCrossingGo(one) {
+  const other = (one.crossing.ends || [])[1 - one.end];
+  if (!other) return;
+  playTravelArea(other.area, { crossing: one.crossing.id, end: 1 - one.end });
+  const end = one.crossing.ends[one.end];
+  playActSay([other.name || one.crossing.name, end.going].filter(Boolean).join(" - "));
+}
 function playPortalDraw(one, size, now) {
   const { ctx } = play;
   const [sx, sy] = playActScreen(one.x + 0.5, one.y + 0.9);
@@ -316,26 +365,53 @@ function playLines() {
   // GROUND (the user, 2026-11-17: "火车轨道 ... 从房子和地面上方直接跨过去，看着比较粗糙"): round the buildings, by the way
   // the roads are found; over water and the dark between lands, on a viaduct.
   for (const line of lines.slice()) {
+    // A BUS ON THE ROADS ONLY (the user, 2026-11-20: "所有公交车必须沿路开。你现在有公交车是按照飞机的路线规划的"): each
+    // stop on the road nearest it, the way from stop to stop over road tiles alone - never across the grass, never a
+    // straight line; with no road between two of its stops, no bus.
+    const onRoad = line.kind === "road";
+    // ON A STREET, NOT A FOOTPATH (the user, 2026-11-20: "我说的路不是能走的地面，而是真的道路"; "宽度一格是可以的"): a paved
+    // way, a tile wide or more (playStreets) - never a path of earth or sand, a boardwalk, the grass.
+    const streets = onRoad ? playStreets(map) : null;
+    if (onRoad) {
+      line.stops = line.stops.map((one) => {
+        const at = streets ? playRoadNear(streets, one.x, one.y) : null;
+        return at && Object.assign({}, one, { x: at[0], y: at[1] });
+      }).filter(Boolean);
+      if (line.stops.length < 2) { lines.splice(lines.indexOf(line), 1); continue; }
+    }
     const ends = [...line.stops, ...(line.loop ? [line.stops[0]] : [])];
     const afloat = line.kind === "ferry" || line.kind === "airship";       // on the water, in the sky: its own way only
     const at = (one) => (afloat ? [one.wx, one.wy] : [one.x, one.y]);
     const ok = line.kind === "ferry" ? (x, y) => playIsWater(x, y) : line.kind === "airship" ? (x, y) => playIsSky(x, y)
-      : (line.kind === "train" || line.kind === "road") && map.blocked ? (x, y) => !map.blocked.has(`${x},${y}`) : null;
+      : onRoad ? (x, y) => streets.has(`${x},${y}`)
+      : line.kind === "train" && map.blocked ? (x, y) => !map.blocked.has(`${x},${y}`) : null;
     const pts = [], starts = [];
     for (let i = 1; i < ends.length; i += 1) {
       const a = at(ends[i - 1]), b = at(ends[i]);
       let route = null;
-      if (afloat) route = playWaterRoute(a, b, ok);
-      else if (ok) { try { route = playRoute(map.blocked, a, b, 0, 211 + i, new Map()); } catch (_err) { route = null; } }
+      // A BOAT IN THE WATER ALL THE WAY (the user, 2026-11-20: "轮船要求一直在水里开"): out on open water - a tile of
+      // water with water all round it, off the banks and out of narrow streams - from its landing to the next; only
+      // where there is no such way, by any water at all; never over land.
+      let wide = false;
+      if (line.kind === "ferry") {
+        route = playWaterRoute(a, b, (x, y) => playOpenWater(x, y) || (x === b[0] && y === b[1]));
+        wide = Boolean(route);
+      }
+      if (afloat) { if (!route) route = playWaterRoute(a, b, ok); }
+      else if (onRoad) {
+        try { route = playRoadRoute(streets, a, b); } catch (_err) { route = null; }
+      } else if (ok) { try { route = playRoute(map.blocked, a, b, 0, 211 + i, new Map()); } catch (_err) { route = null; } }
       let leg = route && route.length ? route.map(([x, y]) => [x + 0.5, y + 0.5]) : null;
-      if (!leg && afloat) { line.none = true; break; }       // no water, or no sky, between: none
+      if (!leg && (afloat || onRoad)) { line.none = true; break; }   // no water, no sky, no road between: none
       leg = leg || [[a[0] + 0.5, a[1] + 0.5], [b[0] + 0.5, b[1] + 0.5]];
-      leg = ok ? playPulled(leg, ok) : leg;
+      // A BUS ON ITS STREETS TURNS SQUARE (the user, 2026-11-20: "bus的移动路线 ... 应该是拐直角弯的（和火车的弯曲铁轨是
+      // 不一样的）"): its way tile by tile along the street - no corner cut, no curve.
+      leg = onRoad ? playSquareLeg(leg) : ok ? playPulled(leg, wide ? (x, y) => playOpenWater(x, y) : ok) : leg;
       pts.push(...(pts.length ? leg.slice(1) : leg));
     }
     if (line.none || pts.length < 2) { lines.splice(lines.indexOf(line), 1); continue; }
     // Rounded as one - where its legs meet at a stop too - and each stop then found along it, in order.
-    if (ok) pts.splice(0, pts.length, ...playRounded(pts, ok));
+    if (ok && line.kind !== "road") pts.splice(0, pts.length, ...playRounded(pts, ok));   // a bus: square (playSquareLeg)
     let from = 0;
     for (const one of ends) {
       const [sx, sy] = at(one).map((v) => v + 0.5);
@@ -357,6 +433,72 @@ function playLines() {
   }
   map.lines = lines;
   return lines;
+}
+/* THE STREETS: the ways of a paved stuff, however wide - as the road is drawn (play-regions.js: its own
+   material, else a grid's street, else the land's path) - kept with the map. */
+const PLAY_PAVED = new Set(["asphalt", "paving", "pavement2", "cobble", "cobble2", "stone"]);
+function playStreets(map) {
+  if (map.streets) return map.streets;
+  map.streets = new Map();
+  for (const [key, one] of map.paths || []) {
+    const region = (map.regions || [])[one.region] || {}, land = region.land || {};
+    const layout = region.layout || "village";
+    const stuff = one.material || (layout === "grid" ? land.street : layout === "islands" ? "bridge" : (land.path || [])[0]);
+    if (PLAY_PAVED.has(stuff)) map.streets.set(key, one);
+  }
+  return map.streets;
+}
+/* THE WAY OVER THE ROADS ALONE from one road tile to another - the whole road network, however far round it goes
+   (breadth first, the fewest tiles) - or null when no road joins them. */
+function playRoadRoute(paths, a, b) {
+  const goal = `${b[0]},${b[1]}`, start = `${a[0]},${a[1]}`;
+  if (!paths.has(start) || !paths.has(goal)) return null;
+  const came = new Map([[start, ""]]);
+  let edge = [a];
+  while (edge.length && !came.has(goal) && came.size < 400000) {
+    const next = [];
+    for (const [x, y] of edge) {
+      for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+        const key = `${nx},${ny}`;
+        if (came.has(key) || !paths.has(key)) continue;
+        came.set(key, `${x},${y}`);
+        next.push([nx, ny]);
+      }
+    }
+    edge = next;
+  }
+  if (!came.has(goal)) return null;
+  const out = [];
+  for (let key = goal; key; key = came.get(key)) out.push(key.split(",").map(Number));
+  return out.reverse();
+}
+/* A leg of a street drawn square: the turns kept, the steps between them along a straight run dropped. */
+function playSquareLeg(leg) {
+  if (leg.length < 3) return leg;
+  const out = [leg[0]];
+  for (let i = 1; i < leg.length - 1; i += 1) {
+    const [ax, ay] = out[out.length - 1], [bx, by] = leg[i], [cx, cy] = leg[i + 1];
+    if (Math.sign(bx - ax) !== Math.sign(cx - bx) || Math.sign(by - ay) !== Math.sign(cy - by)) out.push(leg[i]);   // a turn
+  }
+  out.push(leg[leg.length - 1]);
+  return out;
+}
+/* The road tile nearest a spot (within twelve tiles), or null. */
+function playRoadNear(paths, hx, hy) {
+  const x0 = Math.floor(hx), y0 = Math.floor(hy);
+  for (let r = 0; r <= 12; r += 1) {
+    for (let dy = -r; dy <= r; dy += 1) {
+      for (let dx = -r; dx <= r; dx += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        if (paths.has(`${x0 + dx},${y0 + dy}`)) return [x0 + dx, y0 + dy];
+      }
+    }
+  }
+  return null;
+}
+/* Water with water on its four sides: out from the bank, where a boat drawn larger than a tile stays on the water. */
+function playOpenWater(x, y) {
+  return playIsWater(x, y) && playIsWater(x + 1, y) && playIsWater(x - 1, y) && playIsWater(x, y + 1) && playIsWater(x, y - 1);
 }
 function playIsWater(x, y) {
   try { return playActWater(x, y); } catch (_err) { return false; }
@@ -790,17 +932,20 @@ function playAreaName(area) {
   const first = (play.world.regions || []).find((one) => playAreaOf(one) === area);
   return first ? playWords(first.name || "") || area : area;
 }
-function playTravelArea(area) {
-  // Another area laid, this one let go of: its map, its blocks, its minimap; the walker at its gate.
+function playTravelArea(area, through = null) {
+  // Another area laid, this one let go of: its map, its blocks, its minimap; the walker at its gate - or, come through a
+  // way between the maps, out in front of its end here.
   play.area = area;
   play.map = playLay(play.world, area);
-  play.chunks.clear();
+  playChunksClear();
   play.miniBase = null;                        // another area: its own map, drawn as it comes
   play.miniBuilding = null;
   play.coasters = null;
   play.critters = [];
   const gate = playPortals().find((one) => one.gate);
-  const at = gate ? [gate.x, gate.y + 1] : (playActSpotNear(play.map.hearts[0][0], play.map.hearts[0][1] + 2) || play.map.hearts[0]);
+  const came = through ? playCrossings().find((one) => one.crossing.id === through.crossing && one.end === through.end) : null;
+  const at = came ? [came.x + Math.floor(came.w / 2), came.y + came.h]
+    : gate ? [gate.x, gate.y + 1] : (playActSpotNear(play.map.hearts[0][0], play.map.hearts[0][1] + 2) || play.map.hearts[0]);
   play.flash = performance.now();
   play.me.x = at[0] + 0.5; play.me.y = at[1] + 0.6;
   play.region = null;
@@ -822,6 +967,10 @@ function playRide(line, from, to) {
   if (line.loop && along < 0) along += line.length;
   play.ride = { line, start: a, along, at: performance.now(), seconds: Math.max(2.5, Math.abs(along) / PLAY_LINE_SPEED[line.kind]), to: line.stops[to] };
   play.sit = null;
+  // THE VIEW WITH THE RIDE (the user, 2026-11-20: "agent坐上去了之后，没有自动追踪agent的位置"): looked elsewhere before
+  // (W A S D, the map), the view stayed there while the walker rode off - on the walker again now.
+  play.lookAt = null;
+  if (play.pan) play.pan.clear();
   playSfx("door-close", 0.3);
   const tick = () => {
     const ride = play.ride;
@@ -961,6 +1110,9 @@ function playAct() {
   if (play.ride) return true;
   const tx = play.me.x, ty = play.me.y - 0.3;
   if (play.fish) return playFishPress();
+  // A way to another map stood at: through it (playCrossings).
+  const way = playCrossings().find((one) => tx >= one.x - 0.6 && tx <= one.x + one.w + 0.6 && ty >= one.y - 0.6 && ty <= one.y + one.h + 1.2);
+  if (way) { playCrossingGo(way); return true; }
   // A portal stood in: where it goes.
   const portal = playPortals().find((one) => Math.hypot(one.x + 0.5 - tx, one.y + 0.7 - ty) < 1.1);
   if (portal && portal.gate) {
@@ -1153,8 +1305,14 @@ function playCrittersStep(seconds) {
   play.birds = (play.birds || []).filter((one) => now - one.at < one.ms);
   const region = play.region;
   if (play.birds.length === 0 && Math.random() < 0.004 && region && !["underwater", "space", "cavern"].includes(region.biome)) {
+    // ACROSS THE WORLD, NOT THE SCREEN (the user, 2026-11-20: "飞鸟也是 ... 我移动view ... 也会跟着移"): where it sets
+    // off and its height are places in the world, in tiles; the view moving leaves it flying where it was.
+    const size = PLAY_TILE * play.scale, canvas = play.canvas;
+    const left = play.camera.x / size, top = play.camera.y / size;
+    const across = canvas.width / size, down = canvas.height / size;
     const fromLeft = Math.random() < 0.5, count = 2 + Math.floor(Math.random() * 2);
-    play.birds.push({ at: now, ms: 9000, fromLeft, y: Math.random() * 0.6 + 0.1, count });
+    play.birds.push({ at: now, ms: 9000, fromLeft, count, x: fromLeft ? left - 4 : left + across + 4,
+                      y: top + (Math.random() * 0.6 + 0.1) * down, speed: (across + 8) / 9 });
   }
 }
 function playCrittersDraw(size, now) {
@@ -1174,10 +1332,11 @@ function playCrittersDraw(size, now) {
     ctx.restore();
   }
   for (const flock of play.birds || []) {
-    const k = (now - flock.at) / flock.ms;
+    const gone = (now - flock.at) / 1000 * (flock.speed || 10) * (flock.fromLeft ? 1 : -1);    // tiles flown
+    const [fx, fy] = playActScreen((flock.x || 0) + gone, flock.y || 0);
     for (let i = 0; i < flock.count; i += 1) {
-      const x = (flock.fromLeft ? k : 1 - k) * (canvas.width + 200) - 100 - i * size * 0.7 * (flock.fromLeft ? 1 : -1);
-      const y = flock.y * canvas.height + Math.abs(i - flock.count / 2) * size * 0.4 + Math.sin(now / 300 + i) * size * 0.1;
+      const x = fx - i * size * 0.7 * (flock.fromLeft ? 1 : -1);
+      const y = fy + Math.abs(i - flock.count / 2) * size * 0.4 + Math.sin(now / 300 + i) * size * 0.1;
       const flap = Math.sin(now / 90 + i) > 0;
       ctx.strokeStyle = "#2d2a33"; ctx.lineWidth = Math.max(1, size / 12);
       ctx.beginPath();

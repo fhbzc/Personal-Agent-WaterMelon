@@ -171,7 +171,10 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
 .msg { padding: 9px 12px; border-radius: 12px; max-width: 78%; white-space: pre-wrap; }
 .msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
 .msg.assistant { align-self: flex-start; background: var(--bg); border: 1px solid var(--line); }
-#chat-form { display: flex; gap: 8px; margin-top: 10px; }
+#chat-form { display: flex; gap: 8px; margin-top: 10px; align-items: flex-end; }
+/* SHIFT+ENTER A NEW LINE (the user, 2026-11-20: "现在的chat框, shift + enter 要能够换行"): a box of lines, as tall as
+   what is written in it - up to a third of the window, then scrolled. */
+#chat-input { resize: none; overflow-y: auto; max-height: 33vh; line-height: 1.4; font: inherit; }
 .setting-row { display: grid; grid-template-columns: 260px 1fr; gap: 10px; align-items: center;
   padding: 6px 0; border-bottom: 1px solid var(--line); }
 /* Section 12, as amended: the explanation sits under the control it explains,
@@ -5228,6 +5231,9 @@ body.side-stacked #side-visual { flex: 0 0 auto; max-height: 48vh; overflow-y: a
 #side-full[aria-pressed="true"] .side-full-out { display: none; }
 .side-pin[aria-pressed="true"], #side-play-open[aria-pressed="true"], #side-full[aria-pressed="true"] { color: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, transparent); }   /* Play on: as Pin on (the user, 2026-11-17) */
+/* PLAY SWITCHED ON OR OFF, SEEN AT A GLANCE (play.js playPressed; 2026-11-20): on, its icon green; off, grey and faint. */
+#side-play-open[data-power="on"] { color: #3fb950; }
+#side-play-open[data-power="off"] { color: var(--muted, #8a8f98); opacity: 0.5; }
 .side-compose { flex-wrap: wrap; }
 .side-quick { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 6px; }
 .side-quick[hidden] { display: none; }
@@ -5248,7 +5254,10 @@ body.side-stacked #side-visual { flex: 0 0 auto; max-height: 48vh; overflow-y: a
 /* TAKEN WHERE IT IS SEEN (the user, 2026-11-20: "正常我是以为鼠标放到线上就会有，但是其实现在是放到线上左边一点的位置才有"): it was
    8 px of a page zoomed out (--side-zoom) - a few pixels on the screen, thinner than the line one aims at. Now 12 px on the
    screen whatever the zoom, from the very edge. */
-.side-grip { position: fixed; left: 0; top: 0; bottom: 0; width: calc(12px / var(--side-zoom, 1)); cursor: ew-resize; z-index: 20; }
+/* ITS EDGE TAKEN WHERE THE LINE IS (the user, 2026-11-20: "我把鼠标放在白色线的中间，就应该变成缩放的形状，但是现在是放在白色线
+   右边才有" - not a wider bar): 3 px inside the line here; the 3 px outside it, a strip of the desktop's own (desktop.py
+   _side_edge_follow) - the grip centred on the panel's edge. */
+.side-grip { position: fixed; left: 0; top: 0; bottom: 0; width: calc(3px / var(--side-zoom, 1)); cursor: ew-resize; z-index: 20; }
 /* Over the Play view too (the user, 2026-11-18: "在play mode的时候也要可以拉动sidebar 边框(resize)"): it lies at the same
    height and came later, over the grip. */
 body.side-playing .side-grip { z-index: 30; }
@@ -5345,7 +5354,7 @@ body.side-playing .side-grip { z-index: 30; }
 .side-followup .side-fu-head { display: flex; gap: 6px; align-items: baseline; font-size: 12px; color: var(--muted); }
 .side-followup .side-fu-head button { margin-left: auto; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
 mark.side-fu-anchor { background: color-mix(in srgb, var(--accent) 25%, transparent); color: inherit; }
-.side-grip:hover, .side-grip.dragging { background: color-mix(in srgb, var(--accent) 35%, transparent); }  /* the whole of it, where it is taken */
+/* NO BAR SHOWN OVER IT (the user, 2026-11-20: "感觉现在不要那个拉伸的蓝条更好"): the resizing pointer alone says it is there. */
 /* MARKED BY THE USER (side-visual.js sideMarking): rings drawn over the picture while "Mark" is on. */
 .side-viz-card { position: relative; }
 .side-viz-tools { display: flex; gap: 6px; justify-content: flex-end; position: relative; z-index: 2; }
@@ -6031,6 +6040,10 @@ mark.side-fu-anchor.lit { background: color-mix(in srgb, var(--accent) 38%, tran
 /* THE PLAY VIEW (play.js): the world over the chat and its box, under the panel's head - the world's pixels whole. */
 .side-play { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: #1b1d22; overflow: hidden; }
 .side-play[hidden] { display: none; }
+/* SWITCHED OFF (play.js playPowerSet): all dark, only the way to turn it on. */
+.side-play.off { background: #000; }
+.side-play.off > :not(.side-play-zoom) { display: none !important; }
+.side-play.off .side-play-zoom > :not([data-play-power]) { display: none !important; }
 .side-play-canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; outline: none; }
 .side-play-hint { position: absolute; left: 8px; bottom: 8px; max-width: calc(100% - 16px); margin: 0; padding: 3px 10px;
   border-radius: 10px; font-size: 11px; color: #e8e2d6; background: rgba(0, 0, 0, 0.45); pointer-events: none; }

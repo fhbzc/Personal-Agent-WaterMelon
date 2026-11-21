@@ -42,6 +42,31 @@ class TheStartWatchTests(unittest.TestCase):
         self.assertIn("test_start_watch.py", written, "the place it stood, by file and line")
         self.assertIn("startup_stuck.txt", said.output[0])
 
+    def test_never_faulthandlers_dump_which_brought_the_process_down(self) -> None:
+        # 2026-11-20 20:15: python312.dll 0xc0000005 while faulthandler read the threads without the lock
+        page = (support.ROOT / "personalized_agent" / "__main__.py").read_text(encoding="utf-8")
+        self.assertNotIn("dump_traceback_later(", page)
+        self.assertIn("threading.Timer(START_STUCK_SECONDS, _write_every_thread", page)
+
+    def test_a_crash_is_recorded_and_the_last_ones_kept(self) -> None:
+        import faulthandler
+        logs = self.file.parent
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / "crash.txt").write_text("started\nFatal Python error: made up\n", encoding="utf-8")
+        self.addCleanup(faulthandler.disable)
+        with mock.patch("personalized_agent.build_flags.debugger_available", return_value=True), \
+                self.assertLogs(main_module.log, level="WARNING") as said:
+            main_module._record_crashes(self.root)
+        self.addCleanup(lambda: main_module._CRASH_FILE.close())
+        self.assertTrue(faulthandler.is_enabled())
+        kept = list(logs.glob("crash-*.txt"))
+        self.assertEqual(len(kept), 1, "the last run's crash kept")
+        self.assertIn("Fatal Python error: made up", kept[0].read_text(encoding="utf-8"))
+        self.assertIn("ended in a crash", said.output[0])
+        faulthandler.disable()
+        main_module._CRASH_FILE.flush()
+        self.assertEqual((logs / "crash.txt").read_text(encoding="utf-8").count("\n"), 1, "only its first line")
+
     def test_without_the_debugger_nothing_is_watched(self) -> None:
         with mock.patch("personalized_agent.build_flags.debugger_available", return_value=False):
             self.assertIsNone(main_module._watch_the_start(self.root))

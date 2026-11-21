@@ -156,8 +156,16 @@ class JudgedTests(_Base):
         made, decision = self.judged(("later", far, "after the meeting", "", []))
         self.assertEqual(decision, "later")
         due = _when(self.meta(made.id)["judge_by"])
-        self.assertLessEqual(due - datetime.now(timezone.utc), timedelta(hours=iq.LATER_MOST_HOURS, minutes=1))
+        # A time it named: kept up to a day on (2026-11-20: "just before tomorrow's 11 a.m." had been cut to 12 hours).
+        self.assertLessEqual(due - datetime.now(timezone.utc), timedelta(hours=iq.LATER_NAMED_MOST_HOURS, minutes=1))
         self.assertEqual(self.created, [])
+
+    def test_a_time_named_within_a_day_is_kept_as_named(self) -> None:
+        tomorrow = datetime.now(timezone.utc) + timedelta(hours=20)
+        made, decision = self.judged(("later", tomorrow, "just before tomorrow's opening", "", []))
+        self.assertEqual(decision, "later")
+        due = _when(self.meta(made.id)["judge_by"])
+        self.assertLess(abs((due - tomorrow).total_seconds()), 60, "not cut to twelve hours")
 
     def test_later_never_past_what_it_is_about(self) -> None:
         soon = datetime.now(timezone.utc) + timedelta(minutes=20)

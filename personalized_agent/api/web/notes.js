@@ -1046,6 +1046,7 @@ function sideDrawImages() {
   box.innerHTML = found.length ? "" : `<p class="side-drawer-empty">${escapeHtml("No pictures in this conversation yet.")}</p>`;
   found.reverse().forEach((address) => {
     const picture = document.createElement("img");
+    picture.loading = "lazy"; picture.decoding = "async";      // only drawn when scrolled to (2026-11-20, memory)
     picture.src = address;
     picture.alt = "";
     picture.onclick = () => sideLarger(address);
@@ -1689,7 +1690,7 @@ function sideFilesDraw() {
     const chip = document.createElement("div");
     chip.className = "side-file";
     chip.innerHTML = one.picture
-      ? `<img src="/api/chat/file?id=${encodeURIComponent(one.id)}" alt="">`
+      ? `<img loading="lazy" decoding="async" src="/api/chat/file?id=${encodeURIComponent(one.id)}" alt="">`
       : `<span>📄 ${escapeHtml(one.name)}</span>`;
     const off = document.createElement("button");
     off.type = "button";
@@ -1734,6 +1735,7 @@ function sideFilesShown(line, files) {
     const address = `/api/chat/file?id=${encodeURIComponent(one.id)}`;
     if (one.picture) {
       const picture = document.createElement("img");
+      picture.loading = "lazy"; picture.decoding = "async";    // only drawn when scrolled to (2026-11-20, memory)
       picture.src = address;
       picture.alt = one.name || "";
       picture.onclick = () => sideLarger(address);
@@ -1766,6 +1768,7 @@ function sideShot(line, picture) {
   shot.appendChild(said);
   if (picture.url) {
     const small = document.createElement("img");
+    small.loading = "lazy"; small.decoding = "async";          // only drawn when scrolled to (2026-11-20, memory)
     small.src = picture.url;
     small.alt = "";
     small.onclick = () => sideLarger(picture.url);
@@ -2191,7 +2194,16 @@ if (NOTES_SOLO) {
   $("#side-visual-close")?.addEventListener("click", () => sideHideView());
   $("#side-replying-off")?.addEventListener("click", () => sideReplyTo(""));
   box?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {   // not while a Chinese word is being made
+    // SHIFT+ENTER A NEW LINE, MADE HERE (the user, 2026-11-20: "sidebar的chat, 其实是可以的，只是mac不行"): the Mac's
+    // panel did not put it in by itself - the line is put in at the caret by the page, the same on every system.
+    if (event.key === "Enter" && event.shiftKey && !event.isComposing && event.keyCode !== 229) {
+      event.preventDefault();
+      box.setRangeText("\n", box.selectionStart, box.selectionEnd, "end");
+      box.dispatchEvent(new Event("input", { bubbles: true }));    // grown to it (fit), as typing would
+      return;
+    }
+    // Not while a Chinese word is being made - on a Mac, said by key code 229 (2026-11-20: "对mac也要支持").
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
       event.preventDefault();
       $("#side-compose").requestSubmit();
     }
@@ -2260,7 +2272,7 @@ if (NOTES_SOLO) {
     if (event.key === "Escape" && $("#side-larger") && !$("#side-larger").hidden) { $("#side-larger").hidden = true; return; }
     if (event.key === "Escape" && !event.target.closest(".notes-reply, .side-fu-form")) closeNotes();
     const box = event.target.closest && event.target.closest(".notes-reply textarea");
-    if (box && event.key === "Enter" && !event.shiftKey) {
+    if (box && event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
       event.preventDefault();
       box.form.requestSubmit();
     }

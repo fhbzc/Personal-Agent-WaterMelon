@@ -62,8 +62,13 @@ SKIPPED = "skipped.json"
 HEALTHY_WITHIN = 120
 #: With no page to ask, alive this long counts as up.
 ALIVE_IS_UP = 30
-#: The helper says it is there within this long, or nothing is quit.
-READY_WITHIN = 15.0
+#: The helper says it is there within this long, or nothing is quit - a minute: PowerShell starting cold, a virus
+#: scan looking at it first (2026-11-20: a test copy's helper said so after the agent had stopped waiting).
+READY_WITHIN = 60.0
+#: WHEN THE AGENT STOPPED WAITING FOR ITS HELPER, SAID (2026-11-20: the agent gave up and stayed; its helper, late,
+#: waited the two minutes for it to quit and then ended it - an update that changed nothing, and the agent gone): the
+#: helper, seeing this beside its "ready", does nothing and leaves.
+ABORTED = "helper-abort.txt"
 #: A version whose parts would not move is tried again after a wait - an hour, then twice as long each time, a day
 #: at most - never given up for it (2026-11-16: a file held open is not a version that will not start).
 FIRST_WAIT_SECONDS = 3600
@@ -360,11 +365,20 @@ def windows_helper(pid: int, pairs: List[List[str]], start: List[str], port: int
         "function Say($ok, $why) { @{ok = $ok; tag = " + _ps(tag) + "; why = $why; "
         "at = (Get-Date -Format o)} | ConvertTo-Json | "
         "Set-Content -LiteralPath $result -Encoding UTF8 }",
-        f"Wait-Process -Id {int(pid)} -Timeout {int(AGENT_GONE_WITHIN)} -ErrorAction SilentlyContinue",
+        # WAITED FOR, UNLESS IT STAYED: the agent gone - or, had it stopped waiting for this helper and stayed
+        # (ABORTED beside "ready"), nothing done at all.
+        f"$abort = {_ps(Path(ready).parent / ABORTED)}",
+        f"$until = (Get-Date).AddSeconds({int(AGENT_GONE_WITHIN)})",
+        f"while ((Get-Date) -lt $until -and (Get-Process -Id {int(pid)} -ErrorAction SilentlyContinue)) {{ "
+        "if (Test-Path -LiteralPath $abort) { break }; Start-Sleep -Milliseconds 500 }",
+        "if (Test-Path -LiteralPath $abort) { Note 'the agent stopped waiting for this helper and stayed - nothing done'; "
+        "Remove-Item -LiteralPath $abort -ErrorAction SilentlyContinue; "
+        "Remove-Item -LiteralPath $lock -ErrorAction SilentlyContinue; exit }",
         # GONE, OR ENDED (2026-11-16: the old copy was still closing after two minutes - said to have gone - and its
-        # folder would not move): it quits for this, so what is left of it is ended.
+        # folder would not move): it quits for this, so what is left of it is ended - IT ALONE, never its tree
+        # (2026-11-20: "taskkill /T" ended this helper too, a child of the agent's, and the update stopped there).
         f"if (Get-Process -Id {int(pid)} -ErrorAction SilentlyContinue) {{ "
-        f"Note 'the agent is still closing - ended'; & taskkill.exe /T /F /PID {int(pid)} 2>&1 | Out-Null; "
+        f"Note 'the agent is still closing - ended'; & taskkill.exe /F /PID {int(pid)} 2>&1 | Out-Null; "
         "Start-Sleep -Seconds 2 } else { Note 'the agent has gone' }",
         # And whatever runs from its folder (a worker of its own; the browser
         # extension's host, which the browser started and keeps while pages are
@@ -469,7 +483,8 @@ def posix_helper(pid: int, pairs: List[List[str]], start: List[str], port: int,
         f"echo ready > {_sh(ready)}",
         f"say() {{ printf '{{\"ok\": %s, \"tag\": \"%s\", \"why\": \"%s\"}}' \"$1\" {_sh(tag)} \"$2\" "
         f"> {_sh(result)}; }}",
-        f"while kill -0 {int(pid)} 2>/dev/null; do sleep 0.5; done",
+        f"while kill -0 {int(pid)} 2>/dev/null; do [ -e {_sh(Path(ready).parent / ABORTED)} ] && "
+        f"{{ rm -f {_sh(Path(ready).parent / ABORTED)}; exit 0; }}; sleep 0.5; done",
         "failed=''",
         *moves_in,
         "undo() {",
@@ -507,6 +522,7 @@ def run_helper(kind: str, folder: Path, said: Dict[str, Any], port: int,
         log.debug("when the old version was set aside could not be said", exc_info=True)
     ready = folder / "helper-ready.txt"
     ready.unlink(missing_ok=True)
+    (folder / ABORTED).unlink(missing_ok=True)          # a stay said for an earlier helper
     (folder / RESULT).unlink(missing_ok=True)
     if kind == "windows":
         start = [str(live / Path(sys.executable).name), *argv]
@@ -542,6 +558,11 @@ def run_helper(kind: str, folder: Path, said: Dict[str, Any], port: int,
     until = time.monotonic() + READY_WITHIN
     while not ready.exists():
         if time.monotonic() > until:
+            # STAYING, SAID TO THE HELPER: should it start after all, it does nothing (ABORTED).
+            try:
+                (folder / ABORTED).write_text("stayed", encoding="utf-8")
+            except OSError:
+                log.debug("the helper could not be told the agent stayed", exc_info=True)
             raise RuntimeError("the update's helper did not answer; nothing was changed")
         time.sleep(0.1)
     ready.unlink(missing_ok=True)

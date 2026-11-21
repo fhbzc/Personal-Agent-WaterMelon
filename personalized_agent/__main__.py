@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import signal
 import sys
 import threading
@@ -604,12 +605,20 @@ START_STUCK_SECONDS = 15
 
 def _watch_the_start(root: Any) -> Any:
     """Every thread's place written to the logs' startup_stuck.txt if the start is not done within
-    START_STUCK_SECONDS (faulthandler) - a build with the Debugger only. What `_started` ends."""
+    START_STUCK_SECONDS - a build with the Debugger only. What `_started` ends.
+
+    A TIMER OF PYTHON'S OWN, NOT FAULTHANDLER'S (the user, 2026-11-20 20:15: "agent直接启动不了了" - the
+    process ended in python312.dll, 0xc0000005, one second after a slow start's dump began; startup_stuck.txt
+    broke off in its second thread): faulthandler's dump reads the other threads' frames without the
+    interpreter's lock, and in 3.12 a frame changing under it can bring the whole process down. The timer
+    takes the lock like any thread and writes each thread's stack from sys._current_frames - the same
+    places, never a crash. A start that holds the lock all that while is not written down; one waiting on
+    the disk, a lock or a window is."""
     try:
         from .build_flags import debugger_available
         if not debugger_available():
             return None
-        import faulthandler
+        import threading
         from .common.paths import AppPaths, resolve_root
         folder = AppPaths(resolve_root(root)).logs_dir
         folder.mkdir(parents=True, exist_ok=True)
@@ -617,11 +626,69 @@ def _watch_the_start(root: Any) -> Any:
         out.write(f"{APP_NAME} {__version__}: the start was not done {START_STUCK_SECONDS} s after "
                   f"{time.strftime('%Y-%m-%d %H:%M:%S')} - where every thread stood then:\n\n")
         out.flush()
-        faulthandler.dump_traceback_later(START_STUCK_SECONDS, repeat=False, file=out)
-        return out
+        timer = threading.Timer(START_STUCK_SECONDS, _write_every_thread, args=(out,))
+        timer.daemon = True
+        timer.name = "start-watch"
+        timer.start()
+        return (out, timer)
     except Exception:                        # never in the way of starting
         log.debug("the start could not be watched", exc_info=True)
         return None
+
+
+#: Kept open for the whole run: what faulthandler writes into if the process itself goes down.
+_CRASH_FILE: Any = None
+
+
+def _record_crashes(root: Any) -> None:
+    """A CRASH WRITTEN DOWN (the user, 2026-11-20: "你查一下" - Windows' own record held five crashes of the
+    application this month, the log not one: a crash of the process itself writes no log line). In a build with
+    the Debugger only, as the start's watch: faulthandler's handler for a fatal error or a fault - the Python
+    error's words and where every thread was - into the logs' crash.txt; the last run's, if it crashed, kept as
+    crash-<when>.txt and said in the log. The handler runs only as the process ends - unlike the start watch's
+    timed dump (`_watch_the_start`), it never reads a running thread."""
+    global _CRASH_FILE
+    try:
+        from .build_flags import debugger_available
+        if not debugger_available():
+            return
+        import faulthandler
+        from .common.paths import AppPaths, resolve_root
+        folder = AppPaths(resolve_root(root)).logs_dir
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / "crash.txt"
+        if path.exists():
+            said = path.read_text(encoding="utf-8", errors="replace")
+            if said.count("\n") > 1:                         # more than its first line: the last run crashed
+                kept = folder / f"crash-{time.strftime('%Y%m%d-%H%M%S', time.localtime(path.stat().st_mtime))}.txt"
+                path.replace(kept)
+                log.warning("the last run ended in a crash - what it said is in %s", kept)
+        _CRASH_FILE = open(path, "w", encoding="utf-8")
+        _CRASH_FILE.write(f"{APP_NAME} {__version__}, started {time.strftime('%Y-%m-%d %H:%M:%S')}, "
+                          f"process {os.getpid()}\n")
+        _CRASH_FILE.flush()
+        faulthandler.enable(file=_CRASH_FILE, all_threads=True)
+    except Exception:                        # never in the way of starting
+        log.debug("crashes could not be recorded", exc_info=True)
+
+
+def _write_every_thread(out: Any) -> None:
+    """Each thread's name and stack, most recent call last, written to the start's watch file."""
+    try:
+        import sys
+        import threading
+        import traceback
+        names = {one.ident: one.name for one in threading.enumerate()}
+        mine = threading.get_ident()
+        for ident, frame in sys._current_frames().items():
+            if ident == mine:
+                continue
+            out.write(f"Thread {names.get(ident, '?')} (0x{ident:08x}):\n")
+            out.write("".join(traceback.format_stack(frame)))
+            out.write("\n")
+        out.flush()
+    except Exception:                        # what was written stays
+        log.debug("the start's threads could not be written down", exc_info=True)
 
 
 def _started(stuck: Any) -> None:
@@ -629,11 +696,13 @@ def _started(stuck: Any) -> None:
     if stuck is None:
         return
     try:
-        import faulthandler
-        faulthandler.cancel_dump_traceback_later()
-        written = stuck.tell()
-        stuck.close()
-        path = Path(stuck.name)
+        out, timer = stuck
+        timer.cancel()
+        if timer.is_alive():
+            timer.join(5)                    # writing now: let it finish
+        written = out.tell()
+        out.close()
+        path = Path(out.name)
         if path.stat().st_size <= written and written < 400:
             path.unlink()                    # only its first line: nothing stood still
         else:
@@ -642,9 +711,37 @@ def _started(stuck: Any) -> None:
         log.debug("the start's watch could not be let go", exc_info=True)
 
 
+def _blas_one_thread() -> None:
+    """THE APPLICATION'S OWN SUMS ON ONE THREAD (the user, 2026-11-20: memory outside Python - "这3个要改"): numpy's
+    linear algebra sets up a worker and its buffers for every core (14 here) when it is first loaded, for the little
+    the application itself reckons (its avatar's picture, a few vectors). Loaded now with one, and the setting taken
+    off again - the children (the embedding model's process, a run's own code) keep every core."""
+    import os
+    names = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
+    before = {name: os.environ.get(name) for name in names}
+    try:
+        for name in names:
+            os.environ[name] = "1"
+        import numpy  # noqa: F401 - loaded here, with one thread, once
+    except Exception:
+        pass
+    finally:
+        for name, value in before.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
 def main(argv: list[str] | None = None) -> int:
     args_in = list(sys.argv[1:] if argv is None else argv)
     _certificates_carried()
+    # WHERE THE MEMORY WENT, WHEN ASKED (the Debugger's /api/debugger/memory, 2026-11-20): traced from the first moment
+    # when the program is started with PA_TRACEMALLOC=1 - slower, for a look, never by default.
+    import os
+    if str(os.environ.get("PA_TRACEMALLOC") or "").strip() == "1":     # cmd's "set X=1 && ..." keeps a space
+        import tracemalloc
+        tracemalloc.start(8)       # the calls that led there too (2026-11-20: one line said what, not whose)
 
     # Checked before anything else is imported or constructed.
     if args_in and args_in[0] == SCRIPT_RUNNER_FLAG:
@@ -696,6 +793,7 @@ def main(argv: list[str] | None = None) -> int:
         return serve(args_in[1] if len(args_in) > 1 else
                      "sentence-transformers/all-MiniLM-L6-v2")
 
+    _blas_one_thread()
     parser = argparse.ArgumentParser(prog="personalized-agent",
                                      description=f"{APP_NAME} {__version__}")
     parser.add_argument("--headless", action="store_true",
@@ -846,6 +944,7 @@ def main(argv: list[str] | None = None) -> int:
             guard.release()
             return 0
 
+    _record_crashes(args.root or args.data_dir)
     stuck = _watch_the_start(args.root or args.data_dir)
     try:
         application = AgentApplication(root=args.root or args.data_dir)

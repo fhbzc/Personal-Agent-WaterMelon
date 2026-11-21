@@ -23,6 +23,9 @@ import io
 import json
 import logging
 import re
+import threading
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -37,7 +40,75 @@ MOST_BYTES, MOST_SIDE = 12_000_000, 8000     # kept whole: its original, opened 
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
 #: How many choices a find gives, tried in turn.
 CHOICES_MOST = 4
-AGENT = "Mozilla/5.0 (personal agent; looking at one picture)"
+# WHO ASKS, AND WHERE TO READ ABOUT IT: Wikimedia and others answer a program that names itself and its page, and
+# refuse a nameless one sooner (the user saw 429s from upload.wikimedia.org, 2026-11-20).
+AGENT = "PersonalAgentWaterMelon/1.0 (a personal agent looking at one picture; +https://github.com/fhbzc/Personal-Agent-WaterMelon)"
+#: SITES THAT REFUSE EVERY PROGRAM (403 / 999 to any reader that is not a person's browser): never asked - a failure
+#: each time, and asking again and again is what they block (the user, 2026-11-20).
+REFUSING = ("linkedin.com", "facebook.com", "instagram.com", "x.com", "twitter.com", "tiktok.com", "threads.net",
+            "xiaohongshu.com", "zhihu.com", "weibo.com")
+#: A SITE ASKED AT MOST THIS OFTEN (seconds) - several pictures from one wiki no longer at once.
+SPACING = 2.0
+#: A SITE THAT SAID "TOO MANY" (429) or refused (403, 999) is left alone this long (seconds), or as long as it asked
+#: (Retry-After).
+HELD_TOO_MANY, HELD_REFUSED = 15 * 60, 6 * 3600
+_asked_at: Dict[str, float] = {}
+_held_until: Dict[str, float] = {}
+_hosts_lock = threading.Lock()
+
+
+def _host(url: str) -> str:
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def _refusing(host: str) -> bool:
+    return any(host == one or host.endswith("." + one) for one in REFUSING)
+
+
+def _ascii_address(url: str) -> str:
+    """AN ADDRESS AS IT CAN BE SENT: a name in any language as IDNA, and the path and query percent-encoded - what is
+    already encoded kept (a Chinese Wikipedia file name broke the read: "'ascii' codec can't encode", 2026-11-20)."""
+    parts = urllib.parse.urlsplit(url)
+    try:
+        host = parts.hostname.encode("idna").decode("ascii") if parts.hostname else ""
+    except UnicodeError:
+        host = parts.hostname or ""
+    netloc = host + (f":{parts.port}" if parts.port else "")
+    if parts.username:
+        netloc = parts.username + (f":{parts.password}" if parts.password else "") + "@" + netloc
+    keep = "/:@!$&'()*+,;=%~-._"
+    return urllib.parse.urlunsplit((parts.scheme, netloc, urllib.parse.quote(parts.path, safe=keep),
+                                    urllib.parse.quote(parts.query, safe=keep + "?"),
+                                    urllib.parse.quote(parts.fragment, safe=keep + "?")))
+
+
+def _wait_turn(host: str) -> bool:
+    """False when the site is being left alone; else waits its turn (SPACING) and takes it."""
+    with _hosts_lock:
+        now = time.time()
+        if _held_until.get(host, 0) > now:
+            return False
+        wait = _asked_at.get(host, 0) + SPACING - now
+        _asked_at[host] = max(now, _asked_at.get(host, 0) + SPACING)
+    if wait > 0:
+        time.sleep(wait)
+    return True
+
+
+def _hold(host: str, error: Exception) -> None:
+    code = getattr(error, "code", None)
+    if code not in (403, 429, 999):
+        return
+    seconds = HELD_TOO_MANY if code == 429 else HELD_REFUSED
+    try:
+        asked = int(str((getattr(error, "headers", None) or {}).get("Retry-After") or "0"))
+        if asked > 0:
+            seconds = min(max(asked, 60), 24 * 3600)
+    except (TypeError, ValueError):
+        pass
+    with _hosts_lock:
+        _held_until[host] = time.time() + seconds
 
 FIND_SYSTEM = """You find the picture for a thing in a small pixel world that pictures someone's work - shown when \
 they look at it closely. What the thing is ("what"), the card of their work it stands for ("card": its title, what is \
@@ -214,13 +285,20 @@ def _read(url: str, config: Any = None) -> Optional[tuple]:
     from ..common.privacy_folders import address_is_private
     if address_is_private(url, config):
         return None
+    host = _host(url)
+    if _refusing(host):
+        log.info("a picture's address not read at %s: the site refuses programs", host)
+        return None
+    if not _wait_turn(host):
+        log.info("a picture's address not read at %s: the site asked to be left alone for a while", host)
+        return None
     try:
-        request = urllib.request.Request(url, headers={"User-Agent": AGENT})
+        request = urllib.request.Request(_ascii_address(url), headers={"User-Agent": AGENT})
         with urllib.request.urlopen(request, timeout=20) as response:
             return response.read(MOST_BYTES), str(response.headers.get("Content-Type") or ""), response.geturl()
     except Exception as error:                         # why, for the log: refused (403), not found, too slow
-        log.info("a picture's address could not be read at %s: %s", urllib.parse.urlsplit(url).hostname,
-                 str(error)[:120])
+        _hold(host, error)
+        log.info("a picture's address could not be read at %s: %s", host, str(error)[:120])
         return None
 
 
@@ -282,7 +360,7 @@ def find(models: Any, what: str, look_for: str, theirs: List[Dict[str, Any]],
         response = models.invoke(ModelRequest(
             system=FIND_SYSTEM, task=TASK_FIND, max_tokens=1500, builtin_web=True, web_guard=guard,
             messages=[{"role": "user", "content": json.dumps(given, ensure_ascii=False)}],
-            language=in_english('"what" - an address kept exactly as it is')), role="primary")
+            language=in_english('"what" - an address kept exactly as it is')), role="fast_reply")   # the small model (2026-11-20)
         text, _cut = read_text(response)
         said = next(iter(json_objects(text or "")), {})
     except Exception:

@@ -1253,19 +1253,61 @@ _INTERNET_CLIENT = "S-1-15-3-1"
 _ALL_APP_PACKAGES = "S-1-15-2-1"
 
 
+#: AN INSTALLATION'S OWN IDENTITY (the user, 2026-11-20: "测试版改用自己的隔离身份，不和正式版互相覆盖。可以的"): a copy run
+#: from another data folder than the default (a test installation) names its folders' capabilities with that folder
+#: too - its grants its own, never taking off what the other copy granted, nor the other its own (two copies with other
+#: exclusions undid each other's at each start: 896 s of ACLs rewritten over the home, 2026-11-20). The default
+#: installation keeps the names it always had. Set once at start (set_identity).
+_IDENTITY = ""
+#: WHERE WHAT WAS GRANTED IS NOTED (set_identity): a grant made before with the same exclusions, its root still holding
+#: its entry, is not walked again.
+_GRANTS_NOTED: Optional[Path] = None
+
+
+def set_identity(own: str = "", noted: Optional[Path] = None) -> None:
+    """`own`: "" for the default installation, else its data folder; `noted`: a file for what was granted."""
+    global _IDENTITY, _GRANTS_NOTED
+    _IDENTITY = str(own or "")
+    _GRANTS_NOTED = noted
+
+
+def _named(key: str) -> str:
+    return f"{_IDENTITY}|{key}" if _IDENTITY else key
+
+
+def _noted() -> Dict[str, str]:
+    try:
+        said = json.loads(_GRANTS_NOTED.read_text(encoding="utf-8")) if _GRANTS_NOTED else {}
+        return said if isinstance(said, dict) else {}
+    except Exception:
+        return {}
+
+
+def _note(name: str, memo_key: str) -> None:
+    if _GRANTS_NOTED is None:
+        return
+    said = _noted()
+    said[name] = memo_key
+    try:
+        _GRANTS_NOTED.parent.mkdir(parents=True, exist_ok=True)
+        _GRANTS_NOTED.write_text(json.dumps(said), encoding="utf-8")
+    except OSError:
+        log.debug("what was granted could not be noted", exc_info=True)
+
+
 def run_container(root: Path) -> str:
     """The container a run's code runs in, named for the run's own folder
     (its first writable one): its processes reach each other on loopback,
     and no other run's (see the module's notes). Windows' limit on a name
     is 64 characters."""
-    digest = hashlib.sha256(_key(_real(root)).encode("utf-8")).hexdigest()[:24]
+    digest = hashlib.sha256(_named(_key(_real(root))).encode("utf-8")).hexdigest()[:24]
     return f"{APP_CONTAINER}.{digest}"
 
 
 def capability_name(kind: str, path: Path) -> str:
     """One capability per folder and kind of access: a child holds those of
     its own folders only."""
-    digest = hashlib.sha256(_key(_real(path)).encode("utf-8")).hexdigest()[:32]
+    digest = hashlib.sha256(_named(_key(_real(path))).encode("utf-8")).hexdigest()[:32]
     return f"{APP_CONTAINER}.{kind}.{digest}"
 
 
@@ -1319,6 +1361,15 @@ class _AppContainer:
         if not root.exists():
             return None
         mask = _MODIFY if kind == "Write" else _READ_EXECUTE
+        # THE SAME AS LAST TIME (the user, 2026-11-20: "权限没变就跳过"): granted with these exclusions before, and
+        # its root still holding the entry - not walked again.
+        memo_key = hashlib.sha256(json.dumps(memo[1]).encode("utf-8")).hexdigest()[:24]
+        try:
+            if _noted().get(name) == memo_key and api.has_access(str(root), sid, mask, root.is_dir()):
+                cls._granted.add(memo)
+                return sid
+        except Exception:
+            log.debug("whether a grant stands could not be read", exc_info=True)
         with cls._grant_lock:
             plan = grant_plan(root, excluded)
             for done, (path, whole) in enumerate(plan):
@@ -1336,6 +1387,7 @@ class _AppContainer:
                     continue
                 api.grant(str(path), sid, mask, inherit)
             cls._granted.add(memo)
+        _note(name, memo_key)
         return sid
 
     @classmethod

@@ -927,7 +927,14 @@ class QuickPanel:
         self._read_it(quiet=bool(self.sections))
 
     def _build(self) -> None:
+        # HOW LONG ITS WINDOW TOOK, AND HOW MUCH OF IT WAS WORK (2026-11-20: the window's thread stood still ~1 s here
+        # at every start, while a window alone is made in under 1 ms): busy for it all - work in Tk or Windows;
+        # busy for little of it - waiting (the interpreter's lock, or a message answered elsewhere).
+        began, busy = time.perf_counter(), time.thread_time()
         window = tk.Toplevel(self.root)
+        took, worked = time.perf_counter() - began, time.thread_time() - busy
+        if took > 0.3:
+            log.info("the %s panel's window took %.2fs to make, its thread busy %.2fs of it", self.title, took, worked)
         self.window = window
         borderless(window)
         window.attributes("-topmost", True)

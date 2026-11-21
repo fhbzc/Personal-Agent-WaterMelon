@@ -27,6 +27,7 @@ import json
 import logging
 import math
 import re
+import sys
 import statistics
 import threading
 import time
@@ -665,7 +666,9 @@ class Signals:
             for w in wanted:
                 mine = by_window.get(w.start, [])
                 kept[w.start] = window_items(mine, in_window.get(w.start, []), w, started_in)
-                seen[w.start] = screen_words(mine)
+                # COMPACT (2026-11-20, the memory looked at: 2,500 windows' word sets, 31 MB): a sorted tuple of words,
+                # each word kept once for all the windows (sys.intern) - made a set again only when one is placed.
+                seen[w.start] = tuple(sorted(sys.intern(word) for word in screen_words(mine)))
         here = {w.start for w in work}
         for start in [one for one in kept if one not in here]:
             del kept[start]                      # past the days looked at
@@ -815,7 +818,7 @@ class Signals:
         lead the next clearly: none is better than the wrong one."""
         if not bool(self.config.get("monitor_place_by_words", True) if self.config else True):
             return "", ""
-        scores = self._word_scores(items, seen or set())
+        scores = self._word_scores(items, set(seen) if seen else set())
         if not scores or scores[0][0] < WORDS_AT or (
                 len(scores) > 1 and scores[0][0] < WORDS_LEAD * scores[1][0]):
             return "", ""

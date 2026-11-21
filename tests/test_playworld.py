@@ -1529,7 +1529,10 @@ class LinesOnTheirOwnGroundTests(unittest.TestCase):
         self.assertEqual(said["ends"], [[1, 2], [17, 18]])
         self.assertIsNone(said["none"], "no water between: no way")
         source = (WEB / "play-act.js").read_text(encoding="utf-8")
-        self.assertIn('if (!leg && afloat) { line.none = true; break; }', source, "no water (or sky) between: none")
+        self.assertIn('if (!leg && (afloat || onRoad)) { line.none = true; break; }', source, "no water (or sky) between: none")
+        # 2026-11-20: "轮船要求一直在水里开" - out on open water first, off the banks; any water only where there is none.
+        self.assertIn("route = playWaterRoute(a, b, (x, y) => playOpenWater(x, y) || (x === b[0] && y === b[1]));", source)
+        self.assertIn("if (afloat) { if (!route) route = playWaterRoute(a, b, ok); }", source)
         # 2026-11-18: "你每个交通工具要有能运动的地方，比如轮船只能在水面，天空之船只能在云端".
         self.assertIn('line.kind === "airship" ? (x, y) => playIsSky(x, y)', source, "the airship in the sky only")
         self.assertIn("playSkyNear(one.heart[0], one.heart[1], one.region, side)", source)

@@ -691,6 +691,50 @@ def drag_left_edge_titled(titles: set, narrowest: int, widest: int, let_go: Any)
     return True
 
 
+def edge_strip_titled(titles: set, strip: int, outside: int) -> bool:
+    """THE EDGE TAKEN ON BOTH SIDES OF ITS LINE (the user, 2026-11-20: "我把鼠标放在白色线的中间，就应该变成缩放的形状"): the
+    window `strip` (a handle) set just left of the side panel's left edge, `outside` pixels wide at 96 dpi and as tall
+    as it, straight above it in the order of windows - so it covers no other window the panel is under. Measured and
+    set in the screen's own pixels, this thread put back as it was after. False when the panel is not shown (put
+    away, to its tab, or none): the strip is then hidden by its owner."""
+    if _no_windows_here() or sys.platform != "win32" or not strip:
+        return False
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    handle = _windows_page(set(titles))
+    if handle is None or not user32.IsWindowVisible(handle) or user32.IsIconic(handle) or _peeking(handle):
+        return False
+    user32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+    before = None
+    try:
+        before = user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))     # PER_MONITOR_AWARE_V2, for now
+        rect = wintypes.RECT()
+        user32.GetWindowRect(handle, ctypes.byref(rect))
+        try:
+            dpi = int(user32.GetDpiForWindow(handle)) or 96
+        except Exception:                                  # pragma: no cover - an older Windows
+            dpi = 96
+        wide = max(2, round(outside * dpi / 96))
+        if rect.left - wide < _monitor_box(handle)[0] - 1:
+            return False                                   # at its screen's left edge: nothing outside it to take
+        user32.GetWindow.restype = wintypes.HWND
+        above = user32.GetWindow(handle, 3)                # GW_HWNDPREV: what is just over the panel
+        if above == strip:
+            after = None                                   # already right over it
+        elif above:
+            after = above
+        else:
+            topmost = user32.GetWindowLongW(handle, -20) & 0x8                  # WS_EX_TOPMOST
+            after = wintypes.HWND(-1) if topmost else wintypes.HWND(0)
+        flags = 0x0010 | (0x0004 if after is None else 0)  # SWP_NOACTIVATE, SWP_NOZORDER when it is in place
+        user32.SetWindowPos(wintypes.HWND(strip), after, rect.left - wide, rect.top, wide, rect.bottom - rect.top, flags)
+        return True
+    finally:
+        if before:
+            user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(before))
+
+
 def dock_titled(titles: set, width: int, dock: Any) -> bool:
     """THE SIDE PANEL PINNED WHILE IT IS SHOWN (2026-11-16): the agent's window titled one of `titles` put into a
     strip `width` wide (at the screen's scaling) taken for it now, the other windows moved over. False when none is

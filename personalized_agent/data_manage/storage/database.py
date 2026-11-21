@@ -18,6 +18,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 
+#: Each connection's page cache, in kilobytes (database.connection).
+CACHE_KB = 512
+
 log = logging.getLogger(__name__)
 
 #: A WRITE HOLDING THE DATABASE THIS LONG IS SAID IN THE LOG, with what was doing it - in a build
@@ -55,6 +58,10 @@ class Database:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA foreign_keys=ON")
+            # A SMALL PAGE CACHE EACH (the user, 2026-11-20: memory - "这个可以的"): a connection for every thread that
+            # asks - fifty and more - each with SQLite's 2 MB cache; half a megabyte each, the operating system's own
+            # file cache below it all.
+            conn.execute(f"PRAGMA cache_size=-{CACHE_KB}")
             self._local.conn = conn
         return conn
 

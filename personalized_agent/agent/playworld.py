@@ -24,6 +24,7 @@ made and the days it comes from.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import math
 import logging
@@ -1318,6 +1319,10 @@ class PlayWorld:
             except Exception:
                 log.info("the world's ways could not be designed", exc_info=True)
             try:
+                self._design_crossings(at)               # the way from one map to the next (2026-11-20)
+            except Exception:
+                log.info("the way between the maps could not be designed", exc_info=True)
+            try:
                 self._civic(at)                          # a city's own buildings (2026-11-20)
             except Exception:
                 log.info("a city's own buildings could not be built", exc_info=True)
@@ -1457,7 +1462,7 @@ class PlayWorld:
             system=system, task=task, max_tokens=most, builtin_web=web,
             **({"web_guard": guard} if guard is not None else {}),
             messages=[{"role": "user", "content": content}],
-            language=in_language(shown, words) if shown else in_display(words)), role="primary")
+            language=in_language(shown, words) if shown else in_display(words)), role=role_of(task))
         text, _cut = read_text(response)
         return muse.json_of(text or "")
 
@@ -1611,7 +1616,7 @@ class PlayWorld:
                 found = self._call(muse.MUSE_SYSTEM.format(instruments=", ".join(INSTRUMENTS),
                                                            arrangements=", ".join(ARRANGEMENTS)),
                                    muse.TASK_MUSE, json.dumps(ask, ensure_ascii=False), 9000,
-                                   '"title", "lines", "why" and "design"', web=True)
+                                   '"name", "title", "lines", "why" and "design"', web=True)
                 read = muse.read_muses(found, name_of.values(), tune_of, drawn_pixels)
             except Exception:
                 log.info("the world's muses could not be found", exc_info=True)
@@ -1744,14 +1749,19 @@ class PlayWorld:
         # Indoors and open places each their own list (_room_fit: the 2 x 5 limit indoors only).
         hangings = "; ".join(f"{theme}: {', '.join(names)}" for theme, names in sorted(THEME_HANGINGS.items()))
         self._library = self._made_library()
+        # THE SAME INSTRUCTIONS FOR EVERY ROOM (the user, 2026-11-20: cache hits - "可以"): what never changes in them;
+        # the library, which grows as rooms are made, told with each room (_design_room) - a changed instruction was a
+        # cache missed, about 16k tokens written again each time.
         systems = {open_air: muse.ROOM_SYSTEM.format(wall_kinds=", ".join(sorted(wall_kinds)), kinds=self._room_kinds(open_air),
                                                      widgets=widgets.widgets_told(open_air), hangings=hangings)
-                   + "\n" + pieces.room_pieces_note(self._library) + "\n" + made_lib.room_made_note(self._library)
                    for open_air in (False, True)}
         mood = (world.get("moods") or [None])[-1]
         room_cards = self._room_cards(world, [z for z in rooms[:muse.ROOMS_MOST] if z not in again])
         done = 0
-        for zone in rooms[:muse.ROOMS_MOST]:
+        # THE ROOMS INDOORS TOGETHER, THEN THE OPEN PLACES (the same instructions back to back, their cache warm) -
+        # which rooms is still the longest tasks' first (ROOMS_MOST).
+        chosen = sorted(rooms[:muse.ROOMS_MOST], key=lambda z: not indoors(z))
+        for zone in chosen:
             # A FEW CARDS AT A TIME, TILL EVERY ONE IS IN (the user, 2026-11-19: "每个设计一次性只能输入N个卡片（N是有上限的），
             # 但是可以多次输入，最终把每个都弄好"; "N稍微小一点"): the room designed with its first CARDS_A_CALL, then each
             # next few added to the room as it stands - each its design and its look, never an answer too long to read.
@@ -1888,24 +1898,41 @@ class PlayWorld:
         most = great.GREAT_ANSWER_MOST if zone.get("great") else muse.ROOM_ANSWER_MOST
         if zone.get("great"):
             system = system + "\n" + GREAT_GROUND_NOTE
+        self._library = self._made_library()                # as it is now: what the rooms before made too
+        library = pieces.room_pieces_note(self._library) + "\n" + made_lib.room_made_note(self._library)
+        # A ROOM DESIGNED BEFORE, USED AGAIN (the user, 2026-11-20: "重画不从零开始 ... 那你改吧"): the world drawn again
+        # with this room the same - the same task, floor, cards and their state, its land's look and the language -
+        # takes the design it had (ROOM_DESIGNS_FILE), no call made; the world's own passes after (its look, its ways,
+        # its night) are made again over the whole of it.
+        key = "" if adding else self._design_key(world, zone, whose, rows, wall_width, ask)
+        kept = self._kept_design(key) if key else None
         try:
-            said = self._call(system, muse.TASK_ROOM, json.dumps(ask, ensure_ascii=False), most,
-                              '"idea", "name" and "why"')
-            self._make_asked(said, zone, ask.get("land_look") or "")    # what it asked to be made, made first
-            laid = read(said)
-            things = [{**one, "layer": layer} for layer, group in laid.items() for one in group]
-            things += [{**one, "layer": "wall" if (ITEM_KINDS.get(one["kind"]) or {}).get("wall") else "floor"}
-                       for one in staying if not one.get("on") and not one.get("hang")]
-            picture = muse.draw_room(rows, things, left, top, wall_width, self._room_size) if things else None
-            if picture is not None and (laid["floor"] or laid["wall"]):
-                again = self._call(muse.ROOM_LOOK_SYSTEM + "\n\n" + system, muse.TASK_ROOM_LOOK, [
-                    {"type": "text", "text": json.dumps({"your_design": said, "grid": rows,
-                                                         **({"adding": True} if adding else {})}, ensure_ascii=False)},
-                    {"type": "image", "source": {"type": "base64", **picture}}], most,
-                    '"idea", "looked", "name" and "why"')
-                better = read(again)
-                if better["floor"] or better["wall"]:
-                    said, laid = again, better
+            reused = read(kept) if kept else None
+            reused = reused if reused and (reused["floor"] or reused["wall"]) else None
+            if reused:
+                said, laid = kept, reused
+                log.info("a room designed before used again (%s): no call made", zone.get("kind"))
+            else:
+                said = self._call(system, muse.TASK_ROOM, json.dumps({**ask, "library_now": library}, ensure_ascii=False), most,
+                                  '"idea", "name", "why", "fun_fact" and "task_note"')
+                self._make_asked(said, zone, ask.get("land_look") or "")    # what it asked to be made, made first
+                laid = read(said)
+                things = [{**one, "layer": layer} for layer, group in laid.items() for one in group]
+                things += [{**one, "layer": "wall" if (ITEM_KINDS.get(one["kind"]) or {}).get("wall") else "floor"}
+                           for one in staying if not one.get("on") and not one.get("hang")]
+                picture = muse.draw_room(rows, things, left, top, wall_width, self._room_size) if things else None
+                if picture is not None and (laid["floor"] or laid["wall"]):
+                    again = self._call(system, muse.TASK_ROOM_LOOK, [
+                        {"type": "text", "text": json.dumps({"now_look_at_it": muse.ROOM_LOOK_SYSTEM, "library_now": library,
+                                                             "your_design": said, "grid": rows,
+                                                             **({"adding": True} if adding else {})}, ensure_ascii=False)},
+                        {"type": "image", "source": {"type": "base64", **picture}}], most,
+                        '"idea", "looked", "name", "why", "fun_fact" and "task_note"')
+                    better = read(again)
+                    if better["floor"] or better["wall"]:
+                        said, laid = again, better
+                if key and (laid["floor"] or laid["wall"]):
+                    self._keep_design(key, said)
         except Exception:
             log.info("a room of the world could not be designed", exc_info=True)
             return {}, None
@@ -1915,7 +1942,96 @@ class PlayWorld:
                                 for dy in range(fit(one["kind"])[1] if fit(one["kind"]) else 1)}}
         self._asked_pieces = getattr(self, "_asked_pieces", {})
         self._asked_pieces[zone["id"]] = pieces.read_asked(said, rows, left, top, claimed, pieces.pieces_allowed(len(floor)))
+        if reused:                                       # its pieces as they were built before: from the library
+            shelf = (self._library or {}).get("pieces") or {}
+            for one in self._asked_pieces[zone["id"]]:
+                what = " ".join(str(one.get("what") or "").split())[:300]
+                name = next((n for n, p in shelf.items() if what and p.get("description") == what
+                             and int(p.get("w") or 0) <= one["w"] and int(p.get("h") or 0) <= one["h"]), "")
+                if name and not one.get("use"):
+                    one["use"] = name
         return said, laid if (laid["floor"] or laid["wall"] or laid["on"] or laid["hang"] or laid["under"]) else None
+
+    def _design_key(self, world: Dict[str, Any], zone: Dict[str, Any], whose: Callable[[Dict[str, Any]], str],
+                    rows: List[str], wall_width: int, ask: Dict[str, Any]) -> str:
+        """What makes a room the same room when the world is drawn again: its task, kind and style, its floor as the
+        model is shown it, its cards and their state, its land's look and scene, the language - a hash of them."""
+        region = next((r for r in world.get("regions") or [] if r.get("id") == zone.get("region")), {})
+        same = {"task": whose(zone), "kind": zone.get("kind"), "style": zone.get("style"), "great": bool(zone.get("great")),
+                "grid": rows, "wall_width": wall_width,
+                "cards": sorted((str(c.get("id")), str(c.get("status"))) for c in ask.get("cards") or []),
+                "land": [region.get(k) for k in ("biome", "theme", "look", "palette", "architecture")],
+                "language": self._shown_language()}
+        return hashlib.sha1(json.dumps(same, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+    def minimap(self) -> Dict[str, Any]:
+        """The map's kept pictures (MINIMAP_FILE): {"v", "blocks": {key: [sig, url]}}."""
+        try:
+            said = json.loads((self.folder / MINIMAP_FILE).read_text(encoding="utf-8"))
+            if isinstance(said, dict) and isinstance(said.get("blocks"), dict):
+                return said
+        except Exception:
+            pass
+        return {"v": "", "blocks": {}}
+
+    def keep_minimap(self, version: str, blocks: Any, whole: Any = None) -> int:
+        """Blocks drawn anew kept with the rest - all let go when the drawing's version changed - and the whole map as
+        one picture with each block's mark (`whole`), put in place at once the next time. How many blocks."""
+        fresh = []
+        for one in blocks if isinstance(blocks, list) else []:
+            if (isinstance(one, list) and len(one) == 3 and all(isinstance(x, str) for x in one)
+                    and one[2].startswith("data:image/") and len(one[2]) <= MINIMAP_BLOCK_MOST and len(one[0]) <= 40):
+                fresh.append(one)
+        if not fresh:
+            return 0
+        with self._lock:
+            said = self.minimap()
+            kept = said["blocks"] if str(said.get("v")) == str(version) else {}
+            for key, sig, url in fresh:
+                kept.pop(key, None)
+                kept[key] = [sig, url]
+            while len(kept) > MINIMAP_BLOCKS_MOST:                # the oldest let go of
+                kept.pop(next(iter(kept)))
+            said_whole = said.get("whole") if str(said.get("v")) == str(version) else None
+            if (isinstance(whole, dict) and isinstance(whole.get("url"), str) and whole["url"].startswith("data:image/")
+                    and len(whole["url"]) <= MINIMAP_WHOLE_MOST and isinstance(whole.get("sigs"), dict)
+                    and all(isinstance(whole.get(k), (int, float)) for k in ("left", "top", "w", "h"))):
+                said_whole = {k: whole[k] for k in ("left", "top", "w", "h", "sigs", "url")}
+            try:
+                self.folder.mkdir(parents=True, exist_ok=True)
+                partial = self.folder / (MINIMAP_FILE + ".new")
+                partial.write_text(json.dumps({"v": str(version), "blocks": kept,
+                                               **({"whole": said_whole} if said_whole else {})}), encoding="utf-8")
+                partial.replace(self.folder / MINIMAP_FILE)
+            except OSError:
+                log.info("the map's pictures could not be kept", exc_info=True)
+                return 0
+        return len(fresh)
+
+    def _kept_design(self, key: str) -> Optional[Dict[str, Any]]:
+        try:
+            said = json.loads((self.folder / ROOM_DESIGNS_FILE).read_text(encoding="utf-8"))
+            one = (said.get(key) or {}).get("said") if isinstance(said, dict) else None
+            return one if isinstance(one, dict) else None
+        except Exception:
+            return None
+
+    def _keep_design(self, key: str, said: Dict[str, Any]) -> None:
+        with self._lock:
+            try:
+                kept = json.loads((self.folder / ROOM_DESIGNS_FILE).read_text(encoding="utf-8"))
+                kept = kept if isinstance(kept, dict) else {}
+            except Exception:
+                kept = {}
+            kept.pop(key, None)
+            kept[key] = {"said": said, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+            if len(kept) > ROOM_DESIGNS_MOST:                 # the oldest let go of
+                kept = dict(list(kept.items())[-ROOM_DESIGNS_MOST:])
+            try:
+                self.folder.mkdir(parents=True, exist_ok=True)
+                (self.folder / ROOM_DESIGNS_FILE).write_text(json.dumps(kept, ensure_ascii=False), encoding="utf-8")
+            except OSError:
+                log.info("a room's design could not be kept", exc_info=True)
 
     # -- each task's work as a tree of cards (playmuse; the user, 2026-11-19) ------------------------------------------
     def _trees_of(self, world: Dict[str, Any], tasks: List[str], at: str) -> Dict[str, List[Dict[str, Any]]]:
@@ -2828,6 +2944,109 @@ class PlayWorld:
             log.info("the lines' stations could not be built", exc_info=True)
         return True
 
+    #: A way between two maps not designed after this many tries is let be (the maps' airport still goes there).
+    CROSSING_TRIES_MOST = 3
+
+    def _design_crossings(self, at: str) -> int:
+        """THE WAY FROM ONE MAP TO THE NEXT (muse.CROSSING_SYSTEM; the user, 2026-11-20: "要有一个transition设计stage, 让模型
+        设计一个美观的，酷炫的，意想不到的到其它地图的入口（在另一个地图也有对应的入口）"): each map after the first, once,
+        joined to the map it is most tied to (else the one before it) by a pair of entrances - designed in one call,
+        each end then drawn and looked at as a great piece is (_crossing_end). Kept in world["crossings"] only when
+        both ends are drawn; tried CROSSING_TRIES_MOST times. How many were made now."""
+        with self._lock:
+            world = self.world()
+        lands = [r for r in world.get("regions") or [] if not r.get("closed") and not r.get("apart")]
+        areas = list(dict.fromkeys(regions.area_of(r) for r in lands))
+        if len(areas) < 2:
+            return 0
+        made = 0
+        for area in areas[1:]:
+            with self._lock:
+                world = self.world()
+            if any(one.get("to") == area for one in world.get("crossings") or []):
+                continue
+            if int((world.get("crossing_tries") or {}).get(area) or 0) >= self.CROSSING_TRIES_MOST:
+                continue
+            partner = self._crossing_partner(world, area, areas)
+            lands_a = [r for r in lands if regions.area_of(r) == partner]
+            lands_b = [r for r in lands if regions.area_of(r) == area]
+            shown = lambda r: {"id": r["id"], "name": r.get("name", ""), "scene": r.get("scene") or "",  # noqa: E731
+                               "biome": r.get("biome", ""), "palette": r.get("palette", ""),
+                               "places": [z.get("name", "") for z in world["zones"]
+                                          if z.get("region") == r["id"] and not z.get("plot")][:8]}
+            ids_a, ids_b = {r["id"] for r in lands_a}, {r["id"] for r in lands_b}
+            ties = [{k: t.get(k) for k in ("from", "to", "tie")} for t in world.get("commutes") or []
+                    if {t.get("from"), t.get("to")} & ids_a and {t.get("from"), t.get("to")} & ids_b]
+            plan = None
+            try:
+                said = self._call(muse.crossing_system(), muse.TASK_CROSSING,
+                                  json.dumps({"map_a": {"lands": [shown(r) for r in lands_a]},
+                                              "map_b": {"lands": [shown(r) for r in lands_b]}, "ties": ties},
+                                             ensure_ascii=False), 3000, '"name", "why", "what" and "going"')
+                plan = muse.read_crossing(said, lands_a, lands_b)
+            except Exception:
+                log.info("the way between two maps could not be designed", exc_info=True)
+            ends: List[Dict[str, Any]] = []
+            by_id = {r["id"]: r for r in lands}
+            for end in (plan or {}).get("ends") or []:
+                spec = self._crossing_end(end, by_id.get(end["land"]) or {})
+                if not spec:
+                    break
+                ends.append({"area": partner if end["map"] == "a" else area, "region": end["land"], "name": end["name"],
+                             "what": end["what"], "going": end["going"], "w": end["w"], "h": end["h"], "spec": spec})
+            with self._lock:
+                fresh = self.world()
+                if plan and len(ends) == 2:
+                    kept = fresh.setdefault("crossings", [])
+                    kept.append({"id": f"x{len(kept) + 1}", "from": partner, "to": area, "name": plan["name"],
+                                 "why": plan["why"], "made": at, "ends": ends})
+                    (fresh.get("crossing_tries") or {}).pop(area, None)
+                    made += 1
+                else:
+                    tries = fresh.setdefault("crossing_tries", {})
+                    tries[area] = int(tries.get(area) or 0) + 1
+                self.save(fresh)
+        return made
+
+    @staticmethod
+    def _crossing_partner(world: Dict[str, Any], area: str, areas: List[str]) -> str:
+        """The map a new one is joined to: the one its lands share the most days with (world["commutes"]), else the
+        one before it."""
+        where = {r["id"]: regions.area_of(r) for r in world.get("regions") or []}
+        score: Dict[str, float] = {}
+        for tie in world.get("commutes") or []:
+            a, b = where.get(str(tie.get("from"))), where.get(str(tie.get("to")))
+            for mine, other in ((a, b), (b, a)):
+                if mine == area and other and other != area:
+                    score[other] = score.get(other, 0.0) + float(tie.get("tie") or 0)
+        if score:
+            return max(score, key=lambda one: (score[one], -areas.index(one) if one in areas else 0))
+        return areas[max(0, areas.index(area) - 1)]
+
+    def _crossing_end(self, end: Dict[str, Any], region: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """ONE END OF THE WAY, DRAWN AS A GREAT PIECE IS (pieces.piece_svg_system, then looked at once): its picture kept
+        to what is safe (pieces.read_svg) - None when it could not be drawn."""
+        w, h = int(end["w"]), int(end["h"])
+        ask = {"what": f"{end['name']}: {end['what']} It is an entrance to another map of the world; going through it: "
+                       f"{end['going']}",
+               "w": w, "h": h,
+               "place": {"kind": "crossing", "name": end["name"], "land": region.get("biome", ""),
+                         "palette": region.get("palette", ""), "idea": end["what"]}, "work": {}}
+        system = pieces.piece_svg_system(w, h)
+        try:
+            said = self._call(system, pieces.TASK_PIECE, json.dumps(ask, ensure_ascii=False), 16000, '"name" and "why"')
+            drawn = pieces.read_svg(said, w, h)
+            picture = pieces.render_svg(drawn["svg"], w, h) if drawn else None
+            if picture is not None:
+                again = self._call(pieces.PIECE_SVG_LOOK_SYSTEM + "\n\n" + system, pieces.TASK_PIECE_LOOK, [
+                    {"type": "text", "text": json.dumps({"your_picture": drawn["svg"], **ask}, ensure_ascii=False)},
+                    {"type": "image", "source": {"type": "base64", **picture}}], 16000, '"name", "why" and "looked"')
+                drawn = pieces.read_svg(again, w, h) or drawn
+            return drawn
+        except Exception:
+            log.info("an end of the way between two maps could not be drawn", exc_info=True)
+            return None
+
     def _aesthetics(self, at: str) -> bool:
         """THE WORLD'S LOOKS AS A WHOLE (muse.AESTHETICS_SYSTEM; the user, 2026-11-20): after its ways, one call - where
         two lands meet and how wide, each road's edge and what stands beside it, each land's night - again only when
@@ -3020,7 +3239,13 @@ class PlayWorld:
         call passing its language on.)"""
         text = str(text or "")
         if code == "zh":
-            return bool(re.search(r"[A-Za-z]{2,}", text))
+            # MOSTLY CHINESE IS CHINESE (2026-11-20, the user: "我一开始就是中文呀，本来输出就让他是中文就行了"): a proper
+            # noun or two in Chinese words (WaterMelon, GitHub) is kept as it is, never sent to be put into Chinese - only
+            # words mostly in Latin letters, or three Latin words in a row ("Reading Club notes"), are.
+            if not re.search(r"[A-Za-z]{2,}", text):
+                return False
+            latin, han = len(re.findall(r"[A-Za-z]+", text)), len(re.findall(r"[\u4e00-\u9fff]", text))   # words, characters
+            return latin >= han or bool(re.search(r"[A-Za-z]+(?:[\s\-]+[A-Za-z]+){2,}", text))
         return bool(re.search(r"[㐀-鿿]", text))
 
     def translate_all(self, on_round: Optional[Callable[[], Any]] = None) -> int:
@@ -3063,7 +3288,9 @@ class PlayWorld:
             return 0
         with self._lock:
             world = self.world()
+        remembered = self._remembered_words(target)
         wanted: Dict[str, Dict[str, str]] = {}
+        known: Dict[str, Tuple[Dict[str, str], Dict[str, str]]] = {}
         for key, one in self._word_holders(world):
             if only is not None and key not in only:
                 continue
@@ -3074,43 +3301,93 @@ class PlayWorld:
             old = int(words.get("rule") or 0) < TRANSLATE_RULE
             need = {f: v for f, v in self._words_of(one).items() if self._not_in(v, target)
                     and (not have.get(f) or (old and self._not_in(have[f], target)))}
+            # PUT INTO IT BEFORE (TRANSLATED_FILE): the same words - a card's title in a world drawn again - never
+            # asked twice (2026-11-20: 134 calls in two days, the same titles in each new world).
+            before = {f: remembered[v] for f, v in need.items() if remembered.get(v)}
+            if before:
+                known[key] = ({f: need[f] for f in before}, before)
+            need = {f: v for f, v in need.items() if f not in before}
             if need:
                 wanted[key] = need
             if len(wanted) >= TRANSLATE_MOST:
                 break
+        done = 0
+        if known:
+            with self._lock:
+                world = self.world()
+                holders = dict(self._word_holders(world))
+                for key, (need, put) in known.items():
+                    done += self._put_words(holders.get(key), target, need, put)
+                if done:
+                    self.save(world)
         if not wanted:
-            return 0
+            return done
         try:
             said = self._call(TRANSLATE_SYSTEM.replace("@LANGUAGE@", TRANSLATE_LANGUAGES[target]), TASK_TRANSLATE,
                               json.dumps(wanted, ensure_ascii=False), 10000, "nothing")
         except Exception:
             log.info("the world's words could not be put in the language shown", exc_info=True)
-            return 0
-        done = 0
+            return done
+        learned: Dict[str, str] = {}
         with self._lock:
             world = self.world()
             holders = dict(self._word_holders(world))
+            put_now = 0
             for key, need in wanted.items():
-                one = holders.get(key)
                 given = said.get(key) if isinstance(said.get(key), dict) else None
-                now = self._words_of(one) if one is not None else {}
-                if given is None or any(now.get(f) != v for f, v in need.items()):
-                    continue                             # changed while it was asked: the next time
+                if given is None:
+                    continue
                 put = {f: " ".join(str(given.get(f) or "").split())[:WORD_MOST.get(f, 500)]
                        for f in need if str(given.get(f) or "").strip()}
                 if set(put) != set(need):
                     continue
-                words = one.setdefault("words", {})
-                words.setdefault(target, {}).update(put)
-                for f, v in need.items():                # what was written, kept in its own language - if it is one
-                    for code in TRANSLATE_LANGUAGES:
-                        if code != target and not self._not_in(v, code):
-                            words.setdefault(code, {})[f] = v
-                words["rule"] = TRANSLATE_RULE
-                done += 1
-            if done:
+                learned.update({need[f]: put[f] for f in need})
+                put_now += self._put_words(holders.get(key), target, need, put)
+            if put_now:
                 self.save(world)
-        return done
+        if learned:
+            self._remember_words(target, learned)
+        return done + put_now
+
+    def _put_words(self, one: Optional[Dict[str, Any]], target: str, need: Dict[str, str], put: Dict[str, str]) -> int:
+        """`put` (in `target`) kept beside what was written - 1 - unless the words changed meanwhile (0: the next time)."""
+        now = self._words_of(one) if one is not None else {}
+        if one is None or any(now.get(f) != v for f, v in need.items()):
+            return 0                                     # changed while it was asked: the next time
+        words = one.setdefault("words", {})
+        words.setdefault(target, {}).update(put)
+        for f, v in need.items():                        # what was written, kept in its own language - if it is one
+            for code in TRANSLATE_LANGUAGES:
+                if code != target and not self._not_in(v, code):
+                    words.setdefault(code, {})[f] = v
+        words["rule"] = TRANSLATE_RULE
+        return 1
+
+    def _remembered_words(self, target: str) -> Dict[str, str]:
+        """What was put into `target` before (TRANSLATED_FILE): the words as written -> as put into it."""
+        try:
+            said = json.loads((self.folder / TRANSLATED_FILE).read_text(encoding="utf-8"))
+            return dict(said.get(target) or {}) if isinstance(said, dict) else {}
+        except Exception:
+            return {}
+
+    def _remember_words(self, target: str, learned: Dict[str, str]) -> None:
+        with self._lock:
+            try:
+                said = json.loads((self.folder / TRANSLATED_FILE).read_text(encoding="utf-8"))
+                said = said if isinstance(said, dict) else {}
+            except Exception:
+                said = {}
+            mine = dict(said.get(target) or {})
+            mine.update(learned)
+            if len(mine) > TRANSLATED_MOST:                  # the oldest let go of
+                mine = dict(list(mine.items())[-TRANSLATED_MOST:])
+            said[target] = mine
+            try:
+                self.folder.mkdir(parents=True, exist_ok=True)
+                (self.folder / TRANSLATED_FILE).write_text(json.dumps(said, ensure_ascii=False), encoding="utf-8")
+            except OSError:
+                log.info("the words put into the language shown could not be kept", exc_info=True)
 
     @staticmethod
     def _word_holders(world: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
@@ -3129,7 +3406,8 @@ class PlayWorld:
         """What of a place, a thing, a land or a project is read: its name, its why, its room's idea, its concept's
         idea, its muses' design."""
         fields = {f: str(one[f]) for f in ("name", "why", "room_idea", "grounds_name", "summary", "floor_text", "card_title",
-                                           "news_text", "feeling", "to_them", "look", "task_note", "fun_fact")
+                                           "news_text", "feeling", "to_them", "look", "task_note", "fun_fact",
+                                           "task_title")   # a place's task, its title the user's own words (2026-11-20)
                   if isinstance(one.get(f), str) and one[f].strip()}
         if isinstance(one.get("concept"), dict) and str(one["concept"].get("idea") or "").strip():
             fields["idea"] = str(one["concept"]["idea"])
@@ -3421,7 +3699,7 @@ class PlayWorld:
                      "lands_the_world_has": sorted(set(lands)), "THEMES": tree,
                      "themes_used_before": dict(sorted((world.get("themes_used") or {}).items(),
                                                        key=lambda one: -int(one[1] or 0)))}, ensure_ascii=False)}],
-                language=in_language(self._play_code(), "nothing")), role="primary")
+                language=in_language(self._play_code(), "nothing")), role=role_of(TASK_THEMES))
             text, _cut = read_text(response)
             match = re.search(r"\{.*\}", text or "", re.DOTALL)
             said = (json.loads(match.group(0)) if match else {}).get("themes") or []
@@ -3494,7 +3772,7 @@ class PlayWorld:
                 messages=[{"role": "user", "content": json.dumps(
                     {"these_days": f"{since[:10]} to {until[:10]}", "what_they_lived_these_days": lived[:8000],
                      "who_they_are_now": about[:2000]}, ensure_ascii=False)}],
-                language=in_language(self._play_code(), "the searches")), role="primary")
+                language=in_language(self._play_code(), "the searches")), role=role_of(TASK_LOOK))
             text, _cut = read_text(response)
             match = re.search(r"\{.*\}", text or "", re.DOTALL)
             asked = (json.loads(match.group(0)) if match else {}).get("look_up") or []
@@ -5934,10 +6212,32 @@ TRANSLATE_RULE = 2          # 2: only proper nouns kept (2026-11-19) - what was 
 #: Rounds of it in one growth at most - all of the world's words, against a runaway.
 TRANSLATE_ROUNDS_MOST = 40
 WORD_MOST = {"name": 60, "grounds_name": 60, "why": 500, "room_idea": 300, "summary": 400, "idea": 400, "design": 600,
-             "floor_text": 12, "card_title": 80}
+             "floor_text": 12, "card_title": 80, "task_title": 120}
 TRANSLATE_SYSTEM = """You put the words of a small world that pictures the user's life into @LANGUAGE@ - the language the user has chosen to see it in. Each entry is a place, a thing, a land, a line or a project; its fields are as they were written, in another language. Write each field in @LANGUAGE@ ONLY, EXPLICITLY (the user, 2026-11-19: "生成标牌什么的时候，都要explicitly给language") - never two languages mixed in one, never a sign left as it was - in the same warm, personal voice, as a native writer would say it, not word for word. A "name" and a "grounds_name" go on a sign: at most 24 characters in English, 10 in Chinese, never cut off; a "floor_text" is painted on a floor: at most 12 letters in English, 6 characters in Chinese; a "card_title" names a piece of their work: a few words. ONLY A PROPER NOUN IS KEPT AS IT IS (the user, 2026-11-19: "只有英文专有名词才不翻译") - a brand, a product, an app, a site, a person's or a place's own name (WaterMelon, ChatGPT, Bilibili, StarCatalog); every other word is translated, a project's descriptive name too ("Personalized Agent (WaterMelon)" is "个性化智能体（WaterMelon）", "Reading Club" is "读书会"), and words of another language mixed in are put into @LANGUAGE@ as well. Answer with only JSON: {"<the entry's key>": {"<field>": "<in @LANGUAGE@>", ...}, ...} - every entry, every field."""
 #: The languages the world may be put into, as the model is told them.
 TRANSLATE_LANGUAGES = {"en": "English", "zh": "Simplified Chinese"}
+#: THE MAP'S PICTURES KEPT beside the world (PlayWorld.keep_minimap; play.js playMiniKept): this many blocks at most,
+#: each picture this long at most.
+MINIMAP_FILE, MINIMAP_BLOCKS_MOST, MINIMAP_BLOCK_MOST = "minimap.json", 4000, 400_000
+#: The whole map as one picture, this long at most.
+MINIMAP_WHOLE_MOST = 40_000_000
+#: EACH ROOM'S DESIGN KEPT beside the world (PlayWorld._keep_design), used again when the world is drawn again and
+#: the room is the same; this many rooms at most.
+ROOM_DESIGNS_FILE, ROOM_DESIGNS_MOST = "room_designs.json", 400
+#: WHAT WAS PUT INTO A LANGUAGE, REMEMBERED beside the world (PlayWorld._remembered_words) - kept when the world is
+#: drawn again - this many at most for each language.
+TRANSLATED_FILE, TRANSLATED_MOST = "translated.json", 30000
+#: THE SMALL MODEL FOR THE SHORT, JUDGING CALLS (the user, 2026-11-20: "适合换：翻译、找图、看图、选主题、心情、事件、看一眼
+#: ... 你可以试试"): put into the language shown, the picture found and looked at, the themes, the feeling of the days
+#: and its land, the month's events, the look of the days. The designs (rooms, pieces, materials, muses) stay on the
+#: large model.
+SMALL_TASKS = frozenset({"play_world_translate", "play_world_find", "play_world_find_look", "play_world_themes",
+                         "play_world_mood", "play_world_mood_scene", "play_world_events", "play_world_look"})
+
+
+def role_of(task: str) -> str:
+    """The model a Play call is made on: the small one ("fast_reply") for SMALL_TASKS, else the primary."""
+    return "fast_reply" if task in SMALL_TASKS else "primary"
 #: The work trees the world made for tasks without one, kept beside the world (PlayWorld._kept_trees).
 TREES_FILE = "trees.json"
 #: How many projects' muses are looked for in one growth; how many kinds a room's design is offered.

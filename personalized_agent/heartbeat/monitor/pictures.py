@@ -16,6 +16,7 @@ import ipaddress
 import logging
 import socket
 import time
+import urllib.error
 import urllib.parse
 from pathlib import Path
 from typing import Any, Callable, Optional, Tuple
@@ -93,9 +94,19 @@ def keep(folder: Optional[Path], image: str, page: str, refused: Callable[[str],
         if not address or not allowed(address):
             return ""
         return _kept(Path(folder), get(address)[0])
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
+        # A SITE THAT SAYS NO (403, 404, a timeout, too large): an everyday answer of the web, not a fault - one line,
+        # no traceback (the user saw "HTTP Error 403: Forbidden" with its whole stack, 2026-11-20).
+        log.info("a notification's picture could not be had (%s): %s", _host(image if image != OF_THE_PAGE else page),
+                 getattr(error, "code", None) or type(error).__name__)
+        return ""
     except Exception:
         log.info("a notification's picture could not be had", exc_info=True)
         return ""
+
+
+def _host(address: str) -> str:
+    return urllib.parse.urlparse(str(address or "")).netloc or "?"
 
 
 __all__ = ["OF_THE_PAGE", "is_public", "keep"]

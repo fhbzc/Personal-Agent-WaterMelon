@@ -389,6 +389,7 @@ function playSoundRoomNow(zone) {
 }
 
 /* Notes scheduled a little ahead, in time - the melody over its bass, each an eighth note. */
+const PLAY_MUSIC_AHEAD = 1.5;
 function playSoundAhead() {
   playSoundSettle();
   if (typeof playHeard === "function" && performance.now() - (playSound.heardAt || 0) > 250) {
@@ -401,6 +402,8 @@ function playSoundAhead() {
   const melody = tune.melody.split(" "), bass = tune.bass.split(" ").filter((one) => one !== "-");
   const eighth = 30 / tune.tempo;
   if (playSound.next < ctx.currentTime - 0.2) playSound.next = ctx.currentTime + 0.05;
+  // FAR AHEAD (the user, 2026-11-20: "音乐在view最大的时候一卡一卡的"): 0.4 s ahead, a page held a little longer than
+  // that left a gap; notes are set PLAY_MUSIC_AHEAD s ahead now - the sound card plays them on its own.
   // A chord on each bass note: its root, third (by the mode), fifth and octave, an octave or two up.
   const chordOf = (root) => {
     const f = playFrequency(root);
@@ -408,7 +411,7 @@ function playSoundAhead() {
     return [1, 2 ** (third / 12), 2 ** (7 / 12), 2].map((k) => f * 2 * k);
   };
   const bar = ["waltz", "lullaby", "folk"].includes(tune.style) ? 6 : 8;    // a bass note lasts a bar
-  while (playSound.next < ctx.currentTime + 0.4) {
+  while (playSound.next < ctx.currentTime + PLAY_MUSIC_AHEAD) {
     const i = playSound.index, at = playSound.next;
     const note = melody[i % melody.length];
     if (note !== "-") playInstrument(tune.instrument, playFrequency(note), at, eighth * 1.6, 0.11);

@@ -1614,6 +1614,141 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             raise ApiError("no such call", 404)
         return said
 
+    @route("GET", "/api/debugger/memory")
+    def memory_debugger(request: Any) -> Any:
+        """WHAT HOLDS THE PROGRAM'S MEMORY (the user, 2026-11-20: "主进程 900MB ... 继续分析"): the process's own figures;
+        the live objects by type, how many and their own size; the largest collections and whose attribute holds them;
+        with the program started under PA_TRACEMALLOC=1, the lines that allocated the most. Types, counts, sizes and
+        names only - never what any of it holds. The Debugger's alone."""
+        import gc
+        import os
+        import threading
+        import tracemalloc
+        from collections import Counter
+
+        out: Dict[str, Any] = {}
+        try:
+            import psutil
+            info = psutil.Process().memory_full_info()
+            out["process_mb"] = {k: round(v / 2 ** 20) for k, v in info._asdict().items()
+                                 if k in ("rss", "private", "uss", "peak_wset", "vms")}
+        except Exception as exc:
+            out["process_mb"] = {"error": str(exc)}
+        counts, sizes = Counter(), Counter()
+        big, big_ids = [], set()
+        for one in gc.get_objects():
+            kind = type(one)
+            name = f"{kind.__module__}.{kind.__qualname__}"
+            counts[name] += 1
+            try:
+                sizes[name] += sys.getsizeof(one)
+            except Exception:
+                pass
+            # A dict or a list of strings and numbers only is not tracked by gc: found through what holds it.
+            for part in [one, *(gc.get_referents(one) if kind is not type(sys) else [])]:
+                if type(part) in (dict, list, set) and len(part) >= 20000 and id(part) not in big_ids:
+                    big_ids.add(id(part))
+                    big.append(part)
+        out["types"] = [{"type": name, "count": counts[name], "own_mb": round(size / 2 ** 20, 1)}
+                        for name, size in sizes.most_common(40)]
+        held = []
+        for one in sorted(big, key=len, reverse=True)[:12]:
+            owners = []
+            for ref in gc.get_referrers(one):
+                if isinstance(ref, dict):                 # an object's __dict__, a module's globals: the attribute's name
+                    names = [k for k, v in ref.items() if v is one and isinstance(k, str)][:2]
+                    holder = next((o for o in gc.get_referrers(ref) if getattr(o, "__dict__", None) is ref), None)
+                    where = (f"{type(holder).__module__}.{type(holder).__qualname__}" if holder is not None
+                             else ref.get("__name__", "a dict") if isinstance(ref.get("__name__"), str) else "a dict")
+                    owners += [f"{where}.{n}" for n in names] or [where]
+                elif not isinstance(ref, (list, type(sys._getframe()))):
+                    owners.append(f"{type(ref).__module__}.{type(ref).__qualname__}")
+            held.append({"type": type(one).__name__, "length": len(one), "held_by": owners[:4]})
+        out["largest_collections"] = held
+        # THE SETS AND LISTS, BY WHO HOLDS THEM - A SAMPLE (2026-11-20: grouped for every one, the look took over 25
+        # minutes inside the application and held its threads; now twenty of each kind, chosen evenly, each its holder
+        # found by gc.get_referrers - a few seconds each - and named by class and attribute only, never a plain
+        # dict's key, which may be the user's).
+        # ONLY WHEN ASKED (?holders=1): even sampled, inside a busy application it ran past fifteen minutes and held its
+        # threads (2026-11-20) - not done by default.
+        import random
+        name = lambda x: f"{type(x).__module__}.{type(x).__qualname__}"   # noqa: E731
+
+        def holder_of(child: Any) -> str:
+            for ref in gc.get_referrers(child):
+                if ref is child or isinstance(ref, (type(sys._getframe()),)):
+                    continue
+                if isinstance(ref, dict):
+                    up = next((o for o in gc.get_referrers(ref) if getattr(o, "__dict__", None) is ref), None)
+                    if up is not None:
+                        keys = [k for k, v in ref.items() if v is child and isinstance(k, str)][:1]
+                        return f"{name(up)}.{keys[0] if keys else '?'}"
+                    if isinstance(ref.get("__name__"), str):
+                        return f"module {ref['__name__']}"
+                    outer = next((o for o in gc.get_referrers(ref) if isinstance(o, dict) and o is not ref), None)
+                    if outer is not None:
+                        top = next((o for o in gc.get_referrers(outer) if getattr(o, "__dict__", None) is outer), None)
+                        if top is not None:
+                            keys = [k for k, v in outer.items() if v is ref and isinstance(k, str)][:1]
+                            return f"a dict in {name(top)}.{keys[0] if keys else '?'}"
+                    return "a dict"
+                if isinstance(ref, list) and len(ref) > 1000:
+                    return f"a list of {len(ref)}"
+                return name(ref)
+            return "nothing found"
+        sampled: Dict[str, List[float]] = {}
+        for kind in ((set, list) if str(request.get("holders") or "") == "1" else ()):
+            ones = [o for o in gc.get_objects() if type(o) is kind and len(o) >= 50]
+            total = sum(sys.getsizeof(o) for o in ones)
+            for one in random.Random(7).sample(ones, min(20, len(ones))):
+                key = f"{kind.__name__} held by {holder_of(one)}"
+                entry = sampled.setdefault(key, [0, 0.0])
+                entry[0] += 1
+                entry[1] += total / max(1, min(20, len(ones)))          # each sampled one stands for its share
+        out["held_by_holder"] = [{"what": key, "of_20_sampled": n, "about_mb": round(mb / 2 ** 20, 1)}
+                                 for key, (n, mb) in sorted(sampled.items(), key=lambda kv: -kv[1][1])]
+        # TEXT AND BYTES, NOT TRACKED BY gc: found through what holds them - their total by type, and the largest
+        # with whose they are (sizes and names only).
+        flat, flat_ids, largest = Counter(), set(), []
+        for one in gc.get_objects():
+            for part in gc.get_referents(one):
+                if type(part) in (str, bytes, bytearray, memoryview) and id(part) not in flat_ids:
+                    flat_ids.add(id(part))
+                    size = sys.getsizeof(part)
+                    flat[type(part).__name__] += size
+                    if size >= 1_000_000:
+                        largest.append((size, type(part).__name__, one))
+        out["text_and_bytes_mb"] = {k: round(v / 2 ** 20, 1) for k, v in flat.items()}
+        out["largest_text_and_bytes"] = []
+        for size, name, holder in sorted(largest, key=lambda x: -x[0])[:12]:
+            where = f"{type(holder).__module__}.{type(holder).__qualname__}"
+            if isinstance(holder, dict):
+                owner = next((o for o in gc.get_referrers(holder) if getattr(o, "__dict__", None) is holder), None)
+                keys = [k for k, v in holder.items() if isinstance(k, str) and type(v).__name__ == name
+                        and sys.getsizeof(v) == size][:1]
+                if owner is not None:
+                    where = f"{type(owner).__module__}.{type(owner).__qualname__}.{keys[0] if keys else '?'}"
+            out["largest_text_and_bytes"].append({"type": name, "mb": round(size / 2 ** 20, 1), "held_by": where})
+        out["python_blocks"] = sys.getallocatedblocks()
+        out["threads"] = threading.active_count()
+        if tracemalloc.is_tracing():
+            snapshot = tracemalloc.take_snapshot().filter_traces(
+                (tracemalloc.Filter(False, tracemalloc.__file__), tracemalloc.Filter(False, __file__)))
+            top = snapshot.statistics("lineno")[:30]
+            out["allocated_by_line"] = [{"where": f"{s.traceback[0].filename}:{s.traceback[0].lineno}",
+                                         "mb": round(s.size / 2 ** 20, 1), "blocks": s.count} for s in top]
+            # WHOSE (2026-11-20): the largest by the chain of calls that made them - the application's own frames.
+            mine = "personalized_agent"
+            out["allocated_by_calls"] = [
+                {"mb": round(s.size / 2 ** 20, 1), "blocks": s.count,
+                 "calls": [f"{os.path.basename(f.filename)}:{f.lineno}" for f in s.traceback if mine in f.filename][:6]
+                 or [f"{os.path.basename(s.traceback[0].filename)}:{s.traceback[0].lineno}"]}
+                for s in snapshot.filter_traces([tracemalloc.Filter(True, one.traceback[0].filename, one.traceback[0].lineno)
+                                                 for one in top[:6]]).statistics("traceback")[:20]]   # the top lines' only: fast
+        else:
+            out["allocated_by_line"] = "start the program with PA_TRACEMALLOC=1 to see where it was allocated"
+        return out
+
     @route("GET", "/api/debugger/states")
     def states(request: Any) -> Any:
         """Section 34.1, as amended: states are internal, and shown here only.
@@ -4728,6 +4863,22 @@ def build_routes(app: Any) -> Dict[Tuple[str, str], Callable[[Any], Any]]:
             return {"error": "Cutting out the screen needs the desktop app."}
         snip()
         return {"started": True}
+
+    @route("GET", "/api/play/minimap")
+    def play_minimap(request: Any) -> Any:
+        """THE MAP'S PICTURES, KEPT BESIDE THE WORLD (play.js playMiniKept; the user, 2026-11-20): each block's picture
+        and what made it - {"v", "blocks": {key: [sig, url]}}."""
+        world = getattr(app, "play_world", None)
+        return world.minimap() if world is not None else {"v": "", "blocks": {}}
+
+    @route("POST", "/api/play/minimap")
+    def play_minimap_keep(request: Any) -> Any:
+        """Blocks drawn anew, kept with the rest (playMiniKeep): {"v", "blocks": [[key, sig, url], ...]}."""
+        world = getattr(app, "play_world", None)
+        if world is None:
+            return {"kept": 0}
+        return {"kept": world.keep_minimap(str(request.get("v") or ""), request.get("blocks") or [],
+                                           request.get("whole"))}
 
     @route("POST", "/api/play/translate")
     def play_translate(request: Any) -> Any:

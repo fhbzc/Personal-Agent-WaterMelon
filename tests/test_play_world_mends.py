@@ -248,8 +248,13 @@ class TheSidePanelTests(unittest.TestCase):
 
     def test_its_edge_is_taken_where_it_is_seen_whatever_the_zoom(self) -> None:
         css = (WEB / "styles.css").read_text(encoding="utf-8")
-        self.assertIn(".side-grip { position: fixed; left: 0; top: 0; bottom: 0; width: calc(12px / var(--side-zoom, 1));",
+        self.assertIn(".side-grip { position: fixed; left: 0; top: 0; bottom: 0; width: calc(3px / var(--side-zoom, 1));",
                       css)
+        # 2026-11-20: "放在白色线的中间，就应该变成缩放的形状" - as far again outside the line, a strip of the desktop's own
+        desktop = (support.ROOT / "personalized_agent" / "ui" / "desktop.py").read_text(encoding="utf-8")
+        self.assertIn("SIDE_EDGE_OUTSIDE = 3", desktop)
+        self.assertIn("app_window.edge_strip_titled(self._notes_titles(), handle, self.SIDE_EDGE_OUTSIDE)", desktop)
+        self.assertIn('strip.bind("<ButtonPress-1>", lambda _event: DesktopAgent._side_edge_pressed(self))', desktop)
 
 
 class ANewFeelingOpensANewLandTests(unittest.TestCase):
@@ -354,9 +359,117 @@ class StationsAndPlacesTests(unittest.TestCase):
         self.assertEqual(zh["Take the {0}, get off at {1}"], "乘{0}，在{1}下车")
         self.assertIn("air", pw.PlayWorld.STATION_OF)
 
-    def test_outside_the_road_of_their_life_has_arrows_and_denser_signs(self) -> None:
+    def test_a_bus_keeps_to_the_roads(self) -> None:
+        # The user, 2026-11-20: buses ran the way a plane flies - every bus on the roads alone, or none.
+        act = (WEB / "play-act.js").read_text(encoding="utf-8")
+        self.assertIn("function playRoadRoute(paths, a, b)", act)
+        self.assertIn("function playRoadNear(paths, hx, hy)", act)
+        # 2026-11-20: "我说的路不是能走的地面，而是真的道路" - streets: wide and paved.
+        self.assertIn("route = playRoadRoute(streets, a, b);", act)
+        self.assertIn("onRoad ? (x, y) => streets.has(`${x},${y}`)", act)
+        self.assertIn('const PLAY_PAVED = new Set(["asphalt", "paving", "pavement2", "cobble", "cobble2", "stone"]);', act)
+        self.assertNotIn("if (!one.wide) continue;", act, "a tile wide is a street too, paved")
+        self.assertIn("if (!leg && (afloat || onRoad)) { line.none = true; break; }", act)
+
+    def test_each_road_its_edge_and_the_play_button_its_switch(self) -> None:
+        # 2026-11-20: "还是一团" - a road told from paved ground; "play 的按钮要根据是否on /off 变色".
+        play = (WEB / "play.js").read_text(encoding="utf-8")
+        self.assertIn('if (apart(wx, wy - 1)) context.fillRect(tx * 16, ty * 16, 16, 2);', play)
+        self.assertIn('return !there || (there.material || "") !== (here.material || "");', play, "two roads apart too")
+        self.assertIn('button?.setAttribute("data-power", playPowered() ? "on" : "off");', play)
+        css = (WEB / "styles.css").read_text(encoding="utf-8")
+        self.assertIn('#side-play-open[data-power="on"] { color: #3fb950; }', css)
+        self.assertIn('#side-play-open[data-power="off"]', css)
+
+    def test_no_fringe_on_a_road_dragging_lays_nothing_a_bus_turns_square(self) -> None:
+        # 2026-11-20: a jagged strip beside a road; "view很大的时候 ... 拖动还是卡"; "bus ... 应该是拐直角弯的".
+        regions = (WEB / "play-regions.js").read_text(encoding="utf-8")
+        self.assertIn("      if (paths.has(`${x},${y}`)) continue;\n      for (let dy = 0; dy < w; dy += 1) {", regions)
+        play = (WEB / "play.js").read_text(encoding="utf-8")
+        self.assertIn("const moving = playMoving() || (play.lastLook && performance.now() - play.lastLook < 400);", play)
+        act = (WEB / "play-act.js").read_text(encoding="utf-8")
+        self.assertIn("leg = onRoad ? playSquareLeg(leg) :", act)
+        self.assertIn('if (ok && line.kind !== "road") pts.splice(0, pts.length, ...playRounded(pts, ok));', act)
+
+    def test_roads_one_or_apart_never_glued(self) -> None:
+        # 2026-11-20: "路都黏在一块了"; "你的路的seperation能不能clean, 你现在几条路放一起就和一条路一样".
+        regions = (WEB / "play-regions.js").read_text(encoding="utf-8")
+        self.assertIn("const PLAY_ROAD_BESIDE = 4;", regions)
+        self.assertIn("(paths && paths.beside && paths.beside.has(key) ? PLAY_ROAD_BESIDE : 0)", regions)
+        self.assertIn("paths.beside = paths.beside || new Set();", regions)
+
+    def test_a_hall_on_a_great_ground_is_the_place_one_is_in(self) -> None:
+        # 2026-11-20: "这个房间里的东西好像没法交互" - the ground, found first, was taken for where one stood.
+        play = (WEB / "play.js").read_text(encoding="utf-8")
+        self.assertIn("if (tx >= fx && tx < fx + fw && ty >= fy && ty < fy + fh && fw * fh < zoneArea) { zone = one; zoneArea = fw * fh; }", play)
+        self.assertNotIn("const zone = play.world.zones.find((one) => {", play)
+
+    def test_the_view_follows_every_ride(self) -> None:
+        # 2026-11-20: "有些交通工具，agent坐上去了之后，没有自动追踪agent的位置".
+        play = (WEB / "play.js").read_text(encoding="utf-8")
+        act = (WEB / "play-act.js").read_text(encoding="utf-8")
+        self.assertIn("play.me.x = p.x; play.me.y = p.y;\n        if (typeof playActMeOn", play, "a drawn track's car carries the walker")
+        self.assertEqual(play.count("play.lookAt = null;                        // the view on the walker again"), 2)
+        self.assertIn("  play.lookAt = null;\n  if (play.pan) play.pan.clear();", act)
+
+    def test_zoomed_out_the_land_holds_still(self) -> None:
+        # 2026-11-20: "view很大的时候(比如1/2个world), 整个地图很卡" - the motion layer 43 of 55 ms a frame at a half.
+        play = (WEB / "play.js").read_text(encoding="utf-8")
+        self.assertIn("if (scale >= 1) layer(\"motion\", () => playMotionDraw(size, c0, c1, r0, r1));", play)
+        self.assertIn("else play.motionSeen = false;", play)
+
+    def test_the_view_moves_faster_with_shift(self) -> None:
+        # 2026-11-20: "wasd 移动view的时候按住shift也可以加速".
+        play = (WEB / "play.js").read_text(encoding="utf-8")
+        self.assertIn("const speed = PLAY_PAN_SPEED * (play.running ? PLAY_PAN_FAST : 1)", play)
+        self.assertIn("play.running = event.shiftKey;", play)
+
+    def test_signs_lifted_once_for_the_world_not_each_frame(self) -> None:
+        # 2026-11-20: "这里四个牌子我移动view的时候会不停闪"; "上下移动会闪，左右不会".
+        play = (WEB / "play.js").read_text(encoding="utf-8")
+        self.assertIn("if (!play.signLifts || play.signLifts.key !== sizeKey || play.signLifts.signs !== signs) {", play)
+        self.assertIn("const all = signs.map((sign) => ({ sign, x: Math.round(sign.at[0] * size), y: Math.round(sign.at[1] * size) }))", play)
+
+    def test_play_switched_off_loads_nothing_and_is_dark(self) -> None:
+        # 2026-11-20: "play要有一个开关 ... 关掉，这样play就不加载，不占资源，我切换play panel就是全黑的".
+        play = (WEB / "play.js").read_text(encoding="utf-8")
+        self.assertIn('if (play.off) { playNote("opened switched off: nothing loaded"); return; }', play)
+        self.assertLess(play.index('if (play.off) { playNote("opened switched off'), play.index("await playLoadSheets();"),
+                        "off: returns before anything is loaded")
+        self.assertIn("function playUnload() {", play)
+        self.assertIn("if (!play.on || play.off || !play.map || !play.ctx) return;", play)
+        self.assertIn('data-play-power', play)
+        css = (WEB / "styles.css").read_text(encoding="utf-8")
+        # 2026-11-20: "你这个按钮和原来关机的放在一个位置不就行了" - the one switch, in its place, on the dark.
+        self.assertIn(".side-play.off .side-play-zoom > :not([data-play-power]) { display: none !important; }", css)
+        self.assertNotIn("side-play-power-on", play)
+        zh = json.loads((WEB / "lang" / "zh.json").read_text(encoding="utf-8"))
+        self.assertEqual(zh["Turn Play on"], "打开 Play")
+
+    def test_clouds_birds_and_motes_stay_where_they_are_in_the_world(self) -> None:
+        # 2026-11-20: "你这些云是根据view算的（包括飞鸟也是）我移动view 云也会跟着移".
+        play = (WEB / "play.js").read_text(encoding="utf-8")
+        self.assertIn("const ax = playHash(gx, gy, 500 + k) * P, ay = playHash(gx, gy, 600 + k) * P;", play)
+        self.assertIn('if (biome !== "skycity") return;', play)
+        self.assertNotIn("cx = x0 - 6 + ((k * 13.7", play, "no cloud placed by the view")
+        act = (WEB / "play-act.js").read_text(encoding="utf-8")
+        self.assertIn("const [fx, fy] = playActScreen((flock.x || 0) + gone, flock.y || 0);", act)
+        self.assertNotIn("flock.y * canvas.height", act, "no bird placed by the screen")
+
+    def test_arrows_dense_each_way_its_own_colour(self) -> None:
+        # 2026-11-20: "道路地上的箭头可以密集一点，并且不同path用不同颜色，我刚刚说的不密只是说牌子不密".
+        play = (WEB / "play.js").read_text(encoding="utf-8")
+        self.assertIn("for (let k = 1; k < path.length - 1; k += 2) {", play)
+        self.assertIn("for (let k = 2; k < path.length - 2; k += 3) {", play)
+        self.assertIn("ctx.fillStyle = PLAY_ARROW_COLOURS[(one.c || 0) % PLAY_ARROW_COLOURS.length];", play)
+        self.assertIn("if (taken.has(`${x},${y}`)) return;", play)
+
+    def test_outside_the_road_of_their_life_has_arrows_and_sparser_signs(self) -> None:
         regions_js = (WEB / "play-regions.js").read_text(encoding="utf-8")
-        self.assertIn("const PLAY_POST_EVERY = 10, PLAY_POST_APART = 5;", regions_js)
+        # Sparser (the user, 2026-11-20): the post by the place a road leads to first, then one every 24 tiles.
+        self.assertIn("const PLAY_POST_EVERY = 24, PLAY_POST_APART = 10;", regions_js)
+        self.assertLess(regions_js.index("postBeside(route, route.length - 3, one, from);"),
+                        regions_js.index("for (let k = 12; k < route.length - 12; k += PLAY_POST_EVERY)"))
         self.assertIn("return { order, follows, posts, routes };", regions_js)
         play = (WEB / "play.js").read_text(encoding="utf-8")
         self.assertIn("for (const path of (map.life && map.life.routes) || [])", play)
@@ -433,6 +546,203 @@ class TheLandMovesTests(unittest.TestCase):
         regions_js = (WEB / "play-regions.js").read_text(encoding="utf-8")
         self.assertIn('waterFresh: ["rpg", 0, 0], waterFresh2: ["rpg", 1, 0],', regions_js)
         self.assertIn("!sea[i] && !shore[i] && !rim[i]", regions_js, "a river on its land only")
+
+
+class PictureAddressesTest(unittest.TestCase):
+    """Play's picture reader (2026-11-20): an address in any language is sent encoded; sites that refuse every
+    program are never asked; a site that said "too many" or refused is left alone a while; one site asked at most
+    every SPACING seconds."""
+
+    def setUp(self) -> None:
+        playfind._held_until.clear()
+        playfind._asked_at.clear()
+
+    def test_an_address_in_another_language_is_sent_encoded(self) -> None:
+        self.assertEqual(playfind._ascii_address("https://zh.example.org/wiki/File:西瓜.jpg?q=中&r=%E4%B8%AD"),
+                         "https://zh.example.org/wiki/File:%E8%A5%BF%E7%93%9C.jpg?q=%E4%B8%AD&r=%E4%B8%AD")
+        self.assertTrue(playfind._ascii_address("https://例子.example/路").startswith("https://xn--"))
+
+    def test_refusing_sites_never_asked_and_a_429_holds_the_site(self) -> None:
+        sent = []
+
+        def refuse(request, timeout=0):
+            sent.append(request.full_url)
+            raise playfind.urllib.error.HTTPError(request.full_url, 429, "Too many", {"Retry-After": "120"}, None)
+        with mock.patch.object(playfind.urllib.request, "urlopen", refuse), \
+                mock.patch.object(playfind, "SPACING", 0.0):
+            self.assertIsNone(playfind._read("https://www.linkedin.com/in/someone"))
+            self.assertIsNone(playfind._read("https://media.linkedin.com/a.png"))
+            self.assertEqual(sent, [], "never asked")
+            self.assertIsNone(playfind._read("https://images.example.org/a.png"))
+            self.assertIsNone(playfind._read("https://images.example.org/b.png"))
+        self.assertEqual(len(sent), 1, "left alone after its 429")
+        self.assertTrue(all(one.isascii() for one in sent))
+
+    def test_one_site_is_asked_in_turn(self) -> None:
+        waited = []
+        with mock.patch.object(playfind.time, "sleep", waited.append):
+            self.assertTrue(playfind._wait_turn("one.example.org"))
+            self.assertTrue(playfind._wait_turn("one.example.org"))
+            self.assertTrue(playfind._wait_turn("two.example.org"))
+        self.assertEqual(len(waited), 1)
+        self.assertGreater(waited[0], 0)
+
+
+class PlayLoadsLessAndSoonerTests(unittest.TestCase):
+    """The user, 2026-11-20: "4个都做" - kept by distance, drawn as it is shown, drawn once and kept, the keeping off
+    the page's thread."""
+
+    def setUp(self):
+        self.page = (WEB / "play.js").read_text(encoding="utf-8")
+        self.regions = (WEB / "play-regions.js").read_text(encoding="utf-8")
+
+    def test_what_is_far_from_the_view_is_let_go_of_and_freed(self):
+        self.assertIn("const PLAY_KEEP_RING = 2, PLAY_PIECE_UNSEEN_MS = 120000;", self.page)
+        self.assertIn("playLetGoFar(c0, c1, r0, r1, half);", self.page)
+        self.assertIn("if (made) made.seenAt = performance.now();", self.page, "a piece drawn is kept")
+        self.assertIn("playFree(play.svgPieces.get(oldest));", self.page)
+        self.assertEqual(self.page.count("play.chunks.clear();"), 1, "every clearing frees first - only in playChunksClear")
+        self.assertIn("for (const one of play.chunks.values()) playFree(one);\n  play.chunks.clear();", self.page)
+
+    def test_far_out_a_block_is_drawn_at_half_its_pixels(self):
+        self.assertIn("canvas.width = canvas.height = PLAY_CHUNK * PLAY_TILE * (half ? 0.5 : 1);", self.page)
+        self.assertIn("if (half) context.scale(0.5, 0.5);", self.page)
+        self.assertIn("const far = scale < 0.5, half = scale < 1, map = play.miniBase;", self.page)
+
+    def test_great_pieces_are_finer_than_tiles_but_cheaper_and_moving_parts_cropped(self):
+        self.assertIn("const PLAY_FINE = 2, PLAY_FINE_COLOURS = 24;", self.page)
+        self.assertIn("crop: true", self.page)
+        self.assertIn("part.width * k, part.height * k", self.page)
+
+    def test_a_block_drawn_is_kept_with_its_mark_and_read_back_off_the_thread(self):
+        self.assertIn('const PLAY_CHUNK_KEPT_VERSION = 1, PLAY_CHUNK_DB = "play-blocks", PLAY_CHUNKS_STORED_MOST = 1500;', self.page)
+        self.assertIn("read.result && read.result.mark === mark ? read.result.blob : null", self.page, "another mark: drawn anew")
+        self.assertIn("createImageBitmap(blob)", self.page)
+        self.assertIn("if (play.chunkIncomplete || (play.tilesLoading || 0) > 0) return;", self.page, "nothing half-drawn kept")
+        self.assertIn("const state = playChunkFromStore(cx, cy, half);", self.page, "the ring round the view asks the store too")
+
+    def test_a_block_drawn_another_way_is_drawn_anew_and_the_store_is_kept_small(self):
+        # the drawing's own code in the mark: a change to it needs no number raised by hand
+        self.assertIn("return `${PLAY_CHUNK_KEPT_VERSION}|${playChunkDrawing()}|${play.language", self.page)
+        self.assertIn("for (const one of [playChunk, playChunkPaint, playTile, playWallTile, playLight, playThing, playFloorArt, playLayBlock,", self.page)
+        self.assertIn("PLAY_CHUNKS_STORED_MOST = 1500", self.page)
+        self.assertIn("setTimeout(playChunkStorePrune, 20000);", self.page)
+
+    def test_the_keeping_is_a_workers_and_the_worker_is_ended_with_play(self):
+        self.assertIn("const PLAY_KEEP_WORKER_SOURCE = `", self.page)
+        self.assertIn("worker.postMessage({ key, mark, bitmap }, [bitmap])", self.page)
+        self.assertIn("playKeepWorker.terminate();", self.page)
+        self.assertNotIn("new Worker(\"", self.page, "started from its own text, no file of its own to serve")
+
+    def test_zoomed_out_great_pieces_are_made_while_idle_and_never_while_the_view_moves(self):
+        self.assertIn("if (play.scale < 1 && !playSvgPieceNow) {", self.page)
+        self.assertIn("if (playMoving() || (play.lastLook && performance.now() - play.lastLook < 400)) {", self.page)
+        self.assertIn("} while (waiting.size && deadline.timeRemaining() > 12);", self.page)
+
+    def test_a_great_pieces_pictures_are_made_once_and_kept(self):
+        # the user, 2026-11-20: "他们生成一次之后就保存成素材不就好了吗"
+        self.assertIn("const storeKey = `piece|${item.id}|${shown}`, mark = playPieceMark(spec, shown);", self.page)
+        self.assertIn("playPieceFromStore(storeKey, mark, made).then((found) => {", self.page)
+        self.assertIn("worker.postMessage({ key: storeKey, mark, bitmaps, meta }, bitmaps);", self.page)
+        self.assertIn("const PLAY_PIECES_KEPT = 400;", self.page, "far out every piece is in sight: 24 made them again and again")
+
+    def test_far_out_nothing_holds_the_page_long_enough_to_break_the_music(self):
+        # the user, 2026-11-20: "音乐在view最大的时候一卡一卡的"
+        sky = (WEB / "play-sky.js").read_text(encoding="utf-8")
+        self.assertIn("const block = laid.get(`${cx},${cy}`);", sky, "the night's lamps from blocks laid, none laid for them")
+        self.assertNotIn("playBlock(play.map, cx, cy).deco", sky)
+        self.assertIn("image.onload = () => playOneAtATime(() => done(image));", self.page)
+        self.assertIn("const small = playChunk(cx, cy, false, true);", self.page, "the map's block drawn at its size, not read back")
+        self.assertNotIn("small.toDataURL(", self.page)
+        self.assertIn("const PLAY_MUSIC_AHEAD = 1.5;", (WEB / "play-sound.js").read_text(encoding="utf-8"))
+
+    def test_laid_one_frame_and_drawn_the_next(self):
+        self.assertIn("playBlock(play.map, waiting[toLay][0], waiting[toLay][1]);", self.page)
+
+    def test_the_ways_found_are_kept_and_given_back_by_what_was_asked(self):
+        self.assertIn("function playRouteFind(blocked, from, to, wobble, salt, paths) {", self.regions)
+        self.assertIn("if (memo && memo.routes.has(key)) return memo.routes.get(key).map((one) => one.slice());", self.regions)
+        self.assertIn("await playRouteMemoReady(play.area);", self.page)
+
+    def test_the_lands_motion_lays_nothing(self):
+        self.assertIn("function playCellIfLaid(map, x, y) {", self.regions)
+        self.assertIn("const cell = playCellIfLaid(map, x, y); if (!cell) continue;", self.page)
+
+
+class TheWayToTheNextMapTests(unittest.TestCase):
+    """The user, 2026-11-20: "一个地图差不多我现在的量多一点之后就要设计next 图 ... 要有一个transition设计stage, 让模型设计一个
+    美观的，酷炫的，意想不到的到其它地图的入口（在另一个地图也有对应的入口）"."""
+
+    SVG = ('<svg xmlns="http://www.w3.org/2000/svg"><rect x="0" y="40" width="96" height="40" fill="#336"/>'
+           '<circle cx="48" cy="40" r="20" fill="#9cf"/><rect x="40" y="60" width="16" height="20" fill="#222"/></svg>')
+
+    def world_of_two_maps(self, keeper):
+        world = keeper.world()
+        first = world["regions"][0]
+        first.pop("closed", None)
+        world["regions"] += [{**first, "id": "r2", "name": "Harbour", "biome": "seaside", "area": "a1"},
+                             {**first, "id": "r3", "name": "Sky Town", "biome": "skycity", "area": "a2", "from": None},
+                             {**first, "id": "r4", "name": "Moon Dock", "biome": "space", "area": "a3", "from": None}]
+        world["commutes"] = [{"from": "r2", "to": "r3", "tie": 0.5, "days": 4}, {"from": "r3", "to": "r4", "tie": 0.2}]
+        keeper.save(world)
+
+    def plan(self):
+        return {"name": "The Whale Road", "why": "Made up.", "ends": [
+            {"map": "a", "land": "r2", "name": "Whale's Mouth", "what": "A great blue whale, its mouth a harbour.",
+             "going": "Down its throat like a slide.", "w": 9, "h": 1},
+            {"map": "b", "land": "nowhere", "name": "Spout Garden", "what": "A fountain of cloud.", "going": "Up.",
+             "w": 4, "h": 3}]}
+
+    def test_a_map_holds_about_what_the_users_does_now_then_the_next_begins(self):
+        from personalized_agent.agent import playregions as regions
+        self.assertEqual(regions.AREA_REGIONS, 9, "about seven lands now, a little more, then a new map")
+
+    def test_the_design_is_kept_to_one_end_in_each_map_and_a_size_that_can_be(self):
+        lands_a, lands_b = [{"id": "r2"}], [{"id": "r3"}]
+        kept = muse.read_crossing(self.plan(), lands_a, lands_b)
+        self.assertEqual([e["map"] for e in kept["ends"]], ["a", "b"])
+        self.assertEqual(kept["ends"][0]["w"], muse.CROSSING_W[1], "too wide: the most")
+        self.assertEqual(kept["ends"][0]["h"], muse.CROSSING_H[0], "too low: the least")
+        self.assertEqual(kept["ends"][1]["land"], "r3", "a land not of its map: its map's first")
+        self.assertIsNone(muse.read_crossing({"ends": [{"map": "a", "what": "x"}]}, lands_a, lands_b), "one end: none")
+        self.assertIn("no generic portals", muse.crossing_system())
+
+    def test_each_map_after_the_first_is_joined_once_to_the_map_it_is_most_tied_to(self):
+        with tempfile.TemporaryDirectory() as folder:
+            said = {muse.TASK_CROSSING: self.plan(), pieces_task(): {"svg": self.SVG, "name": "End", "why": "x"}}
+            keeper = keeper_in(folder, said)
+            self.world_of_two_maps(keeper)
+            self.assertEqual(keeper._design_crossings("2026-11-20"), 2, "a2 and a3, each joined once")
+            world = keeper.world()
+            ways = {(one["from"], one["to"]) for one in world["crossings"]}
+            self.assertEqual(ways, {("a1", "a2"), ("a2", "a3")}, "a2 to a1 (most tied); a3 to a2")
+            first = next(one for one in world["crossings"] if one["to"] == "a2")
+            self.assertEqual([e["area"] for e in first["ends"]], ["a1", "a2"])
+            self.assertTrue(all(e["spec"]["svg"] for e in first["ends"]), "each end drawn as a great piece")
+            self.assertEqual(keeper._design_crossings("2026-11-21"), 0, "designed once")
+
+    def test_not_kept_until_both_ends_are_drawn_and_let_be_after_its_tries(self):
+        with tempfile.TemporaryDirectory() as folder:
+            keeper = keeper_in(folder, {muse.TASK_CROSSING: self.plan()})      # no picture comes back
+            self.world_of_two_maps(keeper)
+            for _ in range(pw.PlayWorld.CROSSING_TRIES_MOST + 1):
+                self.assertEqual(keeper._design_crossings("2026-11-20"), 0)
+            world = keeper.world()
+            self.assertFalse(world.get("crossings"))
+            self.assertEqual(world["crossing_tries"]["a2"], pw.PlayWorld.CROSSING_TRIES_MOST)
+
+    def test_the_page_sets_each_end_by_its_land_and_goes_through_to_the_other(self):
+        act = (WEB / "play-act.js").read_text(encoding="utf-8")
+        self.assertIn("const at = playCrossingSpot(heart, end.w, end.h, map.crossings);", act)
+        self.assertIn("if (way) { playCrossingGo(way); return true; }", act)
+        self.assertIn("playTravelArea(other.area, { crossing: one.crossing.id, end: 1 - one.end });", act)
+        page = (WEB / "play.js").read_text(encoding="utf-8")
+        self.assertIn("for (const one of playCrossings()) if (playPieceInView(one)) playSvgPieceDraw(one, size, now);", page)
+
+
+def pieces_task():
+    from personalized_agent.agent import playpieces
+    return playpieces.TASK_PIECE
 
 
 if __name__ == "__main__":

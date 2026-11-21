@@ -222,7 +222,8 @@ def _watch_the_window_at_start(ui: Any) -> None:
         wintypes.UINT, wintypes.UINT, ctypes.POINTER(ctypes.c_size_t))
 
     def where(frame: Any) -> str:
-        stack = traceback.extract_stack(frame)
+        from .stall_watch import stack_of
+        stack = stack_of(frame)                     # no source lines read (stall_watch.stack_of)
         ours = [one for one in stack if "personalized_agent" in one.filename]
         shown = (ours[-3:] if ours else []) + [stack[-1]]
         return " > ".join(f"{one.filename.rsplit(chr(92), 1)[-1].rsplit('/', 1)[-1]}"
@@ -246,7 +247,8 @@ def _watch_the_window_at_start(ui: Any) -> None:
                     if frame is None or one.ident in (window_thread,
                                                       threading.get_ident()):
                         continue
-                    last = traceback.extract_stack(frame)[-1].name
+                    from .stall_watch import stack_of
+                    last = stack_of(frame)[-1].name
                     if last in ("wait", "sleep", "select", "_wait_for_tstate_lock",
                                 "read_directory_changes", "accept", "get"):
                         continue
@@ -317,6 +319,9 @@ def window_writes(desk: Any) -> Any:
         desk._later = later
     return later
 
+
+#: Ms after the avatar's start before its two panels are made ahead (2026-11-20: not while the start loads).
+PANELS_MADE_AFTER_MS = 10000
 
 class DesktopAgent:
     def __init__(self, application: Any) -> None:
@@ -698,6 +703,12 @@ class DesktopAgent:
             log.debug("could not set the window icon", exc_info=True)
 
     def _animate(self) -> None:
+        # HIDDEN, NOT DRAWN (the user, 2026-11-20: "我现在不是已经不画西瓜头像了吗" - hidden for Play or by the user, its
+        # face was still drawn several times a second, up to a second a frame, the window's thread held for it): looked
+        # at again in a second, drawn once it is shown.
+        if getattr(self, "character_hidden", False):
+            self._animate_job = self.root.after(1000, self._animate)
+            return
         if self._rig is not None:
             self._animate_live()
             return
@@ -1465,7 +1476,10 @@ class DesktopAgent:
         self._quick_panels: Dict[str, Any] = {}
         self._chat_vine = None
         try:
-            self.root.after(1500, self._prepare_panels)
+            # AFTER THE START, NOT IN IT (the user's log, 2026-11-20 20:15: "did not answer for 1.0s, 2s after it
+            # appeared ... _prepare_panels"): at 1.5 s the start's threads were still loading and the window waited
+            # on them; made once it is all up, one panel at a time, each when the window is idle.
+            self.root.after(PANELS_MADE_AFTER_MS, self._prepare_panels)
         except Exception:                    # the avatar goes on without them
             log.exception("the avatar's panels could not be made ahead")
 
@@ -1474,13 +1488,17 @@ class DesktopAgent:
         the screen; HIDDEN, ALL OF IT GOES (the user, 2026-11-05), and it comes back as it was."""
         return "" if self.character_hidden else getattr(self, "_tucked", "")
 
-    def _prepare_panels(self) -> None:
-        """Both panels made out of sight, soon after the start."""
-        for which in ("todo", "collection"):
+    def _prepare_panels(self, which: str = "todo") -> None:
+        """Both panels made out of sight, once the start is over - one, then the other when idle."""
+        try:
+            self._panel(which).prepare()
+        except Exception:                    # made at the press, then
+            log.warning("a panel could not be made ahead", exc_info=True)
+        if which == "todo":
             try:
-                self._panel(which).prepare()
+                self.root.after(400, lambda: self.root.after_idle(lambda: self._prepare_panels("collection")))
             except Exception:                # made at the press, then
-                log.warning("a panel could not be made ahead", exc_info=True)
+                pass
 
     def _quick_panel(self, which: str) -> None:
         """A list, opened or closed: drawn here at once, never the page. ONE AT A TIME
@@ -3489,6 +3507,65 @@ class DesktopAgent:
         return app_window.drag_left_edge_titled(self._notes_titles(), self.NOTES_NARROWEST * times,
                                                 self.NOTES_WIDEST * times, let_go)
 
+    #: The side panel's edge taken this far outside its line (pixels at 96 dpi) - the page takes as far inside it.
+    SIDE_EDGE_OUTSIDE = 3                      # 2026-11-20: "6像素太宽了，要不改成3像素吧"
+    #: How often the strip outside the edge follows the panel (ms).
+    SIDE_EDGE_EVERY_MS = 300
+
+    def _side_edge_follow(self) -> None:
+        """THE PANEL'S EDGE TAKEN ON BOTH SIDES OF ITS LINE (the user, 2026-11-20: "我把鼠标放在白色线的中间，就应该变成缩放的
+        形状，但是现在是放在白色线右边才有"): the page's grip is inside the panel; outside it, a strip of this window's own -
+        all but unseen, the resizing pointer over it, pressed it drags the edge as the grip does - kept beside the
+        panel's edge while the panel is shown, hidden when it is not (put away, over the whole screen, closed)."""
+        strip = getattr(self, "_side_edge", None)
+        try:
+            from ..platform_layer import app_window
+            if strip is None:
+                strip = self._side_edge = tk.Toplevel(self.root)
+                strip.withdraw()
+                strip.overrideredirect(True)
+                strip.configure(bg="#000000", cursor="sb_h_double_arrow")
+                strip.attributes("-alpha", 0.01)           # unseen, but there for the pointer
+                strip.bind("<ButtonPress-1>", lambda _event: DesktopAgent._side_edge_pressed(self))
+                strip.update_idletasks()
+                try:                                       # pressed, it takes no focus from what is in front
+                    import ctypes
+                    handle = ctypes.windll.user32.GetParent(strip.winfo_id()) or strip.winfo_id()
+                    style = ctypes.windll.user32.GetWindowLongW(handle, -20)
+                    ctypes.windll.user32.SetWindowLongW(handle, -20, style | 0x08000000 | 0x80)   # NOACTIVATE, TOOLWINDOW
+                except Exception:
+                    pass
+            import ctypes
+            handle = ctypes.windll.user32.GetParent(strip.winfo_id()) or strip.winfo_id()
+            shown = not getattr(self, "_notes_full", None) and \
+                app_window.edge_strip_titled(self._notes_titles(), handle, self.SIDE_EDGE_OUTSIDE)
+            if shown and strip.state() == "withdrawn":
+                strip.deiconify()
+                app_window.edge_strip_titled(self._notes_titles(), handle, self.SIDE_EDGE_OUTSIDE)
+            elif not shown and strip.state() != "withdrawn":
+                strip.withdraw()
+        except Exception:
+            log.debug("the side panel's edge outside could not be kept", exc_info=True)
+        self.root.after(self.SIDE_EDGE_EVERY_MS, lambda: DesktopAgent._side_edge_follow(self))
+
+    def _side_edge_pressed(self) -> None:
+        """Its edge pressed outside the line: dragged as from the page's grip - twice as wide when its picture's column
+        is open (its width now against the chat's)."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            from ..platform_layer import app_window
+            handle = app_window._windows_page(set(self._notes_titles()))
+            wide = False
+            if handle:
+                rect = wintypes.RECT()
+                ctypes.windll.user32.GetWindowRect(handle, ctypes.byref(rect))
+                dpi = int(ctypes.windll.user32.GetDpiForWindow(handle) or 96)
+                wide = (rect.right - rect.left) * 96 / dpi > 1.5 * self._notes_width()
+            DesktopAgent.grab_notes_panel(self, wide)
+        except Exception:
+            log.debug("the side panel's edge could not be taken", exc_info=True)
+
     def size_notes_panel(self, width: int, final: bool, wide: bool = False) -> bool:
         """THE SIDE PANEL MADE AS WIDE AS IT IS DRAGGED (its left edge): `width` the chat's - twice it with its
         picture beside it (`wide`); while dragged, only itself - the other windows moved once, when it is let
@@ -4678,6 +4755,8 @@ class DesktopAgent:
             windows_layer.SIDE_STRIP.append(
                 lambda dock=self._dock: dock.strip if dock.docked and not dock.stepped_aside else None)
             self.root.after(self.SIDE_TAB_AT_START_MS, lambda: DesktopAgent._side_tab_at_start(self))
+            if not os.environ.get("PA_NO_DIALOGS"):
+                self.root.after(self.SIDE_TAB_AT_START_MS + 500, lambda: DesktopAgent._side_edge_follow(self))
         # NOT ON THE SCREEN BY DEFAULT (the user, 2026-11-17: "已经不需要logo在屏幕上了"): the side panel's tab, its
         # shortcuts and the tray reach everything; the watermelon walks in the Play view. Shown again from the tray's
         # menu - and kept so.

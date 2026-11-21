@@ -276,7 +276,8 @@ class HeadsUp:
         from . import missed_things
         from ...common.languages import in_display, in_english
         from ...models.answers import json_objects, read_text
-        given: Dict[str, Any] = {"now": datetime.now(timezone.utc).isoformat(), "candidates": found["items"],
+        from ...common.local_times import IN_THEIR_TIME, local, now_local
+        given: Dict[str, Any] = {"now": now_local(), "candidates": found["items"],
                                  "their_todos": missed_things.their_todos(self.db), "heads_up_lately": self._lately()}
         if callable(self.context):
             try:
@@ -285,8 +286,9 @@ class HeadsUp:
                 log.debug("what the user means to do could not be read", exc_info=True)
         try:
             response = self.models.invoke(ModelRequest(
-                system=missed_things.SYSTEM, task="heads_up_missed", max_tokens=3000, builtin_web=False,  # its TASK
-                messages=[{"role": "user", "content": json.dumps(given, ensure_ascii=False)}],
+                system=missed_things.SYSTEM + "\n" + IN_THEIR_TIME, task="heads_up_missed", max_tokens=3000,
+                builtin_web=False,  # its TASK
+                messages=[{"role": "user", "content": json.dumps(local(given), ensure_ascii=False)}],
                 language=in_display('"title" and "say"') + in_english('"evidence" keeps the words as they are')),
                 # THE SMALL MODEL, as the other looks (the user, 2026-11-20: "这个还是都用小模型判断" - asked whenever
                 # something new comes, it may be asked often).
@@ -335,7 +337,8 @@ class HeadsUp:
     # -- the look -------------------------------------------------------------------------------------
     def look(self, kind: str, found: Dict[str, Any]) -> Optional[str]:
         """One model call: whether there is something they missed; told when it is sure."""
-        given: Dict[str, Any] = {"now": datetime.now(timezone.utc).isoformat(), "what": WHAT_IT_IS[kind],
+        from ...common.local_times import IN_THEIR_TIME, local, now_local
+        given: Dict[str, Any] = {"now": now_local(), "what": WHAT_IT_IS[kind],
                                  "where": found.get("where", ""), "what_they_did": found.get("text", ""),
                                  "heads_up_lately": self._lately()}
         if callable(self.context):
@@ -347,8 +350,9 @@ class HeadsUp:
         from ...models.answers import read_text
         try:
             response = self.models.invoke(ModelRequest(
-                system=SYSTEM, task=f"heads_up_{kind}", max_tokens=800, builtin_web=False,   # TASKS[kind]
-                messages=[{"role": "user", "content": json.dumps(given, ensure_ascii=False)}],
+                system=SYSTEM + "\n" + IN_THEIR_TIME, task=f"heads_up_{kind}", max_tokens=800,
+                builtin_web=False,   # TASKS[kind]
+                messages=[{"role": "user", "content": json.dumps(local(given), ensure_ascii=False)}],
                 language=in_display('"title" and "say"') + in_english('"evidence" keeps the words as they are')),
                 role=ROLE)
             text, _cut = read_text(response)

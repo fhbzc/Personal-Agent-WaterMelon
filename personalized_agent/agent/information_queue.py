@@ -42,6 +42,9 @@ LOOK_EVERY_SECONDS = 20.0
 OWN_GRACE_SECONDS = 90.0
 #: Judged later with no time named; the latest a time named may be; the soonest.
 LATER_UNNAMED_MINUTES, LATER_MOST_HOURS, LATER_LEAST_MINUTES = 30, 12, 1
+#: A TIME IT NAMED, KEPT AS NAMED within a day (the user, 2026-11-20: held "till" 2:18 at night - "just before tomorrow's
+#: 11 a.m." cut to twelve hours, then asked again in the night): a named time up to this many hours on.
+LATER_NAMED_MOST_HOURS = 24
 #: The kinds never held: what is wrong, and what waits on the user's approval - told at once, as before.
 NEVER_HELD = ("error", "warning", "approval")
 #: Its model calls (common/modules.py): the agent's own judgement of what to tell.
@@ -198,14 +201,18 @@ def told_in(answer: str) -> Tuple[str, List[str]]:
     return TOLD.sub("\n", answer or "").strip(), ids
 
 
-def _when(value: Any) -> Optional[datetime]:
+def _when(value: Any, theirs: bool = False) -> Optional[datetime]:
+    """A time kept (UTC when it says no zone) - or, `theirs`, one the model wrote: in the user's own zone when it says
+    none (it is told every time in their time, 2026-11-20)."""
     if not value:
         return None
     try:
         found = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
-    return found if found.tzinfo else found.replace(tzinfo=timezone.utc)
+    if found.tzinfo:
+        return found
+    return found.astimezone() if theirs else found.replace(tzinfo=timezone.utc)
 
 
 def _now() -> datetime:
@@ -338,14 +345,14 @@ class InformationQueue:
             if decision == "later":
                 now = _now()
                 due = at or now + timedelta(minutes=LATER_UNNAMED_MINUTES)
-                due = max(now + timedelta(minutes=LATER_LEAST_MINUTES),
-                          min(due, now + timedelta(hours=LATER_MOST_HOURS)))
+                most = LATER_NAMED_MOST_HOURS if at else LATER_MOST_HOURS
+                due = max(now + timedelta(minutes=LATER_LEAST_MINUTES), min(due, now + timedelta(hours=most)))
                 deadline = self.deadline(meta)
                 if deadline is not None and deadline > now:
                     due = min(due, deadline)
                 meta = dict(meta, judge_by=due.isoformat(), later_because=why)
                 self.notifications.set_metadata(ident, meta)
-                log.info("information held till %s (%s): %s", due.isoformat(), ident, why)
+                log.info("information held till %s (%s): %s", due.astimezone().isoformat(timespec="minutes"), ident, why)
                 return "later"
             self.notifications.release(ident, f"judged now: {why}" if why else "judged now", said=say, rules=rules)
             return "now"
@@ -408,11 +415,12 @@ class InformationQueue:
                 return self.screen("text" if name == "screen_text_now" else "picture")
             except Exception as exc:
                 return {"error": str(exc)[:200]}
-        messages: List[Dict[str, Any]] = [{"role": "user", "content": json.dumps(given, ensure_ascii=False)}]
+        from ..common.local_times import IN_THEIR_TIME, local
+        messages: List[Dict[str, Any]] = [{"role": "user", "content": json.dumps(local(given), ensure_ascii=False)}]
         response = None
         for _round in range(JUDGE_ROUNDS):
             response = self.models.invoke(ModelRequest(
-                system=JUDGE_SYSTEM, messages=messages, task=TASK, max_tokens=1500, builtin_web=False,
+                system=JUDGE_SYSTEM + "\n" + IN_THEIR_TIME, messages=messages, task=TASK, max_tokens=1500, builtin_web=False,
                 tools=tools, tool_runner=run if tools else None,
                 language=in_display('"say" and "why"') + in_english('"rules_used", as the rules were given')),
                 role="primary")
@@ -432,7 +440,7 @@ class InformationQueue:
         if decision not in ("now", "later", "drop"):
             decision = "now"
         rules = [" ".join(str(one).split())[:300] for one in (said.get("rules_used") or []) if str(one).strip()][:3]
-        return (decision, _when(said.get("at")), str(said.get("why") or "")[:300],
+        return (decision, _when(said.get("at"), theirs=True), str(said.get("why") or "")[:300],
                 with_links(str(said.get("say") or "").strip()[:4000], row), rules)
 
     @staticmethod

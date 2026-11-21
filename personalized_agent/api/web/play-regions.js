@@ -557,7 +557,21 @@ const PLAY_WOBBLE = { grid: 0, village: 2.2, scattered: 3.4, plaza: 1.2, river: 
 const PLAY_LAND_MOST = 44;                 // how far the land and its sea may reach from what is there
 
 /* The way from one tile to another, round what stands in the way: cheapest by its tiles' costs (A*). */
+const PLAY_ROAD_BESIDE = 4;     // the cost of a tile beside a road, not on it: a way kept on it, or off it by a tile
+/* THE WAYS FOUND BEFORE, USED AGAIN (the user, 2026-11-20: "4个都做" - the layout reused): the same world laid again
+   asks the same routes in the same order; each is kept by what it was asked (its ends, its bends, its salt, how much
+   was laid when it was asked) and given back, not searched again. Kept with the world's mark in the page's store
+   (play.js playRouteMemoReady); another world, or another drawing of it, has another mark. */
+let playRouteMemo = null;
 function playRoute(blocked, from, to, wobble, salt, paths) {
+  const memo = playRouteMemo;
+  const key = memo ? `${from[0]},${from[1]}>${to[0]},${to[1]}|${wobble}|${salt}|${blocked && blocked.size}|${paths ? paths.size : -1}` : "";
+  if (memo && memo.routes.has(key)) return memo.routes.get(key).map((one) => one.slice());
+  const found = playRouteFind(blocked, from, to, wobble, salt, paths);
+  if (memo) { memo.routes.set(key, found.map((one) => one.slice())); memo.added += 1; }
+  return found;
+}
+function playRouteFind(blocked, from, to, wobble, salt, paths) {
   // FAST (2026-11-18: one route took 15.8 s of a 17 s layout): what is in the way and what each step costs read once
   // into arrays over the route's box; each tile expanded once; a goal walled in ends the search when the box is done.
   const pad = 14;
@@ -570,7 +584,11 @@ function playRoute(blocked, from, to, wobble, salt, paths) {
     for (let x = 0; x < W; x += 1) {
       const key = `${minX + x},${minY + y}`, i = x + y * W;
       wall[i] = blocked.has(key) ? 1 : 0;
-      cost[i] = paths && paths.has(key) ? 0.35 : 1 + wobble * playNoise(minX + x, minY + y, salt, 5);
+      // ONE ROAD OR TWO, NEVER TWO GLUED (the user, 2026-11-20: "路都黏在一块了 ... 几条路放一起就和一条路一样"): a road
+      // there is taken (cheap); the tiles just beside one cost more (PLAY_ROAD_BESIDE) - a new way runs on the road or a
+      // tile of land away from it, and meets it only to join it.
+      cost[i] = paths && paths.has(key) ? 0.35
+        : 1 + wobble * playNoise(minX + x, minY + y, salt, 5) + (paths && paths.beside && paths.beside.has(key) ? PLAY_ROAD_BESIDE : 0);
     }
   }
   const goal = index(to[0], to[1]), start = index(from[0], from[1]);
@@ -690,11 +708,19 @@ function playLay(world, area) {
   const lay = (route, n, wide, material) => {
     const w = wide === true ? 2 : Math.max(1, Math.min(3, Number(wide) || 1));
     for (const [x, y] of route) {
+      // ON A ROAD ALREADY, NOT WIDENED (the user, 2026-11-20, a jagged strip of earth beside an asphalt road: "这样是怎么
+      // 回事"): a way running along a road takes it as it is - its own width laid beside it was that strip.
+      if (paths.has(`${x},${y}`)) continue;
       for (let dy = 0; dy < w; dy += 1) {
         for (let dx = 0; dx < w; dx += 1) {
           const key = `${x + dx},${y + dy}`;
           if ((dx || dy) && blocked.has(key)) continue;
-          if (!paths.has(key)) paths.set(key, { region: n, wide: w > 1, material: material || "" });
+          if (!paths.has(key)) {
+            paths.set(key, { region: n, wide: w > 1, material: material || "" });
+            const bx = x + dx, by = y + dy;                    // its sides, for the next way to keep off (playRoute)
+            paths.beside = paths.beside || new Set();
+            for (const side of [`${bx + 1},${by}`, `${bx - 1},${by}`, `${bx},${by + 1}`, `${bx},${by - 1}`]) paths.beside.add(side);
+          }
         }
       }
     }
@@ -824,12 +850,18 @@ function playLifeOf(world, zones) {
    ("Start of your story") where it begins. */
 // DENSER, AND ON EVERY ROAD HOWEVER SHORT (the user, 2026-11-20: "交通的动线箭头/路牌设计不需要等地图够大，没有更新限制"): a
 // signpost every PLAY_POST_EVERY tiles, one by each place it leads to (its number in time), arrows all along (play.js).
-const PLAY_POST_EVERY = 10, PLAY_POST_APART = 5;
+// SPARSER (the user, 2026-11-20: "路牌太多了 ... 可以稀疏一点"): the post by the place a road leads to first, then one
+// every PLAY_POST_EVERY tiles only on a long road, none within PLAY_POST_APART tiles of another.
+const PLAY_POST_EVERY = 24, PLAY_POST_APART = 10;
+// ONE BOARD FOR A PLACE IN A STRETCH (the user, 2026-11-20: two "Bellwether牧屋" boards a few steps apart - "我说的路牌是
+// 指 bellwether 那个牌子"): no post naming a place within PLAY_POST_SAME_APART tiles of another naming it - roads from
+// two places to one each put theirs by it.
+const PLAY_POST_SAME_APART = 32;
 function playLifeRoad(world, zones, regions, byId, hearts, blocked, paths, doorways, lay) {
   const { order, follows } = playLifeOf(world, zones);
   const posts = [], routes = [], byId2 = new Map(order.map((one) => [one.zone.id, one]));
   if (order.length < 2) return { order, follows, posts, routes };
-  const taken = new Set();
+  const taken = new Set(), named = [];
   const postBeside = (route, k, to, from) => {
     const [x, y] = route[k], ahead = route[Math.min(route.length - 1, k + 3)];
     const dx = Math.sign(ahead[0] - x), dy = Math.sign(ahead[1] - y);
@@ -837,6 +869,8 @@ function playLifeRoad(world, zones, regions, byId, hearts, blocked, paths, doorw
       const key = `${px},${py}`;
       if (blocked.has(key) || paths.has(key) || doorways.has(key) || taken.has(key)) continue;
       if ([...taken].some((one) => { const [qx, qy] = one.split(",").map(Number); return Math.abs(qx - px) + Math.abs(qy - py) < PLAY_POST_APART; })) return;
+      if (named.some((one) => one.to === to && Math.abs(one.x - px) + Math.abs(one.y - py) < PLAY_POST_SAME_APART)) return;
+      named.push({ x: px, y: py, to });
       taken.add(key);
       posts.push({ x: px, y: py, dx: dx || 0, dy: dx ? 0 : dy, to, from });
       return;
@@ -851,8 +885,8 @@ function playLifeRoad(world, zones, regions, byId, hearts, blocked, paths, doorw
     const route = playRoute(blocked, start, one.out, 1, 131, paths);
     lay(route, regionN(one), true);
     routes.push(route);
-    if (route.length > 2) postBeside(route, Math.min(2, route.length - 1), one, null);
     if (route.length > 4) postBeside(route, route.length - 3, one, null);         // by the place it leads to
+    else if (route.length > 2) postBeside(route, Math.min(2, route.length - 1), one, null);
   }
   posts.push({ x: start[0] + 2, y: start[1], dx: 0, dy: 0, start: true, to: roots[0], from: null });
   taken.add(`${start[0] + 2},${start[1]}`);
@@ -866,8 +900,8 @@ function playLifeRoad(world, zones, regions, byId, hearts, blocked, paths, doorw
       lay(route, regionN(one), true);
       routes.push(route);
       if (route.length < 8) { if (route.length > 1) postBeside(route, Math.floor(route.length / 2), one, from); continue; }
-      for (let k = 4; k < route.length - 4; k += PLAY_POST_EVERY) postBeside(route, k, one, from);
       postBeside(route, route.length - 3, one, from);                              // by the place it leads to
+      for (let k = 12; k < route.length - 12; k += PLAY_POST_EVERY) postBeside(route, k, one, from);
     }
   }
   return { order, follows, posts, routes };
@@ -1839,6 +1873,11 @@ function playBlock(index, cx, cy) {
 }
 
 /* A tile, wherever it is: its block (laid if need be) and its place in it. */
+/* A tile's cell only if its block is laid already - null if not (nothing laid for it: the land's motion, 2026-11-20). */
+function playCellIfLaid(map, x, y) {
+  const key = `${Math.floor(x / PLAY_CHUNK)},${Math.floor(y / PLAY_CHUNK)}`;
+  return map.laid && map.laid.has(key) ? playCell(map, x, y) : null;
+}
 function playCell(map, x, y) {
   const cx = Math.floor(x / PLAY_CHUNK), cy = Math.floor(y / PLAY_CHUNK);
   const block = playBlock(map, cx, cy);
