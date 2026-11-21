@@ -12,7 +12,7 @@ way you would want it done. All on your own computer.
 </p>
 
 <p align="center">
-<b>Download v0.3.7:</b> <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-Setup-windows-x64.exe"><b>Windows</b></a> ·
+<b>Download v0.4.0:</b> <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-Setup-windows-x64.exe"><b>Windows</b></a> ·
 <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-macos.dmg"><b>macOS</b></a> ·
 <a href="https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/latest/download/PersonalAgentWaterMelon-linux-x86_64.deb"><b>Linux</b></a>
 <sub>(<a href="#install">other formats</a> · <a href="#versions">every version</a>)</sub>
@@ -501,14 +501,14 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
-| [v0.4.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.4.0) | 2026-11-21 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.4.0) |
+| [v0.4.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.4.0) | 2026-11-21 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.4.0) |
 | [v0.3.12](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.12) | 2026-11-21 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.12) |
 | [v0.3.11](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.11) | 2026-11-21 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.11) |
 | [v0.3.10](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.10) | 2026-11-20 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.10) |
 | [v0.3.9](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.9) | 2026-11-18 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.9) |
 | [v0.3.8](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.8) | 2026-11-18 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.8) |
 | [v0.3.7.1](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7.1) | 2026-11-16 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7.1) |
-| [v0.3.7](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7) | 2026-11-15 | release (the latest) | above, or on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7) |
+| [v0.3.7](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7) | 2026-11-15 | release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.7) |
 | [v0.3.5](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.5) | 2026-11-14 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.5/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.5/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.5/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.5) |
 | [v0.3.4](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.4) | 2026-11-14 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.4) |
 | [v0.3.3](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.3) | 2026-11-09 | release | [Windows](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.3/PersonalAgentWaterMelon-Setup-windows-x64.exe) · [macOS](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.3/PersonalAgentWaterMelon-macos.dmg) · [Linux](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/download/v0.3.3/PersonalAgentWaterMelon-linux-x86_64.deb) · [all files](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.3) |
@@ -780,7 +780,7 @@ has it.
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
 
-### [v0.4.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.4.0) (2026-11-21, a pre-release)
+### [v0.4.0](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.4.0) (2026-11-21, the latest release)
 
 The side panel on a Mac as on Windows - its tab at the edge, pinned so nothing covers it, full screen, no window buttons - and a place to sign in to Claude Code; three new themes in Play; rooms you can walk all through, with every thing in reach.
 
