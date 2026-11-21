@@ -500,6 +500,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.3.11](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.11) | 2026-11-21 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.11) |
 | [v0.3.10](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.10) | 2026-11-20 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.10) |
 | [v0.3.9](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.9) | 2026-11-18 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.9) |
 | [v0.3.8](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.8) | 2026-11-18 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.8) |
@@ -775,6 +776,28 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.3.11](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.11) (2026-11-21, a pre-release)
+
+Play is lighter and smoother: what it draws is drawn once and kept, far views stay fluid, and it can be switched off; a world that outgrows one map goes on in a new map, reached by a way your agent designs; the agent itself uses much less memory.
+
+**Play**
+- **Drawn once, kept.** The ground, the roads' layout and every great piece are drawn once and kept on your computer; opening Play again takes well under a second instead of many seconds. A change to how things are drawn redraws them by itself.
+- **Smooth at any distance.** Only what is near the view is kept in memory; far out the ground is drawn at half its detail and great pieces are made while you stand still, so moving the view - with the mouse or WASD, Shift to go faster - stays fluid even across the whole world. The view zooms much further out, and clouds and birds stay where they are in the world.
+- **The music no longer stumbles** when the view is far out.
+- **A power switch.** Play has an on/off switch in its options; off, nothing of it is loaded and it takes no memory. The Play button shows green when it is on. Closed for a minute, Play lets go of its memory.
+- **The next map.** When a map is full (about the size of a world after some weeks), the world goes on in a new map - and your agent designs a striking, unexpected pair of entrances between the two, one in each map; walk up to one and press E to come out of the other.
+- Buses, taxis and cars drive on real roads and turn square corners; ferries stay on open water; the view follows you on trains, planes and every ride; roads side by side are told apart by their edges; things in rooms on a great ground can be used.
+- Signposts are fewer; place cards no longer show the poems and tunes behind them, and a task's title is in your language.
+- Lighter on the model: small tasks (translating, finding pictures, themes) go to the small model, translations are remembered, and rooms keep their design when a land is redrawn.
+
+**Your agent**
+- **Much less memory.** The agent's own process and its sentence model take a fraction of the memory they did; the side panel's page and the agent's records hold less.
+- Heads-ups and the message queue speak in your own time, never UTC; a time you name for a held message is kept up to a day.
+- Shift+Enter makes a new line in the chat on a Mac too.
+- The side panel's edge can be taken on either side of its line; no bar is shown over it.
+- **Updates.** An update that could not finish no longer ends itself halfway, and the old version is left alone if the update gives up.
+- A slow start can no longer bring the app down; in a build with the Debugger a crash is written to the logs.
 
 ### [v0.3.10](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.10) (2026-11-20, a pre-release)
 
