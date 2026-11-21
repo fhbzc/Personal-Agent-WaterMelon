@@ -252,6 +252,7 @@ fun fact.
   <img src="docs/images/play-launch.png" width="49%" alt="A launch site land: a rocket on its tower, rooms with their things, and the desert round it"><br>
   <img src="docs/images/play-station.png" width="49%" alt="A great station: a glasshouse railway station with its platform and the line leaving it">
   <img src="docs/images/play-night.png" width="49%" alt="The same land at night: an airport with its lamps lit"><br>
+  <img src="docs/images/play-night-world.png" width="60%" alt="The whole world at night, seen from afar: each land lit its own way, lamps along the roads and round the places"><br>
   <sub>A project's estate, numbered in the order you worked; a land of its own scene; a great station; and the night, each land lit its own way.</sub>
 </p>
 
