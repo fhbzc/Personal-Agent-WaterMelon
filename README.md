@@ -500,6 +500,7 @@ update by itself.
 
 | Version | Published | Status | Downloads |
 | --- | --- | --- | --- |
+| [v0.3.12](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.12) | 2026-11-21 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.12) |
 | [v0.3.11](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.11) | 2026-11-21 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.11) |
 | [v0.3.10](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.10) | 2026-11-20 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.10) |
 | [v0.3.9](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.9) | 2026-11-18 | pre-release | on [its release page](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.9) |
@@ -776,6 +777,14 @@ has it.
 
 The newest version first. Each earlier version links to its release, where
 everything it changed is written down.
+
+### [v0.3.12](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.12) (2026-11-21, a pre-release)
+
+A fix for v0.3.11: Play could fill the side panel's memory within seconds of opening, and the side panel then stopped with "Out of Memory".
+
+- **Play opens again.** A world whose project had a boat or a hot-air balloon of its own looked for that vehicle's way from a stop it did not have, and never stopped looking - gigabytes in seconds. A boat's stops are now at the shore and a balloon's at the sky's edge, and a way that cannot be found is given up.
+- **No limit on the side panel's memory.** v0.3.11 capped the memory of the side panel's page, which made it stop at once whenever a page needed more; the cap is gone.
+- In a build with the Debugger, a crash is told from a run that ended as it should; errors that were handled are no longer called a crash.
 
 ### [v0.3.11](https://github.com/fhbzc/Personal-Agent-WaterMelon/releases/tag/v0.3.11) (2026-11-21, a pre-release)
 
